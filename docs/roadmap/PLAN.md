@@ -23,6 +23,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **ACP/BearWire `pair`** | Native loop + armature-local tools over BearWire by default/auto; legacy ACP HTTP/SSE remains compatibility while final smoke/parity validation and deprecation finish | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ACP_LIFECYCLE_RESET_PLAN.md`](ACP_LIFECYCLE_RESET_PLAN.md) |
 | **Memory (dashboard)** | See landed vs open across all memory tracks | [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md) |
 | **Memory tools** | SQLite read/write for `pair`/`chat`/`curate`; hybrid `memory_search` when Qdrant set; `work`/`watch` read exposed, write remains policy-gated | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
+| **Memory surfaces** | Planned: make context/memory layers inspectable, source-linked, scoped, easy to correct/forget, and less noisy in prompt projection | [`MEMORY_SURFACES_IMPROVEMENT_PLAN.md`](MEMORY_SURFACES_IMPROVEMENT_PLAN.md) |
 | **Derived recall** | **Phases 0–3.5 + 5 landed** (indexer, turn recall, hybrid search, temporal + graph legs, `den reindex`); Cabinet + embedding v2 deferred | [`DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) |
 | **Legacy memory import** | **Optional historical tooling** (`den import-legacy-memory` + UI upload landed); no production migration required | [`MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md`](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
 | **Bear entity layer** | **Phases 0–6 landed/partial**: schema, resolver, access gate, entity-filter + graph recall, anchors, tools/governance, `session_info.entities`; portability open | [`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md), [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) |
@@ -79,10 +80,11 @@ See [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md):
 ### 2. Complete the memory/recall stack
 
 1. Consolidation policy: use landed supersession/schema primitives for dedup, contradiction handling, synthesized `reflection` records, and promotion to `core/`.
-2. `archive_harvest` reflection lane and model-assisted pair reflection so closed sessions can produce curated candidates.
-3. Entity portability/export-import ([`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) Phase 7) plus remaining Phase 4 follow-ups such as vector entity-overlap boost and proactive `applies_when` surfacing.
-4. Memory write policy for `work`/`watch`; read exposure is already partially landed.
-5. Cabinet recall and embedding-standard migration remain deferred until their producer/standard prerequisites exist.
+2. Memory surfaces: make context budget, memory layers, provenance, lifecycle, correction/forgetting, projection relevance, and task-vs-personal boundaries inspectable before broadening automation ([`MEMORY_SURFACES_IMPROVEMENT_PLAN.md`](MEMORY_SURFACES_IMPROVEMENT_PLAN.md)).
+3. `archive_harvest` reflection lane and model-assisted pair reflection so closed sessions can produce curated candidates.
+4. Entity portability/export-import ([`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) Phase 7) plus remaining Phase 4 follow-ups such as vector entity-overlap boost and proactive `applies_when` surfacing.
+5. Memory write policy for `work`/`watch`; read exposure is already partially landed.
+6. Cabinet recall and embedding-standard migration remain deferred until their producer/standard prerequisites exist.
 
 ### 3. Land Docket and task handoff
 
@@ -110,6 +112,7 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 ### Active supporting plans
 
 - [Memory tools](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)
+- [Memory surfaces improvement](MEMORY_SURFACES_IMPROVEMENT_PLAN.md)
 - [Memory curation](MEMORY_CURATION_PLAN.md)
 - [Personalization](PERSONALIZATION_PLAN.md)
 - [Reflection system](REFLECTION_SYSTEM_PLAN.md)
