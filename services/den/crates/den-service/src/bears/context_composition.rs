@@ -267,6 +267,28 @@ fn default_pair_contract_for_bear(name: &str) -> String {
         })
 }
 
+fn default_work_contract_for_bear(name: &str) -> String {
+    let registry = super::prompt_fragments::repository_prompt_fragment_registry().ok();
+    registry
+        .as_ref()
+        .and_then(|registry| registry.get("stance_work"))
+        .and_then(|fragment| {
+            render_compile_time_fragment(
+                fragment,
+                &CompileTimePromptContext {
+                    bear_name: name,
+                    bear_slug: "",
+                },
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| {
+            format!(
+                "You are the Bear's work stance: the approved outbound executor for {name}. Execute only Den-approved tasks within the provided run context, allowed tools, and scope. Use curated context rather than raw private interaction history. Prefer dedicated tools over generic command execution whenever the current runtime makes them available. Use generic command execution only when the task actually requires running a command or when no dedicated tool expresses the needed operation. Do not self-approve tasks."
+            )
+        })
+}
+
 pub fn default_role_contracts_for_bear(name: &str) -> RoleContracts {
     RoleContracts {
         chat: format!(
@@ -276,9 +298,7 @@ pub fn default_role_contracts_for_bear(name: &str) -> RoleContracts {
         curate: format!(
             "You are the Bear's curate role: the internal integrator for {name}. Review branches, task intents, observations, work results, and skill proposals. Promote durable knowledge into shared core memory through Den-controlled mechanisms. Do not perform outbound external communication."
         ),
-        work: format!(
-            "You are the Bear's work role: the approved outbound executor for {name}. Execute only Den-approved tasks within the provided run context, allowed tools, and scope. Use curated context rather than raw private interaction history. Do not self-approve tasks."
-        ),
+        work: default_work_contract_for_bear(name),
         watch: format!(
             "You are the Bear's watch role: the inbound observer for {name}. Parse inbound external events into structured observations for review. Do not take outbound action or directly convert events into external work without curate and Den mediation."
         ),
@@ -287,4 +307,3 @@ pub fn default_role_contracts_for_bear(name: &str) -> RoleContracts {
 
 #[cfg(test)]
 mod tests;
-

@@ -18,6 +18,14 @@ fn repository_registry_contains_den_baseline() {
 }
 
 #[test]
+fn repository_registry_contains_work_stance_fragment() {
+    let registry = repository_prompt_fragment_registry().unwrap();
+    let fragment = registry.require("stance_work").unwrap();
+    assert_eq!(fragment.frontmatter.templating_phase, "compile");
+    assert!(fragment.body.contains("Execution Space"));
+}
+
+#[test]
 fn repository_bundle_references_pair_stance_fragment() {
     let fragments = repository_prompt_fragment_registry().unwrap();
     let bundles = repository_prompt_bundle_registry(&fragments).unwrap();
