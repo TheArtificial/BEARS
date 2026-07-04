@@ -10,7 +10,9 @@ use crate::BearProfile;
 
 use crate::tools::{
     context::DenToolInvocationContext,
-    descriptor::{builtin_den_tool_descriptors_for_profile, memory_tool_provider_names_for_profile},
+    descriptor::{
+        builtin_den_tool_descriptors_for_profile, memory_tool_provider_names_for_profile,
+    },
     identity::{role_is_bear_admin, CurrentUser},
     memory::source_client_session_id,
     support::{clean_optional, memory_read_scopes, memory_write_scopes},
@@ -155,8 +157,14 @@ pub fn bear_environment_payload(
     entities: &Value,
     adapter_runtime: &Value,
 ) -> Value {
-    let session_info =
-        session_info_payload(context, role, current_user, member_count, memory_status, entities);
+    let session_info = session_info_payload(
+        context,
+        role,
+        current_user,
+        member_count,
+        memory_status,
+        entities,
+    );
     let runtime = session_info.get("runtime").cloned().unwrap_or_else(|| {
         json!({
             "state": "idle",
