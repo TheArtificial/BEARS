@@ -19,8 +19,8 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 |---|---|---|
 | **Den runtime** | **Landed** for `chat`, `pair`, `curate`, `watch`: in-process loop → Bifrost; canonical transcript in Postgres; stance registry `den-native:{bear_id}:{stance}` | [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md), [`../architecture/den-runtime.md`](../architecture/den-runtime.md) |
 | **Letta/Codepool/MemFS removal** | **Done** in code + compose; no production Letta-runtime Bears require backfill; remaining `letta_*` names are cleanup debt only | [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) |
-| **Web chat** | Native `/v1/chat/send` + Deep Chat UI; memory tools exposed for `chat`; recent stream/persistence fixes | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) (partially superseded) |
-| **ACP/BearWire `pair`** | Native loop + armature-local tools over BearWire by default/auto; legacy ACP HTTP/SSE remains compatibility while final smoke/parity validation and deprecation finish | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ACP_LIFECYCLE_RESET_PLAN.md`](ACP_LIFECYCLE_RESET_PLAN.md) |
+| **Web chat** | Native `/v1/chat/send` + Deep Chat UI; memory tools exposed for `chat`; recent stream/persistence fixes | [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md), [`DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](DEN_CHANNELS_IMPLEMENTATION_PLAN.md) |
+| **ACP/BearWire `pair`** | Native loop + armature-local tools over BearWire by default/auto; legacy ACP HTTP/SSE remains compatibility while final smoke/parity validation and deprecation finish | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`DEN_BEARWIRE_ARMATURE_ACP_HARDENING_PLAN.md`](DEN_BEARWIRE_ARMATURE_ACP_HARDENING_PLAN.md), [`ACP_LIFECYCLE_RESET_PLAN.md`](ACP_LIFECYCLE_RESET_PLAN.md) |
 | **Memory (dashboard)** | See landed vs open across all memory tracks | [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md) |
 | **Memory tools** | SQLite read/write for `pair`/`chat`/`curate`; hybrid `memory_search` when Qdrant set; `work`/`watch` read exposed, write remains policy-gated | [`MEMORY_TOOLS_IMPLEMENTATION_PLAN.md`](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) |
 | **Memory surfaces** | Planned: make context/memory layers inspectable, source-linked, scoped, easy to correct/forget, and less noisy in prompt projection | [`MEMORY_SURFACES_IMPROVEMENT_PLAN.md`](MEMORY_SURFACES_IMPROVEMENT_PLAN.md) |
@@ -29,7 +29,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **Bear entity layer** | **Phases 0–6 landed/partial**: schema, resolver, access gate, entity-filter + graph recall, anchors, tools/governance, `session_info.entities`; portability open | [`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md), [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) |
 | **Reflection / curation** | `memory_curate` + `recall_index` workers; pair→curate enqueue on ACP close; harvest/consolidation open | [`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md), [`MEMORY_CURATION_PLAN.md`](MEMORY_CURATION_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 | **Personalization** | Planned: replace blanket anti-user-memory guidance with safe proactive human understanding; `curate` stance promotes safe memories and quarantines risks | [`PERSONALIZATION_PLAN.md`](PERSONALIZATION_PLAN.md) |
-| **Docket / tasks** | **Level 1** (`den-docket` wraps legacy `bear_work_plans`); ADR-0034 relational schema + `work` dispatch **open** | [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md), [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) |
+| **Docket / tasks** | **Level 1** (`den-docket` wraps legacy `bear_work_plans`); ADR-0034 relational schema + `work` dispatch **open** | [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md), [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) |
 | **`work` sandbox** | **Not started** — blocks real coding harness | [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) Phase 7, [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) |
 | **Context compaction** | Designed; end-to-end runtime **not finished** | [`DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md`](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md), [ADR-0032](../decisions/adr-0032-den-context-compaction-architecture.md) |
 | **Context budget tracking** | Planned: final-request token estimation against resolved model limits, with component attribution and runtime diagnostics | [`CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md`](CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md), [ADR-0047](../decisions/adr-0047-context-window-budget-and-token-estimation.md) |
@@ -88,11 +88,11 @@ See [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md):
 
 ### 3. Land Docket and task handoff
 
-[`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) relational realization + [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) handoff/dispatch — gated on `work` sandbox.
+[`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) relational realization plus task-list/workflow-state UX from [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) — gated on `work` sandbox.
 
 ### 4. Harden BearWire `pair` and web chat
 
-- [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ACP_LIFECYCLE_RESET_PLAN.md`](ACP_LIFECYCLE_RESET_PLAN.md).
+- [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`DEN_BEARWIRE_ARMATURE_ACP_HARDENING_PLAN.md`](DEN_BEARWIRE_ARMATURE_ACP_HARDENING_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ACP_LIFECYCLE_RESET_PLAN.md`](ACP_LIFECYCLE_RESET_PLAN.md).
 - Web chat: interactive approval for mutating tools; continued stream/persistence reliability.
 
 ### 5. Phase 1 operator/product (native-aligned)
@@ -121,9 +121,11 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 - [Context window budget](CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md)
 - [BearWire armature wire](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
 - [BearWire v1 protocol refinement](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md)
+- [Den-BearWire-armature-ACP hardening](DEN_BEARWIRE_ARMATURE_ACP_HARDENING_PLAN.md)
 - [ACP adapter improvements](ACP_ADAPTER_IMPROVEMENT_PLAN.md)
 - [ACP lifecycle reset](ACP_LIFECYCLE_RESET_PLAN.md)
 - [Den channels](DEN_CHANNELS_IMPLEMENTATION_PLAN.md)
+- [Den string hygiene roadmap](DEN_STRING_HYGIENE_ROADMAP.md)
 - [Prompt fragment registry](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md)
 - [Prompt text hardcode audit](PROMPT_TEXT_HARDCODE_AUDIT.md)
 - [Phase 1 native product debt](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)
