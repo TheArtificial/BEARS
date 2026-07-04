@@ -3,6 +3,12 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use den_core::tools::support::truncate_chars;
+use den_core::tools::work_surface::{
+    work_surface_anchor_paths, work_surface_candidate_slug_from_hints,
+    work_surface_projection_status, WorkSurfaceProjectionStatus, WorkSurfaceSessionHints,
+};
+use den_llm::model_registry;
 use den_memory::{
     has_work_surface_canonical_anchor, head_record_for_logical_path,
     list_entity_anchor_head_records, list_profile_local_head_records, memory_sequence_high_water,
@@ -12,12 +18,6 @@ use den_service::bears::{
     managed_blocks::get_compiled_bear_config, model::BearProfile, provision::profile_config_hash,
     Bear,
 };
-use den_core::tools::support::truncate_chars;
-use den_core::tools::work_surface::{
-    work_surface_anchor_paths, work_surface_candidate_slug_from_hints,
-    work_surface_projection_status, WorkSurfaceProjectionStatus, WorkSurfaceSessionHints,
-};
-use den_llm::model_registry;
 
 const TIER1_SHARED_PATHS: &[&str] = &[
     "core/bear-overview.md",
@@ -70,8 +70,6 @@ struct ProjectionBudget {
     global_cap: usize,
     tiers: [TierBudget; 4],
 }
-
-
 
 fn projection_budget_for_profile_and_model(
     role: BearProfile,
@@ -132,7 +130,10 @@ impl BudgetTracker {
     }
 
     fn try_take_record(&mut self, content: &str) -> Option<String> {
-        if self.tier_remaining_records == 0 || self.global_remaining == 0 || self.tier_char_remaining == 0 {
+        if self.tier_remaining_records == 0
+            || self.global_remaining == 0
+            || self.tier_char_remaining == 0
+        {
             return None;
         }
         let cap = self
@@ -157,10 +158,7 @@ impl BudgetTracker {
 }
 
 fn format_record_block(record: &MemoryRecordRow, body: &str) -> String {
-    let path = record
-        .logical_path
-        .as_deref()
-        .unwrap_or("<unmapped>");
+    let path = record.logical_path.as_deref().unwrap_or("<unmapped>");
     format!("### {path}\n{body}")
 }
 
@@ -184,16 +182,16 @@ pub(crate) async fn compiled_prompt_cache_token(
         .to_string())
 }
 
-pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<KeyMemoryProjectionResult, DenError> {
+pub async fn project_key_memory(
+    input: KeyMemoryProjectionInput<'_>,
+) -> Result<KeyMemoryProjectionResult, DenError> {
     let store = input.stores.store_for_bear(input.bear.id).await?;
     let sequence_high_water = memory_sequence_high_water(&store).await?;
     let compiled_config_token =
         compiled_prompt_cache_token(input.pool, input.bear, input.profile, input.native_runtime)
             .await?;
-    let status = work_surface_projection_status(
-        &input.session_hints,
-        input.work_surface_status_override,
-    );
+    let status =
+        work_surface_projection_status(&input.session_hints, input.work_surface_status_override);
     let primary_slug = work_surface_candidate_slug_from_hints(&input.session_hints);
     let cache_key = KeyMemoryProjectionCacheKey {
         bear_id: input.bear.id,
@@ -303,7 +301,10 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
                 }
             }
             if !blocks.is_empty() {
-                sections.push(format!("## Work surface: {slug}\n\n{}", blocks.join("\n\n")));
+                sections.push(format!(
+                    "## Work surface: {slug}\n\n{}",
+                    blocks.join("\n\n")
+                ));
             }
         }
     }
@@ -314,7 +315,10 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
         let mut blocks = Vec::new();
         let records = list_entity_anchor_head_records(&store, 6).await?;
         for record in records {
-            let path = record.logical_path.clone().unwrap_or_else(|| "<unmapped>".to_string());
+            let path = record
+                .logical_path
+                .clone()
+                .unwrap_or_else(|| "<unmapped>".to_string());
             if tracker.tier_remaining_records == 0 {
                 omitted_budget.push(path);
                 continue;
@@ -350,18 +354,29 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
             None
         };
         let records = if let Some(surface) = surface_ref {
-            let mut rows = list_profile_local_head_records(&store, input.profile.as_str(), Some(surface), 8)
-                .await?;
+            let mut rows =
+                list_profile_local_head_records(&store, input.profile.as_str(), Some(surface), 8)
+                    .await?;
             if rows.len() < budget.tiers[2].max_records {
                 let remaining = (budget.tiers[2].max_records - rows.len()) as i64;
-                let global = list_profile_local_head_records(&store, input.profile.as_str(), None, remaining)
-                    .await?;
+                let global = list_profile_local_head_records(
+                    &store,
+                    input.profile.as_str(),
+                    None,
+                    remaining,
+                )
+                .await?;
                 rows.extend(global);
             }
             rows
         } else {
-            list_profile_local_head_records(&store, input.profile.as_str(), None, budget.tiers[2].max_records as i64)
-                .await?
+            list_profile_local_head_records(
+                &store,
+                input.profile.as_str(),
+                None,
+                budget.tiers[2].max_records as i64,
+            )
+            .await?
         };
         for record in records {
             if tracker.tier_remaining_records == 0 {
@@ -414,7 +429,10 @@ pub async fn project_key_memory(input: KeyMemoryProjectionInput<'_>) -> Result<K
                     "memory_id": record.memory_id,
                     "logical_path": TIER4_SITUATION_PATH,
                 }));
-                sections.push(format!("## Situation\n\n{}", format_record_block(&record, &body)));
+                sections.push(format!(
+                    "## Situation\n\n{}",
+                    format_record_block(&record, &body)
+                ));
             } else {
                 omitted_budget.push(TIER4_SITUATION_PATH.to_string());
             }

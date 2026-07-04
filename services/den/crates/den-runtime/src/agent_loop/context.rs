@@ -1,8 +1,10 @@
 use den_core::DenError;
+use den_service::conversation::persistence::{
+    PersistedToolRequestPayload, PersistedToolResultPayload,
+};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
-use den_service::conversation::persistence::{PersistedToolRequestPayload, PersistedToolResultPayload};
 
 use crate::{
     agent_loop::tool_outcome::{
@@ -156,7 +158,9 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                     continue;
                 };
                 let tool_call_id = payload.tool_call_id.clone();
-                let content = if payload.status == den_core::tools::result_compaction::ToolResultStatus::Incomplete {
+                let content = if payload.status
+                    == den_core::tools::result_compaction::ToolResultStatus::Incomplete
+                {
                     Some(INCOMPLETE_TOOL_RESULT_MARK.to_string())
                 } else {
                     payload
@@ -624,7 +628,10 @@ mod tests {
 
         assert!(pruned.diagnostics.pruned_message_count > 0);
         assert!(pruned.diagnostics.pruned_character_count > 0);
-        assert_eq!(pruned.messages.first().map(|m| m.role.as_str()), Some("system"));
+        assert_eq!(
+            pruned.messages.first().map(|m| m.role.as_str()),
+            Some("system")
+        );
     }
 
     #[test]

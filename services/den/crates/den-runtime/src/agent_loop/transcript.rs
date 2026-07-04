@@ -50,16 +50,17 @@ pub fn spawn_persist_native_agent_step(
         );
     }
     for call in tool_calls {
-        let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| {
-            Value::String(call.function.arguments.clone())
-        });
+        let args: Value = serde_json::from_str(&call.function.arguments)
+            .unwrap_or_else(|_| Value::String(call.function.arguments.clone()));
         let approval_required = provider_tool_requires_approval(&call.function.name);
         spawn_persist_tool_request(
             context.clone(),
             CanonicalToolRequestRecord::new(
                 call.function.name.clone(),
                 call.id.clone(),
-                request_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
+                request_id
+                    .clone()
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
                 None,
                 args,
                 approval_required,

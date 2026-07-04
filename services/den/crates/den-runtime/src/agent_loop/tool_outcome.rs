@@ -1,11 +1,8 @@
 //! Shared helpers for tool execution outcomes across web chat, client adapters, and transcript repair.
 
-use den_protocol::{RuntimeSemanticEvent, ToolCallFinishStatus};
+use crate::llm::ChatToolCall;
 use den_core::tools::result_compaction::ToolResultStatus;
-use crate::{
-    llm::ChatToolCall,
-    
-};
+use den_protocol::{RuntimeSemanticEvent, ToolCallFinishStatus};
 
 pub const LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE: &str =
     "Tool result unavailable (prior turn interrupted).";

@@ -4,8 +4,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_service::prompt_memory_block_store::{
-    select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery,
-    PromptMemoryRuntimeSelection,
+    select_prompt_memory_blocks_for_runtime, PromptMemoryBlockQuery, PromptMemoryRuntimeSelection,
 };
 use den_service::prompt_memory_blocks::{
     compile_prompt_memory_blocks, render_prompt_memory_block_context, PromptMemoryCompilationInput,
@@ -74,14 +73,9 @@ pub async fn assemble_den_owned_runtime_supplement(
     _compaction_state: Option<&TurnCompactionState>,
 ) -> Result<String, DenError> {
     let mut parts = Vec::new();
-    let prompt_memory = load_prompt_memory_runtime_text(
-        pool,
-        bear_id,
-        profile_slug,
-        session_id,
-        workspace_roots,
-    )
-    .await?;
+    let prompt_memory =
+        load_prompt_memory_runtime_text(pool, bear_id, profile_slug, session_id, workspace_roots)
+            .await?;
     if !prompt_memory.trim().is_empty() {
         parts.push(prompt_memory);
     }
@@ -97,6 +91,8 @@ mod tests {
         assert!(runtime_context_already_includes_den_owned_blocks(
             "Runtime compaction context is Den-owned."
         ));
-        assert!(!runtime_context_already_includes_den_owned_blocks("plain runtime notes"));
+        assert!(!runtime_context_already_includes_den_owned_blocks(
+            "plain runtime notes"
+        ));
     }
 }

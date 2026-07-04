@@ -14,8 +14,7 @@ use den_core::tools::work_surface::WorkSurfaceSessionHints;
 use super::{
     context::{
         load_transcript_messages, load_transcript_messages_after_seq,
-        prune_messages_for_native_pair_with_diagnostics,
-        repair_tool_call_message_chain,
+        prune_messages_for_native_pair_with_diagnostics, repair_tool_call_message_chain,
     },
     key_memory_projection::{
         project_key_memory, render_key_memory_projection_block, KeyMemoryProjectionCacheKey,
@@ -25,10 +24,10 @@ use super::{
         assemble_den_owned_runtime_supplement, runtime_context_already_includes_den_owned_blocks,
     },
 };
+use crate::context_budget::AssembledTurnBudgetComponents;
 use crate::runtime::compaction::{
     on_turn_assemble_compaction, render_compaction_prompt_context, CompactionMode,
 };
-use crate::context_budget::AssembledTurnBudgetComponents;
 
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
@@ -277,9 +276,8 @@ pub async fn assemble_native_turn_for_bear(
         }
     }
     if ctx.profile == BearProfile::Chat {
-        let tool_surface_blurb = den_core::tools::descriptor::render_profile_tool_surface_blurb(
-            ctx.profile,
-        );
+        let tool_surface_blurb =
+            den_core::tools::descriptor::render_profile_tool_surface_blurb(ctx.profile);
         budget_components.tool_surface_guidance_chars = tool_surface_blurb.chars().count() as u32;
         system_text.push_str("\n\n");
         system_text.push_str(&tool_surface_blurb);
@@ -301,8 +299,11 @@ pub async fn assemble_native_turn_for_bear(
         name: None,
         tool_calls: None,
     }];
-    let compaction_active = CompactionMode::parse(&ctx.config.compaction_mode) == CompactionMode::Active;
-    let transcript_cutoff = compaction_state.as_ref().and_then(|state| state.compacted_seq_cutoff);
+    let compaction_active =
+        CompactionMode::parse(&ctx.config.compaction_mode) == CompactionMode::Active;
+    let transcript_cutoff = compaction_state
+        .as_ref()
+        .and_then(|state| state.compacted_seq_cutoff);
     let transcript_messages = if compaction_active && transcript_cutoff.is_some() {
         load_transcript_messages_after_seq(
             ctx.pool,
@@ -338,10 +339,7 @@ pub async fn assemble_native_turn_for_bear(
         .sum();
     messages.extend(ctx.tool_messages.iter().cloned());
     let messages = repair_tool_call_message_chain(messages);
-    let messages = if ctx.native_runtime
-        && compaction_active
-        && transcript_cutoff.is_some()
-    {
+    let messages = if ctx.native_runtime && compaction_active && transcript_cutoff.is_some() {
         messages
     } else if ctx.native_runtime && ctx.profile == BearProfile::Pair {
         let pruned = prune_messages_for_native_pair_with_diagnostics(messages);

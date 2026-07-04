@@ -170,7 +170,8 @@ mod tests {
     #[test]
     fn upsert_compaction_block_replaces_existing_section() {
         let system = "Base prompt.\n\nRuntime compaction context is Den-owned. old=1";
-        let updated = upsert_compaction_block(system, "Runtime compaction context is Den-owned. new=2");
+        let updated =
+            upsert_compaction_block(system, "Runtime compaction context is Den-owned. new=2");
         assert!(updated.starts_with("Base prompt."));
         assert!(updated.contains("new=2"));
         assert!(!updated.contains("old=1"));

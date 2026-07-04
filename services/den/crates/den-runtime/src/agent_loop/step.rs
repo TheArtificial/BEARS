@@ -128,14 +128,17 @@ impl LazyAgentStepStream {
                 api_style = %fallback_style.as_str(),
                 "retrying LLM stream with fallback model after Bifrost key-selection error"
             );
-            match timeout(NATIVE_LLM_HANDSHAKE_TIMEOUT, Self::connect_request_stream(
-                llm,
-                &fallback_request,
-                session_key,
-                fallback_model,
-                fallback_style,
-                Instant::now(),
-            ))
+            match timeout(
+                NATIVE_LLM_HANDSHAKE_TIMEOUT,
+                Self::connect_request_stream(
+                    llm,
+                    &fallback_request,
+                    session_key,
+                    fallback_model,
+                    fallback_style,
+                    Instant::now(),
+                ),
+            )
             .await
             {
                 Ok(Ok(stream)) => {
@@ -222,7 +225,14 @@ impl LazyAgentStepStream {
             );
             let handshake = timeout(
                 NATIVE_LLM_HANDSHAKE_TIMEOUT,
-                Self::connect_request_stream(&llm, &request, &session_key, &model, api_style, started),
+                Self::connect_request_stream(
+                    &llm,
+                    &request,
+                    &session_key,
+                    &model,
+                    api_style,
+                    started,
+                ),
             )
             .await;
             match handshake {
@@ -527,9 +537,11 @@ pub async fn run_agent_step_stream(
         )));
     }
     if let Some(overflow) = overflow.as_ref() {
-        overflow.session_store.update(&session.session_key, |stored| {
-            stored.latest_context_budget = Some(budget.clone());
-        });
+        overflow
+            .session_store
+            .update(&session.session_key, |stored| {
+                stored.latest_context_budget = Some(budget.clone());
+            });
         let _ = den_service::conversation::persistence::update_latest_context_budget(
             &overflow.pool,
             session.bear_id,
