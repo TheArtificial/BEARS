@@ -823,7 +823,7 @@ mod tests {
     };
 
     use crate::{
-        agent_loop::{NativeToolDispatchMode, StrategyProfile},
+        agent_loop::{NativeToolDispatchMode, StrategyProfile, TurnBudgetPolicy},
         llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
     };
     use den_core::config::Config;
@@ -875,7 +875,13 @@ mod tests {
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,
-            max_steps: 4,
+            turn_budget: TurnBudgetPolicy {
+                soft_steps: 3,
+                hard_steps: 4,
+                max_consecutive_tool_failures: 2,
+                max_same_tool_signature_repeats: 1,
+            },
+            turn_budget_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: true,
             key_memory_projection_cache_key: None,
@@ -947,7 +953,10 @@ mod tests {
         );
 
         let context = stream.server_tool_context();
-        assert_eq!(context.workspace_roots, vec!["/workspace/project".to_string()]);
+        assert_eq!(
+            context.workspace_roots,
+            vec!["/workspace/project".to_string()]
+        );
     }
 
     #[tokio::test]

@@ -8,7 +8,7 @@ use den_protocol::ContextBudgetReport;
 use uuid::Uuid;
 
 use crate::{
-    agent_loop::{KeyMemoryProjectionCacheKey, StrategyProfile},
+    agent_loop::{KeyMemoryProjectionCacheKey, StrategyProfile, TurnBudgetPolicy, TurnBudgetState},
     context_budget::AssembledTurnBudgetComponents,
     llm::{ChatMessage, LlmApiStyle, LlmRequestTelemetry, LlmToolDefinition},
 };
@@ -33,7 +33,8 @@ pub struct AgentLoopSession {
     pub bifrost_virtual_key: Option<String>,
     pub api_style: Option<LlmApiStyle>,
     pub step: u32,
-    pub max_steps: u32,
+    pub turn_budget: TurnBudgetPolicy,
+    pub turn_budget_state: TurnBudgetState,
     pub strategy: StrategyProfile,
     pub stream_tokens: bool,
     pub key_memory_projection_cache_key: Option<KeyMemoryProjectionCacheKey>,

@@ -1,6 +1,8 @@
 use den_core::config::Config;
 use den_core::tools::{
-    arguments::DenToolChannelContext, constants::DEN_WEB_FETCH, context::DenToolInvocationContext,
+    arguments::DenToolChannelContext,
+    constants::DEN_WEB_FETCH,
+    context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_client_tool_result, ClientToolResultInput, ToolResultStatus},
 };
@@ -32,9 +34,11 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     agent_loop::{
-        agent_loop_session_key, assemble_native_turn_for_bear, record_approval_decision,
-        run_agent_step_stream, AgentLoopSession, AgentLoopSessionStore, AgentStepOverflowContext,
-        AssembleTurnContext, NativeToolDispatchMode, SessionTrackingStream,
+        agent_loop_session_key, assemble_native_turn_for_bear, evaluate_turn_budget,
+        record_approval_decision, run_agent_step_stream, tool_result_content_indicates_error,
+        tool_signature_from_call, AgentLoopSession, AgentLoopSessionStore,
+        AgentStepOverflowContext, AssembleTurnContext, NativeToolDispatchMode,
+        SessionTrackingStream, ToolContinuationObservation, TurnBudgetStopReason,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
@@ -262,7 +266,9 @@ pub async fn record_native_client_tool_result(
         );
         let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
         if let Some(call) = matching_call.as_ref() {
-            if !persisted_tool_call_exists(pool, session.bear_id, conversation_id, tool_call_id).await? {
+            if !persisted_tool_call_exists(pool, session.bear_id, conversation_id, tool_call_id)
+                .await?
+            {
                 let args = serde_json::from_str(&call.function.arguments)
                     .unwrap_or_else(|_| serde_json::Value::String(call.function.arguments.clone()));
                 persist_canonical_conversation_record(
@@ -638,7 +644,9 @@ async fn build_session(
         user_id,
         conversation_id: conversation_id.to_string(),
         client_session_id: client_session_id.to_string(),
-        workspace_roots: workspace_roots.map(|items| items.to_vec()).unwrap_or_default(),
+        workspace_roots: workspace_roots
+            .map(|items| items.to_vec())
+            .unwrap_or_default(),
         request_id: request_id.map(|id| id.to_string()),
         run_id: run_id.map(str::to_string),
         messages,
@@ -654,7 +662,8 @@ async fn build_session(
         bifrost_virtual_key,
         api_style,
         step: 0,
-        max_steps: profile.max_steps,
+        turn_budget: profile.turn_budget,
+        turn_budget_state: Default::default(),
         strategy: profile.strategy,
         stream_tokens,
         key_memory_projection_cache_key,
@@ -932,6 +941,30 @@ fn find_pending_tool_call(session: &AgentLoopSession, tool_call_id: &str) -> Opt
         .cloned()
 }
 
+fn tool_observation_from_call(
+    call: &ChatToolCall,
+    content: Option<&str>,
+) -> ToolContinuationObservation {
+    ToolContinuationObservation {
+        tool_name: call.function.name.clone(),
+        signature: tool_signature_from_call(call),
+        failed: tool_result_content_indicates_error(content),
+    }
+}
+
+fn continuation_budget_stop(
+    reason: TurnBudgetStopReason,
+) -> (RuntimeStreamContinuation, RuntimeEventStream) {
+    let stream: RuntimeEventStream = Box::pin(stream::iter(vec![Ok(
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
+            turn: None,
+            category: RuntimeErrorCategory::Internal,
+            message: reason.user_message(),
+        }),
+    )]));
+    (RuntimeStreamContinuation::Deferred, stream)
+}
+
 fn call_is_den_web_fetch(call: &ChatToolCall) -> bool {
     builtin_den_tool_descriptor_for_provider_name(&call.function.name)
         .is_some_and(|descriptor| descriptor.name == DEN_WEB_FETCH)
@@ -1060,7 +1093,11 @@ pub async fn continue_native_client_turn_event_stream(
     let conversation_id = request.conversation.id.clone();
     let session_key = agent_loop_session_key(&conversation_id, client_session_id);
     let existing_session = SESSION_STORE.get(&session_key);
+    let prior_session = existing_session
+        .clone()
+        .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
     let mut tool_messages = Vec::new();
+    let mut observations = Vec::new();
     match &request.continuation {
         RuntimeContinuation::ToolResult {
             tool_call_id,
@@ -1082,11 +1119,15 @@ pub async fn continue_native_client_turn_event_stream(
                 )
                 .await?;
             }
+            let pending_call = find_pending_tool_call(&prior_session, tool_call_id);
+            if let Some(call) = pending_call.as_ref() {
+                observations.push(tool_observation_from_call(call, Some(content)));
+            }
             tool_messages.push(ChatMessage {
                 role: "tool".to_string(),
                 content: Some(content.clone()),
                 tool_call_id: Some(tool_call_id.clone()),
-                name: None,
+                name: pending_call.map(|call| call.function.name),
                 tool_calls: None,
             });
         }
@@ -1124,16 +1165,28 @@ pub async fn continue_native_client_turn_event_stream(
                 }
             } else {
                 let content = reason.clone().unwrap_or_else(|| "denied".to_string());
+                let pending_call = tool_call_id
+                    .as_deref()
+                    .and_then(|id| find_pending_tool_call(&prior_session, id));
+                if let Some(call) = pending_call.as_ref() {
+                    observations.push(tool_observation_from_call(call, Some(&content)));
+                }
                 tool_messages.push(ChatMessage {
                     role: "tool".to_string(),
                     content: Some(content),
                     tool_call_id: tool_call_id.clone(),
-                    name: None,
+                    name: pending_call.map(|call| call.function.name),
                     tool_calls: None,
                 });
             }
         }
     }
+    let evaluation = evaluate_turn_budget(
+        prior_session.turn_budget,
+        prior_session.step,
+        &prior_session.turn_budget_state,
+        &observations,
+    );
     SESSION_STORE.update(&session_key, |session| {
         session.request_id = Some(request.request_id.to_string());
         session.run_id = request
@@ -1141,24 +1194,13 @@ pub async fn continue_native_client_turn_event_stream(
             .map(str::to_string)
             .or_else(|| session.run_id.clone());
         session.messages.extend(tool_messages.clone());
+        session.turn_budget_state = evaluation.next_state.clone();
     });
     let session = SESSION_STORE
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
-    if session.step >= session.max_steps.saturating_sub(1) {
-        let message = format!(
-            "I stopped because this turn reached the tool/permission continuation safety budget before producing a final answer (step={}/max_steps={}). The recent tool results were recorded, but the model appears to be in a tool-recovery loop. Please retry with a narrower request or point me at the exact file/path to inspect.",
-            session.step,
-            session.max_steps
-        );
-        let stream: RuntimeEventStream = Box::pin(stream::iter(vec![Ok(
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
-                turn: None,
-                category: RuntimeErrorCategory::Internal,
-                message,
-            }),
-        )]));
-        return Ok((RuntimeStreamContinuation::Deferred, stream));
+    if let Some(reason) = evaluation.stop_reason {
+        return Ok(continuation_budget_stop(reason));
     }
     let llm = LlmClient::new(request.config);
     let overflow = overflow_context(
@@ -1192,7 +1234,16 @@ pub async fn continue_native_client_turn_event_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_loop::StrategyProfile;
+    use crate::agent_loop::{StrategyProfile, TurnBudgetPolicy};
+
+    fn pair_turn_budget() -> TurnBudgetPolicy {
+        TurnBudgetPolicy {
+            soft_steps: 6,
+            hard_steps: 8,
+            max_consecutive_tool_failures: 3,
+            max_same_tool_signature_repeats: 2,
+        }
+    }
 
     #[test]
     fn bear_id_from_native_binding_parses_den_native_format() {
@@ -1269,7 +1320,8 @@ mod tests {
             bifrost_virtual_key: None,
             api_style: None,
             step: 7,
-            max_steps: 8,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1314,8 +1366,8 @@ mod tests {
             .expect("event ok");
         match event {
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
-                assert!(message.contains("tool/permission continuation safety budget"));
-                assert!(message.contains("step=7/max_steps=8"));
+                assert!(message.contains("hard tool/permission continuation budget"));
+                assert!(message.contains("step=7/hard_steps=8"));
             }
             other => panic!("expected TurnFailed, got {other:?}"),
         }
@@ -1373,7 +1425,8 @@ mod tests {
             bifrost_virtual_key: None,
             api_style: None,
             step: 1,
-            max_steps: 8,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1526,7 +1579,8 @@ mod tests {
             bifrost_virtual_key: None,
             api_style: None,
             step: 1,
-            max_steps: 8,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1671,7 +1725,8 @@ mod tests {
             bifrost_virtual_key: None,
             api_style: None,
             step: 1,
-            max_steps: 8,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
