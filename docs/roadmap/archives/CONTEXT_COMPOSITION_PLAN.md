@@ -1,6 +1,6 @@
 # Context Composition Plan
 
-For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../../architecture/bear-stances.md).
 ## Summary
 
 Before building first-bear onboarding or significantly redesigning the bear details UI, BEARS should define a **role-aware context composition model**.

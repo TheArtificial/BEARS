@@ -1,6 +1,6 @@
 # Work-Surface Memory Scaffolding Plan
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 ## Purpose
 
 This document defines the first implementation slice for making BEARS memory easier to use across multiple **work surfaces** within a single Bear and Workplace.

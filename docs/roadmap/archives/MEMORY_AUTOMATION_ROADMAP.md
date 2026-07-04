@@ -1,6 +1,6 @@
 # Memory Automation Roadmap
 
-For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../../architecture/bear-stances.md).
 Status: implementation roadmap; P0 pair-reflection proposal enqueue is implemented for ACP close.
 
 This roadmap sequences the remaining work needed for `pair` learning to become useful to `work` through reflection, review curation, `core/`, Cabinet, task context, and Letta Archives.

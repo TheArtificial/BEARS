@@ -312,7 +312,7 @@ Phase 3–4 native wiring now loads **`bear_compiled_configs`** via `profile_pro
 
 ## Related documents
 
-- Migration plan and phasing: [`../roadmap/DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
+- Migration plan and phasing: [`../roadmap/DEN_RUNTIME_PLAN.md`](../roadmap/DEN_RUNTIME_PLAN.md)
 - Derived recall (Qdrant + embeddings): [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [`../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md`](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)
 - Bear package format (portable export/import): [`../guides/bear-package.md`](../guides/bear-package.md)
 - Memory model (Bear-facing): [`memory-model.md`](memory-model.md)

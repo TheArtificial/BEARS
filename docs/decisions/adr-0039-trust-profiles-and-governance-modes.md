@@ -150,7 +150,7 @@ Consequently, continuation bias is **governance-mode-driven, not trust-profile-d
 ## Consequences
 
 - **`pair` ↔ `work` flipping largely disappears** as a runtime mechanism. Offline continuation, interrogation, and panic/resume are governance-mode transitions on a stable run + workspace session.
-- **Profiles keep their meaning** as durable trust contracts and prompt/tool defaults, and as product language (`bear-roles.md`). They stop being sandbox-lifetime identifiers.
+- **Profiles keep their meaning** as durable trust contracts and prompt/tool defaults, and as product language (`bear-stances.md`). They stop being sandbox-lifetime identifiers.
 - **Schema impact is additive.** Governance mode is a new run-scoped field plus a transition log; trust profile vocabulary and `bear_profile_bindings` are unchanged. ADR-0037 `run_mode` becomes a derived projection.
 - **`curate` and `watch` are unaffected**; they are not interactive runs and do not carry governance modes beyond a fixed autonomous supervision.
 - **UX can stay continuous** ("your session is still running") while ops truth stays honest (`governance_mode = autonomous_continuation`, executor-leaning effective policy on the same `workspace_session_id`).

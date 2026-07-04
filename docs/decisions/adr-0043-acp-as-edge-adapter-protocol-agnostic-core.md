@@ -10,7 +10,7 @@
 - [ADR-0029](adr-0029-den-structured-runtime-events.md) — Den structured runtime (semantic) events
 - [ADR-0030](adr-0030-bearwire-resource-oriented-event-model.md) — BearWire resource-oriented event model (the canonical event seam)
 - [ADR-0003](adr-0003-acp-session-bindings.md) — ACP session bindings (genuinely edge-only)
-- [Den-Native Runtime architecture](../architecture/den-native-runtime.md)
+- [Den runtime architecture](../architecture/den-runtime.md)
 - [ACP Runtime Contract](../architecture/acp-runtime-contract.md)
 - [Den crate split plan](../roadmap/DEN_CRATE_SPLIT_PLAN.md)
 
@@ -82,7 +82,7 @@ This is a renaming-and-relocation refactor, not a behavior change. It proceeds b
 The machinery being renamed here **is** the ADR-0035 agent loop. The ACP surgery must preserve, not dilute, these conclusions:
 
 - **One agent loop, in-process, for every role.** Roles differ only by capability profile (tool roster, memory scope, autonomy policy, sandbox). The turn controller / tool-turn coordinator / client-obligation coordinator / session machinery are that loop's organs — they are protocol-neutral and stay in the core. (The fact that some were historically named `acp_*` was the bug this ADR fixed, not evidence that they belong to ACP.)
-- **One loop primitive; patterns as a thin strategy policy** (`plan?` / `reflect_on_fail?` / `critique?` / `fanout_n`), selected by the ADR-0033 model-tasks layer — **not** a forked-runtime or pluggable "agent-pattern" framework. ReAct is the substrate; Reflexion / Reflection / best-of-N are compositions realized via Docket + per-Bear SQLite + subagent fan-out. LATS tree search and LLM Compiler DAG engines remain **deferred**. (See [ADR-0035](adr-0035-den-native-in-process-agent-runtime.md) §strategy policy and [den-native-runtime.md#loop-strategies](../architecture/den-native-runtime.md#loop-strategies).)
+- **One loop primitive; patterns as a thin strategy policy** (`plan?` / `reflect_on_fail?` / `critique?` / `fanout_n`), selected by the ADR-0033 model-tasks layer — **not** a forked-runtime or pluggable "agent-pattern" framework. ReAct is the substrate; Reflexion / Reflection / best-of-N are compositions realized via Docket + per-Bear SQLite + subagent fan-out. LATS tree search and LLM Compiler DAG engines remain **deferred**. (See [ADR-0035](adr-0035-den-native-in-process-agent-runtime.md) §strategy policy and [den-runtime.md#loop-strategies](../architecture/den-runtime.md#loop-strategies).)
 - **The canonical seam is BearWire semantic events** (ADR-0029/0030). The renaming must route through that seam (core emits semantic events; the adapter projects them), so that adding the next edge (REST streaming, desktop companion, CI runner) is a new projection — never another fork of the loop.
 - **Tool activity is core replay state, not edge decoration.** Per ADR-0048, every model-relevant tool call/result must be persisted in a replayable Den transcript shape: stable tool-call id, canonical tool name, typed arguments, matching result/error, and a bounded human/model-readable output. ACP may project that into `session/update` tool-call UI, but ACP must not be the only place that knows what tool ran, what input it received, or what result/error came back.
 

@@ -12,7 +12,7 @@
 - [ADR-0028 — Environment affordance and resource boundaries](adr-0028-environment-affordance-and-resource-boundaries.md)
 - [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 - [`work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md)
-- [`den-native-runtime.md`](../architecture/den-native-runtime.md)
+- [`den-runtime.md`](../architecture/den-runtime.md)
 - [`DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md) Phase 7
 
 ## Context

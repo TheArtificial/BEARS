@@ -1,6 +1,6 @@
 # ACP Runtime Migration Rollout Checklist
 
-> **Direction changed (2026-06).** Steps that assume Letta JSON stream translation (`letta_runtime_stream_parser.rs`) are superseded; the runtime emits Den semantic events directly. Canonical target: [Den runtime](den-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Steps that assume Letta JSON stream translation (`letta_runtime_stream_parser.rs`) are superseded; the runtime emits Den semantic events directly. Canonical target: [Den runtime](den-runtime.md) ([runtime plan](../roadmap/DEN_RUNTIME_PLAN.md)).
 
 Use this checklist during deployment and smoke testing for the Den-owned ACP runtime migration.
 

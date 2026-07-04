@@ -1,8 +1,8 @@
 # Pair Tool Discovery and Scope Policy
 
-> **Direction changed (2026-06).** The scope policy stands, but drop the Letta conversation/message persistence assumptions — the `pair` runtime is the Den-native loop with Den/Postgres transcript. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** The scope policy stands, but drop the Letta conversation/message persistence assumptions — the `pair` stance runs in the in-process Den loop with Den/Postgres transcript. Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 ## Status
 
 Initial implementation slice complete. `session_info` is the canonical orientation descriptor, its output includes policy/activity state for ACP pair turns, and memory/workplan/ACP local tool descriptors now include scope and orientation guidance. User testing confirms the agent uses tools naturally without prompt suffix injection.

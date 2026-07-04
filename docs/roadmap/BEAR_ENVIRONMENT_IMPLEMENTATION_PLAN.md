@@ -1,8 +1,8 @@
 # `bear_environment` Harness Rollout Implementation Plan
 
-> **Direction changed (2026-06).** "Harness-level / across runtimes" framing is obsolete — there is one Den native loop and a role-runtime snapshot. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** "Harness-level / across runtimes" framing is obsolete — there is one in-process Den loop and a stance-runtime snapshot. Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 **Status:** Draft  
 **Date:** 2026-05-22  
 **Related ADR:** `docs/architecture/adr/harness-bear-environment-tool.md`

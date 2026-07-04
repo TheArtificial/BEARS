@@ -2,7 +2,7 @@
 
 **Status:** Phases 0–3.5 + 5 landed; Phase 4 (Cabinet) deferred on its ingestion pipeline  
 **Architecture:** [ADR-0038 — Platform embedding standard and derived recall index](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)  
-**Contracts:** [Den archival memory and ingestion](../architecture/den-archival-memory-and-ingestion-contract.md), [Den-native runtime — turn context](../architecture/den-native-runtime.md#turn-context-assembly)
+**Contracts:** [Den archival memory and ingestion](../architecture/den-archival-memory-and-ingestion-contract.md), [Den runtime — turn context](../architecture/den-runtime.md#turn-context-assembly)
 
 ## Goal
 
@@ -114,5 +114,5 @@ Extends the hybrid retriever ([ADR-0041](../decisions/adr-0041-archival-recall-a
 
 ## Related
 
-- [DEN_NATIVE_RUNTIME_PLAN.md](DEN_NATIVE_RUNTIME_PLAN.md) — native loop and context assembler
+- [DEN_RUNTIME_PLAN.md](DEN_RUNTIME_PLAN.md) — in-process Den loop and context assembler
 - [model-tasks-strategy.md](../research/model-tasks-strategy.md) — `embedding` task class

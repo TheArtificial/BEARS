@@ -1,8 +1,8 @@
 # Pair Reflection and Work Memory Sharing Plan
 
-> **Direction changed (2026-06).** The pair->curate->work boundary stands, but pair runs the Den-native loop (not "API-direct vs Letta Code"), and memory lives in per-Bear SQLite (`pair/` scope) rather than MemFS/Letta Archives. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** The pair->curate->work boundary stands, but pair runs in the in-process Den runtime, and memory lives in per-Bear SQLite (`pair/` scope) rather than MemFS/Letta Archives. Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: focused architecture/design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 
 This plan defines the role boundary and data flow for making `pair` memory useful to `work` without exposing raw `pair/` memory. It assumes BEARS will go all the way to a dedicated **pair reflection loop** for improving `pair` role-local memory, and then use `review` to share useful knowledge across spaces such as `core/`, Bear curated archives, Cabinet, and approved `work` task context.

@@ -1,6 +1,6 @@
 # BEARS roadmap
 
-> **Status (2026-06): the in-process Den runtime is the live stack.** BEARS runs a single **in-process Den agent runtime** for all trust stances (`chat`, `pair`, `curate`, `work`, `watch`). **Letta, Letta Code, Codepool, and the git MemFS sidecar are removed** from compose and the execution path. Bear memory/cognition is canonical in **per-Bear SQLite** ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); tasks/jobs target **Docket**-canonical Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). There are no Letta-runtime Bears in production, so legacy Letta/MemFS backfill is not an active roadmap item. Canonical architecture: [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md). Canonical runtime plan: [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) (**Phases 1–6 largely landed; Phase 7 `work` sandbox open**). **[§1](#historical-§1-system-architecture-letta-era)–[Summary](#historical-summary-letta-era)** below are **Letta-era historical reference** only.
+> **Status (2026-06): the in-process Den runtime is the live stack.** BEARS runs a single **in-process Den agent runtime** for all trust stances (`chat`, `pair`, `curate`, `work`, `watch`). **Letta, Letta Code, Codepool, and the git MemFS sidecar are removed** from compose and the execution path. Bear memory/cognition is canonical in **per-Bear SQLite** ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); tasks/jobs target **Docket**-canonical Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). There are no Letta-runtime Bears in production, so legacy Letta/MemFS backfill is not an active roadmap item. Canonical architecture: [`../architecture/den-runtime.md`](../architecture/den-runtime.md). Canonical runtime plan: [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) (**Phases 1–6 largely landed; Phase 7 `work` sandbox open**). **[§1](#historical-§1-system-architecture-letta-era)–[Summary](#historical-summary-letta-era)** below are **Letta-era historical reference** only.
 
 High-level planning hub for BEARS. This file answers what works today, what is next, and which detailed plans are canonical — without duplicating every contract.
 
@@ -17,8 +17,8 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 
 | Area | Status (2026-06) | Canonical docs |
 |---|---|---|
-| **Den runtime** | **Landed** for `chat`, `pair`, `curate`, `watch`: in-process loop → Bifrost; canonical transcript in Postgres; stance registry `den-native:{bear_id}:{stance}` | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md), [`../architecture/den-native-runtime.md`](../architecture/den-native-runtime.md) |
-| **Letta/Codepool/MemFS removal** | **Done** in code + compose; no production Letta-runtime Bears require backfill; remaining `letta_*` names are cleanup debt only | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) |
+| **Den runtime** | **Landed** for `chat`, `pair`, `curate`, `watch`: in-process loop → Bifrost; canonical transcript in Postgres; stance registry `den-native:{bear_id}:{stance}` | [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md), [`../architecture/den-runtime.md`](../architecture/den-runtime.md) |
+| **Letta/Codepool/MemFS removal** | **Done** in code + compose; no production Letta-runtime Bears require backfill; remaining `letta_*` names are cleanup debt only | [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) |
 | **Web chat** | Native `/v1/chat/send` + Deep Chat UI; memory tools exposed for `chat`; recent stream/persistence fixes | [`PHASE1_BOOTSTRAP.md`](PHASE1_BOOTSTRAP.md) (partially superseded) |
 | **ACP/BearWire `pair`** | Native loop + armature-local tools over BearWire by default/auto; legacy ACP HTTP/SSE remains compatibility while final smoke/parity validation and deprecation finish | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`ACP_ADAPTER_IMPROVEMENT_PLAN.md`](ACP_ADAPTER_IMPROVEMENT_PLAN.md), [`ACP_LIFECYCLE_RESET_PLAN.md`](ACP_LIFECYCLE_RESET_PLAN.md) |
 | **Memory (dashboard)** | See landed vs open across all memory tracks | [`BEAR_MEMORY_REMAINING_WORK_PLAN.md`](BEAR_MEMORY_REMAINING_WORK_PLAN.md) |
@@ -29,7 +29,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **Reflection / curation** | `memory_curate` + `recall_index` workers; pair→curate enqueue on ACP close; harvest/consolidation open | [`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md), [`MEMORY_CURATION_PLAN.md`](MEMORY_CURATION_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 | **Personalization** | Planned: replace blanket anti-user-memory guidance with safe proactive human understanding; `curate` stance promotes safe memories and quarantines risks | [`PERSONALIZATION_PLAN.md`](PERSONALIZATION_PLAN.md) |
 | **Docket / tasks** | **Level 1** (`den-docket` wraps legacy `bear_work_plans`); ADR-0034 relational schema + `work` dispatch **open** | [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md), [`TASK_SYSTEM_IMPLEMENTATION_PLAN.md`](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) |
-| **`work` sandbox** | **Not started** — blocks real coding harness | [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) Phase 7, [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) |
+| **`work` sandbox** | **Not started** — blocks real coding harness | [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) Phase 7, [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) |
 | **Context compaction** | Designed; end-to-end runtime **not finished** | [`DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md`](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md), [ADR-0032](../decisions/adr-0032-den-context-compaction-architecture.md) |
 | **Context budget tracking** | Planned: final-request token estimation against resolved model limits, with component attribution and runtime diagnostics | [`CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md`](CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md), [ADR-0047](../decisions/adr-0047-context-window-budget-and-token-estimation.md) |
 | **BearWire armature wire** | **Phases 0–3.2 complete**; BearWire HTTP edge + `bear-armature` client implemented; Phase 4 deprecates adapter-SSE/legacy `/acp/**` after smoke/parity | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md`](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md) |
@@ -71,7 +71,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 
 ### 1. Close the Den runtime plan
 
-See [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md):
+See [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md):
 
 - Phase 7: sandbox runner, `work` harness, chat→work delegation.
 - Residual Letta/MemFS naming cleanup remains regular cleanup when touching affected schema/UI surfaces; it is not a migration milestone.
@@ -101,8 +101,8 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 
 ### Canonical spine (read these first)
 
-- [Den runtime architecture](../architecture/den-native-runtime.md)
-- [Den runtime plan](DEN_NATIVE_RUNTIME_PLAN.md) — Phase 7 work sandbox remains active
+- [Den runtime architecture](../architecture/den-runtime.md)
+- [Den runtime plan](DEN_RUNTIME_PLAN.md) — Phase 7 work sandbox remains active
 - [Derived recall index](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) — Qdrant + hybrid search
 - [Bear entity layer](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) — entities + relations
 - [Memory automation roadmap](MEMORY_AUTOMATION_ROADMAP.md) — pair→curate→work pipeline
@@ -144,12 +144,12 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 
 **Architecture sources of truth:**
 
-- [Den-native runtime](../architecture/den-native-runtime.md) — **canonical**
+- [Den runtime](../architecture/den-runtime.md) — **canonical**
 - [Memory model](../architecture/memory-model.md) — SQLite-canonical
 - [Architecture Decision Records](../architecture/adr/README.md)
-- [Architecture notes](../architecture/ARCHITECTURE_NOTES.md) — stack overview (may lag; prefer den-native-runtime.md)
+- [Architecture notes](../architecture/ARCHITECTURE_NOTES.md) — stack overview (may lag; prefer den-runtime.md)
 
-**Reading order:** This hub → [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md) for open phases → the supporting plan for your track. Use [§1–Summary](#historical-§1-system-architecture-letta-era) only for historical context.
+**Reading order:** This hub → [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) for open phases → the supporting plan for your track. Use [§1–Summary](#historical-§1-system-architecture-letta-era) only for historical context.
 
 ## Table of contents
 
@@ -164,7 +164,7 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 ### Terminology (current)
 
 - **BEARS** — deployment stack: **Den**, **Bifrost**, Postgres, optional **Qdrant**/**Garage**, frontends. Not a single bear.
-- **Bear** — logical assistant: identity, membership, policy. **Runtime:** multi-stance native loop ([bear roles](../architecture/bear-roles.md)).
+- **Bear** — logical assistant: identity, membership, policy. **Runtime:** multi-stance in-process loop ([bear stances](../architecture/bear-stances.md)).
 - **Trust stance** — `chat`, `pair`, `curate`, `work`, `watch`: capability surface (tools, memory scopes, sandbox). Bound as `den-native:{bear_id}:{stance}`.
 - **Armature** — trusted local work-surface harness such as ACP/Zed via `bear-armature` and BearWire. Armatures own local filesystem/git/terminal/MCP execution and permission UX.
 - **Channel** — conversation surface such as web chat, Slack, WhatsApp, or macOS app chat. Channels reuse Den run services but are not armatures unless they expose a trusted work-surface boundary.
@@ -643,7 +643,7 @@ This is the “make it livable and reliable” phase.
 
 ## Summary *(Letta era — historical)* {#historical-summary-letta-era}
 
-> **Superseded.** Current stack summary: Den-native in-process loop, per-Bear SQLite memory, optional Qdrant recall, Docket-target tasks, Bifrost inference. See the [hub sections](#planning-hub-status) above and [`den-native-runtime.md`](../architecture/den-native-runtime.md).
+> **Superseded.** Current stack summary: in-process Den loop, per-Bear SQLite memory, optional Qdrant recall, Docket-target tasks, Bifrost inference. See the [hub sections](#planning-hub-status) above and [`den-runtime.md`](../architecture/den-runtime.md).
 
 **Knowledge (historical):** **Letta memory** is per‑**bear** (per Letta agent) context — **blocks** (curated, bounded) plus **archival** and tools as Letta provides. **Files** (uploads, agent outputs, routines) live in **Garage**, not Letta ([§ Artifacts and object storage](#artifacts-and-object-storage-garage)). **Shared blocks** under multi-writer concurrency need explicit patterns ([§ Shared memory blocks and concurrency](#shared-memory-blocks-and-concurrency-letta)). **Phase 1:** no Den memory store; **dashboard** shows Letta-native `human` memory without aggregate scoring; **bear detail** shows full state ([§ Phase 1 memory model](#phase-1-memory-model-user-promise-persistence-and-ux)). **Cabinet (Outline)** is the shared knowledgebase for humans and bears (post–Phase 1); **Cabinet attachments** use a **separate S3 bucket** from **artifacts**.
 

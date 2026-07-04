@@ -1,8 +1,8 @@
 # Memory Automation Roadmap
 
-> **Direction changed (2026-06).** Canonical memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); Letta Archives and `pair/` MemFS branches are removed. Long-term recall is a **derived Qdrant index** over canonical SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); the engine that *fills* it (extraction-first **harvest** + **consolidation** by supersession) and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Canonical memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); Letta Archives and `pair/` MemFS branches are removed. Long-term recall is a **derived Qdrant index** over canonical SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); the engine that *fills* it (extraction-first **harvest** + **consolidation** by supersession) and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: implementation roadmap; P0 pair-reflection proposal enqueue is implemented for ACP close.
 
 This roadmap sequences the remaining work needed for `pair` learning to become useful to `work` through reflection, curation, `core/`, Cabinet, task context, and the **derived recall index**.

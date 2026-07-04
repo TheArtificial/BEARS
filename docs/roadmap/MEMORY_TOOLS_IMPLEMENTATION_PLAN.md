@@ -1,10 +1,10 @@
 # Memory tools implementation plan
 
-> **Direction changed (2026-06).** All roles use Den-hosted memory tools against per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); the "Letta Code-native MemFS tools for harness-backed roles" / API-direct split is removed. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest/consolidation/recall scoring are in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md#memory-model-under-sqlite) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** All stances use Den-hosted memory tools against per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); the older split between different runtime families is removed. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest/consolidation/recall scoring are in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md#memory-model-under-sqlite) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 >
 > **Note.** Memory "files"/"paths" are logical-path projections over SQLite `memory_records`, not files in a MemFS/git branch.
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: partially implemented. P0/P1 memory tools (`memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, `memory_search`, `memory_request_review`) exist against SQLite. `chat` has read/write exposure, `curate`/`work`/`watch` have read exposure. **Open gaps:** scoped write/review policy for `work`/`watch` and harvest/consolidation automation.
 
 Related docs:

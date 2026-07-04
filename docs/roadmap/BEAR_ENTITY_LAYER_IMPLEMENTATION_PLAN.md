@@ -4,7 +4,7 @@
 **Architecture:** [ADR-0042 — Memory–Entity Relationships and the Bear Entity Layer](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md)  
 **Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [ADR-0041 — Archival recall and async curation](../decisions/adr-0041-archival-recall-and-async-curation.md), [ADR-0038 — Derived recall index](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [ADR-0006 — Work surfaces](../decisions/adr-0006-bear-work-surfaces.md), [ADR-0040 — Connections](../decisions/adr-0040-connections-and-work-surface-presentation.md), [bear package](../guides/bear-package.md), [memory model](../architecture/memory-model.md)
 
-For the canonical role model and current names, see [bear roles](../architecture/bear-roles.md). "Role" = **trust stance**; `curate` is the curation stance.
+For the canonical stance model and current names, see [bear stances](../architecture/bear-stances.md). `curate` is the curation stance.
 
 ## Goal
 

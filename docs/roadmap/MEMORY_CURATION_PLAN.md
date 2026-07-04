@@ -1,10 +1,10 @@
 # Memory curation plan
 
-> **Direction changed (2026-06).** The curation lanes stand, but the canonical store is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) — `memory_records`/`memory_promotions`/`memory_proposals` — not MemFS `core/`/role branches or Letta Archives. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest, consolidation by supersession, and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** The curation lanes stand, but the canonical store is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) — `memory_records`/`memory_promotions`/`memory_proposals` — not MemFS `core/`/stance branches or Letta Archives. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest, consolidation by supersession, and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 >
 > **Note.** `core/` paths denote logical-path projections over SQLite records, not files on a branch.
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: focused design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 
 This plan designs how memories move between role-local branches and shared Bear memory. It focuses on the `memory_curate` lane of BEARS **Reflection** system and the `curate` role as the only role allowed to integrate role-local memory into shared `core/` memory or propose/promote Cabinet updates.

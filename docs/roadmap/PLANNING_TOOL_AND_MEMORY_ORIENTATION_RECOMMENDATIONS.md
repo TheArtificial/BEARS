@@ -1,8 +1,8 @@
 # Planning-Tool and Memory-Orientation Recommendations
 
-> **Direction changed (2026-06).** Orientation memory lives in per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)), not a git-backed MemFS repository; planning maps to Docket ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Orientation memory lives in per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)), not a git-backed MemFS repository; planning maps to Docket ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 ## Objective
 Recommend a lightweight, implementation-oriented set of changes that improves two related environment behaviors without making prompt construction overly heavy:
 

@@ -1,6 +1,6 @@
 # Terminology compliance sweep plan
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 This plan covers a repo-wide compliance sweep for the terminology guidance around **conversation**, **thread**, and **session**.
 
 ## Goal

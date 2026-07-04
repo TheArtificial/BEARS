@@ -200,5 +200,5 @@ Exit criteria:
 
 - `PHASE1_BOOTSTRAP.md` — archive after this plan and deploy docs cover operator/product scope.
 - `PHASE1_DECISIONS.md` — archive after decisions above are accepted as the native replacement.
-- `MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md` — archive after remaining stance/UI/skills concepts are covered by this plan, [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md), and [`DEN_NATIVE_RUNTIME_PLAN.md`](DEN_NATIVE_RUNTIME_PLAN.md).
+- `MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md` — archive after remaining stance/UI/skills concepts are covered by this plan, [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md), and [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md).
 - `TASK_SYSTEM_IMPLEMENTATION_PLAN.md` — archive after [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) absorbs any remaining workflow-state/turn-state details, or keep as reference until Docket phases 3-5 land.

@@ -1,8 +1,8 @@
 # Den model registry and Bifrost configuration plan
 
-> **Direction changed (2026-06).** Bifrost-as-inference-substrate stands, but Den now calls Bifrost directly — Letta is not in the inference path or a runtime consumer. Treat "Letta = persistence/agent runtime" references as historical. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Bifrost-as-inference-substrate stands, but Den now calls Bifrost directly — Letta is not in the inference path or a runtime consumer. Treat "Letta = persistence/agent runtime" references as historical. Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: proposed implementation plan.
 
 This document describes a target architecture in which **Bifrost** owns live model availability, provider keys, routing, pricing, and Model Catalog facts, while **Den** maintains a model metadata overlay for validation, display, context-window estimates, profile/task suitability, and operational reconciliation. It also describes the current repository state, recommended metadata sources, and a migration path from the current Bifrost-first metadata projection.

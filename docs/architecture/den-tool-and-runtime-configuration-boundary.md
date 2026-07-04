@@ -1,6 +1,6 @@
 # Den Tool Surface and Runtime Configuration Boundary
 
-> **Note (2026-06).** "During the Letta migration" framing refers to the Den runtime effort; the current runtime is the in-process Den loop. See [Den runtime](den-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Note (2026-06).** "During the Letta migration" framing refers to the Den runtime effort; the current runtime is the in-process Den loop. See [Den runtime](den-runtime.md) ([runtime plan](../roadmap/DEN_RUNTIME_PLAN.md)).
 
 This document defines the implementation-facing boundary for Den-owned tool surfaces and runtime configuration during the Letta migration.
 

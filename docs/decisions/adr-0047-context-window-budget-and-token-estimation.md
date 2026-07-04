@@ -8,7 +8,7 @@
 - [ADR-0032 — Den Context Compaction Architecture](adr-0032-den-context-compaction-architecture.md)
 - [ADR-0035 — Den-native in-process agent runtime](adr-0035-den-native-in-process-agent-runtime.md)
 - [ADR-0046 — File-backed prompt fragments and compiled runtime prompts](adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md)
-- [Den-native runtime architecture](../architecture/den-native-runtime.md)
+- [Den runtime architecture](../architecture/den-runtime.md)
 - [Den model registry and Bifrost config plan](../roadmap/DEN_MODEL_REGISTRY_AND_BIFROST_CONFIG_PLAN.md)
 
 ## Context

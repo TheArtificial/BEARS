@@ -11,7 +11,7 @@
 - [ADR-0034](adr-0034-jobs-and-tasks-work-management.md) — Docket jobs/tasks in Den Postgres
 - [ADR-0037](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) — work sandbox, egress gateway, upstream auth (Phase 7)
 - [ADR-0043](adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md) — keeps this loop protocol-agnostic; ACP is an edge adapter, so the turn/session/event machinery stays neutral and core-owned
-- [Den-Native Runtime architecture](../architecture/den-native-runtime.md)
+- [Den runtime architecture](../architecture/den-runtime.md)
 - [Migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
 
 ## Context

@@ -1,6 +1,6 @@
 # Role-Aware Tool Guidance Plan
 
-For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../../architecture/bear-stances.md).
 This plan centralizes BEARS agent tool guidance so prompts, tool descriptors, tool results, ACP projection, and operator UI all use one Den-owned source of truth.
 
 ## Problem

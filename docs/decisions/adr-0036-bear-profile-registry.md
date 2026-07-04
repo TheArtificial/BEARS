@@ -1,7 +1,7 @@
 # ADR-0036 — Bear profile registry and binding vocabulary
 
 **Status:** Accepted (2026-06-09)  
-**Related:** [ADR-0035 — Den-native in-process agent runtime](../decisions/adr-0035-den-native-in-process-agent-runtime.md), [`bear-roles.md`](../architecture/bear-roles.md), [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
+**Related:** [ADR-0035 — Den-native in-process agent runtime](../decisions/adr-0035-den-native-in-process-agent-runtime.md), [`bear-stances.md`](../architecture/bear-stances.md), [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 
 ## Context
 

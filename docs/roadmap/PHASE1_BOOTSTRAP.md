@@ -1,6 +1,6 @@
 # Phase 1 implementation plan (Den) — Trestle bootstrap
 
-> **Superseded (2026-06).** The Phase 1 stack here (web chat via Den -> Letta Code -> Letta, "no Den memory store", Letta provisioning) predates the Den-native runtime migration. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) and the [migration plan](DEN_NATIVE_RUNTIME_PLAN.md). Read this as historical.
+> **Superseded (2026-06).** The Phase 1 stack here (web chat via Den -> Letta Code -> Letta, "no Den memory store", Letta provisioning) predates the Den runtime migration. Canonical target: [Den runtime](../architecture/den-runtime.md) and the [runtime plan](DEN_RUNTIME_PLAN.md). Read this as historical.
 >
 > **Salvaged native product scope:** operator console, onboarding, routines, Garage/artifacts, MCP, and acceptance criteria have been consolidated into [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md).
 >

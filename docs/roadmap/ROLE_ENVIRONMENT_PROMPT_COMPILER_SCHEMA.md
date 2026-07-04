@@ -1,8 +1,8 @@
 # Role Environment Prompt Compiler Schema
 
-> **Direction changed (2026-06).** Reframe "role harness configuration" as the Den role-runtime stance (one native loop). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Reframe "role harness configuration" as the Den stance-runtime contract (one in-process loop). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 ## Purpose
 This document defines the concrete schema for the first implementation of BEARS role-environment prompt construction.
 

@@ -1,8 +1,8 @@
 # Capabilities, skills, and Den brokering plan
 
-> **Archived / superseded (2026-06).** Capabilities execute in the Den-native in-process loop; there is no Codepool/Letta Code execution target or Letta persistence. Canonical target: [Den-Native Runtime](../../architecture/den-native-runtime.md) ([migration plan](../DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Archived / superseded (2026-06).** Capabilities execute in the in-process Den loop; there is no Codepool/Letta Code execution target or Letta persistence. Canonical target: [Den runtime](../../architecture/den-runtime.md) ([runtime plan](../DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../../architecture/bear-stances.md).
 This plan formalizes the long-term model discussed for BEARS capabilities, skills, connected apps, managed MCP passthrough, and selective Den-brokered tool execution.
 
 It complements:

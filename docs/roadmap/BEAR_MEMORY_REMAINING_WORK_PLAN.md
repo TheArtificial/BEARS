@@ -4,7 +4,7 @@
 **Purpose:** Single remaining-work picture for Bear memory/cognition — what is landed, what is open, and which detailed plan owns each track.  
 **Hub:** [PLAN.md](PLAN.md) (platform-wide priorities)
 
-Canonical architecture: [Memory model](../architecture/memory-model.md), [Den-native runtime — memory](../architecture/den-native-runtime.md#memory-model-under-sqlite), [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md) (SQLite canonical), [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) (derived recall), [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) (harvest/consolidation/salience), [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) (entity layer).
+Canonical architecture: [Memory model](../architecture/memory-model.md), [Den runtime — memory](../architecture/den-runtime.md#memory-model-under-sqlite), [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md) (SQLite canonical), [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) (derived recall), [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) (harvest/consolidation/salience), [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) (entity layer).
 
 ---
 

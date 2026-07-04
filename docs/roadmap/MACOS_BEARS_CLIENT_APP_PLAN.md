@@ -1,6 +1,6 @@
 # macOS Bears client app implementation plan
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: proposed implementation plan.
 
 ## Goal

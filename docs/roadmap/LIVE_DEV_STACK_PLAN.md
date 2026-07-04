@@ -1,8 +1,8 @@
 # Live dev stack plan
 
-> **Direction changed (2026-06).** The target stack drops Codepool and Letta services; live dev should build Den + Bifrost (+ MemFS only transitionally). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** The target stack drops Codepool and Letta services; live dev should build Den + Bifrost (+ MemFS only transitionally). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 ## Summary
 
 The default smoke stack should be GitOps-like: build immutable images from the current Git workspace, run those images without source/config bind mounts, seed explicitly, then smoke-test the resulting deployment shape. That mode answers: "would the artifact we just built run?"

@@ -308,7 +308,7 @@ Not part of the ETL binary, but required for parity:
 
 ## Related
 
-- [DEN_NATIVE_RUNTIME_PLAN.md](DEN_NATIVE_RUNTIME_PLAN.md) — notes that production Phase 8 backfill is retired
+- [DEN_RUNTIME_PLAN.md](DEN_RUNTIME_PLAN.md) — notes that production Phase 8 backfill is retired
 - [den-migration-backfill-and-rollback-plan.md](den-migration-backfill-and-rollback-plan.md) — historical mixed-origin + rollback framing
 - [DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) — post-import reindex
 - [MEMORY_TOOLS_IMPLEMENTATION_PLAN.md](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md) — logical-path tool UX the import must preserve

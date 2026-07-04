@@ -1,8 +1,8 @@
 # Role Runtime Wedge Prevention Plan
 
-> **Superseded (2026-06).** This plan addresses Letta conversation/run wedges; in the Den-native runtime, run/approval state is Den-owned and the Letta failure modes here no longer apply. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) and the [migration plan](DEN_NATIVE_RUNTIME_PLAN.md). Read this as historical.
+> **Superseded (2026-06).** This plan addresses Letta conversation/run wedges; in the in-process Den runtime, run/approval state is Den-owned and the Letta failure modes here no longer apply. Canonical target: [Den runtime](../architecture/den-runtime.md) and the [runtime plan](DEN_RUNTIME_PLAN.md). Read this as historical.
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 ## Status
 
 Active near-term reliability work.

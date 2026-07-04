@@ -1,8 +1,8 @@
 # Den Model Registry Schema and Sync Spec
 
-> **Direction changed (2026-06).** Drop Letta-facing model option types (`LettaModelOption`); the Den registry feeds Bifrost only, called directly by the Den-native runtime. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Drop Letta-facing model option types (`LettaModelOption`); the Den registry feeds Bifrost only, called directly by the Den runtime. Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: proposed implementation spec.
 
 ## Objective

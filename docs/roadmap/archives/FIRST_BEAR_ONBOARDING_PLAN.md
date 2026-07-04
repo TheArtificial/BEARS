@@ -1,6 +1,6 @@
 # First Bear Onboarding Plan
 
-For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../../architecture/bear-stances.md).
 ## Summary
 
 New users with no bears should be sent directly into a guided "first bear" setup flow. The flow should use **heavy templates with simple language**: internally, templates materialize role contracts for the Bear's five internal roles and collect user steering/context; externally, users should feel like they are answering practical questions about how they want their Bear to work with them.

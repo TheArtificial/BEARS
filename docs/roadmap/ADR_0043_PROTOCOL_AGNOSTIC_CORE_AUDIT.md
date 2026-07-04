@@ -144,7 +144,7 @@ The ACP-flavored event model + its SSE adapter + Letta-named mappers. The core a
 
 ## Safety net (precondition, currently missing)
 
-ADR-0043 and `DEN_NATIVE_RUNTIME_PLAN.md` (Phase 5) reference **`bearwire_projection/golden_traces_tests.rs`** as the harness that asserts `OpenAI SSE → semantic events → BearWire projection → adapter SSE`. **That file does not exist yet.** Present coverage to lean on: `den-acp/src/acp/tests.rs` (98 tests), `den-runtime/.../bearwire_projection/test.rs` (8), and `den/src/core/runtime_bearwire_bridge_tests.rs` (full-pipeline). Before step 1, add the golden-trace file so the rename has a behavior-locking net, as the ADR assumes.
+ADR-0043 and `DEN_RUNTIME_PLAN.md` (Phase 5) reference **`bearwire_projection/golden_traces_tests.rs`** as the harness that asserts `OpenAI SSE → semantic events → BearWire projection → adapter SSE`. **That file does not exist yet.** Present coverage to lean on: `den-acp/src/acp/tests.rs` (98 tests), `den-runtime/.../bearwire_projection/test.rs` (8), and `den/src/core/runtime_bearwire_bridge_tests.rs` (full-pipeline). Before step 1, add the golden-trace file so the rename has a behavior-locking net, as the ADR assumes.
 
 ## Implementation outcome
 
