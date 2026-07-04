@@ -1,166 +1,123 @@
 # Den Archival Memory and Ingestion Contract
 
-> **Note (2026-06).** This replaces Letta archival memory: semantic recall is Den-owned over per-Bear SQLite canonical sources ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) and Cabinet sources ([ADR-0008](../decisions/adr-0008-cabinet-reading-pipeline.md)), using a **derived Qdrant index** and **platform embedding standard** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)). The engine that *fills* archival memory — extraction-first harvest of session archives plus consolidation by supersession — and the retrieval scoring policy are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). See [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+This document defines the architectural contract for Den-owned archival recall and source ingestion.
 
-This document defines the implementation-facing contract for Den-owned archival/recall memory and source ingestion during the Letta migration.
+Archival recall is a **derived retrieval layer** over canonical sources. It is not a second source of truth.
 
-## Purpose
+## Summary
 
-Den needs a clear replacement for the responsibilities historically blurred together under Letta archival memory, passage ingestion, and retrieval.
+- canonical sources remain in Bear cognition, transcript-derived approved records, and approved linked corpora
+- derived passages and vector indexes support recall and retrieval
+- provenance, update, and deletion semantics are Den-owned
+- retrieval is distinct from prompt memory, transcript history, and shared memory
 
-This contract defines:
-
-- what counts as canonical source material,
-- what belongs in archival/recall memory,
-- what belongs in derived retrieval indexes,
-- and how source ingestion, updates, provenance, and deletion should work.
-
-## Architectural stance
-
-The target is Den ownership, not a generalized provider marketplace.
-
-An end state with a monolithic Den that owns canonical source records, ingestion policy, retrieval semantics, and recall behavior is acceptable. External indexes or retrieval engines may exist as implementation details, but they should not define the conceptual model.
-
-## Core separation of concerns
+## Layers
 
 Den should distinguish these layers explicitly:
 
-1. **Canonical source material**
-   - the durable source of truth such as `core/` memory, role-local memory, Cabinet artifacts, transcript-derived records where explicitly allowed, repo/workspace docs, or external imported documents.
+1. canonical source material
+2. archival/recall objects
+3. derived passages or chunks
+4. retrieval indexes
+5. query-time retrieval results
 
-2. **Archival/recall memory**
-   - Den-owned long-lived recall objects representing curated or indexed recallable knowledge, with provenance back to canonical sources.
+These layers are related but not interchangeable.
 
-3. **Derived passages/chunks**
-   - chunked or transformed representations used for indexing and retrieval.
+## Canonical source material
 
-4. **Retrieval indexes**
-   - derived search structures: **Qdrant** vector collections keyed by **embedding standard** ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); passage metadata in Den Postgres; not canonical.
+Examples of canonical sources:
 
-5. **Query-time retrieval results**
-   - relevance-scored outputs returned to runtime prompt assembly or operator tooling.
+- shared Bear memory
+- approved role-local material when policy allows
+- work-surface canonical docs
+- approved Cabinet-linked sources
+- imported external documents with explicit provenance
+- explicitly approved transcript-derived material
 
-These are not interchangeable.
+## Derived recall
+
+Derived recall exists to make canonical material retrievable.
+
+It may include:
+
+- chunked passages
+- embeddings and vector indexes
+- ranking/filter metadata
+- provenance back to canonical source objects
+
+Canonical truth remains outside the retrieval index.
 
 ## Invariants
 
-### 1. Canonical source remains outside the retrieval index
+### 1. Provenance is mandatory
 
-Indexes, passages, and retrieval results are derived views over canonical sources. They are not the source of truth.
+Every archival object and every derived chunk must point back to a canonical source and version or content hash.
 
-### 2. Provenance is mandatory
+### 2. Den owns lifecycle semantics
 
-Every archival/recall item and every derived chunk should be traceable back to a canonical source identifier, location, or content version.
+When a source changes, Den must know how to refresh, supersede, or delete derived material.
 
-### 3. Update and delete semantics are Den-owned
+### 3. Retrieval is not prompt memory
 
-When canonical source content changes or is removed, Den must know how indexed/chunked material is updated, superseded, or deleted.
+Prompt memory is standing in-context state. Retrieval is query-time recall.
 
-### 4. Retrieval is separate from prompt blocks and transcript compaction
+### 4. Retrieval is not transcript history
 
-Archival retrieval is query-time recall. It is not the same thing as editable prompt blocks or derived compaction artifacts.
-
-### 5. Archival memory is not silent provider state
-
-Den must own the write policy, query semantics, provenance, and lifecycle rather than inheriting hidden provider-managed archival behavior.
-
-## Canonical source classes
-
-Initial source classes should include:
-
-- curated shared `core/` memory,
-- role-local memory where archival indexing is appropriate,
-- work-surface canonical docs,
-- Cabinet artifacts and mission material where approved,
-- imported external documents with explicit provenance,
-- and selected transcript-derived material only when explicitly allowed by policy.
-
-Transcript history should not automatically become archival memory. Any transcript-derived archival source should be an explicit Den-owned decision. The explicit, Den-owned policy that crosses this boundary is the **`archive_harvest`** Reflection lane ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)): it distills durable candidates from closed sessions into proposals, which `memory_curate` reviews before any canonical write.
-
-## Filling archival memory: harvest and consolidation
-
-Source registration and indexing (below) describe how canonical material becomes retrievable. **What becomes canonical in the first place** is decided by asynchronous curation ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)), which runs off the live turn (sleep-time posture):
-
-- **Harvest (`archive_harvest`)** — an extraction-first pass over un-mined session archives and compaction artifacts distills atomic facts, decisions, preferences, and lessons (discarding filler) into memory proposals. Idempotent via harvest marks; provenance back to source `conversation_messages` is mandatory.
-- **Consolidation (`memory_curate`)** — candidates are deduped against existing canonical memory. Contradictions are resolved by **supersession** (write a new record, set `supersedes_memory_id`, encode the transition), never by overwrite; history is preserved. Low-risk results promote to `core/`; sensitive items escalate to human review.
-
-Only after consolidation writes a canonical record does the source become eligible for indexing into the derived recall index. **Harvest produces canonical memory; `archive_index` indexes it — the two stay separate.**
+Transcript is session truth. Retrieval is a derived access path over approved source material.
 
 ## Ingestion lifecycle
 
 At minimum, Den ingestion should support:
 
-1. source registration,
-2. source normalization and provenance capture,
-3. chunking/passage derivation,
-4. indexing/materialization into retrieval structures,
-5. source update detection,
-6. delete or supersede handling,
-7. query-time retrieval with provenance-preserving results.
-
-## Recommended source record requirements
-
-A source record should preserve enough information to answer:
-
-- what canonical source this came from,
-- which Bear/role/work surface it belongs to,
-- what version or content hash was indexed,
-- when it was indexed,
-- what derived chunks/passages were produced,
-- and whether the source is still active, superseded, or deleted.
-
-## Chunk/passage requirements
-
-Derived chunks/passages should preserve:
-
-- source reference,
-- source version/hash,
-- chunk ordering,
-- chunk text or structured payload,
-- metadata needed for filtering,
-- and deletion/supersession linkage.
+1. source registration
+2. source normalization and provenance capture
+3. chunk derivation
+4. index materialization
+5. source update detection
+6. supersede/delete handling
+7. query-time retrieval with provenance
 
 ## Query semantics
 
-Den should define query semantics explicitly:
+Den should define:
 
-- query scope filters (ACL by Bear membership and identity scope per [ADR-0015](../decisions/adr-0015-multi-user-memory.md)),
-- provenance returned with matches,
-- ranking behavior,
-- and rules for when retrieval results may be injected into runtime prompt assembly.
+- scope and ACL filtering
+- ranking behavior
+- provenance returned with matches
+- rules for when retrieval results can enter runtime context
 
-**Ranking** is hybrid and scored ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)): merge deterministic anchors (key memory projection), vector recall (Qdrant), and keyword (`LIKE`), ranked by `recency × relevance × importance` where importance derives from record `salience`. Retrieval **degrades gracefully** to anchors + `LIKE` when Qdrant is unavailable; turns must not fail.
-
-Retrieval should be work-surface-aware where applicable rather than Bear-global by default.
+Retrieval should be work-surface-aware when appropriate, not Bear-global by default.
 
 ## Relationship to other memory systems
 
-### Versus durable memory
+### Durable memory
 
-Durable memory is the canonical long-lived knowledge layer. Archival retrieval is a derived recall mechanism over selected canonical sources.
+Durable memory is canonical Bear knowledge.
 
-### Versus prompt blocks
+### Prompt memory
 
-Prompt blocks are standing in-context inputs selected by policy. Retrieval is on-demand recall selected by query.
+Prompt memory is editable in-context state selected by policy.
 
-### Versus transcript history
+### Transcript
 
-Transcript is canonical session history. Retrieval may index selected transcript-derived content only when policy explicitly permits it.
+Transcript is canonical interaction history.
 
-### Versus compaction artifacts
+### Compaction artifacts
 
-Compaction artifacts preserve continuity within long-running sessions. Retrieval serves broader recall over selected source material.
+Compaction artifacts preserve bounded continuity for conversations. They are not general recall indexes.
 
-## Minimum v1 expectations
+## Minimum expectations
 
-A v1 archival/ingestion replacement is acceptable if it provides:
+An acceptable architecture must provide:
 
-- Den-owned source registration,
-- source-to-chunk provenance with **content-hash dedup**,
-- update/delete semantics,
-- explicit query-time retrieval boundaries,
-- **platform embedding standard** (`bears-embed-v1`) shared across Bear memory and Cabinet indexing,
-- Qdrant derived vectors (rebuildable from canonical sources),
-- and a clear separation between canonical sources and derived indexes.
+- Den-owned source registration
+- source-to-chunk provenance
+- content-version or hash-aware refresh logic
+- explicit retrieval boundaries and ACLs
+- clear separation between canonical source material and derived recall
 
-See [Derived recall index implementation plan](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
+## Related docs
+
+- [memory model](memory-model.md)
+- [den-native-runtime](den-native-runtime.md)
+- [den-prompt-memory-block-contract](den-prompt-memory-block-contract.md)
