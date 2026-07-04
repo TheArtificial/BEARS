@@ -37,38 +37,116 @@ use crate::auth::authenticated_bear;
 use crate::methods::run::{
     persist_run_failed, persist_run_progress, persist_runtime_event_as_bearwire,
 };
-use crate::methods::{deserialize_optional_string, deserialize_required_string, parse_params, param_string, required_param_string};
+use crate::methods::{
+    deserialize_optional_string, deserialize_required_string, deserialize_string, parse_params,
+};
 
 const MAX_PERMISSION_RESULTS_PER_RUN: i64 = 8;
 
-#[derive(Debug, Clone)]
+fn deserialize_tool_result_status<'de, D>(deserializer: D) -> Result<ToolResultStatus, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = deserialize_string(deserializer)?;
+    ToolResultStatus::parse(&raw)
+        .ok_or_else(|| serde::de::Error::custom(format!("unsupported tool result status: {raw}")))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PermissionDecisionInput {
+    Approved,
+    Approve,
+    Granted,
+    Allow,
+    AllowOnce,
+    AllowUrl,
+    AllowHost,
+    Denied,
+    Deny,
+    Rejected,
+    Reject,
+    RejectOnce,
+    RejectAlways,
+    Timeout,
+    TimedOut,
+}
+
+impl PermissionDecisionInput {
+    fn normalized(self) -> &'static str {
+        match self {
+            Self::Approved
+            | Self::Approve
+            | Self::Granted
+            | Self::Allow
+            | Self::AllowOnce
+            | Self::AllowUrl
+            | Self::AllowHost => "granted",
+            Self::Denied
+            | Self::Deny
+            | Self::Rejected
+            | Self::Reject
+            | Self::RejectOnce
+            | Self::RejectAlways => "denied",
+            Self::Timeout | Self::TimedOut => "expired",
+        }
+    }
+
+    fn raw(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::Approve => "approve",
+            Self::Granted => "granted",
+            Self::Allow => "allow",
+            Self::AllowOnce => "allow_once",
+            Self::AllowUrl => "allow_url",
+            Self::AllowHost => "allow_host",
+            Self::Denied => "denied",
+            Self::Deny => "deny",
+            Self::Rejected => "rejected",
+            Self::Reject => "reject",
+            Self::RejectOnce => "reject_once",
+            Self::RejectAlways => "reject_always",
+            Self::Timeout => "timeout",
+            Self::TimedOut => "timed_out",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct ClientToolResultRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
     run_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
     session_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
     tool_call_id: String,
+    #[serde(default = "default_tool_result_status", deserialize_with = "deserialize_tool_result_status")]
     status: ToolResultStatus,
-    input: ClientToolResultInput,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    tool_name: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    content: Option<String>,
+    #[serde(default)]
+    structured_content: Value,
+    #[serde(default)]
+    error: Value,
+}
+
+fn default_tool_result_status() -> ToolResultStatus {
+    ToolResultStatus::Ok
 }
 
 impl ClientToolResultRequest {
-    fn from_params(params: &Value) -> Result<Self, CustomError> {
-        let run_id = required_param_string(params, "run_id")?;
-        let session_id = required_param_string(params, "session_id")?;
-        let tool_call_id = required_param_string(params, "tool_call_id")?;
-        let status_raw = param_string(params, "status").unwrap_or_else(|| "ok".to_string());
-        let status = ToolResultStatus::parse(&status_raw).ok_or_else(|| {
-            CustomError::ValidationError(format!(
-                "unsupported client.tool.result status: {status_raw}"
-            ))
-        })?;
-        let input = ClientToolResultInput::from_params(&tool_call_id, status, params);
-        Ok(Self {
-            run_id,
-            session_id,
-            tool_call_id,
-            status,
-            input,
-        })
+    fn input(&self) -> ClientToolResultInput {
+        ClientToolResultInput::new(
+            self.tool_call_id.clone(),
+            self.tool_name.clone(),
+            self.status,
+            self.content.clone(),
+            self.structured_content.clone(),
+            self.error.clone(),
+        )
     }
 }
 
@@ -82,10 +160,14 @@ struct ClientPermissionResultRequest {
     permission_id: String,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     obligation_id: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    decision: Option<String>,
+    #[serde(default = "default_permission_decision")]
+    decision: PermissionDecisionInput,
     #[serde(default)]
     reason: Option<Value>,
+}
+
+fn default_permission_decision() -> PermissionDecisionInput {
+    PermissionDecisionInput::Denied
 }
 
 fn continuation_watchdog_timeout() -> Duration {
@@ -406,7 +488,7 @@ pub(crate) async fn client_tool_result_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let request = ClientToolResultRequest::from_params(params)?;
+    let request: ClientToolResultRequest = parse_params(params)?;
     let run_id = request.run_id.clone();
     let session_id = request.session_id.clone();
     let tool_call_id = request.tool_call_id.clone();
@@ -450,7 +532,8 @@ pub(crate) async fn client_tool_result_result(
             obligation.state
         )));
     }
-    let mut compacted = compact_client_tool_result(&request.input);
+    let input = request.input();
+    let mut compacted = compact_client_tool_result(&input);
     if compacted.truncated {
         if let Ok(artifact) = create_tool_output_artifact(
             &state.sqlx_pool,
@@ -461,9 +544,9 @@ pub(crate) async fn client_tool_result_result(
                 conversation_id: None,
                 run_id: Some(run_id.clone()),
                 tool_call_id: tool_call_id.clone(),
-                tool_name: request.input.tool_name.clone(),
+                tool_name: request.tool_name.clone(),
                 source: "bearwire_client",
-                content_text: request.input.content.clone(),
+                content_text: request.content.clone(),
                 content_json: Some(params.clone()),
                 metadata: json!({ "status": status.as_str() }),
             },
@@ -471,7 +554,7 @@ pub(crate) async fn client_tool_result_result(
         .await
         {
             compacted = compact_client_tool_result_with_artifact(
-                &request.input,
+                &input,
                 Some(&artifact.artifact_ref),
             );
         }
@@ -687,7 +770,7 @@ pub(crate) async fn client_permission_result_result(
     let session_id = request.session_id;
     let permission_id = request.permission_id;
     let obligation_id = request.obligation_id;
-    let decision = request.decision.unwrap_or_else(|| "denied".to_string());
+    let decision = request.decision;
     let Some(run) = turn_runs::get_run(&state.sqlx_pool, &run_id).await? else {
         return Ok(json!({
             "ok": false,
@@ -738,17 +821,7 @@ pub(crate) async fn client_permission_result_result(
             obligation.state
         )));
     }
-    let normalized_decision = match decision.as_str() {
-        "approved" | "approve" | "granted" | "allow" | "allow_once" | "allow_url"
-        | "allow_host" => "granted",
-        "denied" | "deny" | "rejected" | "reject" | "reject_once" | "reject_always" => "denied",
-        "timeout" | "timed_out" => "expired",
-        other => {
-            return Err(CustomError::ValidationError(format!(
-                "unsupported permission decision: {other}"
-            )));
-        }
-    };
+    let normalized_decision = decision.normalized();
     let payload = json!({
         "permission_id": permission_id,
         "decision": normalized_decision,
@@ -825,7 +898,7 @@ pub(crate) async fn client_permission_result_result(
                     &state.sqlx_pool,
                     bear.id,
                     user_id,
-                    decision.as_str(),
+                    decision.raw(),
                     &obligation.request_payload,
                 )
                 .await?;
@@ -874,7 +947,7 @@ pub(crate) async fn client_permission_result_result(
                     &state.sqlx_pool,
                     bear.id,
                     user_id,
-                    decision.as_str(),
+                    decision.raw(),
                     &obligation.request_payload,
                 )
                 .await?;

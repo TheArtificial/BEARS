@@ -32,23 +32,6 @@ pub(crate) fn initialize_result(_state: &DenState) -> Value {
     })
 }
 
-pub(crate) fn param_string(params: &Value, key: &str) -> Option<String> {
-    params
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-}
-
-pub(crate) fn required_param_string(
-    params: &Value,
-    key: &str,
-) -> Result<String, den_http::errors::CustomError> {
-    param_string(params, key)
-        .ok_or_else(|| den_http::errors::CustomError::ValidationError(format!("{key} is required")))
-}
-
 pub(crate) fn parse_params<T: DeserializeOwned>(
     params: &Value,
 ) -> Result<T, den_http::errors::CustomError> {
@@ -97,4 +80,11 @@ where
     Ok(value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty()))
+}
+
+pub(crate) fn deserialize_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_required_string(deserializer)
 }
