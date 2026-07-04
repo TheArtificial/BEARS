@@ -82,8 +82,8 @@ The implementation should not jump directly from the current legacy activity boa
 
 | Task | Done when |
 | --- | --- |
-| Add Docket schema | `bear_jobs`, `bear_tasks`, `bear_job_runs`, `bear_task_run_state`, `bear_job_criteria`, `bear_job_criteria_state`, and events exist in the Docket namespace. |
-| Add Docket service methods | `DocketService` exposes job/task CRUD, task hierarchy reads, checkout inputs, sync targets, run state, and criteria state through a public trait/API. |
+| Add Docket schema | `bear_jobs`, `bear_tasks`, `bear_job_runs`, `bear_task_run_state`, `bear_job_criteria`, `bear_job_criteria_state`, and events exist in the Docket namespace. `bear_tasks.completion_criteria` gives each task concrete done-condition strings. |
+| Add Docket service methods | `DocketService` exposes job/task CRUD, task hierarchy reads, checkout inputs, sync targets, run state, and criteria state through a public trait/API. Task create/update validates non-empty completion criteria. |
 | Keep table access internal | Bear-facing tools call `DocketService`, not Docket DB modules. |
 | Preserve execution invariant | Docket dispatches ready tasks to runtime-owned `TaskDispatcher`; it never executes task bodies itself. |
 

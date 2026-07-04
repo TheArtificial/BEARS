@@ -3,6 +3,11 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use den_core::tools::constants::{
+    DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
+    DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
+    DEN_TASK_UPDATE, DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE,
+};
 use den_docket::{
     self as work_plans, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
     DocketCriterionStatus, DocketEffortHint, DocketJobCreate, DocketJobCriterionInput,
@@ -14,24 +19,18 @@ use den_docket::{
     WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
     WorkPlanVisibility,
 };
-use den_core::tools::constants::{
-    DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
-    DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
-    DEN_TASK_UPDATE, DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE,
-};
 
 use crate::{
     config::Config,
     core::tools::{
-        memory_write::source_client_session_id,
-        session::DenToolInvocationContext,
+        memory_write::source_client_session_id, session::DenToolInvocationContext,
         support::clean_optional,
     },
     errors::{CustomError, DenError},
 };
-use den_service::bears::BearProfile;
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
 use den_runtime::plan_mode;
+use den_service::bears::BearProfile;
 
 pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
     matches!(
@@ -178,6 +177,7 @@ pub(crate) struct DocketTaskCreateArguments {
     pub(crate) scope: DocketTaskScope,
     pub(crate) title: String,
     pub(crate) body: String,
+    pub(crate) completion_criteria: Vec<String>,
     #[serde(default)]
     pub(crate) difficulty: Option<DocketTaskDifficulty>,
     #[serde(default)]
@@ -209,6 +209,8 @@ pub(crate) struct DocketTaskUpdateArguments {
     pub(crate) title: Option<String>,
     #[serde(default)]
     pub(crate) body: Option<String>,
+    #[serde(default)]
+    pub(crate) completion_criteria: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) parent_task_id: Option<Uuid>,
     #[serde(default)]
@@ -663,6 +665,7 @@ pub(crate) async fn create_task(
             scope: args.scope,
             title: args.title,
             body: args.body,
+            completion_criteria: args.completion_criteria,
             difficulty: args.difficulty,
             effort_hint: args.effort_hint,
             assigned_to_role: args.assigned_to_role,
@@ -739,6 +742,7 @@ pub(crate) async fn update_task(
             definition: DocketTaskDefinitionPatch {
                 title: args.title,
                 body: args.body,
+                completion_criteria: args.completion_criteria,
                 parent_task_id: args
                     .clear_parent_task_id
                     .then_some(None)

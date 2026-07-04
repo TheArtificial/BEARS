@@ -922,6 +922,7 @@ pub struct DocketTaskRow {
     pub scope: String,
     pub title: String,
     pub body: String,
+    pub completion_criteria: Json<Vec<String>>,
     pub difficulty: Option<String>,
     pub effort_hint: Option<String>,
     pub assigned_to_role: Option<String>,
@@ -1027,6 +1028,8 @@ pub struct DocketTaskInput {
     pub scope: DocketTaskScope,
     pub title: String,
     pub body: String,
+    #[serde(default)]
+    pub completion_criteria: Vec<String>,
     #[serde(default)]
     pub difficulty: Option<DocketTaskDifficulty>,
     #[serde(default)]
@@ -1159,6 +1162,7 @@ pub struct DocketTaskCreate {
     pub scope: DocketTaskScope,
     pub title: String,
     pub body: String,
+    pub completion_criteria: Vec<String>,
     pub difficulty: Option<DocketTaskDifficulty>,
     pub effort_hint: Option<DocketEffortHint>,
     pub assigned_to_role: Option<BearProfile>,
@@ -1189,6 +1193,7 @@ pub struct DocketTaskRunStateUpdate {
 pub struct DocketTaskDefinitionPatch {
     pub title: Option<String>,
     pub body: Option<String>,
+    pub completion_criteria: Option<Vec<String>>,
     pub parent_task_id: Option<Option<Uuid>>,
     pub sibling_order: Option<i32>,
     pub kind: Option<DocketTaskKind>,
@@ -1222,6 +1227,8 @@ pub enum DocketValidationError {
     EmptyCriterionDescription,
     EmptyTaskTitle,
     EmptyTaskBody,
+    EmptyTaskCompletionCriteria,
+    EmptyTaskCompletionCriterion,
     TaskMissingAnchor,
     DuplicateTaskClientKey { client_key: String },
     MissingParentClientKey { client_key: String },
@@ -1242,6 +1249,12 @@ impl fmt::Display for DocketValidationError {
             }
             Self::EmptyTaskTitle => f.write_str("Docket task title must not be empty"),
             Self::EmptyTaskBody => f.write_str("Docket task body must not be empty"),
+            Self::EmptyTaskCompletionCriteria => {
+                f.write_str("Docket task completion_criteria must include at least one criterion")
+            }
+            Self::EmptyTaskCompletionCriterion => {
+                f.write_str("Docket task completion_criteria must not include blank criteria")
+            }
             Self::TaskMissingAnchor => {
                 f.write_str("Docket task must be anchored to either a job or an client session")
             }
@@ -1502,6 +1515,25 @@ pub fn validate_docket_job_create(create: &DocketJobCreate) -> Result<(), Docket
     validate_docket_task_inputs(&create.tasks)
 }
 
+pub fn normalize_completion_criteria(criteria: &[String]) -> Vec<String> {
+    criteria
+        .iter()
+        .map(|criterion| criterion.trim())
+        .filter(|criterion| !criterion.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+pub fn validate_completion_criteria(criteria: &[String]) -> Result<(), DocketValidationError> {
+    if criteria.is_empty() {
+        return Err(DocketValidationError::EmptyTaskCompletionCriteria);
+    }
+    if criteria.iter().any(|criterion| criterion.trim().is_empty()) {
+        return Err(DocketValidationError::EmptyTaskCompletionCriterion);
+    }
+    Ok(())
+}
+
 pub fn validate_docket_task_create(create: &DocketTaskCreate) -> Result<(), DocketValidationError> {
     if create.job_id.is_none() && create.session_anchor_id.is_none() {
         return Err(DocketValidationError::TaskMissingAnchor);
@@ -1512,6 +1544,7 @@ pub fn validate_docket_task_create(create: &DocketTaskCreate) -> Result<(), Dock
     if create.body.trim().is_empty() {
         return Err(DocketValidationError::EmptyTaskBody);
     }
+    validate_completion_criteria(&create.completion_criteria)?;
     Ok(())
 }
 
@@ -1524,6 +1557,7 @@ fn validate_docket_task_inputs(tasks: &[DocketTaskInput]) -> Result<(), DocketVa
         if task.body.trim().is_empty() {
             return Err(DocketValidationError::EmptyTaskBody);
         }
+        validate_completion_criteria(&task.completion_criteria)?;
         if let Some(key) = task
             .client_key
             .as_ref()
@@ -1960,6 +1994,7 @@ mod tests {
                 scope: DocketTaskScope::Template,
                 title: "Implement child".to_string(),
                 body: "Do the child task.".to_string(),
+                completion_criteria: vec!["Child task is actually done".to_string()],
                 difficulty: Some(DocketTaskDifficulty::Moderate),
                 effort_hint: Some(DocketEffortHint::Medium),
                 assigned_to_role: Some(BearProfile::Work),
@@ -1975,6 +2010,34 @@ mod tests {
     }
 
     #[test]
+    fn rejects_docket_task_without_completion_criteria() {
+        let create = DocketTaskCreate {
+            bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+            job_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000777").unwrap()),
+            session_anchor_id: None,
+            parent_task_id: None,
+            sibling_order: 0,
+            kind: DocketTaskKind::Investigation,
+            scope: DocketTaskScope::Run,
+            title: "Investigate".to_string(),
+            body: "Find the relevant facts.".to_string(),
+            completion_criteria: Vec::new(),
+            difficulty: Some(DocketTaskDifficulty::Unknown),
+            effort_hint: None,
+            assigned_to_role: Some(BearProfile::Pair),
+            created_by_role: "pair".to_string(),
+            created_by_user_id: Some(42),
+            created_by_agent_id: None,
+            created_in_run_id: None,
+        };
+
+        assert_eq!(
+            validate_docket_task_create(&create),
+            Err(DocketValidationError::EmptyTaskCompletionCriteria)
+        );
+    }
+
+    #[test]
     fn validates_session_anchored_or_job_anchored_task_create() {
         let create = DocketTaskCreate {
             bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
@@ -1986,6 +2049,7 @@ mod tests {
             scope: DocketTaskScope::Run,
             title: "Investigate".to_string(),
             body: "Find the relevant facts.".to_string(),
+            completion_criteria: vec!["Relevant facts are identified".to_string()],
             difficulty: Some(DocketTaskDifficulty::Unknown),
             effort_hint: None,
             assigned_to_role: Some(BearProfile::Pair),
@@ -2054,6 +2118,7 @@ mod tests {
                 scope: "template".to_string(),
                 title: "Root task".to_string(),
                 body: "Do root work.".to_string(),
+                completion_criteria: Json(vec!["Root work done".to_string()]),
                 difficulty: None,
                 effort_hint: None,
                 assigned_to_role: Some("work".to_string()),
@@ -2128,6 +2193,7 @@ mod tests {
                     scope: "template".to_string(),
                     title: "Root task".to_string(),
                     body: "Do root work.".to_string(),
+                    completion_criteria: sqlx::types::Json(vec!["Root work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
                     assigned_to_role: Some("work".to_string()),
@@ -2149,6 +2215,7 @@ mod tests {
                     scope: "template".to_string(),
                     title: "Child task".to_string(),
                     body: "Do child work.".to_string(),
+                    completion_criteria: sqlx::types::Json(vec!["Child work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
                     assigned_to_role: Some("work".to_string()),

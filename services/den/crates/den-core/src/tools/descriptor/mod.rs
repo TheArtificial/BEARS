@@ -18,11 +18,11 @@ use crate::tools::{
     constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER, DEN_BEAR_GET_SELF,
         DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CHANNEL_GET_CONTEXT,
-        DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_CORE_WRITE_RESULT_SUMMARY,
-        DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_LINK_MEMORY,
-        DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE, DEN_ENTITY_MERGE_PROVIDER,
-        DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER, DEN_ENTITY_SPLIT,
-        DEN_ENTITY_SPLIT_PROVIDER, DEN_ENTITY_WRITE_ACCESS_RULE,
+        DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
+        DEN_CORE_WRITE_RESULT_SUMMARY, DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER,
+        DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE,
+        DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER,
+        DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER, DEN_ENTITY_WRITE_ACCESS_RULE,
         DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER, DEN_ENTITY_WRITE_ANCHOR,
         DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
         DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE,
@@ -534,11 +534,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_CREATE,
             "Create Docket job",
-            "Create a durable Docket job with acceptance criteria and an optional initial task tree. Jobs are durable work containers larger than individual tasks. Use this when the human asks to create/track/delegate durable work, or when a task-list handoff should become canonical Docket work. Does not execute the job; execution flows through Bear runtime dispatch.",
+            "Create a durable Docket job with acceptance criteria and an optional initial task tree. Jobs are durable work containers larger than individual tasks, and every initial Docket task requires concrete completion_criteria so execution has a stopping condition. Use this when the human asks to create/track/delegate durable work, or when a task-list handoff should become canonical Docket work. Does not execute the job; execution flows through Bear runtime dispatch.",
             "bear.docket",
             &["docket.job.write"],
             CHAT_AND_PAIR_PROFILES,
-            json!({"type":"object","properties":{"goal":{"type":"string","description":"Human-facing durable goal for the job."},"work_surface_ref":{"type":"string"},"commit_policy":{"enum":["none","per_task","per_job","propose_only"]},"status":{"enum":["draft","ready","running","blocked","completed","cancelled"]},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"criteria":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["narrative","command","check_ref"]},"description":{"type":"string"},"spec":{"type":"object"},"sibling_order":{"type":"integer"}},"required":["description"],"additionalProperties":false}},"tasks":{"type":"array","items":{"type":"object","properties":{"client_key":{"type":"string"},"parent_client_key":{"type":"string"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"assigned_to_role":{"enum":ALL_PROFILES}},"required":["title","body"],"additionalProperties":false}}},"required":["goal"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"goal":{"type":"string","description":"Human-facing durable goal for the job."},"work_surface_ref":{"type":"string"},"commit_policy":{"enum":["none","per_task","per_job","propose_only"]},"status":{"enum":["draft","ready","running","blocked","completed","cancelled"]},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"criteria":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["narrative","command","check_ref"]},"description":{"type":"string"},"spec":{"type":"object"},"sibling_order":{"type":"integer"}},"required":["description"],"additionalProperties":false}},"tasks":{"type":"array","items":{"type":"object","properties":{"client_key":{"type":"string"},"parent_client_key":{"type":"string"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"assigned_to_role":{"enum":ALL_PROFILES}},"required":["title","body","completion_criteria"],"additionalProperties":false}}},"required":["goal"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_JOB_LIST,
@@ -588,11 +588,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_CREATE,
             "Create Docket task",
-            "Create a durable Docket task under a job or client session anchor. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Status/results remain run-scoped and are not stored on the task definition.",
+            "Create a durable Docket task under a job or client session anchor. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"session_anchor_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"assigned_to_role":{"enum":ALL_PROFILES},"created_in_run_id":{"type":"string","format":"uuid"}},"required":["title","body"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"session_anchor_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"assigned_to_role":{"enum":ALL_PROFILES},"created_in_run_id":{"type":"string","format":"uuid"}},"required":["title","body","completion_criteria"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LIST,
@@ -606,11 +606,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_UPDATE,
             "Update Docket task",
-            "Update a Docket task definition and/or its run-scoped state. Title/body/hierarchy changes update the durable task definition; status/result fields update bear_task_run_state for the provided run_id. Setting status to done requires a non-empty result_summary describing what was actually completed or verified. Does not execute task bodies.",
+            "Update a Docket task definition and/or its run-scoped state. Title/body/completion_criteria/hierarchy changes update the durable task definition; status/result fields update bear_task_run_state for the provided run_id. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not execute task bodies.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
-            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"},"parent_task_id":{"type":["string","null"],"format":"uuid"},"clear_parent_task_id":{"type":"boolean"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"difficulty":{"enum":["trivial","moderate","hard","unknown",null]},"effort_hint":{"enum":["low","medium","high",null]},"assigned_to_role":{"enum":["chat","pair","curate","work","watch",null]},"run_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"description":"Replacement concrete criteria that define when this task is done."},"parent_task_id":{"type":["string","null"],"format":"uuid"},"clear_parent_task_id":{"type":"boolean"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"difficulty":{"enum":["trivial","moderate","hard","unknown",null]},"effort_hint":{"enum":["low","medium","high",null]},"assigned_to_role":{"enum":["chat","pair","curate","work","watch",null]},"run_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LIST_CHECKOUT,
@@ -1301,7 +1301,12 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             progress_verb: "Updating Docket task",
             complete_verb: "Updated Docket task",
             target_arg_keys: &["task_id", "status"],
-            sensitive_arg_keys: &["body", "result_refs", "result_summary"],
+            sensitive_arg_keys: &[
+                "body",
+                "completion_criteria",
+                "result_refs",
+                "result_summary",
+            ],
             approval_summary: "Update a Docket task definition or run-scoped state.",
         },
         DEN_TASK_LIST_CHECKOUT => ToolDisplayDescriptor {
@@ -1560,7 +1565,10 @@ mod tests {
             display["title"],
             "Applying core memory update …/project/core/decisions.md → append_section"
         );
-        assert_eq!(display["subtitle"], "…/project/core/decisions.md → append_section");
+        assert_eq!(
+            display["subtitle"],
+            "…/project/core/decisions.md → append_section"
+        );
     }
 }
 

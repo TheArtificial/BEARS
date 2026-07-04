@@ -44,6 +44,23 @@ It is not itself the canonical policy. It points to the canonical docs that defi
   - Context window budget is tracked against the fully assembled request.
   - Explains how Den reasons about token pressure before inference.
 
+## Docket Jobs, Tasks, And Session Task Lists
+
+- `docs/decisions/adr-0034-jobs-and-tasks-work-management.md`
+  - Docket jobs/tasks are durable Den Postgres work-management state.
+  - Jobs are larger orchestration containers; tasks are durable task nodes with run-scoped state.
+  - Job criteria define job-level acceptance gates.
+
+- `docs/decisions/adr-0045-session-task-lists-and-docket-checkout.md`
+  - Session task lists are working projections, not automatically Docket tasks.
+  - Task-list items may be local-only or Docket-backed.
+  - Passive task-list prompt context is session/stance-local; cross-stance durable work belongs in Docket.
+
+- `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`
+  - Current implementation order and status for task-list projection, checkout/sync, Docket schema, pair execution, and future work dispatch.
+  - Docket task definitions require concrete `completion_criteria` so the model has a stopping condition for task execution.
+  - Docket task completion (`status: done`) requires a factual `result_summary` describing what was actually completed or verified.
+
 ## Tool Surface
 
 - `AGENTS.md`

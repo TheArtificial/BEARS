@@ -124,6 +124,7 @@ bear_tasks
 - scope             task_scope         -- template | run  (see decomposition)
 - title             text NOT NULL
 - body              text NOT NULL      -- self-contained prompt
+- completion_criteria jsonb NOT NULL   -- array of concrete done-condition strings
 - difficulty        task_difficulty nullable  -- trivial | moderate | hard | unknown (advisory)
 - effort_hint       effort_level nullable     -- low | medium | high (advisory)
 - assigned_to_role  bear_agent_role nullable
@@ -131,7 +132,7 @@ bear_tasks
 - created_at, updated_at
 ```
 
-The task row holds **no status or result** — those are run-scoped. `task.kind` does double duty: pre-allocation review can scan for `decision` tasks needing human pre-decisions before dispatch, and a `decision` task moving to `blocked` is the structured, API-legible "stuck, needs input" signal that opens a `work_handoffs` record (ADR-0026).
+The task row holds **no status or result** — those are run-scoped. It does hold concrete `completion_criteria`: a lightweight array of done-condition strings that gives the model a stopping target for task execution. `task.kind` does double duty: pre-allocation review can scan for `decision` tasks needing human pre-decisions before dispatch, and a `decision` task moving to `blocked` is the structured, API-legible "stuck, needs input" signal that opens a `work_handoffs` record (ADR-0026).
 
 #### `bear_job_runs` — execution log (activity domain)
 
