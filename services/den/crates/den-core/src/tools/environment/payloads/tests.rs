@@ -295,13 +295,44 @@ fn session_info_context_surfaces_degrade_to_explicit_unknowns() {
             .unwrap_or_else(|| panic!("missing {name} layer"))
     };
 
+    let expected_layers = [
+        "conversation_context",
+        "context_budget",
+        "projected_memory",
+        "recalled_memory",
+        "durable_memory",
+        "task_work_state",
+        "entity_context",
+        "tool_runtime_surface",
+    ];
+    assert_eq!(layers.len(), expected_layers.len());
+    for name in expected_layers {
+        assert!(layer(name)["next_surface"].is_string(), "{name} has next_surface");
+    }
+
     assert_eq!(layer("context_budget")["status"], "unavailable");
+    assert_eq!(layer("projected_memory")["status"], "unknown");
     assert_eq!(layer("projected_memory")["count"], "unknown");
+    assert_eq!(layer("recalled_memory")["status"], "unknown");
     assert_eq!(layer("recalled_memory")["count"], "unknown");
     assert_eq!(layer("durable_memory")["status"], "unknown");
+    assert_eq!(layer("task_work_state")["status"], "unknown");
     assert_eq!(layer("entity_context")["status"], "unknown");
+    assert_eq!(
+        payload["model_experience"]["schema"],
+        "den.model_experience.memory_surfaces.v1"
+    );
     assert_eq!(
         payload["model_experience"]["guide"],
         "docs/guides/bear-memory.md#model-experience"
     );
+    assert!(payload["model_experience"]["rule"]
+        .as_str()
+        .expect("model experience rule")
+        .contains("unknown or unavailable"));
+    assert!(payload["model_experience"]["next_surfaces"]
+        .as_array()
+        .expect("model experience next surfaces")
+        .iter()
+        .any(|surface| surface == "session_info.context_surfaces.layers"));
 }

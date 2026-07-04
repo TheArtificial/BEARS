@@ -152,7 +152,7 @@ fn client_tool_descriptors_from_context(
             continue;
         }
         let descriptor = tool.descriptor();
-        if !adapter_supports_tool(context, descriptor.provider_name) {
+        if !adapter_supports_tool(context, descriptor) {
             continue;
         }
         descriptors.push(den_core::client_tools::provider_tool_descriptor(*tool));
@@ -400,16 +400,23 @@ async fn preflight_pair_run_model(
     Ok(resolved)
 }
 
-fn adapter_supports_tool(client_context: &Value, provider_name: &str) -> bool {
-    client_context
-        .pointer(&format!("/adapter/direct_tools/{provider_name}/supported"))
-        .and_then(Value::as_bool)
-        .or_else(|| {
+fn adapter_supports_tool(
+    client_context: &Value,
+    descriptor: &den_core::client_tools::ClientToolDescriptor,
+) -> bool {
+    std::iter::once(descriptor.provider_name)
+        .chain(descriptor.provider_aliases.iter().copied())
+        .any(|name| {
             client_context
-                .pointer(&format!("/direct_tools/{provider_name}"))
+                .pointer(&format!("/adapter/direct_tools/{name}/supported"))
                 .and_then(Value::as_bool)
+                .or_else(|| {
+                    client_context
+                        .pointer(&format!("/direct_tools/{name}"))
+                        .and_then(Value::as_bool)
+                })
+                .unwrap_or(false)
         })
-        .unwrap_or(false)
 }
 
 pub(crate) async fn persist_run_progress(
@@ -1634,7 +1641,8 @@ mod tests {
         assert!(names.contains(&"fs_read_text_file"));
         assert!(names.contains(&"fs_find_paths"));
         assert!(names.contains(&"fs_edit_file"));
-        assert!(names.contains(&"terminal_run_command"));
+        assert!(names.contains(&"run_command"));
+        assert!(!names.contains(&"terminal_run_command"));
         assert!(names.contains(&"chrome_open"));
         assert!(names.contains(&"mcp__chrome_devtools_custom__click"));
         let read = descriptors
