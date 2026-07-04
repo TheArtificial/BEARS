@@ -9,7 +9,10 @@ use uuid::Uuid;
 
 use den_core::tools::{
     constants::DEN_WEB_FETCH,
-    result_compaction::{compact_client_tool_result, compact_client_tool_result_with_artifact, ClientToolResultInput, ToolResultStatus},
+    result_compaction::{
+        compact_client_tool_result, compact_client_tool_result_with_artifact,
+        ClientToolResultInput, ToolResultStatus,
+    },
 };
 use den_http::{errors::CustomError, web_policy};
 use den_protocol::{
@@ -40,8 +43,6 @@ use crate::methods::run::{
 use crate::methods::{
     deserialize_optional_string, deserialize_required_string, deserialize_string, parse_params,
 };
-
-const MAX_PERMISSION_RESULTS_PER_RUN: i64 = 8;
 
 fn deserialize_tool_result_status<'de, D>(deserializer: D) -> Result<ToolResultStatus, D::Error>
 where
@@ -121,7 +122,10 @@ struct ClientToolResultRequest {
     session_id: String,
     #[serde(deserialize_with = "deserialize_required_string")]
     tool_call_id: String,
-    #[serde(default = "default_tool_result_status", deserialize_with = "deserialize_tool_result_status")]
+    #[serde(
+        default = "default_tool_result_status",
+        deserialize_with = "deserialize_tool_result_status"
+    )]
     status: ToolResultStatus,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     tool_name: Option<String>,
@@ -591,10 +595,8 @@ pub(crate) async fn client_tool_result_result(
         )
         .await
         {
-            compacted = compact_client_tool_result_with_artifact(
-                &input,
-                Some(&artifact.artifact_ref),
-            );
+            compacted =
+                compact_client_tool_result_with_artifact(&input, Some(&artifact.artifact_ref));
         }
     }
     let payload = compacted.payload.clone();
@@ -623,30 +625,6 @@ pub(crate) async fn client_tool_result_result(
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
         .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
-    let permission_result_count =
-        turn_runs::client_result_count_for_run_kind(&state.sqlx_pool, &run_id, "permission")
-            .await?;
-    if permission_result_count >= MAX_PERMISSION_RESULTS_PER_RUN {
-        persist_run_failed(
-            &state.sqlx_pool,
-            &session_id,
-            &run_id,
-            bear.id,
-            user_id,
-            "permission_continuation_limit_exceeded",
-            format!(
-                "BearWire run exceeded the permission continuation limit of {} approvals.",
-                MAX_PERMISSION_RESULTS_PER_RUN
-            ),
-        )
-        .await;
-        return Ok(json!({
-            "ok": false,
-            "status": "permission_continuation_limit_exceeded",
-            "run_state": "failed",
-            "max_permission_results": MAX_PERMISSION_RESULTS_PER_RUN,
-        }));
-    }
     let coordinator_outcome = client_obligation_coordinator::record_and_settle_tool_result(
         &state.sqlx_pool,
         &run,
