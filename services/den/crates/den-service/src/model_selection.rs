@@ -4,11 +4,23 @@ use serde_json::Value;
 use sqlx::{types::Json, FromRow, PgPool};
 use uuid::Uuid;
 
+use crate::{bears, conversation::persistence};
+
 #[derive(Debug, Clone, FromRow)]
 pub struct ModelSelectionOptionRow {
     pub handle: String,
     pub display_name: String,
     pub metadata_json: Json<Value>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConversationModelSelectionView {
+    pub selection_mode: String,
+    pub requested_model: Option<String>,
+    pub selected_model: Option<String>,
+    pub effective_model: String,
+    pub source: String,
+    pub model_options: Vec<ModelOption>,
 }
 
 fn metadata_u32(metadata: &Value, key: &str) -> Option<u32> {
@@ -158,6 +170,52 @@ pub async fn apply_conversation_model_selection(
         }),
     )
     .await
+}
+
+pub async fn load_conversation_model_selection_view(
+    pool: &PgPool,
+    bear: &bears::Bear,
+    user_id: i32,
+    profile: bears::BearProfile,
+    default_model: &str,
+    conversation_external_id: &str,
+    source_client_session_id: Option<&str>,
+    acp_friendly_options: bool,
+) -> Result<ConversationModelSelectionView, DenError> {
+    let base_model = bears::db::resolve_model_for_profile(pool, bear, profile, default_model).await?;
+    let model_options = if acp_friendly_options {
+        list_selectable_model_options_for_acp(pool).await?
+    } else {
+        list_selectable_model_options(pool).await?
+    };
+    let conversation = persistence::ensure_conversation_for_external_id(
+        pool,
+        bear.id,
+        Some(user_id),
+        conversation_external_id,
+        source_client_session_id,
+        None,
+    )
+    .await?;
+    let model_state = persistence::get_conversation_model_state(pool, conversation.id).await?;
+    let effective_model = persistence::resolve_conversation_selected_model(pool, conversation.id)
+        .await?
+        .unwrap_or(base_model);
+    Ok(ConversationModelSelectionView {
+        selection_mode: model_state
+            .as_ref()
+            .map(|row| row.selection_mode.clone())
+            .unwrap_or_else(|| "auto".to_string()),
+        requested_model: model_state.as_ref().and_then(|row| row.requested_model.clone()),
+        selected_model: model_state.as_ref().and_then(|row| row.selected_model.clone()),
+        source: if model_state.as_ref().map(|row| row.selection_mode.as_str()) == Some("explicit") {
+            "conversation_explicit".to_string()
+        } else {
+            "stance_or_bear_default".to_string()
+        },
+        effective_model,
+        model_options,
+    })
 }
 
 pub async fn resolve_model_option(pool: &PgPool, handle: &str) -> Result<Option<ModelOption>, DenError> {

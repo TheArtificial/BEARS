@@ -392,46 +392,26 @@ async fn session_model_payload(
         .resolved_conversation_id
         .as_deref()
         .unwrap_or(&session.conversation_id);
-    let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
-        &state.sqlx_pool,
-        bear.id,
-        Some(user_id),
-        conversation_id,
-        Some(&session.client_session_id),
-        None,
-    )
-    .await?;
-    let base_model = den_service::bears::db::resolve_model_for_profile(
+    let view = den_service::model_selection::load_conversation_model_selection_view(
         &state.sqlx_pool,
         bear,
+        user_id,
         BearProfile::Pair,
         state.config.default_llm_model.as_str(),
+        conversation_id,
+        Some(&session.client_session_id),
+        true,
     )
     .await?;
-    let model_state = den_service::conversation::persistence::get_conversation_model_state(
-        &state.sqlx_pool,
-        conversation.id,
-    )
-    .await?;
-    let effective_model =
-        den_service::conversation::persistence::resolve_conversation_selected_model(
-            &state.sqlx_pool,
-            conversation.id,
-        )
-        .await?
-        .unwrap_or(base_model);
-    let model_options =
-        den_service::model_selection::list_selectable_model_options_for_acp(&state.sqlx_pool)
-            .await?;
     Ok(json!({
         "ok": true,
         "session_id": session_id,
         "conversation_id": conversation_id,
-        "selection_mode": model_state.as_ref().map(|s| s.selection_mode.as_str()).unwrap_or("auto"),
-        "requested_model": model_state.as_ref().and_then(|s| s.requested_model.clone()),
-        "selected_model": model_state.as_ref().and_then(|s| s.selected_model.clone()),
-        "effective_model": effective_model,
-        "model_options": model_options,
+        "selection_mode": view.selection_mode,
+        "requested_model": view.requested_model,
+        "selected_model": view.selected_model,
+        "effective_model": view.effective_model,
+        "model_options": view.model_options,
     }))
 }
 

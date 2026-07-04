@@ -9,6 +9,7 @@ use crate::conversation_message_types::{
     ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
     ConversationMessageWrite,
 };
+use crate::archived_conversations;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ConversationRecord {
@@ -620,6 +621,26 @@ pub async fn delete_conversation_for_external_id(
     .await
     .map_err(|err| DenError::Database(format!("delete conversation by external id: {err}")))?;
     Ok(result.rows_affected())
+}
+
+pub async fn delete_conversation_and_clear_archive(
+    pool: &PgPool,
+    bear_id: Uuid,
+    external_conversation_id: &str,
+    archived_by_user_id: Option<i32>,
+    source: &str,
+) -> Result<u64, DenError> {
+    let deleted = delete_conversation_for_external_id(pool, bear_id, external_conversation_id).await?;
+    archived_conversations::set_archived(
+        pool,
+        bear_id,
+        external_conversation_id,
+        archived_by_user_id,
+        source,
+        false,
+    )
+    .await?;
+    Ok(deleted)
 }
 
 pub async fn set_conversation_title(

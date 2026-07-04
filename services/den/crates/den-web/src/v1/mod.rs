@@ -342,19 +342,12 @@ async fn chat_conversation_patch(
     }
 
     if body.deleted == Some(true) {
-        conversation_persistence::delete_conversation_for_external_id(
-            state.sqlx_pool(),
-            bear.id,
-            &conv_id,
-        )
-        .await?;
-        archived_conversations::set_archived(
+        conversation_persistence::delete_conversation_and_clear_archive(
             state.sqlx_pool(),
             bear.id,
             &conv_id,
             Some(user_id),
             "delete",
-            false,
         )
         .await?;
         return Ok(Json(ChatConversationPatchResponse { ok: true }));
