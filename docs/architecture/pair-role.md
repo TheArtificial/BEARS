@@ -1,403 +1,134 @@
 # Pair role
 
-> **Direction changed (2026-06).** The "API-direct, not Letta Code-backed" framing is obsolete: the harness-backed vs API-direct split is deleted and all roles run the same in-process Den loop, differing only by capability profile. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+The `pair` role is the Bear's live collaborative operating mode for trusted work surfaces such as ACP-enabled editors, design tools, and future productivity clients.
 
-The `pair` role is the Bear's live collaborative operating mode for working with a human inside ACP-speaking tools such as IDEs, design tools, product surfaces, and future productivity clients.
-
-For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses specifically on the `pair` role.
-
-This note preserves product and implementation thinking for the `pair` role: what it should do inline, when it should delegate to other roles, what tools it should have, how it should treat memory, and how the Bear should behave inside the user's current work when operating through this role.
+It is the role users experience when the Bear is working side-by-side with them inside an active workspace rather than speaking from a pure chat surface.
 
 ## Job description
 
-When operating through the `pair` role in an ACP client or similar tool, the Bear works side-by-side with the user in an active work context.
+`pair` should feel like a capable collaborator embedded in the current work.
 
-The Bear should behave like a hands-on collaborator embedded in the user's current work, not merely as a conversational advisor. When a concrete workspace, document set, design surface, or other client context is available, `pair` should prefer advancing the task through direct inspection and user-mediated tool use rather than stopping at abstract explanation.
+It should:
 
-`pair` should bias toward the first useful concrete action: inspect the relevant artifact, trace the behavior, compare expected and actual state, draft the change, or otherwise move the work forward with minimal conversational delay. This applies across coding, writing, design, planning, debugging, analysis, and other tool-centered workflows.
+- inspect the active workspace or artifacts before settling on conclusions when evidence is available;
+- use trusted client-mediated tools with human approval;
+- advance the task through concrete action, not only explanation;
+- keep local learning in role-local memory when useful;
+- and request broader background work when the task exceeds inline collaboration.
 
-The Bear operating through `pair` should feel like a capable collaborator who can:
+It should not behave like an unbounded autonomous worker.
 
-- reason about the user's active artifacts and working context,
-- use client-mediated tools with user approval,
-- inspect the relevant materials before settling on a conclusion when evidence is available,
-- look up narrow external documentation when needed,
-- write role-local notes to help future collaboration sessions,
-- propose durable skills or conventions,
-- and create reviewed work requests when the user asks for broader autonomous research or external action.
+## Role grounding
 
-It should not feel like an autonomous background worker. The Bear is present with the user, in the user's tool, helping the current work move forward through the active context rather than merely commenting from outside it.
+`pair` is a role, not a separate assistant identity.
 
-## Role and work-surface grounding
-
-`pair` is a **role**. It is not a separate assistant identity, and it should not be described as a Space or Workplace. The Bear operates through the `pair` role while engaging one or more **work surfaces**: repositories, local checkouts, services, deployments, Missions, projects, or other long-running scopes of work.
-
-That means `pair` should not treat Bear memory as one flat pool when the user is asking about local understanding. For questions about the current project, service, repo, architecture, terminology, or prior local decisions, `pair` should first identify the relevant **work surface** from trusted session hints, workspace roots, repo clues, plan metadata, or explicit user references.
+It should ground itself in the current **work surface** first: repository, local checkout, design document set, service, deployment, project, or similar active context.
 
 Recommended retrieval order for local-understanding questions:
 
-1. current conversation and trusted situation/session briefing,
-2. current role, channel, and current work-surface hints,
-3. current work-surface canonical anchors,
-4. current work-surface role-local working memory,
-5. Bear-global shared anchors,
-6. broader Bear memory search,
-7. direct inspection of local workspace artifacts,
-8. general world knowledge.
+1. current conversation and trusted session briefing
+2. current role/channel/work-surface hints
+3. canonical work-surface anchors
+4. role-local working memory for that work surface
+5. Bear-global shared anchors
+6. broader Bear memory search
+7. direct artifact inspection
+8. general world knowledge
 
-This keeps `pair` from answering with a smooth but over-broad summary when more specific work-surface memory exists.
-
-Recommended canonical anchor layout for `pair` collaboration:
-
-```text
-core/work_surfaces/index.md
-core/work_surfaces/<work_surface_slug>/index.md
-core/work_surfaces/<work_surface_slug>/overview.md
-core/work_surfaces/<work_surface_slug>/glossary.md
-pair/work_surfaces/<work_surface_slug>/current-understanding.md
-```
-
-If canonical work-surface anchors exist, `pair` should prefer reading them over generic memory search for broad "what do you know / understand / remember about this?" questions.
-
-## Runtime and trust boundary
-
-`pair` is API-direct, not Letta Code-backed.
-
-Reasons:
-
-- ACP clients can have multiple sessions per connection; Letta Code harness state is too single-session-oriented for this role.
-- Client tools are mediated through ACP and should remain user-gated.
-- The `pair` tool surface should be narrow and exact, not inherited from a full harness.
-
-Trust posture:
+## Trust posture
 
 | Capability | Pair posture |
 |------------|--------------|
-| Private/raw context | Sees user workspace/session context and client-approved tool results. |
-| External communication | Client-mediated tools only, plus Den-mediated read-only retrieval tools. |
-| Durable state | Writes only its own `pair/` memory branch or Den-mediated structured records. |
-| Shared memory | Cannot write `core/` directly. Review promotes durable shared knowledge. |
-| Autonomous work | Cannot execute directly. Creates task intents for review. |
+| Private/raw context | Sees trusted workspace/session context and approved tool results |
+| External communication | Narrow read-oriented Den tools plus client-mediated actions |
+| Durable state | Writes role-local memory or structured Den records |
+| Shared memory | Cannot directly write shared canonical memory |
+| Autonomous work | Requests handoff or Docket work rather than executing arbitrary background action |
 
 ## Common use cases
 
-### Coding help
+### Coding and workspace help
 
 Examples:
 
-- "Explain this function."
-- "Refactor this file."
-- "Why is this test failing?"
-- "Use the IDE's read file tool to inspect the module."
+- explain a function
+- inspect a module
+- draft or apply a refactor
+- diagnose a failing test
 
 Expected behavior:
 
-- Use ACP client tools where appropriate.
-- Ask for permission through ACP for client-side operations.
-- Keep changes and analysis scoped to the active user session.
+- inspect relevant artifacts
+- ask for permission when local tools require it
+- keep work scoped to the active session and surface
 
-### Inline docs lookup
+### Inline documentation lookup
 
 Examples:
 
-- "Look up the Axum 0.8 docs for extractors."
-- "Check the SQLx offline-mode documentation."
-- "Fetch this API reference and use it to fix the code."
+- fetch a narrow API reference
+- look up a framework behavior
+- retrieve a focused docs page needed for the current turn
 
 Expected behavior:
 
-```text
-user asks for narrow docs lookup
-  -> pair calls web_search or web_fetch
-  -> Den executes the request under Bear policy and approval rules
-  -> Den returns bounded, quoted, cached snippets with source metadata
-  -> pair uses snippets in the current response
-```
-
-This should be immediate and inline. The result is context for the current coding turn, not automatically shared Bear memory.
+- use bounded read-only retrieval tools
+- treat the result as turn context, not automatically as shared Bear knowledge
 
 ### Durable local learning
 
 Examples:
 
-- "Remember that this repo uses Axum 0.8."
-- "Note that migrations go through sqlx and must not edit old files."
-- "For this codebase, prefer these naming conventions."
+- note a repo-specific convention
+- remember a migration rule
+- capture a local glossary or architecture fact
 
 Expected behavior:
 
-```text
-pair writes a note under pair/
-  -> review later reviews
-  -> if broadly useful, review promotes distilled knowledge to core/
-```
+- write role-local notes
+- let review/curation decide what becomes shared Bear memory
 
-Pair can write role-local notes, but cannot unilaterally write `core/`.
-
-When the learning is specific to one work surface, it should be recorded in a work-surface-aware location or with work-surface-aware structure rather than mixed indiscriminately into Bear-global understanding.
-
-### Durable skill learning
+### Broader research or report work
 
 Examples:
 
-- "Learn this checklist for reviewing API routes."
-- "Remember this debugging procedure as a reusable skill."
+- compare multiple external options
+- prepare a longer report
+- perform multi-source synthesis beyond the current edit loop
 
 Expected behavior:
 
-```text
-pair proposes skill
-  -> bear_skill_proposals
-  -> review reviews
-  -> Den updates skill manifest if approved
-  -> affected roles are re-provisioned/reconciled
-```
-
-Pair should not install skills directly.
-
-### Broad research / opinion formation
-
-Examples:
-
-- "Research industry approaches to multi-agent memory isolation and recommend one."
-- "Survey how frameworks handle agent tool permissions."
-- "Compare five options and prepare a report."
-
-Expected behavior:
-
-```text
-pair writes or requests a task intent / handoff
-  -> review reviews and approves/rejects
-  -> Den dispatches approved work to work
-  -> work writes a result/report
-  -> review promotes summary/report to core/results or core knowledge
-  -> pair can surface it to the user
-```
-
-This is not inline docs lookup. It is background work requiring synthesis, auditability, scoping, and possibly rate limiting.
+- offer either a quick inline lookup or a background work path
+- create a handoff or Docket task when the work should become asynchronous, auditable, or broader than the current turn
 
 ## Inline lookup vs delegated work
 
 Use inline `pair` retrieval when:
 
-- the user needs a specific fact or docs page now,
-- scope is narrow,
-- result can fit in a few snippets,
-- it supports the current coding turn,
-- it is read-only and low risk,
-- the user is actively waiting.
+- scope is narrow
+- the result supports the current turn immediately
+- it is mostly read-only
+- the user is actively waiting
 
-Delegate to `work` when:
+Delegate when:
 
-- the user asks for research, comparison, survey, or report,
-- the problem needs multi-source synthesis,
-- it may take minutes,
-- it requires repeated external calls,
-- the result should be auditable,
-- the output may become durable Bear knowledge,
-- it is not necessary for the immediate edit loop.
-
-When ambiguous, pair should ask:
-
-> I can do a quick docs lookup now, or create a background research task for a deeper report. Which do you want?
+- the task is broad research or synthesis
+- it may take minutes or repeated external calls
+- it should become auditable background work
+- the result may become durable shared knowledge
 
 ## Tool profile
 
-The `pair` role should have a deliberately narrow tool profile.
-
-### Client-mediated ACP tools
-
-These come from the user's ACP client and are governed by the client's permission model.
-
-Examples:
-
-- read file,
-- inspect workspace,
-- proposed edits,
-- run client-supported operations if approved.
-
-Den should preserve ACP-native approval semantics rather than pretending these are server-side tools.
-
-### Den-mediated retrieval tools
-
-These support inline docs lookup.
-
-Provider tools:
-
-- `web_search`
-- `web_fetch`
-
-Canonical Den names:
-
-- `den.web.search`
-- `den.web.fetch`
-
-Current implementation:
-
-- `web_fetch` / `den.web.fetch` is implemented with SSRF guards, timeouts, redirect limits, Bear-level source policy, approval flow, audit logging, and bounded content extraction.
-- `web_search` / `den.web.search` supports Brave Search when configured:
-
-```bash
-DEN_SEARCH_PROVIDER=brave
-BRAVE_SEARCH_API_KEY=...
-DEN_SEARCH_MAX_RESULTS=5
-```
-
-If these variables are not set, `den.web.search` returns a clear configuration error and `pair` should ask the user for a direct URL or explain that search is unavailable.
-
-Policy expectations:
-
-- read-only,
-- bounded result count,
-- bounded content size,
-- domain allow/deny controls,
-- source/citation metadata,
-- cacheable,
-- result text framed as untrusted external content,
-- no cookies or user secrets,
-- clear diagnostics for blocked domains or fetch failures.
-
-### Role-local memory tools
-
-Current tool:
-
-- `memory_write_entry`
-
-`memory_write_entry` is intentionally role-aware. Den resolves the caller's Bear role and writes to that role's allowed memory location. It supports semantic kinds such as `note`, `log`, `decision`, `reflection`, `scratch`, and `summary`.
-
-For `pair`, it writes only under pair-local paths, for example:
-
-```text
-pair/notes/<entry-id>.md
-pair/logs/<entry-id>.md
-pair/decisions/<entry-id>.md
-```
-
-It must not write `core/` directly, Cabinet, tasks, observations, or run results.
-
-### Memory review tools
-
-Future tool:
-
-- `memory_request_review`
-
-`memory_request_review` is the producer-side Reflection tool for asking `review` to review pair-local memory. It creates a memory proposal row for the `memory_curate` lane; it does not write `core/`, Cabinet, skills, tasks, observations, or run results.
-
-Pair should use this when local memory may matter beyond future pair sessions. The request can include a `suggested_action`, such as `summarize_into_core`, `promote_to_core`, `cabinet_update`, `skill_review`, `retain_role_local`, `delete_after_review`, `human_review`, or `unspecified`. `review` decides the final outcome.
-
-Pair should not request review for every local note. Most tactical notes can remain pair-local forever.
-
-### Structured delegation tools
-
-Current / near-term tools:
-
-- `den.work_plan.request_handoff`
-- future provider-facing `write_task_intent` or equivalent Docket-backed task-intent tool
-
-Pair uses structured delegation for external-effect requests and broad research tasks. The near-term implementation path is for `den.work_plan.request_handoff` to materialize a Den-generated task-intent artifact from selected workboard items. Docket may later own the richer task/project lifecycle.
-
-Pair should not directly choose durable task artifact paths; it provides semantic handoff or intent fields and Den chooses the path.
-
-### Skill proposal tools
-
-Skill learning belongs to Reflection's adaptation lane. Pair should not directly install durable skills.
-
-When pair discovers a reusable procedure, repeated failure mode, or user-requested behavior change, it should first write appropriate pair-local memory and then use `memory_request_review` with `suggested_action: skill_review` once that tool exists. Future dedicated skill tools may be added under Den's skill namespace, but they should remain proposal-and-review based.
-
-## `memory_write_entry` naming
-
-A shared tool name like `memory_write_entry` is a better fit than `write_note` because role-local memory includes more than notes.
-
-Benefits:
-
-- The agent-facing action is explicit: write a typed memory entry.
-- The policy remains centralized in Den.
-- Different roles can use the same affordance without gaining the same filesystem authority.
-- UI and logs can show a common action shape with role-specific outcomes and `kind` metadata.
-
-Required behavior:
-
-```text
-memory_write_entry(context, args)
-  -> Den authenticates caller context
-  -> Den resolves Bear + role
-  -> Den validates kind/title/body/refs/lifecycle/provenance
-  -> Den selects allowed destination for that role and kind
-  -> Den writes only to that role's memory area
-  -> Den records audit metadata
-```
-
-For example:
-
-| Role | `memory_write_entry` destinations |
-|------|---------------------------------------|
-| `chat` | `chat/notes/`, `chat/logs/`, `chat/decisions/`, ... |
-| `pair` | `pair/notes/`, `pair/logs/`, `pair/decisions/`, ... |
-| `review` | `review/notes/`, `review/reflections/`, `review/decisions/`, ... |
-| `work` | task/run-bound `work/logs/`, `work/decisions/`, `work/summaries/` |
-| `watch` | `watch/logs/` and summaries; observations should use observation tooling |
-
-The first implemented slice is `pair` only.
-
-## Memory edge: explicit content vs durable memory
-
-Pair should distinguish between:
-
-1. **temporary context** — web/docs search snippets used in the current turn;
-2. **role-local memory** — notes under `pair/` useful for future pair sessions;
-3. **shared Bear memory** — curated content promoted to `core/`;
-4. **reports/results** — explicit outputs from `work`, usually under `core/results/` after review review;
-5. **skills** — reviewed durable procedures in the Bear skill manifest.
-
-Pair should not treat every docs lookup as memory. It should only write notes when the information is likely useful beyond the current turn.
-
-Pair's memory decision ladder:
-
-1. **Use only in the current turn** when the information is temporary or already available from source files/docs.
-2. **Write pair-local memory** when the information is durable for future pair sessions.
-3. **Request Reflection review** when the information may matter across roles, belongs in `core/`, suggests a Cabinet update, or indicates a reusable skill/procedure.
-4. **Never directly mutate shared memory or behavior** from pair.
-
-## Recommended first implementation order
-
-1. Implement Den-mediated `web_search` / `web_fetch` or docs-oriented equivalents for pair.
-2. Implement role-aware `memory_write_entry` for pair-local memory.
-3. Expose `web_search`, `web_fetch`, `session_info`, and memory tools to the pair prompt/tool profile.
-4. Add diagnostics and tests showing pair can write to `pair/notes/` but cannot write `core/`.
-5. Implement `memory_request_review` so pair can request Reflection curation without writing shared memory.
-6. Implement Den-generated handoff/task-intent materialization through `den.work_plan.request_handoff`.
-7. Implement Docket-backed task/project lifecycle later for richer background-work delegation.
-
-## Good pair behavior examples
-
-### Narrow docs lookup
-
-User:
-
-> Look up the official docs for this function.
-
-Pair:
-
-> I found the relevant docs. The important constraint is ... [citation]. I'll use that in the change below.
-
-No durable memory is written unless the user asks or the fact is clearly project-stable.
-
-### Durable project note
-
-User:
-
-> Remember that this repo uses SQLx offline mode and we must run prepare after query changes.
-
-Pair:
-
-> Noted for future pair sessions. I wrote this to pair-local memory. If you want, I can also request Reflection review so `review` can decide whether it belongs in shared Bear memory.
-
-### Broad research
-
-User:
-
-> Research approaches to policy engines for task approval and recommend one.
-
-Pair:
-
-> This is broader than a quick docs lookup. I should create a reviewed background research request for the work role. For now, I can either do a quick inline scan or draft the handoff/task intent for review.
+`pair` should expose a deliberately narrow, trusted tool surface:
+
+- armature-local file/workspace/browser tools mediated by the client permission model
+- Den-hosted memory, planning, retrieval, and session/context tools
+- no broad autonomous outbound execution by default
+
+## Related docs
+
+- [bear roles](bear-roles.md)
+- [bear channel and ACP](bear-channel-and-acp.md)
+- [memory model](memory-model.md)
+- [planning](planning.md)
+- [tasks and autonomy](tasks-and-autonomy.md)

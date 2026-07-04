@@ -1,143 +1,110 @@
 # Planning in Bear Den
 
-> **Direction changed (2026-06).** Human-initiated jobs/tasks are now Docket-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)); the MemFS plan/task-intent/approved-task files and Letta Code planning layers are superseded for human work. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+Planning in Bear Den means a user-visible plan for active work and the surrounding control structures that let a Bear coordinate, pause, hand off, and resume that work.
 
-Planning in Bear Den means a user-visible mini-project plan for an active body of work. Plans are Bear-level records with role provenance, and they usually attach to a **work surface**: the durable work context the Bear is acting on, such as a repo, local checkout, service, deployment, Cabinet Mission, Docket project, or long-running responsibility.
+Planning is separate from long-term memory and separate from Docket task execution, but it connects to both.
 
-For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on planning behavior and planning artifacts rather than re-explaining the full role system.
+## Summary
 
-Planning is distinct from continuation, which keeps an agent going in an existing task loop, and from a Cabinet Mission, which is a larger shared knowledge/work container. Bear Den aligns with Letta Code's two planning layers while adapting them to Den's multi-role Bear architecture.
+- planning is the short- to medium-term structure around active work;
+- workboard plans are operational progress state, not the entire project archive;
+- pair mode (`Ask`, `Plan`, `Write`) shapes the interactive editing posture, not a separate runtime;
+- plans can attach to work surfaces and later hand off into Docket work;
+- plan artifacts may exist for approval, audit, or later reference.
 
 ## Two layers
 
-### 1. Live progress tracking
+### 1. Workboard progress tracking
 
-Live progress tracking is the lightweight todo/status list an agent updates while it works.
+The first layer is the lightweight todo/progress list the Bear updates while working.
 
-Letta Code has this as `TodoWrite` for Claude-style toolsets and `UpdatePlan` for Codex-style toolsets. In Letta Code this is mostly UI/state rendering; `UpdatePlan` is a no-op tool implementation whose arguments drive the visible plan, with a simple list of `{ step, status }` and statuses such as `pending`, `in_progress`, and `completed`.
+Bear Den uses a Den-owned workboard for this:
 
-Bear Den's Den equivalent is the **workboard**:
+- current visible steps
+- one `in_progress` item at a time
+- completion, blocking, and cancellation state
+- role provenance
+- optional work-surface attachment
 
-- table: `bear_work_plans`
-- audit stream: `bear_work_plan_events`
-- Den tools:
-  - `den.work_plan.update`
-  - `den.work_plan.get_status`
-  - `den.work_plan.list`
-  - `den.work_plan.request_handoff`
+This is the live collaboration surface for multi-step edits, debugging, planning, and visible progress.
 
-A workboard plan is intentionally small and operational. It records what the Bear is trying to do now, the current item, blockers, the role that created or last updated it, whether the plan should be private to that role, visible to the same user, visible to the Bear, or ready for handoff, and the current work-surface attachment when one is known.
+### 2. Pair session mode
 
-### 2. ACP pair session mode
+ACP `pair` sessions use **Ask**, **Plan**, and **Write** modes.
 
-Letta Code has `EnterPlanMode` and `ExitPlanMode`. Bear Den keeps the familiar **Ask**, **Plan**, and **Write** mode names for ACP `pair`, but treats them as user/client-controlled workflow modes rather than model-operated planning tools.
+These are client- and user-controlled workflow modes that shape the allowed tool posture and expected collaboration style:
 
-In Bear Den ACP:
+1. Ask: read/search/inspect posture
+2. Plan: explicit planning and proposal posture
+3. Write: mutation/execution/browser posture, still subject to approval and policy
 
-1. The user or ACP client UI selects Ask, Plan, or Write mode.
-2. ACP/Den records mode state for the current session.
-3. Ask and Plan modes expose read/search/inspect tools.
-4. Write mode enables mutation/execution/browser tools; concrete effects still require Den policy, adapter safety checks, and ACP client approval.
-5. The model should still plan in Write mode by using the workboard tools (`update_plan`, `get_plan_status`, `list_plans`, and `request_work_handoff`) and concise prose.
-6. The model-facing pair tool surface does not advertise Plan-mode control tools such as `enter_plan_mode`, `exit_plan_mode`, `record_plan_approval`, `get_plan_mode_status`, or `cancel_plan_mode`. Those transitions are controlled by the human/client UI or Den control surfaces.
+The model still uses workboard tools for planning; modes are not themselves model-operated planning tools.
 
-## Planning objects and how they relate
-
-These are related but different objects:
+## Planning objects
 
 | Object | Owner | Purpose | Durability |
 |--------|-------|---------|------------|
-| Work surface | Den canonical model and anchors | Durable work context that planning, tasks, artifacts, memory, and activity can attach to | Durable continuity object, not an authorization boundary |
-| Workboard plan | Den DB | Current visible todo/progress state | Durable enough for resume/status, but not a project archive |
-| Plan artifact | MemFS or approved local plan file | Proposed implementation plan for user approval before mutation or future reference | Durable markdown artifact |
-| Task intent | MemFS | Request for reviewed background/autonomous work | Durable input to `review` review |
-| Approved task | MemFS | Review-approved executable work for `work` | Durable task definition |
-| Work result | MemFS/Garage | Result/log/report from `work` | Durable output, curatable into `core/` |
-
-A workboard plan can attach to a **work_surface_id** when Den can resolve or infer one from available anchors. Those anchors may include a local checkout path, workspace root, normalized Git remote, service name, deployment id, Cabinet Mission reference, Docket project reference, or artifact path. A workboard plan can link to a task intent when `den.work_plan.request_handoff` is used. A pre-implementation plan artifact may later be summarized into a workboard plan, task intent, or role-local memory, but it is not itself a Cabinet Mission.
-
-Role is provenance and policy metadata for a plan, not the primary product owner. Cross-role visibility is not cross-role authority: a `pair` plan intended for `work` still needs handoff, review, and Den dispatch before `work` may execute it.
+| Work surface | Den canonical model and anchors | Durable context for related work | durable continuity object |
+| Workboard plan | Den DB | Current visible todo/progress state | resume/status durability |
+| Plan artifact | Den-controlled artifact or approved workspace file | User-reviewable plan proposal or saved implementation plan | durable artifact |
+| Docket task / job | Docket in Den Postgres | Approved background or autonomous work | canonical work-management record |
+| Work result | Docket + related artifacts/memory | Outcome of approved work | durable result with optional curation |
 
 ## Work-surface continuity
 
-Planning should follow the same work-surface continuity model used elsewhere in Bear Den.
+Plans should attach to the same durable work surfaces used elsewhere in Bear Den.
 
 A common flow is:
 
-1. `pair` encounters a local checkout or workspace root,
-2. starts a workboard plan or writes a plan artifact against that current work,
-3. Den records the observed anchor and may resolve a provisional work surface,
-4. Den canonicalizes the work surface when a stronger durable anchor is available, such as a normalized Git remote,
-5. and later `work` re-materializes that same work surface in a different runtime to execute an approved task.
+1. `pair` identifies the current repo/service/deployment/project;
+2. it creates or updates a workboard plan attached to that work surface;
+3. a plan artifact may be produced for human review or future reference;
+4. if work becomes broader or asynchronous, the plan can hand off into Docket work;
+5. later `work` runs against the same work surface rather than treating the task as unrelated.
 
-Key principle: plans, handoffs, task intents, approved tasks, runs, and related memory should attach to the durable **work_surface_id**, not only to a machine-local checkout path.
+## Pair behavior
 
-## Pair role behavior
+`pair` should use planning for:
 
-`pair` should use planning like a collaborative coding agent:
+- non-trivial multi-step edits
+- debugging loops
+- user-visible progress tracking
+- handoff preparation
+- broader problem decomposition
 
-- Use `den.work_plan.update` for non-trivial mini-projects, multi-step edits, debugging loops, and user-visible progress.
-- Keep at most one item `in_progress`.
-- Mark items `completed`, `blocked`, or `cancelled` as reality changes.
-- Use `den.work_plan.get_status` to recover the current ACP session's plan after interruption.
-- Include available work-surface signals and anchors such as repo, local checkout, workspace root, normalized Git remote, service, deployment, Cabinet Mission, Docket project, or artifact path when relevant.
-- Use `den.work_plan.request_handoff` when the plan becomes broader background work that needs `review` review and `work` execution.
-- Do not treat every response as requiring a plan; very small single-step answers can proceed without one.
+`pair` should not force a plan for every tiny answer or one-step edit.
 
-## Work role behavior
+## Work behavior
 
-`work` is Letta Code-backed and should continue to use Letta Code's native planning affordances where available. Den should still expose the workboard tools to `work` so approved tasks can surface status to Den, operators, and other Bear roles.
+`work` executes approved background work, not arbitrary channel-originated plans.
 
-`work` must execute only approved task definitions, not channel-originated workboard plans directly.
+It may surface progress back into Den work-management state, but execution authority comes from approved Docket work, not from a visible planning list alone.
 
-When `work` executes against a repo-oriented task, it may materialize a fresh checkout in a different runtime. That checkout should be treated as another observed anchor on the same work surface rather than as unrelated planning state.
+## Planning and memory
 
-## Memory interaction
-
-Planning state is not shared Bear memory by default.
+Planning state is not automatically shared Bear memory.
 
 Use this ladder:
 
-1. Keep tactical progress in the Den workboard.
-2. Write a plan artifact for pre-implementation approval when mutation should be gated.
-3. Write role-local memory only when the plan or its rationale will matter beyond the current mini-project.
-4. Request curation when lessons, decisions, or results should become shared `core/` memory.
-5. Use task intents and approved tasks for autonomous/background work.
+1. keep tactical progress in the workboard
+2. use a plan artifact when approval, audit, or later retrieval matters
+3. write role-local memory when rationale should survive the current mini-project
+4. request curation when lessons or decisions should become shared Bear knowledge
+5. use Docket work when the task becomes autonomous/background execution
 
-A simple Den memory log of plans underway/completed can be derived from `bear_work_plan_events` and selected summaries rather than copying every plan into `core`.
+## Current implementation shape
 
-## Current implementation state
+The current architecture assumes:
 
-Implemented:
-
-- Den DB-backed workboard schema and event table.
-- Work plan validation with at most one `in_progress` item.
-- Den workboard tools and role policy.
-- ACP prompt injection of current session workboard context.
-- ACP pair exposure of Den workboard tools (`update_plan`, `get_plan_status`, `list_plans`, and `request_work_handoff`).
-- ACP pair plan-mode DB schema and audit events.
-- Den internal/API plan-mode operations for user/client-controlled mode transitions.
-- ACP prompt reminders that treat mode as user/client-controlled and direct the model to workboard planning tools instead of mode-control tools.
-- Pair-local `plan` memory entries under `pair/plans/` for markdown plan artifacts.
-- ACP `ask` and `plan` modes expose read/search/inspect tools; `write` mode enables mutation/execution/browser tools, which still require concrete ACP client approval and Den/adapter policy checks.
-- Plan-mode artifact submission and approval remain available through Den control surfaces when needed for workflow/audit, but they are not advertised as model-facing ACP pair tools and planning approval is not a global prerequisite for mutation.
-- ACP native `plan` updates projected from Den workboard items.
-- ACP native mode/config updates using `Ask`, `Plan`, and `Write` modes.
-- ACP `session/new` / `session/resume` mode state with both modern `configOptions` and legacy `modes` compatibility.
-
-Planned:
-
-- Operator and chat UI for active/completed plans.
-- A unified Bear-level `list_plans` view that includes live workboard plans, active/submitted planning artifacts, saved plan artifacts, handoffs/task intents, and available work-surface references.
-- Work-surface resolution and canonicalization from ACP workspace roots, local checkout paths, Git remotes, Cabinet Mission references, Docket project references, service names, deployments, and artifact paths.
-- Handoff implementation from workboard items to durable task intents.
-- Reflection/review of completed plan summaries and durable lessons.
+- Den-owned workboard state and events
+- ACP pair mode state
+- work-surface-aware plan continuity
+- handoff from active planning into Docket work
+- runtime/context reminders that help the model use plans appropriately
 
 ## Related docs
 
+- [tasks and autonomy](tasks-and-autonomy.md)
+- [task schema](task-schema.md)
 - [bear roles](bear-roles.md)
-- [Environment Affordance and Resource Boundaries ADR](../decisions/adr-0028-environment-affordance-and-resource-boundaries.md)
-- [Bear Den and Den](bears-and-den.md)
-- [Memory model](memory-model.md)
-- [Tasks and autonomy](tasks-and-autonomy.md)
-- [Bear Workplaces ADR](../architecture/adr/bear-workplaces.md)
+- [memory model](memory-model.md)

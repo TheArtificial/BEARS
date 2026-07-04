@@ -1,81 +1,163 @@
-# Architecture notes
+# Overview
 
-> **Superseded (2026-06).** The stack diagram below (Den -> Letta Code -> Letta -> Bifrost, Letta-native memory) predates the Den-native runtime migration. Canonical target: [Den-Native Runtime](den-native-runtime.md) and its [migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md). Read this as historical.
+This document is the one-page system picture for Bear Den.
 
-Single-page view of the Bear Den stack on Coolify. **Roadmap and contracts:** [PLAN.md](../planning/PLAN.md). **Den + multi-user web:** [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).
+For the full canonical runtime description, read [den-native-runtime](den-native-runtime.md). This page is the compressed view: components, responsibilities, and the main execution/data flows.
 
-## Target architecture
+## Core claim
 
-**Cabinet** (**Outline**) is the shared knowledgebase: humans edit in Outline; **bears** access it through **Den** (Cabinet API, policy). **Letta** keeps **native memory** (blocks, conversations) for the active role runtimes during migration—Cabinet does not replace that. **Bear** = one assistant identity with multiple roles; **Bear Den** = the product. See [PLAN.md](../planning/PLAN.md) terminology.
+Bear Den is a Den-owned assistant system with:
 
-Three layers (see [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md)): **persistence (Letta)** → **harness (Letta Code)** → **control plane (Den)** for operations; web and Slack sit on the harness.
+- one native runtime loop per turn, executed in-process inside Den;
+- one canonical Bear identity composed of multiple roles;
+- one control plane for access, routing, approvals, tasks, and configuration;
+- two canonical persistence domains:
+  - per-Bear SQLite for Bear cognition and curated memory;
+  - Den Postgres for conversations, approvals, compiled configs, Docket work, identity, and schedulers.
 
+## Main components
+
+| Component | Responsibility |
+|-----------|----------------|
+| **Den runtime core** | Turn orchestration, context assembly, tool execution, continuation, compaction, and event production |
+| **Den Postgres** | Conversations, transcript artifacts, approvals, users, Bears, compiled configs, prompt memory blocks, reflection queue, Docket jobs/tasks |
+| **Per-Bear SQLite** | Canonical Bear cognition: memory records, promotions, proposals, observations, reflection outcomes |
+| **Bifrost** | Model gateway used directly by Den for inference |
+| **ACP/BearWire edge** | Trusted armature integration for local tools, permission UI, and turn projection |
+| **Web/API edges** | Browser chat, operator/admin surfaces, JSON/API entry points |
+| **Sandboxes** | Den-managed isolated work surfaces for code execution, filesystem access, and outbound work when required |
+| **Git** | Human-authored repository artifacts such as prompt fragments, policies, and skill source material |
+
+## System diagram
+
+```text
+Humans / clients
+  |- ACP armatures
+  |- web chat / operator UI
+  |- API consumers / future channels
+          |
+          v
+       Den edges
+          |
+          v
+   Den-native runtime core
+  |- turn orchestration
+  |- context assembly
+  |- tool routing
+  |- approval handling
+  |- semantic event stream
+          |
+   -----------------------------
+   |            |             |
+   v            v             v
+Bifrost   Den Postgres   per-Bear SQLite
+                          |
+                          v
+                    canonical Bear cognition
 ```
-Den (chat UI) ───────────────┐     Outline (human editing)
-                             ├──► Den ──Cabinet API───────┘
-                             │      │──────────────► Garage (S3)
-                             │      └──► Letta Code ──► Letta ──► Bifrost ──► providers
-```
-(Den serves the first-party browser chat UI (Deep Chat); **Letta Code** is the mandatory harness for harness-backed role chat — [DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md).)
 
-**Until Den is deployed:** you can exercise Letta + Bifrost directly; add Den + Outline per [PLAN.md](../planning/PLAN.md).
+## What Den is capable of
 
-## Components
+At system level, Den can:
 
-| Component | Role |
-|-----------|------|
-| **Den** | **Operator console** (browser: users, bears, Letta provision, **skills and MCP servers per bear**, harness deploy config); **bear** provisioning on Letta + **Letta Code** config + **skill and MCP materialization**; **local MCP catalog** and per-bear attachments (Phase 1); **users↔bears** membership; auth; **web** routing **Den → Letta Code**; first-party chat UI; **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** (**control-plane tool definitions and policy in Den**; **Letta Code** brokers execution; **no** ad hoc tool code in Letta for these; MCP remains for optional third-party servers); Cabinet API; **Bifrost** for **observability on the bear model path** (Letta → Bifrost direct for chat); future Den-side LLM usage may differ ([PLAN.md](../planning/PLAN.md) §2.5) |
-| **Letta Code** | **[Harness](https://docs.letta.com/letta-code)** for web (via Den) and **Slack** ([Channels](https://docs.letta.com/letta-code/channels/), beta); uses **Letta** for persistence; loads [skills](https://docs.letta.com/letta-code/skills/) from paths Den manages; **brokers** [Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools) (Den APIs) to role runtimes. **WhatsApp** is desired but not in Letta Code Channels yet. |
-| **Letta** | **Persistence** for the harness: tools, memory blocks, conversations, and runtime state for Letta-backed Bear roles |
-| **Bifrost** | Unified OpenAI-compatible model gateway (`/v1`) — see `services/bifrost/` |
-| **Den chat UI** | **Only** first-party web chat — Deep Chat web component served by Den; reference client for Den streaming APIs |
-| **Garage** | S3-compatible object storage — **artifacts** bucket (runtime outputs, uploads, routines; **not** in Letta) + **separate** Cabinet bucket (Outline); GC on artifacts — [artifacts-garage.md](adr/artifacts-garage.md), [`services/garage/`](../../services/garage/) |
-| **Outline** | Cabinet storage and UI |
+- host durable Bear identities with multiple roles;
+- route different surfaces to the correct trust posture and tool surface;
+- run interactive turns with tools and approvals;
+- maintain canonical Bear memory and role-local knowledge;
+- persist replayable conversations and tool interactions;
+- manage workboard plans, Docket tasks, handoffs, and autonomous work;
+- schedule and run reflection/review workflows;
+- expose Den-hosted tools and armature-local tools through stable model-facing descriptors;
+- compile role prompts and runtime context from managed configuration;
+- and project the same core runtime into ACP, web, and future channels.
 
-## Letta
+## Primary execution flows
 
-- Image: `letta/letta:latest`, port `8283`  
-- Models via `LLM_API_URL` → Bifrost  
-- Shared knowledge: Cabinet tools (via Den) when deployed  
-- **Shared memory blocks:** multiple concurrent writers can race on the same block; compiled context can be stale across conversations until recompile—see [PLAN.md § Shared memory blocks and concurrency](../planning/PLAN.md#shared-memory-blocks-and-concurrency-letta).
+### 1. Interactive armature turn
 
-## Data flow
+1. The human sends a prompt through an ACP armature.
+2. BearWire/ACP edge authenticates the session and resolves the Bear + role.
+3. Den assembles turn context from compiled prompt, projected memory, prompt-memory, transcript, and tool surface.
+4. Den streams inference through Bifrost.
+5. The model emits content and possibly tool calls.
+6. Den executes Den-hosted tools directly and emits client obligations for armature-local tools.
+7. Approvals and local tool results flow back through the edge into the same turn coordinator.
+8. Den persists replayable transcript artifacts and returns user-visible updates.
 
-**Web (target with Den):** User → Den chat page → **Den → Letta Code → Letta** → Bifrost → providers.
+### 2. Web/chat turn
 
-**Web (no Den yet):** exercise Letta + Bifrost directly (e.g. Letta UI on `:8283`); first-party multi-user web chat lands with Den.
+1. The human sends a prompt through the Den web/chat surface.
+2. Den resolves the Bear, channel, and role.
+3. The same runtime loop executes in-process.
+4. Den-hosted tools run directly; channel-specific approvals or restrictions are enforced by Den policy.
+5. Transcript and tool activity are persisted in the same canonical stores.
 
-**Slack + harness:** **Slack** → **Letta Code** ([Channels](https://docs.letta.com/letta-code/channels/)) → **Letta**; **web** → **Den → Letta Code → Letta**. Den drives **which bears**, **which skills**, **which MCP servers**, and harness config. **WhatsApp:** not in Letta Code Channels yet—roadmap. Optional later: channel-only Den proxy for audit ([PLAN.md](../planning/PLAN.md)).
+### 3. Background work
 
-**Cabinet:** Bear tool calls → **Letta Code** → **Den** → Outline. **Architecture:** role-facing Cabinet operations use the **[Den meta tools](DEN_ARCHITECTURE.md#den-meta-tools-bears-control-plane-tools)** pattern (Den APIs + Letta Code broker), not a separate MCP layer by default.
+1. A Bear or human creates or approves Docket work.
+2. Den scheduler/queue claims the work.
+3. `work` executes under a constrained capability profile, often with sandbox access.
+4. Results are written to Docket/Den state and may also produce memory proposals or curated summaries.
 
-## Ports (internal)
+### 4. Reflection and curation
 
-| Service | Port |
-|---------|------|
-| Den (HTTP) | app-defined (e.g. 3000 behind Coolify) |
-| Garage S3 API | 3900 |
-| Garage Admin | 3903 |
-| Letta | 8283 |
-| Bifrost | 8080 |
+1. Den scheduler triggers a reflection or review run.
+2. A reflection lane reads canonical memory and related signals.
+3. Outcomes are stored in per-Bear SQLite and queue/scheduler state in Postgres.
+4. Approved promotions update shared Bear memory and may refresh derived recall indexes.
 
-Expose only what users need (e.g. Den behind Coolify proxy).
+## Storage model
 
-## Object storage (Garage)
+### Per-Bear SQLite
 
-[Garage](https://garagehq.deuxfleurs.fr/) is the S3-compatible store for **files that must not live in Letta** (or large blobs in Postgres). Den issues presigned S3 URLs — browsers upload/download directly to Garage; Den never proxies the bytes.
+Use this for Bear cognition:
 
-- **`bears-artifacts`** — Ephemeral **artifacts**: runtime/tool/skill outputs, **human uploads**, routine file outputs; **metadata** (e.g. `conversation_id`, provenance); **garbage collection** by Den policy. Not Cabinet.
-- **`bears-cabinet`** — **Cabinet / Outline** attachments only (Phase 2+); **no** artifact GC rules from Den; optional **promote artifact → Cabinet** UX later.
-- **Auth:** scoped service keys (Den for artifacts; Outline/Cabinet wiring separately).
-- **Backup:** Garage volumes remain part of the three-input contract (repo + DB backups + object storage).
+- canonical memory records
+- supersession chains and promotions
+- role-local knowledge
+- observations and memory proposals
+- reflection outcomes and related cognition artifacts
 
-Architecture: [artifacts-garage.md](adr/artifacts-garage.md). Deploy: [`services/garage/COOLIFY_DEPLOY.md`](../../services/garage/COOLIFY_DEPLOY.md).
+### Den Postgres
 
-## Multi-user
+Use this for control-plane and interaction state:
 
-[DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) — Den (Axum), self-hosted Letta; **v1** web via Den, **Letta Code** harness ([PLAN.md](../planning/PLAN.md)).
+- users, membership, Bears, and access control
+- conversations and transcript projection data
+- approvals and client obligations
+- compiled prompts and prompt-memory blocks
+- workboard plans and Docket jobs/tasks
+- reflection scheduler/queue rows
 
-## Next steps
+## Boundaries that matter
 
-Den + Outline deployment, observability dashboards—see [PLAN.md](../planning/PLAN.md). **Phase 1** includes the **MCP local catalog** (Coolify for server processes, Den for catalog and bear attachments)—[DEN_ARCHITECTURE.md](DEN_ARCHITECTURE.md) (Den-managed MCP servers). **Phase 2** adds Cabinet tools—[PLAN.md §3 Phase 2](../planning/PLAN.md#phase-2--introduce-cabinet-as-an-abstract-service-outline-still-in-background).
+### Bear vs Den
+
+- The Bear is the assistant identity and its cognition.
+- Den is the infrastructure, policy, runtime, and control plane that makes that Bear usable.
+
+### Core runtime vs edges
+
+- The runtime is protocol-neutral.
+- ACP/BearWire, web, and APIs are projections over the same core events and state transitions.
+
+### Cognition vs work management
+
+- Bear memory is not the task tracker.
+- Docket jobs/tasks are infrastructure the Bear uses, not part of the Bear's canonical cognition.
+
+### Den-hosted vs armature-local tools
+
+- Den-hosted tools execute inside Den.
+- Armature-local tools execute through the trusted client/armature boundary and return results to Den.
+
+## Related docs
+
+- [den-native-runtime](den-native-runtime.md)
+- [den crate architecture](den-crate-architecture.md)
+- [den bear spec](den-bear-spec.md)
+- [bears and den](bears-and-den.md)
+- [bear channel and ACP](bear-channel-and-acp.md)
+- [memory model](memory-model.md)
+- [reflection system](reflection-system.md)
+- [tasks and autonomy](tasks-and-autonomy.md)

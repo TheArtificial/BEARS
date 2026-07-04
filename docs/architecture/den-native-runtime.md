@@ -1,8 +1,8 @@
-# Den-Native Runtime (Target Architecture)
+# Den-Native Runtime
 
-**Status:** Target architecture (direction set 2026-06). Supersedes the Letta-backed runtime described in older architecture and roadmap docs.
+**Status:** Canonical runtime architecture.
 
-This document is the canonical description of the **post-Letta** Bear Den runtime. It is the architecture source of truth that the migration plan in [`../roadmap/DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md) drives toward.
+This document is the architecture source of truth for the live Bear Den runtime model.
 
 It rests on these decisions:
 
@@ -13,7 +13,7 @@ It rests on these decisions:
 - [ADR-0043 — ACP is an edge adapter; the Den runtime is protocol-agnostic](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md) — the runtime below owns turns/sessions/events under neutral names; ACP is one edge
 - [ADR-0046 — File-backed prompt fragments and compiled runtime prompts](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md) — repository-authored prompt fragments + runtime-authored compile-time-only prompt content compiled into hot-path prompt bases
 
-## Why this exists (the direction change)
+## Why this architecture exists
 
 The earlier plan converged on a clean trait seam (`RuntimeTurnBackend` / `RuntimeCancellationBackend` / `RuntimeConversationBackend`) whose only implementation was Letta. That seam is a faithful re-model of Letta's HTTP **process boundary** — it enshrines "Den control plane + Letta execution process," a split that only ever existed because we built on Letta, an external project.
 
