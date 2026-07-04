@@ -7,6 +7,7 @@ use crate::{
     truncate_for_log, SessionContext, ToolPolicy,
 };
 use anyhow::{anyhow, Context, Result};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
@@ -31,28 +32,89 @@ fn resolve_optional_session_tool_root(
     }
 }
 
+fn parse_fs_args<T: for<'de> Deserialize<'de>>(value: &Value) -> Result<T> {
+    serde_json::from_value(value.clone()).map_err(|err| anyhow!("invalid filesystem tool args: {err}"))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadTextFileArgs {
+    path: String,
+    #[serde(default)]
+    line: Option<u64>,
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListDirectoryArgs {
+    path: String,
+    #[serde(default)]
+    recursive: Option<bool>,
+    #[serde(default)]
+    include_hidden: Option<bool>,
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FindPathsArgs {
+    glob: String,
+    #[serde(default)]
+    root: Option<String>,
+    #[serde(default)]
+    include_hidden: Option<bool>,
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchFilesArgs {
+    path: String,
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    limit: Option<u64>,
+    #[serde(default)]
+    max_bytes: Option<u64>,
+    #[serde(default)]
+    include_hidden: Option<bool>,
+    #[serde(default)]
+    case_sensitive: Option<bool>,
+    #[serde(default)]
+    pattern: Option<String>,
+    #[serde(default)]
+    extensions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatArgs {
+    path: String,
+    #[serde(default)]
+    include_symlink_target: Option<bool>,
+}
+
 pub(crate) async fn handle_read_text_file(
     context: &SessionContext,
     session_id: &str,
     params: Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let path = params
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("bears/read_text_file params missing path"))?;
-    let line = params
-        .get("line")
-        .and_then(Value::as_u64)
+    let args: ReadTextFileArgs = parse_fs_args(&params)?;
+    let line = args
+        .line
         .unwrap_or(1)
         .max(1) as usize;
     let policy_max_lines = policy.max_lines.unwrap_or(2_000).clamp(1, 2_000);
-    let limit = params
-        .get("limit")
-        .and_then(Value::as_u64)
+    let limit = args
+        .limit
         .map(|v| v.clamp(1, policy_max_lines as u64) as usize)
         .unwrap_or(400.min(policy_max_lines));
-    let path = resolve_session_tool_path(context, path)?;
+    let path = resolve_session_tool_path(context, &args.path)?;
     let started = std::time::Instant::now();
     let raw = tokio::fs::read_to_string(&path)
         .await
@@ -104,27 +166,21 @@ pub(crate) async fn handle_list_directory(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("fs_list_directory args missing path"))?;
+    let args: ListDirectoryArgs = parse_fs_args(args)?;
     let recursive = args
-        .get("recursive")
-        .and_then(Value::as_bool)
+        .recursive
         .or(policy.recursive_default)
         .unwrap_or(false);
     let include_hidden = args
-        .get("include_hidden")
-        .and_then(Value::as_bool)
+        .include_hidden
         .or(policy.include_hidden_default)
         .unwrap_or(false);
     let policy_max_entries = policy.max_entries.unwrap_or(1_000).clamp(1, 1_000);
     let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
+        .limit
         .map(|v| v.clamp(1, policy_max_entries as u64) as usize)
         .unwrap_or(200.min(policy_max_entries));
-    let path = resolve_session_tool_path(context, path)?;
+    let path = resolve_session_tool_path(context, &args.path)?;
     let started = std::time::Instant::now();
     let mut entries = Vec::new();
     let mut total_entries_seen = 0usize;
@@ -214,25 +270,19 @@ pub(crate) async fn handle_find_paths(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let glob = args
-        .get("glob")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow!("fs_find_paths args missing glob"))?;
-    let root = resolve_optional_session_tool_root(
-        context,
-        args.get("root").and_then(Value::as_str),
-    )?;
+    let args: FindPathsArgs = parse_fs_args(args)?;
+    let glob = args.glob.trim();
+    if glob.is_empty() {
+        return Err(anyhow!("fs_find_paths args missing glob"));
+    }
+    let root = resolve_optional_session_tool_root(context, args.root.as_deref())?;
     let include_hidden = args
-        .get("include_hidden")
-        .and_then(Value::as_bool)
+        .include_hidden
         .or(policy.include_hidden_default)
         .unwrap_or(false);
     let policy_max_results = policy.max_results.unwrap_or(500).clamp(1, 500);
     let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
+        .limit
         .map(|v| v.clamp(1, policy_max_results as u64) as usize)
         .unwrap_or(100.min(policy_max_results));
     let started = std::time::Instant::now();
@@ -299,35 +349,24 @@ pub(crate) async fn handle_search_files(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("fs_search_files args missing path"))?;
-    let query = args
-        .get("query")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("");
+    let args: SearchFilesArgs = parse_fs_args(args)?;
+    let query = args.query.as_deref().map(str::trim).unwrap_or("");
     let policy_max_results = policy.max_results.unwrap_or(200).clamp(1, 200);
     let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
+        .limit
         .map(|v| v.clamp(1, policy_max_results as u64) as usize)
         .unwrap_or(50.min(policy_max_results));
     let policy_max_bytes = policy.max_bytes.unwrap_or(1_048_576).clamp(1, 5_242_880);
     let max_bytes = args
-        .get("max_bytes")
-        .and_then(Value::as_u64)
+        .max_bytes
         .map(|v| v.clamp(1, policy_max_bytes))
         .unwrap_or(policy_max_bytes);
     let include_hidden = args
-        .get("include_hidden")
-        .and_then(Value::as_bool)
+        .include_hidden
         .or(policy.include_hidden_default)
         .unwrap_or(false);
-    let filters = search_filters_from_args(args)?;
-    let path = resolve_requested_tool_path(context, path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let filters = search_filters_from_typed_args(&args)?;
+    let path = resolve_session_tool_path(context, &args.path)?;
     let started = std::time::Instant::now();
     let mut files = Vec::new();
     let mut file_collection_truncated = false;
@@ -450,16 +489,11 @@ pub(crate) async fn handle_stat(
     args: &Value,
     _policy: &ToolPolicy,
 ) -> Result<Value> {
-    let raw_path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("fs_stat args missing path"))?;
+    let args: StatArgs = parse_fs_args(args)?;
     let include_symlink_target = args
-        .get("include_symlink_target")
-        .and_then(Value::as_bool)
+        .include_symlink_target
         .unwrap_or(false);
-    let path = resolve_requested_tool_path(context, raw_path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let path = resolve_session_tool_path(context, &args.path)?;
     let metadata =
         fs::symlink_metadata(&path).with_context(|| format!("stat {}", path.display()))?;
     let file_type = metadata.file_type();
@@ -1757,30 +1791,21 @@ fn collect_search_files(
     Ok(())
 }
 
-fn search_filters_from_args(args: &Value) -> Result<SearchFilters> {
-    let case_sensitive = args
-        .get("case_sensitive")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
+fn search_filters_from_typed_args(args: &SearchFilesArgs) -> Result<SearchFilters> {
+    let case_sensitive = args.case_sensitive.unwrap_or(true);
     let pattern = args
-        .get("pattern")
-        .and_then(Value::as_str)
+        .pattern
+        .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     let extensions = args
-        .get("extensions")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(normalize_extension)
-                .filter(|s| !s.is_empty())
-                .take(10)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+        .extensions
+        .iter()
+        .map(|value| normalize_extension(value))
+        .filter(|s| !s.is_empty())
+        .take(10)
+        .collect::<Vec<_>>();
     Ok(SearchFilters {
         case_sensitive,
         pattern,
@@ -1946,5 +1971,32 @@ mod tests {
         assert!(glob_match("**/*.rs", "services/den/src/lib.rs"));
         assert!(glob_match("src/**", "src/nested/lib.rs"));
         assert!(glob_match("**/Cargo.toml", "services/den/Cargo.toml"));
+    }
+
+    #[test]
+    fn parse_read_text_file_args_requires_path() {
+        let args = parse_fs_args::<ReadTextFileArgs>(&json!({ "path": "/workspace/README.md" }))
+            .expect("valid args");
+        assert_eq!(args.path, "/workspace/README.md");
+
+        assert!(parse_fs_args::<ReadTextFileArgs>(&json!({ "line": 1 })).is_err());
+    }
+
+    #[test]
+    fn search_filters_from_typed_args_normalizes_extensions() {
+        let args = SearchFilesArgs {
+            path: "/workspace".to_string(),
+            query: Some("needle".to_string()),
+            limit: None,
+            max_bytes: None,
+            include_hidden: None,
+            case_sensitive: Some(false),
+            pattern: Some("src/**/*.rs".to_string()),
+            extensions: vec![".RS".to_string(), " md ".to_string()],
+        };
+        let filters = search_filters_from_typed_args(&args).expect("filters");
+        assert_eq!(filters.case_sensitive, false);
+        assert_eq!(filters.pattern.as_deref(), Some("src/**/*.rs"));
+        assert_eq!(filters.extensions, vec!["rs".to_string(), "md".to_string()]);
     }
 }
