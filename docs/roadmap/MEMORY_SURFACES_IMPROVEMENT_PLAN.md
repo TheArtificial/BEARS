@@ -226,8 +226,9 @@ Start with the smallest useful observability pass before changing memory behavio
    - active memory/context layers;
    - projected-memory counts and source labels;
    - whether compaction ran and which source range it summarized.
-3. Add one small runnable check around the diagnostic serialization so missing/unknown fields degrade to explicit `unknown` values instead of disappearing.
-4. Update this plan with the exact follow-up workstream owners once the audit identifies which fields are already available.
+3. Shape the model-facing output around the [Bear memory model-experience guide](../guides/bear-memory.md#model-experience): each field should identify the layer it describes, use explicit `unknown`/`unavailable` values when data is missing, and point at the next tool/surface the model can inspect.
+4. Add one small runnable check around the diagnostic serialization so missing/unknown fields degrade to explicit `unknown` values instead of disappearing.
+5. Update this plan with the exact follow-up workstream owners once the audit identifies which fields are already available.
 
 This slice should not add new memory-retention behavior. It only makes the current environment easier to inspect and debug.
 

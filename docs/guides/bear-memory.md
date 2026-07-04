@@ -43,6 +43,29 @@ Den builds **Turn Context** in layers. The model does **not** receive the whole 
 
 See [Turn context assembly](../architecture/den-runtime.md#turn-context-assembly), [Prompt Fragment Registry](../architecture/prompt-fragment-registry.md), and [v1 projection policy](../architecture/den-runtime.md#v1-selection-policy-locked) for path lists and char budgets.
 
+## Model experience
+
+The model's memory experience should be explicit enough to answer user questions like "what can you see?" without inventing hidden state.
+
+When a Bear reasons about memory, it should be able to distinguish:
+
+- **Conversation context** — recent messages and tool results currently in the model window.
+- **Projected memory** — selected durable-memory snippets injected into the prompt before the turn.
+- **Recalled memory** — search/embedding results retrieved for the current turn.
+- **Persistent memory** — the larger SQLite-backed store available through memory tools.
+- **Task/work state** — Docket/task-list state, not semantic memory.
+- **Runtime/tool surface** — tool schemas, environment diagnostics, and compaction metadata.
+
+Useful model-facing surfaces should therefore expose:
+
+- which layer supplied a fact;
+- whether that layer is durable, transient, or task-local;
+- why a memory was projected or recalled;
+- whether context was compacted, omitted, or unavailable;
+- what the model can inspect next with tools.
+
+The desired failure mode is also explicit: if Den cannot provide a field, surface `unknown`/`unavailable` rather than letting the model guess. Short chat answers can stay concise, but detailed diagnostics should be available when the user is debugging memory behavior.
+
 ## Work surfaces
 
 Memory is Bear-wide, but answers should **ground on the current project, repo, or surface** when one is known. Both anchor projection and derived recall apply work-surface filters when a primary surface is resolved or confirmed. See [`work-surfaces-and-conversations.md`](work-surfaces-and-conversations.md).
