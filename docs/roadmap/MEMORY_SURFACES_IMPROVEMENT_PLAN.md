@@ -27,6 +27,14 @@ This plan is about **surfaces and controls** around existing memory/recall syste
 - Do not mix task/workplan state into semantic memory.
 - Do not add a new dependency where existing Den diagnostics, SQLite metadata, or Docket state can cover the need.
 
+## Implementation constraints
+
+- Prefer surfacing fields and state that already exist before adding schema.
+- Keep task state in Docket/task-list surfaces; only promote project facts to semantic memory through explicit review.
+- Treat `session_info` as the low-friction diagnostic entry point, but move anything large or expensive to a dedicated diagnostic tool.
+- Keep user-facing answers short by default; detailed provenance and context attribution should be available on request.
+- Make every destructive or externally visible memory operation explicit and reversible where practical.
+
 ---
 
 ## Workstreams
@@ -205,6 +213,23 @@ Acceptance checks:
 - Active plans are managed as task state, not personal memory.
 - User preferences are not mixed with project implementation details.
 - Shared/core updates require review instead of unilateral promotion.
+
+---
+
+## First implementation slice
+
+Start with the smallest useful observability pass before changing memory behavior:
+
+1. Audit existing runtime data for context budget, projected memory, recalled memory, task-list state, and memory-record metadata.
+2. Extend `session_info` or the nearest existing diagnostic path to expose:
+   - context-budget status when known;
+   - active memory/context layers;
+   - projected-memory counts and source labels;
+   - whether compaction ran and which source range it summarized.
+3. Add one small runnable check around the diagnostic serialization so missing/unknown fields degrade to explicit `unknown` values instead of disappearing.
+4. Update this plan with the exact follow-up workstream owners once the audit identifies which fields are already available.
+
+This slice should not add new memory-retention behavior. It only makes the current environment easier to inspect and debug.
 
 ---
 
