@@ -2,6 +2,7 @@ use den_core::DenError;
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
+use den_service::conversation::persistence::{PersistedToolRequestPayload, PersistedToolResultPayload};
 
 use crate::{
     agent_loop::tool_outcome::{
@@ -116,29 +117,12 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                 });
             }
             "tool_call" => {
-                let Some(event) = row.content_json.get("event").and_then(Value::as_str) else {
+                let Ok(payload) = PersistedToolRequestPayload::try_from(&row.content_json) else {
                     continue;
                 };
-                if event != "tool_request" {
-                    continue;
-                }
-                let tool_call_id = row
-                    .content_json
-                    .get("tool_call_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let tool_name = row
-                    .content_json
-                    .get("tool_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let arguments = row
-                    .content_json
-                    .get("args")
-                    .cloned()
-                    .unwrap_or_else(|| Value::Object(Default::default()));
+                let tool_call_id = payload.tool_call_id;
+                let tool_name = payload.tool_name;
+                let arguments = payload.args;
                 let call = ChatToolCall {
                     id: tool_call_id.clone(),
                     call_type: "function".to_string(),
@@ -168,50 +152,25 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                 }
             }
             "tool_result" => {
-                let Some(event) = row.content_json.get("event").and_then(Value::as_str) else {
+                let Ok(payload) = PersistedToolResultPayload::try_from(&row.content_json) else {
                     continue;
                 };
-                if event != "tool_result" {
-                    continue;
-                }
-                let tool_call_id = row
-                    .content_json
-                    .get("tool_call_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                let persisted_status = row.content_json.get("status").and_then(Value::as_str);
-                let content = if persisted_status == Some("incomplete") {
+                let tool_call_id = payload.tool_call_id.clone();
+                let content = if payload.status == den_core::tools::result_compaction::ToolResultStatus::Incomplete {
                     Some(INCOMPLETE_TOOL_RESULT_MARK.to_string())
                 } else {
-                    row.content_json
-                        .get("output_preview")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
+                    payload
+                        .output_preview
+                        .clone()
+                        .or(payload.content.clone())
                         .or_else(|| {
-                            row.content_json
+                            payload
+                                .structured_content
                                 .get("content")
                                 .and_then(Value::as_str)
                                 .map(str::to_string)
                         })
-                        .or_else(|| {
-                            row.content_json
-                                .get("structured_content")
-                                .and_then(|value| value.get("content"))
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                        })
-                        .or_else(|| {
-                            row.content_json
-                                .get("error")
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                        })
-                        .or_else(|| {
-                            row.content_json
-                                .get("output_summary")
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                        })
+                        .or_else(|| payload.output_summary.clone())
                         .or_else(|| {
                             if row.content_text.trim().is_empty() {
                                 None
@@ -227,11 +186,7 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                     role: "tool".to_string(),
                     content,
                     tool_call_id: tool_call_id.clone(),
-                    name: row
-                        .content_json
-                        .get("tool_name")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
+                    name: payload.tool_name.clone(),
                     tool_calls: None,
                 };
                 if let Some(tool_call_id) = tool_call_id {

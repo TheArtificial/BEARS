@@ -1,6 +1,7 @@
 use den_core::DenError;
+use den_core::tools::result_compaction::ToolResultStatus;
 use den_protocol::ContextBudgetReport;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{types::Json, PgPool, Row};
 use uuid::Uuid;
 
@@ -55,6 +56,49 @@ pub struct PersistedTranscriptMessage {
     pub created_at: time::OffsetDateTime,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PersistedToolRequestPayload {
+    pub event: String,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub approval_request_id: Option<String>,
+    #[serde(default)]
+    pub args: serde_json::Value,
+    #[serde(default)]
+    pub approval_required: bool,
+    #[serde(default)]
+    pub approval_reason: Option<String>,
+    #[serde(default)]
+    pub route: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PersistedToolResultPayload {
+    pub event: String,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub tool_name: Option<String>,
+    pub status: ToolResultStatus,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub structured_content: serde_json::Value,
+    #[serde(default)]
+    pub output_summary: Option<String>,
+    #[serde(default)]
+    pub output_preview: Option<String>,
+    #[serde(default)]
+    pub approval_request_id: Option<String>,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub diagnostic: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PersistedTranscriptRecord {
     Message(PersistedTranscriptMessage),
@@ -86,30 +130,24 @@ pub struct PersistedUserHistoryMessage {
 }
 
 fn tool_result_user_history_summary(content_json: &serde_json::Value) -> Option<String> {
-    let event = content_json.get("event").and_then(|value| value.as_str())?;
-    if event != "tool_result" {
-        return None;
-    }
-    if let Some(summary) = content_json
-        .get("output_summary")
-        .and_then(|value| value.as_str())
+    let payload = PersistedToolResultPayload::try_from(content_json).ok()?;
+    if let Some(summary) = payload
+        .output_summary
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
         return Some(summary.to_string());
     }
-    let tool_name = content_json
-        .get("tool_name")
-        .and_then(|value| value.as_str())
+    let tool_name = payload
+        .tool_name
+        .as_deref()
         .unwrap_or("tool");
-    let status = content_json
-        .get("status")
-        .and_then(|value| value.as_str())
-        .unwrap_or("completed");
-    let content = content_json
-        .get("output_preview")
-        .or_else(|| content_json.get("content"))
-        .and_then(|value| value.as_str())
+    let status = payload.status.as_str();
+    let content = payload
+        .output_preview
+        .as_deref()
+        .or(payload.content.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let prefix = format!("Used {tool_name} ({status})");
@@ -120,6 +158,22 @@ fn tool_result_user_history_summary(content_json: &serde_json::Value) -> Option<
 }
 
 impl PersistedConversationMessage {
+    pub fn tool_request_payload(&self) -> Result<Option<PersistedToolRequestPayload>, DenError> {
+        if self.storage_message_type().ok() != Some(ConversationMessageType::ToolCall) {
+            return Ok(None);
+        }
+        let payload = PersistedToolRequestPayload::try_from(self.content_json_value())?;
+        Ok(Some(payload))
+    }
+
+    pub fn tool_result_payload(&self) -> Result<Option<PersistedToolResultPayload>, DenError> {
+        if self.storage_message_type().ok() != Some(ConversationMessageType::ToolResult) {
+            return Ok(None);
+        }
+        let payload = PersistedToolResultPayload::try_from(self.content_json_value())?;
+        Ok(Some(payload))
+    }
+
     pub fn storage_message_type(&self) -> Result<ConversationMessageType, DenError> {
         ConversationMessageType::try_from_storage(&self.message_type)
     }
@@ -177,70 +231,31 @@ impl PersistedConversationMessage {
 
         match self.storage_message_type().ok()? {
             ConversationMessageType::ToolCall => {
-                let event = self.content_json_value().get("event").and_then(|value| value.as_str())?;
-                if event != "tool_request" {
-                    return None;
-                }
+                let payload = self.tool_request_payload().ok()??;
                 Some(PersistedTranscriptRecord::ToolCall {
                     sequence_no: self.sequence_no,
-                    tool_call_id: self
-                        .content_json_value()
-                        .get("tool_call_id")
-                        .and_then(|value| value.as_str())?
-                        .to_string(),
-                    tool_name: self
-                        .content_json_value()
-                        .get("tool_name")
-                        .and_then(|value| value.as_str())?
-                        .to_string(),
-                    arguments: self
-                        .content_json_value()
-                        .get("args")
-                        .cloned()
-                        .unwrap_or_else(|| serde_json::json!({})),
+                    tool_call_id: payload.tool_call_id,
+                    tool_name: payload.tool_name,
+                    arguments: payload.args,
                     created_at: self.created_at,
                 })
             }
             ConversationMessageType::ToolResult => {
-                let event = self.content_json_value().get("event").and_then(|value| value.as_str())?;
-                if event != "tool_result" {
-                    return None;
-                }
-                let content = self
-                    .content_json_value()
-                    .get("content")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string)
-                    .or_else(|| {
-                        if self.content_text.trim().is_empty() {
-                            None
-                        } else {
-                            Some(self.content_text.clone())
-                        }
-                    });
+                let payload = self.tool_result_payload().ok()??;
+                let content = payload.content.clone().or_else(|| {
+                    if self.content_text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(self.content_text.clone())
+                    }
+                });
                 Some(PersistedTranscriptRecord::ToolResult {
                     sequence_no: self.sequence_no,
-                    tool_call_id: self
-                        .content_json_value()
-                        .get("tool_call_id")
-                        .and_then(|value| value.as_str())
-                        .map(str::to_string),
-                    tool_name: self
-                        .content_json_value()
-                        .get("tool_name")
-                        .and_then(|value| value.as_str())
-                        .map(str::to_string),
-                    status: self
-                        .content_json_value()
-                        .get("status")
-                        .and_then(|value| value.as_str())
-                        .map(str::to_string),
+                    tool_call_id: payload.tool_call_id,
+                    tool_name: payload.tool_name,
+                    status: Some(payload.status.as_str().to_string()),
                     content,
-                    structured_content: self
-                        .content_json_value()
-                        .get("structured_content")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null),
+                    structured_content: payload.structured_content,
                     created_at: self.created_at,
                 })
             }
@@ -295,6 +310,40 @@ impl PersistedConversationMessage {
 
     fn content_json_value(&self) -> &serde_json::Value {
         &self.content_json
+    }
+}
+
+impl TryFrom<&serde_json::Value> for PersistedToolRequestPayload {
+    type Error = DenError;
+
+    fn try_from(value: &serde_json::Value) -> Result<Self, Self::Error> {
+        let payload: Self = serde_json::from_value(value.clone()).map_err(|err| {
+            DenError::Parsing(format!("decode persisted tool_request payload: {err}"))
+        })?;
+        if payload.event != "tool_request" {
+            return Err(DenError::ValidationError(format!(
+                "unexpected persisted tool request event: {}",
+                payload.event
+            )));
+        }
+        Ok(payload)
+    }
+}
+
+impl TryFrom<&serde_json::Value> for PersistedToolResultPayload {
+    type Error = DenError;
+
+    fn try_from(value: &serde_json::Value) -> Result<Self, Self::Error> {
+        let payload: Self = serde_json::from_value(value.clone()).map_err(|err| {
+            DenError::Parsing(format!("decode persisted tool_result payload: {err}"))
+        })?;
+        if payload.event != "tool_result" {
+            return Err(DenError::ValidationError(format!(
+                "unexpected persisted tool result event: {}",
+                payload.event
+            )));
+        }
+        Ok(payload)
     }
 }
 

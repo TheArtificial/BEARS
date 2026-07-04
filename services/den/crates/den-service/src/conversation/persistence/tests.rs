@@ -99,6 +99,35 @@
     }
 
     #[test]
+    fn typed_tool_payloads_decode_from_persisted_content_json() {
+        let tool_call_json = serde_json::json!({
+            "event": "tool_request",
+            "tool_call_id": "call-1",
+            "tool_name": "memory_read",
+            "args": { "path": "pair/notes/demo.md" },
+            "approval_required": false
+        });
+        let tool_call = PersistedToolRequestPayload::try_from(&tool_call_json).expect("tool call payload");
+        assert_eq!(tool_call.tool_call_id, "call-1");
+        assert_eq!(tool_call.tool_name, "memory_read");
+
+        let tool_result_json = serde_json::json!({
+            "event": "tool_result",
+            "tool_call_id": "call-1",
+            "tool_name": "memory_read",
+            "status": "ok",
+            "content": "file contents",
+            "structured_content": { "content": "file contents" },
+            "output_summary": "Used memory_read (ok): file contents",
+            "output_preview": "file contents"
+        });
+        let tool_result = PersistedToolResultPayload::try_from(&tool_result_json)
+            .expect("tool result payload");
+        assert_eq!(tool_result.status, den_core::tools::result_compaction::ToolResultStatus::Ok);
+        assert_eq!(tool_result.output_preview.as_deref(), Some("file contents"));
+    }
+
+    #[test]
     fn user_history_projection_includes_tool_result_summary_but_not_tool_request() {
         let user = row("user", Some("user"), "default");
         assert!(matches!(

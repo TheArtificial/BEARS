@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub const MODEL_TOOL_RESULT_MAX_CHARS: usize = 24 * 1024;
@@ -10,7 +11,8 @@ pub struct CompactToolResult {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolResultStatus {
     Ok,
     Error,
