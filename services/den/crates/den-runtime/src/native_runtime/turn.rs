@@ -35,7 +35,8 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 use crate::{
     agent_loop::{
         agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
-        evaluate_turn_budget, record_approval_decision, run_agent_step_stream,
+        evaluate_turn_budget, projected_memory_session_diagnostic,
+        recalled_memory_session_diagnostic, record_approval_decision, run_agent_step_stream,
         tool_result_content_indicates_error, tool_signature_from_call, AgentLoopSession,
         AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
         NativeToolDispatchMode, SessionTrackingStream, ToolContinuationObservation,
@@ -597,6 +598,13 @@ async fn build_session(
         .key_memory_projection
         .as_ref()
         .map(|projection| projection.cache_key.clone());
+    let latest_projected_memory = assembled
+        .key_memory_projection
+        .as_ref()
+        .map(projected_memory_session_diagnostic);
+    let latest_recalled_memory = Some(recalled_memory_session_diagnostic(
+        assembled.recall_diagnostic.as_ref(),
+    ));
     let messages = assembled.messages;
     let budget_components = assembled.budget_components;
     let tools =
@@ -669,6 +677,8 @@ async fn build_session(
         stream_tokens,
         key_memory_projection_cache_key,
         latest_context_budget: None,
+        latest_projected_memory,
+        latest_recalled_memory,
         profile: profile.profile,
         overflow_retry_attempted: false,
         overflow_compaction_recovered: false,
@@ -1083,6 +1093,8 @@ async fn execute_approved_den_tool_for_session(
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some(request.request_id.to_string()),
         channel: DenToolChannelContext {
             family: Some("armature".to_string()),
@@ -1375,6 +1387,8 @@ mod tests {
             stream_tokens: false,
             key_memory_projection_cache_key: None,
             latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -1480,6 +1494,8 @@ mod tests {
             stream_tokens: false,
             key_memory_projection_cache_key: None,
             latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -1634,6 +1650,8 @@ mod tests {
             stream_tokens: false,
             key_memory_projection_cache_key: None,
             latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -1780,6 +1798,8 @@ mod tests {
             stream_tokens: false,
             key_memory_projection_cache_key: None,
             latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,

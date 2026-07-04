@@ -22,6 +22,8 @@
             activity: None,
             runtime: None,
             context_budget: None,
+            projected_memory: None,
+            recalled_memory: None,
             request_id: None,
             channel: Default::default(),
         }

@@ -33,7 +33,8 @@ pub use approvals::{
 };
 pub use assembler::{
     assemble_native_turn, assemble_native_turn_for_bear, assemble_native_turn_messages,
-    assemble_native_turn_messages_for_bear, AssembleTurnContext, AssembledNativeTurn,
+    assemble_native_turn_messages_for_bear, projected_memory_session_diagnostic,
+    recalled_memory_session_diagnostic, AssembleTurnContext, AssembledNativeTurn,
 };
 pub use budget::{
     classify_tool_budget_class, evaluate_turn_budget, tool_signature, tool_signature_from_call,

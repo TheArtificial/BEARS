@@ -42,6 +42,22 @@ fn memory_context_layers(
     memory_status: &Value,
     entities: &Value,
 ) -> Value {
+    let projected_memory = context.projected_memory.clone().unwrap_or_else(|| {
+        json!({
+            "status": "unknown",
+            "count": "unknown",
+            "reason": "Projection metadata is not wired into session_info yet.",
+            "next_surface": "prompt memory blocks in model prompt / future projection diagnostic"
+        })
+    });
+    let recalled_memory = context.recalled_memory.clone().unwrap_or_else(|| {
+        json!({
+            "status": "unknown",
+            "count": "unknown",
+            "reason": "Recall passage metadata is not wired into session_info yet.",
+            "next_surface": "memory_search / future recall diagnostic"
+        })
+    });
     let durable_memory_status = if memory_status
         .get("available")
         .and_then(Value::as_bool)
@@ -83,26 +99,30 @@ fn memory_context_layers(
             {
                 "name": "projected_memory",
                 "label": "Prompt-projected memory",
-                "status": "unknown",
+                "status": projected_memory.get("status").and_then(Value::as_str).unwrap_or("unknown"),
                 "scope": memory_scope.clone(),
                 "lifetime": "prompt_projection",
                 "mutability": "runtime_selected",
                 "authority": "prompt_context",
-                "count": "unknown",
-                "reason": "Projection metadata is not wired into session_info yet.",
-                "next_surface": "prompt memory blocks in model prompt / future projection diagnostic"
+                "count": projected_memory.get("count").cloned().unwrap_or_else(|| json!("unknown")),
+                "reason": projected_memory.get("reason").cloned().unwrap_or(Value::Null),
+                "selected_paths": projected_memory.get("selected_paths").cloned().unwrap_or_else(|| json!([])),
+                "matched_block_ids": projected_memory.get("matched_block_ids").cloned().unwrap_or_else(|| json!([])),
+                "next_surface": projected_memory.get("next_surface").cloned().unwrap_or_else(|| json!("prompt memory blocks in model prompt / future projection diagnostic"))
             },
             {
                 "name": "recalled_memory",
                 "label": "Turn-start recalled memory",
-                "status": "unknown",
+                "status": recalled_memory.get("status").and_then(Value::as_str).unwrap_or("unknown"),
                 "scope": memory_scope.clone(),
                 "lifetime": "turn",
                 "mutability": "runtime_selected",
                 "authority": "recall_pipeline",
-                "count": "unknown",
-                "reason": "Recall passage metadata is not wired into session_info yet.",
-                "next_surface": "memory_search / future recall diagnostic"
+                "count": recalled_memory.get("count").cloned().unwrap_or_else(|| json!("unknown")),
+                "query": recalled_memory.get("query").cloned().unwrap_or(Value::Null),
+                "top_paths": recalled_memory.get("top_paths").cloned().unwrap_or_else(|| json!([])),
+                "reason": recalled_memory.get("reason").cloned().unwrap_or(Value::Null),
+                "next_surface": recalled_memory.get("next_surface").cloned().unwrap_or_else(|| json!("memory_search / future recall diagnostic"))
             },
             {
                 "name": "durable_memory",

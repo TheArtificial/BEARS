@@ -40,6 +40,10 @@ pub struct DenToolInvocationContext {
     pub runtime: Option<Value>,
     #[serde(default)]
     pub context_budget: Option<Value>,
+    #[serde(default)]
+    pub projected_memory: Option<Value>,
+    #[serde(default)]
+    pub recalled_memory: Option<Value>,
     pub request_id: Option<String>,
     #[serde(default)]
     pub channel: DenToolChannelContext,

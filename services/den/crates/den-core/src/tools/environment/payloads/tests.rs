@@ -24,6 +24,8 @@ fn pair_context() -> DenToolInvocationContext {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: None,
         channel: Default::default(),
     }
@@ -169,6 +171,8 @@ fn chat_session_info_available_tools_match_memory_roster() {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: None,
         channel: Default::default(),
     };
@@ -212,6 +216,8 @@ fn bear_environment_payload_exposes_baseline_sections() {
             "active_turn": { "present": true, "pending_obligations": 0 }
         })),
         context_budget: Some(json!({ "status": "unavailable" })),
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some("req-123".to_string()),
         channel: DenToolChannelContext {
             family: Some("bearwire".to_string()),
@@ -335,4 +341,47 @@ fn session_info_context_surfaces_degrade_to_explicit_unknowns() {
         .expect("model experience next surfaces")
         .iter()
         .any(|surface| surface == "session_info.context_surfaces.layers"));
+}
+
+#[test]
+fn session_info_context_surfaces_include_projection_and_recall_diagnostics_when_present() {
+    let mut context = pair_context();
+    context.projected_memory = Some(json!({
+        "status": "available",
+        "count": 2,
+        "selected_paths": ["core/bear-overview.md", "pair/decisions/mem-1.md"],
+        "matched_block_ids": ["block-a"],
+        "next_surface": "projected prompt"
+    }));
+    context.recalled_memory = Some(json!({
+        "status": "available",
+        "count": 1,
+        "query": "fix memory surface",
+        "top_paths": ["core/shared-conventions.md"],
+        "next_surface": "memory_search"
+    }));
+
+    let payload =
+        session_info_payload(&context, BearProfile::Pair, None, 2, &json!({}), &json!({}));
+    let layers = payload["context_surfaces"]["layers"]
+        .as_array()
+        .expect("context layers array");
+    let projected = layers
+        .iter()
+        .find(|layer| layer["name"] == "projected_memory")
+        .expect("projected memory layer");
+    let recalled = layers
+        .iter()
+        .find(|layer| layer["name"] == "recalled_memory")
+        .expect("recalled memory layer");
+
+    assert_eq!(projected["status"], "available");
+    assert_eq!(projected["count"], 2);
+    assert_eq!(projected["selected_paths"][0], "core/bear-overview.md");
+    assert_eq!(projected["matched_block_ids"][0], "block-a");
+
+    assert_eq!(recalled["status"], "available");
+    assert_eq!(recalled["count"], 1);
+    assert_eq!(recalled["query"], "fix memory surface");
+    assert_eq!(recalled["top_paths"][0], "core/shared-conventions.md");
 }
