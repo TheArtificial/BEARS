@@ -72,6 +72,7 @@ fn default_approval_scope_kind() -> String {
 pub(crate) enum ApprovalScope {
     Directory,
     Workspace,
+    SiteAccount,
     Host,
     Command,
     CommandExactWorkspace,
@@ -84,6 +85,7 @@ impl ApprovalScope {
         match self {
             Self::Directory => "directory",
             Self::Workspace => "workspace",
+            Self::SiteAccount => "site_account",
             Self::Host => "host",
             Self::Command => "command",
             Self::CommandExactWorkspace => "command_exact_workspace",
@@ -434,6 +436,7 @@ fn approval_scope_fingerprint(
             approval_directory_scope(context, target.path).map(|path| path.display().to_string())
         }
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
+        ApprovalScope::SiteAccount => target.url.and_then(approval_url_site_account_scope),
         ApprovalScope::Host => target.url.and_then(approval_url_host_scope),
         ApprovalScope::Command => target.command.map(normalize_command),
         ApprovalScope::CommandExactWorkspace => target
@@ -452,7 +455,16 @@ pub(crate) fn candidate_approval_scopes(
     target_command: Option<&str>,
 ) -> Vec<ApprovalScope> {
     if target_url.and_then(approval_url_host_scope).is_some() {
-        return vec![ApprovalScope::Host, ApprovalScope::Global];
+        let mut scopes = Vec::new();
+        if target_url
+            .and_then(approval_url_site_account_scope)
+            .is_some()
+        {
+            scopes.push(ApprovalScope::SiteAccount);
+        }
+        scopes.push(ApprovalScope::Host);
+        scopes.push(ApprovalScope::Global);
+        return scopes;
     }
     if target_command.map(str::trim).is_some_and(|s| !s.is_empty()) {
         return vec![
@@ -480,6 +492,24 @@ pub(crate) fn approval_url_host_scope(raw_url: &str) -> Option<String> {
         Some(port) => format!("{host}:{port}"),
         None => host,
     })
+}
+
+pub(crate) fn approval_url_site_account_scope(raw_url: &str) -> Option<String> {
+    let url = Url::parse(raw_url.trim()).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
+    let mut segments = url
+        .path_segments()?
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if host == "github.com" {
+        let account = segments.first()?.trim();
+        if account.is_empty() {
+            return None;
+        }
+        return Some(format!("github.com/{account}"));
+    }
+    segments.clear();
+    None
 }
 
 pub(crate) fn approval_directory_scope(
@@ -522,10 +552,22 @@ pub(crate) fn permission_options_for_context(
         "Only this time",
         PermissionOptionKind::AllowOnce,
     )];
+    if let Some(site_account) = target_url.and_then(approval_url_site_account_scope) {
+        let label = if let Some(account) = site_account.strip_prefix("github.com/") {
+            format!("Always allow this GitHub account ({account})")
+        } else {
+            format!("Always allow this account ({site_account})")
+        };
+        options.push(PermissionOption::new(
+            "allow_site_account",
+            label,
+            PermissionOptionKind::AllowAlways,
+        ));
+    }
     if let Some(host) = target_url.and_then(approval_url_host_scope) {
         options.push(PermissionOption::new(
             "allow_host",
-            format!("Always for {host}"),
+            format!("Always allow this host ({host})"),
             PermissionOptionKind::AllowAlways,
         ));
     } else if let Some(command) = target_command.map(str::trim).filter(|s| !s.is_empty()) {
@@ -652,10 +694,10 @@ pub(crate) fn permission_decision_from_option_id(id: &str) -> PermissionDecision
             remember: true,
             scope: ApprovalScope::Workspace,
         },
-        "allow_url" => PermissionDecision {
+        "allow_site_account" => PermissionDecision {
             approved: true,
             remember: true,
-            scope: ApprovalScope::Workspace,
+            scope: ApprovalScope::SiteAccount,
         },
         "allow_host" => PermissionDecision {
             approved: true,
@@ -1041,10 +1083,30 @@ mod tests {
     }
 
     #[test]
+    fn approval_url_site_account_scope_supports_github_accounts() {
+        assert_eq!(
+            approval_url_site_account_scope("https://github.com/Bears-AI/repo/issues/1").as_deref(),
+            Some("github.com/Bears-AI")
+        );
+        assert_eq!(
+            approval_url_site_account_scope("https://docs.example.test/reference"),
+            None
+        );
+    }
+
+    #[test]
     fn candidate_approval_scopes_prefers_host_for_urls() {
         assert_eq!(
             candidate_approval_scopes(None, Some("https://example.test:3030/path"), None),
             vec![ApprovalScope::Host, ApprovalScope::Global]
+        );
+        assert_eq!(
+            candidate_approval_scopes(None, Some("https://github.com/bears-ai/bear-den"), None),
+            vec![
+                ApprovalScope::SiteAccount,
+                ApprovalScope::Host,
+                ApprovalScope::Global
+            ]
         );
         assert_eq!(
             candidate_approval_scopes(Some(Path::new("/workspace/src/main.rs")), None, None),
@@ -1160,6 +1222,11 @@ mod tests {
         assert!(host.remember);
         assert_eq!(host.scope, ApprovalScope::Host);
 
+        let site_account = permission_decision_from_option_id("allow_site_account");
+        assert!(site_account.approved);
+        assert!(site_account.remember);
+        assert_eq!(site_account.scope, ApprovalScope::SiteAccount);
+
         let global = permission_decision_from_option_id("allow_global");
         assert!(global.approved);
         assert!(global.remember);
@@ -1268,7 +1335,40 @@ mod tests {
         );
         assert!(serialized
             .to_string()
-            .contains("Always for docs.example.test:8443"));
+            .contains("Always allow this host (docs.example.test:8443)"));
+    }
+
+    #[test]
+    fn permission_options_use_site_account_scope_for_supported_urls() {
+        let context = workspace_context("/workspace");
+        let options = permission_options_for_context(
+            Some(&context),
+            None,
+            Some("https://github.com/bears-ai/bear-den/issues/1"),
+            None,
+            "network access",
+        );
+        let serialized = serde_json::to_value(&options).unwrap();
+        let option_ids = serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["optionId"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            option_ids,
+            vec![
+                "allow_once",
+                "allow_site_account",
+                "allow_host",
+                "allow_global",
+                "reject_once",
+                "reject_always",
+            ]
+        );
+        assert!(serialized
+            .to_string()
+            .contains("Always allow this GitHub account (bears-ai)"));
     }
 
     #[test]

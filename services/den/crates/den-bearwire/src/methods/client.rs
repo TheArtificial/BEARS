@@ -60,7 +60,7 @@ enum PermissionDecisionInput {
     Granted,
     Allow,
     AllowOnce,
-    AllowUrl,
+    AllowSiteAccount,
     AllowHost,
     Denied,
     Deny,
@@ -80,7 +80,7 @@ impl PermissionDecisionInput {
             | Self::Granted
             | Self::Allow
             | Self::AllowOnce
-            | Self::AllowUrl
+            | Self::AllowSiteAccount
             | Self::AllowHost => "granted",
             Self::Denied
             | Self::Deny
@@ -99,7 +99,7 @@ impl PermissionDecisionInput {
             Self::Granted => "granted",
             Self::Allow => "allow",
             Self::AllowOnce => "allow_once",
-            Self::AllowUrl => "allow_url",
+            Self::AllowSiteAccount => "allow_site_account",
             Self::AllowHost => "allow_host",
             Self::Denied => "denied",
             Self::Deny => "deny",
@@ -196,7 +196,7 @@ async fn record_web_fetch_approval_from_permission(
     decision: &str,
     obligation_payload: &Value,
 ) -> Result<(), CustomError> {
-    if !matches!(decision, "allow_once" | "allow_url" | "allow_host") {
+    if !matches!(decision, "allow_once" | "allow_site_account" | "allow_host") {
         return Ok(());
     }
     let tool_name = obligation_payload
@@ -234,8 +234,43 @@ async fn record_web_fetch_approval_from_permission(
             None => web_policy::normalize_web_url(url)?.host,
         };
         ("host", host)
+    } else if decision == "allow_site_account" {
+        let scope_value = args
+            .get("site_account")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                let normalized = web_policy::normalize_web_url(url).ok()?;
+                if normalized.host == "github.com" {
+                    let account = url
+                        .split("github.com/")
+                        .nth(1)?
+                        .split('/')
+                        .find(|segment| !segment.is_empty())?;
+                    Some(format!("github.com/{account}"))
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                CustomError::ValidationError(
+                    "web_fetch permission payload missing supported site account scope".to_string(),
+                )
+            })?;
+        ("site_account", scope_value)
     } else {
-        ("url", web_policy::normalize_web_url(url)?.url)
+        let host = match args
+            .get("host")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(host) => web_policy::normalize_web_host(host)?,
+            None => web_policy::normalize_web_url(url)?.host,
+        };
+        ("host", host)
     };
     let ttl_seconds = if decision == "allow_once" {
         Some(60 * 60)

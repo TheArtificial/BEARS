@@ -8071,12 +8071,23 @@ async fn handle_permission_request_event(
             format!("{command} {command_args}")
         }
     });
+    let site_account = url.and_then(crate::approvals::approval_url_site_account_scope);
+    let source_path = target.get("source_path").and_then(Value::as_str);
+    let destination_path = target.get("destination_path").and_then(Value::as_str);
+    let path = target
+        .get("path")
+        .or_else(|| target.get("file_path"))
+        .and_then(Value::as_str);
     let target_label = if is_plan_mode {
         artifact_path
             .or(plan_mode_id)
             .unwrap_or("submitted plan artifact")
     } else if let Some(command_line) = command_line.as_deref() {
         command_line
+    } else if let Some(source_path) = source_path {
+        source_path
+    } else if let Some(path) = path {
+        path
     } else {
         url.or(host).unwrap_or("the requested target")
     };
@@ -8095,14 +8106,94 @@ async fn handle_permission_request_event(
             timeout_ms.map(|value| format!("{value}ms")).unwrap_or_else(|| "default".to_string()),
             max_output_bytes.map(|value| value.to_string()).unwrap_or_else(|| "default".to_string()),
         )
+    } else if matches!(tool_name, "chrome_open" | "web_fetch" | "local_web_fetch") {
+        let mut body = format!(
+            "{reason}\n\nAction: {}\nURL: {}",
+            display.permission_operation,
+            url.unwrap_or("<missing url>")
+        );
+        if let Some(site_account) = site_account.as_deref() {
+            body.push_str(&format!("\nKnown site account: {site_account}"));
+        }
+        if let Some(host) = host {
+            body.push_str(&format!("\nHost: {host}"));
+        }
+        body
+    } else if matches!(
+        tool_name,
+        "chrome_snapshot" | "chrome_console_messages" | "chrome_network_requests" | "chrome_screenshot"
+    ) {
+        let mut body = format!("{reason}\n\nAction: {}", display.permission_operation);
+        if let Some(url) = url {
+            body.push_str(&format!("\nURL: {url}"));
+        }
+        if let Some(site_account) = site_account.as_deref() {
+            body.push_str(&format!("\nKnown site account: {site_account}"));
+        }
+        if let Some(host) = host {
+            body.push_str(&format!("\nHost: {host}"));
+        }
+        body
+    } else if matches!(tool_name, "fs_delete_path") {
+        format!(
+            "{reason}\n\nAction: {}\nPath: {}",
+            display.permission_operation,
+            path.unwrap_or("<missing path>")
+        )
+    } else if matches!(tool_name, "fs_move_path" | "fs_copy_path") {
+        format!(
+            "{reason}\n\nAction: {}\nSource: {}\nDestination: {}",
+            display.permission_operation,
+            source_path.unwrap_or("<missing source>"),
+            destination_path.unwrap_or("<missing destination>")
+        )
+    } else if let Some(path) = path {
+        format!(
+            "{reason}\n\nAction: {}\nPath: {}",
+            display.permission_operation,
+            path
+        )
     } else {
-        format!("{reason}\n\nTool: {tool_name}\nTarget: {target_label}")
+        format!(
+            "{reason}\n\nAction: {}\nTarget: {target_label}",
+            display.permission_operation
+        )
     };
     let request_title = if is_command_permission {
         command_line
             .as_deref()
             .map(|command| format!("Run command: {command}"))
             .unwrap_or_else(|| "Run command".to_string())
+    } else if matches!(tool_name, "chrome_open") {
+        url.map(|url| format!("Open: {}", truncate_title(url)))
+            .unwrap_or_else(|| display.title.clone())
+    } else if matches!(tool_name, "web_fetch" | "local_web_fetch") {
+        url.map(|url| format!("Fetch: {}", truncate_title(url)))
+            .unwrap_or_else(|| display.title.clone())
+    } else if matches!(
+        tool_name,
+        "chrome_snapshot" | "chrome_console_messages" | "chrome_network_requests" | "chrome_screenshot"
+    ) {
+        if let Some(url) = url {
+            format!("{}: {}", display.title, truncate_title(url))
+        } else {
+            display.title.clone()
+        }
+    } else if matches!(tool_name, "fs_delete_path") {
+        path.map(|path| format!("Delete: {}", truncate_title(path)))
+            .unwrap_or_else(|| display.title.clone())
+    } else if matches!(tool_name, "fs_move_path" | "fs_copy_path") {
+        match (source_path, destination_path) {
+            (Some(source), Some(destination)) => format!(
+                "{}: {} -> {}",
+                display.title,
+                truncate_title(source),
+                truncate_title(destination)
+            ),
+            _ => display.title.clone(),
+        }
+    } else if let Some(path) = path {
+        format!("{}: {}", display.title, truncate_title(path))
     } else {
         title.to_string()
     };
@@ -8125,6 +8216,9 @@ async fn handle_permission_request_event(
         }
         if let Some(host) = host {
             meta.insert("targetHost".to_string(), json!(host));
+        }
+        if let Some(site_account) = site_account.as_ref() {
+            meta.insert("siteAccount".to_string(), json!(site_account));
         }
         if let Some(command) = command {
             meta.insert("targetCommand".to_string(), json!(command));
@@ -8165,31 +8259,13 @@ async fn handle_permission_request_event(
             "commands",
         )
     } else {
-        let mut options = vec![agent_client_protocol::schema::PermissionOption::new(
-            "allow_once",
-            "Allow this fetch once",
-            agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
-        )];
-        if url.is_some() {
-            options.push(agent_client_protocol::schema::PermissionOption::new(
-                "allow_url",
-                "Always allow this exact URL",
-                agent_client_protocol::schema::PermissionOptionKind::AllowAlways,
-            ));
-        }
-        if let Some(host) = host {
-            options.push(agent_client_protocol::schema::PermissionOption::new(
-                "allow_host",
-                format!("Always allow this host: {host}"),
-                agent_client_protocol::schema::PermissionOptionKind::AllowAlways,
-            ));
-        }
-        options.push(agent_client_protocol::schema::PermissionOption::new(
-            "reject_once",
-            "Deny this fetch",
-            agent_client_protocol::schema::PermissionOptionKind::RejectOnce,
-        ));
-        options
+        permission_options_for_context(
+            adapter_state.session_contexts.get(session_id),
+            None,
+            url,
+            None,
+            permission_family_label(tool_name),
+        )
     };
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
     let context_for_approval = adapter_state
@@ -8294,6 +8370,7 @@ async fn handle_permission_request_event(
         }
     } else {
         match decision.scope {
+            ApprovalScope::SiteAccount if decision.approved => "allow_site_account",
             ApprovalScope::Host if decision.approved => "allow_host",
             ApprovalScope::Workspace
             | ApprovalScope::Directory
@@ -8303,11 +8380,7 @@ async fn handle_permission_request_event(
             | ApprovalScope::Global
                 if decision.approved =>
             {
-                if decision.remember && url.is_some() {
-                    "allow_url"
-                } else {
-                    "allow_once"
-                }
+                "allow_once"
             }
             _ => "reject_once",
         }
@@ -8916,8 +8989,7 @@ fn permission_family_label(tool_name: &str) -> &'static str {
         "git_read" => "reading git status",
         "git_write" => "modifying git status",
         "command_run" => "running commands",
-        "network" => "network access",
-        "browser" => "browser use",
+        "network" | "browser" => "network access",
         _ => "similar local actions",
     }
 }
@@ -9016,7 +9088,7 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
     }
     if matches!(tool_name, "chrome_open") {
         if let Some(url) = tool_url(event) {
-            return format!("Chrome open: {}", truncate_title(url));
+            return format!("Open page: {}", truncate_title(url));
         }
     }
     tool_display(tool_name).title

@@ -758,9 +758,9 @@ pub const CHROME_OPEN_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     provider_name: "chrome_open",
     provider_aliases: &[],
     canonical_name: "armature.chrome.open",
-    title: "Chrome open",
-    kind: "fetch",
-    risk: "browser_access",
+    title: "Open page",
+    kind: "read",
+    risk: "network_fetch",
     permission_class: "browser",
 };
 pub const CHROME_SNAPSHOT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
@@ -769,7 +769,7 @@ pub const CHROME_SNAPSHOT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     canonical_name: "armature.chrome.snapshot",
     title: "Chrome snapshot",
     kind: "read",
-    risk: "browser_access",
+    risk: "network_fetch",
     permission_class: "browser",
 };
 pub const CHROME_CONSOLE_MESSAGES_TOOL: ClientToolDescriptor = ClientToolDescriptor {
@@ -778,7 +778,7 @@ pub const CHROME_CONSOLE_MESSAGES_TOOL: ClientToolDescriptor = ClientToolDescrip
     canonical_name: "armature.chrome.console_messages",
     title: "Chrome console messages",
     kind: "read",
-    risk: "browser_access",
+    risk: "network_fetch",
     permission_class: "browser",
 };
 pub const CHROME_NETWORK_REQUESTS_TOOL: ClientToolDescriptor = ClientToolDescriptor {
@@ -787,7 +787,7 @@ pub const CHROME_NETWORK_REQUESTS_TOOL: ClientToolDescriptor = ClientToolDescrip
     canonical_name: "armature.chrome.network_requests",
     title: "Chrome network requests",
     kind: "read",
-    risk: "browser_access",
+    risk: "network_fetch",
     permission_class: "browser",
 };
 pub const CHROME_SCREENSHOT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
@@ -796,7 +796,7 @@ pub const CHROME_SCREENSHOT_TOOL: ClientToolDescriptor = ClientToolDescriptor {
     canonical_name: "armature.chrome.screenshot",
     title: "Chrome screenshot",
     kind: "read",
-    risk: "browser_access",
+    risk: "network_fetch",
     permission_class: "browser",
 };
 
