@@ -971,6 +971,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
                 "command": { "type": "string", "description": "Executable name. Shell strings are not accepted." },
                 "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments." },
                 "cwd": { "type": "string", "description": "Absolute working directory under the workspace." },
+                "bypass_tool_redirect": { "type": "boolean", "description": "Explicitly override dedicated-tool redirects when command execution is truly required." },
                 "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 600000 },
                 "max_output_bytes": { "type": "integer", "minimum": 1, "maximum": 131072 },
                 "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional non-secret environment values." },

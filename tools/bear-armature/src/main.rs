@@ -13175,6 +13175,63 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let _ = fs::remove_dir_all(outside);
     }
 
+    #[tokio::test]
+    async fn process_run_redirects_git_commands_to_dedicated_tools_unless_overridden() {
+        let root = unique_test_dir("process-run-redirect");
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+
+        let redirected = handle_process_run(
+            context,
+            "session-1",
+            &json!({
+                "command": "git",
+                "args": ["diff", "--", "src/main.rs"],
+                "cwd": root.to_string_lossy(),
+            }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(redirected["ok"], false);
+        assert_eq!(redirected["kind"], "prefer_dedicated_tool");
+        assert_eq!(redirected["suggested_tool"], "git_diff");
+        assert_eq!(
+            redirected["suggested_args"]["repo_path"],
+            root.to_string_lossy().to_string()
+        );
+
+        let _ = std::process::Command::new("git")
+            .arg("init")
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        std::fs::write(root.join("file.txt"), "hello\n").unwrap();
+
+        let executed = handle_process_run(
+            context,
+            "session-1",
+            &json!({
+                "command": "git",
+                "args": ["diff"],
+                "cwd": root.to_string_lossy(),
+                "bypass_tool_redirect": true,
+                "reducer_mode": "none"
+            }),
+            &ToolPolicy {
+                max_bytes: Some(1024),
+                total_timeout_ms: Some(10_000),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(executed.get("kind").is_none());
+        assert_eq!(executed["command"], "git");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[ignore = "canonical web_fetch is Den-executed; adapter local fetch will be renamed if reintroduced"]
     #[tokio::test]
     async fn web_fetch_fetches_and_truncates_http_response() {

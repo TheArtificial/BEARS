@@ -13,6 +13,80 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, fmt, process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
 
+#[derive(Debug, Clone, Copy)]
+struct DedicatedToolRedirect {
+    provider_tool: &'static str,
+    reason: &'static str,
+}
+
+// Keep this redirect map aligned with the advertised direct-tool surface and
+// permission UX. If new dedicated tools replace common shell-style inspection
+// commands, update this gate and its tests so process_run keeps steering models
+// toward the descriptor-owned tool surface.
+fn process_run_dedicated_tool_redirect(
+    command: &str,
+    args: &[String],
+    cwd: &str,
+) -> Option<(DedicatedToolRedirect, Value)> {
+    if command != "git" {
+        return None;
+    }
+    let subcommand = args.first()?.as_str();
+    let (provider_tool, reason, suggested_args) = match subcommand {
+        "status" => (
+            "git_status",
+            "Read-only git inspection should use the dedicated git status tool.",
+            json!({ "repo_path": cwd }),
+        ),
+        "diff" => (
+            "git_diff",
+            "Read-only git inspection should use the dedicated git diff tool.",
+            json!({ "repo_path": cwd }),
+        ),
+        "log" => (
+            "git_log",
+            "Read-only git inspection should use the dedicated git log tool.",
+            json!({ "repo_path": cwd }),
+        ),
+        "show" => (
+            "git_show",
+            "Git object inspection should use the dedicated git show tool.",
+            json!({
+                "repo_path": cwd,
+                "revision": args.get(1).cloned().unwrap_or_else(|| "HEAD".to_string())
+            }),
+        ),
+        "add" => (
+            "git_add",
+            "Git staging should use the dedicated git add tool.",
+            json!({ "repo_path": cwd }),
+        ),
+        "restore" => (
+            "git_restore",
+            "Git restore should use the dedicated git restore tool.",
+            json!({ "repo_path": cwd }),
+        ),
+        "commit" => (
+            "git_commit",
+            "Git commits should use the dedicated git commit tool.",
+            json!({ "repo_path": cwd }),
+        ),
+        "stash" => (
+            "git_stash",
+            "Git stashing should use the dedicated git stash tool.",
+            json!({ "repo_path": cwd }),
+        ),
+        _ => return None,
+    };
+    Some((
+        DedicatedToolRedirect {
+            provider_tool,
+            reason,
+        },
+        suggested_args,
+    ))
+}
+
 pub(crate) async fn handle_process_run(
     context: &SessionContext,
     session_id: &str,
@@ -53,6 +127,33 @@ pub(crate) async fn handle_process_run(
     for arg in &command_args {
         if arg.contains('\0') {
             return Err(anyhow!("process_run args must not contain NUL bytes"));
+        }
+    }
+    let bypass_tool_redirect = args
+        .get("bypass_tool_redirect")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !bypass_tool_redirect {
+        if let Some((redirect, suggested_args)) =
+            process_run_dedicated_tool_redirect(command, &command_args, &cwd.to_string_lossy())
+        {
+            let content = format!(
+                "Process command not executed. Prefer the dedicated `{}` tool instead. {} Re-run `process_run` with `bypass_tool_redirect=true` only if command execution is truly required.",
+                redirect.provider_tool, redirect.reason
+            );
+            return Ok(json!({
+                "ok": false,
+                "kind": "prefer_dedicated_tool",
+                "command": command,
+                "args": command_args,
+                "cwd": cwd.to_string_lossy(),
+                "suggested_tool": redirect.provider_tool,
+                "suggested_args": suggested_args,
+                "reason": redirect.reason,
+                "override_arg": "bypass_tool_redirect",
+                "source": "adapter_local",
+                "content": content,
+            }));
         }
     }
     let policy_timeout_ms = policy.total_timeout_ms.unwrap_or(120_000).clamp(1, 120_000);
