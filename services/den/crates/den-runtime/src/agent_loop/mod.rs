@@ -39,6 +39,7 @@ pub use budget::{
     classify_tool_budget_class, evaluate_turn_budget, tool_signature, tool_signature_from_call,
     ToolBudgetClass, ToolCallBudgetLimits, ToolCallBudgetUsage, ToolContinuationObservation,
     TurnBudgetEvaluation, TurnBudgetPolicy, TurnBudgetState, TurnBudgetStopReason,
+    TurnBudgetWarning,
 };
 pub use context::{
     assemble_agent_messages, load_transcript_grouping_rows, load_transcript_messages,

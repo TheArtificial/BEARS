@@ -304,6 +304,30 @@ impl NativeWebChatLoopStream {
             .update(&self.runtime.session_key, |session| {
                 session.messages.extend(completed.iter().cloned());
                 session.turn_budget_state = evaluation.next_state.clone();
+                if let Some(warning) = evaluation.warning.as_ref() {
+                    if session.messages.last().is_some_and(|message| {
+                        message.role == "system"
+                            && message.content.as_deref() == Some(warning.model_message())
+                    }) {
+                        return;
+                    }
+                    if session.messages.last().is_some_and(|message| {
+                        message.role == "system"
+                            && message
+                                .content
+                                .as_deref()
+                                .is_some_and(|content| content.starts_with("Budget advisory:"))
+                    }) {
+                        session.messages.pop();
+                    }
+                    session.messages.push(ChatMessage {
+                        role: "system".to_string(),
+                        content: Some(warning.model_message().to_string()),
+                        tool_call_id: None,
+                        name: None,
+                        tool_calls: None,
+                    });
+                }
             });
         let Some(reason) = evaluation.stop_reason else {
             return None;

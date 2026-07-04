@@ -549,8 +549,10 @@ impl Stream for SessionTrackingStream {
                     self.pending_server_tool = None;
                     self.tool_calls.remove(&call.id);
                     self.inner = stream;
-                    self.pending_pause_after_tool = Self::plan_update_event_from_tool_message(&message)
-                        .or_else(|| Self::session_info_update_event_from_tool_message(&message));
+                    self.pending_pause_after_tool =
+                        Self::plan_update_event_from_tool_message(&message).or_else(|| {
+                            Self::session_info_update_event_from_tool_message(&message)
+                        });
                     self.pending_server_tool_continuation = Some(call.id.clone());
                     let finished =
                         tool_call_finished_event_for_content(&call, message.content.as_deref());

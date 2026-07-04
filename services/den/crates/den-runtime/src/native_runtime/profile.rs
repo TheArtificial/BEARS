@@ -21,7 +21,7 @@ impl NativeCapabilityProfile {
                     max_wall_clock_ms: 240_000,
                     emergency_hard_steps: 48,
                     tool_call_limits: ToolCallBudgetLimits {
-                        total: 28,
+                        total: 64,
                         read: 18,
                         search: 12,
                         fetch: 8,
@@ -42,7 +42,7 @@ impl NativeCapabilityProfile {
                     max_wall_clock_ms: 180_000,
                     emergency_hard_steps: 36,
                     tool_call_limits: ToolCallBudgetLimits {
-                        total: 20,
+                        total: 48,
                         read: 12,
                         search: 8,
                         fetch: 6,
@@ -63,7 +63,7 @@ impl NativeCapabilityProfile {
                     max_wall_clock_ms: 90_000,
                     emergency_hard_steps: 16,
                     tool_call_limits: ToolCallBudgetLimits {
-                        total: 10,
+                        total: 16,
                         read: 8,
                         search: 4,
                         fetch: 3,
@@ -85,7 +85,7 @@ impl NativeCapabilityProfile {
                         max_wall_clock_ms: 900_000,
                         emergency_hard_steps: 128,
                         tool_call_limits: ToolCallBudgetLimits {
-                            total: 80,
+                            total: 160,
                             read: 48,
                             search: 32,
                             fetch: 20,
@@ -102,7 +102,7 @@ impl NativeCapabilityProfile {
                         max_wall_clock_ms: 180_000,
                         emergency_hard_steps: 40,
                         tool_call_limits: ToolCallBudgetLimits {
-                            total: 24,
+                            total: 56,
                             read: 16,
                             search: 10,
                             fetch: 8,

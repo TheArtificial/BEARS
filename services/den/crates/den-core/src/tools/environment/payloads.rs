@@ -34,6 +34,118 @@ fn trusted_workspace_from_context(
     })
 }
 
+fn memory_context_layers(
+    context: &DenToolInvocationContext,
+    context_budget: &Value,
+    memory_status: &Value,
+    entities: &Value,
+) -> Value {
+    let durable_memory_status = if memory_status
+        .get("available")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        "available"
+    } else {
+        match memory_status.get("configured").and_then(Value::as_bool) {
+            Some(true) => "degraded",
+            Some(false) => "unavailable",
+            None => "unknown",
+        }
+    };
+    let memory_scope = format!("{}/", context.profile.unwrap_or(BearProfile::Pair).as_str());
+    json!({
+        "schema": "den.memory_context_layers.v1",
+        "source": "den.session_info",
+        "layers": [
+            {
+                "name": "conversation_context",
+                "label": "Current conversation/context",
+                "status": "available",
+                "scope": "session",
+                "lifetime": "transient",
+                "mutability": "append_only_during_turn",
+                "authority": "current_transcript_and_runtime",
+                "next_surface": "conversation transcript / session_info.context_budget"
+            },
+            {
+                "name": "context_budget",
+                "label": "Context budget",
+                "status": context_budget.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                "scope": "session",
+                "lifetime": "turn",
+                "mutability": "runtime_reported",
+                "authority": "provider_or_den_estimate",
+                "next_surface": "session_info.context_budget"
+            },
+            {
+                "name": "projected_memory",
+                "label": "Prompt-projected memory",
+                "status": "unknown",
+                "scope": memory_scope.clone(),
+                "lifetime": "prompt_projection",
+                "mutability": "runtime_selected",
+                "authority": "prompt_context",
+                "count": "unknown",
+                "reason": "Projection metadata is not wired into session_info yet.",
+                "next_surface": "prompt memory blocks in model prompt / future projection diagnostic"
+            },
+            {
+                "name": "recalled_memory",
+                "label": "Turn-start recalled memory",
+                "status": "unknown",
+                "scope": memory_scope.clone(),
+                "lifetime": "turn",
+                "mutability": "runtime_selected",
+                "authority": "recall_pipeline",
+                "count": "unknown",
+                "reason": "Recall passage metadata is not wired into session_info yet.",
+                "next_surface": "memory_search / future recall diagnostic"
+            },
+            {
+                "name": "durable_memory",
+                "label": "Persistent semantic memory",
+                "status": durable_memory_status,
+                "scope": memory_scope,
+                "lifetime": "durable_or_lifecycle_managed",
+                "mutability": "explicit_tool_or_review_flow",
+                "authority": "sqlite_memory_store",
+                "next_surface": "session_info.memory.status / memory_status / memory_search"
+            },
+            {
+                "name": "task_work_state",
+                "label": "Task, Docket, and workplan state",
+                "status": if context.activity.is_some() { "available" } else { "unknown" },
+                "scope": "work_surface_or_session",
+                "lifetime": "task_lifecycle",
+                "mutability": "task_tools",
+                "authority": "docket_and_task_list_surfaces",
+                "next_surface": "activity / task-list tools"
+            },
+            {
+                "name": "entity_context",
+                "label": "Entity/work-surface orientation",
+                "status": entities.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                "scope": "work_surface_or_bear",
+                "lifetime": "lifecycle_managed",
+                "mutability": "entity_tools",
+                "authority": "entity_orientation_surface",
+                "next_surface": "session_info.entities / entity tools"
+            },
+            {
+                "name": "tool_runtime_surface",
+                "label": "Runtime instructions and callable tools",
+                "status": "available",
+                "scope": "turn",
+                "lifetime": "turn",
+                "mutability": "runtime_controlled",
+                "authority": "system_developer_prompt_and_tool_descriptors",
+                "next_surface": "tool descriptors / session_info.policy"
+            }
+        ]
+    })
+}
+
 pub fn bear_environment_payload(
     context: &DenToolInvocationContext,
     role: BearProfile,
@@ -292,6 +404,7 @@ pub fn session_info_payload(
         BearProfile::Pair => Some("Builder Bear"),
         _ => None,
     };
+    let context_layers = memory_context_layers(context, &context_budget, memory_status, entities);
     json!({
         "role_contract_context": {
             "profile": role.as_str(),
@@ -351,6 +464,21 @@ pub fn session_info_payload(
         },
         "runtime": runtime,
         "context_budget": context_budget,
+        "context_surfaces": context_layers,
+        "model_experience": {
+            "schema": "den.model_experience.memory_surfaces.v1",
+            "source": "den.session_info",
+            "guide": "docs/guides/bear-memory.md#model-experience",
+            "rule": "Describe memory and context by explicit layer; say unknown or unavailable instead of guessing when a layer has no diagnostic data.",
+            "next_surfaces": [
+                "session_info.context_budget",
+                "session_info.context_surfaces.layers",
+                "session_info.memory.status",
+                "memory_status",
+                "memory_search",
+                "task-list tools"
+            ]
+        },
         "session": {
             "conversation_id": context.conversation_id,
             "session_id": context.session_id,

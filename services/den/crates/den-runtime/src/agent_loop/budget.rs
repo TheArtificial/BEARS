@@ -146,7 +146,14 @@ pub struct ToolContinuationObservation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnBudgetEvaluation {
     pub next_state: TurnBudgetState,
+    pub warning: Option<TurnBudgetWarning>,
     pub stop_reason: Option<TurnBudgetStopReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnBudgetWarning {
+    pub code: &'static str,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +187,12 @@ pub enum TurnBudgetStopReason {
     },
 }
 
+impl TurnBudgetWarning {
+    pub fn model_message(&self) -> &str {
+        &self.message
+    }
+}
+
 impl TurnBudgetStopReason {
     pub fn persistence_reason(&self) -> &'static str {
         match self {
@@ -199,7 +212,7 @@ impl TurnBudgetStopReason {
                 elapsed_ms, limit_ms
             ),
             Self::TotalToolCallLimit { count, limit } => format!(
-                "I stopped because this turn exhausted its total tool-call budget (tool_calls={count}/limit={limit}). The recent tool results were recorded, but this run needs a fresh turn to continue safely."
+                "I stopped because this turn exhausted its emergency total tool-call fuse (tool_calls={count}/limit={limit}). The recent tool results were recorded, but this run needs a fresh turn to continue safely."
             ),
             Self::ToolClassCallLimit { class, count, limit } => format!(
                 "I stopped because this turn exhausted its {} tool budget ({}_calls={}/limit={}). The recent tool results were recorded, but this run needs a fresh turn to continue safely.",
@@ -375,10 +388,108 @@ pub fn evaluate_turn_budget(
         None
     };
 
+    let warning = if stop_reason.is_none() {
+        budget_warning(policy, step, elapsed_ms, &next_state)
+    } else {
+        None
+    };
+
     TurnBudgetEvaluation {
         next_state,
+        warning,
         stop_reason,
     }
+}
+
+fn budget_warning(
+    policy: TurnBudgetPolicy,
+    step: u32,
+    elapsed_ms: u64,
+    state: &TurnBudgetState,
+) -> Option<TurnBudgetWarning> {
+    if step + 1 >= policy.emergency_hard_steps {
+        return Some(TurnBudgetWarning {
+            code: "emergency_hard_step_warning",
+            message: format!(
+                "Budget advisory: this turn is at the end of its emergency continuation fuse (next step would reach {}/{}). If you already have enough information, stop calling tools and provide the best final answer now.",
+                step + 1,
+                policy.emergency_hard_steps
+            ),
+        });
+    }
+
+    let remaining_wall_clock_ms = policy.max_wall_clock_ms.saturating_sub(elapsed_ms);
+    if remaining_wall_clock_ms <= 15_000
+        || elapsed_ms.saturating_mul(100) >= policy.max_wall_clock_ms.saturating_mul(85)
+    {
+        return Some(TurnBudgetWarning {
+            code: "wall_clock_warning",
+            message: format!(
+                "Budget advisory: this turn is close to its wall-clock limit (remaining={}ms). Prefer a final answer over more tool calls unless one more call is strictly necessary.",
+                remaining_wall_clock_ms
+            ),
+        });
+    }
+
+    if state.tool_usage.total + 1 >= policy.tool_call_limits.total {
+        return Some(TurnBudgetWarning {
+            code: "total_tool_budget_warning",
+            message: format!(
+                "Budget advisory: this turn is close to its emergency total tool-call fuse ({}/{} tool calls used). Prefer a final answer over more tool calls unless one more call is strictly necessary.",
+                state.tool_usage.total,
+                policy.tool_call_limits.total
+            ),
+        });
+    }
+
+    for class in [
+        ToolBudgetClass::Destructive,
+        ToolBudgetClass::Write,
+        ToolBudgetClass::Execute,
+        ToolBudgetClass::Fetch,
+        ToolBudgetClass::Search,
+        ToolBudgetClass::Read,
+        ToolBudgetClass::Other,
+    ] {
+        let count = state.tool_usage.count_for(class);
+        let limit = ToolCallBudgetUsage::limit_for(policy.tool_call_limits, class);
+        if count + 1 >= limit {
+            return Some(TurnBudgetWarning {
+                code: "tool_class_budget_warning",
+                message: format!(
+                    "Budget advisory: this turn is close to its {} tool budget ({}/{} used). Prefer a final answer over more tool calls unless one more {} call is strictly necessary.",
+                    class.label(),
+                    count,
+                    limit,
+                    class.label()
+                ),
+            });
+        }
+    }
+
+    if state.consecutive_tool_failures + 1 >= policy.max_consecutive_tool_failures {
+        return Some(TurnBudgetWarning {
+            code: "failure_budget_warning",
+            message: format!(
+                "Budget advisory: this turn is close to its repeated-failure limit ({}/{} consecutive failed tool batches). Do not retry the same failing action unless you have new evidence.",
+                state.consecutive_tool_failures,
+                policy.max_consecutive_tool_failures
+            ),
+        });
+    }
+
+    if state.same_batch_signature_repeats + 1 >= policy.max_same_tool_signature_repeats {
+        return Some(TurnBudgetWarning {
+            code: "rule_of_ko_warning",
+            message: format!(
+                "Budget advisory: this turn is close to its loop-ko limit ({}/{} repeated tool batches). Do not repeat the same tool call pattern again; either answer now or choose a materially different next step.",
+                state.same_batch_signature_repeats,
+                policy.max_same_tool_signature_repeats
+            ),
+        });
+    }
+
+    None
 }
 
 fn first_exhausted_class(
@@ -598,6 +709,26 @@ mod tests {
     }
 
     #[test]
+    fn total_tool_budget_warns_before_limit() {
+        let mut prior = state();
+        prior.tool_usage.total = 19;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            1_000,
+            &prior,
+            &[observation("memory_read", r#"{"path":"a"}"#, false)],
+        );
+
+        assert!(evaluation.stop_reason.is_none());
+        assert_eq!(
+            evaluation.warning.as_ref().map(|warning| warning.code),
+            Some("total_tool_budget_warning")
+        );
+    }
+
+    #[test]
     fn consecutive_failures_trigger_failure_budget() {
         let mut prior = state();
         prior.consecutive_tool_failures = 2;
@@ -633,5 +764,22 @@ mod tests {
                 emergency_hard_steps: 32,
             })
         ));
+    }
+
+    #[test]
+    fn emergency_hard_step_warns_one_step_early() {
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            31,
+            1_000,
+            &state(),
+            &[observation("memory_read", r#"{"path":"a"}"#, false)],
+        );
+
+        assert!(evaluation.stop_reason.is_none());
+        assert_eq!(
+            evaluation.warning.as_ref().map(|warning| warning.code),
+            Some("emergency_hard_step_warning")
+        );
     }
 }

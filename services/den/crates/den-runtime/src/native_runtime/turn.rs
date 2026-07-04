@@ -39,7 +39,7 @@ use crate::{
         tool_result_content_indicates_error, tool_signature_from_call, AgentLoopSession,
         AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
         NativeToolDispatchMode, SessionTrackingStream, ToolContinuationObservation,
-        TurnBudgetStopReason,
+        TurnBudgetStopReason, TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
@@ -967,6 +967,32 @@ fn continuation_budget_stop(
     (RuntimeStreamContinuation::Deferred, stream)
 }
 
+const BUDGET_WARNING_PREFIX: &str = "Budget advisory:";
+
+fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarning) {
+    if session.messages.last().is_some_and(|message| {
+        message.role == "system" && message.content.as_deref() == Some(warning.model_message())
+    }) {
+        return;
+    }
+    if session.messages.last().is_some_and(|message| {
+        message.role == "system"
+            && message
+                .content
+                .as_deref()
+                .is_some_and(|content| content.starts_with(BUDGET_WARNING_PREFIX))
+    }) {
+        session.messages.pop();
+    }
+    session.messages.push(ChatMessage {
+        role: "system".to_string(),
+        content: Some(warning.model_message().to_string()),
+        tool_call_id: None,
+        name: None,
+        tool_calls: None,
+    });
+}
+
 fn call_is_den_web_fetch(call: &ChatToolCall) -> bool {
     builtin_den_tool_descriptor_for_provider_name(&call.function.name)
         .is_some_and(|descriptor| descriptor.name == DEN_WEB_FETCH)
@@ -1205,6 +1231,9 @@ pub async fn continue_native_client_turn_event_stream(
             .or_else(|| session.run_id.clone());
         session.messages.extend(tool_messages.clone());
         session.turn_budget_state = evaluation.next_state.clone();
+        if let Some(warning) = evaluation.warning.as_ref() {
+            apply_budget_warning(session, warning);
+        }
     });
     let session = SESSION_STORE
         .get(&session_key)
