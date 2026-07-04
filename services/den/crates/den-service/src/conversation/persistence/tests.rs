@@ -128,6 +128,24 @@
     }
 
     #[test]
+    fn strict_typed_payloads_require_output_summary_for_complete_tool_results() {
+        std::env::set_var("BEARS_STRICT_TYPED_PAYLOADS", "1");
+        let tool_result_json = serde_json::json!({
+            "event": "tool_result",
+            "tool_call_id": "call-1",
+            "tool_name": "memory_read",
+            "status": "ok",
+            "content": "file contents",
+            "structured_content": { "content": "file contents" }
+        });
+        let err = PersistedToolResultPayload::try_from(&tool_result_json)
+            .expect_err("strict mode should reject missing output_summary");
+        std::env::remove_var("BEARS_STRICT_TYPED_PAYLOADS");
+
+        assert!(err.to_string().contains("output_summary"));
+    }
+
+    #[test]
     fn user_history_projection_includes_tool_result_summary_but_not_tool_request() {
         let user = row("user", Some("user"), "default");
         assert!(matches!(

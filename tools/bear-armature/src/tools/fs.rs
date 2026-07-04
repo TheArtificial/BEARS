@@ -15,6 +15,22 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+fn resolve_session_tool_path(context: &SessionContext, raw_path: &str) -> Result<PathBuf> {
+    let path = resolve_requested_tool_path(context, raw_path)?;
+    ensure_path_allowed_for_session(context, &path)?;
+    Ok(path)
+}
+
+fn resolve_optional_session_tool_root(
+    context: &SessionContext,
+    raw_root: Option<&str>,
+) -> Result<PathBuf> {
+    match raw_root {
+        Some(root) => resolve_session_tool_path(context, root),
+        None => Ok(session_workspace_roots(context)[0].clone()),
+    }
+}
+
 pub(crate) async fn handle_read_text_file(
     context: &SessionContext,
     session_id: &str,
@@ -36,8 +52,7 @@ pub(crate) async fn handle_read_text_file(
         .and_then(Value::as_u64)
         .map(|v| v.clamp(1, policy_max_lines as u64) as usize)
         .unwrap_or(400.min(policy_max_lines));
-    let path = resolve_requested_tool_path(context, path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let path = resolve_session_tool_path(context, path)?;
     let started = std::time::Instant::now();
     let raw = tokio::fs::read_to_string(&path)
         .await
@@ -109,8 +124,7 @@ pub(crate) async fn handle_list_directory(
         .and_then(Value::as_u64)
         .map(|v| v.clamp(1, policy_max_entries as u64) as usize)
         .unwrap_or(200.min(policy_max_entries));
-    let path = resolve_requested_tool_path(context, path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let path = resolve_session_tool_path(context, path)?;
     let started = std::time::Instant::now();
     let mut entries = Vec::new();
     let mut total_entries_seen = 0usize;
@@ -206,13 +220,10 @@ pub(crate) async fn handle_find_paths(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("fs_find_paths args missing glob"))?;
-    let root = args
-        .get("root")
-        .and_then(Value::as_str)
-        .map(|path| resolve_requested_tool_path(context, path))
-        .transpose()?
-        .unwrap_or_else(|| session_workspace_roots(context)[0].clone());
-    ensure_path_allowed_for_session(context, &root)?;
+    let root = resolve_optional_session_tool_root(
+        context,
+        args.get("root").and_then(Value::as_str),
+    )?;
     let include_hidden = args
         .get("include_hidden")
         .and_then(Value::as_bool)

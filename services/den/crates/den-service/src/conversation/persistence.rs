@@ -129,6 +129,13 @@ pub struct PersistedUserHistoryMessage {
     pub created_at: time::OffsetDateTime,
 }
 
+fn strict_typed_payloads_enabled() -> bool {
+    std::env::var("BEARS_STRICT_TYPED_PAYLOADS")
+        .ok()
+        .as_deref()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"))
+}
+
 fn tool_result_user_history_summary(content_json: &serde_json::Value) -> Option<String> {
     let payload = PersistedToolResultPayload::try_from(content_json).ok()?;
     if let Some(summary) = payload
@@ -342,6 +349,20 @@ impl TryFrom<&serde_json::Value> for PersistedToolResultPayload {
                 "unexpected persisted tool result event: {}",
                 payload.event
             )));
+        }
+        if strict_typed_payloads_enabled()
+            && payload.status != ToolResultStatus::Incomplete
+            && payload
+                .output_summary
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+        {
+            return Err(DenError::ValidationError(
+                "strict typed payloads require output_summary on persisted tool_result rows"
+                    .to_string(),
+            ));
         }
         Ok(payload)
     }
