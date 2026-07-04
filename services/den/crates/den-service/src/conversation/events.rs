@@ -1,4 +1,7 @@
-use den_core::{tools::result_compaction::{truncate_str, ToolResultStatus}, DenError};
+use den_core::{
+    tools::result_compaction::{truncate_str, ToolResultStatus},
+    DenError,
+};
 use sqlx::PgPool;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -276,6 +279,21 @@ impl CanonicalConversationRecord {
         }
     }
 
+    pub fn model_visible_hidden_assistant_message(
+        text: impl Into<String>,
+        content_json: serde_json::Value,
+        provider_message_id: Option<String>,
+    ) -> Self {
+        Self::StructuredEvent {
+            message_type: ConversationMessageType::Assistant,
+            role: Some(ConversationMessageRole::Assistant),
+            visibility: ConversationMessageVisibility::HiddenFromUser,
+            content_text: text.into(),
+            content_json,
+            provider_message_id,
+        }
+    }
+
     pub fn tool_event(
         content_text: impl Into<String>,
         content_json: serde_json::Value,
@@ -354,7 +372,10 @@ impl CanonicalConversationRecord {
         )
     }
 
-    pub fn tool_request(record: CanonicalToolRequestRecord, provenance: &ConversationEventProvenance) -> Self {
+    pub fn tool_request(
+        record: CanonicalToolRequestRecord,
+        provenance: &ConversationEventProvenance,
+    ) -> Self {
         Self::tool_call_event(
             format!("Tool request: {}", record.tool_name),
             serde_json::json!({
@@ -374,7 +395,10 @@ impl CanonicalConversationRecord {
         )
     }
 
-    pub fn tool_result(record: CanonicalToolResultRecord, provenance: &ConversationEventProvenance) -> Self {
+    pub fn tool_result(
+        record: CanonicalToolResultRecord,
+        provenance: &ConversationEventProvenance,
+    ) -> Self {
         Self::tool_event(
             format!("Tool result: {}", record.tool_name),
             serde_json::json!({
@@ -755,6 +779,21 @@ pub fn spawn_persist_workflow_event(
             content_text,
             content_json,
             provider_message_id,
+        ),
+    );
+}
+
+pub fn spawn_persist_operational_outcome_message(
+    context: ConversationPersistenceContext,
+    content_text: String,
+    content_json: serde_json::Value,
+) {
+    spawn_persist_canonical_conversation_record(
+        context,
+        CanonicalConversationRecord::model_visible_hidden_assistant_message(
+            content_text,
+            content_json,
+            None,
         ),
     );
 }

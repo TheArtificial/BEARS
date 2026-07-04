@@ -22,7 +22,12 @@ use den_runtime::{
 use den_service::{
     bears::{db as bears_db, BearProfile},
     bifrost::BifrostCatalogSnapshot,
-    client_sessions, DenState,
+    client_sessions,
+    conversation::events::{
+        canonical_persistence_context, spawn_persist_operational_outcome_message,
+        ConversationEventProvenance,
+    },
+    DenState,
 };
 
 use crate::auth::authenticated_bear;
@@ -43,7 +48,11 @@ struct RunStartRequest {
     conversation_id: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     cwd: Option<String>,
-    #[serde(default, alias = "mode", deserialize_with = "deserialize_optional_string")]
+    #[serde(
+        default,
+        alias = "mode",
+        deserialize_with = "deserialize_optional_string"
+    )]
     requested_mode: Option<String>,
     /// Intentionally raw: adapter session/capability context is an extensible envelope.
     #[serde(default)]
@@ -69,6 +78,61 @@ fn log_sample(value: impl AsRef<str>) -> String {
         out.push_str("…");
     }
     out
+}
+
+fn normalized_operational_outcome(
+    reason: &str,
+    message: &str,
+    run_id: &str,
+) -> (String, serde_json::Value) {
+    let (kind, retryable, subsystem, summary) = match reason {
+        "continuation_stream_error" => (
+            "provider_stream_error",
+            true,
+            "llm_stream_transport",
+            "Operational note from Den: the previous turn ended with a retryable provider stream transport error after continuation started. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
+        ),
+        "continuation_watchdog_timeout" => (
+            "continuation_timeout",
+            true,
+            "continuation_runtime",
+            "Operational note from Den: the previous turn timed out while waiting for continuation output after client results were delivered. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
+        ),
+        "continuation_start_failed" => (
+            "continuation_start_failed",
+            true,
+            "continuation_runtime",
+            "Operational note from Den: the previous turn failed while starting continuation after client results were delivered. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
+        ),
+        "runtime_internal" if message.contains("budget") || message.contains("rule of ko") => (
+            "turn_budget_exhausted",
+            false,
+            "turn_budget",
+            "Operational note from Den: the previous turn stopped for budget or loop-safety reasons before delivering a final answer. Recent tool results were preserved. Continue from the latest successful state and prefer a narrower or more conclusive next step.",
+        ),
+        _ => (
+            "operational_failure",
+            false,
+            "bearwire_runtime",
+            "Operational note from Den: the previous turn ended with an operational failure before final answer delivery. Do not assume the requested work completed; continue from the latest successful state.",
+        ),
+    };
+    (
+        summary.to_string(),
+        json!({
+            "source": "den.bearwire",
+            "event": "operational_outcome",
+            "scope_id": run_id,
+            "request_id": run_id,
+            "kind": kind,
+            "reason": reason,
+            "retryable": retryable,
+            "subsystem": subsystem,
+            "run_id": run_id,
+            "summary": summary,
+            "detail": log_sample(message),
+        }),
+    )
 }
 
 fn client_tool_descriptors_from_context(
@@ -773,6 +837,30 @@ pub(crate) async fn persist_run_failed(
         event,
     )
     .await;
+    if let Ok(Some(session)) =
+        client_sessions::find_for_user_bear_session_id(pool, user_id, bear_id, session_id).await
+    {
+        let conversation_id = session
+            .resolved_conversation_id
+            .clone()
+            .unwrap_or_else(|| session.conversation_id.clone());
+        let provenance = ConversationEventProvenance::client_session(session_id.to_string());
+        let (summary, content_json) = normalized_operational_outcome(reason, &message, run_id);
+        spawn_persist_operational_outcome_message(
+            canonical_persistence_context(
+                pool.clone(),
+                bear_id,
+                Some(user_id),
+                conversation_id,
+                Some(session_id.to_string()),
+                Some(run_id.to_string()),
+                provenance.scope_id,
+                false,
+            ),
+            summary,
+            content_json,
+        );
+    }
 }
 
 async fn update_run_state_for_runtime_event(
@@ -1045,7 +1133,8 @@ pub(crate) async fn run_start_result(
         &session_id,
     )
     .await?;
-    let conversation_id = request.conversation_id
+    let conversation_id = request
+        .conversation_id
         .or_else(|| {
             existing
                 .as_ref()
@@ -1061,10 +1150,8 @@ pub(crate) async fn run_start_result(
     let client_context = request.client_context;
     let workspace_roots = workspace_roots_from_client_context(client_context.as_ref());
     let requested_mode = request.requested_mode;
-    let client_tools = client_tool_descriptors_from_context(
-        client_context.as_ref(),
-        requested_mode.as_deref(),
-    );
+    let client_tools =
+        client_tool_descriptors_from_context(client_context.as_ref(), requested_mode.as_deref());
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
         .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;

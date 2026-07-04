@@ -41,6 +41,7 @@ use den_service::{
 
 use crate::{
     events::{events, EventStreamQuery},
+    methods::run::persist_run_failed,
     rpc::{rpc, JsonRpcRequest},
 };
 
@@ -1077,9 +1078,18 @@ async fn session_state_includes_trusted_workspace_diagnostics(pool: sqlx::PgPool
     )
     .await;
     let diagnostics = &response["result"]["session"]["diagnostics"];
-    assert_eq!(diagnostics["trusted_workspace"]["cwd"], "/workspace/project");
-    assert_eq!(diagnostics["trusted_workspace"]["roots"][0], "/workspace/project");
-    assert_eq!(diagnostics["trusted_workspace"]["source"], "trusted_session");
+    assert_eq!(
+        diagnostics["trusted_workspace"]["cwd"],
+        "/workspace/project"
+    );
+    assert_eq!(
+        diagnostics["trusted_workspace"]["roots"][0],
+        "/workspace/project"
+    );
+    assert_eq!(
+        diagnostics["trusted_workspace"]["source"],
+        "trusted_session"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -1452,6 +1462,74 @@ async fn client_tool_result_persists_output_summary_and_preview(pool: sqlx::PgPo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    let session =
+        client_sessions::find_for_user_bear_session(&pool, user_id, &bear_slug, &session_id)
+            .await
+            .expect("load session")
+            .expect("session exists");
+
+    persist_run_failed(
+        &pool,
+        &session_id,
+        &run_id,
+        bear_id,
+        user_id,
+        "runtime_internal",
+        "I stopped because this turn hit the emergency continuation fuse.".to_string(),
+    )
+    .await;
+
+    let mut row = None;
+    for _ in 0..20 {
+        row = sqlx::query(
+            r#"
+            SELECT message_type, role, visibility, content_text, content_json
+            FROM conversation_messages
+            WHERE conversation_id = (
+                SELECT id FROM conversations
+                WHERE bear_id = $1 AND external_conversation_id = $2
+                LIMIT 1
+            )
+            ORDER BY sequence_no DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(bear_id)
+        .bind(&session.conversation_id)
+        .fetch_optional(&pool)
+        .await
+        .expect("query operational outcome row");
+        if row.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let row = row.expect("operational outcome row persisted");
+    let message_type: String = row.try_get("message_type").expect("decode message_type");
+    let role: Option<String> = row.try_get("role").expect("decode role");
+    let visibility: String = row.try_get("visibility").expect("decode visibility");
+    let content_text: String = row.try_get("content_text").expect("decode content_text");
+    let content_json: Value = row.try_get("content_json").expect("decode content_json");
+
+    assert_eq!(message_type, "assistant");
+    assert_eq!(role.as_deref(), Some("assistant"));
+    assert_eq!(visibility, "hidden_from_user");
+    assert!(content_text.starts_with("Operational note from Den:"));
+    assert_eq!(content_json["event"], "operational_outcome");
+    assert_eq!(content_json["reason"], "runtime_internal");
+    assert_eq!(content_json["run_id"], run_id);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     pool: sqlx::PgPool,
 ) {
@@ -1524,10 +1602,13 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     let messages = response["result"]["messages"]
         .as_array()
         .expect("messages array");
-    assert!(messages.iter().any(|message| {
-        message.get("text").and_then(Value::as_str)
-            == Some("Used fs_read_text_file (ok): hello from file")
-    }), "{response}");
+    assert!(
+        messages.iter().any(|message| {
+            message.get("text").and_then(Value::as_str)
+                == Some("Used fs_read_text_file (ok): hello from file")
+        }),
+        "{response}"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]

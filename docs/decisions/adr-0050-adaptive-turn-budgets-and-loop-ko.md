@@ -96,6 +96,21 @@ As with approvals and client obligations in ADR-0048, continuation-budget decisi
 
 BearWire and ACP may project the resulting stop reason, but they do not decide whether the model is allowed to continue.
 
+### 9. Budget and operational failures should leave model-visible hidden transcript records
+
+When a turn ends because of budget exhaustion, loop-ko, repeated tool failure, or operational runtime failure, Den should persist a normalized **model-visible but user-hidden** transcript record.
+
+This record exists so future turns in the same conversation do not falsely assume the previous turn completed successfully.
+
+Requirements:
+
+- persist a short normalized summary, not raw proxy or transport garbage;
+- keep the row visible to model transcript replay;
+- keep the row hidden from ordinary user-facing conversation history;
+- include typed metadata such as reason, retryability, subsystem, and run id.
+
+The model should learn that prior work may have partially succeeded and that it should resume from the latest successful state rather than assuming completion.
+
 ## Consequences
 
 ### Positive
@@ -130,6 +145,7 @@ Token-aware continuation budgets remain compatible future extensions, but are no
 - `work` should receive significantly higher wall-clock and tool-call budgets than interactive stances.
 - The emergency step fuse should be high enough that it only catches pathological loops or missing health signals.
 - Model-visible low-budget warnings are desirable, but runtime enforcement still remains authoritative.
+- Normalized operational outcome records should be persisted for future transcript replay whenever a run/turn fails after work has already been attempted.
 
 ## Non-goals
 

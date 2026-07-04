@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row as SqlxRow, postgres::PgRow};
+use sqlx::{postgres::PgRow, PgPool, Row as SqlxRow};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -90,7 +90,9 @@ impl ClientSessionRow {
                     .map(str::to_string)
             });
         let roots = if roots.is_empty() {
-            cwd.as_ref().map(|cwd| vec![cwd.clone()]).unwrap_or_default()
+            cwd.as_ref()
+                .map(|cwd| vec![cwd.clone()])
+                .unwrap_or_default()
         } else {
             roots
         };
@@ -232,6 +234,31 @@ pub async fn find_for_user_bear_session(
     )
     .bind(user_id)
     .bind(bear_slug)
+    .bind(client_session_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.as_ref().map(client_session_row_from_sql))
+}
+
+pub async fn find_for_user_bear_session_id(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    client_session_id: &str,
+) -> Result<Option<ClientSessionRow>, DenError> {
+    let row = sqlx::query(
+        r"
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_title, conversation_title_updated_at, conversation_title_synced_at,
+               closed_at, archived_at, created_at, updated_at
+        FROM client_sessions
+        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
+        ",
+    )
+    .bind(user_id)
+    .bind(bear_id)
     .bind(client_session_id)
     .fetch_optional(pool)
     .await?;
