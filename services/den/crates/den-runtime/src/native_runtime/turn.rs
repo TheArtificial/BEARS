@@ -1293,7 +1293,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn near_max_step_continuation_returns_terminal_event_not_error() {
+    async fn hard_step_continuation_returns_terminal_event_not_error() {
         let conversation_id = format!("transient-{}", Uuid::new_v4().simple());
         let client_session_id = format!("session-{}", Uuid::new_v4().simple());
         let session_key = agent_loop_session_key(&conversation_id, &client_session_id);
@@ -1319,7 +1319,7 @@ mod tests {
             model_max_output_tokens: None,
             bifrost_virtual_key: None,
             api_style: None,
-            step: 7,
+            step: 8,
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
@@ -1367,7 +1367,7 @@ mod tests {
         match event {
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
                 assert!(message.contains("hard tool/permission continuation budget"));
-                assert!(message.contains("step=7/hard_steps=8"));
+                assert!(message.contains("step=8/hard_steps=8"));
             }
             other => panic!("expected TurnFailed, got {other:?}"),
         }

@@ -172,7 +172,7 @@ pub fn evaluate_turn_budget(
         }
     }
 
-    let stop_reason = if step >= policy.hard_steps.saturating_sub(1) {
+    let stop_reason = if step >= policy.hard_steps {
         Some(TurnBudgetStopReason::HardStepLimit {
             step,
             hard_steps: policy.hard_steps,
@@ -189,9 +189,7 @@ pub fn evaluate_turn_budget(
             limit: policy.max_consecutive_tool_failures,
             tool_name: primary_tool_name,
         })
-    } else if step >= policy.soft_steps.saturating_sub(1)
-        && next_state.consecutive_non_progress_steps > 0
-    {
+    } else if step >= policy.soft_steps && next_state.consecutive_non_progress_steps > 0 {
         Some(TurnBudgetStopReason::SoftStepNoProgress {
             step,
             soft_steps: policy.soft_steps,
@@ -321,6 +319,42 @@ mod tests {
     }
 
     #[test]
+    fn hard_budget_allows_last_permitted_step_and_stops_afterward() {
+        let policy = TurnBudgetPolicy {
+            soft_steps: 6,
+            hard_steps: 12,
+            max_consecutive_tool_failures: 3,
+            max_same_tool_signature_repeats: 5,
+        };
+        let prior = TurnBudgetState {
+            last_tool_signature: Some(tool_signature("memory_read", r#"{\"path\":\"a\"}"#)),
+            ..Default::default()
+        };
+
+        let before_limit = evaluate_turn_budget(
+            policy,
+            11,
+            &prior,
+            &[observation("memory_read", r#"{\"path\":\"b\"}"#, false)],
+        );
+        assert!(before_limit.stop_reason.is_none());
+
+        let at_limit = evaluate_turn_budget(
+            policy,
+            12,
+            &prior,
+            &[observation("memory_read", r#"{\"path\":\"c\"}"#, false)],
+        );
+        assert!(matches!(
+            at_limit.stop_reason,
+            Some(TurnBudgetStopReason::HardStepLimit {
+                step: 12,
+                hard_steps: 12,
+            })
+        ));
+    }
+
+    #[test]
     fn soft_budget_allows_extension_when_signature_changes() {
         let policy = TurnBudgetPolicy {
             soft_steps: 6,
@@ -359,7 +393,7 @@ mod tests {
 
         let evaluation = evaluate_turn_budget(
             policy,
-            5,
+            6,
             &prior,
             &[observation("memory_read", r#"{\"path\":\"a\"}"#, false)],
         );
