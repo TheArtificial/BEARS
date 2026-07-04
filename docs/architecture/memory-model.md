@@ -1,13 +1,13 @@
 # Memory Model
 
-Bear memory is the durable knowledge a Bear can use across roles, work surfaces, channels, and time.
+Bear memory is the durable knowledge a Bear can use across stances, work surfaces, channels, and time.
 
 In the current architecture, canonical Bear cognition lives in **per-Bear SQLite**. Memory is not the same thing as transcript history, task state, or external retrieval indexes.
 
 ## Summary
 
 - canonical Bear cognition is stored in per-Bear SQLite
-- shared knowledge and role-local knowledge are distinct
+- shared knowledge and stance-local knowledge are distinct
 - work-surface grounding matters as much as Bear-global memory
 - transcript history is not the Bear's memory store
 - Docket jobs/tasks are infrastructure, not cognition
@@ -15,11 +15,11 @@ In the current architecture, canonical Bear cognition lives in **per-Bear SQLite
 
 ## Core distinctions
 
-### Shared vs role-local memory
+### Shared vs stance-local memory
 
-Shared memory is durable Bear knowledge that should be usable across roles and surfaces.
+Shared memory is durable Bear knowledge that should be usable across stances and surfaces.
 
-Role-local memory is scoped knowledge that may remain local indefinitely or later be promoted.
+Stance-local memory is scoped knowledge that may remain local indefinitely or later be promoted.
 
 ### Bear-global vs work-surface-local memory
 
@@ -85,9 +85,9 @@ Examples of work surfaces:
 Recommended retrieval order for local-understanding questions:
 
 1. current conversation and trusted session briefing
-2. current role/channel/work-surface resolution state
+2. current stance/channel/work-surface resolution state
 3. canonical work-surface anchors
-4. work-surface role-local memory
+4. work-surface stance-local memory
 5. Bear-global shared anchors
 6. broader Bear memory search
 7. direct artifact inspection or external docs
@@ -114,7 +114,7 @@ Memory does not automatically become shared truth.
 
 Typical flow:
 
-1. a role writes local memory, an observation, or a proposal
+1. a stance writes local memory, an observation, or a proposal
 2. review/curation examines it
 3. it is retained locally, summarized, promoted, superseded, or rejected
 4. if promoted, shared memory is updated in canonical Bear cognition
@@ -143,12 +143,12 @@ Instead it assembles:
 - prompt-memory blocks
 - runtime supplements
 
-See [den-native-runtime](den-native-runtime.md) for the exact context assembly model.
+See [den-runtime](den-runtime.md) for the exact context assembly model.
 
 ## Related docs
 
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [bears and den](bears-and-den.md)
-- [pair role](pair-role.md)
+- [pair stance](pair-stance.md)
 - [reflection system](reflection-system.md)
 - [tasks and autonomy](tasks-and-autonomy.md)

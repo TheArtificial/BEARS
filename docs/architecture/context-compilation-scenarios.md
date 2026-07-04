@@ -9,7 +9,7 @@ This document is both:
 
 Related docs:
 
-- [Den-native runtime](den-native-runtime.md#turn-context-assembly)
+- [Den runtime](den-runtime.md#turn-context-assembly)
 - [Prompt fragment registry](prompt-fragment-registry.md)
 - [Bear memory guide](../guides/bear-memory.md)
 - [Context compaction contract](den-context-compaction-contract.md)

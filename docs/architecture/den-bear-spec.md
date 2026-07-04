@@ -2,15 +2,15 @@
 
 This document is the stable product/runtime contract for what a Bear is in the Den-native architecture.
 
-It complements [den-native-runtime](den-native-runtime.md) by focusing on Bear identity, roles, capabilities, and role boundaries rather than storage and turn mechanics.
+It complements [den runtime](den-runtime.md) by focusing on Bear identity, stances, capabilities, and stance boundaries rather than storage and turn mechanics.
 
 ## Scope
 
-A Bear is a durable assistant identity hosted by Den. A Bear operates through a fixed set of roles, each of which is a capability profile over the same native runtime model.
+A Bear is a durable assistant identity hosted by Den. A Bear operates through a fixed set of stances, each of which is a capability profile over the same in-process runtime model.
 
 This spec covers:
 
-- role purposes
+- stance purposes
 - typical surfaces
 - memory and capability boundaries
 - tool and approval posture
@@ -25,11 +25,11 @@ Every Bear has these invariants:
 3. canonical cognition in per-Bear SQLite;
 4. canonical task/work management in Docket and Den Postgres;
 5. replayable transcript and tool activity in Den conversation persistence;
-6. role-specific capability boundaries enforced by policy, not by informal prompt guidance alone.
+6. stance-specific capability boundaries enforced by policy, not by informal prompt guidance alone.
 
-## Roles
+## Stances
 
-The core Bear roles are:
+The core Bear stances are:
 
 | Role | Typical surfaces | Primary purpose |
 |------|------------------|-----------------|
@@ -39,9 +39,9 @@ The core Bear roles are:
 | `work` | approved background execution | scoped autonomous or semi-autonomous execution |
 | `watch` | inbound events, polling, webhooks | observation intake and interpretation |
 
-The exact vocabulary may differ between documents where `review` and `curate` are separated more explicitly, but the architectural point is stable: the Bear uses differentiated roles with different trust and capability boundaries.
+The exact vocabulary may differ between documents where `review` and `curate` are separated more explicitly, but the architectural point is stable: the Bear uses differentiated stances with different trust and capability boundaries.
 
-## Role capability profiles
+## Stance capability profiles
 
 ### `chat`
 
@@ -54,7 +54,7 @@ The exact vocabulary may differ between documents where `review` and `curate` ar
 
 - trusted interactive collaboration inside an active work surface
 - client-mediated local tools and approvals
-- role-local note taking and planning
+- stance-local note taking and planning
 - may request broader background work rather than silently expanding scope
 
 ### `review` / `curate`
@@ -80,10 +80,10 @@ The exact vocabulary may differ between documents where `review` and `curate` ar
 
 ## Memory boundary
 
-Roles do not share one undifferentiated memory pool.
+Stances do not share one undifferentiated memory pool.
 
 - shared canonical knowledge lives in curated Bear-global memory
-- role-local knowledge remains scoped until reviewed/promoted
+- stance-local knowledge remains scoped until reviewed/promoted
 - transcript history is not itself the Bear's canonical knowledge store
 - tasks and jobs are infrastructure, not Bear cognition
 
@@ -93,7 +93,7 @@ Tool access is descriptor-owned and policy-owned.
 
 - Den-hosted tools execute inside Den
 - armature-local tools execute through trusted clients
-- role capability profiles decide which tools are visible and under what approval posture
+- stance capability profiles decide which tools are visible and under what approval posture
 - durable changes and high-risk actions should remain reviewable and auditable
 
 ## Work-surface boundary
@@ -121,10 +121,10 @@ The Bear can participate in both interactive and autonomous work, but not throug
 
 ## Related docs
 
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [bears and den](bears-and-den.md)
-- [bear roles](bear-roles.md)
-- [pair role](pair-role.md)
+- [bear stances](bear-stances.md)
+- [pair stance](pair-stance.md)
 - [memory model](memory-model.md)
 - [tasks and autonomy](tasks-and-autonomy.md)
 - [capabilities and skills](capabilities-and-skills.md)

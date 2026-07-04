@@ -4,11 +4,11 @@ Human-oriented documentation, operational notes, contributor guides, troubleshoo
 
 ## Architecture
 
-- [den-native runtime](../architecture/den-native-runtime.md)
+- [den runtime](../architecture/den-runtime.md)
 - [context compilation scenarios](../architecture/context-compilation-scenarios.md)
 - [prompt fragment registry](../architecture/prompt-fragment-registry.md)
 - [memory model](../architecture/memory-model.md)
-- [Den native runtime plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
+- [Den runtime plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
 - [Prompt fragment registry plan](../roadmap/PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md)
 
 ## Guides

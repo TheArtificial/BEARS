@@ -317,7 +317,7 @@ This makes stale binary problems obvious in Zed agent logs.
 
 ## 19. Prefer direct ACP implementation over multi-hop tool relays
 
-An earlier multi-hop path (Den → harness → secondary tool runtime → Den → adapter → editor) was difficult to reason about. Failures could occur at many async boundaries. The native `pair` profile now runs **in-process** in Den (see [den-native-runtime.md](../architecture/den-native-runtime.md)).
+An earlier multi-hop path (Den → harness → secondary tool runtime → Den → adapter → editor) was difficult to reason about. Failures could occur at many async boundaries. The `pair` stance now runs **in-process** in Den (see [den-runtime.md](../architecture/den-runtime.md)).
 
 When extending ACP, keep:
 

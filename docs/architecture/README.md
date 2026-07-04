@@ -16,12 +16,12 @@ There is no Letta, Letta Code/Codepool, or MemFS sidecar in the current architec
 
 If you need one linear path that yields a complete mental model without reading code, use this order:
 
-1. [den-native-runtime](den-native-runtime.md) — canonical runtime architecture and storage boundary
+1. [den runtime](den-runtime.md) — canonical runtime architecture and storage boundary
 2. [overview](overview.md) — one-page system picture: components, flows, and responsibilities
 3. [den crate architecture](den-crate-architecture.md) — how the implementation is decomposed inside the Rust workspace
-4. [den bear spec](den-bear-spec.md) — what a Bear is, what roles exist, and what each role is allowed to do
+4. [den bear spec](den-bear-spec.md) — what a Bear is, what stances exist, and what each stance is allowed to do
 5. [bears and den](bears-and-den.md) — product identity vs control plane
-6. [bear roles](bear-roles.md) — role model and role boundaries
+6. [bear stances](bear-stances.md) — stance model and stance boundaries
 7. [bear channel and ACP](bear-channel-and-acp.md) — channels, armatures, and trusted work surfaces
 8. [context compilation scenarios](context-compilation-scenarios.md) — how prompt/context assembly behaves in practice
 9. [memory model](memory-model.md) — canonical memory model and promotion boundaries
@@ -30,7 +30,7 @@ If you need one linear path that yields a complete mental model without reading 
 12. [planning](planning.md) — workboard plans, plan mode, and plan artifacts
 13. [capabilities and skills](capabilities-and-skills.md) — capability model, tools, and skill governance
 14. [task schema](task-schema.md) — current task and task-result shapes
-15. [role vocabulary](role-vocabulary.md) — canonical naming and terminology
+15. [stance vocabulary](stance-vocabulary.md) — canonical naming and terminology
 
 ## What this section should let you answer
 
@@ -61,19 +61,19 @@ Bear Den consists of these architectural layers:
 
 ### Runtime and execution
 
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [overview](overview.md)
 - [den crate architecture](den-crate-architecture.md)
 - [bear channel and ACP](bear-channel-and-acp.md)
 - [context compilation scenarios](context-compilation-scenarios.md)
 
-### Bear model and roles
+### Bear model and stances
 
 - [den bear spec](den-bear-spec.md)
 - [bears and den](bears-and-den.md)
-- [bear roles](bear-roles.md)
-- [pair role](pair-role.md)
-- [role vocabulary](role-vocabulary.md)
+- [bear stances](bear-stances.md)
+- [pair stance](pair-stance.md)
+- [stance vocabulary](stance-vocabulary.md)
 
 ### Memory, reflection, and learning
 
@@ -100,7 +100,7 @@ Bear Den consists of these architectural layers:
 ### Core concepts
 
 - [bears and den](bears-and-den.md)
-- [bear roles](bear-roles.md)
+- [bear stances](bear-stances.md)
 - [bear charter and cabinet missions](bear-charter-and-cabinet-missions.md)
 - [identity and membership](identity-and-membership.md)
 - [capabilities and skills](capabilities-and-skills.md)
@@ -108,7 +108,7 @@ Bear Den consists of these architectural layers:
 
 ### Runtime and systems
 
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [overview](overview.md)
 - [den crate architecture](den-crate-architecture.md)
 - [den bear spec](den-bear-spec.md)
@@ -118,7 +118,7 @@ Bear Den consists of these architectural layers:
 - [den concepts overview](den-concepts-overview.md)
 - [workflow state overview](workflow-state-overview.md)
 - [bear environment tool contract](bear-environment-tool-contract.md)
-- [pair role](pair-role.md)
+- [pair stance](pair-stance.md)
 
 ### Memory, reflection, and work
 
@@ -131,7 +131,7 @@ Bear Den consists of these architectural layers:
 
 ### Reference and terminology
 
-- [role vocabulary](role-vocabulary.md)
+- [stance vocabulary](stance-vocabulary.md)
 - [interactive stances and role axes](interactive-stances-and-role-axes.md)
 - [task schema](task-schema.md)
 - [den prompt memory block contract](den-prompt-memory-block-contract.md)

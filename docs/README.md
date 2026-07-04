@@ -12,7 +12,6 @@ Human-oriented docs for the Bear Den product.
 | [decisions/](decisions/) | Architecture Decision Records (ADRs), named `adr-####-slug.md` |
 | [guides/](guides/) | Human guides, deployment docs, contributor notes, troubleshooting, and operational runbooks |
 | [roadmap/](roadmap/) | Active planning, implementation sequencing, and archived roadmap materials |
-| [../services/codepool/](../services/codepool/) | Codepool runtime service |
 
 ## Suggested entry points
 

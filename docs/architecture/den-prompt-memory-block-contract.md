@@ -17,7 +17,7 @@ A prompt memory block is an editable context object intended for direct inclusio
 
 Examples:
 
-- role-local guidance
+- stance-local guidance
 - work-surface context reminders
 - session focus notes
 - bounded operator/user instruction blocks
@@ -31,7 +31,7 @@ The attachment boundary where a block applies.
 Typical scopes:
 
 - Bear-wide
-- role-local
+- stance-local
 - work-surface-attached
 - session-scoped
 
@@ -94,7 +94,7 @@ Specific scopes should outrank broader defaults when they conflict.
 
 An architecture-level minimum set is:
 
-- role guidance blocks
+- stance guidance blocks
 - work-surface context blocks
 - session focus blocks
 - bounded instruction blocks
@@ -102,5 +102,5 @@ An architecture-level minimum set is:
 ## Related docs
 
 - [memory model](memory-model.md)
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [agent and bear environments](agent-and-bear-environments.md)

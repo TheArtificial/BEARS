@@ -4,7 +4,7 @@
 
 This note captures the ACP / `pair` profile runtime invariants that Den's native agent loop must preserve. It is intentionally focused on operational/runtime behavior rather than broader product architecture.
 
-For the concurrency and turn-ownership model, see [den-native-runtime.md](../architecture/den-native-runtime.md) § Concurrency model.
+For the concurrency and turn-ownership model, see [den-runtime.md](../architecture/den-runtime.md) § Concurrency model.
 
 ## Core invariants
 

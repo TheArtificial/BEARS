@@ -10,7 +10,7 @@ This repo is a **light monorepo**: `docs/`, `services/den/` for Den, `services/b
 |-----------------|------|
 | **Deploy** (Coolify; **recommended:** root Docker Compose `bears-*` app stack) | [docs/guides/deployment/deployment.md](docs/guides/deployment/deployment.md), [docker-compose.yaml](docker-compose.yaml) |
 | **Roadmap & architecture** | [docs/roadmap/PLAN.md](docs/roadmap/PLAN.md), [docs/architecture/overview.md](docs/architecture/overview.md) |
-| **Den-native runtime architecture** | [docs/architecture/den-native-runtime.md](docs/architecture/den-native-runtime.md) |
+| **Den runtime architecture** | [docs/architecture/den-runtime.md](docs/architecture/den-runtime.md) |
 | **Every doc in one place** | [docs/README.md](docs/README.md) |
 | **Troubleshoot ACP/Zed/Code token issues** | [docs/guides/acp-troubleshooting.md](docs/guides/acp-troubleshooting.md) |
 

@@ -29,7 +29,7 @@ Bear Den distinguishes between:
 Architecturally, a task or run record usually needs to capture some combination of:
 
 - durable id
-- originating Bear and role
+- originating Bear and stance
 - requesting human or source surface
 - work-surface attachment
 - desired outcome
@@ -61,7 +61,7 @@ Typical lifecycle progression:
 
 - tasks are infrastructure, not canonical Bear cognition
 - results may produce memory proposals or curated summaries
-- role-local notes and shared memory are separate from task records
+- stance-local notes and shared memory are separate from task records
 
 ## Relationship to approvals
 
@@ -77,5 +77,5 @@ These approvals are part of Den-managed control state, not informal prompt-only 
 
 - [tasks and autonomy](tasks-and-autonomy.md)
 - [planning](planning.md)
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [ADR-0034: jobs and tasks work-management](../decisions/adr-0034-jobs-and-tasks-work-management.md)

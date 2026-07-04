@@ -2,7 +2,7 @@
 
 Deploy Bear Den on Coolify from the repository root [`docker-compose.yaml`](../../../docker-compose.yaml). This is the supported path for operators: one Compose resource, one shared network, and service names that resolve internally as `bears-*`.
 
-The default stack runs the **Den-native agent loop** (`AGENT_RUNTIME=native`): inference via Bifrost, Bear memory in per-Bear SQLite on a mounted volume. See [den-native-runtime.md](../../architecture/den-native-runtime.md) for the architecture and [den-deploy.md](../den-deploy.md) for single-image env details.
+The default stack runs the **in-process Den agent loop** (`AGENT_RUNTIME=native`): inference via Bifrost, Bear memory in per-Bear SQLite on a mounted volume. See [den-runtime.md](../../architecture/den-runtime.md) for the architecture and [den-deploy.md](../den-deploy.md) for single-image env details.
 
 ## What You Deploy
 

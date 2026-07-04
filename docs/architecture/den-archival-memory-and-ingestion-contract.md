@@ -28,7 +28,7 @@ These layers are related but not interchangeable.
 Examples of canonical sources:
 
 - shared Bear memory
-- approved role-local material when policy allows
+- approved stance-local material when policy allows
 - work-surface canonical docs
 - approved Cabinet-linked sources
 - imported external documents with explicit provenance
@@ -119,5 +119,5 @@ An acceptable architecture must provide:
 ## Related docs
 
 - [memory model](memory-model.md)
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [den-prompt-memory-block-contract](den-prompt-memory-block-contract.md)

@@ -28,7 +28,7 @@ These become Docket work rather than ad hoc side effects.
 
 ## Core lifecycle
 
-1. A human, role, or event produces a work request.
+1. A human, stance, or event produces a work request.
 2. Den records that request in work-management state.
 3. Review/policy/human controls approve, refine, reject, or schedule it as needed.
 4. Den dispatches approved work to `work`.
@@ -53,7 +53,7 @@ Autonomy in Bear Den is not unconstrained agent freedom.
 It means work that is:
 
 - requested, derived, or scheduled through a control path;
-- bounded by role and tool policy;
+- bounded by stance and tool policy;
 - auditable;
 - resumable;
 - and separate from the immediate interactive turn.
@@ -90,7 +90,7 @@ Prefer:
 
 Avoid:
 
-- “the chat role can just do it later”
+- “the chat stance can just do it later”
 - “autonomy bypasses review or policy”
 - “tasks are the Bear's memory”
 

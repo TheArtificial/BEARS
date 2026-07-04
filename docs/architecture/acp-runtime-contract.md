@@ -52,7 +52,7 @@ ACP should see stable surface behavior for:
 
 ### Session and conversation binding
 
-ACP sessions bind a client session to a Bear, role, and canonical conversation state.
+ACP sessions bind a client session to a Bear, stance, and canonical conversation state.
 
 ### Turn execution
 
@@ -109,7 +109,7 @@ Those belong to the runtime core.
 
 ## Related docs
 
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [bear channel and ACP](bear-channel-and-acp.md)
 - [den conversation runtime schema](den-conversation-runtime-schema.md)
 - [ADR-0043: ACP as edge adapter, protocol-agnostic core](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md)

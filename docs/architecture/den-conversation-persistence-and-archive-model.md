@@ -61,7 +61,7 @@ A conversation is the durable logical thread.
 Typical metadata includes:
 
 - owning Bear
-- active role or originating surface context
+- active stance or originating surface context
 - session/surface association where relevant
 - current title
 - lifecycle state such as active or archived
@@ -129,5 +129,5 @@ Tool calls and approvals are first-class runtime records linked to the same conv
 ## Related docs
 
 - [den conversation runtime schema](den-conversation-runtime-schema.md)
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [acp-runtime-contract](acp-runtime-contract.md)

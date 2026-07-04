@@ -8,7 +8,7 @@ This document explains how Bear Den distinguishes conversational **channels** fr
 - An **armature** is a trusted work surface that can expose local tools.
 - ACP is the protocol Bear Den uses for armature-style clients.
 - BearWire is the Den-to-armature wire used by the current ACP adapter path.
-- The runtime below those surfaces is Den-native and protocol-neutral.
+- The runtime below those surfaces is the in-process Den runtime and protocol-neutral.
 
 ## Core distinction
 
@@ -74,7 +74,7 @@ BearWire is not the source of truth for runtime semantics. The Den runtime owns 
 
 Client sessions are not the same thing as canonical conversations.
 
-- client session state exists to bind a surface session to a Bear and role
+- client session state exists to bind a surface session to a Bear and stance
 - canonical transcript and tool history live in Den conversation persistence
 - the same runtime concepts should be usable across ACP, web, and other surfaces
 
@@ -118,8 +118,8 @@ The runtime coordinator, not the edge alone, decides when continuation is legal.
 
 ## Surface mapping
 
-| Surface type | Typical role | Local tools? | Example |
-|--------------|--------------|--------------|---------|
+| Surface type | Typical stance | Local tools? | Example |
+|--------------|----------------|--------------|---------|
 | Channel | `chat` | usually no | web chat |
 | Armature | `pair` | yes, trusted and permission-gated | ACP-enabled editor |
 | Scheduled/background | `work` | sandbox/server tools rather than user-local tools | Docket-dispatched run |
@@ -136,9 +136,9 @@ This model implies:
 
 ## Related docs
 
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [den crate architecture](den-crate-architecture.md)
-- [pair role](pair-role.md)
+- [pair stance](pair-stance.md)
 - [agent and bear environments](agent-and-bear-environments.md)
 - [ADR-0043: ACP as edge adapter, protocol-agnostic core](../decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md)
 - [ADR-0048: core turn/client-obligation coordinator](../decisions/adr-0048-core-turn-client-obligation-coordinator.md)

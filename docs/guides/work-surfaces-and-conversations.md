@@ -2,7 +2,7 @@
 
 How **durable work resources** relate to **interactive sessions**, and why product copy should prefer *“start a conversation with this repository”* over *“check out this repo and work on it”* inside an open chat.
 
-**Related:** [ADR-0006 — Bear work surfaces](../decisions/adr-0006-bear-work-surfaces.md), [`bear-roles.md`](../architecture/bear-roles.md), [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md), [work-surface resolution plan](../roadmap/WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md)
+**Related:** [ADR-0006 — Bear work surfaces](../decisions/adr-0006-bear-work-surfaces.md), [`bear-stances.md`](../architecture/bear-stances.md), [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md), [work-surface resolution plan](../roadmap/WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md)
 
 ## Two layers (do not collapse them)
 
@@ -102,4 +102,4 @@ See [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances
 - Work surface model and anchors: [ADR-0006](../decisions/adr-0006-bear-work-surfaces.md)
 - Resolution states and UX copy: [WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md](../roadmap/WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md)
 - `session_info` work-surface hints: Den `work_surface` tool module; active vs reference mode by role
-- Role vocabulary: [`bear-roles.md`](../architecture/bear-roles.md)
+- Stance vocabulary: [`bear-stances.md`](../architecture/bear-stances.md)

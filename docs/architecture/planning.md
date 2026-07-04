@@ -23,7 +23,7 @@ Bear Den uses a Den-owned workboard for this:
 - current visible steps
 - one `in_progress` item at a time
 - completion, blocking, and cancellation state
-- role provenance
+- stance provenance
 - optional work-surface attachment
 
 This is the live collaboration surface for multi-step edits, debugging, planning, and visible progress.
@@ -88,7 +88,7 @@ Use this ladder:
 
 1. keep tactical progress in the workboard
 2. use a plan artifact when approval, audit, or later retrieval matters
-3. write role-local memory when rationale should survive the current mini-project
+3. write stance-local memory when rationale should survive the current mini-project
 4. request curation when lessons or decisions should become shared Bear knowledge
 5. use Docket work when the task becomes autonomous/background execution
 
@@ -106,5 +106,5 @@ The current architecture assumes:
 
 - [tasks and autonomy](tasks-and-autonomy.md)
 - [task schema](task-schema.md)
-- [bear roles](bear-roles.md)
+- [bear stances](bear-stances.md)
 - [memory model](memory-model.md)

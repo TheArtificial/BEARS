@@ -42,8 +42,8 @@ gate), or check_ref. Injected into dispatch as the
 success contract. See ADR-0034.
 
 **task focus**
-the ephemeral per-turn working state the native
-loop uses to judge whether a candidate yield is
+the ephemeral per-turn working state the in-process
+Den loop uses to judge whether a candidate yield is
 premature. A projection of governance mode ×
 acceptance-criteria state × run/task status, not a
 durable record. See ADR-0023 (re-homed by ADR-0035

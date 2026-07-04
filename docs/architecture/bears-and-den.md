@@ -8,7 +8,7 @@ This document explains the product boundary between Bear identity and Den infras
 
 - A Bear is the user-facing assistant identity.
 - Den is the runtime and control plane that makes that identity real.
-- A Bear spans roles, work surfaces, conversations, memory, and tasks.
+- A Bear spans stances, work surfaces, conversations, memory, and tasks.
 - Den spans policy, routing, approvals, persistence, scheduling, and runtime execution.
 
 ## What a Bear is
@@ -48,7 +48,7 @@ Users talk to Bears. Den is the system that hosts them safely and consistently.
 A Bear is not:
 
 - a single conversation;
-- a single role;
+- a single stance;
 - a channel bot alone;
 - an IDE session alone;
 - a task record alone;
@@ -65,19 +65,19 @@ Den is not:
 
 Den owns execution, policy, and persistence. The Bear is the assistant identity that Den presents and maintains.
 
-## Relationship to roles
+## Relationship to stances
 
-Different surfaces engage different Bear roles:
+Different surfaces engage different Bear stances:
 
-| Surface or situation | Typical role |
-|----------------------|--------------|
+| Surface or situation | Typical stance |
+|----------------------|----------------|
 | web chat, messaging, future conversational channels | `chat` |
 | ACP and trusted work-surface collaboration | `pair` |
 | reflection, review, promotion, approval | `review` / `curate` depending on vocabulary in scope |
 | approved background execution | `work` |
 | inbound webhooks, polling, and observation intake | `watch` |
 
-The role changes. The Bear identity remains stable.
+The stance changes. The Bear identity remains stable.
 
 ## Relationship to work surfaces
 
@@ -91,19 +91,19 @@ Prefer:
 
 - “your Bear” for the assistant identity
 - “Den hosts and manages Bears”
-- “Bear roles” for role/stance contracts
+- “Bear stances” for stance contracts
 - “membership” or “access roles” for human permissions
 
 Avoid:
 
 - “Den answered the user” except in infrastructure/operator contexts
 - describing roles as separate assistants
-- using “Bear role” when you mean human access role
+- using “Bear stance” when you mean human access role
 
 ## Related docs
 
 - [den bear spec](den-bear-spec.md)
-- [bear roles](bear-roles.md)
+- [bear stances](bear-stances.md)
 - [memory model](memory-model.md)
 - [tasks and autonomy](tasks-and-autonomy.md)
 - [capabilities and skills](capabilities-and-skills.md)

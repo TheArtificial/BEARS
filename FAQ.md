@@ -1,6 +1,6 @@
 # FAQ
 
-Short answers to common architecture questions. See [docs/architecture/den-native-runtime.md](docs/architecture/den-native-runtime.md) and [docs/roadmap/PLAN.md](docs/roadmap/PLAN.md) for detail.
+Short answers to common architecture questions. See [docs/architecture/den-runtime.md](docs/architecture/den-runtime.md) and [docs/roadmap/PLAN.md](docs/roadmap/PLAN.md) for detail.
 
 ## Why does web chat go through Den?
 

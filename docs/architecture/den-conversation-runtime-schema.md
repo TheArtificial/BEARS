@@ -62,7 +62,7 @@ The exact table names may vary, but the architecture expects records equivalent 
 ### Conversation
 
 - Bear
-- role
+- stance
 - surface/session association
 - title and archive/delete state
 - canonical identifiers
@@ -108,6 +108,6 @@ Without this separation:
 
 ## Related docs
 
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [acp-runtime-contract](acp-runtime-contract.md)
 - [bear channel and ACP](bear-channel-and-acp.md)

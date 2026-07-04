@@ -2,7 +2,7 @@
 
 This document maps the current repository and runtime concepts to the live Bear Den architecture.
 
-It is for readers who want to understand where major responsibilities live in the codebase after reading the architectural model in [den-native-runtime](den-native-runtime.md) and [overview](overview.md).
+It is for readers who want to understand where major responsibilities live in the codebase after reading the architectural model in [den runtime](den-runtime.md) and [overview](overview.md).
 
 ## Repository shape
 
@@ -70,10 +70,10 @@ Composition root:
 
 When you need the conceptual truth rather than the code layout:
 
-- runtime: [den-native-runtime](den-native-runtime.md)
+- runtime: [den runtime](den-runtime.md)
 - product/system picture: [overview](overview.md)
 - crate decomposition: [den crate architecture](den-crate-architecture.md)
-- Bear/role contract: [den bear spec](den-bear-spec.md)
+- Bear/stance contract: [den bear spec](den-bear-spec.md)
 - memory: [memory model](memory-model.md)
 - tasks/autonomy: [tasks and autonomy](tasks-and-autonomy.md)
 - channels/armatures: [bear channel and ACP](bear-channel-and-acp.md)

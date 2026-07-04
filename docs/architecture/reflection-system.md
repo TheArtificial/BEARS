@@ -27,7 +27,7 @@ It is how the system turns raw activity into reviewed memory changes, proposals,
 Reflection can:
 
 - curate shared memory
-- evaluate role-local learnings
+- evaluate stance-local learnings
 - summarize or promote useful durable knowledge
 - inspect behavior failures and repeated patterns
 - produce proposals for skill or workflow changes
@@ -57,14 +57,14 @@ This keeps cognition with cognition and infrastructure with infrastructure.
 
 ## Conductor responsibilities
 
-The conductor is Den-side infrastructure, not a Bear role.
+The conductor is Den-side infrastructure, not a Bear stance.
 
 It should:
 
 1. select pending work for a lane
 2. enforce Bear/lane locking and budgets
 3. assemble bounded context and allowed tools
-4. invoke the appropriate role/runtime behavior
+4. invoke the appropriate stance/runtime behavior
 5. record run state, decisions, and audit events
 6. surface status to operators and future UI projections
 
@@ -72,7 +72,7 @@ It should:
 
 Memory curation asks: what should the Bear remember?
 
-It reviews role-local memory, observations, proposals, and outcomes, then decides whether to:
+It reviews stance-local memory, observations, proposals, and outcomes, then decides whether to:
 
 - retain locally
 - summarize
@@ -137,5 +137,5 @@ Operators and future UIs should be able to see:
 
 - [memory model](memory-model.md)
 - [tasks and autonomy](tasks-and-autonomy.md)
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [reflection run taxonomy](reflection-run-taxonomy.md)

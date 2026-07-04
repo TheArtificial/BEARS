@@ -2,7 +2,7 @@
 
 How **durable Bear knowledge** is stored, what is *not* memory, and how Den **assembles context** each turn — for readers who know the stack but not agent-harness details.
 
-**Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [`memory-model.md`](../architecture/memory-model.md) (full model), [`den-native-runtime.md`](../architecture/den-native-runtime.md#turn-context-assembly) (turn assembly), [ADR-0038 — Derived recall](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [ADR-0046 — file-backed prompt fragments](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md), [`bear-package.md`](bear-package.md) (export/import)
+**Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [`memory-model.md`](../architecture/memory-model.md) (full model), [`den-runtime.md`](../architecture/den-runtime.md#turn-context-assembly) (turn assembly), [ADR-0038 — Derived recall](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [ADR-0046 — file-backed prompt fragments](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md), [`bear-package.md`](bear-package.md) (export/import)
 
 ## Canonical store
 
@@ -41,7 +41,7 @@ Den builds **Turn Context** in layers. The model does **not** receive the whole 
 **Recall** = what is semantically near this turn (fuzzy / cross-topic).  
 **Tools** = fetch more when proactive context is not enough.
 
-See [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly), [Prompt Fragment Registry](../architecture/prompt-fragment-registry.md), and [v1 projection policy](../architecture/den-native-runtime.md#v1-selection-policy-locked) for path lists and char budgets.
+See [Turn context assembly](../architecture/den-runtime.md#turn-context-assembly), [Prompt Fragment Registry](../architecture/prompt-fragment-registry.md), and [v1 projection policy](../architecture/den-runtime.md#v1-selection-policy-locked) for path lists and char budgets.
 
 ## Work surfaces
 

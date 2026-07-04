@@ -2,14 +2,14 @@
 
 This document is the one-page system picture for Bear Den.
 
-For the full canonical runtime description, read [den-native-runtime](den-native-runtime.md). This page is the compressed view: components, responsibilities, and the main execution/data flows.
+For the full canonical runtime description, read [den runtime](den-runtime.md). This page is the compressed view: components, responsibilities, and the main execution/data flows.
 
 ## Core claim
 
 Bear Den is a Den-owned assistant system with:
 
-- one native runtime loop per turn, executed in-process inside Den;
-- one canonical Bear identity composed of multiple roles;
+- one in-process runtime loop per turn, executed inside Den;
+- one canonical Bear identity composed of multiple stances;
 - one control plane for access, routing, approvals, tasks, and configuration;
 - two canonical persistence domains:
   - per-Bear SQLite for Bear cognition and curated memory;
@@ -40,7 +40,7 @@ Humans / clients
        Den edges
           |
           v
-   Den-native runtime core
+   Den runtime core
   |- turn orchestration
   |- context assembly
   |- tool routing
@@ -60,15 +60,15 @@ Bifrost   Den Postgres   per-Bear SQLite
 
 At system level, Den can:
 
-- host durable Bear identities with multiple roles;
+- host durable Bear identities with multiple stances;
 - route different surfaces to the correct trust posture and tool surface;
 - run interactive turns with tools and approvals;
-- maintain canonical Bear memory and role-local knowledge;
+- maintain canonical Bear memory and stance-local knowledge;
 - persist replayable conversations and tool interactions;
 - manage workboard plans, Docket tasks, handoffs, and autonomous work;
 - schedule and run reflection/review workflows;
 - expose Den-hosted tools and armature-local tools through stable model-facing descriptors;
-- compile role prompts and runtime context from managed configuration;
+- compile stance prompts and runtime context from managed configuration;
 - and project the same core runtime into ACP, web, and future channels.
 
 ## Primary execution flows
@@ -76,7 +76,7 @@ At system level, Den can:
 ### 1. Interactive armature turn
 
 1. The human sends a prompt through an ACP armature.
-2. BearWire/ACP edge authenticates the session and resolves the Bear + role.
+2. BearWire/ACP edge authenticates the session and resolves the Bear + stance.
 3. Den assembles turn context from compiled prompt, projected memory, prompt-memory, transcript, and tool surface.
 4. Den streams inference through Bifrost.
 5. The model emits content and possibly tool calls.
@@ -87,7 +87,7 @@ At system level, Den can:
 ### 2. Web/chat turn
 
 1. The human sends a prompt through the Den web/chat surface.
-2. Den resolves the Bear, channel, and role.
+2. Den resolves the Bear, channel, and stance.
 3. The same runtime loop executes in-process.
 4. Den-hosted tools run directly; channel-specific approvals or restrictions are enforced by Den policy.
 5. Transcript and tool activity are persisted in the same canonical stores.
@@ -114,7 +114,7 @@ Use this for Bear cognition:
 
 - canonical memory records
 - supersession chains and promotions
-- role-local knowledge
+- stance-local knowledge
 - observations and memory proposals
 - reflection outcomes and related cognition artifacts
 
@@ -153,7 +153,7 @@ Use this for control-plane and interaction state:
 
 ## Related docs
 
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [den crate architecture](den-crate-architecture.md)
 - [den bear spec](den-bear-spec.md)
 - [bears and den](bears-and-den.md)

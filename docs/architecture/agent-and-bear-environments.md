@@ -1,12 +1,12 @@
 # Agent and Bear Environments
 
-This document defines the environment vocabulary Bear Den uses to distinguish durable Bear state from the narrower runtime projections used during a role's turn or task.
+This document defines the environment vocabulary Bear Den uses to distinguish durable Bear state from the narrower runtime projections used during a stance's turn or task.
 
 ## Summary
 
 - the **Bear Operating Environment** is the durable world Den maintains for a Bear
-- a **role runtime** is the situated projection used for one role in one situation
-- **environment projection** is how Den maps durable state into that role runtime
+- a **stance runtime** is the situated projection used for one stance in one situation
+- **environment projection** is how Den maps durable state into that stance runtime
 - **turn context** is the concrete model-facing slice for one turn or step
 
 ## Bear Operating Environment
@@ -17,7 +17,7 @@ It includes things such as:
 
 - Bear identity and profile
 - canonical memory and curated knowledge
-- role-local memory availability rules
+- stance-local memory availability rules
 - approved tools and capability policy
 - skills and related projection metadata
 - work surfaces and related bindings
@@ -28,11 +28,11 @@ It is broader than any one prompt or session.
 
 ## Role runtime
 
-A role runtime is the situated environment Den projects for a role in a particular situation.
+A stance runtime is the situated environment Den projects for a stance in a particular situation.
 
-Examples of inputs to a role runtime:
+Examples of inputs to a stance runtime:
 
-- current role
+- current stance
 - current channel or armature
 - current work-surface resolution
 - tool surface
@@ -40,11 +40,11 @@ Examples of inputs to a role runtime:
 - current human/task/session context
 - approval posture and policy
 
-The role runtime is narrower than the full Bear Operating Environment.
+The stance runtime is narrower than the full Bear Operating Environment.
 
 ## Environment projection
 
-Environment projection is Den's process of mapping Bear Operating Environment into a role runtime.
+Environment projection is Den's process of mapping Bear Operating Environment into a stance runtime.
 
 Examples:
 
@@ -66,20 +66,20 @@ It typically includes:
 - tool descriptors
 - bounded runtime reminders and policy hints
 
-Turn context is narrower than the role runtime, which is narrower than the Bear Operating Environment.
+Turn context is narrower than the stance runtime, which is narrower than the Bear Operating Environment.
 
 ## Relationship between the concepts
 
 ```text
 Bear Operating Environment
-        -> role runtime
+        -> stance runtime
         -> turn context
 ```
 
 Or in words:
 
 - durable Bear state lives in the Bear Operating Environment
-- Den projects the correct subset into a role runtime
+- Den projects the correct subset into a stance runtime
 - the runtime serializes the immediately relevant slice into turn context
 
 ## Roles, channels, armatures, and work surfaces
@@ -103,15 +103,15 @@ Environment design in Bear Den means intentionally shaping:
 - tools
 - memory projections
 - approval rules
-- role boundaries
+- stance boundaries
 - task/run context
 
-The goal is to give each role enough of the world to do its job without collapsing all authority and all context together.
+The goal is to give each stance enough of the world to do its job without collapsing all authority and all context together.
 
 ## Related docs
 
-- [den-native-runtime](den-native-runtime.md)
+- [den runtime](den-runtime.md)
 - [bears and den](bears-and-den.md)
 - [bear channel and ACP](bear-channel-and-acp.md)
 - [memory model](memory-model.md)
-- [pair role](pair-role.md)
+- [pair stance](pair-stance.md)

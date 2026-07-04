@@ -4,7 +4,7 @@ This document separates several concepts that are easy to conflate in interactiv
 
 In particular, it distinguishes:
 
-- role
+- stance
 - channel
 - armature
 - work surface
@@ -22,7 +22,7 @@ In particular, it distinguishes:
 
 ## Trust stances
 
-Trust stances are durable trust contracts over one Den-native runtime loop.
+Trust stances are durable trust contracts over one in-process Den runtime loop.
 
 | Trust stance | Human present? | Primary boundary |
 |--------------|----------------|------------------|
@@ -54,7 +54,7 @@ Trust stance is the slower trust/memory boundary. Governance mode is the faster 
 
 ## Why this distinction matters
 
-These axes prevent the system from collapsing all interactive behavior into one flat “role” concept.
+These axes prevent the system from collapsing all interactive behavior into one flat “stance” concept.
 
 They help describe:
 
@@ -64,7 +64,7 @@ They help describe:
 
 ## Related docs
 
-- [bear roles](bear-roles.md)
+- [bear stances](bear-stances.md)
 - [bear channel and ACP](bear-channel-and-acp.md)
-- [pair role](pair-role.md)
-- [role vocabulary](role-vocabulary.md)
+- [pair stance](pair-stance.md)
+- [stance vocabulary](stance-vocabulary.md)

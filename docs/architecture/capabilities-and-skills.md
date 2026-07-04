@@ -7,7 +7,7 @@ This document explains the distinction and the governance boundary between them.
 ## Summary
 
 - A capability is a product-level permission or ability.
-- A tool is a concrete operation exposed to one or more roles.
+- A tool is a concrete operation exposed to one or more stances.
 - A skill is reusable know-how.
 - Den owns capability policy and tool exposure.
 - Durable skill learning is reviewed and governed; it is not arbitrary self-installation.
@@ -42,7 +42,7 @@ Examples:
 - inspect a browser page;
 - run a command in a sandbox.
 
-Tool access is role-scoped and policy-scoped. A tool that is safe for `pair` may be unsafe for `chat`; a tool that is valid for `work` may be invalid for `watch`.
+Tool access is stance-scoped and policy-scoped. A tool that is safe for `pair` may be unsafe for `chat`; a tool that is valid for `work` may be invalid for `watch`.
 
 ## Skills
 
@@ -71,7 +71,7 @@ Typical uses:
 
 - prompt fragments
 - policy text
-- role instructions
+- stance instructions
 - reusable procedural content packaged for runtime projection
 
 ### 2. Bear-learned durable know-how
@@ -83,25 +83,25 @@ That durable representation should carry:
 - content or reference to content;
 - provenance;
 - review state;
-- role applicability;
+- stance applicability;
 - dependency or prerequisite metadata;
 - and any projection/runtime materialization metadata Den needs.
 
 In other words: skills are governed Bear knowledge with execution-oriented metadata.
 
-## Role applicability
+## Stance applicability
 
-Not every role should receive every capability, tool, or skill.
+Not every stance should receive every capability, tool, or skill.
 
-| Role | Typical capability shape |
-|------|--------------------------|
+| Stance | Typical capability shape |
+|--------|--------------------------|
 | `chat` | user-facing conversational help and lightweight retrieval |
 | `pair` | trusted local collaboration and interactive planning |
 | `review` / `curate` | review, curation, memory integration, approval |
 | `work` | approved execution with scoped external effects |
 | `watch` | inbound event interpretation and observation writing |
 
-Role applicability is metadata and policy, not path hierarchy.
+Stance applicability is metadata and policy, not path hierarchy.
 
 ## Skill proposals and approval
 
@@ -109,11 +109,11 @@ Agents do not install durable skills directly.
 
 The normal flow is:
 
-1. a role or reflection lane identifies a reusable procedure or convention;
+1. a stance or reflection lane identifies a reusable procedure or convention;
 2. it proposes the skill through a Den-governed review path;
 3. review/curation evaluates the proposal;
 4. Den records the approved applicability, provenance, and projection metadata;
-5. affected roles receive the resulting skill material through Den-owned runtime configuration.
+5. affected stances receive the resulting skill material through Den-owned runtime configuration.
 
 High-risk capability changes remain human-governed when appropriate.
 
@@ -122,9 +122,9 @@ High-risk capability changes remain human-governed when appropriate.
 Den owns the canonical records for:
 
 - which capabilities a Bear has;
-- which tools each role can use;
+- which tools each stance can use;
 - which skills are approved;
-- which roles those skills apply to;
+- which stances those skills apply to;
 - and whether runtime projection matches intended policy.
 
 ## Product language
@@ -145,7 +145,7 @@ Avoid:
 
 ## Related docs
 
-- [bear roles](bear-roles.md)
+- [bear stances](bear-stances.md)
 - [bears and den](bears-and-den.md)
 - [memory model](memory-model.md)
 - [reflection system](reflection-system.md)

@@ -1,6 +1,6 @@
 # Quick start (local development)
 
-Native local development runs Den in-process with Bifrost for inference and per-Bear SQLite for memory. See [den-native-runtime.md](../architecture/den-native-runtime.md) for the runtime model.
+Local development runs Den in-process with Bifrost for inference and per-Bear SQLite for memory. See [den-runtime.md](../architecture/den-runtime.md) for the runtime model.
 
 ## Run the app
 
