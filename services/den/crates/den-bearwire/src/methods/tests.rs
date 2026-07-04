@@ -1047,6 +1047,42 @@ async fn session_state_auth_error_reports_specific_token_bear_diagnostics(pool: 
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn session_state_includes_trusted_workspace_diagnostics(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    client_sessions::update_adapter_environment(
+        &pool,
+        user_id,
+        bear_id,
+        &session_id,
+        &json!({
+            "cwd": "/workspace/project",
+            "workspace_roots": ["/workspace/project", "/workspace/shared"]
+        }),
+    )
+    .await
+    .expect("update adapter environment");
+
+    let response = rpc_value(
+        test_state(pool),
+        &token,
+        "session.state",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id
+        }),
+    )
+    .await;
+    let diagnostics = &response["result"]["session"]["diagnostics"];
+    assert_eq!(diagnostics["trusted_workspace"]["cwd"], "/workspace/project");
+    assert_eq!(diagnostics["trusted_workspace"]["roots"][0], "/workspace/project");
+    assert_eq!(diagnostics["trusted_workspace"]["source"], "trusted_session");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn session_state_auth_error_reports_missing_bear_slug(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, _bear_slug) = create_test_bear(&pool).await;

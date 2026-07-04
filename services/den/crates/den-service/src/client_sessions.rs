@@ -75,16 +75,16 @@ impl ClientSessionRow {
             })
             .unwrap_or_default();
         let cwd = self
-            .cwd
-            .as_deref()
+            .adapter_environment
+            .as_ref()
+            .and_then(|value| value.get("cwd"))
+            .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .or_else(|| {
-                self.adapter_environment
-                    .as_ref()
-                    .and_then(|value| value.get("cwd"))
-                    .and_then(serde_json::Value::as_str)
+                self.cwd
+                    .as_deref()
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(str::to_string)

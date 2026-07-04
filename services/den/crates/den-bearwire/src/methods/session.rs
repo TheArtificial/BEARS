@@ -68,6 +68,12 @@ async fn session_state_payload(
     state: &DenState,
     session: client_sessions::ClientSessionRow,
 ) -> Result<Value, CustomError> {
+    let conversation_runtime_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or(session.conversation_id.as_str())
+        .to_string();
     let conversation_external_id = session
         .resolved_conversation_id
         .as_deref()
@@ -80,6 +86,11 @@ async fn session_state_payload(
     )
     .await?
     .and_then(|conversation| conversation.latest_context_budget);
+    let trusted_workspace = session.trusted_workspace_context();
+    let runtime_session_live = den_runtime::native_runtime::native_client_session_exists(
+        &conversation_runtime_id,
+        &session.client_session_id,
+    );
 
     Ok(json!({
         "id": session.id,
@@ -102,6 +113,11 @@ async fn session_state_payload(
         "created_at": session.created_at,
         "updated_at": session.updated_at,
         "context_budget": latest_context_budget,
+        "diagnostics": {
+            "trusted_workspace": trusted_workspace,
+            "runtime_conversation_id": conversation_runtime_id,
+            "runtime_session_live": runtime_session_live,
+        }
     }))
 }
 
