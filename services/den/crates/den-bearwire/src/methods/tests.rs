@@ -25,6 +25,10 @@ use den_runtime::{native_runtime::NativeRuntimeConversationBackend, turn_obligat
 use den_service::{
     bears::{db as bears_db, db::BearParams},
     client_sessions,
+    conversation::events::{
+        canonical_persistence_context, persist_canonical_conversation_record,
+        CanonicalConversationRecord, CanonicalToolResultRecord, ConversationEventProvenance,
+    },
     conversation::persistence::{
         append_message, ensure_conversation_for_external_id, update_latest_context_budget,
     },
@@ -1409,6 +1413,85 @@ async fn client_tool_result_persists_output_summary_and_preview(pool: sqlx::PgPo
         json!("Used fs_read_text_file (ok): file contents")
     );
     assert_eq!(compacted.payload["output_preview"], json!("file contents"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn conversation_history_returns_tool_result_summary_from_persisted_record(
+    pool: sqlx::PgPool,
+) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    ensure_conversation_for_external_id(
+        &pool,
+        bear_id,
+        Some(user_id),
+        &conversation_id,
+        Some(&session_id),
+        None,
+    )
+    .await
+    .expect("ensure conversation");
+    let context = canonical_persistence_context(
+        pool.clone(),
+        bear_id,
+        Some(user_id),
+        conversation_id.clone(),
+        Some(session_id.clone()),
+        Some("req-history".to_string()),
+        session_id.clone(),
+        false,
+    );
+    persist_canonical_conversation_record(
+        &context,
+        &CanonicalConversationRecord::visible_user_message(
+            "Read that file",
+            json!({ "event": "user_message" }),
+            None,
+        ),
+    )
+    .await
+    .expect("persist user message");
+    persist_canonical_conversation_record(
+        &context,
+        &CanonicalConversationRecord::tool_result(
+            CanonicalToolResultRecord::new(
+                Some("fs_read_text_file".to_string()),
+                "call-history",
+                None,
+                den_core::tools::result_compaction::ToolResultStatus::Ok,
+                Some("".to_string()),
+                json!({ "content": "hello from file" }),
+                Value::Null,
+                Some("req-history".to_string()),
+            ),
+            &ConversationEventProvenance::client_session(session_id.clone()),
+        ),
+    )
+    .await
+    .expect("persist tool result");
+
+    let response = rpc_value(
+        test_state(pool),
+        &token,
+        "conversation.history",
+        json!({
+            "bear_slug": bear_slug,
+            "conversation_id": conversation_id,
+            "limit": 20
+        }),
+    )
+    .await;
+    let messages = response["result"]["messages"]
+        .as_array()
+        .expect("messages array");
+    assert!(messages.iter().any(|message| {
+        message.get("text").and_then(Value::as_str)
+            == Some("Used fs_read_text_file (ok): hello from file")
+    }), "{response}");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
