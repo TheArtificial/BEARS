@@ -23,6 +23,8 @@
             activity: None,
             runtime: None,
             context_budget: None,
+            projected_memory: None,
+            recalled_memory: None,
             request_id: Some("req-1".to_string()),
             channel: DenToolChannelContext::default(),
         }

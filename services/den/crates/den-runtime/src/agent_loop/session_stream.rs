@@ -265,6 +265,14 @@ impl SessionTrackingStream {
             .get(&self.session_key)
             .and_then(|session| session.latest_context_budget)
             .and_then(|report| serde_json::to_value(report).ok());
+        let projected_memory = self
+            .store
+            .get(&self.session_key)
+            .and_then(|session| session.latest_projected_memory);
+        let recalled_memory = self
+            .store
+            .get(&self.session_key)
+            .and_then(|session| session.latest_recalled_memory);
         DenToolInvocationContext {
             bear_id: self.bear_id,
             bear_slug: self.bear_slug.clone(),
@@ -283,6 +291,8 @@ impl SessionTrackingStream {
             activity: None,
             runtime: None,
             context_budget,
+            projected_memory,
+            recalled_memory,
             request_id: self.request_id.clone(),
             channel: DenToolChannelContext {
                 family: Some("armature".to_string()),
@@ -922,6 +932,8 @@ mod tests {
             stream_tokens: true,
             key_memory_projection_cache_key: None,
             latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,

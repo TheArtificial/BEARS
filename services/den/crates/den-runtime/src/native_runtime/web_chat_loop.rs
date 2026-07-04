@@ -581,6 +581,8 @@ async fn execute_one_web_chat_den_tool(
             activity: None,
             runtime: None,
             context_budget: None,
+            projected_memory: None,
+            recalled_memory: None,
             request_id: Some(runtime.request_id.clone()),
             channel: DenToolChannelContext {
                 family: Some("browser_chat".to_string()),

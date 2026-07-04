@@ -1,5 +1,5 @@
 use den_core::{config::Config, DenError};
-use den_memory::MemoryStoreManager;
+use den_memory::{harvest_source_marked, record_harvest_mark, MemoryStoreManager};
 use den_service::memory_proposals::CreateMemoryProposal;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -39,6 +39,7 @@ pub async fn harvest_compaction_artifacts_once(
     bear_id: Uuid,
     limit: i64,
 ) -> Result<ArchiveHarvestOutput, DenError> {
+    let store = stores.store_for_bear(bear_id).await?;
     let artifacts = list_unmined_compaction_artifacts(pool, bear_id, limit).await?;
     let mut output = ArchiveHarvestOutput {
         scanned_artifacts: artifacts.len(),
@@ -46,9 +47,22 @@ pub async fn harvest_compaction_artifacts_once(
     };
 
     for artifact in artifacts {
+        let source_ref = artifact.id.to_string();
+        if harvest_source_marked(&store, "compaction_artifact", &source_ref).await? {
+            continue;
+        }
         let summary = decode_summary(&artifact.artifact_json)?;
         let proposed_content = proposal_content_from_summary(&summary);
         if proposed_content.trim().is_empty() {
+            let _ = record_harvest_mark(
+                &store,
+                "compaction_artifact",
+                &source_ref,
+                None,
+                None,
+                &[],
+            )
+            .await?;
             continue;
         }
 
@@ -101,6 +115,15 @@ pub async fn harvest_compaction_artifacts_once(
         )
         .await?;
         output.created_proposal_ids.push(proposal.id);
+        let _ = record_harvest_mark(
+            &store,
+            "compaction_artifact",
+            &source_ref,
+            None,
+            None,
+            &[proposal.id.to_string()],
+        )
+        .await?;
     }
 
     Ok(output)
