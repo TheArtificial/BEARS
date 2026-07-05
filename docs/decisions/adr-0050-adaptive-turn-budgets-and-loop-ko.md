@@ -44,6 +44,8 @@ The runtime also keeps a `TurnBudgetState` ledger with at least:
 - last tool-batch signature
 - ko repeat count
 
+This ledger is not required to be monotonic for every class. Budgets that primarily detect unproductive exploration may be reset or replenished after a meaningful state-changing action, as long as the reset rule is typed runtime policy rather than ad hoc edge behavior.
+
 ### 2. Hard step ceilings remain only as emergency fuse
 
 Den keeps a hard continuation ceiling because runaway loops are still a real infrastructure and UX risk.
@@ -84,6 +86,21 @@ Den separately tracks consecutive failed tool batches.
 
 If the model keeps driving failure without recovering, the loop stops even if the hard step budget is not exhausted. This distinguishes useful long investigation from blind retry behavior.
 
+### 6a. Productive mutation can open a fresh verification window
+
+Interactive stances such as `pair` often need a short read/search phase, then a mutative action, then another short read/search phase to verify the change. Treating all post-mutation verification reads as the same exploration burst is too punitive and incorrectly classifies productive progress as churn.
+
+Den may therefore reset or replenish **read/search-style exploration budgets** after a successful meaningful mutative action such as a write/edit/execute/destructive step that changes the work state.
+
+Guardrails:
+
+- this applies only to budgets whose purpose is to detect unproductive exploration, not to all budget dimensions;
+- global safety fuses such as wall-clock, total tool-call budget, consecutive-failure limits, and emergency hard-step limits remain turn-global;
+- repeated-signature / ko protections may reset only when the mutative action materially changes the search state;
+- failed or obvious no-op mutative actions must not earn a fresh exploration window automatically.
+
+The goal is not to make turns unbounded. The goal is to distinguish "keeps reading without acting" from "acted and now needs a bounded verification pass."
+
 ### 7. Work gets a larger total budget than interactive pair/chat
 
 `work` is expected to support materially longer runs than `pair`, `chat`, or `watch`.
@@ -120,12 +137,14 @@ The model should learn that prior work may have partially succeeded and that it 
 - Repeated same-call churn is blocked explicitly instead of being indirectly caught only by a coarse step limit.
 - Failure loops are treated separately from exploratory progress.
 - The policy remains typed and role-owned.
+- Interactive verification after a real mutation is less likely to be cut off as false-positive read churn.
 
 ### Negative / tradeoffs
 
 - The loop controller now carries more state.
 - Tool-class quotas are policy choices that will need tuning with real usage.
 - Some borderline cases will still stop early or late until the policy evolves with more signals.
+- "Meaningful mutation" and "materially changed search state" remain policy judgments that require careful typed signals and test coverage.
 
 ## Initial policy shape
 
@@ -146,6 +165,7 @@ Token-aware continuation budgets remain compatible future extensions, but are no
 - The emergency step fuse should be high enough that it only catches pathological loops or missing health signals.
 - Model-visible low-budget warnings are desirable, but runtime enforcement still remains authoritative.
 - Normalized operational outcome records should be persisted for future transcript replay whenever a run/turn fails after work has already been attempted.
+- If `pair` or `chat` replenish read/search budget after a successful mutative step, the replenishment should be small and verification-oriented rather than a full license to restart the turn.
 
 ## Non-goals
 
