@@ -10,7 +10,7 @@ edition = "2021"
 # this crate has no dependency on any sibling edge (ADR-0043: edges are peers). It
 # shares the protocol-neutral `den_service::DenState` and sits above den-http
 # (identity/error foundation), den-oauth, den-service (shared state/services),
-# den-runtime (tool/runtime execution), den-docket (work plans), and den-core.
+# den-runtime (tool/runtime execution), den-docket (task and job state), and den-core.
 
 [lints]
 workspace = true

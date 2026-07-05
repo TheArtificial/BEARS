@@ -1,0 +1,3 @@
+-- Irreversible by design: the matching up migration drops retired legacy
+-- work-plan tables and their data after the active code stopped reading them.
+-- Recreating empty tables here would imply data recovery that is not possible.

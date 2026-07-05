@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const ALL_PROFILES: &[&str] = &["chat", "pair", "curate", "work", "watch"];
-const WORK_PLAN_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work"];
-const WORK_PLAN_UPDATE_PROFILES: &[&str] = &["chat", "pair", "work"];
+const TASK_LIST_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work"];
+const TASK_LIST_UPDATE_PROFILES: &[&str] = &["chat", "pair", "work"];
 const CHAT_AND_PAIR_PROFILES: &[&str] = &["chat", "pair"];
 const PAIR_PROFILES: &[&str] = &["pair"];
 const MEMORY_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work", "watch"];
@@ -504,7 +504,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List visible session task-list state for the current Bear/session, including legacy activity-board state, submitted workplan gates, and saved workplan artifacts where available. A task list is the Bear/human working view; it may contain local-only items or checked-out Docket-backed items. Call session_info first if current thread/session/work-surface scope is unclear.",
             "bear.activity",
             &["task_list.read"],
-            WORK_PLAN_READ_PROFILES,
+            TASK_LIST_READ_PROFILES,
             json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["active","blocked","completed","cancelled","archived"]}},"owner_profile":{"enum":ALL_PROFILES},"include_archived":{"type":"boolean"},"include_completed":{"type":"boolean"},"include_plan_mode":{"type":"boolean"},"include_artifacts":{"type":"boolean"}},"additionalProperties":false}),
         ),
         descriptor(
@@ -513,7 +513,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Return current status for one visible session task list or this session's active task-list projection. Use to recover focus before continuing, updating, syncing, or handing off task-list work; call session_info first if session scope is unclear.",
             "bear.activity",
             &["task_list.read"],
-            WORK_PLAN_READ_PROFILES,
+            TASK_LIST_READ_PROFILES,
             json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"source_acp_session_id":{"type":"string"},"source_conversation_id":{"type":"string"}},"additionalProperties":false}),
         ),
         descriptor(
@@ -522,7 +522,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Create or update the visible task list for the current session. Prefer this whenever you need to remember 3 or more things to do, work has multiple steps, the user asks to create/show/update a task list, or visible progress would help. If you are mentally tracking 3+ pending tasks, put them in this visible task list instead of keeping them only in prose. A task list is active working state, not semantic memory; do not use memory_write_entry for task lists. Items may be local-only or linked to Docket-backed work through source refs. Items require title and status; Den auto-generates stable small slug IDs when id is omitted. Keep at most one item in_progress. Task status is factual, not aspirational: mark an item completed only after you actually performed the work or verified it was already done in this conversation/session, and keep items pending/in_progress/blocked when work remains. For completed non-trivial items, strongly prefer a concise summary of what was actually done or observed. Do not mark a task complete merely because you wrote, planned, or summarized that it should be done. Call session_info first if current session/work-surface scope is unclear.",
             "bear.activity",
             &["task_list.write"],
-            WORK_PLAN_UPDATE_PROFILES,
+            TASK_LIST_UPDATE_PROFILES,
             json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"expected_version":{"type":"integer","minimum":1},"title":{"type":"string"},"summary":{"type":"string"},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"status":{"enum":["active","blocked","completed","cancelled","archived"]},"items":{"type":"array","description":"Visible task-list items. Each item requires title and status. Optional id may be supplied for meaningful stable identifiers; Den auto-generates stable slug IDs when omitted. Exactly zero or one item should be in_progress. Items may be local-only or linked to Docket-backed work through source refs. The completed status is a factual claim: use it only after the item has actually been performed or verified done; otherwise leave it pending, in_progress, or blocked.","items":{"type":"object","properties":{"id":{"type":"string","description":"Optional stable identifier. Omit this unless you already have a meaningful item identity; Den will auto-generate a small slug ID from the item content."},"title":{"type":"string"},"summary":{"type":"string","description":"Optional concise factual state/evidence. For completed items, prefer noting what was actually done or observed, not what was intended."},"status":{"enum":["pending","in_progress","blocked","completed","cancelled"]},"blocked_reason":{"type":"string"},"source_refs":{"type":"array","items":{"type":"string"}}},"required":["title","status"],"additionalProperties":false}},"workspace_context":{"type":"object"}},"required":["title","visibility","status","items"],"additionalProperties":false}),
         ),
         descriptor(
@@ -549,7 +549,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List durable Docket jobs for the current Bear. Use for canonical job status, not session-local task-list focus.",
             "bear.docket",
             &["docket.job.read"],
-            WORK_PLAN_READ_PROFILES,
+            TASK_LIST_READ_PROFILES,
             json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["draft","ready","running","blocked","completed","cancelled"]}},"include_cancelled":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false}),
         ),
         descriptor(
@@ -558,7 +558,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "Read one durable Docket job with criteria, task tree, current run, and run-scoped task state.",
             "bear.docket",
             &["docket.job.read"],
-            WORK_PLAN_READ_PROFILES,
+            TASK_LIST_READ_PROFILES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
@@ -603,7 +603,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "List durable Docket task definitions for a job/session subtree, including current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for session working focus.",
             "bear.docket",
             &["docket.task.read"],
-            WORK_PLAN_READ_PROFILES,
+            TASK_LIST_READ_PROFILES,
             json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"session_anchor_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"include_descendants":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}),
         ),
         descriptor(

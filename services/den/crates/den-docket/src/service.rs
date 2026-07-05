@@ -17,45 +17,10 @@ use super::model::{
     DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate,
     DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
     TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
-    TaskListHandoffRequest, TaskListListFilter, TaskListLocalProjection, TaskListLookup,
-    TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest, TaskListUpsert,
+    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
 };
 
-impl PgDocketService {
-    // ponytail: compatibility-only methods keep den.work_plan.* callers compiling
-    // after bear_work_plans storage retirement; remove with the public tool API
-    // migration to den.task_list.* / Docket-backed operations.
-    pub async fn list_visible_work_plans(
-        &self,
-        _bear_id: Uuid,
-        _viewer_role: BearProfile,
-        _user_id: i32,
-        _filter: TaskListListFilter,
-    ) -> Result<Vec<TaskListLocalProjection>, DenError> {
-        Ok(Vec::new())
-    }
-
-    pub async fn get_visible_work_plan(
-        &self,
-        _bear_id: Uuid,
-        _viewer_role: BearProfile,
-        _user_id: i32,
-        _lookup: TaskListLookup,
-    ) -> Result<Option<TaskListLocalProjection>, DenError> {
-        Ok(None)
-    }
-
-    pub async fn upsert_work_plan(
-        &self,
-        _upsert: TaskListUpsert,
-    ) -> Result<TaskListLocalProjection, DenError> {
-        Err(DenError::System(
-            "den.work_plan.update no longer writes retired bear_work_plans storage; use Docket task/job tools".to_string(),
-        ))
-    }
-}
-
-/// Orchestration API for Docket work plans. The only public entry point to the
+/// Orchestration API for task and job state. The only public entry point to the
 /// subsystem's persistence; never execute task bodies here (ADR-0034 execution
 /// invariant) — Docket schedules, gates, and records.
 // Native async fn in trait: workspace-internal, only ever consumed via generic

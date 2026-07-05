@@ -15,17 +15,13 @@ use den_docket::{
     DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
     DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
     DocketTaskStatus, DocketTaskUpdate, DocketValidationError, PgDocketService,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListListFilter, TaskListLookup,
-    TaskListProjection, TaskListStatus, TaskListSyncRequest, TaskListUpdate, TaskListUpsert,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
     TaskListVisibility,
 };
 
 use crate::{
     config::Config,
-    core::tools::{
-        memory_write::source_client_session_id, session::DenToolInvocationContext,
-        support::clean_optional,
-    },
+    core::tools::{session::DenToolInvocationContext, support::clean_optional},
     errors::{CustomError, DenError},
 };
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
@@ -53,46 +49,13 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct WorkPlanListArguments {
-    #[serde(default, rename = "status")]
-    pub(crate) statuses: Option<Vec<TaskListStatus>>,
-    #[serde(default)]
-    pub(crate) owner_profile: Option<BearProfile>,
-    #[serde(default)]
-    pub(crate) include_archived: bool,
+pub(crate) struct TaskListListArguments {
     #[serde(default)]
     pub(crate) include_completed: bool,
     #[serde(default)]
     pub(crate) include_plan_mode: Option<bool>,
     #[serde(default)]
     pub(crate) include_artifacts: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct WorkPlanGetStatusArguments {
-    #[serde(default)]
-    pub(crate) plan_id: Option<Uuid>,
-    #[serde(default)]
-    pub(crate) source_conversation_id: Option<String>,
-    #[serde(default)]
-    pub(crate) source_client_session_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct TaskListUpdateArguments {
-    #[serde(default)]
-    pub(crate) plan_id: Option<Uuid>,
-    #[serde(default)]
-    pub(crate) expected_version: Option<i32>,
-    pub(crate) title: String,
-    #[serde(default)]
-    pub(crate) summary: String,
-    pub(crate) visibility: TaskListVisibility,
-    pub(crate) status: TaskListStatus,
-    #[serde(default)]
-    pub(crate) items: Vec<work_plans::TaskListUpdateItem>,
-    #[serde(default = "empty_json_object")]
-    pub(crate) workspace_context: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,38 +229,19 @@ fn default_task_scope() -> DocketTaskScope {
     DocketTaskScope::Template
 }
 
-pub(crate) fn empty_json_object() -> Value {
-    json!({})
-}
-
-pub(crate) async fn list_work_plans(
+pub(crate) async fn list_task_lists(
     pool: &PgPool,
     _config: &Config,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
-    activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
+    _activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
     plan_mode_workplan_payload: fn(&plan_mode::PlanModeSessionRow) -> Value,
 ) -> Result<Value, CustomError> {
-    let args: WorkPlanListArguments = serde_json::from_value(arguments)?;
+    let args: TaskListListArguments = serde_json::from_value(arguments)?;
     let include_plan_mode = args.include_plan_mode.unwrap_or(true);
     let include_artifacts = args.include_artifacts.unwrap_or(true);
-    let statuses = args.statuses.or_else(|| {
-        (!args.include_completed).then(|| vec![TaskListStatus::Active, TaskListStatus::Blocked])
-    });
-    let activity_rows = PgDocketService::from_pool(pool)
-        .list_visible_work_plans(
-            context.bear_id,
-            role,
-            context.user_id,
-            TaskListListFilter {
-                statuses,
-                owner_profile: args.owner_profile,
-                include_archived: args.include_archived,
-            },
-        )
-        .await?;
     let plan_mode_gates = if include_plan_mode {
         plan_mode::list_for_bear(pool, context.bear_id, args.include_completed, 50).await?
     } else {
@@ -319,14 +263,8 @@ pub(crate) async fn list_work_plans(
         .iter()
         .filter_map(|gate| gate.plan_artifact_path.as_deref())
         .collect::<Vec<_>>();
-    let activity_plans = activity_rows
-        .iter()
-        .map(|plan| activity_payload(Some(plan)))
-        .collect::<Vec<_>>();
-    let task_lists = activity_rows
-        .iter()
-        .map(work_plans::task_list_projection_from_local)
-        .collect::<Vec<_>>();
+    let activity_plans: Vec<Value> = Vec::new();
+    let task_lists: Vec<work_plans::TaskListProjection> = Vec::new();
     let workplans = plan_mode_gates
         .iter()
         .map(plan_mode_workplan_payload)
@@ -351,92 +289,52 @@ pub(crate) async fn list_work_plans(
         "task_lists": task_lists,
         "activities": activity_plans,
         "activity_plans": activity_plans,
-        "plans": activity_rows,
-        "activity_rows": activity_rows,
         "workplans": workplans,
         "plan_mode_gates": plan_mode_gates,
         "plan_artifacts": plan_artifacts,
         "linked_plan_artifact_paths": linked_artifact_paths,
         "notes": [
-            "list_task_lists is a Bear-level task-list/planning view. It includes live session task lists, submitted/active workplan gates, and saved pair workplan artifacts when available.",
-            "A workplan artifact in pair/plans/ may exist even when there is no active live activity plan; this is workplan-domain state, not semantic memory.",
+            "list_task_lists is a Bear-level task-list/planning view. It includes checked-out task lists, submitted/active plan-mode gates, and saved pair plan artifacts when available.",
+            "A plan artifact in pair/plans/ may exist even when there is no active task list; this is planning state, not semantic memory.",
             "Role fields are provenance and policy hints, not product ownership. Cross-role visibility is not cross-role execution authority."
         ],
     }))
 }
 
-pub(crate) async fn get_work_plan_status(
-    pool: &PgPool,
+pub(crate) async fn get_task_list_status(
+    _pool: &PgPool,
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
     activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
-    let args: WorkPlanGetStatusArguments = serde_json::from_value(arguments)?;
-    let lookup = TaskListLookup {
-        plan_id: args.plan_id,
-        source_conversation_id: args
-            .source_conversation_id
-            .or_else(|| clean_optional(&context.conversation_id)),
-        source_client_session_id: args
-            .source_client_session_id
-            .or_else(|| source_client_session_id(context)),
-    };
-    let plan = PgDocketService::from_pool(pool)
-        .get_visible_work_plan(context.bear_id, role, context.user_id, lookup)
-        .await?;
-    let task_list = plan
-        .as_ref()
-        .map(work_plans::task_list_projection_from_local);
+    let _ignored_arguments: Value = serde_json::from_value(arguments)?;
     Ok(json!({
         "domain": "activity",
         "bear_id": context.bear_id,
-        "task_list": task_list,
-        "activity": activity_payload(plan.as_ref()),
-        "plan": plan,
+        "viewer_role": role.as_str(),
+        "task_list": null,
+        "activity": activity_payload(None),
+        "plan": null,
+        "notes": [
+            "Session-local task-list storage has been retired.",
+            "Use create_job, get_job, checkout_task_list, sync_task_list, or task tools for durable task/job state."
+        ]
     }))
 }
 
-pub(crate) async fn update_work_plan(
-    pool: &PgPool,
-    context: &DenToolInvocationContext,
-    role: BearProfile,
+pub(crate) async fn update_task_list(
+    _pool: &PgPool,
+    _context: &DenToolInvocationContext,
+    _role: BearProfile,
     arguments: Value,
-    activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
+    _activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
-    let mut args: TaskListUpdateArguments = serde_json::from_value(arguments)?;
-    work_plans::normalize_task_list_item_ids(&mut args.items);
-    let row = PgDocketService::from_pool(pool)
-        .upsert_work_plan(TaskListUpsert {
-            bear_id: context.bear_id,
-            owner_profile: role,
-            owner_agent_id: clean_optional(&context.binding_id),
-            created_by_user_id: Some(context.user_id),
-            source_conversation_id: clean_optional(&context.conversation_id),
-            source_acp_session_id: None,
-            source_client_session_id: source_client_session_id(context),
-            source_channel: serde_json::to_value(&context.channel)?,
-            plan_id: args.plan_id,
-            expected_version: args.expected_version,
-            update: TaskListUpdate {
-                title: args.title,
-                summary: args.summary,
-                visibility: args.visibility,
-                status: args.status,
-                items: args.items,
-                workspace_context: args.workspace_context,
-            },
-        })
-        .await?;
-    let plan = row;
-    let task_list = work_plans::task_list_projection_from_local(&plan);
-    Ok(json!({
-        "domain": "activity",
-        "bear_id": context.bear_id,
-        "task_list": task_list,
-        "activity": activity_payload(Some(&plan)),
-        "plan": plan,
-    }))
+    let _ignored_arguments: Value = serde_json::from_value(arguments)?;
+    Err(DenError::ValidationError(
+        "update_task_list no longer writes session-local task lists; use create_job, checkout_task_list, sync_task_list, or task tools for durable task/job state".to_string(),
+    )
+    .into())
 }
 
 pub(crate) async fn create_job(

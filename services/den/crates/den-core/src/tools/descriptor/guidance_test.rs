@@ -43,7 +43,7 @@ fn memory_write_descriptor_includes_shared_guidance() {
 }
 
 #[test]
-fn work_plan_update_descriptor_includes_active_work_state_guidance() {
+fn task_list_update_descriptor_includes_active_work_state_guidance() {
     let descriptor = builtin_den_tool_descriptors()
         .into_iter()
         .find(|descriptor| descriptor.provider_name == DEN_TASK_LISTS_UPDATE_PROVIDER)

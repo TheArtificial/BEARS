@@ -50,7 +50,7 @@ async fn invoke_workflow_tool(
     let role = context.profile.unwrap_or(BearProfile::Pair);
     let value = match tool_name {
         DEN_TASK_LISTS_LIST => {
-            workflow::list_work_plans(
+            workflow::list_task_lists(
                 pool,
                 config,
                 stores,
@@ -63,7 +63,7 @@ async fn invoke_workflow_tool(
             .await?
         }
         DEN_TASK_LISTS_GET_STATUS => {
-            workflow::get_work_plan_status(
+            workflow::get_task_list_status(
                 pool,
                 context,
                 role,
@@ -73,7 +73,7 @@ async fn invoke_workflow_tool(
             .await?
         }
         DEN_TASK_LISTS_UPDATE => {
-            workflow::update_work_plan(
+            workflow::update_task_list(
                 pool,
                 context,
                 role,
