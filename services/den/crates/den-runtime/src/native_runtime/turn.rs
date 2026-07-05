@@ -1039,7 +1039,7 @@ async fn record_web_fetch_url_approval(
     sqlx::query(
         r#"
         INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
-        VALUES ($1, 'url', $2, $3, 'armature', now() + interval '1 hour')
+        VALUES ($1, 'url', $2, $3, 'acp', now() + interval '1 hour')
         ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
         DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
                       source = EXCLUDED.source,
