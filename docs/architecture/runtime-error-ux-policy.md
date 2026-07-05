@@ -80,11 +80,13 @@ Example for Den restart / missing in-memory continuation:
 Operational note from Den: the previous turn could not continue because in-memory runtime state was lost, likely due to a Den restart. Persisted conversation and tool results remain available, but no final answer was delivered. There is no repair action for the model; continue from persisted state in this fresh turn.
 ```
 
-### ACP And History Marker
+### Chat-Surface And History Marker
 
-When Den sends a model-visible operational note, recoverable error note, task-focus warning, budget warning, or continuation warning, Den should also emit a concise human-visible marker to ACP sessions and user-visible conversation history.
+When Den sends a model-visible operational note, recoverable error note, task-focus warning, budget warning, or continuation warning, Den should also emit a concise human-visible marker to the active chat surface and user-visible conversation history.
 
 This is a visibility parity rule: if the model is told that runtime state changed, the human should see a compact explanation that the runtime changed course.
+
+This rule is surface-agnostic. It applies to ACP armatures, web chat, desktop/mobile chat, Slack/WhatsApp-style channels, and future Bear conversation surfaces. Armatures may expose richer event cards and diagnostics because they have a trusted work-surface boundary. Chat-only surfaces will usually project fewer event types, but they should still show concise markers for behavior-changing runtime notes.
 
 The marker should:
 
@@ -160,7 +162,7 @@ Diagnostic context must not include secrets, full file contents, full prompts, b
 
 ## Warning And Recovery Taxonomy
 
-| Class | ACP/History Marker | Model Note | Diagnostic Home |
+| Class | Chat/History Marker | Model Note | Diagnostic Home |
 |---|---|---|---|
 | Near-budget warning | “close to this turn's budget” | Prefer concise wrap-up or ask for fresh turn | Den event/log context budget details |
 | Task-focus warning | “kept task focus active” | Continue next incomplete/unblocked item | Den task-focus state |
@@ -183,7 +185,7 @@ Use retryability to guide behavior, not to expose implementation details.
 2. BearWire `run.failed` should carry concise user copy plus structured diagnostic context, not one overloaded message string.
 3. The armature should render concise user copy and write diagnostic context to stderr.
 4. Hidden operational outcome messages should remain model-visible but user-hidden.
-5. Concise ACP/history markers should accompany model-visible warnings and recovery notes when they affect behavior.
+5. Concise chat/history markers should accompany model-visible warnings and recovery notes when they affect behavior.
 6. If an error is entirely infrastructure-level and no model action is needed, both Den's model note and the user copy should say so in different levels of detail.
 
 ## Current Gap To Close
