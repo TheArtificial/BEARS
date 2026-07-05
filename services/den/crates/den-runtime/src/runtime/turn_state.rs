@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use den_core::{client_tools::ResolvedSessionPolicy, profile::BearProfile};
 use crate::plan_mode;
-use den_docket::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection};
+use den_docket::{TaskListItem, TaskListProjection, WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection};
 
 pub const TURN_STATE_SCHEMA: &str = "bears.turn_state/v1";
 pub const TURN_STATE_VERSION: u32 = 1;
@@ -165,6 +165,64 @@ pub fn should_allow_terminal_response(
 ) -> bool {
     let kind = classify_autonomous_final_response(assistant_text);
     autonomous_execution_gate_for_plan(profile, active_activity_plan, kind).may_stop
+}
+
+pub fn autonomous_execution_gate_for_task_list(
+    profile: BearProfile,
+    task_list: Option<&TaskListProjection>,
+    final_response_kind: AutonomousFinalResponseKind,
+) -> AutonomousExecutionGate {
+    let Some(task_list) = task_list.filter(|task_list| is_autonomous_task_list(profile, task_list)) else {
+        return AutonomousExecutionGate {
+            is_active_autonomous_task: false,
+            has_incomplete_unblocked_items: false,
+            acceptance_criteria_met: false,
+            has_hard_blocker: false,
+            may_stop: true,
+            next_incomplete_task_title: None,
+        };
+    };
+
+    let acceptance_criteria_met = task_list_acceptance_criteria_met(task_list);
+    let has_hard_blocker = task_list
+        .items
+        .iter()
+        .any(|item| item.status == WorkPlanItemStatus::Blocked)
+        || matches!(task_list.status.as_str(), "blocked");
+    let next_incomplete_task_title = next_incomplete_unblocked_task_list_item(&task_list.items)
+        .map(|item| item.title.clone());
+    let has_incomplete_unblocked_items = next_incomplete_task_title.is_some();
+    let may_stop = if acceptance_criteria_met {
+        final_response_kind == AutonomousFinalResponseKind::CompletionFinal
+    } else if has_hard_blocker {
+        matches!(
+            final_response_kind,
+            AutonomousFinalResponseKind::BlockedFinal
+                | AutonomousFinalResponseKind::UnsafeActionPermissionRequest
+        )
+    } else if has_incomplete_unblocked_items {
+        false
+    } else {
+        false
+    };
+
+    AutonomousExecutionGate {
+        is_active_autonomous_task: true,
+        has_incomplete_unblocked_items,
+        acceptance_criteria_met,
+        has_hard_blocker,
+        may_stop,
+        next_incomplete_task_title,
+    }
+}
+
+pub fn should_allow_terminal_response_for_task_list(
+    profile: BearProfile,
+    active_task_list: Option<&TaskListProjection>,
+    assistant_text: &str,
+) -> bool {
+    let kind = classify_autonomous_final_response(assistant_text);
+    autonomous_execution_gate_for_task_list(profile, active_task_list, kind).may_stop
 }
 
 pub fn autonomous_resume_obligation_text(plan: &WorkPlanProjection) -> Option<String> {
@@ -350,6 +408,12 @@ fn is_autonomous_implementation_plan(profile: BearProfile, plan: &WorkPlanProjec
         && matches!(plan.status.as_str(), "active" | "blocked" | "completed" | "cancelled")
 }
 
+fn is_autonomous_task_list(profile: BearProfile, task_list: &TaskListProjection) -> bool {
+    matches!(profile, BearProfile::Pair | BearProfile::Work)
+        && matches!(task_list.owner_profile.as_str(), "pair" | "work")
+        && matches!(task_list.status.as_str(), "active" | "blocked" | "completed" | "cancelled")
+}
+
 fn acceptance_criteria_met(plan: &WorkPlanProjection) -> bool {
     !plan.items.is_empty()
         && plan
@@ -360,6 +424,21 @@ fn acceptance_criteria_met(plan: &WorkPlanProjection) -> bool {
 }
 
 fn next_incomplete_unblocked_item(items: &[WorkPlanItem]) -> Option<&WorkPlanItem> {
+    items.iter().find(|item| {
+        matches!(item.status, WorkPlanItemStatus::Pending | WorkPlanItemStatus::InProgress)
+    })
+}
+
+fn task_list_acceptance_criteria_met(task_list: &TaskListProjection) -> bool {
+    !task_list.items.is_empty()
+        && task_list
+            .items
+            .iter()
+            .all(|item| matches!(item.status, WorkPlanItemStatus::Completed | WorkPlanItemStatus::Cancelled))
+        && matches!(task_list.status.as_str(), "completed" | "cancelled")
+}
+
+fn next_incomplete_unblocked_task_list_item(items: &[TaskListItem]) -> Option<&TaskListItem> {
     items.iter().find(|item| {
         matches!(item.status, WorkPlanItemStatus::Pending | WorkPlanItemStatus::InProgress)
     })

@@ -32,7 +32,9 @@ use den_core::tools::{
     result_compaction::{compact_json_tool_result, compact_json_tool_result_with_artifact},
 };
 use den_core::{config::Config, profile::BearProfile, DenError};
-use crate::runtime::turn_state::{autonomous_execution_gate_for_plan, should_allow_terminal_response};
+use crate::runtime::turn_state::{
+    autonomous_execution_gate_for_task_list, should_allow_terminal_response_for_task_list,
+};
 
 use super::session_store::AgentLoopSession;
 use super::transcript::{
@@ -585,7 +587,13 @@ impl Stream for SessionTrackingStream {
         }
 
         if let Some(pause) = self.pending_pause_after_tool.take() {
-            if matches!(pause, RuntimeSemanticEvent::RunPaused { .. }) {
+            if matches!(
+                pause,
+                RuntimeSemanticEvent::RunPaused { .. }
+                    | RuntimeSemanticEvent::TurnCompleted { .. }
+                    | RuntimeSemanticEvent::TurnFailed { .. }
+                    | RuntimeSemanticEvent::TurnCancelled { .. }
+            ) {
                 self.finished = true;
             }
             return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(pause))));
@@ -824,20 +832,30 @@ impl Stream for SessionTrackingStream {
                     );
                     return Poll::Ready(None);
                 }
-                if !self.assistant_text.trim().is_empty() {
+                if self.assistant_text.trim().is_empty() {
+                    let fallback = "BEARS completed the turn without assistant output.".to_string();
+                    self.assistant_text = fallback.clone();
+                    self.persist_assistant_tool_step();
+                    self.pending_pause_after_tool = Some(RuntimeSemanticEvent::TurnCompleted {
+                        turn: None,
+                    });
+                    return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
+                        RuntimeSemanticEvent::AssistantTextDelta { text: fallback },
+                    ))));
+                } else {
                     self.persist_assistant_tool_step();
                 }
                 let active_activity_plan = self
                     .store
                     .get(&self.session_key)
                     .and_then(|session| session.active_activity_plan);
-                if !should_allow_terminal_response(
+                if !should_allow_terminal_response_for_task_list(
                     self.profile,
                     active_activity_plan.as_ref(),
                     &self.assistant_text,
                 ) {
                     let next_task = active_activity_plan.as_ref().and_then(|plan| {
-                            autonomous_execution_gate_for_plan(
+                            autonomous_execution_gate_for_task_list(
                                 self.profile,
                                 Some(&plan),
                                 crate::runtime::turn_state::classify_autonomous_final_response(
@@ -966,6 +984,7 @@ mod tests {
     use den_memory::MemoryStoreManager;
     use den_protocol::RuntimeStreamEvent;
     use den_service::bears::BearProfile;
+    use futures::StreamExt;
 
     fn counting_waker(counter: Arc<AtomicUsize>) -> Waker {
         unsafe fn clone(data: *const ()) -> RawWaker {
@@ -1054,6 +1073,46 @@ mod tests {
                 arguments: "{}".to_string(),
             },
         }
+    }
+
+    #[tokio::test]
+    async fn empty_turn_completion_emits_fallback_assistant_output_first() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::new();
+        store.insert(session.clone());
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::TurnCompleted { turn: None },
+            ))])),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+
+        let first = stream.next().await.expect("fallback event").expect("ok");
+        assert!(matches!(
+            first,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { ref text })
+                if text.contains("completed the turn without assistant output")
+        ));
+        let second = stream.next().await.expect("completion event").expect("ok");
+        assert!(matches!(
+            second,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
+        ));
+        assert!(stream.next().await.is_none());
     }
 
     #[test]

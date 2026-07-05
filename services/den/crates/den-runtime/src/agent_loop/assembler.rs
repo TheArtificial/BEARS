@@ -1,6 +1,9 @@
 use den_core::config::Config;
 use den_core::DenError;
-use den_docket::{PgDocketService, WorkPlanListFilter, WorkPlanProjection};
+use den_docket::{
+    DocketExecutionLookup, DocketService, PgDocketService, TaskListCheckoutRequest,
+    TaskListCheckoutSource, TaskListProjection,
+};
 use den_memory::MemoryStoreManager;
 use den_service::bears::{
     db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear,
@@ -88,29 +91,41 @@ pub struct AssembledNativeTurn {
     /// disabled, skipped (e.g. empty query), or failed best-effort.
     pub recall_diagnostic: Option<Value>,
     pub budget_components: AssembledTurnBudgetComponents,
-    pub active_activity_plan: Option<WorkPlanProjection>,
+    pub active_activity_plan: Option<TaskListProjection>,
 }
 
-async fn load_active_activity_plan(ctx: &AssembleTurnContext<'_>) -> Result<Option<WorkPlanProjection>, DenError> {
+async fn load_active_activity_plan(ctx: &AssembleTurnContext<'_>) -> Result<Option<TaskListProjection>, DenError> {
     let Some(user_id) = ctx.user_id else {
         return Ok(None);
     };
-    let plans = PgDocketService::from_pool(ctx.pool)
-        .list_visible_work_plans(
+    let service = PgDocketService::from_pool(ctx.pool);
+    let Some(execution) = service
+        .get_active_execution_session(
+            ctx.bear_id,
+            ctx.profile,
+            DocketExecutionLookup {
+                session_id: ctx.session_id.map(str::to_string),
+                source_conversation_id: Some(ctx.conversation_id.to_string()),
+                source_client_session_id: ctx.session_id.map(str::to_string),
+            },
+        )
+        .await?
+    else {
+        return Ok(None);
+    };
+    service
+        .checkout_task_list(
             ctx.bear_id,
             ctx.profile,
             user_id,
-            WorkPlanListFilter::default(),
+            TaskListCheckoutRequest {
+                source: TaskListCheckoutSource::DocketJob {
+                    job_id: execution.job_id,
+                    parent_task_id: None,
+                },
+            },
         )
-        .await?;
-    Ok(plans.into_iter().find(|plan| {
-        matches!(plan.status.as_str(), "active" | "blocked")
-            && plan.source_conversation_id.as_deref() == Some(ctx.conversation_id)
-            && match ctx.session_id {
-                Some(session_id) => plan.source_client_session_id.as_deref() == Some(session_id),
-                None => true,
-            }
-    }))
+        .await
 }
 
 pub fn projected_memory_session_diagnostic(projection: &KeyMemoryProjectionResult) -> Value {
