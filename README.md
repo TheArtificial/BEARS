@@ -44,4 +44,11 @@ These are summaries with pointers; the canonical docs live under [docs/](docs/RE
 
 ## License
 
-Add a `LICENSE` at the repo root when you publish or distribute this configuration.
+Copyright © The Artificial Creative B.V., registered in the Netherlands
+under Chamber of Commerce (KvK) number 61953679. Source-available under
+the [PolyForm Noncommercial License 1.0.0](LICENSE.md) — free to use,
+modify, and share for noncommercial purposes. **Commercial use requires
+a separate license**: contact <hans@theartificial.nl>.
+
+Contributions are welcome and require agreeing to the
+[Contributor License Agreement](CLA.md) — see [CONTRIBUTING.md](CONTRIBUTING.md).
