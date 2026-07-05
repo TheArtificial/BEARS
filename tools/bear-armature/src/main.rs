@@ -7454,7 +7454,7 @@ pub(crate) fn tool_completion_preview(tool_name: &str, value: &Value) -> String 
             return format!("Conversation title set to {}.", markdown_inline_code(title));
         }
     }
-    if matches!(tool_name, "process_run" | "terminal_run_command") {
+    if matches!(tool_name, "run_command" | "process_run" | "terminal_run_command") {
         let command = command_line_from_value(value).unwrap_or_else(|| "command".to_string());
         let cwd = value
             .get("cwd")
@@ -9123,7 +9123,7 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
             .unwrap_or("conversation");
         return format!("Set conversation title: {}", truncate_title(title));
     }
-    if matches!(tool_name, "process_run" | "terminal_run_command") {
+    if matches!(tool_name, "run_command" | "process_run" | "terminal_run_command") {
         let command = event
             .get("args")
             .and_then(|args| args.get("command"))
@@ -9156,6 +9156,8 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
             };
             return if tool_name == "terminal_run_command" {
                 format!("Run terminal command: {rendered}")
+            } else if tool_name == "run_command" {
+                format!("Run command: {rendered}")
             } else {
                 format!("Run process: {rendered}")
             };
@@ -11592,6 +11594,33 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert!(preview.contains("`cargo test --all`"));
         assert!(preview.contains("exit code 0"));
         assert!(!preview.contains("Local tool"));
+    }
+
+    #[test]
+    fn run_command_title_and_preview_show_command() {
+        let event = json!({
+            "args": {
+                "command": "cargo",
+                "args": ["test", "--all"]
+            }
+        });
+        assert_eq!(
+            tool_call_title("run_command", &event),
+            "Run command: cargo test --all"
+        );
+
+        let value = json!({
+            "command": "cargo",
+            "args": ["test", "--all"],
+            "cwd": "/workspace/tools/bear-armature",
+            "exit_code": 0,
+            "timed_out": false,
+            "elapsed_ms": 1234,
+            "truncated": false
+        });
+        let preview = tool_completion_preview("run_command", &value);
+        assert!(preview.contains("`cargo test --all`"), "{preview}");
+        assert!(preview.contains("exit code 0"), "{preview}");
     }
 
     #[test]
