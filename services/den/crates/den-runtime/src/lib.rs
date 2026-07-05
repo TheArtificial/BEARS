@@ -30,10 +30,6 @@ pub mod llm;
 /// assistant display/title helpers, agent JSON projections, and model/tool option types.
 pub mod agent_assist;
 
-/// Pure conversation-id classification + normalization helpers (shared by the runtime
-/// conversation layer and the adapter edge).
-pub mod conversation_ids;
-
 /// Persisted BearWire event log for the Den ↔ armature wire.
 pub mod bearwire_events;
 /// Protocol-neutral coordinator decisions for turn obligations.
@@ -69,9 +65,8 @@ pub mod native_runtime;
 /// Reflection/curation worker subsystem: the memory-curate conductor + conversation lanes.
 pub mod reflection;
 
-/// Derived recall index client (ADR-0038): minimal Qdrant REST client for readiness +
-/// collection bootstrap. Recall is optional; absence/unreachability degrades to keyword search.
-pub mod recall;
+/// Compatibility re-export: concrete recall implementation lives in `den-service`.
+pub use den_service::recall;
 
 // Flat aliases mirroring the den crate's former `core/mod.rs` runtime block, so the
 // den-side re-export shims and intra-crate paths keep their familiar names.

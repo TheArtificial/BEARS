@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 
@@ -14,11 +16,8 @@ use den_core::DenError;
 pub const CONTEXT_PROFILE_VERSION: u32 = 1;
 pub const DEFAULT_ROLE_CONTRACT_VERSION: &str = "2";
 
-const DEN_BASELINE: &str = r"You are operating as a Bear in Den.
-A Bear feels like one assistant to the user, but internally it has specialized stances backing different Spaces.
-Preserve Space and stance boundaries and do not claim tools or authority unavailable in the current runtime.
-Ask before destructive or externally visible actions.
-Do not intentionally remember secrets or credentials.";
+const DEN_BASELINE_SOURCE: &str =
+    include_str!("../../../../prompts/fragments/base/den_baseline.md");
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RoleContracts {
@@ -80,7 +79,21 @@ pub struct ComposedRoleContext {
 }
 
 pub fn den_baseline() -> &'static str {
-    DEN_BASELINE
+    static BASELINE: OnceLock<String> = OnceLock::new();
+    BASELINE
+        .get_or_init(|| {
+            PromptFragmentRegistry::from_embedded_sources(&[(
+                "fragments/base/den_baseline.md",
+                DEN_BASELINE_SOURCE,
+            )])
+            .expect("embedded den_baseline prompt fragment must parse")
+            .require("den_baseline")
+            .expect("embedded den_baseline prompt fragment must have id den_baseline")
+            .body
+            .trim()
+            .to_string()
+        })
+        .as_str()
 }
 
 pub fn context_profile_from_json(
@@ -152,11 +165,8 @@ pub fn render_managed_role_prompt_with_registry(
         bear_name: &bear.name,
         bear_slug: &bear.slug,
     };
-    let den_baseline_text = render_compile_time_text(
-        "den_baseline",
-        &den_baseline_text,
-        &compile_context,
-    )?;
+    let den_baseline_text =
+        render_compile_time_text("den_baseline", &den_baseline_text, &compile_context)?;
     let role_contract = resolved
         .and_then(|resolved| {
             let key = managed_space_block_key(role);
@@ -205,8 +215,12 @@ pub fn compose_role_context(
     role: BearProfile,
     runtime_context: Option<&str>,
 ) -> Result<ComposedRoleContext, DenError> {
+    let runtime_context = runtime_context.map(str::trim).filter(|s| !s.is_empty());
     let Some(profile) = context_profile_from_json(&bear.context_profile)? else {
-        let legacy = bear.system_prompt.trim().to_string();
+        let mut legacy = bear.system_prompt.trim().to_string();
+        if let Some(runtime_context) = runtime_context {
+            push_section(&mut legacy, "Runtime/thread context", runtime_context);
+        }
         return Ok(ComposedRoleContext {
             role: role.as_str().to_string(),
             den_baseline: String::new(),
@@ -219,10 +233,26 @@ pub fn compose_role_context(
         });
     };
 
-    let role_contract = profile.role_contracts.get(role).trim().to_string();
-    let user_steering = profile.user_steering.trim();
-    let bear_context = profile.bear_context.trim();
-    let runtime_context = runtime_context.map(str::trim).filter(|s| !s.is_empty());
+    let compile_context = CompileTimePromptContext {
+        bear_name: &bear.name,
+        bear_slug: &bear.slug,
+    };
+    let den_baseline = render_compile_time_text("den_baseline", den_baseline(), &compile_context)?;
+    let role_contract = render_compile_time_text(
+        managed_space_block_key(role),
+        profile.role_contracts.get(role).trim(),
+        &compile_context,
+    )?;
+    let user_steering = render_compile_time_text(
+        "context_profile.user_steering",
+        profile.user_steering.trim(),
+        &compile_context,
+    )?;
+    let bear_context = render_compile_time_text(
+        "context_profile.bear_context",
+        profile.bear_context.trim(),
+        &compile_context,
+    )?;
 
     let mut composed = render_managed_role_prompt(bear, role, None)?;
     if let Some(runtime_context) = runtime_context {
@@ -231,10 +261,10 @@ pub fn compose_role_context(
 
     Ok(ComposedRoleContext {
         role: role.as_str().to_string(),
-        den_baseline: den_baseline().to_string(),
+        den_baseline,
         role_contract,
-        user_steering: (!user_steering.is_empty()).then(|| user_steering.to_string()),
-        bear_context: (!bear_context.is_empty()).then(|| bear_context.to_string()),
+        user_steering: (!user_steering.is_empty()).then_some(user_steering),
+        bear_context: (!bear_context.is_empty()).then_some(bear_context),
         runtime_context: runtime_context.map(str::to_string),
         composed_prompt: composed,
         is_legacy: false,

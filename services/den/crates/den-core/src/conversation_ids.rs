@@ -1,11 +1,10 @@
 //! Pure conversation-id classification + normalization helpers.
 //!
 //! These predicates decide how a client-supplied conversation selection maps onto runtime
-//! history/archive targets. They have no storage or session dependencies, so they live at
-//! the runtime root and are shared by the runtime conversation layer and the adapter edge
-//! (adapter runtime re-exports them for existing call sites).
+//! history/archive targets. They have no storage or session dependencies, so they live in
+//! `den-core` instead of forcing callers to pick `den-runtime` or `den-service` as the owner.
 
-use den_core::DenError;
+use crate::DenError;
 
 pub fn is_valid_pending_acp_conversation_id(conversation_id: &str) -> bool {
     conversation_id.starts_with("new-")

@@ -13,7 +13,9 @@ use den_memory::MemoryStoreManager;
 use den_protocol::{RuntimeContinuation, RuntimeConversationBackend, RuntimeConversationRef};
 use den_service::client_sessions;
 
-use crate::{conversation_ids::is_native_runtime_conversation_id, llm::LlmApiStyle};
+use den_core::conversation_ids::is_native_runtime_conversation_id;
+
+use crate::llm::LlmApiStyle;
 
 /// Shown to the model when stale-approval recovery auto-denies an expired tool approval.
 pub const STALE_APPROVAL_RECOVERY_DENIAL_REASON: &str = "BEARS closed an expired client approval request during stale-approval recovery. This denial applies only to that stale request; it is not a user or web policy block. Retry the tool if it is still needed.";

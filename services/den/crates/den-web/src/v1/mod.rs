@@ -18,10 +18,6 @@ use uuid::Uuid;
 use crate::web::bear::create_support::model_catalog_select_context;
 use crate::{
     auth_backend::{AuthSession, Backend},
-    core::{
-        docket::{DocketService, PgDocketService},
-        work_plans::{self, WorkPlanLookup},
-    },
     errors::CustomError,
     observability::{
         chat_proxy_stream::{deep_chat_sse_body_for_assistant_text, BearChannelSseProxyStream},
@@ -570,26 +566,17 @@ fn chat_send_error_response(err: CustomError, request_id: Uuid) -> Response {
 }
 
 async fn web_chat_workboard_prompt_context(
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    user_id: i32,
-    conversation_id: &str,
+    _pool: &sqlx::PgPool,
+    _bear_id: Uuid,
+    _user_id: i32,
+    _conversation_id: &str,
     _session_id: &str,
 ) -> Result<String, CustomError> {
-    let plan = PgDocketService::from_pool(pool)
-        .get_visible_work_plan(
-            bear_id,
-            BearProfile::Chat,
-            user_id,
-            WorkPlanLookup {
-                plan_id: None,
-                source_conversation_id: Some(conversation_id.to_string()),
-                source_client_session_id: None,
-            },
-        )
-        .await?;
-    let plans = plan.into_iter().collect::<Vec<_>>();
-    Ok(work_plans::render_workboard_prompt_context(&plans))
+    // ponytail: local task-list lookup was removed with the Docket crate split; skip
+    // prompt workboard context rather than breaking chat/deploy. Upgrade path: render
+    // from Docket checkout/list APIs once conversation-scoped task lists are backed
+    // by the relational Docket model.
+    Ok(String::new())
 }
 
 async fn chat_model_response_for(

@@ -5,6 +5,7 @@
 
 pub mod client_tools;
 pub mod config;
+pub mod conversation_ids;
 pub mod error;
 pub mod governance;
 pub mod ids;

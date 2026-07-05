@@ -1,4 +1,3 @@
-
 use super::UPSERT_SESSION_SQL;
 
 #[test]

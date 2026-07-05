@@ -6,11 +6,11 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use super::{context_composition, Bear, BearProfile};
 use super::prompt_fragments::{
     repository_prompt_bundle_registry, repository_prompt_fragment_registry,
     repository_prompt_source_version,
 };
+use super::{context_composition, Bear, BearProfile};
 
 type ManagedBlockResolutionRow = (
     String,
@@ -620,4 +620,3 @@ pub async fn compile_and_store_managed_config_for_bear(
 
 #[cfg(test)]
 mod tests;
-

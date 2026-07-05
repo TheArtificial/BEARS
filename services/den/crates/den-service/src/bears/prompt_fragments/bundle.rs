@@ -24,7 +24,9 @@ impl PromptBundleRegistry {
         let mut bundles = BTreeMap::new();
         for (source_name, source) in sources {
             let bundle: PromptBundle = serde_yml::from_str(source).map_err(|err| {
-                DenError::Parsing(format!("prompt bundle {source_name} failed to parse: {err}"))
+                DenError::Parsing(format!(
+                    "prompt bundle {source_name} failed to parse: {err}"
+                ))
             })?;
             bundle.validate(source_name, fragments)?;
             let key = bundle.id.clone();
@@ -48,7 +50,11 @@ impl PromptBundleRegistry {
 }
 
 impl PromptBundle {
-    fn validate(&self, source_name: &str, fragments: &PromptFragmentRegistry) -> Result<(), DenError> {
+    fn validate(
+        &self,
+        source_name: &str,
+        fragments: &PromptFragmentRegistry,
+    ) -> Result<(), DenError> {
         if self.id.trim().is_empty() {
             return Err(DenError::ValidationError(format!(
                 "prompt bundle {source_name} has an empty id"

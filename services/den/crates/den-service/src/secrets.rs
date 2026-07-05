@@ -90,4 +90,3 @@ pub fn decrypt_secret(encoded: &str, secret_key: &str) -> Result<String, DenErro
 
 #[cfg(test)]
 mod tests;
-

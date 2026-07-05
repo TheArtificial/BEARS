@@ -8,7 +8,7 @@ use den_service::conversation::message_types::{
     ConversationMessageWrite,
 };
 
-use crate::conversation_ids::is_acp_history_target;
+use den_core::conversation_ids::is_acp_history_target;
 use super::persistence::{
     append_message, ensure_conversation_for_external_id, list_messages_page,
 };

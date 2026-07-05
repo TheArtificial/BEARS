@@ -105,15 +105,20 @@ fn maybe_project_pair_reflection_completion(pool: &PgPool, row: &PairReflectionR
                 considered_message_count: row.considered_message_count,
                 completed_at: row.completed_at,
             }),
-            workflow_text: format!("Pair reflection completed for session {}", row.client_session_id),
-            visible_summary: (row.status == "completed").then(|| format!(
-                "Pair reflection summary completed for session {}{}.",
-                row.client_session_id,
-                row.summary_path
-                    .as_deref()
-                    .map(|path| format!(" and saved to {path}"))
-                    .unwrap_or_default()
-            )),
+            workflow_text: format!(
+                "Pair reflection completed for session {}",
+                row.client_session_id
+            ),
+            visible_summary: (row.status == "completed").then(|| {
+                format!(
+                    "Pair reflection summary completed for session {}{}.",
+                    row.client_session_id,
+                    row.summary_path
+                        .as_deref()
+                        .map(|path| format!(" and saved to {path}"))
+                        .unwrap_or_default()
+                )
+            }),
         },
     );
 }

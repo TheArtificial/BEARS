@@ -12,7 +12,7 @@ use crate::conversation_message_types::{
 };
 
 use super::persistence::{append_message, ensure_conversation_for_external_id, list_messages_page};
-use crate::conversation_ids::is_acp_history_target;
+use den_core::conversation_ids::is_acp_history_target;
 
 pub fn canonical_persistence_enabled_for_conversation(external_conversation_id: &str) -> bool {
     is_acp_history_target(external_conversation_id)

@@ -14,7 +14,9 @@ fn repository_registry_contains_den_baseline() {
     let registry = repository_prompt_fragment_registry().unwrap();
     let fragment = registry.require("den_baseline").unwrap();
     assert_eq!(fragment.frontmatter.templating_phase, "compile");
-    assert!(fragment.body.contains("You are operating as a Bear in Den."));
+    assert!(fragment
+        .body
+        .contains("You are operating as a Bear in Den."));
 }
 
 #[test]

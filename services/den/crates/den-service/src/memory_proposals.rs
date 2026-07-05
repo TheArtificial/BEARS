@@ -5,12 +5,10 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    {
-        bears::BearProfile,
-        conversation_events::{
-            memory_proposal_created_projection, memory_proposal_resolved_projection,
-            project_to_conversation, ProjectionProvenance, ProjectionSource,
-        },
+    bears::BearProfile,
+    conversation_events::{
+        memory_proposal_created_projection, memory_proposal_resolved_projection,
+        project_to_conversation, ProjectionProvenance, ProjectionSource,
     },
 };
 

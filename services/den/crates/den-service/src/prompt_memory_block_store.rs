@@ -3,11 +3,8 @@
 use den_core::DenError;
 use sqlx::{PgPool, Row};
 
-use crate::{
-    prompt_memory_blocks::{
-        PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState,
-        PromptMemoryBlockType,
-    },
+use crate::prompt_memory_blocks::{
+    PromptMemoryBlock, PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
 };
 
 // Write/patch DTOs now live alongside the prompt-memory tool executors in
@@ -230,7 +227,9 @@ pub async fn archive_conflicting_prompt_memory_blocks(
     .bind(&write.session_id)
     .execute(pool)
     .await
-    .map_err(|err| DenError::Database(format!("archive conflicting prompt_memory_blocks: {err}")))?;
+    .map_err(|err| {
+        DenError::Database(format!("archive conflicting prompt_memory_blocks: {err}"))
+    })?;
     Ok(result.rows_affected())
 }
 
@@ -255,11 +254,24 @@ pub async fn select_prompt_memory_blocks_for_runtime(
 fn row_to_block(row: sqlx::postgres::PgRow) -> Result<PromptMemoryBlock, DenError> {
     Ok(PromptMemoryBlock {
         id: row.try_get("block_id").map_err(db_decode("block_id"))?,
-        block_type: block_type_from_db(&row.try_get::<String, _>("block_type").map_err(db_decode("block_type"))?)?,
-        scope: scope_from_db(&row.try_get::<String, _>("scope").map_err(db_decode("scope"))?)?,
-        state: state_from_db(&row.try_get::<String, _>("state").map_err(db_decode("state"))?)?,
-        role: row.try_get("profile_slug").map_err(db_decode("profile_slug"))?,
-        work_surface: row.try_get("work_surface").map_err(db_decode("work_surface"))?,
+        block_type: block_type_from_db(
+            &row.try_get::<String, _>("block_type")
+                .map_err(db_decode("block_type"))?,
+        )?,
+        scope: scope_from_db(
+            &row.try_get::<String, _>("scope")
+                .map_err(db_decode("scope"))?,
+        )?,
+        state: state_from_db(
+            &row.try_get::<String, _>("state")
+                .map_err(db_decode("state"))?,
+        )?,
+        role: row
+            .try_get("profile_slug")
+            .map_err(db_decode("profile_slug"))?,
+        work_surface: row
+            .try_get("work_surface")
+            .map_err(db_decode("work_surface"))?,
         session_id: row.try_get("session_id").map_err(db_decode("session_id"))?,
         title: row.try_get("title").map_err(db_decode("title"))?,
         body: row.try_get("body").map_err(db_decode("body"))?,
@@ -304,7 +316,9 @@ fn scope_from_db(value: &str) -> Result<PromptMemoryBlockScope, DenError> {
         "profile_local" => Ok(PromptMemoryBlockScope::RoleLocal),
         "work_surface" => Ok(PromptMemoryBlockScope::WorkSurface),
         "session" => Ok(PromptMemoryBlockScope::Session),
-        other => Err(DenError::Database(format!("unknown prompt memory scope: {other}"))),
+        other => Err(DenError::Database(format!(
+            "unknown prompt memory scope: {other}"
+        ))),
     }
 }
 
@@ -314,7 +328,9 @@ fn block_type_from_db(value: &str) -> Result<PromptMemoryBlockType, DenError> {
         "work_surface_context" => Ok(PromptMemoryBlockType::WorkSurfaceContext),
         "session_focus" => Ok(PromptMemoryBlockType::SessionFocus),
         "user_instruction" => Ok(PromptMemoryBlockType::UserInstruction),
-        other => Err(DenError::Database(format!("unknown prompt memory block type: {other}"))),
+        other => Err(DenError::Database(format!(
+            "unknown prompt memory block type: {other}"
+        ))),
     }
 }
 
@@ -324,6 +340,8 @@ fn state_from_db(value: &str) -> Result<PromptMemoryBlockState, DenError> {
         "active" => Ok(PromptMemoryBlockState::Active),
         "superseded" => Ok(PromptMemoryBlockState::Superseded),
         "archived" => Ok(PromptMemoryBlockState::Archived),
-        other => Err(DenError::Database(format!("unknown prompt memory block state: {other}"))),
+        other => Err(DenError::Database(format!(
+            "unknown prompt memory block state: {other}"
+        ))),
     }
 }

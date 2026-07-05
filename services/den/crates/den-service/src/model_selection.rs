@@ -160,7 +160,11 @@ pub async fn apply_conversation_model_selection(
     crate::conversation::persistence::set_conversation_model_state(
         pool,
         conversation_id,
-        if selected.is_some() { "explicit" } else { "auto" },
+        if selected.is_some() {
+            "explicit"
+        } else {
+            "auto"
+        },
         selected.as_deref(),
         selected.as_deref(),
         Some(if selected.is_some() {
@@ -182,7 +186,8 @@ pub async fn load_conversation_model_selection_view(
     source_client_session_id: Option<&str>,
     acp_friendly_options: bool,
 ) -> Result<ConversationModelSelectionView, DenError> {
-    let base_model = bears::db::resolve_model_for_profile(pool, bear, profile, default_model).await?;
+    let base_model =
+        bears::db::resolve_model_for_profile(pool, bear, profile, default_model).await?;
     let model_options = if acp_friendly_options {
         list_selectable_model_options_for_acp(pool).await?
     } else {
@@ -206,8 +211,12 @@ pub async fn load_conversation_model_selection_view(
             .as_ref()
             .map(|row| row.selection_mode.clone())
             .unwrap_or_else(|| "auto".to_string()),
-        requested_model: model_state.as_ref().and_then(|row| row.requested_model.clone()),
-        selected_model: model_state.as_ref().and_then(|row| row.selected_model.clone()),
+        requested_model: model_state
+            .as_ref()
+            .and_then(|row| row.requested_model.clone()),
+        selected_model: model_state
+            .as_ref()
+            .and_then(|row| row.selected_model.clone()),
         source: if model_state.as_ref().map(|row| row.selection_mode.as_str()) == Some("explicit") {
             "conversation_explicit".to_string()
         } else {
@@ -218,7 +227,10 @@ pub async fn load_conversation_model_selection_view(
     })
 }
 
-pub async fn resolve_model_option(pool: &PgPool, handle: &str) -> Result<Option<ModelOption>, DenError> {
+pub async fn resolve_model_option(
+    pool: &PgPool,
+    handle: &str,
+) -> Result<Option<ModelOption>, DenError> {
     let trimmed = handle.trim();
     if trimmed.is_empty() {
         return Ok(None);

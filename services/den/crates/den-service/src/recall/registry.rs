@@ -164,7 +164,10 @@ pub async fn delete_passages_for_memory(
     .await
     .map_err(|e| DenError::System(format!("recall_passages delete (memory): {e}")))?;
 
-    Ok(rows.into_iter().map(|r| r.get::<String, _>("point_id")).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<String, _>("point_id"))
+        .collect())
 }
 
 /// Soft-delete live passages for a memory record at or above `min_chunk_index` (stale-chunk
@@ -193,5 +196,8 @@ pub async fn delete_passages_for_chunks_ge(
     .await
     .map_err(|e| DenError::System(format!("recall_passages delete (chunks): {e}")))?;
 
-    Ok(rows.into_iter().map(|r| r.get::<String, _>("point_id")).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<String, _>("point_id"))
+        .collect())
 }

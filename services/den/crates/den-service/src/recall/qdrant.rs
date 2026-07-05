@@ -215,7 +215,9 @@ impl QdrantRecall {
         let result = value
             .get("result")
             .and_then(Value::as_array)
-            .ok_or_else(|| DenError::System(format!("qdrant search missing result array: {text}")))?;
+            .ok_or_else(|| {
+                DenError::System(format!("qdrant search missing result array: {text}"))
+            })?;
         let hits = result
             .iter()
             .filter_map(|item| {
@@ -262,7 +264,9 @@ impl QdrantRecall {
             .get("result")
             .and_then(|r| r.get("count"))
             .and_then(Value::as_u64)
-            .ok_or_else(|| DenError::System(format!("qdrant count missing result.count: {text}")))?;
+            .ok_or_else(|| {
+                DenError::System(format!("qdrant count missing result.count: {text}"))
+            })?;
         Ok(count)
     }
 }
@@ -273,5 +277,34 @@ pub fn collection_name(embedding_standard: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
 
+    #[test]
+    fn from_config_none_when_recall_disabled() {
+        let cfg = Config::test_stub();
+        assert!(cfg.qdrant_url.is_none());
+        assert!(QdrantRecall::from_config(&cfg).is_none());
+    }
+
+    #[test]
+    fn from_config_some_with_derived_collection_name() {
+        let mut cfg = Config::test_stub();
+        cfg.qdrant_url = Some("http://bears-qdrant:6333/".to_string());
+        cfg.embedding_standard = "bears-embed-v1".into();
+        cfg.embedding_dimensions = 1536;
+
+        let recall = QdrantRecall::from_config(&cfg).expect("recall client");
+        assert_eq!(recall.base_url(), "http://bears-qdrant:6333");
+        assert_eq!(recall.collection_name(), "den_recall_bears-embed-v1");
+        assert_eq!(recall.dimensions, 1536);
+    }
+
+    #[test]
+    fn collection_name_tracks_standard() {
+        assert_eq!(
+            collection_name("bears-embed-v2"),
+            "den_recall_bears-embed-v2"
+        );
+    }
+}

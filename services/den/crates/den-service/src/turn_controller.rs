@@ -200,7 +200,10 @@ impl ActiveTurnCancelRegistry {
         true
     }
 
-    pub fn active_for_session(&self, client_session_id: &str) -> Option<ActiveTurnCancelRegistration> {
+    pub fn active_for_session(
+        &self,
+        client_session_id: &str,
+    ) -> Option<ActiveTurnCancelRegistration> {
         self.inner.lock().ok()?.get(client_session_id).cloned()
     }
 

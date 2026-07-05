@@ -1,8 +1,8 @@
 use den_core::DenError;
 
 use super::{
-    bundle::PromptBundle, registry::PromptFragmentRegistry, render::CompileTimePromptContext,
-    render::render_compile_time_fragment,
+    bundle::PromptBundle, registry::PromptFragmentRegistry, render::render_compile_time_fragment,
+    render::CompileTimePromptContext,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

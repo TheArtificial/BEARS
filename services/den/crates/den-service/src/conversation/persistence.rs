@@ -1,15 +1,15 @@
-use den_core::DenError;
 use den_core::tools::result_compaction::ToolResultStatus;
+use den_core::DenError;
 use den_protocol::ContextBudgetReport;
 use serde::{Deserialize, Serialize};
 use sqlx::{types::Json, PgPool, Row};
 use uuid::Uuid;
 
+use crate::archived_conversations;
 use crate::conversation_message_types::{
     ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
     ConversationMessageWrite,
 };
-use crate::archived_conversations;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ConversationRecord {
@@ -147,10 +147,7 @@ fn tool_result_user_history_summary(content_json: &serde_json::Value) -> Option<
     {
         return Some(summary.to_string());
     }
-    let tool_name = payload
-        .tool_name
-        .as_deref()
-        .unwrap_or("tool");
+    let tool_name = payload.tool_name.as_deref().unwrap_or("tool");
     let status = payload.status.as_str();
     let content = payload
         .output_preview
@@ -435,7 +432,9 @@ pub async fn ensure_conversation_for_external_id(
             ))
         })?,
         source_client_session_id: row.try_get("source_client_session_id").map_err(|err| {
-            DenError::Database(format!("decode conversation source_client_session_id: {err}"))
+            DenError::Database(format!(
+                "decode conversation source_client_session_id: {err}"
+            ))
         })?,
         current_title: row.try_get("current_title").map_err(|err| {
             DenError::Database(format!("decode conversation current_title: {err}"))
@@ -455,13 +454,13 @@ pub async fn ensure_conversation_for_external_id(
                 })
             })
             .transpose()?,
-        latest_context_budget_updated_at: row
-            .try_get("latest_context_budget_updated_at")
-            .map_err(|err| {
+        latest_context_budget_updated_at: row.try_get("latest_context_budget_updated_at").map_err(
+            |err| {
                 DenError::Database(format!(
                     "decode conversation latest_context_budget_updated_at: {err}"
                 ))
-            })?,
+            },
+        )?,
         updated_at: row
             .try_get("updated_at")
             .map_err(|err| DenError::Database(format!("decode conversation updated_at: {err}")))?,
@@ -499,7 +498,9 @@ pub async fn get_conversation_by_id(
                 ))
             })?,
             source_client_session_id: row.try_get("source_client_session_id").map_err(|err| {
-                DenError::Database(format!("decode conversation source_client_session_id: {err}"))
+                DenError::Database(format!(
+                    "decode conversation source_client_session_id: {err}"
+                ))
             })?,
             current_title: row.try_get("current_title").map_err(|err| {
                 DenError::Database(format!("decode conversation current_title: {err}"))
@@ -568,7 +569,9 @@ pub async fn get_conversation_for_external_id(
                 ))
             })?,
             source_client_session_id: row.try_get("source_client_session_id").map_err(|err| {
-                DenError::Database(format!("decode conversation source_client_session_id: {err}"))
+                DenError::Database(format!(
+                    "decode conversation source_client_session_id: {err}"
+                ))
             })?,
             current_title: row.try_get("current_title").map_err(|err| {
                 DenError::Database(format!("decode conversation current_title: {err}"))
@@ -630,7 +633,8 @@ pub async fn delete_conversation_and_clear_archive(
     archived_by_user_id: Option<i32>,
     source: &str,
 ) -> Result<u64, DenError> {
-    let deleted = delete_conversation_for_external_id(pool, bear_id, external_conversation_id).await?;
+    let deleted =
+        delete_conversation_for_external_id(pool, bear_id, external_conversation_id).await?;
     archived_conversations::set_archived(
         pool,
         bear_id,
@@ -757,9 +761,13 @@ pub async fn list_conversations_for_bear(
                         ))
                     },
                 )?,
-                source_client_session_id: row.try_get("source_client_session_id").map_err(|err| {
-                    DenError::Database(format!("decode conversation source_client_session_id: {err}"))
-                })?,
+                source_client_session_id: row.try_get("source_client_session_id").map_err(
+                    |err| {
+                        DenError::Database(format!(
+                            "decode conversation source_client_session_id: {err}"
+                        ))
+                    },
+                )?,
                 current_title: row.try_get("current_title").map_err(|err| {
                     DenError::Database(format!("decode conversation current_title: {err}"))
                 })?,
@@ -781,10 +789,10 @@ pub async fn list_conversations_for_bear(
                 latest_context_budget_updated_at: row
                     .try_get("latest_context_budget_updated_at")
                     .map_err(|err| {
-                        DenError::Database(format!(
-                            "decode conversation latest_context_budget_updated_at: {err}"
-                        ))
-                    })?,
+                    DenError::Database(format!(
+                        "decode conversation latest_context_budget_updated_at: {err}"
+                    ))
+                })?,
                 updated_at: row.try_get("updated_at").map_err(|err| {
                     DenError::Database(format!("decode conversation updated_at: {err}"))
                 })?,
@@ -1061,7 +1069,6 @@ pub async fn count_visible_messages(pool: &PgPool, conversation_id: Uuid) -> Res
 #[cfg(test)]
 mod tests;
 
-
 pub async fn get_conversation_model_state(
     pool: &PgPool,
     conversation_id: Uuid,
@@ -1147,35 +1154,41 @@ pub async fn resolve_conversation_selected_model(
     }))
 }
 
-fn decode_conversation_model_state(row: sqlx::postgres::PgRow) -> Result<ConversationModelState, DenError> {
+fn decode_conversation_model_state(
+    row: sqlx::postgres::PgRow,
+) -> Result<ConversationModelState, DenError> {
     let metadata_json: Json<serde_json::Value> = row
         .try_get("metadata_json")
         .map_err(|err| DenError::Database(format!("decode conversation model metadata: {err}")))?;
     Ok(ConversationModelState {
-        conversation_id: row
-            .try_get("conversation_id")
-            .map_err(|err| DenError::Database(format!("decode conversation model conversation_id: {err}")))?,
-        selection_mode: row
-            .try_get("selection_mode")
-            .map_err(|err| DenError::Database(format!("decode conversation model selection_mode: {err}")))?,
-        requested_model: row
-            .try_get("requested_model")
-            .map_err(|err| DenError::Database(format!("decode conversation model requested_model: {err}")))?,
-        selected_model: row
-            .try_get("selected_model")
-            .map_err(|err| DenError::Database(format!("decode conversation model selected_model: {err}")))?,
-        selected_reason: row
-            .try_get("selected_reason")
-            .map_err(|err| DenError::Database(format!("decode conversation model selected_reason: {err}")))?,
-        actual_last_model: row
-            .try_get("actual_last_model")
-            .map_err(|err| DenError::Database(format!("decode conversation model actual_last_model: {err}")))?,
-        actual_last_provider: row
-            .try_get("actual_last_provider")
-            .map_err(|err| DenError::Database(format!("decode conversation model actual_last_provider: {err}")))?,
-        fallback_count: row
-            .try_get("fallback_count")
-            .map_err(|err| DenError::Database(format!("decode conversation model fallback_count: {err}")))?,
+        conversation_id: row.try_get("conversation_id").map_err(|err| {
+            DenError::Database(format!("decode conversation model conversation_id: {err}"))
+        })?,
+        selection_mode: row.try_get("selection_mode").map_err(|err| {
+            DenError::Database(format!("decode conversation model selection_mode: {err}"))
+        })?,
+        requested_model: row.try_get("requested_model").map_err(|err| {
+            DenError::Database(format!("decode conversation model requested_model: {err}"))
+        })?,
+        selected_model: row.try_get("selected_model").map_err(|err| {
+            DenError::Database(format!("decode conversation model selected_model: {err}"))
+        })?,
+        selected_reason: row.try_get("selected_reason").map_err(|err| {
+            DenError::Database(format!("decode conversation model selected_reason: {err}"))
+        })?,
+        actual_last_model: row.try_get("actual_last_model").map_err(|err| {
+            DenError::Database(format!(
+                "decode conversation model actual_last_model: {err}"
+            ))
+        })?,
+        actual_last_provider: row.try_get("actual_last_provider").map_err(|err| {
+            DenError::Database(format!(
+                "decode conversation model actual_last_provider: {err}"
+            ))
+        })?,
+        fallback_count: row.try_get("fallback_count").map_err(|err| {
+            DenError::Database(format!("decode conversation model fallback_count: {err}"))
+        })?,
         metadata_json: metadata_json.0,
     })
 }

@@ -21,7 +21,10 @@ pub struct PromptMemoryCompilation {
     pub omitted_block_ids: Vec<String>,
 }
 
-fn block_matches_scope(block: &PromptMemoryBlock, input: &PromptMemoryCompilationInput<'_>) -> bool {
+fn block_matches_scope(
+    block: &PromptMemoryBlock,
+    input: &PromptMemoryCompilationInput<'_>,
+) -> bool {
     if block.state != PromptMemoryBlockState::Active {
         return false;
     }
@@ -31,7 +34,12 @@ fn block_matches_scope(block: &PromptMemoryBlock, input: &PromptMemoryCompilatio
         PromptMemoryBlockScope::WorkSurface => block
             .work_surface
             .as_ref()
-            .map(|surface| input.work_surfaces.iter().any(|candidate| candidate == surface))
+            .map(|surface| {
+                input
+                    .work_surfaces
+                    .iter()
+                    .any(|candidate| candidate == surface)
+            })
             .unwrap_or(false),
         PromptMemoryBlockScope::Session => block.session_id.as_deref() == Some(input.session_id),
     }
@@ -61,7 +69,11 @@ pub fn compile_prompt_memory_blocks(
             .then_with(|| b.priority.cmp(&a.priority))
             .then_with(|| a.title.cmp(&b.title))
     });
-    let included_blocks = eligible.iter().take(input.max_blocks).cloned().collect::<Vec<_>>();
+    let included_blocks = eligible
+        .iter()
+        .take(input.max_blocks)
+        .cloned()
+        .collect::<Vec<_>>();
     let omitted_block_ids = eligible
         .iter()
         .skip(input.max_blocks)
@@ -104,4 +116,3 @@ pub fn render_prompt_memory_block_context(compilation: &PromptMemoryCompilation)
 
 #[cfg(test)]
 mod tests;
-
