@@ -24,8 +24,8 @@ use den_service::{
     bifrost::BifrostCatalogSnapshot,
     client_sessions,
     conversation::events::{
-        canonical_persistence_context, spawn_persist_operational_outcome_message,
-        ConversationEventProvenance,
+        canonical_persistence_context, persist_canonical_conversation_record,
+        CanonicalConversationRecord, ConversationEventProvenance,
     },
     DenState,
 };
@@ -864,8 +864,8 @@ pub(crate) async fn persist_run_failed(
         let provenance = ConversationEventProvenance::client_session(session_id.to_string());
         let (summary, content_json) =
             normalized_operational_outcome(reason, &message, run_id, context.as_ref());
-        spawn_persist_operational_outcome_message(
-            canonical_persistence_context(
+        let _ = persist_canonical_conversation_record(
+            &canonical_persistence_context(
                 pool.clone(),
                 bear_id,
                 Some(user_id),
@@ -875,9 +875,13 @@ pub(crate) async fn persist_run_failed(
                 provenance.scope_id,
                 false,
             ),
-            summary,
-            content_json,
-        );
+            &CanonicalConversationRecord::model_visible_hidden_assistant_message(
+                summary,
+                content_json,
+                None,
+            ),
+        )
+        .await;
     }
 }
 

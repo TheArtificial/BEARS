@@ -431,6 +431,17 @@ fn budget_warning(
         });
     }
 
+    if state.tool_usage.total >= policy.tool_call_limits.total {
+        return Some(TurnBudgetWarning {
+            code: "total_tool_budget_warning",
+            message: format!(
+                "Budget advisory: this turn has fully used its emergency total tool-call fuse ({}/{} tool calls used). Any further tool call will stop the turn. Provide the best final answer now unless you explicitly need a fresh turn.",
+                state.tool_usage.total,
+                policy.tool_call_limits.total
+            ),
+        });
+    }
+
     if state.tool_usage.total + 1 >= policy.tool_call_limits.total {
         return Some(TurnBudgetWarning {
             code: "total_tool_budget_warning",
@@ -453,6 +464,21 @@ fn budget_warning(
     ] {
         let count = state.tool_usage.count_for(class);
         let limit = ToolCallBudgetUsage::limit_for(policy.tool_call_limits, class);
+        if count == 0 {
+            continue;
+        }
+        if count >= limit {
+            return Some(TurnBudgetWarning {
+                code: "tool_class_budget_warning",
+                message: format!(
+                    "Budget advisory: this turn has fully used its {} tool budget ({}/{} used). Any further {} call will stop the turn. Provide the best final answer now unless you explicitly need a fresh turn.",
+                    class.label(),
+                    count,
+                    limit,
+                    class.label()
+                ),
+            });
+        }
         if count + 1 >= limit {
             return Some(TurnBudgetWarning {
                 code: "tool_class_budget_warning",
@@ -726,6 +752,55 @@ mod tests {
             evaluation.warning.as_ref().map(|warning| warning.code),
             Some("total_tool_budget_warning")
         );
+        assert!(evaluation
+            .warning
+            .as_ref()
+            .is_some_and(|warning| warning.message.contains("Any further tool call will stop the turn")));
+    }
+
+    #[test]
+    fn read_budget_warns_when_last_safe_read_is_already_used() {
+        let mut prior = state();
+        prior.tool_usage.read = 11;
+        prior.tool_usage.total = 11;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            1_000,
+            &prior,
+            &[observation("memory_read", r#"{"path":"a"}"#, false)],
+        );
+
+        assert!(evaluation.stop_reason.is_none());
+        assert_eq!(
+            evaluation.warning.as_ref().map(|warning| warning.code),
+            Some("tool_class_budget_warning")
+        );
+        assert!(evaluation.warning.as_ref().is_some_and(|warning| warning
+            .message
+            .contains("Any further read call will stop the turn")));
+    }
+
+    #[test]
+    fn class_budget_warning_ignores_unused_stricter_classes() {
+        let mut prior = state();
+        prior.tool_usage.read = 10;
+        prior.tool_usage.total = 10;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            1_000,
+            &prior,
+            &[observation("memory_read", r#"{"path":"a"}"#, false)],
+        );
+
+        assert!(evaluation.stop_reason.is_none());
+        assert!(evaluation.warning.as_ref().is_some_and(|warning| {
+            warning.code == "tool_class_budget_warning"
+                && warning.message.contains("read tool budget")
+        }));
     }
 
     #[test]

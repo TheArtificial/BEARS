@@ -1489,32 +1489,25 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
     )
     .await;
 
-    let mut row = None;
-    for _ in 0..20 {
-        row = sqlx::query(
-            r#"
-            SELECT message_type, role, visibility, content_text, content_json
-            FROM conversation_messages
-            WHERE conversation_id = (
-                SELECT id FROM conversations
-                WHERE bear_id = $1 AND external_conversation_id = $2
-                LIMIT 1
-            )
-            ORDER BY sequence_no DESC
+    let row = sqlx::query(
+        r#"
+        SELECT message_type, role, visibility, content_text, content_json
+        FROM conversation_messages
+        WHERE conversation_id = (
+            SELECT id FROM conversations
+            WHERE bear_id = $1 AND external_conversation_id = $2
             LIMIT 1
-            "#,
         )
-        .bind(bear_id)
-        .bind(&session.conversation_id)
-        .fetch_optional(&pool)
-        .await
-        .expect("query operational outcome row");
-        if row.is_some() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-    let row = row.expect("operational outcome row persisted");
+        ORDER BY sequence_no DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(bear_id)
+    .bind(&session.conversation_id)
+    .fetch_optional(&pool)
+    .await
+    .expect("query operational outcome row")
+    .expect("operational outcome row persisted immediately");
     let message_type: String = row.try_get("message_type").expect("decode message_type");
     let role: Option<String> = row.try_get("role").expect("decode role");
     let visibility: String = row.try_get("visibility").expect("decode visibility");
