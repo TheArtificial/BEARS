@@ -99,6 +99,11 @@ Routing defaults:
 
 The dedicated-tool redirect should be a soft wall: first redirect, then require an explicit override to force command execution when truly necessary.
 
+Initial soft-wall examples:
+
+- `rg` / `grep` should redirect to `fs_search_files` for workspace text search.
+- `sed` should redirect to a dedicated edit tool only when the requested operation is clearly representable as a structured text edit.
+
 ## Initial tool mapping targets
 
 This table defines the intended near-term mapping for common current tools.

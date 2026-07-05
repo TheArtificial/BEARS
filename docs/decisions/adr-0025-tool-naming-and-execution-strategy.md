@@ -278,6 +278,12 @@ The dedicated-tool redirect should be a **soft wall**:
 - first request: return a structured `prefer_dedicated_tool` result without executing;
 - second request: allow execution only when the caller sets an explicit override flag such as `bypass_tool_redirect=true`.
 
+Examples of soft-walled shell commands that should steer to dedicated tools when they clearly fit:
+
+- `git status`, `git diff`, `git log`, `git show`, `git add`, `git restore`, `git commit`, `git stash` -> dedicated git tools
+- `rg` / `grep` workspace searches -> `fs_search_files`
+- clearly targeted `sed` replacement invocations -> `fs_replace_text`
+
 #### Maintenance obligation
 
 When BEARS adds a new dedicated tool for an operation that models commonly attempt through command execution, the `run_command` router and soft-wall policy must be updated in the same change.

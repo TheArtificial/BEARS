@@ -98,6 +98,8 @@ The redirect should be a **soft wall**:
 - first request returns a structured `prefer_dedicated_tool` result with a suggested tool and suggested arguments;
 - a second request may force command execution only through an explicit override flag such as `bypass_tool_redirect=true`.
 
+Near-term soft-wall coverage should include common shell fallbacks for existing file tools, especially `rg`/`grep` for content search and clearly mappable `sed` replacements for structured text edits.
+
 This keeps the model-facing surface simple while preserving transparency and an escape hatch.
 
 ### Level 0: Hidden Den/runtime mechanisms

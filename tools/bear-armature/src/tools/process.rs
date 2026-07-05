@@ -28,63 +28,99 @@ fn process_run_dedicated_tool_redirect(
     args: &[String],
     cwd: &str,
 ) -> Option<(DedicatedToolRedirect, Value)> {
-    if command != "git" {
-        return None;
+    match command {
+        "git" => {
+            let subcommand = args.first()?.as_str();
+            let (provider_tool, reason, suggested_args) = match subcommand {
+                "status" => (
+                    "git_status",
+                    "Read-only git inspection should use the dedicated git status tool.",
+                    json!({ "repo_path": cwd }),
+                ),
+                "diff" => (
+                    "git_diff",
+                    "Read-only git inspection should use the dedicated git diff tool.",
+                    json!({ "repo_path": cwd }),
+                ),
+                "log" => (
+                    "git_log",
+                    "Read-only git inspection should use the dedicated git log tool.",
+                    json!({ "repo_path": cwd }),
+                ),
+                "show" => (
+                    "git_show",
+                    "Git object inspection should use the dedicated git show tool.",
+                    json!({
+                        "repo_path": cwd,
+                        "revision": args.get(1).cloned().unwrap_or_else(|| "HEAD".to_string())
+                    }),
+                ),
+                "add" => (
+                    "git_add",
+                    "Git staging should use the dedicated git add tool.",
+                    json!({ "repo_path": cwd }),
+                ),
+                "restore" => (
+                    "git_restore",
+                    "Git restore should use the dedicated git restore tool.",
+                    json!({ "repo_path": cwd }),
+                ),
+                "commit" => (
+                    "git_commit",
+                    "Git commits should use the dedicated git commit tool.",
+                    json!({ "repo_path": cwd }),
+                ),
+                "stash" => (
+                    "git_stash",
+                    "Git stashing should use the dedicated git stash tool.",
+                    json!({ "repo_path": cwd }),
+                ),
+                _ => return None,
+            };
+            Some((
+                DedicatedToolRedirect {
+                    provider_tool,
+                    reason,
+                },
+                suggested_args,
+            ))
+        }
+        "rg" | "grep" => {
+            let query = args
+                .iter()
+                .rev()
+                .find(|arg| !arg.starts_with('-'))
+                .cloned()
+                .unwrap_or_default();
+            Some((
+                DedicatedToolRedirect {
+                    provider_tool: "fs_search_files",
+                    reason: "Workspace text search should use the dedicated file search tool.",
+                },
+                json!({
+                    "path": cwd,
+                    "query": query,
+                }),
+            ))
+        }
+        "sed" => {
+            let script = args.iter().find(|arg| !arg.starts_with('-'))?;
+            if script == "-n" {
+                return None;
+            }
+            let path = args.iter().rev().find(|arg| !arg.starts_with('-') && *arg != script)?;
+            Some((
+                DedicatedToolRedirect {
+                    provider_tool: "fs_replace_text",
+                    reason: "Targeted text replacement in workspace files should use the dedicated text-replace tool when the edit can be expressed as an exact replacement.",
+                },
+                json!({
+                    "path": path,
+                }),
+            ))
+        }
+        _ => None,
     }
-    let subcommand = args.first()?.as_str();
-    let (provider_tool, reason, suggested_args) = match subcommand {
-        "status" => (
-            "git_status",
-            "Read-only git inspection should use the dedicated git status tool.",
-            json!({ "repo_path": cwd }),
-        ),
-        "diff" => (
-            "git_diff",
-            "Read-only git inspection should use the dedicated git diff tool.",
-            json!({ "repo_path": cwd }),
-        ),
-        "log" => (
-            "git_log",
-            "Read-only git inspection should use the dedicated git log tool.",
-            json!({ "repo_path": cwd }),
-        ),
-        "show" => (
-            "git_show",
-            "Git object inspection should use the dedicated git show tool.",
-            json!({
-                "repo_path": cwd,
-                "revision": args.get(1).cloned().unwrap_or_else(|| "HEAD".to_string())
-            }),
-        ),
-        "add" => (
-            "git_add",
-            "Git staging should use the dedicated git add tool.",
-            json!({ "repo_path": cwd }),
-        ),
-        "restore" => (
-            "git_restore",
-            "Git restore should use the dedicated git restore tool.",
-            json!({ "repo_path": cwd }),
-        ),
-        "commit" => (
-            "git_commit",
-            "Git commits should use the dedicated git commit tool.",
-            json!({ "repo_path": cwd }),
-        ),
-        "stash" => (
-            "git_stash",
-            "Git stashing should use the dedicated git stash tool.",
-            json!({ "repo_path": cwd }),
-        ),
-        _ => return None,
-    };
-    Some((
-        DedicatedToolRedirect {
-            provider_tool,
-            reason,
-        },
-        suggested_args,
-    ))
 }
 
 pub(crate) async fn handle_process_run(

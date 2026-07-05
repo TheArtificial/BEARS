@@ -13323,6 +13323,65 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         std::env::remove_var("DEN_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
     }
 
+    #[tokio::test]
+    async fn process_run_redirects_rg_and_grep_to_fs_search_files() {
+        let root = std::env::temp_dir().join(format!("bear-armature-rg-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+
+        for command in ["rg", "grep"] {
+            let redirected = handle_process_run(
+                context,
+                "session-1",
+                &json!({
+                    "command": command,
+                    "args": ["needle", "src"],
+                    "cwd": root.to_string_lossy(),
+                }),
+                &ToolPolicy::default(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(redirected["ok"], false, "{command}");
+            assert_eq!(redirected["kind"], "prefer_dedicated_tool", "{command}");
+            assert_eq!(redirected["suggested_tool"], "fs_search_files", "{command}");
+            assert_eq!(redirected["suggested_args"]["path"], root.to_string_lossy().to_string(), "{command}");
+            assert_eq!(redirected["suggested_args"]["query"], "src", "{command}");
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn process_run_redirects_sed_to_fs_replace_text() {
+        let root = std::env::temp_dir().join(format!("bear-armature-sed-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("file.txt");
+        std::fs::write(&file, "hello\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+
+        let redirected = handle_process_run(
+            context,
+            "session-1",
+            &json!({
+                "command": "sed",
+                "args": ["-i", "s/hello/hi/", file.to_string_lossy()],
+                "cwd": root.to_string_lossy(),
+            }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(redirected["ok"], false);
+        assert_eq!(redirected["kind"], "prefer_dedicated_tool");
+        assert_eq!(redirected["suggested_tool"], "fs_replace_text");
+        assert_eq!(redirected["suggested_args"]["path"], file.to_string_lossy().to_string());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[ignore = "canonical web_fetch is Den-executed; adapter local fetch will be renamed if reintroduced"]
     #[tokio::test]
     async fn web_fetch_rejects_unsafe_urls() {
