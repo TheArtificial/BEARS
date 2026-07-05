@@ -84,6 +84,7 @@ fn normalized_operational_outcome(
     reason: &str,
     message: &str,
     run_id: &str,
+    context: Option<&serde_json::Value>,
 ) -> (String, serde_json::Value) {
     let (kind, retryable, subsystem, summary) = match reason {
         "continuation_stream_error" => (
@@ -96,7 +97,7 @@ fn normalized_operational_outcome(
             "continuation_timeout",
             true,
             "continuation_runtime",
-            "Operational note from Den: the previous turn timed out while waiting for continuation output after client results were delivered. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
+            "Operational note from Den: the previous turn timed out after Den received a client/local-tool result and started continuation, but the resumed runtime produced no event before the watchdog expired. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
         ),
         "continuation_start_failed" => (
             "continuation_start_failed",
@@ -117,9 +118,7 @@ fn normalized_operational_outcome(
             "Operational note from Den: the previous turn ended with an operational failure before final answer delivery. Do not assume the requested work completed; continue from the latest successful state.",
         ),
     };
-    (
-        summary.to_string(),
-        json!({
+    let mut content = json!({
             "source": "den.bearwire",
             "event": "operational_outcome",
             "scope_id": run_id,
@@ -131,8 +130,11 @@ fn normalized_operational_outcome(
             "run_id": run_id,
             "summary": summary,
             "detail": log_sample(message),
-        }),
-    )
+    });
+    if let Some(context) = context {
+        content["context"] = context.clone();
+    }
+    (summary.to_string(), content)
 }
 
 fn client_tool_descriptors_from_context(
@@ -806,6 +808,7 @@ pub(crate) async fn persist_run_failed(
     user_id: i32,
     reason: &str,
     message: String,
+    context: Option<serde_json::Value>,
 ) {
     tracing::warn!(
         session_id,
@@ -830,6 +833,7 @@ pub(crate) async fn persist_run_failed(
             "run_id": run_id,
             "message": message,
             "reason": reason,
+            "context": context,
         }),
     );
     event.bear_id = Some(bear_id.to_string());
@@ -852,7 +856,8 @@ pub(crate) async fn persist_run_failed(
             .clone()
             .unwrap_or_else(|| session.conversation_id.clone());
         let provenance = ConversationEventProvenance::client_session(session_id.to_string());
-        let (summary, content_json) = normalized_operational_outcome(reason, &message, run_id);
+        let (summary, content_json) =
+            normalized_operational_outcome(reason, &message, run_id, context.as_ref());
         spawn_persist_operational_outcome_message(
             canonical_persistence_context(
                 pool.clone(),
@@ -1413,6 +1418,7 @@ pub(crate) async fn run_start_result(
                                 user_id,
                                 "stream_error",
                                 err.to_string(),
+                                None,
                             )
                             .await;
                             break;
@@ -1432,6 +1438,7 @@ pub(crate) async fn run_start_result(
                     user_id,
                     "start_failed",
                     err.to_string(),
+                    None,
                 )
                 .await;
             }

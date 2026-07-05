@@ -1485,6 +1485,7 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
         user_id,
         "runtime_internal",
         "I stopped because this turn hit the emergency continuation fuse.".to_string(),
+        None,
     )
     .await;
 

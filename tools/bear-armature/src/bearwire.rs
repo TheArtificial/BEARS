@@ -840,10 +840,6 @@ fn bearwire_run_failed_user_message(event: &Value) -> String {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|detail| !detail.is_empty() && *detail != message);
-    let context = data
-        .get("context")
-        .filter(|context| !context.is_null())
-        .map(Value::to_string);
     let run_id = event
         .get("run_id")
         .and_then(Value::as_str)
@@ -859,16 +855,19 @@ fn bearwire_run_failed_user_message(event: &Value) -> String {
     if let Some(detail) = detail {
         rendered.push_str(&format!("\n\nDetail: {}", truncate_for_log(detail, 1200)));
     }
-    if let Some(context) = context {
-        rendered.push_str(&format!(
-            "\n\nContext: {}",
-            truncate_for_log(&context, 1200)
-        ));
-    }
     if let Some(run_id) = run_id {
         rendered.push_str(&format!("\n\nRun: `{run_id}`"));
     }
     rendered
+}
+
+fn bearwire_run_failed_stderr_context(event: &Value) -> Option<String> {
+    let data = event.get("data")?;
+    let context = data.get("context")?;
+    if context.is_null() {
+        return None;
+    }
+    Some(truncate_for_log(&context.to_string(), 1200))
 }
 
 async fn handle_bearwire_tool_call_finished_event(
@@ -1083,6 +1082,12 @@ async fn handle_bearwire_event(
                 session_id,
                 truncate_for_log(&message, 500)
             );
+            if let Some(context) = bearwire_run_failed_stderr_context(event) {
+                eprintln!(
+                    "bear-armature: BearWire run failed diagnostic session_id={} context={}",
+                    session_id, context
+                );
+            }
             return Err(anyhow!(message));
         }
         "run.cancelled" => {
@@ -1390,6 +1395,31 @@ mod tests {
         let message = bearwire_run_failed_user_message(&event);
 
         assert_eq!(message, "BEARS run failed: BearWire run failed");
+    }
+
+    #[test]
+    fn bearwire_run_failed_user_message_omits_context_but_stderr_helper_keeps_it() {
+        let event = json!({
+            "type": "run.failed",
+            "run_id": "run-timeout",
+            "data": {
+                "reason": "continuation_watchdog_timeout",
+                "message": "Den received the client result and started continuation request req-123, but no runtime event arrived within 30000ms.",
+                "context": {
+                    "continuation_request_id": "req-123",
+                    "watchdog_timeout_ms": 30000,
+                    "runtime_event_count": 0
+                }
+            }
+        });
+
+        let message = bearwire_run_failed_user_message(&event);
+        let context = bearwire_run_failed_stderr_context(&event).expect("stderr context");
+
+        assert!(!message.contains("Context:"));
+        assert!(message.contains("run-timeout"));
+        assert!(context.contains("continuation_request_id"));
+        assert!(context.contains("req-123"));
     }
 
     #[test]

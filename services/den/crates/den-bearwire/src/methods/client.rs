@@ -400,6 +400,14 @@ fn spawn_continuation_task(
                     let item = match tokio::time::timeout(watchdog_timeout, stream.next()).await {
                         Ok(item) => item,
                         Err(_) => {
+                            let context = json!({
+                                "continuation_request_id": request_id,
+                                "watchdog_timeout_ms": watchdog_timeout.as_millis(),
+                                "runtime_event_count": runtime_event_count,
+                                "first_event_seen": first_event_seen,
+                                "terminal_event_seen": terminal_event_seen,
+                                "last_event_kind": last_event_kind,
+                            });
                             persist_run_failed(
                                 &pool,
                                 &run.session_id,
@@ -408,9 +416,10 @@ fn spawn_continuation_task(
                                 run.user_id,
                                 "continuation_watchdog_timeout",
                                 format!(
-                                    "Continuation produced no runtime event within {}ms after client result.",
+                                    "Den received the client result and started continuation request {request_id}, but no runtime event arrived within {}ms. This usually means the resumed model/runtime stream stalled before emitting its first event.",
                                     watchdog_timeout.as_millis()
                                 ),
+                                Some(context),
                             )
                             .await;
                             break;
@@ -475,6 +484,7 @@ fn spawn_continuation_task(
                                 run.user_id,
                                 "continuation_stream_error",
                                 err.to_string(),
+                                None,
                             )
                             .await;
                             break;
@@ -517,6 +527,7 @@ fn spawn_continuation_task(
                     run.user_id,
                     "continuation_start_failed",
                     err.to_string(),
+                    None,
                 )
                 .await;
             }
