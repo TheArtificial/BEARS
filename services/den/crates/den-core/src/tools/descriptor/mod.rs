@@ -536,8 +536,8 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_JOB_CREATE,
-            "Create Docket job",
-            "Create a durable Docket job with acceptance criteria and an optional initial task tree. Jobs are durable work containers larger than individual tasks, and every initial Docket task requires concrete completion_criteria so execution has a stopping condition. Use this when the human asks to create/track/delegate durable work, or when a task-list handoff should become canonical Docket work. Does not execute the job; execution flows through Bear runtime dispatch.",
+            "Create job",
+            "Create a durable job with acceptance criteria and an optional initial task tree. Jobs are durable work containers larger than individual tasks, and every initial task requires concrete completion_criteria so execution has a stopping condition. Use this when the human asks to create, track, or delegate durable work, or when a task-list handoff should become canonical work. Does not execute the job; execution flows through Bear runtime dispatch.",
             "bear.docket",
             &["docket.job.write"],
             CHAT_AND_PAIR_PROFILES,
@@ -1232,12 +1232,12 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
         },
         DEN_JOB_CREATE => ToolDisplayDescriptor {
             label,
-            category: "docket",
-            progress_verb: "Creating Docket job",
-            complete_verb: "Created Docket job",
+            category: "work",
+            progress_verb: "Creating job",
+            complete_verb: "Created job",
             target_arg_keys: &["goal"],
             sensitive_arg_keys: &["criteria", "tasks"],
-            approval_summary: "Create a durable Docket job without executing it.",
+            approval_summary: "Create a durable job without executing it.",
         },
         DEN_JOB_LIST => ToolDisplayDescriptor {
             label,
@@ -1544,6 +1544,23 @@ mod tests {
         );
         assert_eq!(display["subtitle"], "Trace ACP tool card title rendering");
         assert_ne!(display["subtitle"], "conversation");
+    }
+
+    #[test]
+    fn den_tool_display_includes_job_goal_target() {
+        let display = den_tool_display_json_for_provider(
+            "create_job",
+            &json!({ "goal": "Improve ACP tool card summaries" }),
+        )
+        .expect("display");
+
+        assert_eq!(display["label"], "Create job");
+        assert_eq!(
+            display["title"],
+            "Creating job Improve ACP tool card summaries"
+        );
+        assert_eq!(display["subtitle"], "Improve ACP tool card summaries");
+        assert_eq!(display["category"], "work");
     }
 
     #[test]
