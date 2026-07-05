@@ -8,7 +8,7 @@ use crate::{
     DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
     DocketJobStatus, DocketService, DocketTaskDefinitionPatch, DocketTaskDifficulty,
     DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
-    DocketTaskUpdate, PgDocketService, TaskListSyncRequest, WorkPlanVisibility,
+    DocketTaskUpdate, PgDocketService, TaskDispatcher, TaskListSyncRequest, WorkPlanVisibility,
 };
 
 async fn test_pool() -> Option<PgPool> {
@@ -310,4 +310,77 @@ async fn docket_task_list_sync_rejects_completed_item_without_evidence() {
     assert!(!outcome.applied);
     assert!(!outcome.conflicts.is_empty());
     assert!(outcome.conflicts[0].contains("completion summary"));
+}
+
+#[tokio::test]
+async fn docket_dispatcher_finds_starts_and_records_work_task_outcomes() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket dispatcher test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "dispatcher").await;
+    let service = PgDocketService::from_pool(&pool);
+    let mut create = two_task_job(user_id, bear_id);
+    create.tasks[0].assigned_to_role = Some(BearProfile::Work);
+    create.tasks[1].parent_client_key = Some("first".to_string());
+    create.tasks[1].assigned_to_role = Some(BearProfile::Work);
+
+    let created = service.create_job(create).await.expect("create job");
+    let run_id = created.job.current_run_id.expect("current run");
+    let parent_task_id = created.tasks[0].id;
+    let child_task_id = created.tasks[1].id;
+    assert_eq!(created.tasks[1].parent_task_id, Some(parent_task_id));
+
+    let runnable = service
+        .runnable_work_tasks(bear_id, 10)
+        .await
+        .expect("runnable work tasks");
+    assert_eq!(runnable.len(), 2);
+    assert!(runnable.iter().any(|task| task.task.id == parent_task_id));
+    assert!(runnable.iter().any(|task| task.task.id == child_task_id));
+
+    let started = service
+        .mark_task_started(
+            bear_id,
+            parent_task_id,
+            run_id,
+            Some("dispatcher-test".to_string()),
+        )
+        .await
+        .expect("mark started");
+    assert_eq!(started.run_state.as_ref().unwrap().status, "in_progress");
+
+    let done = service
+        .record_task_success(
+            bear_id,
+            parent_task_id,
+            run_id,
+            "work task completed".to_string(),
+            Some(serde_json::json!({"artifact":"dispatcher-test"})),
+            Some("dispatcher-test".to_string()),
+        )
+        .await
+        .expect("record success");
+    assert_eq!(done.run_state.as_ref().unwrap().status, "done");
+    assert_eq!(
+        done.run_state.as_ref().unwrap().result_summary.as_deref(),
+        Some("work task completed")
+    );
+
+    let blocked = service
+        .record_task_blocked(
+            bear_id,
+            child_task_id,
+            run_id,
+            "waiting for sandbox capability".to_string(),
+            None,
+            Some("dispatcher-test".to_string()),
+        )
+        .await
+        .expect("record blocked");
+    assert_eq!(blocked.run_state.as_ref().unwrap().status, "blocked");
+    assert_eq!(
+        blocked.run_state.as_ref().unwrap().result_summary.as_deref(),
+        Some("waiting for sandbox capability")
+    );
 }

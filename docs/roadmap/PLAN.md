@@ -29,7 +29,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **Bear entity layer** | **Phases 0–6 landed/partial**: schema, resolver, access gate, entity-filter + graph recall, anchors, tools/governance, `session_info.entities`; portability open | [`BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md`](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md), [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) |
 | **Reflection / curation** | `memory_curate` + `recall_index` workers; pair→curate enqueue on ACP close; harvest/consolidation open | [`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md), [`MEMORY_CURATION_PLAN.md`](MEMORY_CURATION_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 | **Personalization** | Planned: replace blanket anti-user-memory guidance with safe proactive human understanding; `curate` stance promotes safe memories and quarantines risks | [`PERSONALIZATION_PLAN.md`](PERSONALIZATION_PLAN.md) |
-| **Docket / tasks** | **Level 1** (`den-docket` wraps legacy `bear_work_plans`); ADR-0034 relational schema + `work` dispatch **open** | [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md), [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) |
+| **Docket / tasks** | **Relational vertical slice landed**: new jobs/tasks use ADR-0034 Postgres tables; task-list projections and minimal `TaskDispatcher` seam exist; legacy `bear_work_plans` remains compatibility-only for old session task-list data | [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md), [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) |
 | **`work` sandbox** | **Not started** — blocks real coding harness | [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) Phase 7, [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) |
 | **Context compaction** | Designed; end-to-end runtime **not finished** | [`DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md`](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md), [ADR-0032](../decisions/adr-0032-den-context-compaction-architecture.md) |
 | **Context budget tracking** | Planned: final-request token estimation against resolved model limits, with component attribution and runtime diagnostics | [`CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md`](CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md), [ADR-0047](../decisions/adr-0047-context-window-budget-and-token-estimation.md) |
@@ -50,9 +50,9 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 
 ### What is next (priority order)
 
-1. **`work` sandbox (native Phase 7)** — `bears-sandbox-runner`, `SandboxBackend`, coding tools, Docket-driven dispatch. Unblocks the `work` stance.
+1. **`work` sandbox (native Phase 7)** — `bears-sandbox-runner`, `SandboxBackend`, coding tools, Docket-driven dispatch using the landed `TaskDispatcher` seam. Unblocks the `work` stance.
 2. **ADR-0041 harvest + consolidation** — consolidation policy/supersession usage, freshness trend, and `archive_harvest` lane ([`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md) P2.5); core schema pieces are mostly landed.
-3. **Docket relational schema** — `bear_jobs`/`bear_tasks`/runs per ADR-0034; replace `work_plan.*` tools; wire `TaskDispatcher`.
+3. **Docket legacy compatibility retirement** — backfill or archive old `bear_work_plans` data, retire compatibility provider names from advertisement, and keep session task-list UX distinct from Docket jobs/tasks.
 4. **Context compaction** — Den-owned transcript compaction per ADR-0032.
 5. **BearWire Phase 4** — finish Zed/ACP smoke and parity, then deprecate adapter-SSE and legacy `/acp/**` hot path.
 6. **Schema/UI naming cleanup** — retire residual transitional Letta/MemFS names as ordinary cleanup, not migration/backfill work.

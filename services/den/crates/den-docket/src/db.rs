@@ -1,8 +1,9 @@
 //! Docket Postgres access — internal to the module.
 //!
 //! These functions are the persistence layer behind `DocketService`; callers
-//! outside `core::docket` go through the service, never here. Storage is still
-//! the legacy `bear_work_plans` + `bear_work_plan_events` tables (pre-ADR-0034).
+//! outside Docket go through the service, never here. New Docket job/task data
+//! is stored in the ADR-0034 relational tables. The legacy `bear_work_plans`
+//! helpers remain below as deprecated task-list compatibility paths only.
 
 use std::collections::HashMap;
 

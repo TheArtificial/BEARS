@@ -1,8 +1,9 @@
 //! `den-docket` — Den's control-plane subsystem for work management (ADR-0034).
 //!
 //! Public face is [`DocketService`] / [`PgDocketService`]; `db` is crate-internal.
-//! Today this wraps the **legacy `bear_work_plans` activity board** (JSONB
-//! items); see [`model`] for why the types keep their honest pre-ADR-0034 names.
+//! New Docket jobs/tasks use the ADR-0034 relational Postgres tables. Legacy
+//! `bear_work_plans` support remains for session task-list compatibility and
+//! old data reads, but it is not the primary Docket write path.
 //! This crate is a service-layer leaf: it depends only on `den-core`. The
 //! relational jobs/tasks realization is tracked in
 //! `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`; the crate split itself in
