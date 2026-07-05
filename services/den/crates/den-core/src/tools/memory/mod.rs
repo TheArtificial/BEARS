@@ -172,7 +172,8 @@ pub async fn write_memory_entry(
         source,
         author,
         conversation_id: clean_optional(&context.conversation_id),
-        session_id: source_client_session_id(context).or_else(|| clean_optional(&context.session_id)),
+        session_id: source_client_session_id(context)
+            .or_else(|| clean_optional(&context.session_id)),
         client_session_id: context
             .client_session_id
             .clone()
@@ -267,7 +268,9 @@ pub async fn memory_read(
     let args: MemoryReadArguments = serde_json::from_value(arguments)?;
     let path = args.path.trim();
     if path.is_empty() {
-        return Err(DenError::ValidationError("path must not be empty".to_string()));
+        return Err(DenError::ValidationError(
+            "path must not be empty".to_string(),
+        ));
     }
     memory.read(bear_id, role, path).await
 }
@@ -281,7 +284,9 @@ pub async fn memory_search(
     let args: MemorySearchArguments = serde_json::from_value(arguments)?;
     let query = args.query.trim();
     if query.is_empty() {
-        return Err(DenError::ValidationError("query must not be empty".to_string()));
+        return Err(DenError::ValidationError(
+            "query must not be empty".to_string(),
+        ));
     }
     let limit = args.limit.map(|n| n.clamp(1, 50) as i64).unwrap_or(10);
     memory.search(bear_id, role, query, limit).await

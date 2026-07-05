@@ -16,7 +16,9 @@ use uuid::Uuid;
 
 use crate::DenError;
 
-use crate::tools::{context::DenToolInvocationContext, memory::source_client_session_id, validation};
+use crate::tools::{
+    context::DenToolInvocationContext, memory::source_client_session_id, validation,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct PlanModeEnterArguments {
@@ -51,8 +53,9 @@ fn require_client_session(
     context: &DenToolInvocationContext,
     purpose: &str,
 ) -> Result<String, DenError> {
-    source_client_session_id(context)
-        .ok_or_else(|| DenError::ValidationError(format!("client session id is required for {purpose}")))
+    source_client_session_id(context).ok_or_else(|| {
+        DenError::ValidationError(format!("client session id is required for {purpose}"))
+    })
 }
 
 pub async fn enter_plan_mode(
@@ -107,7 +110,8 @@ pub async fn record_plan_approval(
     arguments: Value,
 ) -> Result<Value, DenError> {
     let args: PlanModeRecordApprovalArguments = serde_json::from_value(arguments)?;
-    let approval_text = validation::validate_bounded_text("approval_text", &args.approval_text, 1, 1000)?;
+    let approval_text =
+        validation::validate_bounded_text("approval_text", &args.approval_text, 1, 1000)?;
     let client_session_id = require_client_session(context, "plan approval")?;
     let view = ops
         .record_approval(context, &client_session_id, args.plan_mode_id)
@@ -134,7 +138,13 @@ pub async fn exit_plan_mode(
     let title = validation::validate_bounded_text("title", &args.title, 1, 200)?;
     let body = validation::validate_bounded_text("body", &args.body, 1, 50_000)?;
     let view = ops
-        .exit(context, &client_session_id, args.plan_mode_id, &title, &body)
+        .exit(
+            context,
+            &client_session_id,
+            args.plan_mode_id,
+            &title,
+            &body,
+        )
         .await?;
     Ok(json!({
         "domain": "workplan",
@@ -164,7 +174,9 @@ pub async fn cancel_plan_mode(
 ) -> Result<Value, DenError> {
     let args: PlanModeCancelArguments = serde_json::from_value(arguments)?;
     let client_session_id = require_client_session(context, "plan mode")?;
-    let view = ops.cancel(context, &client_session_id, args.plan_mode_id).await?;
+    let view = ops
+        .cancel(context, &client_session_id, args.plan_mode_id)
+        .await?;
     Ok(json!({
         "domain": "workplan",
         "workplan": view.workplan,

@@ -6,11 +6,8 @@ use uuid::Uuid;
 use den_memory::MemoryStoreManager;
 use den_service::memory_proposals::{MemoryProposalRow, ProposalResolutionParams};
 
+use crate::memory::{get_proposal, promote_core_content, resolve_proposal};
 use den_service::bears::BearProfile;
-use crate::{
-    
-    memory::{get_proposal, promote_core_content, resolve_proposal},
-};
 
 pub const MEMORY_CURATE_RUNNER_AGENT_ID: &str = "memory_curate_runner";
 
@@ -103,11 +100,21 @@ impl CurateTriage {
 
     fn decision_summary(&self) -> &'static str {
         match self {
-            Self::RetainProfileLocal { decision_summary, .. }
-            | Self::Reject { decision_summary, .. }
-            | Self::Defer { decision_summary, .. }
-            | Self::EscalateHuman { decision_summary, .. }
-            | Self::PromoteToCore { decision_summary, .. } => decision_summary,
+            Self::RetainProfileLocal {
+                decision_summary, ..
+            }
+            | Self::Reject {
+                decision_summary, ..
+            }
+            | Self::Defer {
+                decision_summary, ..
+            }
+            | Self::EscalateHuman {
+                decision_summary, ..
+            }
+            | Self::PromoteToCore {
+                decision_summary, ..
+            } => decision_summary,
         }
     }
 }
@@ -116,14 +123,16 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
     if proposal.requires_human {
         return CurateTriage::EscalateHuman {
             review_notes: "Proposal was flagged requires_human=true.",
-            decision_summary: "Escalated to human review because the proposal requires human follow-up.",
+            decision_summary:
+                "Escalated to human review because the proposal requires human follow-up.",
         };
     }
 
     if sensitivity_requires_human(&proposal.sensitivity) {
         return CurateTriage::EscalateHuman {
             review_notes: "Proposal sensitivity requires human review.",
-            decision_summary: "Escalated to human review because sensitivity policy blocks autonomous resolution.",
+            decision_summary:
+                "Escalated to human review because sensitivity policy blocks autonomous resolution.",
         };
     }
 
@@ -133,7 +142,8 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
             decision_summary: "Escalated to human review per suggested_action=human_review.",
         },
         "retain_profile_local" => CurateTriage::RetainProfileLocal {
-            review_notes: "Role-local memory remains the durable source; no shared-memory write needed.",
+            review_notes:
+                "Role-local memory remains the durable source; no shared-memory write needed.",
             decision_summary: "Autonomous curate retained the proposal as role-local memory.",
         },
         "delete_after_review" => CurateTriage::Reject {
@@ -144,7 +154,8 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
             if can_auto_promote_to_core(proposal) {
                 CurateTriage::PromoteToCore {
                     review_notes: "Low-risk core promotion candidate with bounded summary content.",
-                    decision_summary: "Autonomous curate applied a distilled summary to core memory.",
+                    decision_summary:
+                        "Autonomous curate applied a distilled summary to core memory.",
                 }
             } else {
                 CurateTriage::Defer {
@@ -153,10 +164,14 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
                 }
             }
         }
-        "cabinet_update" | "skill_review" | "archive_index" | "task_context" => CurateTriage::Defer {
-            review_notes: "Specialized promotion path is not handled by the autonomous substrate yet.",
-            decision_summary: "Deferred until curate can route the proposal through the appropriate workflow.",
-        },
+        "cabinet_update" | "skill_review" | "archive_index" | "task_context" => {
+            CurateTriage::Defer {
+                review_notes:
+                    "Specialized promotion path is not handled by the autonomous substrate yet.",
+                decision_summary:
+                    "Deferred until curate can route the proposal through the appropriate workflow.",
+            }
+        }
         "unspecified" => {
             if trigger == Some("pair_reflection") && proposal.sensitivity == "normal" {
                 CurateTriage::RetainProfileLocal {
@@ -165,13 +180,15 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
                 }
             } else if trigger == Some("watch_observation") {
                 CurateTriage::Defer {
-                    review_notes: "Watch observation recorded; curate review decides promotion or dismissal.",
+                    review_notes:
+                        "Watch observation recorded; curate review decides promotion or dismissal.",
                     decision_summary: "Deferred watch observation for curate review.",
                 }
             } else {
                 CurateTriage::Defer {
                     review_notes: "Ambiguous proposal needs curate-agent review.",
-                    decision_summary: "Deferred unspecified proposal until curate can decide the final outcome.",
+                    decision_summary:
+                        "Deferred unspecified proposal until curate can decide the final outcome.",
                 }
             }
         }
@@ -283,10 +300,7 @@ async fn build_curate_briefing(
 ) -> Result<Vec<CurateBriefingItem>, DenError> {
     let mut briefing = Vec::new();
     for outcome in outcomes {
-        if !matches!(
-            outcome.status.as_str(),
-            "deferred" | "needs_human_review"
-        ) {
+        if !matches!(outcome.status.as_str(), "deferred" | "needs_human_review") {
             continue;
         }
         let Some(proposal) =
@@ -472,7 +486,11 @@ mod tests {
     use super::*;
     use time::OffsetDateTime;
 
-    fn sample_proposal(suggested_action: &str, sensitivity: &str, requires_human: bool) -> MemoryProposalRow {
+    fn sample_proposal(
+        suggested_action: &str,
+        sensitivity: &str,
+        requires_human: bool,
+    ) -> MemoryProposalRow {
         MemoryProposalRow {
             id: Uuid::new_v4(),
             bear_id: Uuid::new_v4(),

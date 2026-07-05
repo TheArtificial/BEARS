@@ -124,7 +124,6 @@ pub trait EntityOps: Send + Sync {
         role: BearProfile,
         arguments: Value,
     ) -> Result<Value, DenError>;
-
 }
 
 pub async fn entity_browse(

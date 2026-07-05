@@ -17,9 +17,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Identifier for a Bear (`bear_id`).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
 #[serde(transparent)]
 #[sqlx(transparent)]
 pub struct BearId(pub Uuid);
@@ -104,9 +102,7 @@ impl fmt::Display for UserId {
 ///
 /// These are provider-/client-issued strings (e.g. `client-…`, `zed-client-…`), not
 /// UUIDs, so the inner type is `String`.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
 #[serde(transparent)]
 #[sqlx(transparent)]
 pub struct SessionId(pub String);
@@ -115,9 +111,7 @@ pub struct SessionId(pub String);
 ///
 /// Conversation ids include sentinel/pending forms (`default`, `new-…`,
 /// `conv-…`), so the inner type is `String`.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
 #[serde(transparent)]
 #[sqlx(transparent)]
 pub struct ConversationId(pub String);
@@ -166,4 +160,3 @@ string_id_impls!(ConversationId);
 
 #[cfg(test)]
 mod tests;
-

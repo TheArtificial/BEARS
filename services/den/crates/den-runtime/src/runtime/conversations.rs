@@ -3,7 +3,6 @@ use std::cmp::Ordering;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeConversationRow {
     pub id: String,
@@ -145,7 +144,10 @@ pub fn summarize_runtime_messages(value: Option<&Value>) -> Vec<String> {
             if content.is_empty() {
                 None
             } else {
-                Some(format!("{role}: {}", truncate_runtime_message(content, 300)))
+                Some(format!(
+                    "{role}: {}",
+                    truncate_runtime_message(content, 300)
+                ))
             }
         })
         .take(20)
@@ -249,10 +251,18 @@ mod tests {
     #[test]
     fn runtime_conversation_is_archived_detects_top_level_and_nested_flags() {
         assert!(runtime_conversation_is_archived(&json!({"archived": true})));
-        assert!(runtime_conversation_is_archived(&json!({"metadata": {"status": "archived"}})));
-        assert!(runtime_conversation_is_archived(&json!({"attributes": {"hidden": "true"}})));
-        assert!(runtime_conversation_is_archived(&json!({"tags": ["active", "archived"]})));
-        assert!(!runtime_conversation_is_archived(&json!({"status": "active"})));
+        assert!(runtime_conversation_is_archived(
+            &json!({"metadata": {"status": "archived"}})
+        ));
+        assert!(runtime_conversation_is_archived(
+            &json!({"attributes": {"hidden": "true"}})
+        ));
+        assert!(runtime_conversation_is_archived(
+            &json!({"tags": ["active", "archived"]})
+        ));
+        assert!(!runtime_conversation_is_archived(
+            &json!({"status": "active"})
+        ));
     }
 
     #[test]
@@ -289,9 +299,18 @@ mod tests {
             compacted_group_count: 12,
         };
 
-        assert_eq!(serde_json::to_value(&group).unwrap()["kind"], "ToolInteraction");
-        assert_eq!(serde_json::to_value(&artifact).unwrap()["kind"], "IterativeSummary");
+        assert_eq!(
+            serde_json::to_value(&group).unwrap()["kind"],
+            "ToolInteraction"
+        );
+        assert_eq!(
+            serde_json::to_value(&artifact).unwrap()["kind"],
+            "IterativeSummary"
+        );
         assert_eq!(serde_json::to_value(&trigger).unwrap(), "ModelSafetyMargin");
-        assert_eq!(serde_json::to_value(&boundary).unwrap()["retained_group_count"], 5);
+        assert_eq!(
+            serde_json::to_value(&boundary).unwrap()["retained_group_count"],
+            5
+        );
     }
 }

@@ -168,7 +168,11 @@ pub fn render_prometheus_text() -> String {
     )
     .unwrap();
     writeln!(s, "# TYPE den_chat_send_dropped_with_bytes_total counter").unwrap();
-    writeln!(s, "den_chat_send_dropped_with_bytes_total {dropped_with_bytes}").unwrap();
+    writeln!(
+        s,
+        "den_chat_send_dropped_with_bytes_total {dropped_with_bytes}"
+    )
+    .unwrap();
 
     s
 }

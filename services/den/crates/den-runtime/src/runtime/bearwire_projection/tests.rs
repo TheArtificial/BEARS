@@ -160,16 +160,15 @@ fn lossy_projection_handles_progress_events_without_failure() {
 
 #[test]
 fn session_info_update_progress_projects_to_session_info_gateway_event() {
-    let mapped = runtime_semantic_event_to_bearwire_gateway_events(
-        RuntimeSemanticEvent::RunProgress {
+    let mapped =
+        runtime_semantic_event_to_bearwire_gateway_events(RuntimeSemanticEvent::RunProgress {
             kind: "session_info_update".to_string(),
             text: None,
             phase: Some("tool_result".to_string()),
             detail: Some(serde_json::json!({
                 "title": "New title"
             })),
-        },
-    );
+        });
 
     assert!(matches!(
         mapped.as_slice(),
@@ -180,16 +179,15 @@ fn session_info_update_progress_projects_to_session_info_gateway_event() {
 
 #[test]
 fn budget_warning_progress_projects_to_status_text_gateway_event() {
-    let mapped = runtime_semantic_event_to_bearwire_gateway_events(
-        RuntimeSemanticEvent::RunProgress {
+    let mapped =
+        runtime_semantic_event_to_bearwire_gateway_events(RuntimeSemanticEvent::RunProgress {
             kind: "turn_budget_warning".to_string(),
             text: Some("Budget advisory: next read will stop the turn.".to_string()),
             phase: Some("budget".to_string()),
             detail: Some(serde_json::json!({
                 "code": "tool_class_budget_warning"
             })),
-        },
-    );
+        });
 
     assert!(matches!(
         mapped.as_slice(),
@@ -215,7 +213,10 @@ fn session_info_update_progress_projects_to_dedicated_bearwire_event() {
     let text = std::str::from_utf8(mapped[0].as_ref()).expect("valid utf8 sse");
     assert!(text.contains("\"type\":\"session_info_update\""), "{text}");
     assert!(text.contains("\"title\":\"New title\""), "{text}");
-    assert!(text.contains("\"updated_at\":\"2026-07-05T12:00:00Z\""), "{text}");
+    assert!(
+        text.contains("\"updated_at\":\"2026-07-05T12:00:00Z\""),
+        "{text}"
+    );
 }
 
 #[test]

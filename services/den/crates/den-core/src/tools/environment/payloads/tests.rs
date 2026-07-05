@@ -313,7 +313,10 @@ fn session_info_context_surfaces_degrade_to_explicit_unknowns() {
     ];
     assert_eq!(layers.len(), expected_layers.len());
     for name in expected_layers {
-        assert!(layer(name)["next_surface"].is_string(), "{name} has next_surface");
+        assert!(
+            layer(name)["next_surface"].is_string(),
+            "{name} has next_surface"
+        );
     }
 
     assert_eq!(layer("context_budget")["status"], "unavailable");

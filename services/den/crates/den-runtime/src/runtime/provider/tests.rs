@@ -1,8 +1,9 @@
 use crate::runtime::provider::{
-    classify_runtime_error, edge_gateway_requires_runtime, runtime_error_is_conflict_pending_approval,
-    ContinueTurnRequest, ContinueTurnResult, RoleRuntimeBinding, RuntimeApprovalDecision,
-    RuntimeContinuation, RuntimeConversationRef, RuntimeErrorCategory, RuntimeStartupCapabilities,
-    RuntimeStreamContinuation, RuntimeToolResultStatus,
+    classify_runtime_error, edge_gateway_requires_runtime,
+    runtime_error_is_conflict_pending_approval, ContinueTurnRequest, ContinueTurnResult,
+    RoleRuntimeBinding, RuntimeApprovalDecision, RuntimeContinuation, RuntimeConversationRef,
+    RuntimeErrorCategory, RuntimeStartupCapabilities, RuntimeStreamContinuation,
+    RuntimeToolResultStatus,
 };
 use den_core::config::Config;
 use den_core::DenError;
@@ -18,8 +19,7 @@ fn runtime_error_categories_are_stable_for_acp_policy() {
     );
     assert!(runtime_error_is_conflict_pending_approval(&approval));
 
-    let misconfigured =
-        DenError::System("Runtime is not configured".to_string());
+    let misconfigured = DenError::System("Runtime is not configured".to_string());
     assert_eq!(
         classify_runtime_error(&misconfigured),
         RuntimeErrorCategory::Misconfigured

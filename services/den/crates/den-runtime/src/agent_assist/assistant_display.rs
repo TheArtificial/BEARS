@@ -69,10 +69,10 @@ pub fn normalize_display_status_text(s: &str) -> String {
 
 fn strip_prompt_scaffolding_prefix(s: &str) -> String {
     let trimmed = s.trim_start();
-    let is_scaffold = find_ascii_case_insensitive(trimmed, "client workflow state for this session:")
-        == Some(0)
-        || find_ascii_case_insensitive(trimmed, "AUTHORITATIVE WORKFLOW STATE for this turn:")
-            == Some(0);
+    let is_scaffold =
+        find_ascii_case_insensitive(trimmed, "client workflow state for this session:") == Some(0)
+            || find_ascii_case_insensitive(trimmed, "AUTHORITATIVE WORKFLOW STATE for this turn:")
+                == Some(0);
     if !is_scaffold {
         return s.trim().to_string();
     }
@@ -83,7 +83,11 @@ fn strip_prompt_scaffolding_prefix(s: &str) -> String {
 }
 
 fn strip_hidden_resource_blocks(raw: &str) -> String {
-    strip_tagged_block(raw, "<bears-armature-resource", "</bears-armature-resource>")
+    strip_tagged_block(
+        raw,
+        "<bears-armature-resource",
+        "</bears-armature-resource>",
+    )
 }
 
 fn strip_tagged_block(raw: &str, open: &str, close: &str) -> String {

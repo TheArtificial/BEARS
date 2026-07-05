@@ -1,10 +1,13 @@
 use std::str::FromStr;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use den_core::{client_tools::ResolvedSessionPolicy, profile::BearProfile};
 use crate::plan_mode;
-use den_docket::{TaskListItem, TaskListItemStatus, TaskListLocalProjection, TaskListProjection, TaskListUpdateItem};
+use den_core::{client_tools::ResolvedSessionPolicy, profile::BearProfile};
+use den_docket::{
+    TaskListItem, TaskListItemStatus, TaskListLocalProjection, TaskListProjection,
+    TaskListUpdateItem,
+};
 
 pub const TURN_STATE_SCHEMA: &str = "bears.turn_state/v1";
 pub const TURN_STATE_VERSION: u32 = 1;
@@ -115,9 +118,12 @@ pub fn autonomous_execution_gate_for_plan(
 
     let items = &plan.items;
     let acceptance_criteria_met = acceptance_criteria_met(plan);
-    let has_hard_blocker = items.iter().any(|item| item.status == TaskListItemStatus::Blocked)
+    let has_hard_blocker = items
+        .iter()
+        .any(|item| item.status == TaskListItemStatus::Blocked)
         || matches!(plan.status.as_str(), "blocked");
-    let next_incomplete_task_title = next_incomplete_unblocked_item(items).map(|item| item.title.clone());
+    let next_incomplete_task_title =
+        next_incomplete_unblocked_item(items).map(|item| item.title.clone());
     let has_incomplete_unblocked_items = next_incomplete_task_title.is_some();
     let may_stop = if acceptance_criteria_met {
         final_response_kind == AutonomousFinalResponseKind::CompletionFinal
@@ -245,9 +251,8 @@ pub fn detect_task_focus_loop(recent_texts: &[impl AsRef<str>]) -> TaskFocusLoop
 
     // ponytail: phrase-based loop detection is intentionally conservative;
     // replace with structured assistant terminal-state events once final answers are typed.
-    let detected = continuation_nudges >= 2
-        && terminal_objections >= 2
-        && repeated_objection_kind.is_some();
+    let detected =
+        continuation_nudges >= 2 && terminal_objections >= 2 && repeated_objection_kind.is_some();
 
     TaskFocusLoopDetection {
         detected,
@@ -291,7 +296,8 @@ pub fn autonomous_execution_gate_for_task_list(
     task_list: Option<&TaskListProjection>,
     final_response_kind: AutonomousFinalResponseKind,
 ) -> AutonomousExecutionGate {
-    let Some(task_list) = task_list.filter(|task_list| is_autonomous_task_list(profile, task_list)) else {
+    let Some(task_list) = task_list.filter(|task_list| is_autonomous_task_list(profile, task_list))
+    else {
         return AutonomousExecutionGate {
             is_active_autonomous_task: false,
             has_incomplete_unblocked_items: false,
@@ -308,8 +314,8 @@ pub fn autonomous_execution_gate_for_task_list(
         .iter()
         .any(|item| item.status == TaskListItemStatus::Blocked)
         || matches!(task_list.status.as_str(), "blocked");
-    let next_incomplete_task_title = next_incomplete_unblocked_task_list_item(&task_list.items)
-        .map(|item| item.title.clone());
+    let next_incomplete_task_title =
+        next_incomplete_unblocked_task_list_item(&task_list.items).map(|item| item.title.clone());
     let has_incomplete_unblocked_items = next_incomplete_task_title.is_some();
     let may_stop = if acceptance_criteria_met {
         final_response_kind == AutonomousFinalResponseKind::CompletionFinal
@@ -537,42 +543,58 @@ fn autonomous_task_json(item: &TaskListUpdateItem) -> Value {
 fn is_autonomous_implementation_plan(profile: BearProfile, plan: &TaskListLocalProjection) -> bool {
     matches!(profile, BearProfile::Pair | BearProfile::Work)
         && matches!(plan.owner_profile.as_str(), "pair" | "work")
-        && matches!(plan.status.as_str(), "active" | "blocked" | "completed" | "cancelled")
+        && matches!(
+            plan.status.as_str(),
+            "active" | "blocked" | "completed" | "cancelled"
+        )
 }
 
 fn is_autonomous_task_list(profile: BearProfile, task_list: &TaskListProjection) -> bool {
     matches!(profile, BearProfile::Pair | BearProfile::Work)
         && matches!(task_list.owner_profile.as_str(), "pair" | "work")
-        && matches!(task_list.status.as_str(), "active" | "ready" | "running" | "blocked" | "completed" | "cancelled")
+        && matches!(
+            task_list.status.as_str(),
+            "active" | "ready" | "running" | "blocked" | "completed" | "cancelled"
+        )
 }
 
 fn acceptance_criteria_met(plan: &TaskListLocalProjection) -> bool {
     !plan.items.is_empty()
-        && plan
-            .items
-            .iter()
-            .all(|item| matches!(item.status, TaskListItemStatus::Completed | TaskListItemStatus::Cancelled))
+        && plan.items.iter().all(|item| {
+            matches!(
+                item.status,
+                TaskListItemStatus::Completed | TaskListItemStatus::Cancelled
+            )
+        })
         && matches!(plan.status.as_str(), "completed" | "cancelled")
 }
 
 fn next_incomplete_unblocked_item(items: &[TaskListUpdateItem]) -> Option<&TaskListUpdateItem> {
     items.iter().find(|item| {
-        matches!(item.status, TaskListItemStatus::Pending | TaskListItemStatus::InProgress)
+        matches!(
+            item.status,
+            TaskListItemStatus::Pending | TaskListItemStatus::InProgress
+        )
     })
 }
 
 fn task_list_acceptance_criteria_met(task_list: &TaskListProjection) -> bool {
     !task_list.items.is_empty()
-        && task_list
-            .items
-            .iter()
-            .all(|item| matches!(item.status, TaskListItemStatus::Completed | TaskListItemStatus::Cancelled))
+        && task_list.items.iter().all(|item| {
+            matches!(
+                item.status,
+                TaskListItemStatus::Completed | TaskListItemStatus::Cancelled
+            )
+        })
         && matches!(task_list.status.as_str(), "completed" | "cancelled")
 }
 
 fn next_incomplete_unblocked_task_list_item(items: &[TaskListItem]) -> Option<&TaskListItem> {
     items.iter().find(|item| {
-        matches!(item.status, TaskListItemStatus::Pending | TaskListItemStatus::InProgress)
+        matches!(
+            item.status,
+            TaskListItemStatus::Pending | TaskListItemStatus::InProgress
+        )
     })
 }
 
@@ -649,7 +671,10 @@ fn summarize_text(body: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use den_docket::{TaskListItem, TaskListProjection, TaskListSourceRef, TaskListSyncState, TaskListLocalProjection};
+    use den_docket::{
+        TaskListItem, TaskListLocalProjection, TaskListProjection, TaskListSourceRef,
+        TaskListSyncState,
+    };
     use time::OffsetDateTime;
     use uuid::Uuid;
 
@@ -694,7 +719,8 @@ mod tests {
             title: title.to_string(),
             summary: Some(format!("evidence: {title}")),
             status,
-            blocked_reason: (status == TaskListItemStatus::Blocked).then(|| "permission needed".to_string()),
+            blocked_reason: (status == TaskListItemStatus::Blocked)
+                .then(|| "permission needed".to_string()),
             source_ref: TaskListSourceRef::local(Vec::new()),
             sync_state: TaskListSyncState::LocalOnly,
         }
@@ -730,8 +756,14 @@ mod tests {
         let plan = plan(
             "active",
             vec![
-                item("Inventory schema and Docket API coupling", TaskListItemStatus::Completed),
-                item("Add lifecycle/dispatcher tests", TaskListItemStatus::Pending),
+                item(
+                    "Inventory schema and Docket API coupling",
+                    TaskListItemStatus::Completed,
+                ),
+                item(
+                    "Add lifecycle/dispatcher tests",
+                    TaskListItemStatus::Pending,
+                ),
             ],
         );
         let text = autonomous_resume_obligation_text(&plan).expect("autonomous reminder");
@@ -849,8 +881,14 @@ mod tests {
         let task_list = task_list(
             "active",
             vec![
-                task_list_item("Rename internal Docket model names", TaskListItemStatus::Completed),
-                task_list_item("Rename public den.work_plan tools", TaskListItemStatus::Pending),
+                task_list_item(
+                    "Rename internal Docket model names",
+                    TaskListItemStatus::Completed,
+                ),
+                task_list_item(
+                    "Rename public den.work_plan tools",
+                    TaskListItemStatus::Pending,
+                ),
             ],
         );
 
@@ -876,13 +914,15 @@ mod tests {
         );
     }
 
-
     #[test]
     fn runtime_limit_blocked_final_allows_terminal_response_with_remaining_work() {
         let task_list = task_list(
             "active",
             vec![
-                task_list_item("Add runtime-limit terminal state", TaskListItemStatus::Completed),
+                task_list_item(
+                    "Add runtime-limit terminal state",
+                    TaskListItemStatus::Completed,
+                ),
                 task_list_item("Commit task-focus batch", TaskListItemStatus::Pending),
             ],
         );

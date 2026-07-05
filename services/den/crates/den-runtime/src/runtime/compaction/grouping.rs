@@ -1,5 +1,7 @@
+use den_service::conversation::persistence::{
+    PersistedToolRequestPayload, PersistedToolResultPayload,
+};
 use serde_json::Value;
-use den_service::conversation::persistence::{PersistedToolRequestPayload, PersistedToolResultPayload};
 
 use crate::runtime_conversations::{RuntimeSemanticGroup, RuntimeSemanticGroupKind};
 
@@ -110,7 +112,10 @@ fn tool_call_id_from_row(row: &TranscriptGroupingRow) -> Option<String> {
     row.tool_call_id.clone().or_else(|| {
         PersistedToolRequestPayload::try_from(&row.content_json)
             .map(|payload| payload.tool_call_id)
-            .or_else(|_| PersistedToolResultPayload::try_from(&row.content_json).map(|payload| payload.tool_call_id.unwrap_or_default()))
+            .or_else(|_| {
+                PersistedToolResultPayload::try_from(&row.content_json)
+                    .map(|payload| payload.tool_call_id.unwrap_or_default())
+            })
             .ok()
             .filter(|value| !value.is_empty())
     })
@@ -125,7 +130,9 @@ fn row_identity(row: &TranscriptGroupingRow) -> Option<String> {
 
 fn is_incomplete_tool_result(row: &TranscriptGroupingRow) -> bool {
     PersistedToolResultPayload::try_from(&row.content_json)
-        .map(|payload| payload.status == den_core::tools::result_compaction::ToolResultStatus::Incomplete)
+        .map(|payload| {
+            payload.status == den_core::tools::result_compaction::ToolResultStatus::Incomplete
+        })
         .unwrap_or(false)
 }
 

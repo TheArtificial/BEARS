@@ -27,7 +27,7 @@ pub enum PendingApprovalDenialMode {
     InspectOnly,
 }
 
-pub use agent_diagnostics::{AgentDiagnostics, AgentBlockRow, AgentToolRow};
+pub use agent_diagnostics::{AgentBlockRow, AgentDiagnostics, AgentToolRow};
 pub use agent_document::unwrap_agent_document;
 pub use agent_prefill::AgentBearPrefill;
 pub use agent_summary::AgentSummary;

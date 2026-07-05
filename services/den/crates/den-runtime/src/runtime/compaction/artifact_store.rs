@@ -3,13 +3,9 @@ use serde_json::to_value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::runtime_conversations::{
-    RuntimeCompactionTriggerKind, RuntimeIterativeSummary,
-};
+use crate::runtime_conversations::{RuntimeCompactionTriggerKind, RuntimeIterativeSummary};
 
-use super::{
-    RuntimeCompactionDecision, RuntimeCompactionPolicy,
-};
+use super::{RuntimeCompactionDecision, RuntimeCompactionPolicy};
 
 #[derive(Debug, Clone)]
 pub struct CompactionArtifactRecord {
@@ -51,9 +47,8 @@ pub async fn load_latest_iterative_summary(
         return Ok(None);
     };
 
-    let summary: RuntimeIterativeSummary = serde_json::from_value(artifact_json).map_err(|err| {
-        DenError::Database(format!("decode compaction artifact_json: {err}"))
-    })?;
+    let summary: RuntimeIterativeSummary = serde_json::from_value(artifact_json)
+        .map_err(|err| DenError::Database(format!("decode compaction artifact_json: {err}")))?;
 
     Ok(Some(CompactionArtifactRecord {
         artifact_id,
@@ -75,14 +70,13 @@ pub async fn insert_iterative_summary_artifact(
     source_message_end_seq: i64,
     summary: &RuntimeIterativeSummary,
 ) -> Result<Uuid, DenError> {
-    let conversation_uuid =
-        resolve_conversation_uuid(pool, bear_id, external_conversation_id)
-            .await?
-            .ok_or_else(|| {
-                DenError::NotFound(format!(
-                    "conversation not found for compaction artifact: {external_conversation_id}"
-                ))
-            })?;
+    let conversation_uuid = resolve_conversation_uuid(pool, bear_id, external_conversation_id)
+        .await?
+        .ok_or_else(|| {
+            DenError::NotFound(format!(
+                "conversation not found for compaction artifact: {external_conversation_id}"
+            ))
+        })?;
 
     let artifact_json = to_value(summary)
         .map_err(|err| DenError::System(format!("serialize compaction summary: {err}")))?;

@@ -8,6 +8,10 @@ use den_memory::MemoryStoreManager;
 use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
 use futures::Stream;
 
+use crate::runtime::turn_state::{
+    autonomous_execution_gate_for_task_list, detect_task_focus_loop,
+    should_allow_terminal_response_for_task_list,
+};
 use crate::{
     agent_loop::{
         approvals::create_native_approval,
@@ -32,10 +36,6 @@ use den_core::tools::{
     result_compaction::{compact_json_tool_result, compact_json_tool_result_with_artifact},
 };
 use den_core::{config::Config, profile::BearProfile, DenError};
-use crate::runtime::turn_state::{
-    autonomous_execution_gate_for_task_list, detect_task_focus_loop,
-    should_allow_terminal_response_for_task_list,
-};
 
 use super::session_store::AgentLoopSession;
 use super::transcript::{
@@ -59,7 +59,8 @@ type ServerToolFuture = Pin<
             + Send,
     >,
 >;
-type FinalGateContinuationFuture = Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
+type FinalGateContinuationFuture =
+    Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 
 async fn tool_output_read_result(
     pool: &sqlx::PgPool,
@@ -837,9 +838,8 @@ impl Stream for SessionTrackingStream {
                     let fallback = "BEARS completed the turn without assistant output.".to_string();
                     self.assistant_text = fallback.clone();
                     self.persist_assistant_tool_step();
-                    self.pending_pause_after_tool = Some(RuntimeSemanticEvent::TurnCompleted {
-                        turn: None,
-                    });
+                    self.pending_pause_after_tool =
+                        Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
                     return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                         RuntimeSemanticEvent::AssistantTextDelta { text: fallback },
                     ))));
@@ -884,7 +884,9 @@ impl Stream for SessionTrackingStream {
                             RuntimeSemanticEvent::TurnCompleted { turn: None },
                         ))));
                     }
-                    let next_task = active_activity_plan.as_ref().and_then(|plan| {
+                    let next_task = active_activity_plan
+                        .as_ref()
+                        .and_then(|plan| {
                             autonomous_execution_gate_for_task_list(
                                 self.profile,
                                 Some(&plan),
@@ -1112,9 +1114,9 @@ mod tests {
         let store = AgentLoopSessionStore::new();
         store.insert(session.clone());
         let mut stream = SessionTrackingStream::new(
-            Box::pin(futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
-                RuntimeSemanticEvent::TurnCompleted { turn: None },
-            ))])),
+            Box::pin(futures::stream::iter(vec![Ok(
+                RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { turn: None }),
+            )])),
             &session,
             store,
             sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")

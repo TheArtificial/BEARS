@@ -6,7 +6,7 @@
 //! descriptor authority crate, so both `den-tools` descriptors and the `den`-side
 //! armature tool surface share a single definition.
 
-use serde_json::json;
+use serde_json::{json, Value};
 use std::path::{Component, Path};
 
 #[derive(Debug, Clone, Copy)]
@@ -37,7 +37,14 @@ impl ToolDisplayDescriptor {
 pub fn is_display_path_key(key: &str) -> bool {
     matches!(
         key,
-        "path" | "repo_path" | "source_path" | "destination_path" | "root" | "base_path" | "cwd" | "target_path"
+        "path"
+            | "repo_path"
+            | "source_path"
+            | "destination_path"
+            | "root"
+            | "base_path"
+            | "cwd"
+            | "target_path"
     )
 }
 
@@ -68,4 +75,60 @@ pub fn display_path(path: &str) -> String {
     }
     let keep = 3.min(parts.len());
     format!("…/{}", parts[parts.len() - keep..].join("/"))
+}
+
+pub fn tool_target_summary(keys: &[&str], args: &Value) -> Option<String> {
+    let object = args.as_object()?;
+    let mut values = Vec::new();
+    for key in keys {
+        if *key == "command" {
+            if let Some(command) = command_summary(args) {
+                values.push(command);
+            }
+            continue;
+        }
+        if let Some(value) = object.get(*key).and_then(Value::as_str) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                let display = if is_display_path_key(key) {
+                    display_path(trimmed)
+                } else {
+                    trimmed.to_string()
+                };
+                values.push(preview(&display, 96));
+            }
+        }
+    }
+    match values.len() {
+        0 => None,
+        1 => values.into_iter().next(),
+        _ => Some(values.join(" → ")),
+    }
+}
+
+fn command_summary(args: &Value) -> Option<String> {
+    let object = args.as_object()?;
+    let command = object.get("command")?.as_str()?.trim();
+    if command.is_empty() {
+        return None;
+    }
+    let mut parts = vec![command.to_string()];
+    if let Some(arg_values) = object.get("args").and_then(Value::as_array) {
+        for arg in arg_values.iter().filter_map(Value::as_str).map(str::trim) {
+            if !arg.is_empty() {
+                parts.push(arg.to_string());
+            }
+        }
+    }
+    Some(preview(&parts.join(" "), 120))
+}
+
+fn preview(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
+    }
 }

@@ -14,7 +14,9 @@ use serde_json::{json, Value};
 
 use crate::BearProfile;
 
-use crate::tools::{context::DenToolInvocationContext, identity::BearDirectory, memory::source_client_session_id};
+use crate::tools::{
+    context::DenToolInvocationContext, identity::BearDirectory, memory::source_client_session_id,
+};
 
 async fn memory_status_for_environment(
     env: &impl EnvironmentOps,

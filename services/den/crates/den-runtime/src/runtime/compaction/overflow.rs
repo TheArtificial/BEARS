@@ -48,7 +48,9 @@ mod tests {
         assert!(is_context_length_overflow_message(
             "maximum context length exceeded for model"
         ));
-        assert!(is_context_length_overflow_message("too many tokens in request"));
+        assert!(is_context_length_overflow_message(
+            "too many tokens in request"
+        ));
         assert!(is_context_length_overflow_message("context window is 128k"));
     }
 
@@ -65,6 +67,8 @@ mod tests {
                 .into(),
         );
         assert!(den_error_indicates_context_overflow(&err));
-        assert!(!den_error_indicates_context_overflow(&DenError::NotFound("x".into())));
+        assert!(!den_error_indicates_context_overflow(&DenError::NotFound(
+            "x".into()
+        )));
     }
 }

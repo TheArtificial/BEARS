@@ -1,12 +1,12 @@
-use den_core::{DenError, config::Config};
+use den_core::{config::Config, DenError};
 use serde_json::Value;
 
-use den_service::bears::BearProfile;
 use crate::llm::LlmToolDefinition;
 use den_core::tools::descriptor::{
-    DenToolDescriptor, builtin_den_tool_descriptors_for_pair_acp_surface,
-    builtin_den_tool_descriptors_for_profile,
+    builtin_den_tool_descriptors_for_pair_acp_surface, builtin_den_tool_descriptors_for_profile,
+    DenToolDescriptor,
 };
+use den_service::bears::BearProfile;
 
 use super::legacy_memory_tools::{
     filter_client_tools_for_native_runtime, is_legacy_memory_client_tool_name,

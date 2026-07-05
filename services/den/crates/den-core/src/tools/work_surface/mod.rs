@@ -529,4 +529,3 @@ pub fn build_work_surface_orientation_payload(
 
 #[cfg(test)]
 mod tests;
-

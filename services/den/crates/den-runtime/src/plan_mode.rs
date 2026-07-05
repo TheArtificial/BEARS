@@ -294,8 +294,13 @@ pub async fn enter_plan_mode(
     }
 
     let mut tx = pool.begin().await?;
-    let existing =
-        active_for_session(pool, params.user_id, params.bear_id, &params.client_session_id).await?;
+    let existing = active_for_session(
+        pool,
+        params.user_id,
+        params.bear_id,
+        &params.client_session_id,
+    )
+    .await?;
     let row = if let Some(existing) = existing {
         existing
     } else {
@@ -503,10 +508,7 @@ async fn close_with_state(
     state: PlanModeState,
     event_type: &str,
 ) -> Result<PlanModeSessionRow, DenError> {
-    if matches!(
-        state,
-        PlanModeState::Active | PlanModeState::Submitted
-    ) {
+    if matches!(state, PlanModeState::Active | PlanModeState::Submitted) {
         return Err(DenError::System(
             "close_with_state requires a closed state".to_string(),
         ));

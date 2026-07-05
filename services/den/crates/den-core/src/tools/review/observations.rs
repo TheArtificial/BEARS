@@ -91,7 +91,10 @@ pub async fn write_observation(
         .map(str::to_string);
     validate_optional_object("source", &args.source)?;
 
-    if let Some(existing) = store.find_observation(context.bear_id, &observation_id).await? {
+    if let Some(existing) = store
+        .find_observation(context.bear_id, &observation_id)
+        .await?
+    {
         return Ok(observation_write_payload(&existing, true));
     }
 

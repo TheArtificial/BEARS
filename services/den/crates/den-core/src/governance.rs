@@ -119,4 +119,3 @@ impl fmt::Display for RunMode {
 
 #[cfg(test)]
 mod tests;
-

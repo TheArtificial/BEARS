@@ -810,10 +810,9 @@ mod tests {
             evaluation.warning.as_ref().map(|warning| warning.code),
             Some("total_tool_budget_warning")
         );
-        assert!(evaluation
-            .warning
-            .as_ref()
-            .is_some_and(|warning| warning.message.contains("Any further tool call will stop the turn")));
+        assert!(evaluation.warning.as_ref().is_some_and(|warning| warning
+            .message
+            .contains("Any further tool call will stop the turn")));
     }
 
     #[test]
@@ -915,7 +914,11 @@ mod tests {
             2,
             1_000,
             &prior,
-            &[observation("terminal_run_command", r#"{"command":"ls"}"#, false)],
+            &[observation(
+                "terminal_run_command",
+                r#"{"command":"ls"}"#,
+                false,
+            )],
         );
 
         assert_eq!(evaluation.next_state.tool_usage.read, 12);

@@ -109,7 +109,12 @@ fn summarize_task_list_collection(value: &serde_json::Value) -> Option<String> {
         }
         format!(": {}", titles.join(", "))
     };
-    Some(format!("Listed {} task list{}{}.", lists.len(), if lists.len() == 1 { "" } else { "s" }, title_text))
+    Some(format!(
+        "Listed {} task list{}{}.",
+        lists.len(),
+        if lists.len() == 1 { "" } else { "s" },
+        title_text
+    ))
 }
 
 fn task_list_summary(task_list: &serde_json::Value) -> String {
@@ -140,7 +145,14 @@ fn task_list_summary(task_list: &serde_json::Value) -> String {
             _ => pending += 1,
         }
     }
-    let mut parts = vec![format!("`{title}`"), format!("{} item{}", items.len(), if items.len() == 1 { "" } else { "s" })];
+    let mut parts = vec![
+        format!("`{title}`"),
+        format!(
+            "{} item{}",
+            items.len(),
+            if items.len() == 1 { "" } else { "s" }
+        ),
+    ];
     if in_progress > 0 {
         parts.push(format!("{in_progress} in progress"));
     }
@@ -270,7 +282,10 @@ mod tests {
             Some(&content),
         );
 
-        assert!(summary.contains("Read task list status: `Runtime fixes`"), "{summary}");
+        assert!(
+            summary.contains("Read task list status: `Runtime fixes`"),
+            "{summary}"
+        );
         assert!(summary.contains("3 items"), "{summary}");
         assert!(summary.contains("1 in progress"), "{summary}");
         assert!(summary.contains("1 pending"), "{summary}");

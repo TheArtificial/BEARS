@@ -134,7 +134,9 @@ pub async fn web_search(
     let args: WebSearchArguments = serde_json::from_value(arguments)?;
     let query = args.query.trim();
     if query.is_empty() {
-        return Err(DenError::ValidationError("query must not be empty".to_string()));
+        return Err(DenError::ValidationError(
+            "query must not be empty".to_string(),
+        ));
     }
     let max_results = args
         .max_results

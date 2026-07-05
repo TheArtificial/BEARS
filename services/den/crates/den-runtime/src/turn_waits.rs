@@ -161,6 +161,29 @@ pub async fn persist_surface_obligation_transactionally(
     })
 }
 
+fn tool_call_display_json(tool_name: &str, arguments: &Value) -> Option<Value> {
+    den_core::tools::descriptor::den_tool_display_json_for_provider(tool_name, arguments).or_else(
+        || {
+            Some(den_core::client_tools::client_tool_display_for_provider(
+                tool_name, arguments,
+            ))
+        },
+    )
+}
+
+fn tool_call_display_title(
+    display: Option<&Value>,
+    fallback_title: &Option<String>,
+) -> Option<String> {
+    display
+        .and_then(|display| display.get("title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| fallback_title.clone())
+}
+
 pub async fn persist_bearwire_tool_call_wait_transactionally(
     pool: &sqlx::PgPool,
     input: PersistToolCallWaitInput<'_>,
@@ -355,6 +378,8 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     let obligation = obligation_from_row(obligation_row);
 
     let effective_kind = input.kind.clone().unwrap_or_else(|| "function".to_string());
+    let display = tool_call_display_json(input.tool_name, input.arguments);
+    let display_title = tool_call_display_title(display.as_ref(), input.title);
     let mut event = if effective_approval_required {
         BearWireEvent::ephemeral(
             "client.waiting",
@@ -364,7 +389,8 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
                 "tool_call": {
                     "id": input.tool_call_id,
                     "name": input.tool_name,
-                    "title": input.title,
+                    "title": display_title,
+                    "display": display,
                     "kind": effective_kind,
                     "arguments": input.arguments,
                 },
@@ -382,7 +408,8 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             json!({
                 "tool_call_id": input.tool_call_id,
                 "tool_name": input.tool_name,
-                "title": input.title,
+                "title": display_title,
+                "display": display,
                 "kind": effective_kind,
                 "arguments": input.arguments,
                 "approval_required": false,

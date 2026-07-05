@@ -54,7 +54,10 @@ fn compact_client_tool_result_adds_bounded_summary_without_preview() {
     );
     let compacted = compact_client_tool_result(&input);
 
-    assert_eq!(compacted.payload["output_summary"], "Used session_info (ok)");
+    assert_eq!(
+        compacted.payload["output_summary"],
+        "Used session_info (ok)"
+    );
     assert!(compacted.payload.get("output_preview").is_none());
 }
 

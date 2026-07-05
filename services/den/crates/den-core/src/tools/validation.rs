@@ -17,7 +17,9 @@ pub fn validate_bounded_text(
     let trimmed = value.trim();
     let char_count = trimmed.chars().count();
     if char_count < min_chars {
-        return Err(DenError::ValidationError(format!("{field} must not be empty")));
+        return Err(DenError::ValidationError(format!(
+            "{field} must not be empty"
+        )));
     }
     if char_count > max_chars {
         return Err(DenError::ValidationError(format!(
@@ -31,7 +33,9 @@ pub fn validate_bounded_text(
 pub fn validate_optional_object(field: &str, value: &Option<Value>) -> Result<(), DenError> {
     if let Some(value) = value {
         if !value.is_object() {
-            return Err(DenError::ValidationError(format!("{field} must be an object")));
+            return Err(DenError::ValidationError(format!(
+                "{field} must be an object"
+            )));
         }
     }
     Ok(())

@@ -2,8 +2,8 @@ use crate::runtime_conversations::RuntimeSemanticGroup;
 use den_core::DenError;
 
 use super::{
-    merge_iterative_summary, TranscriptGroupingRow, RuntimeCompactionDecision,
-    RuntimeIterativeSummary,
+    merge_iterative_summary, RuntimeCompactionDecision, RuntimeIterativeSummary,
+    TranscriptGroupingRow,
 };
 
 /// Deterministic v1 summarization: merge structured labels from compacted groups.
@@ -28,14 +28,20 @@ pub struct CompactionSummaryInput<'a> {
 }
 
 pub trait CompactionSummarizer {
-    fn summarize(&self, input: CompactionSummaryInput<'_>) -> Result<RuntimeIterativeSummary, DenError>;
+    fn summarize(
+        &self,
+        input: CompactionSummaryInput<'_>,
+    ) -> Result<RuntimeIterativeSummary, DenError>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DeterministicCompactionSummarizer;
 
 impl CompactionSummarizer for DeterministicCompactionSummarizer {
-    fn summarize(&self, input: CompactionSummaryInput<'_>) -> Result<RuntimeIterativeSummary, DenError> {
+    fn summarize(
+        &self,
+        input: CompactionSummaryInput<'_>,
+    ) -> Result<RuntimeIterativeSummary, DenError> {
         Ok(deterministic_summary(
             input.prior,
             input.compacted_groups,
@@ -76,8 +82,16 @@ impl<F> CompactionSummarizer for LlmBackedCompactionSummarizer<F>
 where
     F: Fn(CompactionSummaryPrompt) -> Result<RuntimeIterativeSummary, DenError>,
 {
-    fn summarize(&self, input: CompactionSummaryInput<'_>) -> Result<RuntimeIterativeSummary, DenError> {
-        let fallback = deterministic_summary(input.prior, input.compacted_groups, input.rows, input.decision);
+    fn summarize(
+        &self,
+        input: CompactionSummaryInput<'_>,
+    ) -> Result<RuntimeIterativeSummary, DenError> {
+        let fallback = deterministic_summary(
+            input.prior,
+            input.compacted_groups,
+            input.rows,
+            input.decision,
+        );
         let prompt = build_compaction_summary_prompt(&fallback, &input);
         let generated = (self.generate)(prompt)?;
         Ok(validate_generated_summary(generated, fallback))
@@ -129,12 +143,24 @@ fn validate_generated_summary(
     mut generated: RuntimeIterativeSummary,
     fallback: RuntimeIterativeSummary,
 ) -> RuntimeIterativeSummary {
-    ensure_fallback_items(&mut generated.active_user_goals, &fallback.active_user_goals);
-    ensure_fallback_items(&mut generated.important_constraints, &fallback.important_constraints);
+    ensure_fallback_items(
+        &mut generated.active_user_goals,
+        &fallback.active_user_goals,
+    );
+    ensure_fallback_items(
+        &mut generated.important_constraints,
+        &fallback.important_constraints,
+    );
     ensure_fallback_items(&mut generated.decisions_made, &fallback.decisions_made);
     ensure_fallback_items(&mut generated.artifact_refs, &fallback.artifact_refs);
-    ensure_fallback_items(&mut generated.workflow_state_refs, &fallback.workflow_state_refs);
-    ensure_fallback_items(&mut generated.unresolved_followups, &fallback.unresolved_followups);
+    ensure_fallback_items(
+        &mut generated.workflow_state_refs,
+        &fallback.workflow_state_refs,
+    );
+    ensure_fallback_items(
+        &mut generated.unresolved_followups,
+        &fallback.unresolved_followups,
+    );
     generated
 }
 
@@ -160,9 +186,7 @@ fn enrich_summary_from_rows(
             "assistant" => push_unique(&mut summary.unresolved_followups, snippet),
             "tool_call" | "tool_result" => push_unique(&mut summary.artifact_refs, snippet),
             "workflow_event" => push_unique(&mut summary.workflow_state_refs, snippet),
-            "compaction_marker" => {
-                push_unique(&mut summary.important_constraints, snippet)
-            }
+            "compaction_marker" => push_unique(&mut summary.important_constraints, snippet),
             _ => push_unique(&mut summary.important_constraints, snippet),
         }
     }
@@ -184,11 +208,7 @@ fn rows_for_compacted_groups<'a>(
         }
     }
     rows.iter()
-        .filter(|row| {
-            row.message_id
-                .as_deref()
-                .is_some_and(|id| ids.contains(id))
-        })
+        .filter(|row| row.message_id.as_deref().is_some_and(|id| ids.contains(id)))
         .collect()
 }
 
@@ -268,11 +288,12 @@ mod tests {
 
     #[test]
     fn llm_backed_summarizer_keeps_required_deterministic_fallback_items() {
-        let rows = vec![
-            TranscriptGroupingRow::new("user", "keep artifact docs/plan.md", json!({}))
-                .with_message_id("msg-1")
-                .with_sequence_no(1),
-        ];
+        let rows =
+            vec![
+                TranscriptGroupingRow::new("user", "keep artifact docs/plan.md", json!({}))
+                    .with_message_id("msg-1")
+                    .with_sequence_no(1),
+            ];
         let groups = super::super::semantic_groups_from_conversation_messages(&rows);
         let decision = RuntimeCompactionDecision {
             trigger: crate::runtime_conversations::RuntimeCompactionTriggerKind::Manual,

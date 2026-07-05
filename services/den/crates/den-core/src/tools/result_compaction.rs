@@ -280,7 +280,11 @@ pub fn compact_client_tool_result_with_artifact(
     let tool_call_id = input.tool_call_id.as_str();
     let status = input.status.as_str();
     let (content, content_truncated, content_omitted) = compact_value_for_model(
-        input.content.clone().map(Value::String).unwrap_or(Value::Null),
+        input
+            .content
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
         TOOL_RESULT_FIELD_MAX_CHARS,
     );
     truncated |= content_truncated;
@@ -291,10 +295,8 @@ pub fn compact_client_tool_result_with_artifact(
     );
     truncated |= structured_truncated;
     omitted_chars += structured_omitted;
-    let (error, error_truncated, error_omitted) = compact_value_for_model(
-        input.error.clone(),
-        TOOL_RESULT_FIELD_MAX_CHARS,
-    );
+    let (error, error_truncated, error_omitted) =
+        compact_value_for_model(input.error.clone(), TOOL_RESULT_FIELD_MAX_CHARS);
     truncated |= error_truncated;
     omitted_chars += error_omitted;
 
@@ -321,8 +323,11 @@ pub fn compact_client_tool_result_with_artifact(
         let (preview, _, _) = truncate_str(preview, 512);
         payload["output_preview"] = json!(preview);
     }
-    payload["output_summary"] =
-        json!(bounded_summary(tool_name.as_deref(), status, preview.as_deref()));
+    payload["output_summary"] = json!(bounded_summary(
+        tool_name.as_deref(),
+        status,
+        preview.as_deref()
+    ));
     let serialized_len = payload.to_string().chars().count();
     if serialized_len > MODEL_TOOL_RESULT_MAX_CHARS {
         truncated = true;

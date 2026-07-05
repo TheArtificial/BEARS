@@ -26,11 +26,7 @@ fn component(key: &str, label: &str, chars: u32) -> ContextBudgetComponentReport
     component_with_label(key, label.to_string(), chars)
 }
 
-fn component_with_label(
-    key: &str,
-    label: String,
-    chars: u32,
-) -> ContextBudgetComponentReport {
+fn component_with_label(key: &str, label: String, chars: u32) -> ContextBudgetComponentReport {
     ContextBudgetComponentReport {
         key: key.to_string(),
         label,
@@ -51,7 +47,11 @@ pub fn estimate_context_budget(
         .map(|value| value.chars().count() as u32)
         .unwrap_or_default();
     let mut components = vec![
-        component("compiled_prompt", "Compiled prompt", parts.compiled_prompt_chars),
+        component(
+            "compiled_prompt",
+            "Compiled prompt",
+            parts.compiled_prompt_chars,
+        ),
         component(
             "key_memory_projection",
             "Key memory projection",
@@ -88,7 +88,10 @@ pub fn estimate_context_budget(
             parts.transcript_fallback_pruned_chars,
         ));
     }
-    let accounted_chars: u32 = components.iter().map(|entry| entry.estimated_characters).sum();
+    let accounted_chars: u32 = components
+        .iter()
+        .map(|entry| entry.estimated_characters)
+        .sum();
     if body_chars > accounted_chars {
         components.push(component(
             "request_overhead",
@@ -111,8 +114,9 @@ pub fn estimate_context_budget(
         .min(max_output_tokens.unwrap_or(u32::MAX))
         .min(4096);
     let estimated_total_tokens = total_input_tokens.saturating_add(reserved_output_tokens);
-    let near_budget = context_window
-        .is_some_and(|limit| estimated_total_tokens.saturating_mul(100) >= limit.saturating_mul(90));
+    let near_budget = context_window.is_some_and(|limit| {
+        estimated_total_tokens.saturating_mul(100) >= limit.saturating_mul(90)
+    });
     let over_budget = context_window.is_some_and(|limit| estimated_total_tokens > limit);
 
     ContextBudgetReport {
@@ -180,7 +184,10 @@ mod tests {
         assert_eq!(report.context_window, Some(1_047_576));
         assert_eq!(report.max_output_tokens, Some(32_768));
         assert_eq!(report.reserved_output_tokens, 512);
-        assert_eq!(report.estimate_precision, ContextBudgetEstimatePrecision::Approximate);
+        assert_eq!(
+            report.estimate_precision,
+            ContextBudgetEstimatePrecision::Approximate
+        );
         assert!(report.components.iter().any(|c| c.key == "compiled_prompt"));
         assert!(report.components.iter().any(|c| c.key == "tool_schemas"));
         assert!(report

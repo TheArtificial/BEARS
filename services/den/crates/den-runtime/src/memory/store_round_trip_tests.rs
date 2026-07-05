@@ -24,10 +24,7 @@ mod tests {
         )
         .await
         .expect("write");
-        let path = written
-            .get("path")
-            .and_then(|v| v.as_str())
-            .expect("path");
+        let path = written.get("path").and_then(|v| v.as_str()).expect("path");
         let store = stores.store_for_bear(bear_id).await.expect("store");
         let read = sqlite_tools::sqlite_memory_read(&store, path)
             .await

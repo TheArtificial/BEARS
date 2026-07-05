@@ -5,9 +5,9 @@ use std::str::FromStr;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_protocol::{RoleProfileRegistry, RoleRuntimeBinding};
 use den_core::config::Config;
 use den_core::{BearProfile, DenError};
+use den_protocol::{RoleProfileRegistry, RoleRuntimeBinding};
 
 pub struct DenNativeProfileRegistry<'a> {
     pool: &'a PgPool,
@@ -56,9 +56,8 @@ impl RoleProfileRegistry for DenNativeProfileRegistry<'_> {
         bear_id: Uuid,
         profile: &str,
     ) -> Result<Option<RoleRuntimeBinding>, DenError> {
-        let profile = BearProfile::from_str(profile).map_err(|_| {
-            DenError::ValidationError(format!("unknown bear profile: {profile}"))
-        })?;
+        let profile = BearProfile::from_str(profile)
+            .map_err(|_| DenError::ValidationError(format!("unknown bear profile: {profile}")))?;
         self.resolve_binding(bear_id, profile).await
     }
 }

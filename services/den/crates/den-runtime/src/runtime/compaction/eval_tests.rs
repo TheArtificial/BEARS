@@ -99,18 +99,17 @@ fn continuation_probe_compacted_render_retains_goal_and_artifact_signals() {
     let rows = pair_tool_heavy_fixture();
     let groups = semantic_groups_from_conversation_messages(&rows);
     let policy = continuation_policy_for_tests();
-    let decision = choose_compaction_decision(
-        &groups,
-        RuntimeCompactionTriggerKind::Manual,
-        &policy,
-    )
-    .expect("eligible compaction range");
+    let decision =
+        choose_compaction_decision(&groups, RuntimeCompactionTriggerKind::Manual, &policy)
+            .expect("eligible compaction range");
 
     let compacted_groups = &groups[decision.selected_group_start..=decision.selected_group_end];
     let summary = summarize_compacted_groups(None, compacted_groups, &rows, &decision);
     let rendered = render_compacted_context_block(&summary);
 
-    assert!(rendered.contains("refactor compaction module") || !summary.active_user_goals.is_empty());
+    assert!(
+        rendered.contains("refactor compaction module") || !summary.active_user_goals.is_empty()
+    );
     assert!(rendered.contains("fs_read_text_file") || !summary.artifact_refs.is_empty());
 }
 

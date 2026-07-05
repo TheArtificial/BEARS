@@ -45,7 +45,8 @@ fn artifact_id_from_ref(artifact_ref: &str) -> Result<Uuid, DenError> {
         .strip_prefix("tool-output://")
         .unwrap_or(artifact_ref)
         .trim();
-    Uuid::parse_str(raw).map_err(|err| DenError::ValidationError(format!("invalid artifact_ref: {err}")))
+    Uuid::parse_str(raw)
+        .map_err(|err| DenError::ValidationError(format!("invalid artifact_ref: {err}")))
 }
 
 pub async fn create_tool_output_artifact(
@@ -56,7 +57,12 @@ pub async fn create_tool_output_artifact(
         .content_text
         .as_ref()
         .map(|text| text.len() as i64)
-        .or_else(|| input.content_json.as_ref().map(|value| value.to_string().len() as i64))
+        .or_else(|| {
+            input
+                .content_json
+                .as_ref()
+                .map(|value| value.to_string().len() as i64)
+        })
         .unwrap_or(0);
     let metadata = if input.metadata.is_object() {
         input.metadata
@@ -102,7 +108,18 @@ pub async fn read_tool_output_artifact(
     limit_chars: usize,
 ) -> Result<ToolOutputArtifactRead, DenError> {
     let id = artifact_id_from_ref(artifact_ref)?;
-    let row = sqlx::query_as::<_, (Uuid, String, Option<String>, String, Option<String>, Option<Value>, Value)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<Value>,
+            Value,
+        ),
+    >(
         r#"
         SELECT id, tool_call_id, tool_name, source, content_text, content_json, metadata
         FROM tool_output_artifacts
@@ -115,11 +132,17 @@ pub async fn read_tool_output_artifact(
     .fetch_optional(pool)
     .await
     .map_err(|err| DenError::Database(format!("read tool output artifact: {err}")))?
-    .ok_or_else(|| DenError::NotFound("tool output artifact not found for this session".to_string()))?;
+    .ok_or_else(|| {
+        DenError::NotFound("tool output artifact not found for this session".to_string())
+    })?;
 
     let content = row
         .4
-        .or_else(|| row.5.map(|value| serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())))
+        .or_else(|| {
+            row.5.map(|value| {
+                serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+            })
+        })
         .unwrap_or_default();
     let total_chars = content.chars().count();
     let limit_chars = limit_chars.clamp(1, 24_000);
@@ -152,7 +175,10 @@ mod tests {
     #[test]
     fn parses_tool_output_artifact_ref() {
         let id = Uuid::new_v4();
-        assert_eq!(artifact_id_from_ref(&format!("tool-output://{id}")).unwrap(), id);
+        assert_eq!(
+            artifact_id_from_ref(&format!("tool-output://{id}")).unwrap(),
+            id
+        );
         assert_eq!(artifact_id_from_ref(&id.to_string()).unwrap(), id);
     }
 
@@ -162,12 +188,12 @@ mod tests {
         let bear_id = sqlx::query_scalar::<_, Uuid>(
             "INSERT INTO bears (slug, name, description) VALUES ($1, $2, $3) RETURNING id",
         )
-            .bind(format!("artifact-bear-{}", suffix.simple()))
-            .bind("Artifact Bear")
-            .bind("artifact test bear")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        .bind(format!("artifact-bear-{}", suffix.simple()))
+        .bind("Artifact Bear")
+        .bind("artifact test bear")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         let artifact = create_tool_output_artifact(
             &pool,
             ToolOutputArtifactInput {
@@ -187,16 +213,10 @@ mod tests {
         .await
         .unwrap();
 
-        let read = read_tool_output_artifact(
-            &pool,
-            bear_id,
-            "session-1",
-            &artifact.artifact_ref,
-            2,
-            3,
-        )
-        .await
-        .unwrap();
+        let read =
+            read_tool_output_artifact(&pool, bear_id, "session-1", &artifact.artifact_ref, 2, 3)
+                .await
+                .unwrap();
 
         assert_eq!(read.content, "cde");
         assert_eq!(read.total_chars, 6);

@@ -1,8 +1,8 @@
+use den_core::DenError;
 use den_protocol::{
     RuntimeByteStream, RuntimeEventParser, RuntimeEventStream, RuntimeSemanticEvent,
     RuntimeStreamEvent,
 };
-use den_core::DenError;
 
 pub fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
     let lf = buf.windows(2).position(|w| w == b"\n\n").map(|p| p + 2);
@@ -53,7 +53,9 @@ pub fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Va
         .map_err(|e| DenError::System(format!("invalid continuation SSE JSON: {e}")))
 }
 
-pub fn runtime_stream_event_from_provider_json(event: &serde_json::Value) -> Option<RuntimeStreamEvent> {
+pub fn runtime_stream_event_from_provider_json(
+    event: &serde_json::Value,
+) -> Option<RuntimeStreamEvent> {
     let inner = match event.get("contents") {
         Some(contents) if contents.get("message_type").is_some() => contents,
         _ => event,
@@ -66,14 +68,11 @@ pub fn runtime_stream_event_from_provider_json(event: &serde_json::Value) -> Opt
     match message_type {
         "ping" => None,
         "assistant_message" => {
-            let text =
-                crate::gateway_events::provider_stream_text_preserving_whitespace(inner)
-                    .or_else(|| {
-                        crate::gateway_events::provider_stream_text_preserving_whitespace(
-                            event,
-                        )
-                    })
-                    .unwrap_or_default();
+            let text = crate::gateway_events::provider_stream_text_preserving_whitespace(inner)
+                .or_else(|| {
+                    crate::gateway_events::provider_stream_text_preserving_whitespace(event)
+                })
+                .unwrap_or_default();
             Some(RuntimeStreamEvent::Semantic(
                 RuntimeSemanticEvent::AssistantTextDelta { text },
             ))
@@ -96,9 +95,9 @@ pub fn runtime_stream_event_from_provider_json(event: &serde_json::Value) -> Opt
                     crate::gateway_events::provider_stream_text_preserving_whitespace(event)
                 })
                 .unwrap_or_default();
-            Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
-                text,
-            }))
+            Some(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::StatusText { text },
+            ))
         }
         "error_message" => Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
             message: event
@@ -131,19 +130,23 @@ pub fn runtime_stream_event_from_provider_json(event: &serde_json::Value) -> Opt
                     RuntimeSemanticEvent::TurnCompleted { turn: None },
                 ))
             } else if stop_reason == "requires_approval" {
-                Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused {
-                    reason: "awaiting_approval".to_string(),
-                    resume_token: None,
-                    expires_at: None,
-                }))
+                Some(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::RunPaused {
+                        reason: "awaiting_approval".to_string(),
+                        resume_token: None,
+                        expires_at: None,
+                    },
+                ))
             } else {
-                Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
-                    turn: None,
-                    category: den_protocol::RuntimeErrorCategory::BackendProtocol,
-                    message: format!(
-                        "Runtime stopped before producing assistant output: {stop_reason}"
-                    ),
-                }))
+                Some(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::TurnFailed {
+                        turn: None,
+                        category: den_protocol::RuntimeErrorCategory::BackendProtocol,
+                        message: format!(
+                            "Runtime stopped before producing assistant output: {stop_reason}"
+                        ),
+                    },
+                ))
             }
         }
         "tool_call_message" | "approval_request_message" | "function_call" => Some(
@@ -206,31 +209,38 @@ pub fn runtime_stream_event_from_provider_json(event: &serde_json::Value) -> Opt
                     .or_else(|| inner.get("approval_reason"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
-                run_id: ["run_id", "message/run_id", "data/run_id", "run/id", "message/run/id", "data/run/id"]
-                    .into_iter()
-                    .find_map(|pointer| {
-                        event
-                            .pointer(&format!("/{pointer}"))
-                            .or_else(|| inner.pointer(&format!("/{pointer}")))
-                            .and_then(|v| v.as_str())
-                            .map(str::trim)
-                            .filter(|run_id| !run_id.is_empty())
-                            .map(str::to_string)
-                    }),
+                run_id: [
+                    "run_id",
+                    "message/run_id",
+                    "data/run_id",
+                    "run/id",
+                    "message/run/id",
+                    "data/run/id",
+                ]
+                .into_iter()
+                .find_map(|pointer| {
+                    event
+                        .pointer(&format!("/{pointer}"))
+                        .or_else(|| inner.pointer(&format!("/{pointer}")))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|run_id| !run_id.is_empty())
+                        .map(str::to_string)
+                }),
             }),
         ),
-        _ => crate::gateway_events::conversation_resolved_gateway_event(event).map(
-            |evt| match evt {
-                crate::gateway_events::GatewayEvent::ConversationResolved {
-                    conversation_id,
-                } => RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved {
-                    conversation: den_protocol::RuntimeConversationRef {
-                        id: conversation_id,
-                    },
-                }),
+        _ => {
+            crate::gateway_events::conversation_resolved_gateway_event(event).map(|evt| match evt {
+                crate::gateway_events::GatewayEvent::ConversationResolved { conversation_id } => {
+                    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved {
+                        conversation: den_protocol::RuntimeConversationRef {
+                            id: conversation_id,
+                        },
+                    })
+                }
                 _ => unreachable!(),
-            },
-        ),
+            })
+        }
     }
 }
 
@@ -240,9 +250,8 @@ pub fn runtime_byte_stream_to_event_stream(
     parser: RuntimeEventParser,
 ) -> RuntimeEventStream {
     let mut buffer = Vec::new();
-    let mut queued_events: std::collections::VecDeque<
-        Result<RuntimeStreamEvent, DenError>,
-    > = std::collections::VecDeque::new();
+    let mut queued_events: std::collections::VecDeque<Result<RuntimeStreamEvent, DenError>> =
+        std::collections::VecDeque::new();
     let mut finished = false;
     let mut saw_terminal_or_pause = false;
     let stream = futures::stream::poll_fn(move |cx| loop {

@@ -1410,7 +1410,10 @@ mod tests {
         let replacement = sample_budget_warning("Budget advisory: next read will stop the turn.");
         assert!(apply_budget_warning(&mut session, &replacement));
         assert_eq!(session.messages.len(), 1);
-        assert_eq!(session.messages[0].content.as_deref(), Some(replacement.model_message()));
+        assert_eq!(
+            session.messages[0].content.as_deref(),
+            Some(replacement.model_message())
+        );
     }
 
     #[test]
@@ -2045,5 +2048,4 @@ mod tests {
             "What I changed: added one test. Remaining work: more later."
         ));
     }
-
 }

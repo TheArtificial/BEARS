@@ -57,12 +57,10 @@ pub async fn record_runtime_compaction_event(
     event: &RuntimeCompactionEvent,
 ) -> Result<(), DenError> {
     let event_hash = runtime_compaction_event_hash(event)?;
-    let boundary = serde_json::to_value(&event.boundary).map_err(|err| {
-        DenError::System(format!("serialize compaction boundary: {err}"))
-    })?;
-    let artifact = serde_json::to_value(&event.artifact).map_err(|err| {
-        DenError::System(format!("serialize compaction artifact: {err}"))
-    })?;
+    let boundary = serde_json::to_value(&event.boundary)
+        .map_err(|err| DenError::System(format!("serialize compaction boundary: {err}")))?;
+    let artifact = serde_json::to_value(&event.artifact)
+        .map_err(|err| DenError::System(format!("serialize compaction artifact: {err}")))?;
     sqlx::query(
         r"
         INSERT INTO runtime_compaction_events (
@@ -138,13 +136,13 @@ pub async fn list_runtime_compaction_events(
                 DenError::Database(format!("decode compaction policy_version: {err}"))
             })?,
             trigger: Some(
-                row.try_get::<String, _>("trigger")
-                    .map_err(|err| DenError::Database(format!("decode compaction trigger: {err}")))?,
+                row.try_get::<String, _>("trigger").map_err(|err| {
+                    DenError::Database(format!("decode compaction trigger: {err}"))
+                })?,
             ),
-            created_at: Some(
-                row.try_get::<String, _>("created_at")
-                    .map_err(|err| DenError::Database(format!("decode compaction created_at: {err}")))?,
-            ),
+            created_at: Some(row.try_get::<String, _>("created_at").map_err(|err| {
+                DenError::Database(format!("decode compaction created_at: {err}"))
+            })?),
             source_group_start: row
                 .try_get::<Option<i32>, _>("source_group_start")
                 .map_err(|err| {
@@ -209,9 +207,9 @@ pub async fn latest_compaction_artifact_for_conversation(
         id: row
             .try_get::<Uuid, _>("id")
             .map_err(|err| DenError::Database(format!("decode compaction artifact id: {err}")))?,
-        artifact_kind: row.try_get::<String, _>("artifact_kind").map_err(|err| {
-            DenError::Database(format!("decode compaction artifact_kind: {err}"))
-        })?,
+        artifact_kind: row
+            .try_get::<String, _>("artifact_kind")
+            .map_err(|err| DenError::Database(format!("decode compaction artifact_kind: {err}")))?,
         policy_version: row.try_get::<String, _>("policy_version").map_err(|err| {
             DenError::Database(format!("decode compaction artifact policy_version: {err}"))
         })?,
@@ -221,26 +219,32 @@ pub async fn latest_compaction_artifact_for_conversation(
         source_message_start_seq: row.try_get::<i64, _>("source_message_start_seq").map_err(
             |err| DenError::Database(format!("decode compaction source_message_start_seq: {err}")),
         )?,
-        source_message_end_seq: row.try_get::<i64, _>("source_message_end_seq").map_err(
-            |err| DenError::Database(format!("decode compaction source_message_end_seq: {err}")),
-        )?,
+        source_message_end_seq: row
+            .try_get::<i64, _>("source_message_end_seq")
+            .map_err(|err| {
+                DenError::Database(format!("decode compaction source_message_end_seq: {err}"))
+            })?,
         source_group_start: row
             .try_get::<Option<i32>, _>("source_group_start")
-            .map_err(|err| DenError::Database(format!("decode compaction source_group_start: {err}")))?
+            .map_err(|err| {
+                DenError::Database(format!("decode compaction source_group_start: {err}"))
+            })?
             .map(|v| v as usize),
         source_group_end: row
             .try_get::<Option<i32>, _>("source_group_end")
-            .map_err(|err| DenError::Database(format!("decode compaction source_group_end: {err}")))?
+            .map_err(|err| {
+                DenError::Database(format!("decode compaction source_group_end: {err}"))
+            })?
             .map(|v| v as usize),
-        artifact_json: row.try_get::<serde_json::Value, _>("artifact_json").map_err(|err| {
-            DenError::Database(format!("decode compaction artifact_json: {err}"))
+        artifact_json: row
+            .try_get::<serde_json::Value, _>("artifact_json")
+            .map_err(|err| DenError::Database(format!("decode compaction artifact_json: {err}")))?,
+        superseded_by: row
+            .try_get::<Option<Uuid>, _>("superseded_by")
+            .map_err(|err| DenError::Database(format!("decode compaction superseded_by: {err}")))?,
+        created_at: row.try_get::<String, _>("created_at").map_err(|err| {
+            DenError::Database(format!("decode compaction artifact created_at: {err}"))
         })?,
-        superseded_by: row.try_get::<Option<Uuid>, _>("superseded_by").map_err(|err| {
-            DenError::Database(format!("decode compaction superseded_by: {err}"))
-        })?,
-        created_at: row
-            .try_get::<String, _>("created_at")
-            .map_err(|err| DenError::Database(format!("decode compaction artifact created_at: {err}")))?
     }))
 }
 
@@ -256,8 +260,9 @@ fn runtime_compaction_event_hash(event: &RuntimeCompactionEvent) -> Result<Strin
         "artifact": event.artifact,
         "diagnostic": event.diagnostic,
     });
-    let bytes = serde_json::to_vec(&payload)
-        .map_err(|err| DenError::System(format!("serialize compaction event hash payload: {err}")))?;
+    let bytes = serde_json::to_vec(&payload).map_err(|err| {
+        DenError::System(format!("serialize compaction event hash payload: {err}"))
+    })?;
     let digest = Sha256::digest(bytes);
     Ok(format!("{:x}", digest))
 }

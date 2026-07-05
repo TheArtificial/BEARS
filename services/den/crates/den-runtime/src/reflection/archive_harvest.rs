@@ -4,12 +4,8 @@ use den_service::memory_proposals::CreateMemoryProposal;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+use crate::{memory::create_proposal, runtime_conversations::RuntimeIterativeSummary};
 use den_service::bears::BearProfile;
-use crate::{
-    
-    memory::create_proposal,
-    runtime_conversations::RuntimeIterativeSummary,
-};
 
 #[derive(Debug, Clone)]
 struct CompactionArtifactHarvestRow {
@@ -54,15 +50,9 @@ pub async fn harvest_compaction_artifacts_once(
         let summary = decode_summary(&artifact.artifact_json)?;
         let proposed_content = proposal_content_from_summary(&summary);
         if proposed_content.trim().is_empty() {
-            let _ = record_harvest_mark(
-                &store,
-                "compaction_artifact",
-                &source_ref,
-                None,
-                None,
-                &[],
-            )
-            .await?;
+            let _ =
+                record_harvest_mark(&store, "compaction_artifact", &source_ref, None, None, &[])
+                    .await?;
             continue;
         }
 
@@ -193,7 +183,10 @@ fn decode_summary(value: &serde_json::Value) -> Result<RuntimeIterativeSummary, 
         .map_err(|err| DenError::Database(format!("decode compaction summary for harvest: {err}")))
 }
 
-fn proposal_title(summary: &RuntimeIterativeSummary, artifact: &CompactionArtifactHarvestRow) -> String {
+fn proposal_title(
+    summary: &RuntimeIterativeSummary,
+    artifact: &CompactionArtifactHarvestRow,
+) -> String {
     summary
         .active_user_goals
         .first()
@@ -204,11 +197,23 @@ fn proposal_title(summary: &RuntimeIterativeSummary, artifact: &CompactionArtifa
 fn proposal_content_from_summary(summary: &RuntimeIterativeSummary) -> String {
     let mut out = String::new();
     append_section(&mut out, "Active user goals", &summary.active_user_goals);
-    append_section(&mut out, "Important constraints", &summary.important_constraints);
+    append_section(
+        &mut out,
+        "Important constraints",
+        &summary.important_constraints,
+    );
     append_section(&mut out, "Decisions made", &summary.decisions_made);
     append_section(&mut out, "Artifact references", &summary.artifact_refs);
-    append_section(&mut out, "Workflow state references", &summary.workflow_state_refs);
-    append_section(&mut out, "Unresolved follow-ups", &summary.unresolved_followups);
+    append_section(
+        &mut out,
+        "Workflow state references",
+        &summary.workflow_state_refs,
+    );
+    append_section(
+        &mut out,
+        "Unresolved follow-ups",
+        &summary.unresolved_followups,
+    );
     out.trim().to_string()
 }
 
@@ -246,7 +251,9 @@ mod tests {
             active_user_goals: vec!["ship compaction".to_string()],
             important_constraints: vec!["do not cross approval floors".to_string()],
             decisions_made: Vec::new(),
-            artifact_refs: vec!["docs/roadmap/DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md".to_string()],
+            artifact_refs: vec![
+                "docs/roadmap/DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md".to_string()
+            ],
             workflow_state_refs: Vec::new(),
             unresolved_followups: vec!["wire archive harvest".to_string()],
         };

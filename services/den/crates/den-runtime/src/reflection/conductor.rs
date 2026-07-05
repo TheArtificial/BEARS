@@ -3,7 +3,6 @@ use sqlx::{PgPool, Row};
 use time::{Date, OffsetDateTime};
 use uuid::Uuid;
 
-use std::sync::Arc;
 use den_memory::MemoryStoreManager;
 use den_service::{
     bears::BearProfile,
@@ -14,6 +13,7 @@ use den_service::{
         spawn_persist_assistant_summary_message, ProjectionProvenance, ProjectionSource,
     },
 };
+use std::sync::Arc;
 
 use crate::{
     memory::{record_reflection_outcome_complete, record_reflection_outcome_start},
@@ -22,12 +22,12 @@ use crate::{
         compose_curate_briefing_prompt, run_native_profile_turn_collect_assistant_text,
         NativeRuntimeDeps,
     },
+    recall::{reconcile_bear, QdrantRecall},
+    reflection::archive_harvest::harvest_compaction_artifacts_once,
     reflection::conversations::{
         bind_memory_curate_run_conversation, ensure_memory_curate_conversation,
         touch_memory_curate_conversation,
     },
-    reflection::archive_harvest::harvest_compaction_artifacts_once,
-    recall::{reconcile_bear, QdrantRecall},
 };
 use std::str::FromStr;
 
@@ -160,9 +160,7 @@ async fn mark_archive_harvest_failed(
     Ok(row_from_sql(row))
 }
 
-async fn list_bears_with_queued_archive_harvest_runs(
-    pool: &PgPool,
-) -> Result<Vec<Uuid>, DenError> {
+async fn list_bears_with_queued_archive_harvest_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
     let rows = sqlx::query_scalar::<_, Uuid>(
         r#"
         SELECT DISTINCT bear_id
@@ -201,7 +199,8 @@ pub async fn run_next_archive_harvest_once(
             Ok(Some(completed))
         }
         Err(error) => {
-            let failed = mark_archive_harvest_failed(pool, bear_id, run.id, &error.to_string()).await?;
+            let failed =
+                mark_archive_harvest_failed(pool, bear_id, run.id, &error.to_string()).await?;
             Ok(Some(failed))
         }
     }
@@ -351,11 +350,7 @@ fn project_memory_curate_started(pool: &PgPool, row: &ReflectionRunRow, proposal
     );
 }
 
-fn project_memory_curate_completed(
-    pool: &PgPool,
-    row: &ReflectionRunRow,
-    proposal_ids: Vec<Uuid>,
-) {
+fn project_memory_curate_completed(pool: &PgPool, row: &ReflectionRunRow, proposal_ids: Vec<Uuid>) {
     project_to_conversation(
         pool,
         row.bear_id,
@@ -495,8 +490,7 @@ pub async fn claim_next_memory_curate_run(
         )
         .await?;
         if let Some(conversation_id) = reflection_conversation.conversation_id.as_deref() {
-            bind_memory_curate_run_conversation(pool, run.bear_id, run.id, conversation_id)
-                .await?;
+            bind_memory_curate_run_conversation(pool, run.bear_id, run.id, conversation_id).await?;
             run.conversation_id = Some(conversation_id.to_string());
         }
         let _ = touch_memory_curate_conversation(pool, run.bear_id, conversation_date).await;
@@ -1197,9 +1191,7 @@ async fn mark_context_compact_failed(
     Ok(row_from_sql(row))
 }
 
-async fn list_bears_with_queued_context_compact_runs(
-    pool: &PgPool,
-) -> Result<Vec<Uuid>, DenError> {
+async fn list_bears_with_queued_context_compact_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
     let rows = sqlx::query_scalar::<_, Uuid>(
         r"
         SELECT DISTINCT bear_id

@@ -989,7 +989,9 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
             }),
             vec![],
         ),
-        ClientToolName::RunCommand | ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => object_schema(
+        ClientToolName::RunCommand
+        | ClientToolName::ProcessRun
+        | ClientToolName::TerminalRunCommand => object_schema(
             json!({
                 "command": { "type": "string", "description": "Executable name. Shell strings are not accepted." },
                 "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments." },
@@ -1446,7 +1448,9 @@ pub fn client_tool_policy(tool: ClientToolName) -> ToolPolicy {
         ClientToolName::GitRestore => ARMATURE_GIT_WRITE_POLICY,
         ClientToolName::GitCommit => ARMATURE_GIT_WRITE_POLICY,
         ClientToolName::GitStash => ARMATURE_GIT_WRITE_POLICY,
-        ClientToolName::RunCommand | ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => ARMATURE_PROCESS_RUN_POLICY,
+        ClientToolName::RunCommand
+        | ClientToolName::ProcessRun
+        | ClientToolName::TerminalRunCommand => ARMATURE_PROCESS_RUN_POLICY,
         ClientToolName::ChromeOpen
         | ClientToolName::ChromeSnapshot
         | ClientToolName::ChromeConsoleMessages
@@ -1478,7 +1482,9 @@ pub fn tool_class(tool: ClientToolName) -> ToolClass {
         | ClientToolName::GitRestore
         | ClientToolName::GitCommit
         | ClientToolName::GitStash => ToolClass::WorkspaceMutation,
-        ClientToolName::RunCommand | ClientToolName::ProcessRun | ClientToolName::TerminalRunCommand => ToolClass::Execution,
+        ClientToolName::RunCommand
+        | ClientToolName::ProcessRun
+        | ClientToolName::TerminalRunCommand => ToolClass::Execution,
         ClientToolName::ChromeOpen
         | ClientToolName::ChromeSnapshot
         | ClientToolName::ChromeConsoleMessages
@@ -1780,7 +1786,7 @@ pub fn client_tool_display_for_provider(
         return fallback_tool_display(tool_name, args);
     };
     let display = client_tool_display(tool);
-    let target = summarize_target(display.target_arg_keys, args);
+    let target = crate::tools::display::tool_target_summary(display.target_arg_keys, args);
     json!({
         "label": display.label,
         "title": target.as_ref().map(|target| format!("{} {target}", display.progress_verb)).unwrap_or_else(|| display.label.to_string()),
@@ -1805,29 +1811,6 @@ fn fallback_tool_display(tool_name: &str, args: &serde_json::Value) -> serde_jso
     })
 }
 
-fn summarize_target(keys: &[&str], args: &serde_json::Value) -> Option<String> {
-    let object = args.as_object()?;
-    let mut values = Vec::new();
-    for key in keys {
-        if let Some(value) = object.get(*key).and_then(|value| value.as_str()) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                let display = if crate::tools::display::is_display_path_key(key) {
-                    crate::tools::display::display_path(trimmed)
-                } else {
-                    trimmed.to_string()
-                };
-                values.push(preview(&display, 96));
-            }
-        }
-    }
-    match values.len() {
-        0 => None,
-        1 => values.into_iter().next(),
-        _ => Some(values.join(" → ")),
-    }
-}
-
 fn summarize_target_object(keys: &[&str], args: &serde_json::Value) -> serde_json::Value {
     let Some(object) = args.as_object() else {
         return serde_json::Value::Null;
@@ -1837,7 +1820,10 @@ fn summarize_target_object(keys: &[&str], args: &serde_json::Value) -> serde_jso
         if let Some(value) = object.get(*key) {
             if crate::tools::display::is_display_path_key(key) {
                 if let Some(raw) = value.as_str() {
-                    out.insert((*key).to_string(), json!(crate::tools::display::display_path(raw)));
+                    out.insert(
+                        (*key).to_string(),
+                        json!(crate::tools::display::display_path(raw)),
+                    );
                     continue;
                 }
             }

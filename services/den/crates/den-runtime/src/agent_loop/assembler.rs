@@ -94,7 +94,9 @@ pub struct AssembledNativeTurn {
     pub active_activity_plan: Option<TaskListProjection>,
 }
 
-async fn load_active_activity_plan(ctx: &AssembleTurnContext<'_>) -> Result<Option<TaskListProjection>, DenError> {
+async fn load_active_activity_plan(
+    ctx: &AssembleTurnContext<'_>,
+) -> Result<Option<TaskListProjection>, DenError> {
     let Some(user_id) = ctx.user_id else {
         return Ok(None);
     };

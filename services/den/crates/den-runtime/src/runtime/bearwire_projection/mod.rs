@@ -121,10 +121,7 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             context: None,
         }],
         RuntimeSemanticEvent::RunProgress {
-            kind,
-            text,
-            detail,
-            ..
+            kind, text, detail, ..
         } => {
             if kind == "session_info_update" {
                 let title = detail

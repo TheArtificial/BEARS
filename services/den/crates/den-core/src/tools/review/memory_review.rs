@@ -95,7 +95,11 @@ fn projection_scope_id(
         .unwrap_or_else(|| format!("bear:{}:role:{}", bear_id, role.as_str()))
 }
 
-fn projection(context: &DenToolInvocationContext, bear_id: Uuid, role: BearProfile) -> ProposalProjection {
+fn projection(
+    context: &DenToolInvocationContext,
+    bear_id: Uuid,
+    role: BearProfile,
+) -> ProposalProjection {
     ProposalProjection {
         user_id: context.user_id,
         conversation_id: clean_optional(&context.conversation_id),

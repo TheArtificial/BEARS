@@ -7,14 +7,14 @@ use uuid::Uuid;
 use den_service::tool_turns::ToolResultRequest;
 
 use den_core::client_tools::{
-    diag_phase, client_tool_display_for_provider, client_tool_policy_json_for_provider,
+    client_tool_display_for_provider, client_tool_policy_json_for_provider, diag_phase,
     supported_provider_tool_names, ClientToolName,
 };
-use den_docket::{TaskListItemStatus, TaskListLocalProjection};
 use den_core::tools::descriptor::{
     builtin_den_tool_descriptor_for_provider_name, builtin_den_tool_descriptors,
     den_tool_display_json_for_provider, den_tool_policy_json_for_provider,
 };
+use den_docket::{TaskListItemStatus, TaskListLocalProjection};
 
 #[derive(Debug)]
 pub enum GatewayEvent {
@@ -219,8 +219,9 @@ pub fn map_provider_stream_event_to_gateway_event(
             )
         }
         "tool_return_message" => None,
-        _ => conversation_resolved_gateway_event(event)
-            .or_else(|| extract_stream_text_delta(event)),
+        _ => {
+            conversation_resolved_gateway_event(event).or_else(|| extract_stream_text_delta(event))
+        }
     }
 }
 
@@ -352,7 +353,13 @@ fn native_provider_tool_request_event(
     inner: &serde_json::Value,
     has_provider_approval_request: bool,
 ) -> Option<GatewayEvent> {
-    native_provider_tool_request_event_with_args(event, inner, has_provider_approval_request, None, None)
+    native_provider_tool_request_event_with_args(
+        event,
+        inner,
+        has_provider_approval_request,
+        None,
+        None,
+    )
 }
 
 fn native_provider_tool_request_event_with_args(
@@ -365,8 +372,7 @@ fn native_provider_tool_request_event_with_args(
     let tool_call = tool_call_value(inner, event);
     let tool_name = tool_name_override.or_else(|| tool_call_name(tool_call, inner, event))?;
     let client_tool = ClientToolName::from_provider_alias(tool_name);
-    let den_server_tool =
-        builtin_den_tool_descriptor_for_provider_name(tool_name).is_some();
+    let den_server_tool = builtin_den_tool_descriptor_for_provider_name(tool_name).is_some();
     let unsupported_tool_detail = if client_tool.is_none() && !den_server_tool {
         let mut supported = supported_provider_tool_names()
             .into_iter()
@@ -575,8 +581,7 @@ impl ToolCallAccumulator {
             .map(openai_tool_call_index_key)
             .unwrap_or_else(|| "0".to_string());
         if let Some(id) = tool_call_id(Some(tool_call), &serde_json::Value::Null, event) {
-            self.openai_delta_index_ids
-                .insert(index_key.clone(), id);
+            self.openai_delta_index_ids.insert(index_key.clone(), id);
         }
         let tool_call_id = self.openai_delta_index_ids.get(&index_key)?.clone();
         if self.emitted.contains_key(&tool_call_id) {
@@ -759,9 +764,7 @@ pub fn map_provider_stream_event_to_gateway_event_with_accumulator(
     map_provider_stream_event_to_gateway_event(event)
 }
 
-pub fn conversation_resolved_gateway_event(
-    event: &serde_json::Value,
-) -> Option<GatewayEvent> {
+pub fn conversation_resolved_gateway_event(event: &serde_json::Value) -> Option<GatewayEvent> {
     let conversation_id = event
         .get("conversation_id")
         .or_else(|| event.get("conversationId"))

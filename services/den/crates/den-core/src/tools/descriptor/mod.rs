@@ -47,17 +47,18 @@ use crate::tools::{
         DEN_SITUATION_GET, DEN_SITUATION_GET_LEGACY_PROVIDER, DEN_SITUATION_GET_PROVIDER,
         DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
         DEN_TASK_APPROVE_INTENT, DEN_TASK_CREATE, DEN_TASK_CREATE_PROVIDER, DEN_TASK_LIST,
+        DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_GET_STATUS_LEGACY_PROVIDER,
+        DEN_TASK_LISTS_GET_STATUS_PROVIDER, DEN_TASK_LISTS_LIST,
+        DEN_TASK_LISTS_LIST_LEGACY_PROVIDER, DEN_TASK_LISTS_LIST_PROVIDER,
+        DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_LISTS_REQUEST_HANDOFF_LEGACY_PROVIDER,
+        DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE,
+        DEN_TASK_LISTS_UPDATE_LEGACY_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
         DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER,
         DEN_TASK_LIST_SYNC, DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_REJECT_INTENT, DEN_TASK_UPDATE,
         DEN_TASK_UPDATE_PROVIDER, DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ,
         DEN_TOOL_OUTPUT_READ_PROVIDER, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
         DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_FETCH_PROVIDER, DEN_WEB_SEARCH,
-        DEN_WEB_SEARCH_PROVIDER, DEN_TASK_LISTS_GET_STATUS,
-        DEN_TASK_LISTS_GET_STATUS_LEGACY_PROVIDER, DEN_TASK_LISTS_GET_STATUS_PROVIDER,
-        DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_LIST_LEGACY_PROVIDER, DEN_TASK_LISTS_LIST_PROVIDER,
-        DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_LISTS_REQUEST_HANDOFF_LEGACY_PROVIDER,
-        DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE,
-        DEN_TASK_LISTS_UPDATE_LEGACY_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
+        DEN_WEB_SEARCH_PROVIDER,
     },
     display::ToolDisplayDescriptor,
     tool_descriptor_guidance::{
@@ -124,7 +125,9 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_TASK_LISTS_LIST => return DEN_TASK_LISTS_LIST_PROVIDER.to_string(),
         DEN_TASK_LISTS_GET_STATUS => return DEN_TASK_LISTS_GET_STATUS_PROVIDER.to_string(),
         DEN_TASK_LISTS_UPDATE => return DEN_TASK_LISTS_UPDATE_PROVIDER.to_string(),
-        DEN_TASK_LISTS_REQUEST_HANDOFF => return DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER.to_string(),
+        DEN_TASK_LISTS_REQUEST_HANDOFF => {
+            return DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER.to_string()
+        }
         DEN_JOB_CREATE => return DEN_JOB_CREATE_PROVIDER.to_string(),
         DEN_JOB_LIST => return DEN_JOB_LIST_PROVIDER.to_string(),
         DEN_JOB_GET => return DEN_JOB_GET_PROVIDER.to_string(),
@@ -968,33 +971,10 @@ fn descriptor(
     }
 }
 
-fn display_target_summary(keys: &[&str], args: &Value) -> Option<String> {
-    let object = args.as_object()?;
-    let mut values = Vec::new();
-    for key in keys {
-        if let Some(value) = object.get(*key).and_then(Value::as_str) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                let display = if crate::tools::display::is_display_path_key(key) {
-                    crate::tools::display::display_path(trimmed)
-                } else {
-                    trimmed.to_string()
-                };
-                values.push(display);
-            }
-        }
-    }
-    match values.len() {
-        0 => None,
-        1 => values.into_iter().next(),
-        _ => Some(values.join(" → ")),
-    }
-}
-
 pub fn den_tool_display_json_for_provider(provider_name: &str, args: &Value) -> Option<Value> {
     let descriptor = builtin_den_tool_descriptor_for_provider_name(provider_name)?;
     let display = den_tool_display(descriptor.name, descriptor.label);
-    let target = display_target_summary(display.target_arg_keys, args);
+    let target = crate::tools::display::tool_target_summary(display.target_arg_keys, args);
     Some(json!({
         "label": display.label,
         "title": target.as_ref()
@@ -1549,6 +1529,22 @@ fn set_conversation_title_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn den_tool_display_includes_conversation_title_target() {
+        let display = den_tool_display_json_for_provider(
+            "set_conversation_title",
+            &json!({ "title": "Trace ACP tool card title rendering" }),
+        )
+        .expect("display");
+
+        assert_eq!(
+            display["title"],
+            "Setting conversation title Trace ACP tool card title rendering"
+        );
+        assert_eq!(display["subtitle"], "Trace ACP tool card title rendering");
+        assert_ne!(display["subtitle"], "conversation");
+    }
 
     #[test]
     fn den_tool_display_uses_short_display_paths_for_target_paths() {
