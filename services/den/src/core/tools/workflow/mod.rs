@@ -6,7 +6,7 @@ use uuid::Uuid;
 use den_core::tools::constants::{
     DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
     DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
-    DEN_TASK_UPDATE, DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE,
+    DEN_TASK_UPDATE, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE,
 };
 use den_docket::{
     self as work_plans, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
@@ -16,8 +16,8 @@ use den_docket::{
     DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
     DocketTaskStatus, DocketTaskUpdate, DocketValidationError, PgDocketService,
     TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
-    WorkPlanListFilter, WorkPlanLookup, WorkPlanStatus, WorkPlanUpdate, WorkPlanUpsert,
-    WorkPlanVisibility,
+    TaskListListFilter, TaskListLookup, TaskListStatus, TaskListUpdate, TaskListUpsert,
+    TaskListVisibility,
 };
 
 use crate::{
@@ -35,9 +35,9 @@ use den_service::bears::BearProfile;
 pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        DEN_WORK_PLAN_LIST
-            | DEN_WORK_PLAN_GET_STATUS
-            | DEN_WORK_PLAN_UPDATE
+        DEN_TASK_LISTS_LIST
+            | DEN_TASK_LISTS_GET_STATUS
+            | DEN_TASK_LISTS_UPDATE
             | DEN_JOB_CREATE
             | DEN_JOB_LIST
             | DEN_JOB_GET
@@ -55,7 +55,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
 #[derive(Debug, Deserialize)]
 pub(crate) struct WorkPlanListArguments {
     #[serde(default, rename = "status")]
-    pub(crate) statuses: Option<Vec<WorkPlanStatus>>,
+    pub(crate) statuses: Option<Vec<TaskListStatus>>,
     #[serde(default)]
     pub(crate) owner_profile: Option<BearProfile>,
     #[serde(default)]
@@ -79,7 +79,7 @@ pub(crate) struct WorkPlanGetStatusArguments {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct WorkPlanUpdateArguments {
+pub(crate) struct TaskListUpdateArguments {
     #[serde(default)]
     pub(crate) plan_id: Option<Uuid>,
     #[serde(default)]
@@ -87,10 +87,10 @@ pub(crate) struct WorkPlanUpdateArguments {
     pub(crate) title: String,
     #[serde(default)]
     pub(crate) summary: String,
-    pub(crate) visibility: WorkPlanVisibility,
-    pub(crate) status: WorkPlanStatus,
+    pub(crate) visibility: TaskListVisibility,
+    pub(crate) status: TaskListStatus,
     #[serde(default)]
-    pub(crate) items: Vec<work_plans::WorkPlanItem>,
+    pub(crate) items: Vec<work_plans::TaskListUpdateItem>,
     #[serde(default = "empty_json_object")]
     pub(crate) workspace_context: Value,
 }
@@ -105,7 +105,7 @@ pub(crate) struct DocketJobCreateArguments {
     #[serde(default = "default_job_status")]
     pub(crate) status: DocketJobStatus,
     #[serde(default = "default_job_visibility")]
-    pub(crate) visibility: WorkPlanVisibility,
+    pub(crate) visibility: TaskListVisibility,
     #[serde(default)]
     pub(crate) criteria: Vec<DocketJobCriterionInput>,
     #[serde(default)]
@@ -143,7 +143,7 @@ pub(crate) struct DocketJobUpdateArguments {
     #[serde(default)]
     pub(crate) status: Option<DocketJobStatus>,
     #[serde(default)]
-    pub(crate) visibility: Option<WorkPlanVisibility>,
+    pub(crate) visibility: Option<TaskListVisibility>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -260,8 +260,8 @@ fn default_job_status() -> DocketJobStatus {
     DocketJobStatus::Ready
 }
 
-fn default_job_visibility() -> WorkPlanVisibility {
-    WorkPlanVisibility::SameUser
+fn default_job_visibility() -> TaskListVisibility {
+    TaskListVisibility::SameUser
 }
 
 fn default_task_kind() -> DocketTaskKind {
@@ -283,21 +283,21 @@ pub(crate) async fn list_work_plans(
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
-    activity_payload: fn(Option<&work_plans::WorkPlanProjection>) -> Value,
+    activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
     plan_mode_workplan_payload: fn(&plan_mode::PlanModeSessionRow) -> Value,
 ) -> Result<Value, CustomError> {
     let args: WorkPlanListArguments = serde_json::from_value(arguments)?;
     let include_plan_mode = args.include_plan_mode.unwrap_or(true);
     let include_artifacts = args.include_artifacts.unwrap_or(true);
     let statuses = args.statuses.or_else(|| {
-        (!args.include_completed).then(|| vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked])
+        (!args.include_completed).then(|| vec![TaskListStatus::Active, TaskListStatus::Blocked])
     });
     let activity_rows = PgDocketService::from_pool(pool)
         .list_visible_work_plans(
             context.bear_id,
             role,
             context.user_id,
-            WorkPlanListFilter {
+            TaskListListFilter {
                 statuses,
                 owner_profile: args.owner_profile,
                 include_archived: args.include_archived,
@@ -331,7 +331,7 @@ pub(crate) async fn list_work_plans(
         .collect::<Vec<_>>();
     let task_lists = activity_rows
         .iter()
-        .map(work_plans::task_list_projection_from_work_plan)
+        .map(work_plans::task_list_projection_from_local)
         .collect::<Vec<_>>();
     let workplans = plan_mode_gates
         .iter()
@@ -376,10 +376,10 @@ pub(crate) async fn get_work_plan_status(
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
-    activity_payload: fn(Option<&work_plans::WorkPlanProjection>) -> Value,
+    activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
     let args: WorkPlanGetStatusArguments = serde_json::from_value(arguments)?;
-    let lookup = WorkPlanLookup {
+    let lookup = TaskListLookup {
         plan_id: args.plan_id,
         source_conversation_id: args
             .source_conversation_id
@@ -393,7 +393,7 @@ pub(crate) async fn get_work_plan_status(
         .await?;
     let task_list = plan
         .as_ref()
-        .map(work_plans::task_list_projection_from_work_plan);
+        .map(work_plans::task_list_projection_from_local);
     Ok(json!({
         "domain": "activity",
         "bear_id": context.bear_id,
@@ -408,12 +408,12 @@ pub(crate) async fn update_work_plan(
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
-    activity_payload: fn(Option<&work_plans::WorkPlanProjection>) -> Value,
+    activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
-    let mut args: WorkPlanUpdateArguments = serde_json::from_value(arguments)?;
-    work_plans::normalize_work_plan_item_ids(&mut args.items);
+    let mut args: TaskListUpdateArguments = serde_json::from_value(arguments)?;
+    work_plans::normalize_task_list_item_ids(&mut args.items);
     let row = PgDocketService::from_pool(pool)
-        .upsert_work_plan(WorkPlanUpsert {
+        .upsert_work_plan(TaskListUpsert {
             bear_id: context.bear_id,
             owner_profile: role,
             owner_agent_id: clean_optional(&context.binding_id),
@@ -424,7 +424,7 @@ pub(crate) async fn update_work_plan(
             source_channel: serde_json::to_value(&context.channel)?,
             plan_id: args.plan_id,
             expected_version: args.expected_version,
-            update: WorkPlanUpdate {
+            update: TaskListUpdate {
                 title: args.title,
                 summary: args.summary,
                 visibility: args.visibility,
@@ -435,7 +435,7 @@ pub(crate) async fn update_work_plan(
         })
         .await?;
     let plan = row;
-    let task_list = work_plans::task_list_projection_from_work_plan(&plan);
+    let task_list = work_plans::task_list_projection_from_local(&plan);
     Ok(json!({
         "domain": "activity",
         "bear_id": context.bear_id,
@@ -781,21 +781,15 @@ pub(crate) async fn checkout_task_list(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: TaskListCheckoutArguments = serde_json::from_value(arguments)?;
-    let source = if let Some(job_id) = args.job_id {
-        TaskListCheckoutSource::DocketJob {
-            job_id,
-            parent_task_id: args.parent_task_id,
-        }
-    } else {
-        TaskListCheckoutSource::LegacyWorkPlan(WorkPlanLookup {
-            plan_id: args.plan_id,
-            source_conversation_id: args
-                .source_conversation_id
-                .or_else(|| clean_optional(&context.conversation_id)),
-            source_client_session_id: args
-                .source_client_session_id
-                .or_else(|| source_client_session_id(context)),
-        })
+    let Some(job_id) = args.job_id else {
+        return Err(DenError::ValidationError(
+            "checkout_task_list requires job_id; legacy work-plan lookup has been retired".to_string(),
+        )
+        .into());
+    };
+    let source = TaskListCheckoutSource::DocketJob {
+        job_id,
+        parent_task_id: args.parent_task_id,
     };
     let task_list = PgDocketService::from_pool(pool)
         .checkout_task_list(

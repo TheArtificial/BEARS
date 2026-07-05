@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use den_docket::WorkPlanProjection;
+use den_docket::TaskListLocalProjection;
 use den_runtime::{plan_mode, turn_state};
 
 pub(crate) fn plan_mode_workplan_payload(row: &plan_mode::PlanModeSessionRow) -> Value {
@@ -40,7 +40,7 @@ pub(crate) fn no_active_workplan_payload() -> Value {
     })
 }
 
-pub(crate) fn activity_payload(plan: Option<&WorkPlanProjection>) -> Value {
+pub(crate) fn activity_payload(plan: Option<&TaskListLocalProjection>) -> Value {
     match plan {
         Some(plan) => json!({
             "domain": "activity",

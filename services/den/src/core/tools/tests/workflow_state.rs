@@ -37,7 +37,7 @@ use crate::core::{
 };
 use den_core::client_tools::{ClientToolName, provider_tool_descriptor};
 use den_core::tools::preflight::{ToolSemanticWarning, tool_warning_payload};
-use den_docket::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection};
+use den_docket::{TaskListUpdateItem, TaskListItemStatus, TaskListLocalProjection};
 use den_runtime::{plan_mode::PlanModeSessionRow};
 
 #[test]
@@ -101,15 +101,15 @@ fn plan_mode_payload_is_workplan_native() {
 #[test]
 fn work_plan_payload_is_activity_native() {
     let now = time::OffsetDateTime::UNIX_EPOCH;
-    let item = WorkPlanItem {
+    let item = TaskListUpdateItem {
         id: "item-1".to_string(),
         title: "Implement".to_string(),
         summary: None,
-        status: WorkPlanItemStatus::InProgress,
+        status: TaskListItemStatus::InProgress,
         blocked_reason: None,
         source_refs: Vec::new(),
     };
-    let plan = WorkPlanProjection {
+    let plan = TaskListLocalProjection {
         id: uuid::Uuid::nil(),
         bear_id: uuid::Uuid::nil(),
         title: "Activity".to_string(),

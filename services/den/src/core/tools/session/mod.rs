@@ -9,7 +9,7 @@ use crate::{
 use den_core::tools::constants::{
     DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
     DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
-    DEN_TASK_UPDATE, DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_UPDATE,
+    DEN_TASK_UPDATE, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE,
 };
 use den_memory::MemoryStoreManager;
 use den_service::conversation::persistence as conversation_persistence;
@@ -49,7 +49,7 @@ async fn invoke_workflow_tool(
 ) -> Result<Value, CustomError> {
     let role = context.profile.unwrap_or(BearProfile::Pair);
     let value = match tool_name {
-        DEN_WORK_PLAN_LIST => {
+        DEN_TASK_LISTS_LIST => {
             workflow::list_work_plans(
                 pool,
                 config,
@@ -62,7 +62,7 @@ async fn invoke_workflow_tool(
             )
             .await?
         }
-        DEN_WORK_PLAN_GET_STATUS => {
+        DEN_TASK_LISTS_GET_STATUS => {
             workflow::get_work_plan_status(
                 pool,
                 context,
@@ -72,7 +72,7 @@ async fn invoke_workflow_tool(
             )
             .await?
         }
-        DEN_WORK_PLAN_UPDATE => {
+        DEN_TASK_LISTS_UPDATE => {
             workflow::update_work_plan(
                 pool,
                 context,
