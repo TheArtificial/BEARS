@@ -162,6 +162,26 @@ A Bear in `pair` or `work` stance may:
 
 This is an effectiveness-oriented workflow, not a purity boundary. The boundary exists to preserve source-of-truth, audit, concurrency, and dispatch semantics.
 
+### Continuation and stop invariant
+
+The native runtime's autonomous continuation gate is tied to **active activity/task-list state**, not to prompt wording alone.
+
+- For `pair`, the continuation gate activates only when there is an active session task list/activity plan for the current session/conversation and stance.
+- For `pair` without an active task list, normal interactive behavior remains allowed.
+- For `work`, an active session task list/activity plan is required runtime state, not an optional aid.
+- For `work` without an active task list, the runtime must not fall back to generic conversational behavior; it must stop with an explicit missing-task-list blocker.
+
+When the gate is active:
+
+- progress-only final answers are not valid terminal responses while incomplete, unblocked task-list items remain;
+- valid terminal responses are limited to completed work, a hard blocker, or a required safety/permission stop;
+- interruption recovery should resume from the next incomplete unblocked task-list item rather than merely summarizing progress.
+
+This invariant applies to both `pair` and `work`, but `work` is stricter:
+
+- `pair` may still terminate for genuine clarification when the active task list exists but safe continuation depends on missing user intent;
+- `work` should prefer continued execution and should treat absence of an active task list as a runtime configuration/state error, not as an invitation to chat.
+
 ### Docket invariants retained
 
 This ADR does not weaken ADR-0034’s execution invariant:

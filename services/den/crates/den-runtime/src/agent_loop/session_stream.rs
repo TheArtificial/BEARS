@@ -32,6 +32,7 @@ use den_core::tools::{
     result_compaction::{compact_json_tool_result, compact_json_tool_result_with_artifact},
 };
 use den_core::{config::Config, profile::BearProfile, DenError};
+use crate::runtime::turn_state::{autonomous_execution_gate_for_plan, should_allow_terminal_response};
 
 use super::session_store::AgentLoopSession;
 use super::transcript::{
@@ -770,6 +771,42 @@ impl Stream for SessionTrackingStream {
                 if !self.assistant_text.trim().is_empty() {
                     self.persist_assistant_tool_step();
                 }
+                let active_activity_plan = self
+                    .store
+                    .get(&self.session_key)
+                    .and_then(|session| session.active_activity_plan);
+                if !should_allow_terminal_response(
+                    self.profile,
+                    active_activity_plan.as_ref(),
+                    &self.assistant_text,
+                ) {
+                    let next_task = active_activity_plan.as_ref().and_then(|plan| {
+                            autonomous_execution_gate_for_plan(
+                                self.profile,
+                                Some(&plan),
+                                crate::runtime::turn_state::classify_autonomous_final_response(
+                                    &self.assistant_text,
+                                ),
+                            )
+                            .next_incomplete_task_title
+                        })
+                        .unwrap_or_else(|| "the next incomplete task".to_string());
+                    tracing::info!(
+                        client_session_id = %self.client_session_id,
+                        profile = %self.profile.as_str(),
+                        next_task = %next_task,
+                        "native runtime suppressed terminal response because active task-list work remains"
+                    );
+                    return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
+                        RuntimeSemanticEvent::TurnFailed {
+                            turn: None,
+                            category: den_protocol::RuntimeErrorCategory::Internal,
+                            message: format!(
+                                "Autonomous task remains active; continue with {next_task} instead of stopping with a progress-only summary"
+                            ),
+                        },
+                    ))));
+                }
                 let pool = self.pool.clone();
                 let config = self.config.clone();
                 let bear_id = self.bear_id;
@@ -934,6 +971,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
+            active_activity_plan: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,

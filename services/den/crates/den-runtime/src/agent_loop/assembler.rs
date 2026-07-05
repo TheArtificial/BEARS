@@ -1,5 +1,6 @@
 use den_core::config::Config;
 use den_core::DenError;
+use den_docket::{DocketService, PgDocketService, WorkPlanListFilter, WorkPlanProjection};
 use den_memory::MemoryStoreManager;
 use den_service::bears::{
     db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear,
@@ -87,6 +88,29 @@ pub struct AssembledNativeTurn {
     /// disabled, skipped (e.g. empty query), or failed best-effort.
     pub recall_diagnostic: Option<Value>,
     pub budget_components: AssembledTurnBudgetComponents,
+    pub active_activity_plan: Option<WorkPlanProjection>,
+}
+
+async fn load_active_activity_plan(ctx: &AssembleTurnContext<'_>) -> Result<Option<WorkPlanProjection>, DenError> {
+    let Some(user_id) = ctx.user_id else {
+        return Ok(None);
+    };
+    let plans = PgDocketService::from_pool(ctx.pool)
+        .list_visible_work_plans(
+            ctx.bear_id,
+            ctx.profile,
+            user_id,
+            WorkPlanListFilter::default(),
+        )
+        .await?;
+    Ok(plans.into_iter().find(|plan| {
+        matches!(plan.status.as_str(), "active" | "blocked")
+            && plan.source_conversation_id.as_deref() == Some(ctx.conversation_id)
+            && match ctx.session_id {
+                Some(session_id) => plan.source_client_session_id.as_deref() == Some(session_id),
+                None => true,
+            }
+    }))
 }
 
 pub fn projected_memory_session_diagnostic(projection: &KeyMemoryProjectionResult) -> Value {
@@ -295,6 +319,7 @@ pub async fn assemble_native_turn_for_bear(
         ctx.profile,
     )
     .await?;
+    let active_activity_plan = load_active_activity_plan(&ctx).await?;
 
     let mut system_text = compiled_prompt;
     if let Some(block) = render_key_memory_projection_block(&projection) {
@@ -456,5 +481,6 @@ pub async fn assemble_native_turn_for_bear(
         key_memory_projection: Some(projection),
         recall_diagnostic,
         budget_components,
+        active_activity_plan,
     })
 }

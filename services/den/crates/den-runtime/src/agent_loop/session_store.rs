@@ -4,6 +4,7 @@ use std::{
 };
 
 use den_core::profile::BearProfile;
+use den_docket::WorkPlanProjection;
 use den_protocol::ContextBudgetReport;
 use serde_json::Value;
 use uuid::Uuid;
@@ -42,6 +43,7 @@ pub struct AgentLoopSession {
     pub latest_context_budget: Option<ContextBudgetReport>,
     pub latest_projected_memory: Option<Value>,
     pub latest_recalled_memory: Option<Value>,
+    pub active_activity_plan: Option<WorkPlanProjection>,
     pub profile: BearProfile,
     pub overflow_retry_attempted: bool,
     pub overflow_compaction_recovered: bool,

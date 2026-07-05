@@ -607,6 +607,12 @@ async fn build_session(
     ));
     let messages = assembled.messages;
     let budget_components = assembled.budget_components;
+    let active_activity_plan = assembled.active_activity_plan;
+    if profile.profile == BearProfile::Work && active_activity_plan.is_none() {
+        return Err(DenError::ValidationError(
+            "Work stance requires an active task list before execution can continue".to_string(),
+        ));
+    }
     let tools =
         merge_den_and_client_tools(deps.config, profile.profile, client_tools, human_message)?;
     let session_key = agent_loop_session_key(conversation_id, client_session_id);
@@ -679,6 +685,7 @@ async fn build_session(
         latest_context_budget: None,
         latest_projected_memory,
         latest_recalled_memory,
+        active_activity_plan,
         profile: profile.profile,
         overflow_retry_attempted: false,
         overflow_compaction_recovered: false,
@@ -1389,6 +1396,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
+            active_activity_plan: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -1496,6 +1504,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
+            active_activity_plan: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -1652,6 +1661,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
+            active_activity_plan: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -1800,6 +1810,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
+            active_activity_plan: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -1922,6 +1933,15 @@ mod tests {
             prompt_for_model("Please continue.", None),
             "Please continue."
         );
+    }
+
+    #[test]
+    fn work_without_active_task_list_does_not_use_task_list_terminal_gate() {
+        assert!(crate::runtime::turn_state::should_allow_terminal_response(
+            BearProfile::Work,
+            None,
+            "What I changed: added one test. Remaining work: more later."
+        ));
     }
 
 }

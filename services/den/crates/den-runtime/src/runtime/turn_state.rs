@@ -1,6 +1,8 @@
+use std::str::FromStr;
+
 use serde_json::{Value, json};
 
-use den_core::client_tools::ResolvedSessionPolicy;
+use den_core::{client_tools::ResolvedSessionPolicy, profile::BearProfile};
 use crate::plan_mode;
 use den_docket::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection};
 
@@ -85,10 +87,11 @@ pub fn turn_state_from_sources(
 }
 
 pub fn autonomous_execution_gate_for_plan(
+    profile: BearProfile,
     plan: Option<&WorkPlanProjection>,
     final_response_kind: AutonomousFinalResponseKind,
 ) -> AutonomousExecutionGate {
-    let Some(plan) = plan.filter(|plan| is_autonomous_implementation_plan(plan)) else {
+    let Some(plan) = plan.filter(|plan| is_autonomous_implementation_plan(profile, plan)) else {
         return AutonomousExecutionGate {
             is_active_autonomous_task: false,
             has_incomplete_unblocked_items: false,
@@ -155,8 +158,17 @@ pub fn classify_autonomous_final_response(text: &str) -> AutonomousFinalResponse
     AutonomousFinalResponseKind::CompletionFinal
 }
 
+pub fn should_allow_terminal_response(
+    profile: BearProfile,
+    active_activity_plan: Option<&WorkPlanProjection>,
+    assistant_text: &str,
+) -> bool {
+    let kind = classify_autonomous_final_response(assistant_text);
+    autonomous_execution_gate_for_plan(profile, active_activity_plan, kind).may_stop
+}
+
 pub fn autonomous_resume_obligation_text(plan: &WorkPlanProjection) -> Option<String> {
-    if !is_autonomous_implementation_plan(plan) {
+    if !matches!(plan.owner_profile.as_str(), "pair" | "work") {
         return None;
     }
     let items = plan
@@ -282,13 +294,20 @@ fn activity_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
 }
 
 fn autonomous_execution_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
-    let Some(plan) = plan.filter(|plan| is_autonomous_implementation_plan(plan)) else {
+    let profile = plan
+        .and_then(|plan| BearProfile::from_str(&plan.owner_profile).ok())
+        .unwrap_or(BearProfile::Pair);
+    let Some(plan) = plan.filter(|plan| is_autonomous_implementation_plan(profile, plan)) else {
         return json!({
             "mode": Value::Null,
             "active": false,
         });
     };
-    let gate = autonomous_execution_gate_for_plan(Some(plan), AutonomousFinalResponseKind::ProgressReport);
+    let gate = autonomous_execution_gate_for_plan(
+        profile,
+        Some(plan),
+        AutonomousFinalResponseKind::ProgressReport,
+    );
     let last_verified_completed_step = plan
         .items
         .iter()
@@ -325,8 +344,9 @@ fn autonomous_task_json(item: &WorkPlanItem) -> Value {
     })
 }
 
-fn is_autonomous_implementation_plan(plan: &WorkPlanProjection) -> bool {
-    matches!(plan.owner_profile.as_str(), "pair")
+fn is_autonomous_implementation_plan(profile: BearProfile, plan: &WorkPlanProjection) -> bool {
+    matches!(profile, BearProfile::Pair | BearProfile::Work)
+        && matches!(plan.owner_profile.as_str(), "pair" | "work")
         && matches!(plan.status.as_str(), "active" | "blocked" | "completed" | "cancelled")
 }
 
@@ -481,6 +501,7 @@ mod tests {
             ],
         );
         let gate = autonomous_execution_gate_for_plan(
+            BearProfile::Pair,
             Some(&plan),
             classify_autonomous_final_response(
                 "What I changed: added one test. Remaining work: gate final answers.",
@@ -498,6 +519,7 @@ mod tests {
             vec![item("done", WorkPlanItemStatus::Completed)],
         );
         let gate = autonomous_execution_gate_for_plan(
+            BearProfile::Pair,
             Some(&plan),
             AutonomousFinalResponseKind::CompletionFinal,
         );
@@ -512,10 +534,20 @@ mod tests {
             vec![item("blocked", WorkPlanItemStatus::Blocked)],
         );
         let gate = autonomous_execution_gate_for_plan(
+            BearProfile::Pair,
             Some(&plan),
             AutonomousFinalResponseKind::BlockedFinal,
         );
         assert!(gate.has_hard_blocker);
         assert!(gate.may_stop);
+    }
+
+    #[test]
+    fn pair_without_active_task_list_does_not_trigger_terminal_gate() {
+        assert!(should_allow_terminal_response(
+            BearProfile::Pair,
+            None,
+            "What I changed: added one test. Remaining work: more later."
+        ));
     }
 }
