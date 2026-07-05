@@ -270,7 +270,7 @@ fn observation_is_successful_mutation(observation: &ToolContinuationObservation)
     !observation.failed
         && matches!(
             observation.class,
-            ToolBudgetClass::Write | ToolBudgetClass::Execute | ToolBudgetClass::Destructive
+            ToolBudgetClass::Write | ToolBudgetClass::Destructive
         )
 }
 
@@ -875,6 +875,27 @@ mod tests {
         assert_eq!(evaluation.next_state.tool_usage.search, 7);
         assert!(evaluation.stop_reason.is_none());
         assert!(evaluation.warning.is_some());
+    }
+
+    #[test]
+    fn successful_execute_does_not_replenish_exploration_budget() {
+        let mut prior = state();
+        prior.tool_usage.read = 12;
+        prior.tool_usage.search = 7;
+        prior.tool_usage.total = 19;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            1_000,
+            &prior,
+            &[observation("terminal_run_command", r#"{"command":"ls"}"#, false)],
+        );
+
+        assert_eq!(evaluation.next_state.tool_usage.read, 12);
+        assert_eq!(evaluation.next_state.tool_usage.search, 7);
+        assert_eq!(evaluation.next_state.tool_usage.total, 20);
+        assert!(evaluation.stop_reason.is_none());
     }
 
     #[test]
