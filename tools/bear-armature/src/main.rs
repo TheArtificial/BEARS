@@ -83,7 +83,6 @@ use tower_service::Service;
 use tools::adapter_env::{
     collect_bear_environment, fetch_den_runtime_state, handle_bear_environment,
 };
-use tools::command_policy::command_workspace_scope_label;
 use tools::fs::{
     handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
     handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
@@ -7405,17 +7404,18 @@ fn command_line_from_value(value: &Value) -> Option<String> {
     })
 }
 
-fn command_scope_label_from_value(value: &Value) -> Option<String> {
-    let full = command_line_from_value(value)?;
-    Some(command_workspace_scope_label(&full).unwrap_or(full))
-}
-
-fn command_args_from_event(event: &Value) -> Option<&Value> {
+fn tool_args_from_event(event: &Value) -> Option<&Value> {
     event
         .get("args")
         .or_else(|| event.get("arguments"))
+        .or_else(|| event.get("input"))
+        .or_else(|| event.get("raw_input"))
         .or_else(|| event.pointer("/data/arguments"))
+        .or_else(|| event.pointer("/data/input"))
+        .or_else(|| event.pointer("/data/raw_input"))
         .or_else(|| event.pointer("/data/tool_call/arguments"))
+        .or_else(|| event.pointer("/data/tool_call/input"))
+        .or_else(|| event.pointer("/data/tool_call/raw_input"))
 }
 
 fn compact_tool_raw_output(value: Value) -> Value {
@@ -8995,6 +8995,12 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             "Reading task list status",
             "read task list status",
         ),
+        "update_task" => ToolDisplay::builtin(
+            "Update task",
+            ToolKind::Edit,
+            "Updating task",
+            "update task",
+        ),
         "update_task_list" | "update_plan" => ToolDisplay::builtin(
             "Update task list",
             ToolKind::Edit,
@@ -9122,19 +9128,23 @@ fn permission_family_label(tool_name: &str) -> &'static str {
 
 fn tool_call_title(tool_name: &str, event: &Value) -> String {
     if matches!(tool_name, "set_conversation_title") {
-        let title = command_args_from_event(event)
+        if let Some(title) = tool_args_from_event(event)
             .and_then(|args| args.get("title"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|title| !title.is_empty())
-            .unwrap_or("conversation");
-        return format!("Set conversation title: {}", truncate_title(title));
+        {
+            return format!("Set conversation title: {}", truncate_title(title));
+        }
+        // ponytail: if a future transport shape hides the title somewhere else, prefer a
+        // plain static label over pretending the requested title was `conversation`.
+        return "Set conversation title".to_string();
     }
     if matches!(
         tool_name,
         "run_command" | "process_run" | "terminal_run_command"
     ) {
-        let command_args = command_args_from_event(event);
+        let command_args = tool_args_from_event(event);
         let command = command_args
             .and_then(|args| args.get("command"))
             .and_then(Value::as_str)
@@ -9157,13 +9167,7 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
             } else {
                 format!(" {}", args.join(" "))
             };
-            let rendered = if tool_name == "run_command" {
-                command_args
-                    .and_then(command_scope_label_from_value)
-                    .unwrap_or_else(|| format!("{command}{suffix}"))
-            } else {
-                format!("{command}{suffix}")
-            };
+            let rendered = format!("{command}{suffix}");
             let rendered = if rendered.chars().count() > 80 {
                 format!("{}…", rendered.chars().take(79).collect::<String>())
             } else {
@@ -9172,11 +9176,38 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
             return if tool_name == "terminal_run_command" {
                 format!("Run terminal command: {rendered}")
             } else if tool_name == "run_command" {
-                format!("Run Command: {rendered}")
+                format!("Run command: {rendered}")
             } else {
                 format!("Run process: {rendered}")
             };
         }
+    }
+    if matches!(tool_name, "update_task") {
+        let args = tool_args_from_event(event);
+        let subject = args
+            .and_then(|args| args.get("title"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                args.and_then(|args| args.get("task_id"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            });
+        let status = args
+            .and_then(|args| args.get("status"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        return match (subject, status) {
+            (Some(subject), Some(status)) => {
+                format!("Update task: {} → {}", truncate_title(subject), status)
+            }
+            (Some(subject), None) => format!("Update task: {}", truncate_title(subject)),
+            (None, Some(status)) => format!("Update task: {status}"),
+            (None, None) => "Update task".to_string(),
+        };
     }
     if matches!(tool_name, "fs_search_files") {
         let query = event
@@ -9411,7 +9442,11 @@ fn tool_status_from_str(status: &str) -> ToolCallStatus {
 fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay) -> String {
     if matches!(
         tool_name,
-        "set_conversation_title" | "run_command" | "process_run" | "terminal_run_command"
+        "set_conversation_title"
+            | "run_command"
+            | "process_run"
+            | "terminal_run_command"
+            | "update_task"
     ) {
         return event
             .map(|event| tool_call_title(tool_name, event))
@@ -9491,7 +9526,7 @@ async fn send_tool_call_update(
         if let Some(locations) = tool_locations_from_event(tool_name, event) {
             tool_call = tool_call.locations(locations);
         }
-        if let Some(args) = command_args_from_event(event) {
+        if let Some(args) = tool_args_from_event(event) {
             tool_call = tool_call.raw_input(Some(args.clone()));
         }
     }
@@ -11450,6 +11485,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             ("web_search", "Search web"),
             ("list_task_lists", "List task lists"),
             ("get_task_list_status", "Get task list status"),
+            ("update_task", "Update task"),
             ("update_task_list", "Update task list"),
             ("request_task_list_handoff", "Request work handoff"),
         ] {
@@ -11480,6 +11516,17 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             ),
             "Set conversation title: Nested ACP card title"
         );
+        assert_eq!(
+            tool_call_title(
+                "set_conversation_title",
+                &json!({ "data": { "tool_call": { "input": { "title": "Nested ACP input title" } } } })
+            ),
+            "Set conversation title: Nested ACP input title"
+        );
+        assert_eq!(
+            tool_call_title("set_conversation_title", &json!({ "args": {} })),
+            "Set conversation title"
+        );
         let stale_display_event = json!({
             "display": { "title": "Set conversation title: conversation" },
             "arguments": { "title": "Actual ACP card title" }
@@ -11494,7 +11541,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             "Set conversation title: Actual ACP card title"
         );
         assert_eq!(
-            command_args_from_event(&stale_display_event)
+            tool_args_from_event(&stale_display_event)
                 .and_then(|args| args.get("title"))
                 .and_then(Value::as_str),
             Some("Actual ACP card title")
@@ -11695,7 +11742,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         });
         assert_eq!(
             tool_call_title("run_command", &event),
-            "Run Command: cargo test"
+            "Run command: cargo test --all"
         );
         let display = ToolDisplay::from_event(
             "run_command",
@@ -11713,7 +11760,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                 })),
                 &display
             ),
-            "Run Command: cargo test"
+            "Run command: cargo test --all"
         );
 
         let value = json!({
@@ -11744,7 +11791,38 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
 
         assert_eq!(
             tool_call_title("run_command", &event),
-            "Run Command: git status"
+            "Run command: git status --short"
+        );
+    }
+
+    #[test]
+    fn update_task_title_includes_useful_target_fields() {
+        let event = json!({
+            "data": {
+                "tool_call": {
+                    "input": {
+                        "task_id": "task-123",
+                        "title": "Patch live ACP card titles",
+                        "status": "done"
+                    }
+                }
+            },
+            "display": { "title": "Update Task" }
+        });
+        assert_eq!(
+            tool_call_title("update_task", &event),
+            "Update task: Patch live ACP card titles → done"
+        );
+        let display = ToolDisplay::from_event("update_task", &event);
+        assert_eq!(
+            tool_card_title("update_task", Some(&event), &display),
+            "Update task: Patch live ACP card titles → done"
+        );
+
+        let id_only = json!({ "arguments": { "task_id": "task-456" } });
+        assert_eq!(
+            tool_call_title("update_task", &id_only),
+            "Update task: task-456"
         );
     }
 

@@ -838,6 +838,28 @@ fn bearwire_tool_event_to_legacy_tool_request(event: &Value, approval_required: 
     })
 }
 
+fn bearwire_session_info_update_to_legacy(event: &Value) -> Value {
+    let data = event.get("data").unwrap_or(&Value::Null);
+    json!({
+        "type": "session_info_update",
+        "title": event
+            .get("title")
+            .or_else(|| data.get("title"))
+            .cloned()
+            .unwrap_or(Value::Null),
+        "updated_at": event
+            .get("updated_at")
+            .or_else(|| data.get("updated_at"))
+            .cloned()
+            .unwrap_or(Value::Null),
+        "meta": event
+            .get("meta")
+            .or_else(|| data.get("meta"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    })
+}
+
 fn bearwire_permission_event_to_legacy_permission_request(event: &Value) -> Value {
     let data = event.get("data").unwrap_or(&Value::Null);
     let tool_call = data.get("tool_call").unwrap_or(&Value::Null);
@@ -1131,12 +1153,13 @@ async fn handle_bearwire_event(
             }
         }
         "session_info_update" => {
+            let legacy = bearwire_session_info_update_to_legacy(event);
             handle_den_event(
                 config,
                 adapter_state,
                 shared_state,
                 session_id,
-                event,
+                &legacy,
                 turn_token,
             )
             .await?;
@@ -1368,6 +1391,23 @@ mod tests {
         assert_eq!(legacy["type"], "tool_request");
         assert_eq!(legacy["tool_name"], "fs_read_text_file");
         assert_eq!(legacy["approval"]["required"], false);
+    }
+
+    #[test]
+    fn bearwire_session_info_update_projects_nested_title_to_legacy_event() {
+        let event = json!({
+            "type": "session_info_update",
+            "data": {
+                "title": "Visible conversation title",
+                "updated_at": "2026-07-05T19:00:00Z"
+            }
+        });
+
+        let legacy = bearwire_session_info_update_to_legacy(&event);
+
+        assert_eq!(legacy["type"], "session_info_update");
+        assert_eq!(legacy["title"], "Visible conversation title");
+        assert_eq!(legacy["updated_at"], "2026-07-05T19:00:00Z");
     }
 
     #[test]
