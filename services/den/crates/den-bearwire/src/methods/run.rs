@@ -154,6 +154,10 @@ fn run_failed_user_message(reason: &str, message: &str) -> Option<&'static str> 
     None
 }
 
+fn run_failed_history_marker(reason: &str, message: &str) -> Option<String> {
+    run_failed_user_message(reason, message).map(str::to_string)
+}
+
 fn numeric_message_field(message: &str, field: &str) -> Option<u64> {
     let start = message.find(field)? + field.len();
     let rest = &message[start..];
@@ -197,6 +201,97 @@ fn failure_context_with_diagnostics(
     }
     object.insert("diagnostic".to_string(), diagnostic);
     Some(context)
+}
+
+fn runtime_progress_history_marker(
+    kind: &str,
+    text: Option<&str>,
+    detail: Option<&serde_json::Value>,
+) -> Option<(String, serde_json::Value)> {
+    match kind {
+        "turn_budget_warning" => Some((
+            "BEARS is close to this turn's budget, so it may wrap up or ask for a fresh turn soon."
+                .to_string(),
+            json!({ "kind": kind, "runtime_text": text, "detail": detail }),
+        )),
+        "autonomous_continuation_gate" => {
+            let next_task = detail
+                .and_then(|value| value.get("next_task"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let marker = if let Some(next_task) = next_task {
+                format!("BEARS kept the task focus active and asked the model to continue `{next_task}`.")
+            } else {
+                "BEARS kept the task focus active and asked the model to continue the next incomplete item."
+                    .to_string()
+            };
+            Some((
+                marker,
+                json!({ "kind": kind, "runtime_text": text, "detail": detail }),
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn runtime_event_history_marker(
+    event: &den_protocol::RuntimeStreamEvent,
+) -> Option<(String, String, serde_json::Value)> {
+    match event {
+        den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::RunProgress {
+                kind,
+                text,
+                detail,
+                ..
+            },
+        ) => runtime_progress_history_marker(kind, text.as_deref(), detail.as_ref())
+            .map(|(marker, metadata)| (kind.clone(), marker, metadata)),
+        _ => None,
+    }
+}
+
+async fn persist_visible_runtime_marker(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    marker_kind: &str,
+    marker_text: String,
+    mut metadata: serde_json::Value,
+) {
+    let Ok(Some(session)) =
+        client_sessions::find_for_user_bear_session_id(pool, user_id, bear_id, session_id).await
+    else {
+        return;
+    };
+    let conversation_id = session
+        .resolved_conversation_id
+        .clone()
+        .unwrap_or_else(|| session.conversation_id.clone());
+    let provenance = ConversationEventProvenance::client_session(session_id.to_string());
+    metadata["source"] = json!("den.bearwire");
+    metadata["event"] = json!("runtime_marker");
+    metadata["scope_id"] = json!(run_id);
+    metadata["request_id"] = json!(format!("{run_id}:{marker_kind}"));
+    metadata["marker_kind"] = json!(marker_kind);
+    metadata["run_id"] = json!(run_id);
+    let _ = persist_canonical_conversation_record(
+        &canonical_persistence_context(
+            pool.clone(),
+            bear_id,
+            Some(user_id),
+            conversation_id,
+            Some(session_id.to_string()),
+            Some(run_id.to_string()),
+            provenance.scope_id,
+            false,
+        ),
+        &CanonicalConversationRecord::visible_assistant_message(marker_text, metadata, None),
+    )
+    .await;
 }
 
 fn client_tool_descriptors_from_context(
@@ -749,6 +844,7 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     request_id: Uuid,
     started_at: Option<Instant>,
 ) {
+    let history_marker = runtime_event_history_marker(&runtime_event);
     if let den_protocol::RuntimeStreamEvent::Semantic(
         den_protocol::RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
@@ -807,6 +903,19 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
         started_at,
     )
     .await;
+    if let Some((marker_kind, marker_text, metadata)) = history_marker {
+        persist_visible_runtime_marker(
+            pool,
+            session_id,
+            run_id,
+            bear_id,
+            user_id,
+            &marker_kind,
+            marker_text,
+            metadata,
+        )
+        .await;
+    }
     for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
         if event.event_type == "client.waiting" {
             if let Some(obligation) = active_obligation.as_ref() {
@@ -924,6 +1033,11 @@ pub(crate) async fn persist_run_failed(
         let provenance = ConversationEventProvenance::client_session(session_id.to_string());
         let (summary, content_json) =
             normalized_operational_outcome(reason, &message, run_id, context.as_ref());
+        let marker_kind = content_json.get("kind").cloned().unwrap_or(Value::Null);
+        let marker_retryable = content_json
+            .get("retryable")
+            .cloned()
+            .unwrap_or(Value::Null);
         let _ = persist_canonical_conversation_record(
             &canonical_persistence_context(
                 pool.clone(),
@@ -942,6 +1056,23 @@ pub(crate) async fn persist_run_failed(
             ),
         )
         .await;
+        if let Some(marker) = run_failed_history_marker(reason, &message) {
+            persist_visible_runtime_marker(
+                pool,
+                session_id,
+                run_id,
+                bear_id,
+                user_id,
+                "operational_outcome",
+                marker,
+                json!({
+                    "reason": reason,
+                    "kind": marker_kind,
+                    "retryable": marker_retryable,
+                }),
+            )
+            .await;
+        }
     }
 }
 
@@ -1686,6 +1817,27 @@ mod tests {
         assert!(summary.contains("no infrastructure repair action"), "{summary}");
         assert_eq!(content["kind"], "turn_budget_exhausted");
         assert_eq!(content["retryable"], false);
+    }
+
+    #[test]
+    fn runtime_progress_history_marker_covers_budget_and_task_focus() {
+        let (budget_marker, budget_metadata) = runtime_progress_history_marker(
+            "turn_budget_warning",
+            Some("Budget advisory: next read will stop the turn."),
+            Some(&json!({ "code": "tool_class_budget_warning" })),
+        )
+        .expect("budget marker");
+        assert!(budget_marker.contains("close to this turn's budget"));
+        assert_eq!(budget_metadata["kind"], "turn_budget_warning");
+
+        let (task_marker, task_metadata) = runtime_progress_history_marker(
+            "autonomous_continuation_gate",
+            None,
+            Some(&json!({ "next_task": "Patch runtime markers" })),
+        )
+        .expect("task focus marker");
+        assert!(task_marker.contains("Patch runtime markers"));
+        assert_eq!(task_metadata["kind"], "autonomous_continuation_gate");
     }
 
     fn available_model(handle: &str, model: &str) -> den_service::bifrost::BifrostModelMetadata {

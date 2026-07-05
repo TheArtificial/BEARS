@@ -1484,12 +1484,12 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
         bear_id,
         user_id,
         "runtime_internal",
-        "I stopped because this turn hit the emergency continuation fuse.".to_string(),
+        "I stopped because this turn exhausted its wall-clock budget (elapsed=252985ms/limit=240000ms).".to_string(),
         None,
     )
     .await;
 
-    let row = sqlx::query(
+    let rows = sqlx::query(
         r#"
         SELECT message_type, role, visibility, content_text, content_json
         FROM conversation_messages
@@ -1498,21 +1498,27 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
             WHERE bear_id = $1 AND external_conversation_id = $2
             LIMIT 1
         )
-        ORDER BY sequence_no DESC
-        LIMIT 1
+        ORDER BY sequence_no ASC
         "#,
     )
     .bind(bear_id)
     .bind(&session.conversation_id)
-    .fetch_optional(&pool)
+    .fetch_all(&pool)
     .await
-    .expect("query operational outcome row")
-    .expect("operational outcome row persisted immediately");
-    let message_type: String = row.try_get("message_type").expect("decode message_type");
-    let role: Option<String> = row.try_get("role").expect("decode role");
-    let visibility: String = row.try_get("visibility").expect("decode visibility");
-    let content_text: String = row.try_get("content_text").expect("decode content_text");
-    let content_json: Value = row.try_get("content_json").expect("decode content_json");
+    .expect("query operational outcome rows");
+    assert_eq!(rows.len(), 2, "hidden model note plus visible marker");
+    let hidden = rows
+        .iter()
+        .find(|row| {
+            row.try_get::<String, _>("visibility")
+                .is_ok_and(|visibility| visibility == "hidden_from_user")
+        })
+        .expect("hidden operational outcome row");
+    let message_type: String = hidden.try_get("message_type").expect("decode message_type");
+    let role: Option<String> = hidden.try_get("role").expect("decode role");
+    let visibility: String = hidden.try_get("visibility").expect("decode visibility");
+    let content_text: String = hidden.try_get("content_text").expect("decode content_text");
+    let content_json: Value = hidden.try_get("content_json").expect("decode content_json");
 
     assert_eq!(message_type, "assistant");
     assert_eq!(role.as_deref(), Some("assistant"));
@@ -1521,6 +1527,20 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
     assert_eq!(content_json["event"], "operational_outcome");
     assert_eq!(content_json["reason"], "runtime_internal");
     assert_eq!(content_json["run_id"], run_id);
+
+    let visible = rows
+        .iter()
+        .find(|row| {
+            row.try_get::<String, _>("visibility")
+                .is_ok_and(|visibility| visibility == "default")
+        })
+        .expect("visible runtime marker row");
+    let marker_text: String = visible.try_get("content_text").expect("decode marker text");
+    let marker_json: Value = visible.try_get("content_json").expect("decode marker json");
+    assert!(marker_text.contains("BEARS stopped this turn after it ran too long"));
+    assert_eq!(marker_json["event"], "runtime_marker");
+    assert_eq!(marker_json["marker_kind"], "operational_outcome");
+    assert_eq!(marker_json["run_id"], run_id);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
