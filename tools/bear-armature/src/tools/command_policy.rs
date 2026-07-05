@@ -126,7 +126,10 @@ pub(crate) fn process_command_preferred(command: &str, args: &[String]) -> bool 
     if command_policy_for(&full).is_some() {
         return false;
     }
-    matches!(command, "printf" | "true" | "false" | "pwd" | "uname" | "whoami" | "date" | "env")
+    matches!(
+        command,
+        "printf" | "true" | "false" | "pwd" | "uname" | "whoami" | "date" | "env"
+    )
 }
 
 pub(crate) fn rtk_wrap_allowed(command: &str, args: &[String]) -> bool {
@@ -174,7 +177,8 @@ mod tests {
             Some("pytest")
         );
         assert_eq!(
-            command_workspace_scope_label("python -m pytest tests/unit/test_x.py -k foo").as_deref(),
+            command_workspace_scope_label("python -m pytest tests/unit/test_x.py -k foo")
+                .as_deref(),
             Some("python -m pytest")
         );
     }

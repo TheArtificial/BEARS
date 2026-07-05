@@ -516,7 +516,9 @@ fn validate_terminal_command_args(
             ));
         }
     }
-    if validation == TerminalCommandValidation::Allowlisted && !terminal_command_allowed(command, args) {
+    if validation == TerminalCommandValidation::Allowlisted
+        && !terminal_command_allowed(command, args)
+    {
         Err(anyhow!(
             "terminal_run_command command `{}` is not allowed by command policy",
             if args.is_empty() {

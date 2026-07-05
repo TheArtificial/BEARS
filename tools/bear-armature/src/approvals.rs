@@ -364,7 +364,8 @@ fn command_workspace_fingerprint(
     prefix: &str,
     command: &str,
 ) -> Option<String> {
-    let command = command_workspace_scope_label(command).unwrap_or_else(|| normalize_command(command));
+    let command =
+        command_workspace_scope_label(command).unwrap_or_else(|| normalize_command(command));
     if command.is_empty() {
         return None;
     }
@@ -573,7 +574,8 @@ pub(crate) fn permission_options_for_context(
             PermissionOptionKind::AllowAlways,
         ));
     } else if let Some(command) = target_command.map(str::trim).filter(|s| !s.is_empty()) {
-        let exact = command_workspace_scope_label(command).unwrap_or_else(|| normalize_command(command));
+        let exact =
+            command_workspace_scope_label(command).unwrap_or_else(|| normalize_command(command));
         options.push(PermissionOption::new(
             "allow_command_exact_workspace",
             format!("Always allow `{exact}` in this workspace"),
@@ -1435,7 +1437,8 @@ mod tests {
         );
         let cargo_serialized = serde_json::to_value(&cargo).unwrap().to_string();
         assert!(cargo_serialized.contains("Always allow `cargo test` in this workspace"));
-        assert!(!cargo_serialized.contains("Always allow `cargo test --lib foo::bar` in this workspace"));
+        assert!(!cargo_serialized
+            .contains("Always allow `cargo test --lib foo::bar` in this workspace"));
 
         let pytest = permission_options_for_context(
             Some(&context),
@@ -1446,7 +1449,9 @@ mod tests {
         );
         let pytest_serialized = serde_json::to_value(&pytest).unwrap().to_string();
         assert!(pytest_serialized.contains("Always allow `python -m pytest` in this workspace"));
-        assert!(!pytest_serialized.contains("Always allow `python -m pytest tests/unit/test_x.py -k foo` in this workspace"));
+        assert!(!pytest_serialized.contains(
+            "Always allow `python -m pytest tests/unit/test_x.py -k foo` in this workspace"
+        ));
     }
 
     #[test]

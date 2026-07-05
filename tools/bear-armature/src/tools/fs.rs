@@ -33,7 +33,8 @@ fn resolve_optional_session_tool_root(
 }
 
 fn parse_fs_args<T: for<'de> Deserialize<'de>>(value: &Value) -> Result<T> {
-    serde_json::from_value(value.clone()).map_err(|err| anyhow!("invalid filesystem tool args: {err}"))
+    serde_json::from_value(value.clone())
+        .map_err(|err| anyhow!("invalid filesystem tool args: {err}"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,10 +106,7 @@ pub(crate) async fn handle_read_text_file(
     policy: &ToolPolicy,
 ) -> Result<Value> {
     let args: ReadTextFileArgs = parse_fs_args(&params)?;
-    let line = args
-        .line
-        .unwrap_or(1)
-        .max(1) as usize;
+    let line = args.line.unwrap_or(1).max(1) as usize;
     let policy_max_lines = policy.max_lines.unwrap_or(2_000).clamp(1, 2_000);
     let limit = args
         .limit
@@ -167,10 +165,7 @@ pub(crate) async fn handle_list_directory(
     policy: &ToolPolicy,
 ) -> Result<Value> {
     let args: ListDirectoryArgs = parse_fs_args(args)?;
-    let recursive = args
-        .recursive
-        .or(policy.recursive_default)
-        .unwrap_or(false);
+    let recursive = args.recursive.or(policy.recursive_default).unwrap_or(false);
     let include_hidden = args
         .include_hidden
         .or(policy.include_hidden_default)
@@ -490,9 +485,7 @@ pub(crate) async fn handle_stat(
     _policy: &ToolPolicy,
 ) -> Result<Value> {
     let args: StatArgs = parse_fs_args(args)?;
-    let include_symlink_target = args
-        .include_symlink_target
-        .unwrap_or(false);
+    let include_symlink_target = args.include_symlink_target.unwrap_or(false);
     let path = resolve_session_tool_path(context, &args.path)?;
     let metadata =
         fs::symlink_metadata(&path).with_context(|| format!("stat {}", path.display()))?;

@@ -108,7 +108,10 @@ fn process_run_dedicated_tool_redirect(
             if script == "-n" {
                 return None;
             }
-            let path = args.iter().rev().find(|arg| !arg.starts_with('-') && *arg != script)?;
+            let path = args
+                .iter()
+                .rev()
+                .find(|arg| !arg.starts_with('-') && *arg != script)?;
             Some((
                 DedicatedToolRedirect {
                     provider_tool: "fs_replace_text",
