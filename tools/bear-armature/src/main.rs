@@ -7444,6 +7444,16 @@ pub(crate) fn tool_completion_preview(tool_name: &str, value: &Value) -> String 
     if matches!(tool_name, "fs_read_text_file" | "fs.read_text_file") {
         return read_text_file_completion_preview(value);
     }
+    if matches!(tool_name, "set_conversation_title") {
+        if let Some(title) = value
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            return format!("Conversation title set to {}.", markdown_inline_code(title));
+        }
+    }
     if matches!(tool_name, "process_run" | "terminal_run_command") {
         let command = command_line_from_value(value).unwrap_or_else(|| "command".to_string());
         let cwd = value
@@ -7478,11 +7488,49 @@ pub(crate) fn tool_completion_preview(tool_name: &str, value: &Value) -> String 
         return text;
     }
 
-    if matches!(
-        tool_name,
-        "update_task_list" | "update_plan" | "request_task_list_handoff" | "request_work_handoff"
-    ) {
+    if matches!(tool_name, "request_task_list_handoff" | "request_work_handoff") {
         return String::new();
+    }
+    if matches!(tool_name, "update_task_list" | "update_plan") {
+        let entries = value
+            .get("plan")
+            .map(|plan| {
+                plan.get("items")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| {
+                                plan_entry_from_acp_plan_item(item)
+                                    .or_else(|| plan_entry_from_work_plan_item(item))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+        if entries.is_empty() {
+            return "Task list updated.".to_string();
+        }
+        let completed = entries
+            .iter()
+            .filter(|entry| entry.status == PlanEntryStatus::Completed)
+            .count();
+        let in_progress = entries
+            .iter()
+            .filter(|entry| entry.status == PlanEntryStatus::InProgress)
+            .count();
+        let pending = entries
+            .iter()
+            .filter(|entry| entry.status == PlanEntryStatus::Pending)
+            .count();
+        return format!(
+            "Task list updated: {} total, {} in progress, {} pending, {} completed.",
+            entries.len(),
+            in_progress,
+            pending,
+            completed
+        );
     }
 
     let content = value
@@ -9065,6 +9113,16 @@ fn permission_family_label(tool_name: &str) -> &'static str {
 }
 
 fn tool_call_title(tool_name: &str, event: &Value) -> String {
+    if matches!(tool_name, "set_conversation_title") {
+        let title = event
+            .get("args")
+            .and_then(|args| args.get("title"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or("conversation");
+        return format!("Set conversation title: {}", truncate_title(title));
+    }
     if matches!(tool_name, "process_run" | "terminal_run_command") {
         let command = event
             .get("args")
@@ -9155,6 +9213,34 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
     if matches!(tool_name, "fs_delete_path") {
         let path = tool_path(event).unwrap_or("path");
         return format!("Delete path: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_read_text_file" | "fs.read_text_file") {
+        let path = tool_path(event).unwrap_or("file");
+        return format!("Read file: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_list_directory") {
+        let path = tool_path(event).unwrap_or("directory");
+        return format!("List directory: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_stat") {
+        let path = tool_path(event).unwrap_or("path");
+        return format!("Stat path: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_edit_file" | "fs_replace_text") {
+        let path = tool_path(event).unwrap_or("file");
+        return format!("Edit file: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_create_text_file") {
+        let path = tool_path(event).unwrap_or("file");
+        return format!("Create file: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_create_directory") {
+        let path = tool_path(event).unwrap_or("directory");
+        return format!("Create directory: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_apply_patch") {
+        let path = tool_path(event).unwrap_or("patch target");
+        return format!("Apply patch: {}", truncate_title(path));
     }
     if matches!(tool_name, "chrome_open") {
         if let Some(url) = tool_url(event) {
@@ -11314,6 +11400,24 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
+    fn tool_call_title_includes_conversation_title_and_file_targets() {
+        assert_eq!(
+            tool_call_title(
+                "set_conversation_title",
+                &json!({ "args": { "title": "Runtime investigation" } })
+            ),
+            "Set conversation title: Runtime investigation"
+        );
+        assert_eq!(
+            tool_call_title(
+                "fs_replace_text",
+                &json!({ "args": { "path": "/workspace/src/main.rs" } })
+            ),
+            "Edit file: /workspace/src/main.rs"
+        );
+    }
+
+    #[test]
     fn mcp_tools_have_human_friendly_titles() {
         assert_eq!(
             tool_display("mcp__chrome_devtools_custom__take_snapshot").title,
@@ -11491,10 +11595,29 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
-    fn update_task_list_completion_preview_is_suppressed() {
-        let value = json!({ "content": "Local tool update_task_list completed." });
-        assert_eq!(tool_completion_preview("update_task_list", &value), "");
-        assert_eq!(tool_completion_preview("update_plan", &value), "");
+    fn update_task_list_completion_preview_summarizes_entries() {
+        let value = json!({
+            "plan": {
+                "items": [
+                    { "content": "Inspect logs", "status": "completed", "priority": "high" },
+                    { "content": "Patch parser", "status": "in_progress", "priority": "high" },
+                    { "content": "Run tests", "status": "pending", "priority": "medium" }
+                ]
+            }
+        });
+        let preview = tool_completion_preview("update_task_list", &value);
+        assert!(preview.contains("Task list updated: 3 total"), "{preview}");
+        assert!(preview.contains("1 in progress"), "{preview}");
+        assert!(preview.contains("1 pending"), "{preview}");
+        assert!(preview.contains("1 completed"), "{preview}");
+    }
+
+    #[test]
+    fn set_conversation_title_completion_preview_shows_new_title() {
+        let value = json!({ "title": "Investigate Bifrost stream framing" });
+        let preview = tool_completion_preview("set_conversation_title", &value);
+        assert!(preview.contains("Conversation title set to"), "{preview}");
+        assert!(preview.contains("Investigate Bifrost stream framing"), "{preview}");
     }
 
     #[test]
