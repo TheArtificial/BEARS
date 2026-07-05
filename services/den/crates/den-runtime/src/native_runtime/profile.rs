@@ -20,17 +20,17 @@ impl NativeCapabilityProfile {
             BearProfile::Pair => Self {
                 profile,
                 turn_budget: TurnBudgetPolicy {
-                    max_wall_clock_ms: 240_000,
-                    emergency_hard_steps: 48,
+                    max_wall_clock_ms: 360_000,
+                    emergency_hard_steps: 80,
                     tool_call_limits: ToolCallBudgetLimits {
-                        total: 64,
-                        read: 18,
-                        search: 12,
-                        fetch: 8,
-                        execute: 8,
-                        write: 8,
+                        total: 112,
+                        read: 32,
+                        search: 20,
+                        fetch: 12,
+                        execute: 16,
+                        write: 24,
                         destructive: 2,
-                        other: 12,
+                        other: 16,
                     },
                     max_consecutive_tool_failures: 3,
                     max_same_tool_signature_repeats: 2,
@@ -117,14 +117,14 @@ impl NativeCapabilityProfile {
                         max_wall_clock_ms: 180_000,
                         emergency_hard_steps: 40,
                         tool_call_limits: ToolCallBudgetLimits {
-                            total: 56,
-                            read: 16,
-                            search: 10,
+                            total: 72,
+                            read: 20,
+                            search: 12,
                             fetch: 8,
                             execute: 6,
-                            write: 6,
+                            write: 12,
                             destructive: 2,
-                            other: 10,
+                            other: 12,
                         },
                         max_consecutive_tool_failures: 3,
                         max_same_tool_signature_repeats: 2,
@@ -178,5 +178,12 @@ mod tests {
         assert!(work.emergency_hard_steps > pair.emergency_hard_steps);
         assert!(work.max_wall_clock_ms > pair.max_wall_clock_ms);
         assert!(work.tool_call_limits.total > pair.tool_call_limits.total);
+    }
+
+    #[test]
+    fn pair_profile_has_room_for_productive_multi_file_edits() {
+        let pair = NativeCapabilityProfile::for_profile(BearProfile::Pair).turn_budget;
+        assert!(pair.tool_call_limits.write >= 24);
+        assert!(pair.tool_call_limits.total >= 100);
     }
 }
