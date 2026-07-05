@@ -9122,8 +9122,7 @@ fn permission_family_label(tool_name: &str) -> &'static str {
 
 fn tool_call_title(tool_name: &str, event: &Value) -> String {
     if matches!(tool_name, "set_conversation_title") {
-        let title = event
-            .get("args")
+        let title = command_args_from_event(event)
             .and_then(|args| args.get("title"))
             .and_then(Value::as_str)
             .map(str::trim)
@@ -11462,6 +11461,20 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                 &json!({ "args": { "title": "Runtime investigation" } })
             ),
             "Set conversation title: Runtime investigation"
+        );
+        assert_eq!(
+            tool_call_title(
+                "set_conversation_title",
+                &json!({ "arguments": { "title": "Direct ACP card title" } })
+            ),
+            "Set conversation title: Direct ACP card title"
+        );
+        assert_eq!(
+            tool_call_title(
+                "set_conversation_title",
+                &json!({ "data": { "tool_call": { "arguments": { "title": "Nested ACP card title" } } } })
+            ),
+            "Set conversation title: Nested ACP card title"
         );
         assert_eq!(
             tool_call_title(
