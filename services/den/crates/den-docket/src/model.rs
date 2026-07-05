@@ -1,9 +1,9 @@
 //! Docket domain types and compatibility projection shapes.
 //!
 //! ADR-0034 relational jobs/tasks are the canonical storage model. The
-//! `WorkPlan*` and task-list projection types remain as API/projection shapes
+//! `TaskList*` and task-list projection types remain as API/projection shapes
 //! for existing tool contracts; they should not imply an active
-//! `bear_work_plans` persistence path.
+//! `bear_task_lists` persistence path.
 
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
@@ -16,14 +16,14 @@ use den_core::{BearProfile, DenError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkPlanVisibility {
+pub enum TaskListVisibility {
     PrivateToProfile,
     SameUser,
     BearVisible,
     HandoffRequested,
 }
 
-impl WorkPlanVisibility {
+impl TaskListVisibility {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::PrivateToProfile => "private_to_profile",
@@ -40,13 +40,13 @@ impl WorkPlanVisibility {
             "bear_visible" => Ok(Self::BearVisible),
             "handoff_requested" => Ok(Self::HandoffRequested),
             other => Err(DenError::Parsing(format!(
-                "unknown work plan visibility: {other}"
+                "unknown task-list visibility: {other}"
             ))),
         }
     }
 }
 
-impl fmt::Display for WorkPlanVisibility {
+impl fmt::Display for TaskListVisibility {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -54,7 +54,7 @@ impl fmt::Display for WorkPlanVisibility {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkPlanStatus {
+pub enum TaskListStatus {
     Active,
     Blocked,
     Completed,
@@ -62,7 +62,7 @@ pub enum WorkPlanStatus {
     Archived,
 }
 
-impl WorkPlanStatus {
+impl TaskListStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",
@@ -81,13 +81,13 @@ impl WorkPlanStatus {
             "cancelled" => Ok(Self::Cancelled),
             "archived" => Ok(Self::Archived),
             other => Err(DenError::Parsing(format!(
-                "unknown work plan status: {other}"
+                "unknown task-list status: {other}"
             ))),
         }
     }
 }
 
-impl fmt::Display for WorkPlanStatus {
+impl fmt::Display for TaskListStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -95,7 +95,7 @@ impl fmt::Display for WorkPlanStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkPlanItemStatus {
+pub enum TaskListItemStatus {
     Pending,
     InProgress,
     Blocked,
@@ -103,7 +103,7 @@ pub enum WorkPlanItemStatus {
     Cancelled,
 }
 
-impl WorkPlanItemStatus {
+impl TaskListItemStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
@@ -115,20 +115,20 @@ impl WorkPlanItemStatus {
     }
 }
 
-impl fmt::Display for WorkPlanItemStatus {
+impl fmt::Display for TaskListItemStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkPlanItem {
+pub struct TaskListUpdateItem {
     #[serde(default)]
     pub id: String,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
-    pub status: WorkPlanItemStatus,
+    pub status: TaskListItemStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -136,35 +136,35 @@ pub struct WorkPlanItem {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct WorkPlanUpdate {
+pub struct TaskListUpdate {
     pub title: String,
     pub summary: String,
-    pub visibility: WorkPlanVisibility,
-    pub status: WorkPlanStatus,
-    pub items: Vec<WorkPlanItem>,
+    pub visibility: TaskListVisibility,
+    pub status: TaskListStatus,
+    pub items: Vec<TaskListUpdateItem>,
     pub workspace_context: serde_json::Value,
 }
 
-impl<'de> Deserialize<'de> for WorkPlanUpdate {
+impl<'de> Deserialize<'de> for TaskListUpdate {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        struct RawWorkPlanUpdate {
+        struct RawTaskListUpdate {
             title: String,
             #[serde(default)]
             summary: String,
-            visibility: WorkPlanVisibility,
-            status: WorkPlanStatus,
+            visibility: TaskListVisibility,
+            status: TaskListStatus,
             #[serde(default)]
-            items: Vec<WorkPlanItem>,
+            items: Vec<TaskListUpdateItem>,
             #[serde(default = "default_json_object")]
             workspace_context: serde_json::Value,
         }
 
-        let mut raw = RawWorkPlanUpdate::deserialize(deserializer)?;
-        normalize_work_plan_item_ids(&mut raw.items);
+        let mut raw = RawTaskListUpdate::deserialize(deserializer)?;
+        normalize_task_list_item_ids(&mut raw.items);
         Ok(Self {
             title: raw.title,
             summary: raw.summary,
@@ -180,16 +180,16 @@ fn default_json_object() -> serde_json::Value {
     serde_json::json!({})
 }
 
-pub fn normalize_work_plan_item_ids(items: &mut [WorkPlanItem]) {
+pub fn normalize_task_list_item_ids(items: &mut [TaskListUpdateItem]) {
     let mut generated_ids = std::collections::HashSet::new();
     for item in items {
         let trimmed = item.id.trim();
         if trimmed.is_empty() {
-            let mut generated = generated_work_plan_item_id(item, None);
+            let mut generated = generated_task_list_item_id(item, None);
             if !generated_ids.insert(generated.clone()) {
                 let mut ordinal = 2_u32;
                 loop {
-                    generated = generated_work_plan_item_id(item, Some(ordinal));
+                    generated = generated_task_list_item_id(item, Some(ordinal));
                     if generated_ids.insert(generated.clone()) {
                         break;
                     }
@@ -203,7 +203,7 @@ pub fn normalize_work_plan_item_ids(items: &mut [WorkPlanItem]) {
     }
 }
 
-fn generated_work_plan_item_id(item: &WorkPlanItem, ordinal: Option<u32>) -> String {
+fn generated_task_list_item_id(item: &TaskListUpdateItem, ordinal: Option<u32>) -> String {
     let mut seed = format!(
         "{}\n{}\n{}",
         item.title.trim(),
@@ -248,7 +248,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct BearWorkPlanRow {
+pub struct HistoricalTaskListRow {
     pub id: Uuid,
     pub bear_id: Uuid,
     pub title: String,
@@ -262,7 +262,7 @@ pub struct BearWorkPlanRow {
     pub workspace_context: Json<serde_json::Value>,
     pub visibility: String,
     pub status: String,
-    pub items: Json<Vec<WorkPlanItem>>,
+    pub items: Json<Vec<TaskListUpdateItem>>,
     pub version: i32,
     pub handoff_intent_path: Option<String>,
     pub handoff_task_id: Option<String>,
@@ -272,7 +272,7 @@ pub struct BearWorkPlanRow {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkPlanUpsert {
+pub struct TaskListUpsert {
     pub bear_id: Uuid,
     pub owner_profile: BearProfile,
     pub owner_agent_id: Option<String>,
@@ -283,25 +283,25 @@ pub struct WorkPlanUpsert {
     pub source_channel: serde_json::Value,
     pub plan_id: Option<Uuid>,
     pub expected_version: Option<i32>,
-    pub update: WorkPlanUpdate,
+    pub update: TaskListUpdate,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct WorkPlanListFilter {
-    pub statuses: Option<Vec<WorkPlanStatus>>,
+pub struct TaskListListFilter {
+    pub statuses: Option<Vec<TaskListStatus>>,
     pub owner_profile: Option<BearProfile>,
     pub include_archived: bool,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct WorkPlanLookup {
+pub struct TaskListLookup {
     pub plan_id: Option<Uuid>,
     pub source_conversation_id: Option<String>,
     pub source_client_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct WorkPlanProjection {
+pub struct TaskListLocalProjection {
     pub id: Uuid,
     pub bear_id: Uuid,
     pub title: String,
@@ -310,8 +310,8 @@ pub struct WorkPlanProjection {
     pub visibility: String,
     pub status: String,
     pub version: i32,
-    pub items: Vec<WorkPlanItem>,
-    pub current_item: Option<WorkPlanItem>,
+    pub items: Vec<TaskListUpdateItem>,
+    pub current_item: Option<TaskListUpdateItem>,
     pub source_conversation_id: Option<String>,
     pub source_client_session_id: Option<String>,
     pub handoff_intent_path: Option<String>,
@@ -394,7 +394,7 @@ pub struct TaskListItem {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
-    pub status: WorkPlanItemStatus,
+    pub status: TaskListItemStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<String>,
     pub source_ref: TaskListSourceRef,
@@ -423,7 +423,7 @@ pub struct TaskListProjection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkPlanValidationError {
+pub enum TaskListValidationError {
     EmptyTitle,
     EmptyItemId,
     EmptyItemTitle { item_id: String },
@@ -431,31 +431,31 @@ pub enum WorkPlanValidationError {
     BlockedItemMissingReason { item_id: String },
 }
 
-impl fmt::Display for WorkPlanValidationError {
+impl fmt::Display for TaskListValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyTitle => f.write_str("work plan title must not be empty"),
-            Self::EmptyItemId => f.write_str("work plan item id must not be empty"),
+            Self::EmptyTitle => f.write_str("task-list title must not be empty"),
+            Self::EmptyItemId => f.write_str("task-list item id must not be empty"),
             Self::EmptyItemTitle { item_id } => {
-                write!(f, "work plan item `{item_id}` title must not be empty")
+                write!(f, "task-list item `{item_id}` title must not be empty")
             }
             Self::MultipleInProgressItems => {
-                f.write_str("work plan may have at most one in_progress item")
+                f.write_str("task list may have at most one in_progress item")
             }
             Self::BlockedItemMissingReason { item_id } => {
                 write!(
                     f,
-                    "blocked work plan item `{item_id}` must include blocked_reason"
+                    "blocked task-list item `{item_id}` must include blocked_reason"
                 )
             }
         }
     }
 }
 
-impl std::error::Error for WorkPlanValidationError {}
+impl std::error::Error for TaskListValidationError {}
 
-impl From<WorkPlanValidationError> for DenError {
-    fn from(err: WorkPlanValidationError) -> Self {
+impl From<TaskListValidationError> for DenError {
+    fn from(err: TaskListValidationError) -> Self {
         DenError::ValidationError(err.to_string())
     }
 }
@@ -478,7 +478,7 @@ fn parse_docket_source_refs(refs: &[String]) -> Option<TaskListSourceRef> {
     task_id.map(|task_id| TaskListSourceRef::docket_task(job_id, task_id, refs.to_vec()))
 }
 
-pub fn task_list_item_from_work_plan_item(item: &WorkPlanItem) -> TaskListItem {
+pub fn task_list_item_from_update_item(item: &TaskListUpdateItem) -> TaskListItem {
     let source_ref = parse_docket_source_refs(&item.source_refs)
         .unwrap_or_else(|| TaskListSourceRef::local(item.source_refs.clone()));
     let sync_state = if source_ref.kind == "docket_task" {
@@ -497,16 +497,16 @@ pub fn task_list_item_from_work_plan_item(item: &WorkPlanItem) -> TaskListItem {
     }
 }
 
-pub fn task_list_projection_from_work_plan(plan: &WorkPlanProjection) -> TaskListProjection {
+pub fn task_list_projection_from_local(plan: &TaskListLocalProjection) -> TaskListProjection {
     let items = plan
         .items
         .iter()
-        .map(task_list_item_from_work_plan_item)
+        .map(task_list_item_from_update_item)
         .collect::<Vec<_>>();
     let current_item = plan
         .current_item
         .as_ref()
-        .map(task_list_item_from_work_plan_item);
+        .map(task_list_item_from_update_item);
     TaskListProjection {
         id: plan.id,
         bear_id: plan.bear_id,
@@ -516,7 +516,7 @@ pub fn task_list_projection_from_work_plan(plan: &WorkPlanProjection) -> TaskLis
         visibility: plan.visibility.clone(),
         status: plan.status.clone(),
         version: plan.version,
-        source_ref: TaskListSourceRef::local(vec![format!("work_plan:{}", plan.id)]),
+        source_ref: TaskListSourceRef::local(vec![format!("task_list:{}", plan.id)]),
         items,
         current_item,
         source_conversation_id: plan.source_conversation_id.clone(),
@@ -528,9 +528,9 @@ pub fn task_list_projection_from_work_plan(plan: &WorkPlanProjection) -> TaskLis
     }
 }
 
-impl WorkPlanProjection {
+impl TaskListLocalProjection {
     pub fn to_task_list_projection(&self) -> TaskListProjection {
-        task_list_projection_from_work_plan(self)
+        task_list_projection_from_local(self)
     }
 }
 
@@ -1037,7 +1037,7 @@ pub struct DocketJobCreate {
     pub work_surface_ref: Option<String>,
     pub commit_policy: Option<DocketCommitPolicy>,
     pub status: DocketJobStatus,
-    pub visibility: WorkPlanVisibility,
+    pub visibility: TaskListVisibility,
     pub criteria: Vec<DocketJobCriterionInput>,
     pub tasks: Vec<DocketTaskInput>,
 }
@@ -1060,7 +1060,7 @@ pub struct DocketJobUpdate {
     pub work_surface_ref: Option<Option<String>>,
     pub commit_policy: Option<Option<DocketCommitPolicy>>,
     pub status: Option<DocketJobStatus>,
-    pub visibility: Option<WorkPlanVisibility>,
+    pub visibility: Option<TaskListVisibility>,
 }
 
 #[derive(Debug, Clone)]
@@ -1413,25 +1413,25 @@ pub fn docket_parent_task_ref(source_ref: &TaskListSourceRef) -> Option<Uuid> {
         .and_then(|raw| Uuid::parse_str(raw.trim()).ok())
 }
 
-pub fn work_plan_item_status_from_docket_task_status(status: &str) -> WorkPlanItemStatus {
+pub fn task_list_item_status_from_docket_task_status(status: &str) -> TaskListItemStatus {
     match status {
-        "in_progress" => WorkPlanItemStatus::InProgress,
-        "done" => WorkPlanItemStatus::Completed,
-        "blocked" => WorkPlanItemStatus::Blocked,
-        "cancelled" => WorkPlanItemStatus::Cancelled,
-        _ => WorkPlanItemStatus::Pending,
+        "in_progress" => TaskListItemStatus::InProgress,
+        "done" => TaskListItemStatus::Completed,
+        "blocked" => TaskListItemStatus::Blocked,
+        "cancelled" => TaskListItemStatus::Cancelled,
+        _ => TaskListItemStatus::Pending,
     }
 }
 
-pub fn docket_task_status_from_work_plan_item_status(
-    status: WorkPlanItemStatus,
+pub fn docket_task_status_from_task_list_item_status(
+    status: TaskListItemStatus,
 ) -> DocketTaskStatus {
     match status {
-        WorkPlanItemStatus::Pending => DocketTaskStatus::Pending,
-        WorkPlanItemStatus::InProgress => DocketTaskStatus::InProgress,
-        WorkPlanItemStatus::Blocked => DocketTaskStatus::Blocked,
-        WorkPlanItemStatus::Completed => DocketTaskStatus::Done,
-        WorkPlanItemStatus::Cancelled => DocketTaskStatus::Cancelled,
+        TaskListItemStatus::Pending => DocketTaskStatus::Pending,
+        TaskListItemStatus::InProgress => DocketTaskStatus::InProgress,
+        TaskListItemStatus::Blocked => DocketTaskStatus::Blocked,
+        TaskListItemStatus::Completed => DocketTaskStatus::Done,
+        TaskListItemStatus::Cancelled => DocketTaskStatus::Cancelled,
     }
 }
 
@@ -1440,14 +1440,14 @@ fn task_list_item_from_docket_task(
     state: Option<&DocketTaskRunStateRow>,
 ) -> TaskListItem {
     let status = state
-        .map(|state| work_plan_item_status_from_docket_task_status(&state.status))
-        .unwrap_or(WorkPlanItemStatus::Pending);
+        .map(|state| task_list_item_status_from_docket_task_status(&state.status))
+        .unwrap_or(TaskListItemStatus::Pending);
     TaskListItem {
         id: task.id.to_string(),
         title: task.title.clone(),
         summary: Some(task.body.clone()),
         status,
-        blocked_reason: (status == WorkPlanItemStatus::Blocked)
+        blocked_reason: (status == TaskListItemStatus::Blocked)
             .then(|| state.and_then(|state| state.result_summary.clone()))
             .flatten(),
         source_ref: TaskListSourceRef::docket_task(
@@ -1467,16 +1467,16 @@ fn task_list_item_from_docket_task(
 fn current_task_list_item(items: &[TaskListItem]) -> Option<&TaskListItem> {
     items
         .iter()
-        .find(|item| item.status == WorkPlanItemStatus::InProgress)
+        .find(|item| item.status == TaskListItemStatus::InProgress)
         .or_else(|| {
             items
                 .iter()
-                .find(|item| item.status == WorkPlanItemStatus::Blocked)
+                .find(|item| item.status == TaskListItemStatus::Blocked)
         })
         .or_else(|| {
             items
                 .iter()
-                .find(|item| item.status == WorkPlanItemStatus::Pending)
+                .find(|item| item.status == TaskListItemStatus::Pending)
         })
 }
 
@@ -1570,24 +1570,24 @@ fn validate_docket_task_inputs(tasks: &[DocketTaskInput]) -> Result<(), DocketVa
     Ok(())
 }
 
-impl BearWorkPlanRow {
+impl HistoricalTaskListRow {
     pub fn parsed_owner_profile(&self) -> Result<BearProfile, DenError> {
         self.owner_profile.parse().map_err(DenError::Parsing)
     }
 
-    pub fn parsed_visibility(&self) -> Result<WorkPlanVisibility, DenError> {
-        WorkPlanVisibility::parse(&self.visibility)
+    pub fn parsed_visibility(&self) -> Result<TaskListVisibility, DenError> {
+        TaskListVisibility::parse(&self.visibility)
     }
 
-    pub fn parsed_status(&self) -> Result<WorkPlanStatus, DenError> {
-        WorkPlanStatus::parse(&self.status)
+    pub fn parsed_status(&self) -> Result<TaskListStatus, DenError> {
+        TaskListStatus::parse(&self.status)
     }
 
     pub fn is_visible_to(&self, viewer_role: BearProfile, user_id: i32) -> Result<bool, DenError> {
         let owner_profile = self.parsed_owner_profile()?;
         let visibility = self.parsed_visibility()?;
         let same_user = self.created_by_user_id == Some(user_id);
-        Ok(role_can_read_work_plan(
+        Ok(role_can_read_task_list(
             viewer_role,
             owner_profile,
             visibility,
@@ -1599,13 +1599,13 @@ impl BearWorkPlanRow {
         &self,
         viewer_role: BearProfile,
         user_id: i32,
-    ) -> Result<Option<WorkPlanProjection>, DenError> {
+    ) -> Result<Option<TaskListLocalProjection>, DenError> {
         if !self.is_visible_to(viewer_role, user_id)? {
             return Ok(None);
         }
         let items = self.items.0.clone();
         let current_item = current_item(&items).cloned();
-        Ok(Some(WorkPlanProjection {
+        Ok(Some(TaskListLocalProjection {
             id: self.id,
             bear_id: self.bear_id,
             title: self.title.clone(),
@@ -1626,64 +1626,64 @@ impl BearWorkPlanRow {
     }
 }
 
-fn current_item(items: &[WorkPlanItem]) -> Option<&WorkPlanItem> {
+fn current_item(items: &[TaskListUpdateItem]) -> Option<&TaskListUpdateItem> {
     items
         .iter()
-        .find(|item| item.status == WorkPlanItemStatus::InProgress)
+        .find(|item| item.status == TaskListItemStatus::InProgress)
         .or_else(|| {
             items
                 .iter()
-                .find(|item| item.status == WorkPlanItemStatus::Blocked)
+                .find(|item| item.status == TaskListItemStatus::Blocked)
         })
         .or_else(|| {
             items
                 .iter()
-                .find(|item| item.status == WorkPlanItemStatus::Pending)
+                .find(|item| item.status == TaskListItemStatus::Pending)
         })
 }
 
-pub fn validate_work_plan_update(update: &WorkPlanUpdate) -> Result<(), WorkPlanValidationError> {
+pub fn validate_task_list_update(update: &TaskListUpdate) -> Result<(), TaskListValidationError> {
     if update.title.trim().is_empty() {
-        return Err(WorkPlanValidationError::EmptyTitle);
+        return Err(TaskListValidationError::EmptyTitle);
     }
 
-    validate_work_plan_items(&update.items)
+    validate_task_list_items(&update.items)
 }
 
-pub fn validate_work_plan_items(items: &[WorkPlanItem]) -> Result<(), WorkPlanValidationError> {
+pub fn validate_task_list_items(items: &[TaskListUpdateItem]) -> Result<(), TaskListValidationError> {
     let mut in_progress_count = 0;
     for item in items {
         if item.id.trim().is_empty() {
-            return Err(WorkPlanValidationError::EmptyItemId);
+            return Err(TaskListValidationError::EmptyItemId);
         }
         if item.title.trim().is_empty() {
-            return Err(WorkPlanValidationError::EmptyItemTitle {
+            return Err(TaskListValidationError::EmptyItemTitle {
                 item_id: item.id.clone(),
             });
         }
-        if item.status == WorkPlanItemStatus::InProgress {
+        if item.status == TaskListItemStatus::InProgress {
             in_progress_count += 1;
         }
-        if item.status == WorkPlanItemStatus::Blocked
+        if item.status == TaskListItemStatus::Blocked
             && item
                 .blocked_reason
                 .as_deref()
                 .map(|reason| reason.trim().is_empty())
                 .unwrap_or(true)
         {
-            return Err(WorkPlanValidationError::BlockedItemMissingReason {
+            return Err(TaskListValidationError::BlockedItemMissingReason {
                 item_id: item.id.clone(),
             });
         }
     }
 
     if in_progress_count > 1 {
-        return Err(WorkPlanValidationError::MultipleInProgressItems);
+        return Err(TaskListValidationError::MultipleInProgressItems);
     }
     Ok(())
 }
 
-pub fn role_can_update_work_plan(role: BearProfile) -> bool {
+pub fn role_can_update_task_list(role: BearProfile) -> bool {
     matches!(
         role,
         BearProfile::Chat | BearProfile::Pair | BearProfile::Work
@@ -1694,29 +1694,29 @@ pub fn role_can_request_work_handoff(role: BearProfile) -> bool {
     matches!(role, BearProfile::Chat | BearProfile::Pair)
 }
 
-pub fn role_can_read_work_plan(
+pub fn role_can_read_task_list(
     viewer_role: BearProfile,
     owner_profile: BearProfile,
-    visibility: WorkPlanVisibility,
+    visibility: TaskListVisibility,
     same_user: bool,
 ) -> bool {
     match visibility {
-        WorkPlanVisibility::PrivateToProfile => viewer_role == owner_profile,
-        WorkPlanVisibility::SameUser => same_user || viewer_role == owner_profile,
-        WorkPlanVisibility::BearVisible => true,
-        WorkPlanVisibility::HandoffRequested => {
+        TaskListVisibility::PrivateToProfile => viewer_role == owner_profile,
+        TaskListVisibility::SameUser => same_user || viewer_role == owner_profile,
+        TaskListVisibility::BearVisible => true,
+        TaskListVisibility::HandoffRequested => {
             matches!(viewer_role, BearProfile::Curate) || viewer_role == owner_profile
         }
     }
 }
 
-pub fn render_workboard_prompt_context(plans: &[WorkPlanProjection]) -> String {
+pub fn render_task_list_prompt_context(plans: &[TaskListLocalProjection]) -> String {
     if plans.is_empty() {
         return String::new();
     }
 
     let mut out = String::from(
-        "\n\n<system-reminder>\nDen activity context for this Bear. Use `den.work_plan.update` to keep live activity/status current. Use `den.work_plan.request_handoff` when channel work should become a durable task intent.\n",
+        "\n\n<system-reminder>\nDen activity context for this Bear. Use `den.task_list.update` to keep live activity/status current. Use `den.task_list.request_handoff` when channel work should become a durable task intent.\n",
     );
     for plan in plans.iter().take(5) {
         let _ = write!(
@@ -1740,8 +1740,8 @@ pub fn render_workboard_prompt_context(plans: &[WorkPlanProjection]) -> String {
 mod tests {
     use super::*;
 
-    fn item(id: &str, status: WorkPlanItemStatus) -> WorkPlanItem {
-        WorkPlanItem {
+    fn item(id: &str, status: TaskListItemStatus) -> TaskListUpdateItem {
+        TaskListUpdateItem {
             id: id.to_string(),
             title: format!("Item {id}"),
             summary: None,
@@ -1754,16 +1754,16 @@ mod tests {
     #[test]
     fn validates_single_in_progress_item() {
         let items = vec![
-            item("one", WorkPlanItemStatus::Completed),
-            item("two", WorkPlanItemStatus::InProgress),
-            item("three", WorkPlanItemStatus::Pending),
+            item("one", TaskListItemStatus::Completed),
+            item("two", TaskListItemStatus::InProgress),
+            item("three", TaskListItemStatus::Pending),
         ];
-        assert!(validate_work_plan_items(&items).is_ok());
+        assert!(validate_task_list_items(&items).is_ok());
     }
 
     #[test]
     fn deserializes_missing_item_ids_with_stable_generated_slugs() {
-        let update: WorkPlanUpdate = serde_json::from_value(serde_json::json!({
+        let update: TaskListUpdate = serde_json::from_value(serde_json::json!({
             "title": "Fix ACP plan visibility",
             "visibility": "private_to_profile",
             "status": "active",
@@ -1772,8 +1772,8 @@ mod tests {
                 { "title": "Patch plan projection", "summary": "Surface plan_update in ACP", "status": "in_progress" }
             ]
         }))
-        .expect("work plan update should deserialize with generated item ids");
-        let repeated: WorkPlanUpdate = serde_json::from_value(serde_json::json!({
+        .expect("task-list update should deserialize with generated item ids");
+        let repeated: TaskListUpdate = serde_json::from_value(serde_json::json!({
             "title": "Fix ACP plan visibility",
             "visibility": "private_to_profile",
             "status": "active",
@@ -1782,19 +1782,19 @@ mod tests {
                 { "title": "Patch plan projection", "summary": "Surface plan_update in ACP", "status": "in_progress" }
             ]
         }))
-        .expect("work plan update should deserialize repeatedly");
+        .expect("task-list update should deserialize repeatedly");
 
         assert_eq!(update.items.len(), 2);
         assert!(update.items[0].id.starts_with("inspect_bearwire_logs_"));
         assert!(update.items[1].id.starts_with("patch_plan_projection_"));
         assert_eq!(update.items[0].id, repeated.items[0].id);
         assert_eq!(update.items[1].id, repeated.items[1].id);
-        assert!(validate_work_plan_update(&update).is_ok());
+        assert!(validate_task_list_update(&update).is_ok());
     }
 
     #[test]
     fn generated_item_ids_are_unique_for_duplicate_items() {
-        let update: WorkPlanUpdate = serde_json::from_value(serde_json::json!({
+        let update: TaskListUpdate = serde_json::from_value(serde_json::json!({
             "title": "Duplicate item test",
             "visibility": "private_to_profile",
             "status": "active",
@@ -1803,32 +1803,32 @@ mod tests {
                 { "title": "Do the thing", "status": "pending" }
             ]
         }))
-        .expect("work plan update should deserialize duplicate generated ids");
+        .expect("task-list update should deserialize duplicate generated ids");
 
         assert_ne!(update.items[0].id, update.items[1].id);
         assert!(update.items[0].id.starts_with("do_the_thing_"));
         assert!(update.items[1].id.starts_with("do_the_thing_"));
-        assert!(validate_work_plan_update(&update).is_ok());
+        assert!(validate_task_list_update(&update).is_ok());
     }
 
     #[test]
     fn rejects_multiple_in_progress_items() {
         let items = vec![
-            item("one", WorkPlanItemStatus::InProgress),
-            item("two", WorkPlanItemStatus::InProgress),
+            item("one", TaskListItemStatus::InProgress),
+            item("two", TaskListItemStatus::InProgress),
         ];
         assert_eq!(
-            validate_work_plan_items(&items),
-            Err(WorkPlanValidationError::MultipleInProgressItems)
+            validate_task_list_items(&items),
+            Err(TaskListValidationError::MultipleInProgressItems)
         );
     }
 
     #[test]
     fn blocked_items_need_reason() {
-        let items = vec![item("one", WorkPlanItemStatus::Blocked)];
+        let items = vec![item("one", TaskListItemStatus::Blocked)];
         assert_eq!(
-            validate_work_plan_items(&items),
-            Err(WorkPlanValidationError::BlockedItemMissingReason {
+            validate_task_list_items(&items),
+            Err(TaskListValidationError::BlockedItemMissingReason {
                 item_id: "one".to_string()
             })
         );
@@ -1836,34 +1836,34 @@ mod tests {
 
     #[test]
     fn visibility_preserves_role_boundaries() {
-        assert!(role_can_read_work_plan(
+        assert!(role_can_read_task_list(
             BearProfile::Pair,
             BearProfile::Pair,
-            WorkPlanVisibility::PrivateToProfile,
+            TaskListVisibility::PrivateToProfile,
             false
         ));
-        assert!(!role_can_read_work_plan(
+        assert!(!role_can_read_task_list(
             BearProfile::Chat,
             BearProfile::Pair,
-            WorkPlanVisibility::PrivateToProfile,
+            TaskListVisibility::PrivateToProfile,
             false
         ));
-        assert!(role_can_read_work_plan(
+        assert!(role_can_read_task_list(
             BearProfile::Chat,
             BearProfile::Pair,
-            WorkPlanVisibility::BearVisible,
+            TaskListVisibility::BearVisible,
             false
         ));
-        assert!(role_can_read_work_plan(
+        assert!(role_can_read_task_list(
             BearProfile::Curate,
             BearProfile::Pair,
-            WorkPlanVisibility::HandoffRequested,
+            TaskListVisibility::HandoffRequested,
             false
         ));
-        assert!(!role_can_read_work_plan(
+        assert!(!role_can_read_task_list(
             BearProfile::Work,
             BearProfile::Pair,
-            WorkPlanVisibility::HandoffRequested,
+            TaskListVisibility::HandoffRequested,
             false
         ));
     }
@@ -1876,8 +1876,8 @@ mod tests {
         assert!(!role_can_request_work_handoff(BearProfile::Curate));
     }
 
-    fn projection_fixture(items: Vec<WorkPlanItem>) -> WorkPlanProjection {
-        WorkPlanProjection {
+    fn projection_fixture(items: Vec<TaskListUpdateItem>) -> TaskListLocalProjection {
+        TaskListLocalProjection {
             id: Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap(),
             bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
             title: "Build task system".to_string(),
@@ -1898,13 +1898,13 @@ mod tests {
     }
 
     #[test]
-    fn task_list_projection_wraps_work_plan_as_local_projection() {
-        let plan = projection_fixture(vec![item("one", WorkPlanItemStatus::InProgress)]);
+    fn task_list_projection_wraps_task_list_as_local_projection() {
+        let plan = projection_fixture(vec![item("one", TaskListItemStatus::InProgress)]);
 
         let task_list = plan.to_task_list_projection();
 
         assert_eq!(task_list.source_ref.kind, "local");
-        assert_eq!(task_list.source_ref.refs, vec![format!("work_plan:{}", plan.id)]);
+        assert_eq!(task_list.source_ref.refs, vec![format!("task_list:{}", plan.id)]);
         assert_eq!(task_list.items.len(), 1);
         assert_eq!(task_list.items[0].source_ref.kind, "local");
         assert_eq!(task_list.items[0].sync_state, TaskListSyncState::LocalOnly);
@@ -1916,14 +1916,14 @@ mod tests {
 
     #[test]
     fn task_list_projection_preserves_docket_backing_refs_when_present() {
-        let mut backed = item("backed", WorkPlanItemStatus::Pending);
+        let mut backed = item("backed", TaskListItemStatus::Pending);
         backed.source_refs = vec![
             "docket_job:job-123".to_string(),
             "docket_task:task-456".to_string(),
         ];
         let plan = projection_fixture(vec![backed]);
 
-        let task_list = task_list_projection_from_work_plan(&plan);
+        let task_list = task_list_projection_from_local(&plan);
         let item = &task_list.items[0];
 
         assert_eq!(item.source_ref.kind, "docket_task");
@@ -1942,7 +1942,7 @@ mod tests {
             work_surface_ref: None,
             commit_policy: Some(DocketCommitPolicy::ProposeOnly),
             status: DocketJobStatus::Ready,
-            visibility: WorkPlanVisibility::BearVisible,
+            visibility: TaskListVisibility::BearVisible,
             criteria: Vec::new(),
             tasks: Vec::new(),
         };
@@ -1965,7 +1965,7 @@ mod tests {
             work_surface_ref: None,
             commit_policy: None,
             status: DocketJobStatus::Ready,
-            visibility: WorkPlanVisibility::BearVisible,
+            visibility: TaskListVisibility::BearVisible,
             criteria: Vec::new(),
             tasks: vec![DocketTaskInput {
                 client_key: Some("child".to_string()),
@@ -2229,7 +2229,7 @@ mod tests {
         assert_eq!(root_checkout.items[0].sync_state, TaskListSyncState::Clean);
         assert_eq!(
             root_checkout.items[0].status,
-            WorkPlanItemStatus::InProgress
+            TaskListItemStatus::InProgress
         );
 
         let child_checkout = task_list_projection_from_docket_job(&projection, Some(root_task_id));
@@ -2243,7 +2243,7 @@ mod tests {
 
     #[test]
     fn renders_compact_prompt_context_without_raw_workspace_context() {
-        let plan = WorkPlanProjection {
+        let plan = TaskListLocalProjection {
             id: Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap(),
             bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
             title: "Build task system".to_string(),
@@ -2252,8 +2252,8 @@ mod tests {
             visibility: "bear_visible".to_string(),
             status: "active".to_string(),
             version: 1,
-            items: vec![item("one", WorkPlanItemStatus::InProgress)],
-            current_item: Some(item("one", WorkPlanItemStatus::InProgress)),
+            items: vec![item("one", TaskListItemStatus::InProgress)],
+            current_item: Some(item("one", TaskListItemStatus::InProgress)),
             source_conversation_id: None,
             source_client_session_id: None,
             handoff_intent_path: None,
@@ -2262,9 +2262,9 @@ mod tests {
             updated_at: OffsetDateTime::UNIX_EPOCH,
         };
 
-        let rendered = render_workboard_prompt_context(&[plan]);
+        let rendered = render_task_list_prompt_context(&[plan]);
         assert!(rendered.contains("Den activity context"));
-        assert!(rendered.contains("den.work_plan.update"));
+        assert!(rendered.contains("den.task_list.update"));
         assert!(rendered.contains("Build task system"));
         assert!(rendered.contains("Item one"));
         assert!(!rendered.contains("workspace_context"));

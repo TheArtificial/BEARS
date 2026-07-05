@@ -13,7 +13,7 @@ use uuid::Uuid;
 use den_core::{BearProfile, DenError};
 
 use super::model::{
-    docket_parent_task_ref, docket_task_status_from_work_plan_item_status,
+    docket_parent_task_ref, docket_task_status_from_task_list_item_status,
     normalize_completion_criteria, task_list_projection_from_docket_job,
     validate_docket_job_create, validate_docket_task_create, DocketCriterionStateRow,
     DocketCriterionStateUpdate, DocketExecutionLookup, DocketExecutionSessionRow,
@@ -23,7 +23,7 @@ use super::model::{
     DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskProjection,
     DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate, TaskListProjection,
     TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
-    WorkPlanItemStatus,
+    TaskListItemStatus,
 };
 
 pub(super) async fn create_job(
@@ -1555,7 +1555,7 @@ pub(super) async fn sync_task_list(
                     existing.id, item.id
                 ));
             }
-            if item.status == WorkPlanItemStatus::Completed
+            if item.status == TaskListItemStatus::Completed
                 && item
                     .summary
                     .as_deref()
@@ -1589,7 +1589,7 @@ pub(super) async fn sync_task_list(
             let existing = tasks_by_id.get(&task_id).copied();
             let body = item.summary.clone();
             let result_summary = match item.status {
-                WorkPlanItemStatus::Completed => item
+                TaskListItemStatus::Completed => item
                     .summary
                     .as_ref()
                     .filter(|summary| {
@@ -1598,7 +1598,7 @@ pub(super) async fn sync_task_list(
                             .unwrap_or(true)
                     })
                     .cloned(),
-                WorkPlanItemStatus::Blocked => item.blocked_reason.clone(),
+                TaskListItemStatus::Blocked => item.blocked_reason.clone(),
                 _ => None,
             };
             update_task(
@@ -1620,7 +1620,7 @@ pub(super) async fn sync_task_list(
                     },
                     run_state: Some(super::model::DocketTaskRunStateUpdate {
                         run_id,
-                        status: docket_task_status_from_work_plan_item_status(item.status),
+                        status: docket_task_status_from_task_list_item_status(item.status),
                         result_refs: None,
                         result_summary,
                     }),

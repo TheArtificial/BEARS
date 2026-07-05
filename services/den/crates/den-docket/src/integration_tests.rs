@@ -3,12 +3,12 @@ use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
 
 use crate::{
-    docket_task_status_from_work_plan_item_status, task_list_projection_from_docket_job,
+    docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
     DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
     DocketJobStatus, DocketService, DocketTaskDefinitionPatch, DocketTaskDifficulty,
     DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
-    DocketTaskUpdate, PgDocketService, TaskDispatcher, TaskListSyncRequest, WorkPlanVisibility,
+    DocketTaskUpdate, PgDocketService, TaskDispatcher, TaskListSyncRequest, TaskListVisibility,
 };
 
 async fn test_pool() -> Option<PgPool> {
@@ -69,7 +69,7 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
         work_surface_ref: None,
         commit_policy: Some(DocketCommitPolicy::ProposeOnly),
         status: DocketJobStatus::Ready,
-        visibility: WorkPlanVisibility::SameUser,
+        visibility: TaskListVisibility::SameUser,
         criteria: vec![DocketJobCriterionInput {
             kind: DocketCriterionKind::Narrative,
             description: "Both tasks are done".to_string(),
@@ -296,10 +296,10 @@ async fn docket_task_list_sync_rejects_completed_item_without_evidence() {
         .expect("create job");
     let mut task_list = task_list_projection_from_docket_job(&created, None);
     task_list.owner_profile = "pair".to_string();
-    task_list.items[0].status = crate::WorkPlanItemStatus::Completed;
+    task_list.items[0].status = crate::TaskListItemStatus::Completed;
     task_list.items[0].summary = Some(created.tasks[0].body.clone());
     assert_eq!(
-        docket_task_status_from_work_plan_item_status(task_list.items[0].status).as_str(),
+        docket_task_status_from_task_list_item_status(task_list.items[0].status).as_str(),
         "done"
     );
 
