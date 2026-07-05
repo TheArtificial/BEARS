@@ -80,6 +80,51 @@ Example for Den restart / missing in-memory continuation:
 Operational note from Den: the previous turn could not continue because in-memory runtime state was lost, likely due to a Den restart. Persisted conversation and tool results remain available, but no final answer was delivered. There is no repair action for the model; continue from persisted state in this fresh turn.
 ```
 
+### ACP And History Marker
+
+When Den sends a model-visible operational note, recoverable error note, task-focus warning, budget warning, or continuation warning, Den should also emit a concise human-visible marker to ACP sessions and user-visible conversation history.
+
+This is a visibility parity rule: if the model is told that runtime state changed, the human should see a compact explanation that the runtime changed course.
+
+The marker should:
+
+- be one or two short sentences;
+- say what changed at product level;
+- avoid raw reason codes and implementation internals;
+- be safe to show in normal conversation history;
+- correlate to the detailed model-visible note through structured metadata, not by duplicating all detail.
+
+The marker should not include:
+
+- elapsed/limit counters unless needed for user action;
+- provider JSON or raw stream/parser errors;
+- hidden task-gate internals;
+- full diagnostic context.
+
+Examples:
+
+```text
+BEARS is close to this turn's budget, so it may wrap up or ask for a fresh turn soon.
+```
+
+```text
+BEARS kept the task focus active and asked the model to continue the next incomplete item.
+```
+
+```text
+BEARS recovered from an interrupted continuation. Recent tool results were preserved.
+```
+
+```text
+BEARS stopped this turn after it ran too long. Start a fresh turn to continue safely.
+```
+
+Exceptions:
+
+- Pure diagnostics that do not affect model behavior may remain stderr/log-only.
+- Security-sensitive or secret-bearing diagnostics must not be mirrored into user history.
+- Very frequent warnings should be coalesced or deduplicated so history does not become noisy.
+
 ### Operator Diagnostics
 
 Detailed failure context should be structured and searchable.
@@ -113,6 +158,15 @@ Diagnostic context must not include secrets, full file contents, full prompts, b
 | Tool execution failure | Tool-specific user message | Use tool result/error semantics | Tool result raw output + Den/armature logs |
 | User cancellation | “request was cancelled” | Do not continue unless user asks | Armature/Den logs |
 
+## Warning And Recovery Taxonomy
+
+| Class | ACP/History Marker | Model Note | Diagnostic Home |
+|---|---|---|---|
+| Near-budget warning | “close to this turn's budget” | Prefer concise wrap-up or ask for fresh turn | Den event/log context budget details |
+| Task-focus warning | “kept task focus active” | Continue next incomplete/unblocked item | Den task-focus state |
+| Recoverable continuation warning | “recovered from interrupted continuation” | Recent results preserved; continue from latest state | Den logs + armature stderr if adapter-observed |
+| Budget replenishment after mutation | “allowed a short verification pass” when user-relevant | Verification-oriented continuation only | Den budget state |
+
 ## Retryability Vocabulary
 
 Use retryability to guide behavior, not to expose implementation details.
@@ -129,7 +183,8 @@ Use retryability to guide behavior, not to expose implementation details.
 2. BearWire `run.failed` should carry concise user copy plus structured diagnostic context, not one overloaded message string.
 3. The armature should render concise user copy and write diagnostic context to stderr.
 4. Hidden operational outcome messages should remain model-visible but user-hidden.
-5. If an error is entirely infrastructure-level and no model action is needed, both Den's model note and the user copy should say so in different levels of detail.
+5. Concise ACP/history markers should accompany model-visible warnings and recovery notes when they affect behavior.
+6. If an error is entirely infrastructure-level and no model action is needed, both Den's model note and the user copy should say so in different levels of detail.
 
 ## Current Gap To Close
 

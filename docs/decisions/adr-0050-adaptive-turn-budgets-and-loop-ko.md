@@ -147,6 +147,10 @@ Requirements:
 
 The model should learn that prior work may have partially succeeded and that it should resume from the latest successful state rather than assuming completion.
 
+The detailed operational record being hidden from ordinary history does not mean the human should see nothing. Per [Runtime Error UX Policy](../architecture/runtime-error-ux-policy.md), Den should also project a concise user-visible ACP/history marker whenever model-visible budget warnings, task-focus warnings, recovery notes, or operational outcomes affect model behavior.
+
+The marker should explain the behavioral change in product language, while the hidden record retains the detailed model-continuity instruction and structured diagnostics.
+
 ## Consequences
 
 ### Positive
