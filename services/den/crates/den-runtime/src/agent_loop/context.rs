@@ -166,7 +166,7 @@ fn reconstruct_transcript_messages(rows: Vec<TranscriptRow>) -> Vec<ChatMessage>
                     payload
                         .output_preview
                         .clone()
-                        .or(payload.content.clone())
+                        .or_else(|| payload.content.clone())
                         .or_else(|| {
                             payload
                                 .structured_content

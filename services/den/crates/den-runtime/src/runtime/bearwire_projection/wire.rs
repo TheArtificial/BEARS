@@ -13,7 +13,7 @@ pub enum BearWireEventScope {
     Ephemeral,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BearWireEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
@@ -66,7 +66,7 @@ impl BearWireEvent {
     }
 
     fn with_run_id(mut self, run_id: Option<String>) -> Self {
-        self.run_id = run_id.clone();
+        self.run_id.clone_from(&run_id);
         if let Some(run_id) = run_id {
             self.subject = Some(format!("resource/run/{run_id}"));
             self.resource_refs.push(ResourceRef::new("run", run_id));
@@ -127,7 +127,7 @@ impl ResourceRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonRpcNotification<T> {
     pub jsonrpc: &'static str,
     pub method: &'static str,

@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 const LOG_SAMPLE_CHARS: usize = 2_000;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeOperationalOutcomeProjection {
     pub model_summary: String,
     pub content: Value,
@@ -11,7 +11,7 @@ pub struct RuntimeOperationalOutcomeProjection {
     pub diagnostic_context: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeHistoryMarkerProjection {
     pub kind: String,
     pub text: String,

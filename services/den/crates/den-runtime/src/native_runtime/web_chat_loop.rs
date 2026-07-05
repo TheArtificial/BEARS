@@ -40,7 +40,7 @@ use den_core::DenError;
 use crate::native_runtime::RuntimeToolInvoker;
 
 const WEB_CHAT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
-const WEB_CHAT_TURN_BUDGET: Duration = Duration::from_secs(120);
+const WEB_CHAT_TURN_BUDGET: Duration = Duration::from_mins(2);
 
 #[derive(Clone)]
 pub struct NativeWebChatLoopRuntime {
@@ -329,9 +329,7 @@ impl NativeWebChatLoopStream {
                     });
                 }
             });
-        let Some(reason) = evaluation.stop_reason else {
-            return None;
-        };
+        let reason = evaluation.stop_reason?;
         self.persist_interrupted_turn(reason.persistence_reason());
         Some(RuntimeStreamEvent::Semantic(
             RuntimeSemanticEvent::TurnFailed {

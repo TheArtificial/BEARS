@@ -71,7 +71,7 @@ pub async fn enqueue_archive_harvest_for_bear(
     trigger: &str,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_reflection_runs (bear_id, lane, trigger, status, input_summary, output_summary)
         SELECT $1, 'archive_harvest', $2, 'queued', '{}'::jsonb, '{}'::jsonb
         WHERE NOT EXISTS (
@@ -82,7 +82,7 @@ pub async fn enqueue_archive_harvest_for_bear(
                   conversation_id, conversation_key, conversation_date,
                   input_summary, output_summary, error,
                   started_at, completed_at, created_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(trigger)
@@ -96,7 +96,7 @@ async fn claim_next_archive_harvest_run(
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         WITH next_run AS (
             SELECT id
             FROM bear_reflection_runs
@@ -113,7 +113,7 @@ async fn claim_next_archive_harvest_run(
                   runs.role_agent_id, runs.conversation_id, runs.conversation_key,
                   runs.conversation_date, runs.input_summary, runs.output_summary,
                   runs.error, runs.started_at, runs.completed_at, runs.created_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_optional(pool)
@@ -162,12 +162,12 @@ async fn mark_archive_harvest_failed(
 
 async fn list_bears_with_queued_archive_harvest_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
     let rows = sqlx::query_scalar::<_, Uuid>(
-        r#"
+        r"
         SELECT DISTINCT bear_id
         FROM bear_reflection_runs
         WHERE lane = 'archive_harvest' AND status = 'queued'
         ORDER BY bear_id
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await?;

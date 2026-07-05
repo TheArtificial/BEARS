@@ -124,7 +124,7 @@ async fn list_unmined_compaction_artifacts(
     limit: i64,
 ) -> Result<Vec<CompactionArtifactHarvestRow>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT a.id,
                a.conversation_id,
                c.external_conversation_id,
@@ -149,7 +149,7 @@ async fn list_unmined_compaction_artifacts(
           )
         ORDER BY a.created_at ASC
         LIMIT $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(limit)

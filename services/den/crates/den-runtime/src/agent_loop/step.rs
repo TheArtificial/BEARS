@@ -359,7 +359,7 @@ impl LazyAgentStepStream {
                 .await?;
 
         ctx.session_store.update(&session_key, |s| {
-            s.messages = new_messages.clone();
+            s.messages.clone_from(&new_messages);
             s.overflow_retry_attempted = true;
             s.overflow_compaction_recovered = recovered;
         });

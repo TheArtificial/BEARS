@@ -175,7 +175,7 @@ async fn persisted_tool_call_exists(
     tool_call_id: &str,
 ) -> Result<bool, DenError> {
     let exists = sqlx::query_scalar::<_, bool>(
-        r#"
+        r"
         SELECT EXISTS (
             SELECT 1
             FROM conversation_messages
@@ -187,7 +187,7 @@ async fn persisted_tool_call_exists(
               AND message_type = 'tool_call'
               AND tool_call_id = $3
         )
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(bear_id)
@@ -1056,14 +1056,14 @@ async fn record_web_fetch_url_approval(
         .ok_or_else(|| DenError::ValidationError("web_fetch args missing url".to_string()))?;
     let normalized_url = normalize_approved_web_url(raw_url)?;
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_web_approvals (bear_id, scope_kind, scope_value, approved_by_user_id, source, expires_at)
         VALUES ($1, 'url', $2, $3, 'acp', now() + interval '1 hour')
         ON CONFLICT (bear_id, scope_kind, scope_value) WHERE revoked_at IS NULL
         DO UPDATE SET approved_by_user_id = EXCLUDED.approved_by_user_id,
                       source = EXCLUDED.source,
                       expires_at = EXCLUDED.expires_at
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(normalized_url)
@@ -1677,11 +1677,11 @@ mod tests {
         let username = format!("toolhist{}", &suffix[..12]);
         let email = format!("{username}@example.test");
         let (user_id,): (i32,) = sqlx::query_as(
-            r#"
+            r"
             INSERT INTO users (email, username, display_name, passhash)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-            "#,
+            ",
         )
         .bind(email)
         .bind(&username)
@@ -1693,10 +1693,10 @@ mod tests {
         let bear_id = Uuid::new_v4();
         let bear_slug = format!("tool-history-{}", &suffix[..12]);
         sqlx::query(
-            r#"
+            r"
             INSERT INTO bears (id, slug, name)
             VALUES ($1, $2, $3)
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(&bear_slug)
@@ -1827,11 +1827,11 @@ mod tests {
         let username = format!("toolhistload{}", &suffix[..8]);
         let email = format!("{username}@example.test");
         let (user_id,): (i32,) = sqlx::query_as(
-            r#"
+            r"
             INSERT INTO users (email, username, display_name, passhash)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-            "#,
+            ",
         )
         .bind(email)
         .bind(&username)
@@ -1843,10 +1843,10 @@ mod tests {
         let bear_id = Uuid::new_v4();
         let bear_slug = format!("tool-load-history-{}", &suffix[..8]);
         sqlx::query(
-            r#"
+            r"
             INSERT INTO bears (id, slug, name)
             VALUES ($1, $2, $3)
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(&bear_slug)

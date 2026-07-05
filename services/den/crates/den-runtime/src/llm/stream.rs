@@ -319,7 +319,7 @@ impl OpenAiStreamAccumulator {
             out.events.extend(terminal_events);
         }
 
-        if let Some(diagnostics) = diagnostics.as_deref_mut() {
+        if let Some(diagnostics) = diagnostics {
             diagnostics.observe_emitted_events(&out.events);
         }
         out

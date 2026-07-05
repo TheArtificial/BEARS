@@ -89,10 +89,10 @@ fn row_to_run(row: sqlx::postgres::PgRow) -> TurnRunRow {
     }
 }
 
-const RUN_RETURNING: &str = r#"
+const RUN_RETURNING: &str = r"
     id, run_id, session_id, bear_id, user_id, state,
     terminal_reason, created_at, updated_at, completed_at
-"#;
+";
 
 pub async fn create_run(
     pool: &PgPool,
@@ -102,11 +102,11 @@ pub async fn create_run(
     user_id: i32,
 ) -> Result<TurnRunRow, DenError> {
     let row = sqlx::query(&format!(
-        r#"
+        r"
         INSERT INTO turn_runs (run_id, session_id, bear_id, user_id, state)
         VALUES ($1, $2, $3, $4, 'accepted')
         RETURNING {RUN_RETURNING}
-        "#
+        "
     ))
     .bind(run_id)
     .bind(session_id)
@@ -119,11 +119,11 @@ pub async fn create_run(
 
 pub async fn get_run(pool: &PgPool, run_id: &str) -> Result<Option<TurnRunRow>, DenError> {
     let row = sqlx::query(&format!(
-        r#"
+        r"
         SELECT {RUN_RETURNING}
         FROM turn_runs
         WHERE run_id = $1
-        "#
+        "
     ))
     .bind(run_id)
     .fetch_optional(pool)
@@ -136,14 +136,14 @@ pub async fn active_run_for_session(
     session_id: &str,
 ) -> Result<Option<TurnRunRow>, DenError> {
     let row = sqlx::query(&format!(
-        r#"
+        r"
         SELECT {RUN_RETURNING}
         FROM turn_runs
         WHERE session_id = $1
           AND state IN ('accepted','running','waiting_for_client','waiting_for_tool_result','waiting_for_permission','continuing')
         ORDER BY created_at DESC
         LIMIT 1
-        "#
+        "
     ))
     .bind(session_id)
     .fetch_optional(pool)
@@ -159,7 +159,7 @@ pub async fn supersede_active_run_for_session(
     reason: &str,
 ) -> Result<Option<TurnRunRow>, DenError> {
     let row = sqlx::query(&format!(
-        r#"
+        r"
         UPDATE turn_runs
         SET state = 'failed', terminal_reason = $4, completed_at = NOW(), updated_at = NOW()
         WHERE id = (
@@ -171,7 +171,7 @@ pub async fn supersede_active_run_for_session(
             LIMIT 1
         )
         RETURNING {RUN_RETURNING}
-        "#
+        "
     ))
     .bind(session_id)
     .bind(bear_id)
@@ -231,11 +231,11 @@ pub async fn existing_client_result_for_payload(
     payload_json: &serde_json::Value,
 ) -> Result<Option<TurnObligationResultRecord>, DenError> {
     let Some(existing) = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
         FROM turn_obligation_results
         WHERE run_id = $1 AND obligation_kind = $2 AND obligation_id = $3
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(obligation_kind)
@@ -283,13 +283,13 @@ pub async fn record_client_result_for_step(
 ) -> Result<TurnObligationResultRecord, DenError> {
     let hash = result_hash(&payload_json)?;
     let inserted = sqlx::query(
-        r#"
+        r"
         INSERT INTO turn_obligation_results (
             run_id, turn_step_id, obligation_kind, obligation_id, result_hash, payload_json
         ) VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (run_id, obligation_kind, obligation_id) DO NOTHING
         RETURNING id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(turn_step_id)
@@ -306,11 +306,11 @@ pub async fn record_client_result_for_step(
     }
 
     let existing = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
         FROM turn_obligation_results
         WHERE run_id = $1 AND obligation_kind = $2 AND obligation_id = $3
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(obligation_kind)
@@ -333,11 +333,11 @@ pub async fn client_result_count_for_run_kind(
     obligation_kind: &str,
 ) -> Result<i64, DenError> {
     let count = sqlx::query_scalar::<_, i64>(
-        r#"
+        r"
         SELECT COUNT(*)
         FROM turn_obligation_results
         WHERE run_id = $1 AND obligation_kind = $2
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(obligation_kind)
@@ -357,7 +357,7 @@ pub async fn transition_run(
         TurnRunState::Completed | TurnRunState::Failed | TurnRunState::Cancelled
     );
     let row = sqlx::query(&format!(
-        r#"
+        r"
         UPDATE turn_runs
         SET state = $2,
             terminal_reason = $3,
@@ -365,7 +365,7 @@ pub async fn transition_run(
             completed_at = CASE WHEN $4 THEN COALESCE(completed_at, NOW()) ELSE completed_at END
         WHERE run_id = $1
         RETURNING {RUN_RETURNING}
-        "#
+        "
     ))
     .bind(run_id)
     .bind(state.as_str())

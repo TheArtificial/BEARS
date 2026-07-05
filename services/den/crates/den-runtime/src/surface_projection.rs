@@ -53,7 +53,7 @@ impl SurfaceActionKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SurfaceProjection {
     pub surface: TurnSurfaceKind,
     pub obligation_id: String,

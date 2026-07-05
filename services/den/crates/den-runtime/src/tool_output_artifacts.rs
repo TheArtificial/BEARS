@@ -70,13 +70,13 @@ pub async fn create_tool_output_artifact(
         json!({ "value": input.metadata })
     };
     let id = sqlx::query_scalar::<_, Uuid>(
-        r#"
+        r"
         INSERT INTO tool_output_artifacts (
             bear_id, user_id, session_id, conversation_id, run_id, tool_call_id,
             tool_name, source, content_text, content_json, metadata, content_bytes
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING id
-        "#,
+        ",
     )
     .bind(input.bear_id)
     .bind(input.user_id)
@@ -120,11 +120,11 @@ pub async fn read_tool_output_artifact(
             Value,
         ),
     >(
-        r#"
+        r"
         SELECT id, tool_call_id, tool_name, source, content_text, content_json, metadata
         FROM tool_output_artifacts
         WHERE id = $1 AND bear_id = $2 AND session_id = $3
-        "#,
+        ",
     )
     .bind(id)
     .bind(bear_id)

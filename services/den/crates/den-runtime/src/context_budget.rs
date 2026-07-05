@@ -110,7 +110,7 @@ pub fn estimate_context_budget(
         .or(fallback_max_output_tokens);
     let reserved_output_tokens = request
         .max_tokens
-        .unwrap_or(max_output_tokens.unwrap_or(2048))
+        .unwrap_or_else(|| max_output_tokens.unwrap_or(2048))
         .min(max_output_tokens.unwrap_or(u32::MAX))
         .min(4096);
     let estimated_total_tokens = total_input_tokens.saturating_add(reserved_output_tokens);

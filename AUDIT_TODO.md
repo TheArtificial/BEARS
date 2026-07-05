@@ -43,9 +43,16 @@ Idiomatic/clippy fixes:
   `unwrap_or_else`, `from_mins`, `String::new()`, struct field order, needless `Ok(?)`).
   Verified `cargo clippy -p den-service --all-targets -- -D warnings` exits 0.
 
-### Remaining clippy-gate work (downstream crates, cascading as upstream goes green)
-- [ ] `den-runtime` — next (depends on den-service).
-- [ ] `den-http`, `den-oauth`, `den-api`, `den-web`, `den-bearwire`, root `den` bin — after den-runtime.
+### Batch 3 — den-runtime clippy green — DONE
+- [x] `den-runtime` — 69 lib / 73 test errors. Bulk via `cargo clippy --fix` (raw-string
+  hashes ×52, derive `Eq`, `redundant_clone`, `clone_from`), remainder by hand:
+  `large_enum_variant` on `PermissionResultCoordinatorOutcome::DispatchLocalTool`
+  (boxed `tool_obligation`; consumers auto-deref), `unwrap_or_else`/`or_else`,
+  dead `if selected_paths.is_empty() {"available"} else {"available"}` (audit
+  assembler.rs:113 finding), `let...else` → `?`. Verified green; workspace compiles.
+
+### Remaining clippy-gate work
+- [ ] `den-http`, `den-oauth`, `den-api`, `den-web`, `den-bearwire`, root `den` bin.
 
 ---
 

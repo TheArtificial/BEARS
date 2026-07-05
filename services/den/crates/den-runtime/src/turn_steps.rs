@@ -72,14 +72,14 @@ fn row_to_step(row: sqlx::postgres::PgRow) -> TurnStepRow {
 
 pub async fn ensure_active_step(pool: &PgPool, run_id: &str) -> Result<TurnStepRow, DenError> {
     if let Some(row) = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
         FROM turn_steps
         WHERE run_id = $1
           AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
         ORDER BY step_index DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(run_id)
     .fetch_optional(pool)
@@ -89,7 +89,7 @@ pub async fn ensure_active_step(pool: &PgPool, run_id: &str) -> Result<TurnStepR
     }
 
     let row = sqlx::query(
-        r#"
+        r"
         WITH next_step AS (
             SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
             FROM turn_steps
@@ -99,7 +99,7 @@ pub async fn ensure_active_step(pool: &PgPool, run_id: &str) -> Result<TurnStepR
         SELECT $1, step_index, 'streaming_model'
         FROM next_step
         RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-        "#,
+        ",
     )
     .bind(run_id)
     .fetch_one(pool)
@@ -118,13 +118,13 @@ pub async fn transition_step(
         TurnStepState::Continued | TurnStepState::Failed | TurnStepState::Cancelled
     );
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE turn_steps
         SET state = $2,
             closed_at = CASE WHEN $3 THEN COALESCE(closed_at, NOW()) ELSE closed_at END
         WHERE id = $1
         RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-        "#,
+        ",
     )
     .bind(turn_step_id)
     .bind(state.as_str())
@@ -145,13 +145,13 @@ pub async fn transition_active_steps_for_run(
         TurnStepState::Continued | TurnStepState::Failed | TurnStepState::Cancelled
     );
     let result = sqlx::query(
-        r#"
+        r"
         UPDATE turn_steps
         SET state = $2,
             closed_at = CASE WHEN $3 THEN COALESCE(closed_at, NOW()) ELSE closed_at END
         WHERE run_id = $1
           AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(state.as_str())
