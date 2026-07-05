@@ -177,6 +177,32 @@ When the gate is active:
 - valid terminal responses are limited to completed work, a hard blocker, or a required safety/permission stop;
 - interruption recovery should resume from the next incomplete unblocked task-list item rather than merely summarizing progress.
 
+The gate must evaluate **incomplete actionable** items, not merely every non-completed item. A task-list item may also end in a terminal non-completion outcome such as blocked, not applicable, waived, cancelled, or unsafe/permission-gated. A reasoned non-action with evidence is a valid terminal outcome, not a failure to proceed. For example, a “Commit changes” item may be marked not applicable or cancelled when there are no relevant changes, only unrelated dirty files, no commit authorization, or committing would be misleading.
+
+Model-facing continuation instructions should therefore say:
+
+> Continue until the task is finished, blocked, not applicable, waived, or permission-gated. If the next planned action is inappropriate, mark that item with a terminal non-completion state and report the evidence.
+
+The runtime must not force an assistant to perform an unsafe, unauthorized, empty, or misleading action merely because the item remains unchecked.
+
+### Task-gate rejection loops
+
+The task outcome gate can itself create a loop if a model repeatedly tries the same invalid terminal response while the task list still has an actionable item. Den should treat repeated gate rejections as a first-class loop signal, distinct from tool-call rule-of-ko.
+
+Required behavior:
+
+- Track task-gate rejection count per active run/session.
+- Fingerprint each rejected terminal attempt using the task-list id/version, next actionable item, final-response kind, and normalized assistant text.
+- On the first rejection, nudge the model to continue or mark the item blocked/cancelled/not-applicable with evidence.
+- On a repeated matching rejection, strengthen the nudge and explicitly forbid repeating the same final answer.
+- After a small threshold, stop forcing continuation and surface a concise blocker requiring human review or task-state update.
+
+The threshold stop should not look like a raw runtime crash. It should produce a user-facing blocker such as:
+
+> I am stopping because I repeatedly reached the same task gate. The remaining item appears to need a task-state update, permission, or human review.
+
+Den must not silently mutate task-list state at the threshold unless the model explicitly supplied a blocker/non-action reason that can be recorded as evidence.
+
 This invariant applies to both `pair` and `work`, but `work` is stricter:
 
 - `pair` may still terminate for genuine clarification when the active task list exists but safe continuation depends on missing user intent;

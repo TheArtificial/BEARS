@@ -80,6 +80,25 @@ Den adopts a **rule-of-ko** style guard for agent loops:
 
 This is the primary churn guard for long-running stances such as `work`.
 
+### 5a. Task outcome gates need their own ko signal
+
+Tool-call ko is not enough. A run can also loop at a task outcome gate: the model repeatedly attempts to final-answer, Den rejects the terminal response because an active task-list item remains actionable, Den nudges continuation, and the model repeats the same invalid final answer.
+
+Den should track this as a typed gate-rejection loop, not infer it from transcript prose. The gate-rejection signature should include at least:
+
+- active task-list id and version;
+- next actionable item id/title;
+- classified final-response kind;
+- normalized assistant text hash.
+
+Policy shape:
+
+- first rejection: model-facing continuation nudge;
+- repeated same rejection: stronger nudge requiring a different action or a task-state update such as blocked/cancelled/not-applicable with evidence;
+- threshold exceeded: stop forcing continuation and surface a concise blocker for human review or task-state correction.
+
+This preserves the value of the continuation gate without creating an obstinate self-loop. It also keeps reasoned non-action distinct from failure: if the remaining task is blocked, not applicable, waived, or permission-gated with evidence, the terminal response should be allowed by the task gate rather than counted as a rejection.
+
 ### 6. Repeated failures have their own budget
 
 Den separately tracks consecutive failed tool batches.
@@ -154,6 +173,7 @@ The first implementation should use:
 - profile-owned total and per-class tool-call budgets;
 - consecutive tool failure cutoff;
 - ko-style repeated identical tool signature cutoff.
+- ko-style repeated task-gate rejection cutoff.
 - a high emergency hard-step fuse.
 
 Token-aware continuation budgets remain compatible future extensions, but are not required for the first implementation because Den already tracks context-window budget separately in ADR-0047.
