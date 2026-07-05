@@ -48,6 +48,52 @@ fn default_tool_status_summary(tool_name: &str, failed: bool) -> String {
     }
 }
 
+fn command_name_from_tool_event(data: &Value) -> Option<String> {
+    let tool_name = data.get("tool_name").and_then(Value::as_str)?;
+    if !matches!(tool_name, "run_command" | "process_run" | "terminal_run_command") {
+        return None;
+    }
+    let command = data
+        .get("args")
+        .and_then(|args| args.get("command"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+        .map(str::to_string)?;
+    let arg_list = data
+        .get("args")
+        .and_then(|args| args.get("args"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let summary = match command.as_str() {
+        "git" | "cargo" => arg_list
+            .first()
+            .map(|subcommand| format!("{command} {subcommand}"))
+            .unwrap_or(command),
+        "python" | "python3" if arg_list.first().is_some_and(|arg| arg == "-m") => arg_list
+            .get(1)
+            .map(|module| format!("{command} -m {module}"))
+            .unwrap_or(command),
+        _ => command,
+    };
+    Some(summary)
+}
+
+fn default_tool_status_summary_with_context(data: &Value, tool_name: &str, failed: bool) -> String {
+    let base = default_tool_status_summary(tool_name, failed);
+    let Some(command) = command_name_from_tool_event(data) else {
+        return base;
+    };
+    format!("{base} Command: `{command}`.")
+}
+
 fn tool_call_finished_summary(data: &Value, tool_name: &str, failed: bool) -> String {
     let candidate = [
         data.get("error_message").and_then(Value::as_str),
@@ -90,7 +136,7 @@ fn tool_call_finished_summary(data: &Value, tool_name: &str, failed: bool) -> St
                     crate::compact_tool_json_detail(data, 1_200)
                 );
             }
-            default_tool_status_summary(tool_name, failed)
+            default_tool_status_summary_with_context(data, tool_name, failed)
         }
     }
 }
@@ -1433,6 +1479,40 @@ mod tests {
             tool_call_finished_summary(&data, "memory_read", true),
             "Read memory failed."
         );
+    }
+
+    #[test]
+    fn tool_call_finished_summary_adds_command_name_for_generic_run_command_summary() {
+        let data = json!({
+            "tool_name": "run_command",
+            "summary": "Tool completed.",
+            "args": {
+                "command": "cargo",
+                "args": ["test"]
+            }
+        });
+
+        let summary = tool_call_finished_summary(&data, "run_command", false);
+
+        assert!(summary.contains("Run Command completed."), "{summary}");
+        assert!(summary.contains("Command: `cargo test`."), "{summary}");
+    }
+
+    #[test]
+    fn tool_call_finished_summary_adds_git_subcommand_for_generic_summary() {
+        let data = json!({
+            "tool_name": "process_run",
+            "summary": "Tool completed.",
+            "args": {
+                "command": "git",
+                "args": ["status", "--short"]
+            }
+        });
+
+        let summary = tool_call_finished_summary(&data, "process_run", false);
+
+        assert!(summary.contains("Run process completed."), "{summary}");
+        assert!(summary.contains("Command: `git status`."), "{summary}");
     }
 
     #[test]
