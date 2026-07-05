@@ -16,6 +16,7 @@ const AUTONOMOUS_CONTINUATION_POLICY: &str = "continue_until_complete_or_blocked
 pub enum AutonomousFinalResponseKind {
     CompletionFinal,
     BlockedFinal,
+    ReasonedNonActionFinal,
     ProgressReport,
     ClarificationRequest,
     UnsafeActionPermissionRequest,
@@ -114,7 +115,14 @@ pub fn autonomous_execution_gate_for_plan(
         matches!(
             final_response_kind,
             AutonomousFinalResponseKind::BlockedFinal
+                | AutonomousFinalResponseKind::ReasonedNonActionFinal
                 | AutonomousFinalResponseKind::UnsafeActionPermissionRequest
+        )
+    } else if !has_incomplete_unblocked_items {
+        matches!(
+            final_response_kind,
+            AutonomousFinalResponseKind::CompletionFinal
+                | AutonomousFinalResponseKind::ReasonedNonActionFinal
         )
     } else {
         false
@@ -138,6 +146,17 @@ pub fn classify_autonomous_final_response(text: &str) -> AutonomousFinalResponse
         || lower.contains("permission")
     {
         return AutonomousFinalResponseKind::UnsafeActionPermissionRequest;
+    }
+    if lower.contains("not applicable")
+        || lower.contains("waived")
+        || lower.contains("intentionally skipped")
+        || lower.contains("skipped because")
+        || lower.contains("not appropriate")
+        || lower.contains("no relevant changes")
+        || lower.contains("do not commit")
+        || lower.contains("did not commit")
+    {
+        return AutonomousFinalResponseKind::ReasonedNonActionFinal;
     }
     if lower.contains("blocked") || lower.contains("cannot continue") {
         return AutonomousFinalResponseKind::BlockedFinal;
@@ -198,12 +217,17 @@ pub fn autonomous_execution_gate_for_task_list(
         matches!(
             final_response_kind,
             AutonomousFinalResponseKind::BlockedFinal
+                | AutonomousFinalResponseKind::ReasonedNonActionFinal
                 | AutonomousFinalResponseKind::UnsafeActionPermissionRequest
         )
     } else if has_incomplete_unblocked_items {
         false
     } else {
-        false
+        matches!(
+            final_response_kind,
+            AutonomousFinalResponseKind::CompletionFinal
+                | AutonomousFinalResponseKind::ReasonedNonActionFinal
+        )
     };
 
     AutonomousExecutionGate {
@@ -245,7 +269,7 @@ pub fn autonomous_resume_obligation_text(plan: &WorkPlanProjection) -> Option<St
         .map(|item| item.title.as_str())
         .unwrap_or("resolve blocker before proceeding");
     Some(format!(
-        "Previous assistant turn ended before completing an autonomous implementation task.\n\nActive goal:\n{}\n\nContinuation policy:\nContinue the next incomplete, unblocked task. Do not provide a progress-only final answer unless the work is complete or blocked.\n\nCurrent task state:\n{}\n\nRequired action:\nResume execution from the next incomplete item: {}.",
+        "Previous assistant turn ended before completing an autonomous implementation task.\n\nActive goal:\n{}\n\nContinuation policy:\nContinue the next incomplete, unblocked task. Do not provide a progress-only final answer unless the work is complete, blocked, not applicable, waived, or permission-gated. If the next planned action is inappropriate, mark that item blocked or cancelled with evidence and report the reason.\n\nCurrent task state:\n{}\n\nRequired action:\nResume execution from the next incomplete actionable item: {}.",
         plan.title, items, next
     ))
 }
@@ -411,7 +435,7 @@ fn is_autonomous_implementation_plan(profile: BearProfile, plan: &WorkPlanProjec
 fn is_autonomous_task_list(profile: BearProfile, task_list: &TaskListProjection) -> bool {
     matches!(profile, BearProfile::Pair | BearProfile::Work)
         && matches!(task_list.owner_profile.as_str(), "pair" | "work")
-        && matches!(task_list.status.as_str(), "active" | "blocked" | "completed" | "cancelled")
+        && matches!(task_list.status.as_str(), "active" | "ready" | "running" | "blocked" | "completed" | "cancelled")
 }
 
 fn acceptance_criteria_met(plan: &WorkPlanProjection) -> bool {
@@ -517,7 +541,7 @@ fn summarize_text(body: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use den_docket::WorkPlanProjection;
+    use den_docket::{TaskListItem, TaskListProjection, TaskListSourceRef, TaskListSyncState, WorkPlanProjection};
     use time::OffsetDateTime;
     use uuid::Uuid;
 
@@ -542,6 +566,43 @@ mod tests {
             visibility: "bear_visible".to_string(),
             status: status.to_string(),
             version: 1,
+            current_item: items
+                .iter()
+                .find(|item| item.status == WorkPlanItemStatus::InProgress)
+                .cloned(),
+            items,
+            source_conversation_id: None,
+            source_client_session_id: None,
+            handoff_intent_path: None,
+            handoff_task_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    fn task_list_item(title: &str, status: WorkPlanItemStatus) -> TaskListItem {
+        TaskListItem {
+            id: title.to_string(),
+            title: title.to_string(),
+            summary: Some(format!("evidence: {title}")),
+            status,
+            blocked_reason: (status == WorkPlanItemStatus::Blocked).then(|| "permission needed".to_string()),
+            source_ref: TaskListSourceRef::local(Vec::new()),
+            sync_state: TaskListSyncState::LocalOnly,
+        }
+    }
+
+    fn task_list(status: &str, items: Vec<TaskListItem>) -> TaskListProjection {
+        TaskListProjection {
+            id: Uuid::nil(),
+            bear_id: Uuid::nil(),
+            title: "Implementation".to_string(),
+            summary: "Acceptance criteria".to_string(),
+            owner_profile: "pair".to_string(),
+            visibility: "bear_visible".to_string(),
+            status: status.to_string(),
+            version: 1,
+            source_ref: TaskListSourceRef::local(Vec::new()),
             current_item: items
                 .iter()
                 .find(|item| item.status == WorkPlanItemStatus::InProgress)
@@ -628,5 +689,50 @@ mod tests {
             None,
             "What I changed: added one test. Remaining work: more later."
         ));
+    }
+
+    #[test]
+    fn cancelled_remaining_task_allows_reasoned_non_action_final() {
+        let task_list = task_list(
+            "active",
+            vec![
+                task_list_item("Implement change", WorkPlanItemStatus::Completed),
+                task_list_item("Commit changes", WorkPlanItemStatus::Cancelled),
+            ],
+        );
+
+        let gate = autonomous_execution_gate_for_task_list(
+            BearProfile::Pair,
+            Some(&task_list),
+            classify_autonomous_final_response(
+                "I did not commit because there are no relevant changes to commit.",
+            ),
+        );
+
+        assert!(gate.is_active_autonomous_task);
+        assert!(!gate.has_incomplete_unblocked_items);
+        assert!(gate.may_stop);
+    }
+
+    #[test]
+    fn blocked_remaining_task_allows_blocker_final() {
+        let task_list = task_list(
+            "active",
+            vec![
+                task_list_item("Implement change", WorkPlanItemStatus::Completed),
+                task_list_item("Commit changes", WorkPlanItemStatus::Blocked),
+            ],
+        );
+
+        let gate = autonomous_execution_gate_for_task_list(
+            BearProfile::Pair,
+            Some(&task_list),
+            classify_autonomous_final_response(
+                "I am blocked because committing requires explicit permission.",
+            ),
+        );
+
+        assert!(gate.has_hard_blocker);
+        assert!(gate.may_stop);
     }
 }
