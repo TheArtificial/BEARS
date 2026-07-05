@@ -434,11 +434,7 @@ pub(crate) async fn update_work_plan(
             },
         })
         .await?;
-    let plan = row
-        .project_for_profile(role, context.user_id)?
-        .ok_or_else(|| {
-            CustomError::System("updated work plan was not visible to its owner".to_string())
-        })?;
+    let plan = row;
     let task_list = work_plans::task_list_projection_from_work_plan(&plan);
     Ok(json!({
         "domain": "activity",

@@ -16,8 +16,8 @@ use super::model::{
     DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest,
     DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate,
     DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
-    HistoricalTaskListRow, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
-    TaskListHandoffRequest, TaskListListFilter, TaskListLookup, TaskListProjection,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest,
+    TaskListListFilter, TaskListLocalProjection, TaskListLookup, TaskListProjection,
     TaskListSyncOutcome, TaskListSyncRequest, TaskListUpsert,
 };
 
@@ -31,7 +31,7 @@ impl PgDocketService {
         _viewer_role: BearProfile,
         _user_id: i32,
         _filter: TaskListListFilter,
-    ) -> Result<Vec<HistoricalTaskListRow>, DenError> {
+    ) -> Result<Vec<TaskListLocalProjection>, DenError> {
         Ok(Vec::new())
     }
 
@@ -41,16 +41,16 @@ impl PgDocketService {
         _viewer_role: BearProfile,
         _user_id: i32,
         _lookup: TaskListLookup,
-    ) -> Result<Option<HistoricalTaskListRow>, DenError> {
+    ) -> Result<Option<TaskListLocalProjection>, DenError> {
         Ok(None)
     }
 
     pub async fn upsert_work_plan(
         &self,
         _upsert: TaskListUpsert,
-    ) -> Result<HistoricalTaskListRow, DenError> {
-        Err(DenError::system(
-            "den.work_plan.update no longer writes retired bear_work_plans storage; use Docket task/job tools",
+    ) -> Result<TaskListLocalProjection, DenError> {
+        Err(DenError::System(
+            "den.work_plan.update no longer writes retired bear_work_plans storage; use Docket task/job tools".to_string(),
         ))
     }
 }

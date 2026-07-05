@@ -83,9 +83,7 @@ use tower_service::Service;
 use tools::adapter_env::{
     collect_bear_environment, fetch_den_runtime_state, handle_bear_environment,
 };
-use tools::command_policy::{
-    command_workspace_scope_label, process_command_preferred, terminal_command_allowed,
-};
+use tools::command_policy::command_workspace_scope_label;
 use tools::fs::{
     handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
     handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
@@ -3081,7 +3079,7 @@ fn adapter_capabilities_context_with_client_mcp(has_client_mcp_tools: bool) -> V
             "git_restore": direct_tool_descriptor(true, "Restore files in a repository.", &["git restore"]),
             "git_commit": direct_tool_descriptor(true, "Create a git commit.", &["git commit"]),
             "git_stash": direct_tool_descriptor(true, "Stash repository changes.", &["git stash"]),
-            "run_command": direct_tool_descriptor(true, "Run a local command when no dedicated filesystem or git tool clearly fits.", &[]),
+            "run_command": direct_tool_descriptor(true, "Run a local command in terminal view by default when the ACP client supports terminals; use process_run for short captured output.", &[]),
             "process_run": direct_tool_descriptor(true, "Run a short, bounded local command and capture its result.", &[]),
             "terminal_run_command": direct_tool_descriptor(true, "Run a local terminal command with live output for interactive or long-running work.", &[]),
             "bear_environment": direct_tool_descriptor(true, "Inspect BEARS adapter and environment diagnostics.", &[]),
@@ -3134,7 +3132,7 @@ fn direct_tools_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
         "git_restore": direct_tool_descriptor(true, "Restore files in a repository.", &["git restore"]),
         "git_commit": direct_tool_descriptor(true, "Create a git commit.", &["git commit"]),
         "git_stash": direct_tool_descriptor(true, "Stash repository changes.", &["git stash"]),
-        "run_command": direct_tool_descriptor(true, "Run a local command when no dedicated filesystem or git tool clearly fits.", &[]),
+        "run_command": direct_tool_descriptor(true, "Run a local command in terminal view by default when the ACP client supports terminals; use process_run for short captured output.", &[]),
         "process_run": direct_tool_descriptor(true, "Run a short, bounded local command and capture its result.", &[]),
         "terminal_run_command": direct_tool_descriptor(true, "Run a local terminal command with live output for interactive or long-running work.", &[]),
         "bear_environment": direct_tool_descriptor(true, "Inspect BEARS adapter and environment diagnostics.", &[]),
@@ -3206,34 +3204,12 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
 
 fn run_command_prefers_terminal(args: &Value) -> bool {
     let command = args.get("command").and_then(Value::as_str).map(str::trim);
-    let command_args = args
-        .get("args")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let Some(command) = command.filter(|value| !value.is_empty()) else {
+    let Some(_command) = command.filter(|value| !value.is_empty()) else {
         return false;
     };
-    if command == "git" {
-        if command_args.first().is_some_and(|subcommand| {
-            matches!(
-                subcommand.as_str(),
-                "status" | "diff" | "log" | "show" | "add" | "restore" | "commit" | "stash"
-            )
-        }) {
-            return false;
-        }
-    }
-    if terminal_command_allowed(command, &command_args) {
-        return true;
-    }
-    !process_command_preferred(command, &command_args)
+    // ponytail: terminal support is the coarse gate; keep process_run as the explicit
+    // simple-process escape hatch instead of maintaining a second command classifier.
+    true
 }
 
 fn session_context_from_params(params: &Value) -> Result<SessionContext> {
@@ -3657,9 +3633,27 @@ async fn execute_local_tool(
             let context = session_context(adapter_state, session_id)?;
             handle_git_stash(context, &args, policy).await
         }
-        "run_command" | "process_run" => {
+        "process_run" => {
             let context = session_context(adapter_state, session_id)?;
             handle_process_run(context, session_id, &args, policy).await
+        }
+        "run_command" => {
+            let context = session_context(adapter_state, session_id)?.clone();
+            if client_supports_terminal(adapter_state) && run_command_prefers_terminal(&args) {
+                handle_terminal_run_command(
+                    adapter_state,
+                    &context,
+                    session_id,
+                    None,
+                    None,
+                    &args,
+                    policy,
+                    TerminalCommandValidation::Generic,
+                )
+                .await
+            } else {
+                handle_process_run(&context, session_id, &args, policy).await
+            }
         }
         "terminal_run_command" => {
             let context = session_context(adapter_state, session_id)?.clone();
@@ -11356,6 +11350,14 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert!(!stream_has_successful_terminal_condition(
             false, false, false, true
         ));
+    }
+
+    #[test]
+    fn run_command_defaults_to_terminal_when_command_is_present() {
+        assert!(run_command_prefers_terminal(&json!({ "command": "cargo", "args": ["check"] })));
+        assert!(run_command_prefers_terminal(&json!({ "command": "docker", "args": ["build", "."] })));
+        assert!(run_command_prefers_terminal(&json!({ "command": "pwd" })));
+        assert!(!run_command_prefers_terminal(&json!({ "args": ["check"] })));
     }
 
     #[test]
