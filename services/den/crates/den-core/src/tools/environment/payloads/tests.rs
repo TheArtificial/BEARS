@@ -139,6 +139,64 @@ fn pair_session_info_uses_context_runtime_health_when_available() {
 }
 
 #[test]
+fn session_info_preserves_structured_runtime_budget_and_task_focus_state() {
+    let mut context = pair_context();
+    context.runtime = Some(json!({
+        "schema": "den.runtime_state.v1",
+        "state": "active",
+        "budgets": {
+            "turn": {
+                "max_wall_clock_ms": 360000,
+                "emergency_hard_steps": 80,
+                "remaining_steps_before_hard_fuse": 77
+            },
+            "tool_calls": {
+                "limits": { "total": 112 },
+                "usage": { "total": 3 }
+            }
+        },
+        "loop_guards": {
+            "same_tool_signature_repeats": 1,
+            "max_same_tool_signature_repeats": 2
+        },
+        "task_focus": {
+            "active": true,
+            "next_incomplete_task_title": "Run focused checks"
+        },
+        "last_budget_advisory": {
+            "present": true,
+            "summary": "Budget advisory: prefer final answer soon."
+        }
+    }));
+    let payload = session_info_payload(
+        &context,
+        BearProfile::Pair,
+        None,
+        2,
+        &json!({ "available": true }),
+        &json!({ "status": "ok" }),
+    );
+
+    assert_eq!(
+        payload["runtime"]["budgets"]["turn"]["emergency_hard_steps"],
+        json!(80)
+    );
+    assert_eq!(
+        payload["runtime"]["budgets"]["tool_calls"]["limits"]["total"],
+        json!(112)
+    );
+    assert_eq!(
+        payload["runtime"]["loop_guards"]["same_tool_signature_repeats"],
+        json!(1)
+    );
+    assert_eq!(payload["runtime"]["task_focus"]["active"], json!(true));
+    assert_eq!(
+        payload["runtime"]["last_budget_advisory"]["present"],
+        json!(true)
+    );
+}
+
+#[test]
 fn chat_profile_exposes_memory_read_and_write_tools() {
     let names: Vec<_> = builtin_den_tool_descriptors_for_profile(BearProfile::Chat)
         .into_iter()

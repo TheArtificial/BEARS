@@ -1109,11 +1109,17 @@ async fn execute_approved_den_tool_for_session(
         runtime_target: Some(session.conversation_id.clone()),
         workspace_roots: session.workspace_roots.clone(),
         session_policy: None,
-        activity: None,
-        runtime: None,
-        context_budget: None,
-        projected_memory: None,
-        recalled_memory: None,
+        activity: session
+            .active_activity_plan
+            .as_ref()
+            .and_then(|plan| serde_json::to_value(plan).ok()),
+        runtime: Some(session.session_info_runtime_snapshot()),
+        context_budget: session
+            .latest_context_budget
+            .as_ref()
+            .and_then(|budget| serde_json::to_value(budget).ok()),
+        projected_memory: session.latest_projected_memory.clone(),
+        recalled_memory: session.latest_recalled_memory.clone(),
         request_id: Some(request.request_id.to_string()),
         channel: DenToolChannelContext {
             family: Some("armature".to_string()),

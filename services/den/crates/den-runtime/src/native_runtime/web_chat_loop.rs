@@ -554,6 +554,7 @@ async fn execute_one_web_chat_den_tool(
         .unwrap_or_else(|| provider_name.clone());
     let args: Value = serde_json::from_str(&call.function.arguments)
         .unwrap_or_else(|_| Value::Object(Default::default()));
+    let session_snapshot = runtime.session_store.get(&runtime.session_key);
     let content = if !provider_tool_supports_unilateral_execution(&provider_name) {
         serde_json::json!({
             "ok": false,
@@ -578,11 +579,25 @@ async fn execute_one_web_chat_den_tool(
             runtime_target: Some(runtime.conversation_id.clone()),
             workspace_roots: Vec::new(),
             session_policy: None,
-            activity: None,
-            runtime: None,
-            context_budget: None,
-            projected_memory: None,
-            recalled_memory: None,
+            activity: session_snapshot
+                .as_ref()
+                .and_then(|session| session.active_activity_plan.as_ref())
+                .and_then(|plan| serde_json::to_value(plan).ok()),
+            runtime: session_snapshot
+                .as_ref()
+                .map(|session| session.session_info_runtime_snapshot()),
+            context_budget: session_snapshot.as_ref().and_then(|session| {
+                session
+                    .latest_context_budget
+                    .as_ref()
+                    .and_then(|budget| serde_json::to_value(budget).ok())
+            }),
+            projected_memory: session_snapshot
+                .as_ref()
+                .and_then(|session| session.latest_projected_memory.clone()),
+            recalled_memory: session_snapshot
+                .as_ref()
+                .and_then(|session| session.latest_recalled_memory.clone()),
             request_id: Some(runtime.request_id.clone()),
             channel: DenToolChannelContext {
                 family: Some("browser_chat".to_string()),
