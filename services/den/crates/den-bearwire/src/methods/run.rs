@@ -14,6 +14,7 @@ use den_runtime::{
     runtime::bearwire_projection::wire::{
         runtime_stream_event_to_bearwire_events, BearWireEvent, ResourceRef,
     },
+    runtime_error_ux::{log_sample, run_failure_projection, runtime_event_history_marker},
     surface_projection::bearwire_client_method_for_action,
     turn_obligations,
     turn_runner::TurnStartRequest,
@@ -66,187 +67,17 @@ struct RunCancelRequest {
 }
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_millis(3_000);
-const BEARWIRE_LOG_SAMPLE_CHARS: usize = 2_000;
-
-fn log_sample(value: impl AsRef<str>) -> String {
-    let value = value.as_ref();
-    let mut out = value
-        .chars()
-        .take(BEARWIRE_LOG_SAMPLE_CHARS)
-        .collect::<String>();
-    if value.chars().count() > BEARWIRE_LOG_SAMPLE_CHARS {
-        out.push_str("…");
-    }
-    out
-}
-
-fn normalized_operational_outcome(
-    reason: &str,
-    message: &str,
-    run_id: &str,
-    context: Option<&serde_json::Value>,
-) -> (String, serde_json::Value) {
-    let autonomous_resume = context
-        .and_then(|value| value.get("autonomous_resume_obligation"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let (kind, retryable, subsystem, summary) = match reason {
-        "continuation_stream_error" => (
-            "provider_stream_error",
-            true,
-            "llm_stream_transport",
-            "Operational note from Den: the previous turn ended with a retryable provider stream transport error after continuation started. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
-        ),
-        "continuation_watchdog_timeout" => (
-            "continuation_timeout",
-            true,
-            "continuation_runtime",
-            "Operational note from Den: the previous turn timed out after Den received a client/local-tool result and started continuation, but the resumed runtime produced no event before the watchdog expired. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
-        ),
-        "continuation_start_failed" => (
-            "continuation_start_failed",
-            true,
-            "continuation_runtime",
-            "Operational note from Den: the previous turn failed while starting continuation after client results were delivered. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
-        ),
-        "runtime_internal" if message.contains("budget") || message.contains("rule of ko") => (
-            "turn_budget_exhausted",
-            false,
-            "turn_budget",
-            "Operational note from Den: the previous turn stopped for budget or loop-safety reasons before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; continue from the latest successful state only if the user asks to proceed.",
-        ),
-        _ => (
-            "operational_failure",
-            false,
-            "bearwire_runtime",
-            "Operational note from Den: the previous turn ended with an operational failure before final answer delivery. Do not assume the requested work completed; continue from the latest successful state.",
-        ),
-    };
-    let summary = autonomous_resume.unwrap_or(summary);
-    let mut content = json!({
-            "source": "den.bearwire",
-            "event": "operational_outcome",
-            "scope_id": run_id,
-            "request_id": run_id,
-            "kind": kind,
-            "reason": reason,
-            "retryable": retryable,
-            "subsystem": subsystem,
-            "run_id": run_id,
-            "summary": summary,
-            "detail": log_sample(message),
-    });
-    if let Some(context) = context {
-        content["context"] = context.clone();
-    }
-    (summary.to_string(), content)
-}
-
-fn is_budget_or_loop_failure(reason: &str, message: &str) -> bool {
-    reason == "runtime_internal" && (message.contains("budget") || message.contains("rule of ko"))
-}
-
-fn run_failed_user_message(reason: &str, message: &str) -> Option<&'static str> {
-    if is_budget_or_loop_failure(reason, message) {
-        return Some("BEARS stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.");
-    }
-    None
-}
-
-fn run_failed_history_marker(reason: &str, message: &str) -> Option<String> {
-    run_failed_user_message(reason, message).map(str::to_string)
-}
-
-fn numeric_message_field(message: &str, field: &str) -> Option<u64> {
-    let start = message.find(field)? + field.len();
-    let rest = &message[start..];
-    let digits = rest
-        .chars()
-        .take_while(|ch| ch.is_ascii_digit())
-        .collect::<String>();
-    (!digits.is_empty())
-        .then(|| digits.parse::<u64>().ok())
+// Runtime status/error UX policy is surface-agnostic. Keep product copy,
+// model-continuity summaries, and marker wording in den-runtime::runtime_error_ux.
+// BearWire should only transport/persist those projections for this wire method.
+async fn bear_display_name(pool: &sqlx::PgPool, bear_id: uuid::Uuid) -> String {
+    bears_db::get_bear(pool, bear_id)
+        .await
+        .ok()
         .flatten()
-}
-
-fn failure_context_with_diagnostics(
-    reason: &str,
-    message: &str,
-    context: Option<serde_json::Value>,
-) -> Option<serde_json::Value> {
-    let mut context = context.unwrap_or_else(|| json!({}));
-    let Some(object) = context.as_object_mut() else {
-        return Some(json!({
-            "diagnostic": {
-                "reason": reason,
-                "raw_message": message,
-            },
-            "previous_context": context,
-        }));
-    };
-    let mut diagnostic = json!({
-        "reason": reason,
-        "raw_message": message,
-    });
-    if is_budget_or_loop_failure(reason, message) {
-        diagnostic["class"] = json!("turn_budget_exhausted");
-        diagnostic["model_action"] = json!("none");
-        if let Some(elapsed_ms) = numeric_message_field(message, "elapsed=") {
-            diagnostic["elapsed_ms"] = json!(elapsed_ms);
-        }
-        if let Some(limit_ms) = numeric_message_field(message, "limit=") {
-            diagnostic["limit_ms"] = json!(limit_ms);
-        }
-    }
-    object.insert("diagnostic".to_string(), diagnostic);
-    Some(context)
-}
-
-fn runtime_progress_history_marker(
-    kind: &str,
-    text: Option<&str>,
-    detail: Option<&serde_json::Value>,
-) -> Option<(String, serde_json::Value)> {
-    match kind {
-        "turn_budget_warning" => Some((
-            "BEARS is close to this turn's budget, so it may wrap up or ask for a fresh turn soon."
-                .to_string(),
-            json!({ "kind": kind, "runtime_text": text, "detail": detail }),
-        )),
-        "autonomous_continuation_gate" => {
-            let next_task = detail
-                .and_then(|value| value.get("next_task"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            let marker = if let Some(next_task) = next_task {
-                format!("BEARS kept the task focus active and asked the model to continue `{next_task}`.")
-            } else {
-                "BEARS kept the task focus active and asked the model to continue the next incomplete item."
-                    .to_string()
-            };
-            Some((
-                marker,
-                json!({ "kind": kind, "runtime_text": text, "detail": detail }),
-            ))
-        }
-        _ => None,
-    }
-}
-
-fn runtime_event_history_marker(
-    event: &den_protocol::RuntimeStreamEvent,
-) -> Option<(String, String, serde_json::Value)> {
-    match event {
-        den_protocol::RuntimeStreamEvent::Semantic(
-            den_protocol::RuntimeSemanticEvent::RunProgress {
-                kind, text, detail, ..
-            },
-        ) => runtime_progress_history_marker(kind, text.as_deref(), detail.as_ref())
-            .map(|(marker, metadata)| (kind.clone(), marker, metadata)),
-        _ => None,
-    }
+        .map(|bear| bear.name)
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "The bear".to_string())
 }
 
 async fn persist_visible_runtime_marker(
@@ -841,7 +672,8 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     request_id: Uuid,
     started_at: Option<Instant>,
 ) {
-    let history_marker = runtime_event_history_marker(&runtime_event);
+    let bear_name = bear_display_name(pool, bear_id).await;
+    let history_marker = runtime_event_history_marker(&bear_name, &runtime_event);
     if let den_protocol::RuntimeStreamEvent::Semantic(
         den_protocol::RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
@@ -900,16 +732,16 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
         started_at,
     )
     .await;
-    if let Some((marker_kind, marker_text, metadata)) = history_marker {
+    if let Some(marker) = history_marker {
         persist_visible_runtime_marker(
             pool,
             session_id,
             run_id,
             bear_id,
             user_id,
-            &marker_kind,
-            marker_text,
-            metadata,
+            &marker.kind,
+            marker.text,
+            marker.metadata,
         )
         .await;
     }
@@ -978,8 +810,10 @@ pub(crate) async fn persist_run_failed(
     message: String,
     context: Option<serde_json::Value>,
 ) {
-    let user_message = run_failed_user_message(reason, &message);
-    let context = failure_context_with_diagnostics(reason, &message, context);
+    let bear_name = bear_display_name(pool, bear_id).await;
+    let projection = run_failure_projection(reason, &message, run_id, &bear_name, context);
+    let user_message = projection.user_message.as_deref();
+    let context = projection.diagnostic_context.clone();
     tracing::warn!(
         session_id,
         run_id,
@@ -1028,8 +862,7 @@ pub(crate) async fn persist_run_failed(
             .clone()
             .unwrap_or_else(|| session.conversation_id.clone());
         let provenance = ConversationEventProvenance::client_session(session_id.to_string());
-        let (summary, content_json) =
-            normalized_operational_outcome(reason, &message, run_id, context.as_ref());
+        let content_json = projection.content.clone();
         let marker_kind = content_json.get("kind").cloned().unwrap_or(Value::Null);
         let marker_retryable = content_json
             .get("retryable")
@@ -1047,13 +880,13 @@ pub(crate) async fn persist_run_failed(
                 false,
             ),
             &CanonicalConversationRecord::model_visible_hidden_assistant_message(
-                summary,
+                projection.model_summary.clone(),
                 content_json,
                 None,
             ),
         )
         .await;
-        if let Some(marker) = run_failed_history_marker(reason, &message) {
+        if let Some(marker) = projection.history_marker.clone() {
             persist_visible_runtime_marker(
                 pool,
                 session_id,
@@ -1781,63 +1614,6 @@ mod tests {
             runtime_upstream_target("conv-existing", Some("   ")),
             "conv-existing"
         );
-    }
-
-    #[test]
-    fn budget_failure_has_friendly_user_message_and_diagnostics() {
-        let message = "I stopped because this turn exhausted its wall-clock budget \
-            (elapsed=252985ms/limit=240000ms).";
-
-        assert_eq!(
-            run_failed_user_message("runtime_internal", message),
-            Some("BEARS stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.")
-        );
-
-        let context = failure_context_with_diagnostics("runtime_internal", message, None)
-            .expect("diagnostic context");
-        assert_eq!(context["diagnostic"]["class"], "turn_budget_exhausted");
-        assert_eq!(context["diagnostic"]["model_action"], "none");
-        assert_eq!(context["diagnostic"]["elapsed_ms"], 252985);
-        assert_eq!(context["diagnostic"]["limit_ms"], 240000);
-    }
-
-    #[test]
-    fn budget_operational_outcome_tells_model_no_repair_action() {
-        let (summary, content) = normalized_operational_outcome(
-            "runtime_internal",
-            "I stopped because this turn exhausted its wall-clock budget \
-                (elapsed=252985ms/limit=240000ms).",
-            "run-1",
-            None,
-        );
-
-        assert!(
-            summary.contains("no infrastructure repair action"),
-            "{summary}"
-        );
-        assert_eq!(content["kind"], "turn_budget_exhausted");
-        assert_eq!(content["retryable"], false);
-    }
-
-    #[test]
-    fn runtime_progress_history_marker_covers_budget_and_task_focus() {
-        let (budget_marker, budget_metadata) = runtime_progress_history_marker(
-            "turn_budget_warning",
-            Some("Budget advisory: next read will stop the turn."),
-            Some(&json!({ "code": "tool_class_budget_warning" })),
-        )
-        .expect("budget marker");
-        assert!(budget_marker.contains("close to this turn's budget"));
-        assert_eq!(budget_metadata["kind"], "turn_budget_warning");
-
-        let (task_marker, task_metadata) = runtime_progress_history_marker(
-            "autonomous_continuation_gate",
-            None,
-            Some(&json!({ "next_task": "Patch runtime markers" })),
-        )
-        .expect("task focus marker");
-        assert!(task_marker.contains("Patch runtime markers"));
-        assert_eq!(task_metadata["kind"], "autonomous_continuation_gate");
     }
 
     fn available_model(handle: &str, model: &str) -> den_service::bifrost::BifrostModelMetadata {

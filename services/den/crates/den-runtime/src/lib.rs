@@ -36,6 +36,8 @@ pub mod bearwire_events;
 pub mod client_obligation_coordinator;
 /// Final-request context budget estimation and component attribution.
 pub mod context_budget;
+/// Surface-agnostic runtime failure/warning UX policy projections.
+pub mod runtime_error_ux;
 /// Surface projection contracts for turn obligations.
 pub mod surface_projection;
 /// Typed identifiers for turn coordination.

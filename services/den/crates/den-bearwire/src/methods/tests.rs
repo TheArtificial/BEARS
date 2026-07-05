@@ -1523,7 +1523,8 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
     assert_eq!(message_type, "assistant");
     assert_eq!(role.as_deref(), Some("assistant"));
     assert_eq!(visibility, "hidden_from_user");
-    assert!(content_text.starts_with("Operational note from Den:"));
+    assert!(!content_text.starts_with("Operational note from Den:"));
+    assert!(content_text.contains("Previous turn stopped"));
     assert_eq!(content_json["event"], "operational_outcome");
     assert_eq!(content_json["reason"], "runtime_internal");
     assert_eq!(content_json["run_id"], run_id);
@@ -1537,7 +1538,7 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
         .expect("visible runtime marker row");
     let marker_text: String = visible.try_get("content_text").expect("decode marker text");
     let marker_json: Value = visible.try_get("content_json").expect("decode marker json");
-    assert!(marker_text.contains("BEARS stopped this turn after it ran too long"));
+    assert!(marker_text.contains("BearWire Test Bear stopped this turn after it ran too long"));
     assert_eq!(marker_json["event"], "runtime_marker");
     assert_eq!(marker_json["marker_kind"], "operational_outcome");
     assert_eq!(marker_json["run_id"], run_id);

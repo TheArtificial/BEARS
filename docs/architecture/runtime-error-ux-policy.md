@@ -1,6 +1,6 @@
 # Runtime Error UX Policy
 
-This policy defines how BEARS should present runtime failures across three audiences:
+This policy defines how Den should project runtime failures for a named bear across three audiences:
 
 - the model in a future turn;
 - the human user in the armature/client UI;
@@ -40,19 +40,19 @@ It should not include:
 Example for budget/runtime interruption:
 
 ```text
-BEARS stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.
+Builder Bear stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.
 ```
 
 Example for restart/orphaned continuation:
 
 ```text
-BEARS lost the active runtime state for this turn, likely because the Den service restarted. Recent persisted history is still available. Start a fresh turn to continue.
+Builder Bear lost the active runtime state for this turn, likely because the Den service restarted. Recent persisted history is still available. Start a fresh turn to continue.
 ```
 
 Example for provider stream transport failure:
 
 ```text
-The model stream was interrupted before BEARS could finish the turn. Recent tool results were preserved. Retrying or continuing in a fresh turn is safe.
+The model stream was interrupted before Builder Bear finished the turn. Recent tool results were preserved. Retrying or continuing in a fresh turn is safe.
 ```
 
 ### Model-Facing Continuity Note
@@ -71,13 +71,13 @@ For infrastructure-only events where no model action is required, say that expli
 Example for budget exhaustion:
 
 ```text
-Operational note from Den: the previous turn stopped after exhausting its wall-clock budget before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; continue from the latest successful state if the user asks to proceed.
+Previous turn stopped after exhausting its wall-clock budget before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; continue from the latest successful state if the user asks to proceed.
 ```
 
 Example for Den restart / missing in-memory continuation:
 
 ```text
-Operational note from Den: the previous turn could not continue because in-memory runtime state was lost, likely due to a Den restart. Persisted conversation and tool results remain available, but no final answer was delivered. There is no repair action for the model; continue from persisted state in this fresh turn.
+Previous turn could not continue because in-memory runtime state was lost, likely due to a Den restart. Persisted conversation and tool results remain available, but no final answer was delivered. There is no repair action for the model; continue from persisted state in this fresh turn.
 ```
 
 ### Chat-Surface And History Marker
@@ -106,19 +106,19 @@ The marker should not include:
 Examples:
 
 ```text
-BEARS is close to this turn's budget, so it may wrap up or ask for a fresh turn soon.
+Builder Bear was warned about the number of tool calls for this turn.
 ```
 
 ```text
-BEARS kept the task focus active and asked the model to continue the next incomplete item.
+Builder Bear was kept on the current task focus and asked to continue the next incomplete item.
 ```
 
 ```text
-BEARS recovered from an interrupted continuation. Recent tool results were preserved.
+Recent tool results were preserved after an interrupted continuation.
 ```
 
 ```text
-BEARS stopped this turn after it ran too long. Start a fresh turn to continue safely.
+Builder Bear stopped this turn after it ran too long. Start a fresh turn to continue safely.
 ```
 
 Exceptions:
