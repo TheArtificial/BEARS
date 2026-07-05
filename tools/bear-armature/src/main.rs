@@ -93,7 +93,9 @@ use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
     handle_git_show, handle_git_stash, handle_git_status,
 };
-use tools::command_policy::{process_command_preferred, terminal_command_allowed};
+use tools::command_policy::{
+    command_workspace_scope_label, process_command_preferred, terminal_command_allowed,
+};
 use tools::mcp::{
     host_browser_bridge_config_from_env, host_browser_bridge_env_summary, parse_acp_mcp_servers,
     summarize_acp_mcp_servers_param, McpRegistry, McpSourceConfig,
@@ -7409,6 +7411,11 @@ fn command_line_from_value(value: &Value) -> Option<String> {
     })
 }
 
+fn command_scope_label_from_value(value: &Value) -> Option<String> {
+    let full = command_line_from_value(value)?;
+    Some(command_workspace_scope_label(&full).unwrap_or(full))
+}
+
 fn compact_tool_raw_output(value: Value) -> Value {
     if value.to_string().chars().count() <= 24 * 1024 {
         return value;
@@ -9136,7 +9143,14 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
             } else {
                 format!(" {}", args.join(" "))
             };
-            let rendered = format!("{command}{suffix}");
+            let rendered = if tool_name == "run_command" {
+                event
+                    .get("args")
+                    .and_then(command_scope_label_from_value)
+                    .unwrap_or_else(|| format!("{command}{suffix}"))
+            } else {
+                format!("{command}{suffix}")
+            };
             let rendered = if rendered.chars().count() > 80 {
                 format!("{}…", rendered.chars().take(79).collect::<String>())
             } else {
@@ -9145,7 +9159,7 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
             return if tool_name == "terminal_run_command" {
                 format!("Run terminal command: {rendered}")
             } else if tool_name == "run_command" {
-                format!("Run command: {rendered}")
+                format!("Run Command: {rendered}")
             } else {
                 format!("Run process: {rendered}")
             };
@@ -9381,6 +9395,21 @@ fn tool_status_from_str(status: &str) -> ToolCallStatus {
     }
 }
 
+fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay) -> String {
+    if matches!(tool_name, "run_command" | "process_run" | "terminal_run_command") {
+        return event
+            .map(|event| tool_call_title(tool_name, event))
+            .unwrap_or_else(|| display.title.clone());
+    }
+    if event.is_some_and(|event| event.get("display").is_some()) {
+        display.title.clone()
+    } else {
+        event
+            .map(|event| tool_call_title(tool_name, event))
+            .unwrap_or_else(|| display.title.clone())
+    }
+}
+
 pub(crate) async fn send_terminal_tool_call_update(
     session_id: &str,
     tool_call_id: &str,
@@ -9437,13 +9466,7 @@ async fn send_tool_call_update(
         content.push(ToolCallContent::from(trimmed_text.to_string()));
     }
     content.extend(extra_content);
-    let title = if event.is_some_and(|event| event.get("display").is_some()) {
-        display.title.clone()
-    } else {
-        event
-            .map(|event| tool_call_title(tool_name, event))
-            .unwrap_or_else(|| display.title.clone())
-    };
+    let title = tool_card_title(tool_name, event, &display);
     let mut tool_call = ToolCall::new(tool_call_id.to_string(), title)
         .kind(display.kind)
         .status(tool_status_from_str(status))
@@ -11594,7 +11617,25 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         });
         assert_eq!(
             tool_call_title("run_command", &event),
-            "Run command: cargo test --all"
+            "Run Command: cargo test"
+        );
+        let display = ToolDisplay::from_event(
+            "run_command",
+            &json!({
+                "args": { "command": "cargo", "args": ["test", "--all"] },
+                "display": { "title": "Run Command" }
+            }),
+        );
+        assert_eq!(
+            tool_card_title(
+                "run_command",
+                Some(&json!({
+                    "args": { "command": "cargo", "args": ["test", "--all"] },
+                    "display": { "title": "Run Command" }
+                })),
+                &display
+            ),
+            "Run Command: cargo test"
         );
 
         let value = json!({
