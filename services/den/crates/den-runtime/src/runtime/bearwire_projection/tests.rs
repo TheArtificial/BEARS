@@ -179,6 +179,26 @@ fn session_info_update_progress_projects_to_session_info_gateway_event() {
 }
 
 #[test]
+fn budget_warning_progress_projects_to_status_text_gateway_event() {
+    let mapped = runtime_semantic_event_to_bearwire_gateway_events(
+        RuntimeSemanticEvent::RunProgress {
+            kind: "turn_budget_warning".to_string(),
+            text: Some("Budget advisory: next read will stop the turn.".to_string()),
+            phase: Some("budget".to_string()),
+            detail: Some(serde_json::json!({
+                "code": "tool_class_budget_warning"
+            })),
+        },
+    );
+
+    assert!(matches!(
+        mapped.as_slice(),
+        [GatewayEvent::StatusText { text }]
+            if text == "Budget advisory: next read will stop the turn."
+    ));
+}
+
+#[test]
 fn session_info_update_progress_projects_to_dedicated_bearwire_event() {
     let mapped = runtime_stream_event_to_bearwire_sse(RuntimeStreamEvent::Semantic(
         RuntimeSemanticEvent::RunProgress {

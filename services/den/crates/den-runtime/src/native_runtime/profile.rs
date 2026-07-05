@@ -1,6 +1,8 @@
 //! Capability profiles for API-direct native roles ([Phase 5](../../../../docs/roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
 
-use crate::agent_loop::{StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy};
+use crate::agent_loop::{
+    PostMutationVerificationWindow, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
+};
 use den_service::bears::BearProfile;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +34,10 @@ impl NativeCapabilityProfile {
                     },
                     max_consecutive_tool_failures: 3,
                     max_same_tool_signature_repeats: 2,
+                    post_mutation_verification_window: Some(PostMutationVerificationWindow {
+                        replenish_read: 4,
+                        replenish_search: 2,
+                    }),
                 },
                 include_prompt_memory: true,
                 strategy: StrategyProfile::plain_react(),
@@ -53,6 +59,10 @@ impl NativeCapabilityProfile {
                     },
                     max_consecutive_tool_failures: 3,
                     max_same_tool_signature_repeats: 2,
+                    post_mutation_verification_window: Some(PostMutationVerificationWindow {
+                        replenish_read: 3,
+                        replenish_search: 1,
+                    }),
                 },
                 include_prompt_memory: true,
                 strategy: StrategyProfile::plain_react(),
@@ -74,6 +84,7 @@ impl NativeCapabilityProfile {
                     },
                     max_consecutive_tool_failures: 2,
                     max_same_tool_signature_repeats: 1,
+                    post_mutation_verification_window: None,
                 },
                 include_prompt_memory: false,
                 strategy: StrategyProfile::plain_react(),
@@ -96,6 +107,10 @@ impl NativeCapabilityProfile {
                         },
                         max_consecutive_tool_failures: 4,
                         max_same_tool_signature_repeats: 2,
+                        post_mutation_verification_window: Some(PostMutationVerificationWindow {
+                            replenish_read: 8,
+                            replenish_search: 4,
+                        }),
                     }
                 } else {
                     TurnBudgetPolicy {
@@ -113,6 +128,10 @@ impl NativeCapabilityProfile {
                         },
                         max_consecutive_tool_failures: 3,
                         max_same_tool_signature_repeats: 2,
+                        post_mutation_verification_window: Some(PostMutationVerificationWindow {
+                            replenish_read: 4,
+                            replenish_search: 2,
+                        }),
                     }
                 },
                 include_prompt_memory: true,

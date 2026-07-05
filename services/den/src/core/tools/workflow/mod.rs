@@ -419,6 +419,7 @@ pub(crate) async fn update_work_plan(
             owner_agent_id: clean_optional(&context.binding_id),
             created_by_user_id: Some(context.user_id),
             source_conversation_id: clean_optional(&context.conversation_id),
+            source_acp_session_id: None,
             source_client_session_id: source_client_session_id(context),
             source_channel: serde_json::to_value(&context.channel)?,
             plan_id: args.plan_id,

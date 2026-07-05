@@ -1,6 +1,6 @@
 use den_core::config::Config;
 use den_core::DenError;
-use den_docket::{DocketService, PgDocketService, WorkPlanListFilter, WorkPlanProjection};
+use den_docket::{PgDocketService, WorkPlanListFilter, WorkPlanProjection};
 use den_memory::MemoryStoreManager;
 use den_service::bears::{
     db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear,

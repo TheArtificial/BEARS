@@ -281,6 +281,7 @@ pub struct WorkPlanUpsert {
     pub owner_agent_id: Option<String>,
     pub created_by_user_id: Option<i32>,
     pub source_conversation_id: Option<String>,
+    pub source_acp_session_id: Option<String>,
     pub source_client_session_id: Option<String>,
     pub source_channel: serde_json::Value,
     pub plan_id: Option<Uuid>,

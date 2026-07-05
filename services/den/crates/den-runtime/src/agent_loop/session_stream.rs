@@ -56,6 +56,7 @@ type ServerToolFuture = Pin<
             + Send,
     >,
 >;
+type FinalGateContinuationFuture = Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 
 async fn tool_output_read_result(
     pool: &sqlx::PgPool,
@@ -121,6 +122,7 @@ pub struct SessionTrackingStream {
     pending_pause_after_tool: Option<RuntimeSemanticEvent>,
     pending_server_tool: Option<ServerToolFuture>,
     pending_server_tool_continuation: Option<String>,
+    pending_final_gate_continuation: Option<FinalGateContinuationFuture>,
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
     stores: MemoryStoreManager,
@@ -164,6 +166,7 @@ impl SessionTrackingStream {
             pending_pause_after_tool: None,
             pending_server_tool: None,
             pending_server_tool_continuation: None,
+            pending_final_gate_continuation: None,
             dispatch_mode,
             config,
             stores,
@@ -513,6 +516,40 @@ impl SessionTrackingStream {
             session.step += 1;
         });
     }
+
+    fn begin_final_gate_continuation(&mut self, next_task: &str) {
+        let model_message = format!(
+            "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet. Continue with: {next_task}."
+        );
+        self.store.update(&self.session_key, |session| {
+            session.messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: Some(model_message),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            });
+        });
+
+        let store = self.store.clone();
+        let session_key = self.session_key.clone();
+        let config = self.config.clone();
+        let pool = self.pool.clone();
+        let profile = self.profile;
+        self.pending_final_gate_continuation = Some(Box::pin(async move {
+            let session = store.get(&session_key).ok_or_else(|| {
+                DenError::System("native agent loop session not found".to_string())
+            })?;
+            let llm = LlmClient::new(config.as_ref());
+            let overflow = AgentStepOverflowContext {
+                pool,
+                config,
+                profile,
+                session_store: store,
+            };
+            run_agent_step_stream(&llm, &session, Some(overflow)).await
+        }));
+    }
 }
 
 fn upsert_assistant_tool_step_in_messages(
@@ -571,6 +608,25 @@ impl Stream for SessionTrackingStream {
                 }
                 Poll::Ready(Err(error)) => {
                     self.pending_server_tool = None;
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
+        if let Some(fut) = self.pending_final_gate_continuation.as_mut() {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(stream)) => {
+                    self.pending_final_gate_continuation = None;
+                    self.inner = stream;
+                    self.assistant_text.clear();
+                    self.tool_calls.clear();
+                    self.assistant_synced_to_session = false;
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => {
+                    self.pending_final_gate_continuation = None;
                     return Poll::Ready(Some(Err(error)));
                 }
                 Poll::Pending => return Poll::Pending,
@@ -795,15 +851,21 @@ impl Stream for SessionTrackingStream {
                         client_session_id = %self.client_session_id,
                         profile = %self.profile.as_str(),
                         next_task = %next_task,
-                        "native runtime suppressed terminal response because active task-list work remains"
+                        "native runtime converted premature terminal response into continuation nudge"
                     );
+                    self.begin_final_gate_continuation(&next_task);
                     return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
-                        RuntimeSemanticEvent::TurnFailed {
-                            turn: None,
-                            category: den_protocol::RuntimeErrorCategory::Internal,
-                            message: format!(
-                                "Autonomous task remains active; continue with {next_task} instead of stopping with a progress-only summary"
-                            ),
+                        RuntimeSemanticEvent::RunProgress {
+                            kind: "autonomous_continuation_gate".to_string(),
+                            text: Some(format!(
+                                "Active task-list work remains; continuing with {next_task} instead of stopping on a progress-only summary."
+                            )),
+                            phase: Some("continuation".to_string()),
+                            detail: Some(serde_json::json!({
+                                "next_task": next_task,
+                                "profile": self.profile.as_str(),
+                                "terminal_response_suppressed": true,
+                            })),
                         },
                     ))));
                 }
@@ -895,7 +957,8 @@ mod tests {
 
     use crate::{
         agent_loop::{
-            NativeToolDispatchMode, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
+            NativeToolDispatchMode, PostMutationVerificationWindow, StrategyProfile,
+            ToolCallBudgetLimits, TurnBudgetPolicy,
         },
         llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
     };
@@ -963,6 +1026,10 @@ mod tests {
                 },
                 max_consecutive_tool_failures: 2,
                 max_same_tool_signature_repeats: 1,
+                post_mutation_verification_window: Some(PostMutationVerificationWindow {
+                    replenish_read: 2,
+                    replenish_search: 1,
+                }),
             },
             turn_budget_state: Default::default(),
             strategy: StrategyProfile::plain_react(),

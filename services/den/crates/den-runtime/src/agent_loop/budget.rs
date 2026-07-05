@@ -112,6 +112,13 @@ pub struct TurnBudgetPolicy {
     pub tool_call_limits: ToolCallBudgetLimits,
     pub max_consecutive_tool_failures: u32,
     pub max_same_tool_signature_repeats: u32,
+    pub post_mutation_verification_window: Option<PostMutationVerificationWindow>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PostMutationVerificationWindow {
+    pub replenish_read: u32,
+    pub replenish_search: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,6 +266,22 @@ impl TurnBudgetStopReason {
     }
 }
 
+fn observation_is_successful_mutation(observation: &ToolContinuationObservation) -> bool {
+    !observation.failed
+        && matches!(
+            observation.class,
+            ToolBudgetClass::Write | ToolBudgetClass::Execute | ToolBudgetClass::Destructive
+        )
+}
+
+fn apply_post_mutation_verification_window(
+    usage: &mut ToolCallBudgetUsage,
+    window: PostMutationVerificationWindow,
+) {
+    usage.read = usage.read.saturating_sub(window.replenish_read);
+    usage.search = usage.search.saturating_sub(window.replenish_search);
+}
+
 pub fn classify_tool_budget_class(tool_name: &str) -> ToolBudgetClass {
     match tool_name.trim() {
         "fs_find_paths" | "fs_search_files" | "memory_search" | "web_search" => {
@@ -323,6 +346,11 @@ pub fn evaluate_turn_budget(
     let mut next_state = prior_state.clone();
     for observation in observations {
         next_state.tool_usage.increment(observation.class);
+    }
+    if let Some(window) = policy.post_mutation_verification_window {
+        if observations.iter().any(observation_is_successful_mutation) {
+            apply_post_mutation_verification_window(&mut next_state.tool_usage, window);
+        }
     }
 
     let batch_signature = batch_signature(observations);
@@ -625,6 +653,10 @@ mod tests {
             },
             max_consecutive_tool_failures: 3,
             max_same_tool_signature_repeats: 2,
+            post_mutation_verification_window: Some(PostMutationVerificationWindow {
+                replenish_read: 4,
+                replenish_search: 2,
+            }),
         }
     }
 
@@ -801,6 +833,71 @@ mod tests {
             warning.code == "tool_class_budget_warning"
                 && warning.message.contains("read tool budget")
         }));
+    }
+
+    #[test]
+    fn successful_mutation_replenishes_read_and_search_budget() {
+        let mut prior = state();
+        prior.tool_usage.read = 12;
+        prior.tool_usage.search = 7;
+        prior.tool_usage.total = 19;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            1_000,
+            &prior,
+            &[observation("fs_edit_file", r#"{"path":"a"}"#, false)],
+        );
+
+        assert_eq!(evaluation.next_state.tool_usage.read, 8);
+        assert_eq!(evaluation.next_state.tool_usage.search, 5);
+        assert_eq!(evaluation.next_state.tool_usage.total, 20);
+        assert!(evaluation.stop_reason.is_none());
+    }
+
+    #[test]
+    fn failed_mutation_does_not_replenish_exploration_budget() {
+        let mut prior = state();
+        prior.tool_usage.read = 12;
+        prior.tool_usage.search = 7;
+        prior.tool_usage.total = 19;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            1_000,
+            &prior,
+            &[observation("fs_edit_file", r#"{"path":"a"}"#, true)],
+        );
+
+        assert_eq!(evaluation.next_state.tool_usage.read, 12);
+        assert_eq!(evaluation.next_state.tool_usage.search, 7);
+        assert!(evaluation.stop_reason.is_none());
+        assert!(evaluation.warning.is_some());
+    }
+
+    #[test]
+    fn mutation_replenishment_does_not_reset_total_budget_fuse() {
+        let mut prior = state();
+        prior.tool_usage.read = 12;
+        prior.tool_usage.total = 20;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            1_000,
+            &prior,
+            &[observation("fs_edit_file", r#"{"path":"a"}"#, false)],
+        );
+
+        assert!(matches!(
+            evaluation.stop_reason,
+            Some(TurnBudgetStopReason::TotalToolCallLimit {
+                count: 21,
+                limit: 20,
+            })
+        ));
     }
 
     #[test]

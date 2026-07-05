@@ -1,9 +1,9 @@
 //! Docket Postgres access — internal to the module.
 //!
 //! These functions are the persistence layer behind `DocketService`; callers
-//! outside Docket go through the service, never here. New Docket job/task data
-//! is stored in the ADR-0034 relational tables. The legacy `bear_work_plans`
-//! helpers remain below as deprecated task-list compatibility paths only.
+//! outside Docket go through the service, never here. Docket job/task data is
+//! stored in the ADR-0034 relational tables. Legacy `bear_work_plans` helpers
+//! remain as compatibility paths while interactive callers are still migrated.
 
 use std::collections::HashMap;
 
@@ -15,17 +15,272 @@ use den_core::{BearProfile, DenError};
 
 use super::model::{
     docket_parent_task_ref, docket_task_status_from_work_plan_item_status,
-    normalize_completion_criteria, task_list_projection_from_docket_job,
-    validate_docket_job_create, validate_docket_task_create, DocketCriterionStateRow,
-    DocketCriterionStateUpdate, DocketExecutionLookup, DocketExecutionSessionRow,
-    DocketExecutionSessionUpsert, DocketJobCreate, DocketJobCriterionRow,
-    DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection,
-    DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate, DocketTaskCreate,
-    DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter, DocketTaskProjection,
-    DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate, TaskListProjection,
-    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
-    WorkPlanItemStatus,
+    normalize_completion_criteria, role_can_update_work_plan,
+    task_list_projection_from_docket_job, validate_docket_job_create,
+    validate_docket_task_create, validate_work_plan_update, BearWorkPlanRow,
+    DocketCriterionStateRow, DocketCriterionStateUpdate, DocketExecutionLookup,
+    DocketExecutionSessionRow, DocketExecutionSessionUpsert, DocketJobCreate,
+    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest,
+    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobRunRow,
+    DocketJobStatus, DocketJobUpdate, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketTaskInput, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow,
+    DocketTaskRunStateRow, DocketTaskUpdate, TaskListProjection, TaskListSourceRef,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState, WorkPlanItemStatus,
+    WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanStatus, WorkPlanUpsert,
 };
+
+const SELECT_WORK_PLAN_COLUMNS: &str = r"
+    SELECT id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
+           source_conversation_id, source_client_session_id, source_channel, workspace_context,
+           visibility, status, items, version, handoff_intent_path, handoff_task_id,
+           archived_at, created_at, updated_at
+    FROM bear_work_plans
+";
+
+pub(super) async fn list_visible_work_plans(
+    pool: &PgPool,
+    bear_id: Uuid,
+    viewer_role: BearProfile,
+    user_id: i32,
+    filter: WorkPlanListFilter,
+) -> Result<Vec<WorkPlanProjection>, DenError> {
+    let rows = sqlx::query_as::<_, BearWorkPlanRow>(&format!(
+        "{SELECT_WORK_PLAN_COLUMNS} WHERE bear_id = $1 ORDER BY updated_at DESC"
+    ))
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await?;
+    let mut plans = Vec::new();
+    for row in rows {
+        if !filter.include_archived
+            && (row.archived_at.is_some() || row.status == WorkPlanStatus::Archived.as_str())
+        {
+            continue;
+        }
+        if let Some(owner_profile) = filter.owner_profile {
+            if row.owner_profile != owner_profile.as_str() {
+                continue;
+            }
+        }
+        if let Some(statuses) = filter.statuses.as_ref() {
+            if !statuses.iter().any(|status| row.status == status.as_str()) {
+                continue;
+            }
+        }
+        if let Some(plan) = row.project_for_profile(viewer_role, user_id)? {
+            plans.push(plan);
+        }
+    }
+    Ok(plans)
+}
+
+pub(super) async fn get_visible_work_plan(
+    pool: &PgPool,
+    bear_id: Uuid,
+    viewer_role: BearProfile,
+    user_id: i32,
+    lookup: WorkPlanLookup,
+) -> Result<Option<WorkPlanProjection>, DenError> {
+    let rows = if let Some(plan_id) = lookup.plan_id {
+        sqlx::query_as::<_, BearWorkPlanRow>(&format!(
+            "{SELECT_WORK_PLAN_COLUMNS} WHERE bear_id = $1 AND id = $2"
+        ))
+        .bind(bear_id)
+        .bind(plan_id)
+        .fetch_all(pool)
+        .await?
+    } else if let Some(source_client_session_id) = lookup
+        .source_client_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sqlx::query_as::<_, BearWorkPlanRow>(&format!(
+            "{SELECT_WORK_PLAN_COLUMNS} WHERE bear_id = $1 AND source_client_session_id = $2 ORDER BY updated_at DESC"
+        ))
+        .bind(bear_id)
+        .bind(source_client_session_id)
+        .fetch_all(pool)
+        .await?
+    } else if let Some(source_conversation_id) = lookup
+        .source_conversation_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sqlx::query_as::<_, BearWorkPlanRow>(&format!(
+            "{SELECT_WORK_PLAN_COLUMNS} WHERE bear_id = $1 AND source_conversation_id = $2 ORDER BY updated_at DESC"
+        ))
+        .bind(bear_id)
+        .bind(source_conversation_id)
+        .fetch_all(pool)
+        .await?
+    } else {
+        Vec::new()
+    };
+    for row in rows {
+        if let Some(plan) = row.project_for_profile(viewer_role, user_id)? {
+            return Ok(Some(plan));
+        }
+    }
+    Ok(None)
+}
+
+pub(super) async fn upsert_work_plan(
+    pool: &PgPool,
+    upsert: WorkPlanUpsert,
+) -> Result<BearWorkPlanRow, DenError> {
+    validate_work_plan_update(&upsert.update)?;
+    if !role_can_update_work_plan(upsert.owner_profile) {
+        return Err(DenError::Authorization(format!(
+            "role `{}` cannot update work plans",
+            upsert.owner_profile.as_str()
+        )));
+    }
+    let mut tx = pool.begin().await?;
+    let row = if let Some(plan_id) = upsert.plan_id {
+        let current = sqlx::query_as::<_, BearWorkPlanRow>(&format!(
+            "{SELECT_WORK_PLAN_COLUMNS} WHERE bear_id = $1 AND id = $2 FOR UPDATE"
+        ))
+        .bind(upsert.bear_id)
+        .bind(plan_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| DenError::NotFound(format!("work plan not found: {plan_id}")))?;
+        if let Some(expected_version) = upsert.expected_version {
+            if current.version != expected_version {
+                return Err(DenError::ValidationError(format!(
+                    "work plan version mismatch: expected {expected_version}, found {}",
+                    current.version
+                )));
+            }
+        }
+        let row = sqlx::query_as::<_, BearWorkPlanRow>(
+            r"
+            UPDATE bear_work_plans
+            SET title = $3,
+                summary = $4,
+                owner_profile = $5,
+                owner_agent_id = $6,
+                created_by_user_id = COALESCE($7, created_by_user_id),
+                source_conversation_id = $8,
+                source_client_session_id = $9,
+                source_channel = $10::jsonb,
+                workspace_context = $11::jsonb,
+                visibility = $12,
+                status = $13,
+                items = $14::jsonb,
+                version = version + 1,
+                archived_at = CASE WHEN $13 = 'archived' THEN COALESCE(archived_at, NOW()) ELSE NULL END,
+                updated_at = NOW()
+            WHERE bear_id = $1 AND id = $2
+            RETURNING id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
+                      source_conversation_id, source_client_session_id, source_channel, workspace_context,
+                      visibility, status, items, version, handoff_intent_path, handoff_task_id,
+                      archived_at, created_at, updated_at
+            ",
+        )
+        .bind(upsert.bear_id)
+        .bind(plan_id)
+        .bind(upsert.update.title.trim())
+        .bind(upsert.update.summary.trim())
+        .bind(upsert.owner_profile.as_str())
+        .bind(upsert.owner_agent_id.as_deref())
+        .bind(upsert.created_by_user_id)
+        .bind(clean_optional_string(upsert.source_conversation_id.as_deref()))
+        .bind(clean_optional_string(
+            upsert
+                .source_client_session_id
+                .as_deref()
+                .or(upsert.source_acp_session_id.as_deref()),
+        ))
+        .bind(upsert.source_channel.clone())
+        .bind(upsert.update.workspace_context.clone())
+        .bind(upsert.update.visibility.as_str())
+        .bind(upsert.update.status.as_str())
+        .bind(serde_json::to_value(&upsert.update.items)?)
+        .fetch_one(&mut *tx)
+        .await?;
+        append_work_plan_event(&mut tx, &row, &upsert, "updated").await?;
+        row
+    } else {
+        let row = sqlx::query_as::<_, BearWorkPlanRow>(
+            r"
+            INSERT INTO bear_work_plans (
+                bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
+                source_conversation_id, source_client_session_id, source_channel, workspace_context,
+                visibility, status, items, version, archived_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13::jsonb, 1,
+                    CASE WHEN $12 = 'archived' THEN NOW() ELSE NULL END)
+            RETURNING id, bear_id, title, summary, owner_profile, owner_agent_id, created_by_user_id,
+                      source_conversation_id, source_client_session_id, source_channel, workspace_context,
+                      visibility, status, items, version, handoff_intent_path, handoff_task_id,
+                      archived_at, created_at, updated_at
+            ",
+        )
+        .bind(upsert.bear_id)
+        .bind(upsert.update.title.trim())
+        .bind(upsert.update.summary.trim())
+        .bind(upsert.owner_profile.as_str())
+        .bind(upsert.owner_agent_id.as_deref())
+        .bind(upsert.created_by_user_id)
+        .bind(clean_optional_string(upsert.source_conversation_id.as_deref()))
+        .bind(clean_optional_string(
+            upsert
+                .source_client_session_id
+                .as_deref()
+                .or(upsert.source_acp_session_id.as_deref()),
+        ))
+        .bind(upsert.source_channel.clone())
+        .bind(upsert.update.workspace_context.clone())
+        .bind(upsert.update.visibility.as_str())
+        .bind(upsert.update.status.as_str())
+        .bind(serde_json::to_value(&upsert.update.items)?)
+        .fetch_one(&mut *tx)
+        .await?;
+        append_work_plan_event(&mut tx, &row, &upsert, "created").await?;
+        row
+    };
+    tx.commit().await?;
+    Ok(row)
+}
+
+fn clean_optional_string(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+async fn append_work_plan_event(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    row: &BearWorkPlanRow,
+    upsert: &WorkPlanUpsert,
+    event_type: &str,
+) -> Result<(), DenError> {
+    sqlx::query(
+        r"
+        INSERT INTO bear_work_plan_events (
+            plan_id, bear_id, actor_role, actor_agent_id, actor_user_id, event_type, event_payload
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        ",
+    )
+    .bind(row.id)
+    .bind(row.bear_id)
+    .bind(upsert.owner_profile.as_str())
+    .bind(upsert.owner_agent_id.as_deref())
+    .bind(upsert.created_by_user_id)
+    .bind(event_type)
+    .bind(json!({
+        "status": row.status,
+        "visibility": row.visibility,
+        "version": row.version,
+        "source_conversation_id": row.source_conversation_id,
+        "source_client_session_id": row.source_client_session_id,
+    }))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
 
 pub(super) async fn create_job(
     pool: &PgPool,

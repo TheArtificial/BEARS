@@ -986,11 +986,22 @@ fn continuation_budget_stop(
 
 const BUDGET_WARNING_PREFIX: &str = "Budget advisory:";
 
-fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarning) {
+fn budget_warning_runtime_event(warning: &TurnBudgetWarning) -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+        kind: "turn_budget_warning".to_string(),
+        text: Some(warning.model_message().to_string()),
+        phase: Some("budget".to_string()),
+        detail: Some(serde_json::json!({
+            "code": warning.code,
+        })),
+    })
+}
+
+fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarning) -> bool {
     if session.messages.last().is_some_and(|message| {
         message.role == "system" && message.content.as_deref() == Some(warning.model_message())
     }) {
-        return;
+        return false;
     }
     if session.messages.last().is_some_and(|message| {
         message.role == "system"
@@ -1008,6 +1019,7 @@ fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarn
         name: None,
         tool_calls: None,
     });
+    true
 }
 
 fn call_is_den_web_fetch(call: &ChatToolCall) -> bool {
@@ -1242,6 +1254,7 @@ pub async fn continue_native_client_turn_event_stream(
         &prior_session.turn_budget_state,
         &observations,
     );
+    let mut warning_applied = false;
     SESSION_STORE.update(&session_key, |session| {
         session.request_id = Some(request.request_id.to_string());
         session.run_id = request
@@ -1251,7 +1264,7 @@ pub async fn continue_native_client_turn_event_stream(
         session.messages.extend(tool_messages.clone());
         session.turn_budget_state = evaluation.next_state.clone();
         if let Some(warning) = evaluation.warning.as_ref() {
-            apply_budget_warning(session, warning);
+            warning_applied = apply_budget_warning(session, warning);
         }
     });
     let session = SESSION_STORE
@@ -1267,6 +1280,16 @@ pub async fn continue_native_client_turn_event_stream(
         profile,
     );
     let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
+    let stream = if warning_applied {
+        let warning_event = evaluation
+            .warning
+            .as_ref()
+            .map(budget_warning_runtime_event)
+            .expect("warning_applied requires warning payload");
+        Box::pin(stream::iter(vec![Ok(warning_event)]).chain(stream)) as RuntimeEventStream
+    } else {
+        stream
+    };
     let stream = wrap_session_stream(
         stream,
         &session,
@@ -1292,7 +1315,16 @@ pub async fn continue_native_client_turn_event_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_loop::{StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy};
+    use crate::agent_loop::{
+        PostMutationVerificationWindow, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
+    };
+
+    fn sample_budget_warning(message: &str) -> TurnBudgetWarning {
+        TurnBudgetWarning {
+            code: "tool_class_budget_warning",
+            message: message.to_string(),
+        }
+    }
 
     fn pair_turn_budget() -> TurnBudgetPolicy {
         TurnBudgetPolicy {
@@ -1310,6 +1342,10 @@ mod tests {
             },
             max_consecutive_tool_failures: 3,
             max_same_tool_signature_repeats: 2,
+            post_mutation_verification_window: Some(PostMutationVerificationWindow {
+                replenish_read: 2,
+                replenish_search: 1,
+            }),
         }
     }
 
@@ -1330,6 +1366,72 @@ mod tests {
             compatibility_backend: Some("runtime:legacy".to_string()),
         };
         assert_eq!(bear_id_from_native_binding(&binding), None);
+    }
+
+    #[test]
+    fn apply_budget_warning_reports_when_message_changes() {
+        let mut session = AgentLoopSession {
+            session_key: "session".to_string(),
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(1),
+            conversation_id: "conv".to_string(),
+            client_session_id: "session".to_string(),
+            workspace_roots: vec![],
+            request_id: None,
+            run_id: None,
+            messages: vec![],
+            tools: vec![],
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 0,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
+            active_activity_plan: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        };
+
+        let warning = sample_budget_warning("Budget advisory: close to read budget.");
+        assert!(apply_budget_warning(&mut session, &warning));
+        assert!(!apply_budget_warning(&mut session, &warning));
+
+        let replacement = sample_budget_warning("Budget advisory: next read will stop the turn.");
+        assert!(apply_budget_warning(&mut session, &replacement));
+        assert_eq!(session.messages.len(), 1);
+        assert_eq!(session.messages[0].content.as_deref(), Some(replacement.model_message()));
+    }
+
+    #[test]
+    fn budget_warning_runtime_event_is_user_visible_progress_not_error() {
+        let warning = sample_budget_warning("Budget advisory: next read will stop the turn.");
+        let event = budget_warning_runtime_event(&warning);
+
+        match event {
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+                kind,
+                text,
+                phase,
+                detail: Some(detail),
+            }) => {
+                assert_eq!(kind, "turn_budget_warning");
+                assert_eq!(text.as_deref(), Some(warning.model_message()));
+                assert_eq!(phase.as_deref(), Some("budget"));
+                assert_eq!(detail["code"].as_str(), Some(warning.code));
+            }
+            other => panic!("expected RunProgress budget warning, got {other:?}"),
+        }
     }
 
     #[test]
