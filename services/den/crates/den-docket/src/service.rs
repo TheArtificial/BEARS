@@ -226,7 +226,6 @@ impl DocketService for PgDocketService {
                 .get_job(bear_id, job_id)
                 .await?
                 .map(|job| task_list_projection_from_docket_job(&job, parent_task_id))),
-            TaskListCheckoutSource::LegacyWorkPlan(_) => Ok(None),
             TaskListCheckoutSource::LocalProjection(task_list) => Ok(Some(task_list)),
         }
     }

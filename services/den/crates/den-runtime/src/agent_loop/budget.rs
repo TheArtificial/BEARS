@@ -559,7 +559,7 @@ fn budget_warning(
         });
     }
 
-    if state.same_batch_signature_repeats + 1 >= policy.max_same_tool_signature_repeats {
+    if state.same_batch_signature_repeats >= policy.max_same_tool_signature_repeats {
         return Some(TurnBudgetWarning {
             code: "rule_of_ko_warning",
             message: format!(
@@ -729,6 +729,50 @@ mod tests {
             evaluation.stop_reason,
             Some(TurnBudgetStopReason::RuleOfKo { repeats: 3, .. })
         ));
+    }
+
+    #[test]
+    fn rule_of_ko_warns_after_the_last_safe_repeat_not_before_it() {
+        let mut prior = state();
+        prior.last_batch_signature = Some(tool_signature("memory_read", r#"{"path":"a"}"#));
+        prior.same_batch_signature_repeats = 1;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            1_000,
+            &prior,
+            &[observation("memory_read", r#"{"path":"a"}"#, false)],
+        );
+
+        assert!(evaluation.stop_reason.is_none());
+        assert_eq!(evaluation.next_state.same_batch_signature_repeats, 2);
+        assert_eq!(
+            evaluation.warning.as_ref().map(|warning| warning.code),
+            Some("rule_of_ko_warning")
+        );
+    }
+
+    #[test]
+    fn different_tool_signature_resets_rule_of_ko_warning() {
+        let mut prior = state();
+        prior.last_batch_signature = Some(tool_signature("memory_read", r#"{"path":"a"}"#));
+        prior.same_batch_signature_repeats = 1;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            1_000,
+            &prior,
+            &[observation("memory_read", r#"{"path":"b"}"#, false)],
+        );
+
+        assert!(evaluation.stop_reason.is_none());
+        assert_eq!(evaluation.next_state.same_batch_signature_repeats, 1);
+        assert_ne!(
+            evaluation.warning.as_ref().map(|warning| warning.code),
+            Some("rule_of_ko_warning")
+        );
     }
 
     #[test]

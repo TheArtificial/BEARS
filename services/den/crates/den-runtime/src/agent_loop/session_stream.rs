@@ -904,18 +904,23 @@ impl Stream for SessionTrackingStream {
                         "native runtime converted premature terminal response into continuation nudge"
                     );
                     self.begin_final_gate_continuation(&next_task);
+                    self.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunProgress {
+                        kind: "autonomous_continuation_gate".to_string(),
+                        text: Some(format!(
+                            "Active task-list work remains; continuing with {next_task} instead of stopping on a progress-only summary."
+                        )),
+                        phase: Some("continuation".to_string()),
+                        detail: Some(serde_json::json!({
+                            "next_task": next_task,
+                            "profile": self.profile.as_str(),
+                            "terminal_response_suppressed": true,
+                        })),
+                    });
                     return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
-                        RuntimeSemanticEvent::RunProgress {
-                            kind: "autonomous_continuation_gate".to_string(),
-                            text: Some(format!(
-                                "Active task-list work remains; continuing with {next_task} instead of stopping on a progress-only summary."
-                            )),
-                            phase: Some("continuation".to_string()),
-                            detail: Some(serde_json::json!({
-                                "next_task": next_task,
-                                "profile": self.profile.as_str(),
-                                "terminal_response_suppressed": true,
-                            })),
+                        RuntimeSemanticEvent::StatusText {
+                            text: format!(
+                                "Warned the bear that task focus is still active; continuing with {next_task}."
+                            ),
                         },
                     ))));
                 }

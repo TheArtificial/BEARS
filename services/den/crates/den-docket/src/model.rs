@@ -300,30 +300,6 @@ pub struct TaskListLookup {
     pub source_client_session_id: Option<String>,
 }
 
-// ponytail: compatibility aliases keep the existing den.work_plan.* public tool
-// protocol compiling while active code migrates to TaskList* names; remove them
-// with the explicit tool-protocol migration.
-#[deprecated(note = "use TaskListVisibility")]
-pub type WorkPlanVisibility = TaskListVisibility;
-#[deprecated(note = "use TaskListStatus")]
-pub type WorkPlanStatus = TaskListStatus;
-#[deprecated(note = "use TaskListItemStatus")]
-pub type WorkPlanItemStatus = TaskListItemStatus;
-#[deprecated(note = "use TaskListUpdateItem")]
-pub type WorkPlanItem = TaskListUpdateItem;
-#[deprecated(note = "use TaskListUpdate")]
-pub type WorkPlanUpdate = TaskListUpdate;
-#[deprecated(note = "use TaskListValidationError")]
-pub type WorkPlanValidationError = TaskListValidationError;
-#[deprecated(note = "use TaskListUpsert")]
-pub type WorkPlanUpsert = TaskListUpsert;
-#[deprecated(note = "use TaskListListFilter")]
-pub type WorkPlanListFilter = TaskListListFilter;
-#[deprecated(note = "use TaskListLookup")]
-pub type WorkPlanLookup = TaskListLookup;
-#[deprecated(note = "use TaskListLocalProjection")]
-pub type WorkPlanProjection = TaskListLocalProjection;
-
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskListLocalProjection {
     pub id: Uuid,
@@ -558,26 +534,12 @@ impl TaskListLocalProjection {
     }
 }
 
-#[deprecated(note = "use normalize_task_list_item_ids")]
-pub fn normalize_work_plan_item_ids(items: &mut [TaskListUpdateItem]) {
-    normalize_task_list_item_ids(items);
-}
-
-#[deprecated(note = "use task_list_projection_from_local")]
-pub fn task_list_projection_from_work_plan(plan: &TaskListLocalProjection) -> TaskListProjection {
-    task_list_projection_from_local(plan)
-}
-
 #[derive(Debug, Clone)]
 pub enum TaskListCheckoutSource {
     DocketJob {
         job_id: Uuid,
         parent_task_id: Option<Uuid>,
     },
-    // ponytail: compatibility-only checkout source for den.work_plan.* callers;
-    // it never touches retired bear_work_plans storage and should disappear with
-    // the public tool-protocol migration.
-    LegacyWorkPlan(TaskListLookup),
     LocalProjection(TaskListProjection),
 }
 

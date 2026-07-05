@@ -232,6 +232,7 @@ pub fn detect_task_focus_loop(recent_texts: &[impl AsRef<str>]) -> TaskFocusLoop
         .count();
     let mut terminal_objections = 0;
     let mut previous_objection_kind = None;
+    let mut previous_objection_fingerprint = None;
     let mut repeated_objection_kind = None;
 
     for text in recent_texts {
@@ -242,10 +243,14 @@ pub fn detect_task_focus_loop(recent_texts: &[impl AsRef<str>]) -> TaskFocusLoop
         let kind = classify_autonomous_final_response(text);
         if is_terminal_objection_kind(kind) {
             terminal_objections += 1;
-            if previous_objection_kind == Some(kind) {
+            let fingerprint = terminal_objection_fingerprint(text);
+            if previous_objection_kind == Some(kind)
+                && previous_objection_fingerprint.as_deref() == Some(fingerprint.as_str())
+            {
                 repeated_objection_kind = Some(kind);
             }
             previous_objection_kind = Some(kind);
+            previous_objection_fingerprint = Some(fingerprint);
         }
     }
 
@@ -260,6 +265,17 @@ pub fn detect_task_focus_loop(recent_texts: &[impl AsRef<str>]) -> TaskFocusLoop
         terminal_objections,
         repeated_objection_kind,
     }
+}
+
+fn terminal_objection_fingerprint(text: &str) -> String {
+    // ponytail: phrase fingerprint keeps loop detection conservative; upgrade to
+    // structured terminal-state IDs when assistant responses are typed.
+    text.to_ascii_lowercase()
+        .split_whitespace()
+        .filter(|word| word.len() >= 4)
+        .take(16)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn is_terminal_objection_kind(kind: AutonomousFinalResponseKind) -> bool {
@@ -967,6 +983,40 @@ mod tests {
             detection.repeated_objection_kind,
             Some(AutonomousFinalResponseKind::ScopeEscalationFinal)
         );
+    }
+
+    #[test]
+    fn task_focus_loop_ignores_substantially_different_scope_objections() {
+        let recent = [
+            "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet.",
+            "Terminal status: requires scope escalation. Remaining public tool protocol names need a separate API migration plan.",
+            "Continue with: finish the active task list.",
+            "Terminal status: requires scope escalation. Database migration ownership is outside scope for this plan.",
+        ];
+
+        let detection = detect_task_focus_loop(&recent);
+
+        assert!(!detection.detected);
+        assert_eq!(detection.continuation_nudges, 2);
+        assert_eq!(detection.terminal_objections, 2);
+        assert_eq!(detection.repeated_objection_kind, None);
+    }
+
+    #[test]
+    fn task_focus_loop_requires_substantially_same_terminal_objection() {
+        let recent = [
+            "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet.",
+            "Terminal status: blocked by runtime limits. The write budget is exhausted; continuing requires a fresh turn.",
+            "Continue with: finish the active task list.",
+            "Terminal status: requires scope escalation. Remaining public tool protocol names need a separate API migration plan.",
+        ];
+
+        let detection = detect_task_focus_loop(&recent);
+
+        assert!(!detection.detected);
+        assert_eq!(detection.continuation_nudges, 2);
+        assert_eq!(detection.terminal_objections, 2);
+        assert_eq!(detection.repeated_objection_kind, None);
     }
 
     #[test]

@@ -37,10 +37,7 @@ pub use model::{
     TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
     TaskListUpdateItem, TaskListItemStatus, TaskListListFilter, TaskListLookup,
     TaskListLocalProjection, TaskListStatus, TaskListUpdate, TaskListUpsert,
-    TaskListValidationError, TaskListVisibility, WorkPlanItem, WorkPlanItemStatus,
-    WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanStatus, WorkPlanUpdate,
-    WorkPlanUpsert, WorkPlanValidationError, WorkPlanVisibility, normalize_work_plan_item_ids,
-    task_list_projection_from_work_plan,
+    TaskListValidationError, TaskListVisibility,
 };
 pub use dispatcher::TaskDispatcher;
 pub use service::{DocketService, PgDocketService};
