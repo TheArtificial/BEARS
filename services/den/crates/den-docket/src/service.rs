@@ -12,13 +12,12 @@ use den_core::{BearProfile, DenError};
 
 use super::db;
 use super::model::{
-    task_list_projection_from_docket_job, BearWorkPlanRow, DocketCriterionStateUpdate,
-    DocketExecutionLookup, DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome,
-    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
-    DocketJobUpdate, DocketTaskCreate, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow,
-    DocketTaskUpdate, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
+    task_list_projection_from_docket_job, DocketCriterionStateUpdate, DocketExecutionLookup,
+    DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest,
+    DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate,
+    DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
     TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
-    WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanUpsert,
 };
 
 /// Orchestration API for Docket work plans. The only public entry point to the
@@ -72,24 +71,6 @@ pub trait DocketService: Send + Sync {
 
     async fn update_task(&self, update: DocketTaskUpdate)
         -> Result<DocketTaskProjection, DenError>;
-
-    async fn upsert_work_plan(&self, params: WorkPlanUpsert) -> Result<BearWorkPlanRow, DenError>;
-
-    async fn list_visible_work_plans(
-        &self,
-        bear_id: Uuid,
-        viewer_role: BearProfile,
-        user_id: i32,
-        filter: WorkPlanListFilter,
-    ) -> Result<Vec<WorkPlanProjection>, DenError>;
-
-    async fn get_visible_work_plan(
-        &self,
-        bear_id: Uuid,
-        viewer_role: BearProfile,
-        user_id: i32,
-        lookup: WorkPlanLookup,
-    ) -> Result<Option<WorkPlanProjection>, DenError>;
 
     async fn checkout_task_list(
         &self,
@@ -195,42 +176,15 @@ impl DocketService for PgDocketService {
         db::update_task(&self.pool, update).await
     }
 
-    async fn upsert_work_plan(&self, params: WorkPlanUpsert) -> Result<BearWorkPlanRow, DenError> {
-        db::create_or_update_work_plan(&self.pool, params).await
-    }
-
-    async fn list_visible_work_plans(
-        &self,
-        bear_id: Uuid,
-        viewer_role: BearProfile,
-        user_id: i32,
-        filter: WorkPlanListFilter,
-    ) -> Result<Vec<WorkPlanProjection>, DenError> {
-        db::list_visible_work_plans(&self.pool, bear_id, viewer_role, user_id, filter).await
-    }
-
-    async fn get_visible_work_plan(
-        &self,
-        bear_id: Uuid,
-        viewer_role: BearProfile,
-        user_id: i32,
-        lookup: WorkPlanLookup,
-    ) -> Result<Option<WorkPlanProjection>, DenError> {
-        db::get_visible_work_plan(&self.pool, bear_id, viewer_role, user_id, lookup).await
-    }
-
     async fn checkout_task_list(
         &self,
         bear_id: Uuid,
-        viewer_role: BearProfile,
-        user_id: i32,
+        _viewer_role: BearProfile,
+        _user_id: i32,
         request: TaskListCheckoutRequest,
     ) -> Result<Option<TaskListProjection>, DenError> {
         match request.source {
-            TaskListCheckoutSource::LegacyWorkPlan(lookup) => Ok(self
-                .get_visible_work_plan(bear_id, viewer_role, user_id, lookup)
-                .await?
-                .map(|plan| plan.to_task_list_projection())),
+            TaskListCheckoutSource::LegacyWorkPlan(_) => Ok(None),
             TaskListCheckoutSource::DocketJob {
                 job_id,
                 parent_task_id,
