@@ -1,12 +1,9 @@
-//! Docket domain types — **legacy activity-board shape** (pre-ADR-0034).
+//! Docket domain types and compatibility projection shapes.
 //!
-//! These are the current `bear_work_plans` JSONB activity-board types. They are
-//! deliberately **not** renamed to ADR-0034 `Job`/`Task`: that ADR specifies a
-//! relational shape where a task is a pure definition (status is run-scoped) and
-//! a job has no embedded item array. Minting `Job`/`Task` structs over this
-//! JSONB shape would be a mislabeled structure. The names stay honest until the
-//! relational realization (see `docs/decisions/adr-0034-jobs-and-tasks-work-management.md`
-//! and `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`).
+//! ADR-0034 relational jobs/tasks are the canonical storage model. The
+//! `WorkPlan*` and task-list projection types remain as API/projection shapes
+//! for existing tool contracts; they should not imply an active
+//! `bear_work_plans` persistence path.
 
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
