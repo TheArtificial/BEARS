@@ -22,6 +22,9 @@ fn generic_tool_summary(summary: &str) -> bool {
 
 fn generic_tool_summary_for_tool(summary: &str, tool_name: &str) -> bool {
     let normalized = summary.trim().trim_end_matches('.').to_ascii_lowercase();
+    if normalized == format!("finished {}", tool_name.to_ascii_lowercase()) {
+        return true;
+    }
     if matches!(normalized.as_str(), "tool failed" | "tool completed") {
         return true;
     }
@@ -40,6 +43,34 @@ fn generic_tool_summary_for_tool(summary: &str, tool_name: &str) -> bool {
 }
 
 fn default_tool_status_summary(tool_name: &str, failed: bool) -> String {
+    if !failed {
+        match tool_name {
+            "session_info" => return "Inspected session.".to_string(),
+            "set_conversation_title" => return "Set conversation title.".to_string(),
+            "memory_browse" => return "Browsed memory.".to_string(),
+            "memory_read" => return "Read memory.".to_string(),
+            "memory_search" => return "Searched memory.".to_string(),
+            "memory_write_entry" => return "Wrote memory entry.".to_string(),
+            "memory_request_review" => return "Requested memory review.".to_string(),
+            "web_fetch" | "local_web_fetch" => return "Fetched URL.".to_string(),
+            "web_search" => return "Searched web.".to_string(),
+            "list_task_lists" => return "Listed task lists.".to_string(),
+            "get_task_list_status" => return "Read task list status.".to_string(),
+            "update_task_list" | "update_plan" => return "Updated task list.".to_string(),
+            "request_task_list_handoff" | "request_work_handoff" => {
+                return "Requested work handoff.".to_string();
+            }
+            "git_status" => return "Checked git status.".to_string(),
+            "git_diff" => return "Read git diff.".to_string(),
+            "git_log" => return "Read git log.".to_string(),
+            "git_show" => return "Read git revision.".to_string(),
+            "git_add" => return "Staged git changes.".to_string(),
+            "git_restore" => return "Restored git paths.".to_string(),
+            "git_commit" => return "Created git commit.".to_string(),
+            "git_stash" => return "Created git stash.".to_string(),
+            _ => {}
+        }
+    }
     let title = crate::friendly_tool_title(tool_name);
     if failed {
         format!("{title} failed.")
@@ -1490,6 +1521,38 @@ mod tests {
             tool_call_finished_summary(&data, "memory_read", true),
             "Read memory failed."
         );
+    }
+
+    #[test]
+    fn tool_call_finished_summary_replaces_provider_name_finished_summary_for_task_lists() {
+        let data = json!({
+            "tool_name": "list_task_lists",
+            "summary": "Finished list_task_lists"
+        });
+
+        assert_eq!(
+            tool_call_finished_summary(&data, "list_task_lists", false),
+            "Listed task lists."
+        );
+    }
+
+    #[test]
+    fn tool_call_finished_summary_replaces_provider_name_finished_summary_for_common_den_tools() {
+        for (tool_name, expected) in [
+            ("session_info", "Inspected session."),
+            ("set_conversation_title", "Set conversation title."),
+            ("memory_read", "Read memory."),
+            ("memory_search", "Searched memory."),
+            ("web_search", "Searched web."),
+            ("git_status", "Checked git status."),
+        ] {
+            let data = json!({
+                "tool_name": tool_name,
+                "summary": format!("Finished {tool_name}")
+            });
+
+            assert_eq!(tool_call_finished_summary(&data, tool_name, false), expected);
+        }
     }
 
     #[test]
