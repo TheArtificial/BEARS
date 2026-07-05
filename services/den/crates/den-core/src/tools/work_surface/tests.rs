@@ -1,4 +1,3 @@
-
 use super::infer_work_surface_hint;
 use crate::tools::context::DenToolInvocationContext;
 use crate::BearProfile;
