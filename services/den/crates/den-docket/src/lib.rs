@@ -9,6 +9,7 @@
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
 mod db;
+mod dispatcher;
 #[cfg(test)]
 mod integration_tests;
 pub mod model;
@@ -36,4 +37,5 @@ pub use model::{
     WorkPlanItemStatus, WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanStatus,
     WorkPlanUpdate, WorkPlanUpsert, WorkPlanValidationError, WorkPlanVisibility,
 };
+pub use dispatcher::TaskDispatcher;
 pub use service::{DocketService, PgDocketService};

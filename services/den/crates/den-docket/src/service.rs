@@ -114,7 +114,7 @@ pub trait DocketService: Send + Sync {
 /// it is an `Arc` internally).
 #[derive(Debug, Clone)]
 pub struct PgDocketService {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 
 impl PgDocketService {
