@@ -1,0 +1,146 @@
+# Runtime Error UX Policy
+
+This policy defines how BEARS should present runtime failures across three audiences:
+
+- the model in a future turn;
+- the human user in the armature/client UI;
+- operators debugging Den, Bifrost, or armature logs.
+
+The goal is to preserve continuity without leaking implementation detail into normal user copy.
+
+## Principles
+
+1. The user-facing error should explain the situation at a high level and say whether a retry/fresh turn is appropriate.
+2. The model-facing continuity note should be explicit about what happened and what state can be trusted, but should not ask the model to diagnose infrastructure unless that is the user's task.
+3. Diagnostic detail belongs in structured Den events/logs, armature stderr, or both, depending on where the failure was observed.
+4. Do not put raw provider errors, stack traces, chunk framing errors, internal run-state strings, or full context JSON in normal user-visible error text.
+5. Do not hide operational failures from future model turns. A later turn should know that the previous turn did not complete and should know whether recent tool results were preserved.
+
+## Output Channels
+
+### User-Facing Armature Message
+
+The user-facing message should be short and product-level.
+
+It should include:
+
+- what happened in plain language;
+- whether work/results were preserved when known;
+- whether the user should retry, continue, or wait;
+- the run id only when useful for support or logs.
+
+It should not include:
+
+- raw Den reason codes as the main phrase;
+- provider JSON bodies;
+- chunk parser details;
+- Rust/internal enum names;
+- full diagnostic context.
+
+Example for budget/runtime interruption:
+
+```text
+BEARS stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.
+```
+
+Example for restart/orphaned continuation:
+
+```text
+BEARS lost the active runtime state for this turn, likely because the Den service restarted. Recent persisted history is still available. Start a fresh turn to continue.
+```
+
+Example for provider stream transport failure:
+
+```text
+The model stream was interrupted before BEARS could finish the turn. Recent tool results were preserved. Retrying or continuing in a fresh turn is safe.
+```
+
+### Model-Facing Continuity Note
+
+Den should persist a hidden, model-visible operational outcome when a turn fails after work may have happened.
+
+The note should tell the future model:
+
+- the previous turn did not complete;
+- whether recent tool results were preserved;
+- whether it should continue from latest successful state;
+- whether there is nothing for it to repair.
+
+For infrastructure-only events where no model action is required, say that explicitly.
+
+Example for budget exhaustion:
+
+```text
+Operational note from Den: the previous turn stopped after exhausting its wall-clock budget before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; continue from the latest successful state if the user asks to proceed.
+```
+
+Example for Den restart / missing in-memory continuation:
+
+```text
+Operational note from Den: the previous turn could not continue because in-memory runtime state was lost, likely due to a Den restart. Persisted conversation and tool results remain available, but no final answer was delivered. There is no repair action for the model; continue from persisted state in this fresh turn.
+```
+
+### Operator Diagnostics
+
+Detailed failure context should be structured and searchable.
+
+Den logs should include:
+
+- `run_id`, `session_id`, `bear_id`, `user_id`;
+- normalized `reason`, `kind`, `subsystem`, and retryability;
+- elapsed/limit values for budget failures;
+- provider/model/routing metadata for stream failures;
+- restart/orphan indicators for missing continuation state;
+- server version/git SHA.
+
+Armature stderr should include:
+
+- the concise user-facing message;
+- structured diagnostic context when present;
+- Den server version/git SHA when available;
+- any adapter-side stream diagnostics such as last event kind, replay counts, or missing first event.
+
+Diagnostic context must not include secrets, full file contents, full prompts, bearer tokens, or unbounded provider payloads.
+
+## Failure Taxonomy
+
+| Class | User Copy | Model Continuity | Diagnostic Home |
+|---|---|---|---|
+| Turn budget exhausted | “stopped after it ran too long” | Continue only if user asks; latest tool results preserved | Den logs + hidden operational outcome |
+| Den restart / missing continuation state | “lost active runtime state, likely restart” | No repair action; continue from persisted state | Den logs + armature stderr |
+| Continuation watchdog timeout | “runtime did not resume after tool result” | Continue from latest successful state | Den logs + armature stderr context |
+| Provider stream transport error | “model stream was interrupted” | Retry/continue safely; do not assume completion | Bifrost/Den logs + armature stderr |
+| Tool execution failure | Tool-specific user message | Use tool result/error semantics | Tool result raw output + Den/armature logs |
+| User cancellation | “request was cancelled” | Do not continue unless user asks | Armature/Den logs |
+
+## Retryability Vocabulary
+
+Use retryability to guide behavior, not to expose implementation details.
+
+- `retryable=true`: user copy may say “retrying or continuing is safe.”
+- `retryable=false`: user copy should say “start a fresh turn” or “narrow the request,” depending on class.
+- `model_action=none`: model continuity note should say there is no infrastructure repair action.
+- `model_action=continue_from_persisted_state`: model should proceed from latest persisted transcript/tool state if the user asks.
+- `model_action=do_not_assume_completion`: model should not claim the previous task completed.
+
+## Implementation Guidance
+
+1. Den should normalize operational failures into structured outcomes before they reach armatures.
+2. BearWire `run.failed` should carry concise user copy plus structured diagnostic context, not one overloaded message string.
+3. The armature should render concise user copy and write diagnostic context to stderr.
+4. Hidden operational outcome messages should remain model-visible but user-hidden.
+5. If an error is entirely infrastructure-level and no model action is needed, both Den's model note and the user copy should say so in different levels of detail.
+
+## Current Gap To Close
+
+The current `runtime_internal` budget-exhaustion message is too implementation-shaped for users:
+
+```text
+I stopped because this turn exhausted its wall-clock budget (elapsed=252985ms/limit=240000ms)...
+```
+
+Desired split:
+
+- user message: concise high-level timeout copy;
+- hidden model note: preserved results, no final answer, continue only if user asks;
+- Den/armature diagnostics: elapsed, limit, run id, version, exact reason.
