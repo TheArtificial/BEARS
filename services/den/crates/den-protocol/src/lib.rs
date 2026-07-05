@@ -1,6 +1,6 @@
+use bytes::Bytes;
 use den_core::config::Config;
 use den_core::DenError;
-use bytes::Bytes;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
@@ -168,9 +168,8 @@ pub struct RuntimeEventParser {
 
 pub type RuntimeByteStream =
     Pin<Box<dyn Stream<Item = Result<Bytes, den_core::DenError>> + Send + 'static>>;
-pub type RuntimeEventStream = Pin<
-    Box<dyn Stream<Item = Result<RuntimeStreamEvent, den_core::DenError>> + Send + 'static>,
->;
+pub type RuntimeEventStream =
+    Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, den_core::DenError>> + Send + 'static>>;
 
 pub type RuntimeParserFn = fn(&serde_json::Value) -> Option<RuntimeStreamEvent>;
 
@@ -280,9 +279,7 @@ pub enum RuntimeSemanticEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeStreamEvent {
     Semantic(RuntimeSemanticEvent),
-    UntranslatedProviderEvent {
-        value: serde_json::Value,
-    },
+    UntranslatedProviderEvent { value: serde_json::Value },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

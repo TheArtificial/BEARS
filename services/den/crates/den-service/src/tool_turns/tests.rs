@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn result_body(tool_call_id: Option<&str>) -> ToolResultRequest {

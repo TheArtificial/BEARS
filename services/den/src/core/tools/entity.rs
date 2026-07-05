@@ -3,11 +3,11 @@ use den_core::tools::entity::{
     EntityBrowseArguments, EntityLinkMemoryArguments, EntityMergeArguments, EntityResolveArguments,
     EntitySplitArguments, EntityWriteAccessRuleArguments, EntityWriteAnchorArguments,
 };
-use den_service::bears::BearProfile;
 use den_memory::{
     self as memory_store, descriptors, EntityHandleRow, EntityRow, EntityTrust, LogicalMemoryPath,
     RelationClass, RelationRow, ResolutionState,
 };
+use den_service::bears::BearProfile;
 use serde_json::{json, Value};
 
 use crate::core::tools::context::DenToolContext;

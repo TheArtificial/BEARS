@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use den_core::tools::constants::{
     DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
-    DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC,
-    DEN_TASK_UPDATE, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE,
+    DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
+    DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
 };
 use den_docket::{
     self as work_plans, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
@@ -15,8 +15,8 @@ use den_docket::{
     DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
     DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
     DocketTaskStatus, DocketTaskUpdate, DocketValidationError, PgDocketService,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
-    TaskListListFilter, TaskListLookup, TaskListStatus, TaskListUpdate, TaskListUpsert,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListListFilter, TaskListLookup,
+    TaskListProjection, TaskListStatus, TaskListSyncRequest, TaskListUpdate, TaskListUpsert,
     TaskListVisibility,
 };
 
@@ -248,12 +248,6 @@ pub(crate) struct TaskListCheckoutArguments {
     pub(crate) job_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) parent_task_id: Option<Uuid>,
-    #[serde(default)]
-    pub(crate) plan_id: Option<Uuid>,
-    #[serde(default)]
-    pub(crate) source_conversation_id: Option<String>,
-    #[serde(default)]
-    pub(crate) source_client_session_id: Option<String>,
 }
 
 fn default_job_status() -> DocketJobStatus {
@@ -783,7 +777,8 @@ pub(crate) async fn checkout_task_list(
     let args: TaskListCheckoutArguments = serde_json::from_value(arguments)?;
     let Some(job_id) = args.job_id else {
         return Err(DenError::ValidationError(
-            "checkout_task_list requires job_id; legacy work-plan lookup has been retired".to_string(),
+            "checkout_task_list requires job_id; legacy work-plan lookup has been retired"
+                .to_string(),
         )
         .into());
     };

@@ -1650,7 +1650,9 @@ pub fn validate_task_list_update(update: &TaskListUpdate) -> Result<(), TaskList
     validate_task_list_items(&update.items)
 }
 
-pub fn validate_task_list_items(items: &[TaskListUpdateItem]) -> Result<(), TaskListValidationError> {
+pub fn validate_task_list_items(
+    items: &[TaskListUpdateItem],
+) -> Result<(), TaskListValidationError> {
     let mut in_progress_count = 0;
     for item in items {
         if item.id.trim().is_empty() {
@@ -1904,7 +1906,10 @@ mod tests {
         let task_list = plan.to_task_list_projection();
 
         assert_eq!(task_list.source_ref.kind, "local");
-        assert_eq!(task_list.source_ref.refs, vec![format!("task_list:{}", plan.id)]);
+        assert_eq!(
+            task_list.source_ref.refs,
+            vec![format!("task_list:{}", plan.id)]
+        );
         assert_eq!(task_list.items.len(), 1);
         assert_eq!(task_list.items[0].source_ref.kind, "local");
         assert_eq!(task_list.items[0].sync_state, TaskListSyncState::LocalOnly);

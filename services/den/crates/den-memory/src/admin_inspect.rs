@@ -66,18 +66,19 @@ pub async fn bear_memory_admin_stats(
     let db_path = bear_sqlite_db_path(config, bear_id);
     let db_path_display = db_path.display().to_string();
     let db_exists = db_path.exists();
-    let db_size_bytes = db_exists.then(|| std::fs::metadata(&db_path).ok().map(|m| m.len())).flatten();
+    let db_size_bytes = db_exists
+        .then(|| std::fs::metadata(&db_path).ok().map(|m| m.len()))
+        .flatten();
 
     let store = manager.store_for_bear(bear_id).await?;
     let pool = store.pool();
 
-    let record_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM memory_records WHERE bear_id = ?",
-    )
-    .bind(bear_id.to_string())
-    .fetch_one(pool)
-    .await
-    .map_err(|e| DenError::System(format!("memory record count failed: {e}")))?;
+    let record_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM memory_records WHERE bear_id = ?")
+            .bind(bear_id.to_string())
+            .fetch_one(pool)
+            .await
+            .map_err(|e| DenError::System(format!("memory record count failed: {e}")))?;
 
     let shared_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND scope_type = 'shared'",
@@ -178,26 +179,37 @@ pub async fn get_memory_record_by_id(
     let metadata_raw: String = row
         .try_get("metadata_json")
         .map_err(|e| DenError::System(format!("decode metadata_json: {e}")))?;
-    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
+    let metadata_json =
+        serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
 
     Ok(Some(MemoryRecordRow {
-        memory_id: row.try_get("memory_id").map_err(|e| DenError::System(e.to_string()))?,
-        sequence_no: row.try_get("sequence_no").map_err(|e| DenError::System(e.to_string()))?,
+        memory_id: row
+            .try_get("memory_id")
+            .map_err(|e| DenError::System(e.to_string()))?,
+        sequence_no: row
+            .try_get("sequence_no")
+            .map_err(|e| DenError::System(e.to_string()))?,
         scope_type: MemoryScopeType::parse(
             &row.try_get::<String, _>("scope_type")
                 .map_err(|e| DenError::System(e.to_string()))?,
         )
         .unwrap_or(MemoryScopeType::ProfileLocal),
         scope_profile: row.try_get("scope_profile").ok(),
-        kind: row.try_get("kind").map_err(|e| DenError::System(e.to_string()))?,
+        kind: row
+            .try_get("kind")
+            .map_err(|e| DenError::System(e.to_string()))?,
         content_text: row
             .try_get("content_text")
             .map_err(|e| DenError::System(e.to_string()))?,
         logical_path: row.try_get("logical_path").ok(),
         work_surface_ref: row.try_get("work_surface_ref").ok(),
         metadata_json,
-        created_at: row.try_get("created_at").map_err(|e| DenError::System(e.to_string()))?,
-        salience: row.try_get("salience").unwrap_or_else(|_| "normal".to_string()),
+        created_at: row
+            .try_get("created_at")
+            .map_err(|e| DenError::System(e.to_string()))?,
+        salience: row
+            .try_get("salience")
+            .unwrap_or_else(|_| "normal".to_string()),
     }))
 }
 
@@ -365,18 +377,29 @@ pub async fn get_memory_record_detail(
     let metadata_raw: String = row
         .try_get("metadata_json")
         .map_err(|e| DenError::System(format!("decode metadata_json: {e}")))?;
-    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
+    let metadata_json =
+        serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
     Ok(Some(MemoryRecordDetail {
-        memory_id: row.try_get("memory_id").map_err(|e| DenError::System(e.to_string()))?,
-        sequence_no: row.try_get("sequence_no").map_err(|e| DenError::System(e.to_string()))?,
-        scope_type: row.try_get("scope_type").map_err(|e| DenError::System(e.to_string()))?,
+        memory_id: row
+            .try_get("memory_id")
+            .map_err(|e| DenError::System(e.to_string()))?,
+        sequence_no: row
+            .try_get("sequence_no")
+            .map_err(|e| DenError::System(e.to_string()))?,
+        scope_type: row
+            .try_get("scope_type")
+            .map_err(|e| DenError::System(e.to_string()))?,
         scope_profile: row.try_get("scope_profile").ok(),
-        kind: row.try_get("kind").map_err(|e| DenError::System(e.to_string()))?,
+        kind: row
+            .try_get("kind")
+            .map_err(|e| DenError::System(e.to_string()))?,
         author_profile: row
             .try_get("author_profile")
             .map_err(|e| DenError::System(e.to_string()))?,
         author_agent_id: row.try_get("author_agent_id").ok(),
-        visibility: row.try_get("visibility").map_err(|e| DenError::System(e.to_string()))?,
+        visibility: row
+            .try_get("visibility")
+            .map_err(|e| DenError::System(e.to_string()))?,
         supersedes_memory_id: row.try_get("supersedes_memory_id").ok(),
         logical_path: row.try_get("logical_path").ok(),
         work_surface_ref: row.try_get("work_surface_ref").ok(),
@@ -384,7 +407,9 @@ pub async fn get_memory_record_detail(
             .try_get("content_text")
             .map_err(|e| DenError::System(e.to_string()))?,
         metadata_json,
-        created_at: row.try_get("created_at").map_err(|e| DenError::System(e.to_string()))?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|e| DenError::System(e.to_string()))?,
     }))
 }
 
@@ -461,7 +486,8 @@ fn escape_like(input: &str) -> String {
 
 fn decode_memory_record_row(row: sqlx::sqlite::SqliteRow) -> Result<MemoryRecordRow, sqlx::Error> {
     let metadata_raw: String = row.try_get("metadata_json")?;
-    let metadata_json = serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
+    let metadata_json =
+        serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
     Ok(MemoryRecordRow {
         memory_id: row.try_get("memory_id")?,
         sequence_no: row.try_get("sequence_no")?,
@@ -474,7 +500,9 @@ fn decode_memory_record_row(row: sqlx::sqlite::SqliteRow) -> Result<MemoryRecord
         work_surface_ref: row.try_get("work_surface_ref").ok(),
         metadata_json,
         created_at: row.try_get("created_at")?,
-        salience: row.try_get("salience").unwrap_or_else(|_| "normal".to_string()),
+        salience: row
+            .try_get("salience")
+            .unwrap_or_else(|_| "normal".to_string()),
     })
 }
 
@@ -482,8 +510,9 @@ fn decode_memory_record_row(row: sqlx::sqlite::SqliteRow) -> Result<MemoryRecord
 mod tests {
     use super::*;
     use crate::{
-        append_memory_record, append_relation, create_entity, get_entity, list_records_for_logical_path,
-        list_relations_for_source, EntityTrust, LogicalMemoryPath, ResolutionState,
+        append_memory_record, append_relation, create_entity, get_entity,
+        list_records_for_logical_path, list_relations_for_source, EntityTrust, LogicalMemoryPath,
+        ResolutionState,
     };
     use serde_json::json;
 
@@ -504,16 +533,40 @@ mod tests {
 
         // Two versions at one path (history) + a second path of a different kind.
         let path = LogicalMemoryPath::profile_local("pair", "note");
-        let v1 = append_memory_record(&store, &path, "note", "pair", None, "first draft about Ryan", &json!({}))
-            .await
-            .expect("append v1");
-        let v2 = append_memory_record(&store, &path, "note", "pair", None, "second draft about Ryan", &json!({}))
-            .await
-            .expect("append v2");
+        let v1 = append_memory_record(
+            &store,
+            &path,
+            "note",
+            "pair",
+            None,
+            "first draft about Ryan",
+            &json!({}),
+        )
+        .await
+        .expect("append v1");
+        let v2 = append_memory_record(
+            &store,
+            &path,
+            "note",
+            "pair",
+            None,
+            "second draft about Ryan",
+            &json!({}),
+        )
+        .await
+        .expect("append v2");
         let other = LogicalMemoryPath::shared_core("bear-glossary");
-        append_memory_record(&store, &other, "glossary", "curate", None, "glossary entry", &json!({}))
-            .await
-            .expect("append other");
+        append_memory_record(
+            &store,
+            &other,
+            "glossary",
+            "curate",
+            None,
+            "glossary entry",
+            &json!({}),
+        )
+        .await
+        .expect("append other");
 
         // Detail fetch includes author/visibility.
         let detail = get_memory_record_detail(&manager, bear_id, &v2.memory_id)
@@ -532,16 +585,24 @@ mod tests {
         assert_eq!(versions[1].memory_id, v1.memory_id);
 
         // Grouped counts + head count.
-        let by_kind = count_records_by_kind(&manager, bear_id).await.expect("by kind");
+        let by_kind = count_records_by_kind(&manager, bear_id)
+            .await
+            .expect("by kind");
         assert!(by_kind.iter().any(|b| b.label == "note" && b.count == 2));
-        assert!(by_kind.iter().any(|b| b.label == "glossary" && b.count == 1));
-        let by_profile = count_records_by_profile(&manager, bear_id).await.expect("by profile");
+        assert!(by_kind
+            .iter()
+            .any(|b| b.label == "glossary" && b.count == 1));
+        let by_profile = count_records_by_profile(&manager, bear_id)
+            .await
+            .expect("by profile");
         assert!(by_profile.iter().any(|b| b.label == "pair" && b.count == 2));
         assert!(by_profile.iter().any(|b| b.label == "core" && b.count == 1));
         assert_eq!(head_entry_count(&manager, bear_id).await.expect("heads"), 2);
 
         // Path summaries: one head row per path, with the version count.
-        let summaries = list_path_summaries(&manager, bear_id).await.expect("summaries");
+        let summaries = list_path_summaries(&manager, bear_id)
+            .await
+            .expect("summaries");
         let note_summary = summaries
             .iter()
             .find(|s| s.logical_path == path.to_logical_path())
@@ -554,10 +615,12 @@ mod tests {
             .await
             .expect("search");
         assert_eq!(hits.len(), 2, "both 'Ryan' drafts match");
-        assert!(search_memory_records(&manager, bear_id, "nonexistent-token", 50)
-            .await
-            .expect("search empty")
-            .is_empty());
+        assert!(
+            search_memory_records(&manager, bear_id, "nonexistent-token", 50)
+                .await
+                .expect("search empty")
+                .is_empty()
+        );
 
         // Entity cross-link: a record references a resolved entity.
         let entity = create_entity(

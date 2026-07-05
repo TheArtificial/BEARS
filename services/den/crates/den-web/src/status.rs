@@ -240,7 +240,9 @@ async fn gather_model_registry_status(state: &AppState) -> ModelRegistryStatus {
             let gateway_error = if snapshot.models.is_empty() {
                 Some("Bifrost model catalog snapshot is empty.".to_string())
             } else if snapshot.stale {
-                Some("Bifrost model catalog snapshot is stale; using last known values.".to_string())
+                Some(
+                    "Bifrost model catalog snapshot is stale; using last known values.".to_string(),
+                )
             } else {
                 None
             };

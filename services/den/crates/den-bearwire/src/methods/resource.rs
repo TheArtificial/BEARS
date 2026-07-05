@@ -3,11 +3,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
+use den_runtime::{bearwire_events, runtime::bearwire_projection::wire::BearWireEvent};
 use den_service::DenState;
-use den_runtime::{
-    bearwire_events,
-    runtime::bearwire_projection::wire::BearWireEvent,
-};
 
 use crate::auth::authenticated_bear;
 use crate::methods::{deserialize_required_string, parse_params};

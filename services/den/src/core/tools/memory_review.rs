@@ -18,14 +18,6 @@ use den_core::tools::review::{
 
 use crate::{config::Config, errors::DenError};
 use den_memory::MemoryStoreManager;
-use den_service::{
-    bears::BearProfile,
-    conversation::events::{
-        memory_proposal_resolved_projection, memory_review_requested_projection,
-        project_to_conversation, ProjectionProvenance, ProjectionSource,
-    },
-    memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
-};
 use den_runtime::{
     bear_observations::{self, BearObservationRow},
     memory::{
@@ -34,6 +26,14 @@ use den_runtime::{
         promote_core_content, resolve_proposal as db_resolve_proposal,
     },
     reflection_conductor::{self, ProposalEnqueueParams},
+};
+use den_service::{
+    bears::BearProfile,
+    conversation::events::{
+        memory_proposal_resolved_projection, memory_review_requested_projection,
+        project_to_conversation, ProjectionProvenance, ProjectionSource,
+    },
+    memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
 };
 
 fn observation_record(row: &BearObservationRow) -> ObservationRecord {

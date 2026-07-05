@@ -34,7 +34,6 @@ pub fn runtime_semantic_to_bear_channel_events(
             ..
         } => {
             let display_summary = summary
-                
                 .or_else(|| error_message.clone())
                 .unwrap_or_else(|| format!("Finished {tool_name}"));
             let mut events = vec![serde_json::json!({
@@ -56,8 +55,7 @@ pub fn runtime_semantic_to_bear_channel_events(
             events
         }
         RuntimeSemanticEvent::RunProgress {
-            text: Some(text),
-            ..
+            text: Some(text), ..
         } => {
             if is_ephemeral_progress_status(&text) {
                 vec![serde_json::json!({ "type": "status_progress", "text": text })]
@@ -65,7 +63,9 @@ pub fn runtime_semantic_to_bear_channel_events(
                 vec![serde_json::json!({ "type": "reasoning_delta", "text": text })]
             }
         }
-        RuntimeSemanticEvent::RunProgress { kind, text: None, .. } => {
+        RuntimeSemanticEvent::RunProgress {
+            kind, text: None, ..
+        } => {
             if is_ephemeral_progress_status(&kind) {
                 vec![serde_json::json!({ "type": "status_progress", "text": kind })]
             } else {
@@ -82,9 +82,7 @@ pub fn runtime_semantic_to_bear_channel_events(
             vec![serde_json::json!({ "type": "done", "outcome": "ok" })]
         }
         RuntimeSemanticEvent::ToolCallRequested {
-            tool_name,
-            title,
-            ..
+            tool_name, title, ..
         } => {
             let summary = title.unwrap_or_else(|| tool_name.clone());
             vec![serde_json::json!({
@@ -107,9 +105,7 @@ pub fn runtime_semantic_to_bear_channel_events(
             "context": context,
         })],
         RuntimeSemanticEvent::TurnFailed {
-            category,
-            message,
-            ..
+            category, message, ..
         } => vec![serde_json::json!({
             "type": "error",
             "message": message,
@@ -160,7 +156,8 @@ fn runtime_stream_event_to_bear_channel_bytes(
 
 /// Presents native runtime events as bear_channel SSE bytes for [`super::chat_proxy_stream::BearChannelSseProxyStream`].
 pub struct NativeWebChatUpstreamStream {
-    inner: Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send>>,
+    inner:
+        Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send>>,
     request_id: Uuid,
     pending: VecDeque<Bytes>,
     finished: bool,
@@ -168,7 +165,9 @@ pub struct NativeWebChatUpstreamStream {
 
 impl NativeWebChatUpstreamStream {
     pub fn new(
-        inner: impl Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>> + Send + 'static,
+        inner: impl Stream<Item = Result<RuntimeStreamEvent, crate::errors::CustomError>>
+            + Send
+            + 'static,
         request_id: Uuid,
     ) -> Self {
         Self {
@@ -189,7 +188,9 @@ impl NativeWebChatUpstreamStream {
         if let Some(bytes) = bear_channel_sse_bytes(&value) {
             self.pending.push_back(bytes);
         }
-        if let Some(bytes) = bear_channel_sse_bytes(&serde_json::json!({ "type": "done", "outcome": "error" })) {
+        if let Some(bytes) =
+            bear_channel_sse_bytes(&serde_json::json!({ "type": "done", "outcome": "error" }))
+        {
             self.pending.push_back(bytes);
         }
         self.finished = true;
@@ -231,9 +232,9 @@ impl Stream for NativeWebChatUpstreamStream {
                     return Poll::Ready(None);
                 }
                 None => {
-                    if let Some(bytes) =
-                        bear_channel_sse_bytes(&serde_json::json!({ "type": "done", "outcome": "ok" }))
-                    {
+                    if let Some(bytes) = bear_channel_sse_bytes(
+                        &serde_json::json!({ "type": "done", "outcome": "ok" }),
+                    ) {
                         this.finished = true;
                         return Poll::Ready(Some(Ok(bytes)));
                     }
@@ -247,4 +248,3 @@ impl Stream for NativeWebChatUpstreamStream {
 
 #[cfg(test)]
 mod tests;
-

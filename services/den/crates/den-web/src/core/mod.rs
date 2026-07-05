@@ -8,9 +8,9 @@
 //! The root `den` binary injects concrete runtime/tool composition, so no tool composition lives here.
 pub mod s3;
 
-pub use den_http::armature_tokens;
 pub use den_docket as docket;
 pub use den_docket as work_plans;
+pub use den_http::armature_tokens;
 pub use den_http::{email, user, web_policy};
 
 /// Re-exports of den-core tool descriptor/constant/argument modules plus the

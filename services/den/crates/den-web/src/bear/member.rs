@@ -3,16 +3,8 @@
 use axum::response::Redirect;
 use uuid::Uuid;
 
-use crate::{
-    auth_backend::SessionUser,
-    core::user,
-    errors::CustomError,
-};
-use den_service::bears::{
-    db as bears_db,
-    db::role_is_bear_admin,
-    Bear,
-};
+use crate::{auth_backend::SessionUser, core::user, errors::CustomError};
+use den_service::bears::{db as bears_db, db::role_is_bear_admin, Bear};
 
 pub(crate) async fn email_verify_redirect(
     pool: &sqlx::PgPool,

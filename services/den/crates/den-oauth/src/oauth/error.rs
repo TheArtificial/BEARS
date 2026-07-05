@@ -179,9 +179,9 @@ impl From<OAuthError> for den_http::errors::CustomError {
             OAuthError::InvalidScope => {
                 den_http::errors::CustomError::Authentication("Invalid scope".to_string())
             }
-            OAuthError::UnsupportedResponseType => {
-                den_http::errors::CustomError::Authentication("Unsupported response type".to_string())
-            }
+            OAuthError::UnsupportedResponseType => den_http::errors::CustomError::Authentication(
+                "Unsupported response type".to_string(),
+            ),
             OAuthError::ServerError(msg) => den_http::errors::CustomError::System(msg),
             OAuthError::TemporarilyUnavailable => {
                 den_http::errors::CustomError::System("Service temporarily unavailable".to_string())

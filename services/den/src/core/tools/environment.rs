@@ -5,14 +5,12 @@ use den_core::tools::environment::EnvironmentOps;
 
 use crate::{
     config::Config,
-    core::tools::{
-        memory_read::memory_status_value, session::DenToolInvocationContext,
-    },
+    core::tools::{memory_read::memory_status_value, session::DenToolInvocationContext},
     errors::{CustomError, DenError},
 };
-use den_service::bears::BearProfile;
 use den_memory as memory_store;
 use den_memory::MemoryStoreManager;
+use den_service::bears::BearProfile;
 use den_service::client_sessions;
 
 /// Concrete [`EnvironmentOps`] over the runtime pool/config.

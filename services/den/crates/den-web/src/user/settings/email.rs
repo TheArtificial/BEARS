@@ -17,11 +17,9 @@ use minijinja::context;
 
 use crate::{
     auth_backend::AuthSession,
+    core::user::email_settings::{self, UserEmailBasics, UserEmailSettings, VerifyAttemptStatus},
     errors::CustomError,
     web::{self, AppState},
-    core::{
-        user::email_settings::{self, UserEmailBasics, UserEmailSettings, VerifyAttemptStatus},
-    },
 };
 
 static VERIFY_TOKEN: &str = "send_token";

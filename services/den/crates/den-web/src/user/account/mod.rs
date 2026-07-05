@@ -23,12 +23,12 @@ use std::sync::OnceLock;
 
 use crate::{
     auth_backend::{AuthSession, Backend},
-    errors::CustomError,
-    web::{self, AppState},
     core::{
         armature_tokens,
         user::{self, email_settings},
     },
+    errors::CustomError,
+    web::{self, AppState},
 };
 
 use crate::core::user::RESERVED_NAMES;

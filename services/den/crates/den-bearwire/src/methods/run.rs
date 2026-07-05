@@ -241,10 +241,7 @@ fn runtime_event_history_marker(
     match event {
         den_protocol::RuntimeStreamEvent::Semantic(
             den_protocol::RuntimeSemanticEvent::RunProgress {
-                kind,
-                text,
-                detail,
-                ..
+                kind, text, detail, ..
             },
         ) => runtime_progress_history_marker(kind, text.as_deref(), detail.as_ref())
             .map(|(marker, metadata)| (kind.clone(), marker, metadata)),
@@ -1814,7 +1811,10 @@ mod tests {
             None,
         );
 
-        assert!(summary.contains("no infrastructure repair action"), "{summary}");
+        assert!(
+            summary.contains("no infrastructure repair action"),
+            "{summary}"
+        );
         assert_eq!(content["kind"], "turn_budget_exhausted");
         assert_eq!(content["retryable"], false);
     }

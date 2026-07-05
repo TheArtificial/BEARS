@@ -16,9 +16,9 @@ use super::model::{
     DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest,
     DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate,
     DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome, TaskListHandoffRequest,
-    TaskListListFilter, TaskListLocalProjection, TaskListLookup, TaskListProjection,
-    TaskListSyncOutcome, TaskListSyncRequest, TaskListUpsert,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
+    TaskListHandoffRequest, TaskListListFilter, TaskListLocalProjection, TaskListLookup,
+    TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest, TaskListUpsert,
 };
 
 impl PgDocketService {

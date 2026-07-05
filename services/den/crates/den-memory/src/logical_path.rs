@@ -56,7 +56,11 @@ impl LogicalMemoryPath {
 
     /// Encode to the legacy logical path string used by memory tools.
     pub fn to_logical_path(&self) -> String {
-        match (&self.scope_type, &self.scope_profile, &self.work_surface_ref) {
+        match (
+            &self.scope_type,
+            &self.scope_profile,
+            &self.work_surface_ref,
+        ) {
             (MemoryScopeType::Shared, None, Some(ws)) => {
                 format!("core/work_surfaces/{ws}/{}.md", self.kind)
             }

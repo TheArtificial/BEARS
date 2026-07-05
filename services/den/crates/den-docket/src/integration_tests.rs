@@ -380,7 +380,12 @@ async fn docket_dispatcher_finds_starts_and_records_work_task_outcomes() {
         .expect("record blocked");
     assert_eq!(blocked.run_state.as_ref().unwrap().status, "blocked");
     assert_eq!(
-        blocked.run_state.as_ref().unwrap().result_summary.as_deref(),
+        blocked
+            .run_state
+            .as_ref()
+            .unwrap()
+            .result_summary
+            .as_deref(),
         Some("waiting for sandbox capability")
     );
 }

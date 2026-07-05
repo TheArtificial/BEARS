@@ -104,10 +104,12 @@ async fn add_adr0041_record_columns_if_missing(
             .map_err(|e| DenError::System(format!("add invalid_at column failed: {e}")))?;
     }
     if !record_columns.iter().any(|c| c == "salience") {
-        sqlx::query("ALTER TABLE memory_records ADD COLUMN salience TEXT NOT NULL DEFAULT 'normal'")
-            .execute(pool)
-            .await
-            .map_err(|e| DenError::System(format!("add salience column failed: {e}")))?;
+        sqlx::query(
+            "ALTER TABLE memory_records ADD COLUMN salience TEXT NOT NULL DEFAULT 'normal'",
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| DenError::System(format!("add salience column failed: {e}")))?;
     }
     Ok(())
 }

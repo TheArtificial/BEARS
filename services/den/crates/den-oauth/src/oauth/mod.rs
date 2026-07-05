@@ -506,7 +506,10 @@ mod tests {
             OAuthScope::from_str("data:write"),
             Some(OAuthScope::DataWrite)
         );
-        assert_eq!(OAuthScope::from_str("armature:chat"), Some(OAuthScope::ArmatureChat));
+        assert_eq!(
+            OAuthScope::from_str("armature:chat"),
+            Some(OAuthScope::ArmatureChat)
+        );
         assert_eq!(OAuthScope::from_str("armature:tools"), None);
         assert_eq!(
             OAuthScope::from_str("hexes:read"),

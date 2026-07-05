@@ -9,9 +9,9 @@ use minijinja::context;
 
 use crate::{
     auth_backend::AuthSession,
+    core::user,
     errors::CustomError,
     web::{self, AppState},
-    core::user,
 };
 use den_service::bears::db as bears_db;
 

@@ -1,4 +1,7 @@
-use axum::{routing::{get, post}, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use den_service::DenState;
 
 mod auth;

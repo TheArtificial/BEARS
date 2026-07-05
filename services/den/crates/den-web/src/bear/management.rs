@@ -36,12 +36,12 @@ use crate::{
 };
 use den_core::client_tools::{client_tool_policy_json_for_provider, ClientToolName};
 use den_memory::tools::sqlite_collect_role_logical_paths;
-use den_service::client_sessions;
 use den_service::bears::{
     db as bears_db,
     db::{role_is_bear_admin, BearParams, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
     provision, Bear, BearProfile,
 };
+use den_service::client_sessions;
 
 pub(crate) use super::member::{email_verify_redirect, load_bear_member, viewer_can_manage_bear};
 use super::settings;
@@ -891,12 +891,8 @@ async fn new_bear_post(
     }
 
     if validation_errors.is_empty() {
-        let id = insert_new_bear_row(
-            state.sqlx_pool(),
-            &form,
-            default_model_opt.as_deref(),
-        )
-        .await?;
+        let id =
+            insert_new_bear_row(state.sqlx_pool(), &form, default_model_opt.as_deref()).await?;
 
         if let Err(e) = provision_bifrost_virtual_key_for_bear(&state, id, form.slug.trim()).await {
             let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;

@@ -9,11 +9,11 @@ use serde::Deserialize;
 use serde_json::json;
 
 use den_http::errors::CustomError;
-use den_service::{client_sessions, DenState};
 use den_runtime::{
     bearwire_events,
     runtime::bearwire_projection::wire::{bearwire_event_to_json_rpc_notification, BearWireEvent},
 };
+use den_service::{client_sessions, DenState};
 
 use crate::auth::authenticate_for_bear_slug;
 
@@ -38,14 +38,16 @@ pub(crate) fn events_sse_body(
             }),
         );
         let notification = bearwire_event_to_json_rpc_notification(event);
-        let payload = serde_json::to_string(&notification)
-            .map_err(|err| CustomError::System(format!("serialize BearWire event failed: {err}")))?;
+        let payload = serde_json::to_string(&notification).map_err(|err| {
+            CustomError::System(format!("serialize BearWire event failed: {err}"))
+        })?;
         frame.push_str(&format!("data: {payload}\n\n"));
     } else {
         for row in events {
             let notification = bearwire_event_to_json_rpc_notification(row.event);
-            let payload = serde_json::to_string(&notification)
-                .map_err(|err| CustomError::System(format!("serialize BearWire event failed: {err}")))?;
+            let payload = serde_json::to_string(&notification).map_err(|err| {
+                CustomError::System(format!("serialize BearWire event failed: {err}"))
+            })?;
             frame.push_str(&format!("id: {}\ndata: {payload}\n\n", row.sequence_no));
         }
     }
@@ -119,7 +121,9 @@ mod tests {
     #[tokio::test]
     async fn events_endpoint_requires_bearer_token_for_bear_session() {
         let err = events(
-            State(test_state(sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap())),
+            State(test_state(
+                sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
+            )),
             HeaderMap::new(),
             Path("session-test".to_string()),
             Query(EventStreamQuery {

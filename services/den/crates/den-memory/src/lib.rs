@@ -41,8 +41,8 @@ pub use harvest::{
     harvest_mark_for_source, harvest_source_marked, record_harvest_mark, MemoryHarvestMark,
 };
 pub use import::{
-    import_legacy_memory_bundle, import_legacy_memory_git_dir, LegacyMemoryBranchReport, LegacyMemoryImportOptions,
-    LegacyMemoryImportReport, LegacyMemoryImportSource,
+    import_legacy_memory_bundle, import_legacy_memory_git_dir, LegacyMemoryBranchReport,
+    LegacyMemoryImportOptions, LegacyMemoryImportReport, LegacyMemoryImportSource,
 };
 pub use logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType};
 pub use manager::MemoryStoreManager;
@@ -57,9 +57,9 @@ pub use proposals::{
 pub use records::{
     append_memory_record, effective_time_by_ids, fetch_records_min,
     has_work_surface_canonical_anchor, head_record_as_of, head_record_for_logical_path,
-    list_entity_anchor_head_records, list_profile_local_head_records, list_records_for_logical_path,
-    memory_sequence_high_water, superseder_times_by_superseded, BearMemoryStore, MemoryRecordRow,
-    RecallRecordMin,
+    list_entity_anchor_head_records, list_profile_local_head_records,
+    list_records_for_logical_path, memory_sequence_high_water, superseder_times_by_superseded,
+    BearMemoryStore, MemoryRecordRow, RecallRecordMin,
 };
 pub use reflection_outcomes::{
     complete_reflection_run_outcome, create_reflection_run_outcome, reflection_outcome_exists,

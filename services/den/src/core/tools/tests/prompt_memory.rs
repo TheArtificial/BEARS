@@ -6,11 +6,11 @@ use crate::{
     },
     errors::CustomError,
 };
-use den_service::bears::BearProfile;
 use den_runtime::{
     prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite},
     prompt_memory_blocks::{PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType},
 };
+use den_service::bears::BearProfile;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;

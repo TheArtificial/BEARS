@@ -92,7 +92,8 @@ mod tests {
 
     #[tokio::test]
     async fn idle_timeout_fires_when_upstream_stalls() {
-        let stream = byte_stream_with_idle_timeout(empty_pending_stream(), Duration::from_millis(50));
+        let stream =
+            byte_stream_with_idle_timeout(empty_pending_stream(), Duration::from_millis(50));
         let mut stream = pin!(stream);
         let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await

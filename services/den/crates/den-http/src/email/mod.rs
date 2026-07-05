@@ -15,10 +15,7 @@ pub struct EmailConfig {
     pub display_name: String,
     pub week_start_day: i32, // 0 = Sunday, 1 = Monday, etc.
 }
-pub async fn get_current_config(
-    sqlx_pool: &PgPool,
-    user_id: i32,
-) -> Result<EmailConfig, DenError> {
+pub async fn get_current_config(sqlx_pool: &PgPool, user_id: i32) -> Result<EmailConfig, DenError> {
     Ok(query_as!(
         EmailConfig,
         r#"

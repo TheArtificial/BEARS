@@ -14,7 +14,11 @@ use crate::methods::{
 struct ConversationHistoryRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     conversation_id: String,
-    #[serde(default, alias = "before_sequence_no", deserialize_with = "deserialize_optional_i64_from_value")]
+    #[serde(
+        default,
+        alias = "before_sequence_no",
+        deserialize_with = "deserialize_optional_i64_from_value"
+    )]
     before: Option<i64>,
     #[serde(default = "default_history_limit")]
     limit: i64,

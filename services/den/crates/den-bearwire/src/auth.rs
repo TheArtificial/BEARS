@@ -28,16 +28,25 @@ pub(crate) async fn authenticate_for_bear_slug(
     let token = bearer_token(headers)?;
     let required_scope = armature_tokens::armature_chat_scope();
     if !armature_tokens::is_armature_token(token) {
-        let diagnostics =
-            armature_tokens::diagnose_for_bear_slug(&state.sqlx_pool, token, bear_slug, required_scope)
-                .await?;
+        let diagnostics = armature_tokens::diagnose_for_bear_slug(
+            &state.sqlx_pool,
+            token,
+            bear_slug,
+            required_scope,
+        )
+        .await?;
         return Err(CustomError::Authentication(format!(
             "expected a bear-scoped BEARS Armature token; diagnostics: {}",
             diagnostics.summary()
         )));
     }
-    match armature_tokens::authenticate_for_bear_slug(&state.sqlx_pool, token, bear_slug, required_scope)
-        .await?
+    match armature_tokens::authenticate_for_bear_slug(
+        &state.sqlx_pool,
+        token,
+        bear_slug,
+        required_scope,
+    )
+    .await?
     {
         Some(user_id) => Ok(user_id),
         None => {

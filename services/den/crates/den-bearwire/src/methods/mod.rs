@@ -36,9 +36,7 @@ pub(crate) fn parse_params<T: DeserializeOwned>(
     params: &Value,
 ) -> Result<T, den_http::errors::CustomError> {
     serde_json::from_value(params.clone()).map_err(|err| {
-        den_http::errors::CustomError::ValidationError(format!(
-            "invalid BearWire params: {err}"
-        ))
+        den_http::errors::CustomError::ValidationError(format!("invalid BearWire params: {err}"))
     })
 }
 
@@ -56,9 +54,7 @@ where
     }))
 }
 
-pub(crate) fn deserialize_required_string<'de, D>(
-    deserializer: D,
-) -> Result<String, D::Error>
+pub(crate) fn deserialize_required_string<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {

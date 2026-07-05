@@ -93,16 +93,16 @@ pub async fn list_memory_proposals(
     .map_err(|e| DenError::System(format!("sqlite list proposals failed: {e}")))?;
     Ok(rows
         .into_iter()
-        .map(|(proposal_id, sequence_no, status, payload_json, created_at)| {
-            SqliteMemoryProposal {
+        .map(
+            |(proposal_id, sequence_no, status, payload_json, created_at)| SqliteMemoryProposal {
                 proposal_id,
                 sequence_no,
                 status,
                 payload_json: serde_json::from_str(&payload_json)
                     .unwrap_or_else(|_| json!({ "raw": payload_json })),
                 created_at,
-            }
-        })
+            },
+        )
         .collect())
 }
 

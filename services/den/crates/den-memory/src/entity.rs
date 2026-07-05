@@ -245,14 +245,12 @@ pub async fn attach_handle(
 }
 
 pub async fn detach_handle(store: &BearMemoryStore, handle_id: &str) -> Result<(), DenError> {
-    sqlx::query(
-        "UPDATE entity_handles SET state = 'detached' WHERE bear_id = ? AND handle_id = ?",
-    )
-    .bind(store.bear_id().to_string())
-    .bind(handle_id)
-    .execute(store.pool())
-    .await
-    .map_err(|e| DenError::System(format!("detach handle failed: {e}")))?;
+    sqlx::query("UPDATE entity_handles SET state = 'detached' WHERE bear_id = ? AND handle_id = ?")
+        .bind(store.bear_id().to_string())
+        .bind(handle_id)
+        .execute(store.pool())
+        .await
+        .map_err(|e| DenError::System(format!("detach handle failed: {e}")))?;
     Ok(())
 }
 
@@ -322,15 +320,13 @@ pub async fn set_resolution(
         .await
         .map_err(|e| DenError::System(format!("set resolution failed: {e}")))?;
     } else {
-        sqlx::query(
-            "UPDATE entities SET resolution = ? WHERE bear_id = ? AND entity_id = ?",
-        )
-        .bind(resolution.as_str())
-        .bind(store.bear_id().to_string())
-        .bind(entity_id)
-        .execute(store.pool())
-        .await
-        .map_err(|e| DenError::System(format!("set resolution failed: {e}")))?;
+        sqlx::query("UPDATE entities SET resolution = ? WHERE bear_id = ? AND entity_id = ?")
+            .bind(resolution.as_str())
+            .bind(store.bear_id().to_string())
+            .bind(entity_id)
+            .execute(store.pool())
+            .await
+            .map_err(|e| DenError::System(format!("set resolution failed: {e}")))?;
     }
     Ok(())
 }
@@ -367,7 +363,9 @@ pub async fn merge_entities(
         .await?
         .ok_or_else(|| DenError::NotFound(format!("survivor entity {survivor_entity_id}")))?;
     if get_entity(store, loser_entity_id).await?.is_none() {
-        return Err(DenError::NotFound(format!("loser entity {loser_entity_id}")));
+        return Err(DenError::NotFound(format!(
+            "loser entity {loser_entity_id}"
+        )));
     }
 
     sqlx::query(
@@ -423,15 +421,13 @@ pub async fn split_entity(
     )
     .await?;
     for handle_id in handle_ids_to_move {
-        sqlx::query(
-            "UPDATE entity_handles SET entity_id = ? WHERE bear_id = ? AND handle_id = ?",
-        )
-        .bind(&new_entity.entity_id)
-        .bind(store.bear_id().to_string())
-        .bind(handle_id)
-        .execute(store.pool())
-        .await
-        .map_err(|e| DenError::System(format!("split handle re-home failed: {e}")))?;
+        sqlx::query("UPDATE entity_handles SET entity_id = ? WHERE bear_id = ? AND handle_id = ?")
+            .bind(&new_entity.entity_id)
+            .bind(store.bear_id().to_string())
+            .bind(handle_id)
+            .execute(store.pool())
+            .await
+            .map_err(|e| DenError::System(format!("split handle re-home failed: {e}")))?;
     }
     Ok(new_entity)
 }
@@ -519,9 +515,16 @@ mod tests {
     async fn create_get_and_handle_lookup_round_trip() {
         let store = new_test_store().await;
         let ryan = new_person(&store, "Ryan").await;
-        attach_handle(&store, &ryan.entity_id, "email", "ryan@acme.com", None, EntityTrust::Asserted)
-            .await
-            .unwrap();
+        attach_handle(
+            &store,
+            &ryan.entity_id,
+            "email",
+            "ryan@acme.com",
+            None,
+            EntityTrust::Asserted,
+        )
+        .await
+        .unwrap();
 
         let fetched = get_entity(&store, &ryan.entity_id).await.unwrap().unwrap();
         assert_eq!(fetched.display_name.as_deref(), Some("Ryan"));
@@ -558,9 +561,16 @@ mod tests {
         let store = new_test_store().await;
         let survivor = new_person(&store, "Ryan").await;
         let loser = new_person(&store, "Ryan (dup)").await;
-        attach_handle(&store, &loser.entity_id, "slack_user", "T01:U07", None, EntityTrust::Asserted)
-            .await
-            .unwrap();
+        attach_handle(
+            &store,
+            &loser.entity_id,
+            "slack_user",
+            "T01:U07",
+            None,
+            EntityTrust::Asserted,
+        )
+        .await
+        .unwrap();
 
         let returned = merge_entities(&store, &survivor.entity_id, &loser.entity_id)
             .await
@@ -570,8 +580,14 @@ mod tests {
         // Loser is dead with a forward pointer; reads resolve to the survivor — no history loss.
         let dead = get_entity(&store, &loser.entity_id).await.unwrap().unwrap();
         assert_eq!(dead.resolution, ResolutionState::Merged);
-        assert_eq!(dead.superseded_by_entity_id.as_deref(), Some(survivor.entity_id.as_str()));
-        let live = resolve_live_entity(&store, &loser.entity_id).await.unwrap().unwrap();
+        assert_eq!(
+            dead.superseded_by_entity_id.as_deref(),
+            Some(survivor.entity_id.as_str())
+        );
+        let live = resolve_live_entity(&store, &loser.entity_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(live.entity_id, survivor.entity_id);
 
         // The loser's handle now resolves to the survivor.

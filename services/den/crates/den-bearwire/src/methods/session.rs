@@ -12,8 +12,8 @@ use den_service::{bears::BearProfile, client_sessions, DenState};
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
 use crate::methods::{
-    deserialize_optional_i64_from_value, deserialize_optional_string,
-    deserialize_required_string, parse_params,
+    deserialize_optional_i64_from_value, deserialize_optional_string, deserialize_required_string,
+    parse_params,
 };
 
 #[derive(Debug, Deserialize)]
@@ -28,7 +28,11 @@ struct SessionOpenRequest {
     runtime_session_id: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     cwd: Option<String>,
-    #[serde(default, alias = "requested_mode", deserialize_with = "deserialize_optional_string")]
+    #[serde(
+        default,
+        alias = "requested_mode",
+        deserialize_with = "deserialize_optional_string"
+    )]
     mode: Option<String>,
     /// Intentionally raw: adapter session snapshots are open-ended capability/context envelopes.
     #[serde(default)]
@@ -60,7 +64,11 @@ struct SessionModelSetRequest {
     session_id: String,
     #[serde(default, deserialize_with = "deserialize_optional_string")]
     selection_mode: Option<String>,
-    #[serde(default, alias = "requested_model", deserialize_with = "deserialize_optional_string")]
+    #[serde(
+        default,
+        alias = "requested_model",
+        deserialize_with = "deserialize_optional_string"
+    )]
     model: Option<String>,
 }
 
@@ -79,13 +87,14 @@ async fn session_state_payload(
         .as_deref()
         .filter(|id| !id.trim().is_empty())
         .unwrap_or(session.conversation_id.as_str());
-    let latest_context_budget = den_service::conversation::persistence::get_conversation_for_external_id(
-        &state.sqlx_pool,
-        session.bear_id,
-        conversation_external_id,
-    )
-    .await?
-    .and_then(|conversation| conversation.latest_context_budget);
+    let latest_context_budget =
+        den_service::conversation::persistence::get_conversation_for_external_id(
+            &state.sqlx_pool,
+            session.bear_id,
+            conversation_external_id,
+        )
+        .await?
+        .and_then(|conversation| conversation.latest_context_budget);
     let trusted_workspace = session.trusted_workspace_context();
     let runtime_session_live = den_runtime::native_runtime::native_client_session_exists(
         &conversation_runtime_id,
@@ -137,7 +146,8 @@ pub(crate) async fn session_open_result(
     )
     .await?;
     let client = request.client.unwrap_or_else(|| "bearwire".to_string());
-    let conversation_id = request.conversation_id
+    let conversation_id = request
+        .conversation_id
         .or_else(|| {
             existing
                 .as_ref()
@@ -147,7 +157,8 @@ pub(crate) async fn session_open_result(
     let resolved_conversation_id = existing
         .as_ref()
         .and_then(|session| session.resolved_conversation_id.clone());
-    let runtime_session_id = request.runtime_session_id
+    let runtime_session_id = request
+        .runtime_session_id
         .or_else(|| {
             existing
                 .as_ref()

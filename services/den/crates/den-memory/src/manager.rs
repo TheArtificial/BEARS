@@ -35,9 +35,8 @@ impl MemoryStoreManager {
         if let Some(pool) = guard.get(&bear_id) {
             return Ok(pool.clone());
         }
-        std::fs::create_dir_all(&self.data_dir).map_err(|e| {
-            DenError::System(format!("failed to create bear sqlite data dir: {e}"))
-        })?;
+        std::fs::create_dir_all(&self.data_dir)
+            .map_err(|e| DenError::System(format!("failed to create bear sqlite data dir: {e}")))?;
         let db_path = self.data_dir.join(format!("{bear_id}.sqlite"));
         let options = SqliteConnectOptions::new()
             .filename(&db_path)
@@ -50,7 +49,11 @@ impl MemoryStoreManager {
             .connect_with(options)
             .await
             .map_err(|e| DenError::System(format!("bear sqlite connect failed: {e}")))?;
-        for statement in SCHEMA_SQL.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        for statement in SCHEMA_SQL
+            .split(';')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             sqlx::query(statement)
                 .execute(&pool)
                 .await

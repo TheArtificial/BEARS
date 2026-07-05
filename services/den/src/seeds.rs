@@ -24,7 +24,8 @@ use den_service::bears::{
 pub const SMOKE_USERNAME: &str = "alice";
 pub const SMOKE_PASSWORD: &str = "Never deploy seed passwords.";
 pub const SMOKE_BEAR_SLUG: &str = "test-bear";
-pub const SMOKE_ARMATURE_TOKEN: &str = "bear_arm_smoke_known_token_for_dev_and_ci_only_000000000000";
+pub const SMOKE_ARMATURE_TOKEN: &str =
+    "bear_arm_smoke_known_token_for_dev_and_ci_only_000000000000";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeedProfile {
@@ -199,7 +200,11 @@ async fn ensure_smoke_role_runtimes(
         .context("provision smoke bear native runtimes")
 }
 
-async fn ensure_smoke_armature_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid) -> Result<()> {
+async fn ensure_smoke_armature_token(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: uuid::Uuid,
+) -> Result<()> {
     let token_hash = armature_tokens::hash_raw_token_for_seed(SMOKE_ARMATURE_TOKEN);
     let mut tx = pool.begin().await?;
     let row: (uuid::Uuid,) = sqlx::query_as(

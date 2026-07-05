@@ -125,7 +125,6 @@ impl<'a> DenToolContext<'a> {
     fn conversation(&self) -> DenConversationTitleOps<'a> {
         DenConversationTitleOps { pool: self.pool }
     }
-
 }
 
 impl WebFetcher for DenToolContext<'_> {
@@ -484,9 +483,7 @@ impl EnvironmentOps for DenToolContext<'_> {
         &self,
         context: &DenToolInvocationContext,
     ) -> Result<Option<Value>, DenError> {
-        self.environment()
-            .fetch_adapter_environment(context)
-            .await
+        self.environment().fetch_adapter_environment(context).await
     }
 }
 

@@ -49,10 +49,7 @@ impl From<UserEmailSettings> for VerifyEmailParams {
  the sending service.
 */
 
-pub async fn settings_by_id(
-    db_pool: &PgPool,
-    user_id: i32,
-) -> Result<UserEmailSettings, DenError> {
+pub async fn settings_by_id(db_pool: &PgPool, user_id: i32) -> Result<UserEmailSettings, DenError> {
     if let Some(email_settings) = query_as!(
         UserEmailSettings,
         "

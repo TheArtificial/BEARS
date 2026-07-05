@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::bears::managed_blocks::{
     content_hash, managed_space_block_key, ResolvedManagedBlock, ResolvedManagedBlockSet,

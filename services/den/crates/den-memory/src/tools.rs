@@ -70,16 +70,8 @@ pub async fn sqlite_write_profile_entry(
         "storage": "sqlite",
         "runtime": "native",
     });
-    let row = append_memory_record(
-        &store,
-        &logical,
-        kind,
-        profile,
-        None,
-        &content,
-        &metadata,
-    )
-    .await?;
+    let row =
+        append_memory_record(&store, &logical, kind, profile, None, &content, &metadata).await?;
     Ok(json!({
         "bear_id": bear_id,
         "profile": profile,
@@ -91,10 +83,7 @@ pub async fn sqlite_write_profile_entry(
     }))
 }
 
-pub async fn sqlite_memory_browse(
-    store: &BearMemoryStore,
-    role: &str,
-) -> Result<Value, DenError> {
+pub async fn sqlite_memory_browse(store: &BearMemoryStore, role: &str) -> Result<Value, DenError> {
     let rows = sqlx::query_scalar::<_, String>(
         r"
         SELECT DISTINCT logical_path
@@ -268,10 +257,7 @@ pub async fn sqlite_list_plan_artifacts(
     Ok(json!(results))
 }
 
-pub async fn sqlite_memory_status(
-    store: &BearMemoryStore,
-    role: &str,
-) -> Result<Value, DenError> {
+pub async fn sqlite_memory_status(store: &BearMemoryStore, role: &str) -> Result<Value, DenError> {
     let file_count: i64 = sqlx::query_scalar(
         r"
         SELECT COUNT(DISTINCT logical_path)

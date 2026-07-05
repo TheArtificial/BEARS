@@ -1797,7 +1797,8 @@ async fn models_post(
             )
             .await?;
         } else {
-            let client = den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
+            let client =
+                den_service::bifrost_governance::BifrostGovernanceClient::new(&state.config);
             let validation = client.validate_virtual_key_value(new_value).await?;
             tracing::info!(
                 bear_id = %bear.id,

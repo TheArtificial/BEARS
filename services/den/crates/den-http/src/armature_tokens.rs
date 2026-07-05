@@ -128,7 +128,10 @@ pub async fn create_for_bear(
     .bind(user_id)
     .bind(name)
     .bind(hash)
-    .bind(serde_json::json!([ARMATURE_CHAT_SCOPE, ARMATURE_TOOLS_SCOPE]))
+    .bind(serde_json::json!([
+        ARMATURE_CHAT_SCOPE,
+        ARMATURE_TOOLS_SCOPE
+    ]))
     .fetch_one(&mut *tx)
     .await?;
 
@@ -220,7 +223,9 @@ pub async fn revoke_for_user(
     .execute(pool)
     .await?;
     if result.rows_affected() == 0 {
-        return Err(CustomError::NotFound("Armature token not found".to_string()));
+        return Err(CustomError::NotFound(
+            "Armature token not found".to_string(),
+        ));
     }
     Ok(())
 }

@@ -336,7 +336,10 @@ mod tests {
             Resolution::Resolved(e) => e.entity_id,
             other => panic!("expected Resolved, got {other:?}"),
         };
-        assert_ne!(slack_id, email_id, "different strong identities must stay separate");
+        assert_ne!(
+            slack_id, email_id,
+            "different strong identities must stay separate"
+        );
 
         // A signal claiming both are one ⇒ conflict for curate, never automatic.
         let conflict = resolve(

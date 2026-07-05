@@ -222,7 +222,13 @@ pub const ENTITY_TYPES: &[EntityTypeDescriptor] = &[
         owning_registry: OwningRegistry::Den,
         default_trust: EntityTrust::Asserted,
         anchor_eligible: true,
-        valid_handle_types: &["git_remote", "connection_ref", "checkout", "workspace_root", "url"],
+        valid_handle_types: &[
+            "git_remote",
+            "connection_ref",
+            "checkout",
+            "workspace_root",
+            "url",
+        ],
     },
     EntityTypeDescriptor {
         id: "connection",
@@ -308,20 +314,59 @@ pub const RELATIONS: &[RelationDescriptor] = &[
 
 /// v1 handle-type vocabulary + strength (ADR-0042 §11).
 pub const HANDLE_TYPES: &[HandleTypeDescriptor] = &[
-    HandleTypeDescriptor { id: "den_user", strength: HandleStrength::Strong },
-    HandleTypeDescriptor { id: "session_human", strength: HandleStrength::Strong },
-    HandleTypeDescriptor { id: "git_remote", strength: HandleStrength::Strong },
-    HandleTypeDescriptor { id: "cabinet_ref", strength: HandleStrength::Strong },
-    HandleTypeDescriptor { id: "connection_ref", strength: HandleStrength::Strong },
-    HandleTypeDescriptor { id: "calendar_event_id", strength: HandleStrength::Strong },
-    HandleTypeDescriptor { id: "slack_user", strength: HandleStrength::Strong },
-    HandleTypeDescriptor { id: "email", strength: HandleStrength::Strong },
-    HandleTypeDescriptor { id: "url", strength: HandleStrength::Strong },
+    HandleTypeDescriptor {
+        id: "den_user",
+        strength: HandleStrength::Strong,
+    },
+    HandleTypeDescriptor {
+        id: "session_human",
+        strength: HandleStrength::Strong,
+    },
+    HandleTypeDescriptor {
+        id: "git_remote",
+        strength: HandleStrength::Strong,
+    },
+    HandleTypeDescriptor {
+        id: "cabinet_ref",
+        strength: HandleStrength::Strong,
+    },
+    HandleTypeDescriptor {
+        id: "connection_ref",
+        strength: HandleStrength::Strong,
+    },
+    HandleTypeDescriptor {
+        id: "calendar_event_id",
+        strength: HandleStrength::Strong,
+    },
+    HandleTypeDescriptor {
+        id: "slack_user",
+        strength: HandleStrength::Strong,
+    },
+    HandleTypeDescriptor {
+        id: "email",
+        strength: HandleStrength::Strong,
+    },
+    HandleTypeDescriptor {
+        id: "url",
+        strength: HandleStrength::Strong,
+    },
     // Path-unique but machine-local ⇒ weak.
-    HandleTypeDescriptor { id: "checkout", strength: HandleStrength::Weak },
-    HandleTypeDescriptor { id: "workspace_root", strength: HandleStrength::Weak },
-    HandleTypeDescriptor { id: "mention", strength: HandleStrength::Weak },
-    HandleTypeDescriptor { id: "alias", strength: HandleStrength::Weak },
+    HandleTypeDescriptor {
+        id: "checkout",
+        strength: HandleStrength::Weak,
+    },
+    HandleTypeDescriptor {
+        id: "workspace_root",
+        strength: HandleStrength::Weak,
+    },
+    HandleTypeDescriptor {
+        id: "mention",
+        strength: HandleStrength::Weak,
+    },
+    HandleTypeDescriptor {
+        id: "alias",
+        strength: HandleStrength::Weak,
+    },
 ];
 
 /// Descriptor registry resolver. All lookups go through here; no scattered match arms.
@@ -365,8 +410,14 @@ mod tests {
             relation_class("den.memory.relation.subject"),
             Some(RelationClass::Descriptive)
         );
-        assert_eq!(relation_class("audience"), Some(RelationClass::AccessBearing));
-        assert_eq!(relation_class("confined_to"), Some(RelationClass::AccessBearing));
+        assert_eq!(
+            relation_class("audience"),
+            Some(RelationClass::AccessBearing)
+        );
+        assert_eq!(
+            relation_class("confined_to"),
+            Some(RelationClass::AccessBearing)
+        );
         assert_eq!(relation_class("nope"), None);
     }
 
@@ -404,7 +455,10 @@ mod tests {
             assert_eq!(ResolutionState::parse(s.as_str()), Some(s));
         }
         // `superseded` is accepted as an alias for `merged`.
-        assert_eq!(ResolutionState::parse("superseded"), Some(ResolutionState::Merged));
+        assert_eq!(
+            ResolutionState::parse("superseded"),
+            Some(ResolutionState::Merged)
+        );
     }
 
     #[test]

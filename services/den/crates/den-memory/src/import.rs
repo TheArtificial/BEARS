@@ -104,7 +104,8 @@ async fn import_legacy_memory_source(
     source: &LegacyMemoryImportSource,
     options: &LegacyMemoryImportOptions,
 ) -> Result<LegacyMemoryImportReport, DenError> {
-    let temp_repo = std::env::temp_dir().join(format!("den-legacy-memory-import-{}", Uuid::new_v4()));
+    let temp_repo =
+        std::env::temp_dir().join(format!("den-legacy-memory-import-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&temp_repo)
         .map_err(|err| DenError::System(format!("create temp import dir failed: {err}")))?;
 
@@ -642,13 +643,19 @@ mod tests {
         let store = new_test_store().await;
         let fixture = LegacyMemoryFixture::new();
 
-        let report =
-            import_legacy_memory_bundle(&store, &fixture.bundle_path, &LegacyMemoryImportOptions::default())
-                .await
-                .expect("import bundle");
+        let report = import_legacy_memory_bundle(
+            &store,
+            &fixture.bundle_path,
+            &LegacyMemoryImportOptions::default(),
+        )
+        .await
+        .expect("import bundle");
         assert_eq!(report.imported_count, 3);
         assert_eq!(report.quarantined_count, 2);
-        assert!(matches!(report.source, LegacyMemoryImportSource::Bundle { .. }));
+        assert!(matches!(
+            report.source,
+            LegacyMemoryImportSource::Bundle { .. }
+        ));
 
         let head = head_record_for_logical_path(&store, "core/bear-overview.md")
             .await
@@ -675,10 +682,13 @@ mod tests {
         assert_eq!(chat.kind, "log");
         assert_eq!(chat.scope_type, MemoryScopeType::ProfileLocal);
 
-        let rerun =
-            import_legacy_memory_bundle(&store, &fixture.bundle_path, &LegacyMemoryImportOptions::default())
-                .await
-                .expect("reimport bundle");
+        let rerun = import_legacy_memory_bundle(
+            &store,
+            &fixture.bundle_path,
+            &LegacyMemoryImportOptions::default(),
+        )
+        .await
+        .expect("reimport bundle");
         assert_eq!(rerun.imported_count, 0);
         assert_eq!(rerun.skipped_count, 3);
     }
@@ -701,7 +711,10 @@ mod tests {
 
         assert_eq!(report.imported_count, 4);
         assert!(report.import_history);
-        assert!(matches!(report.source, LegacyMemoryImportSource::GitDir { .. }));
+        assert!(matches!(
+            report.source,
+            LegacyMemoryImportSource::GitDir { .. }
+        ));
 
         let history = list_records_for_logical_path(&store, "core/bear-overview.md", 10)
             .await
@@ -735,8 +748,8 @@ mod tests {
 
     impl LegacyMemoryFixture {
         fn new() -> Self {
-            let temp_root =
-                std::env::temp_dir().join(format!("den-legacy-memory-import-test-{}", Uuid::new_v4()));
+            let temp_root = std::env::temp_dir()
+                .join(format!("den-legacy-memory-import-test-{}", Uuid::new_v4()));
             let repo_dir = temp_root.join("repo");
             let bundle_path = temp_root.join("fixture.bundle");
             std::fs::create_dir_all(&repo_dir).expect("create repo dir");

@@ -2,8 +2,8 @@
 mod tests {
     use den_runtime::{
         role_runtime::{
-            ClientTurnLifecycleContext, ClientTurnLifecycleRuntime, RoleRuntimeRole, TurnResultReason,
-            TurnResultStatus,
+            ClientTurnLifecycleContext, ClientTurnLifecycleRuntime, RoleRuntimeRole,
+            TurnResultReason, TurnResultStatus,
         },
         tool_turns::ToolTurnCoordinator,
         turn_controller::ActiveTurnCancelRegistry,

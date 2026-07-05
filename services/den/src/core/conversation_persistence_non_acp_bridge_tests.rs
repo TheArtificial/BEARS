@@ -1,4 +1,3 @@
-
 use den_runtime::{
     bears::{db::create_bear, db::BearParams, BearProfile},
     conversation_persistence::{ensure_conversation_for_external_id, list_messages_page},

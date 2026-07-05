@@ -270,7 +270,9 @@ async fn chat_conversations(
                     latest_context_budget_updated_at: row
                         .latest_context_budget_updated_at
                         .and_then(|value| {
-                            value.format(&time::format_description::well_known::Rfc3339).ok()
+                            value
+                                .format(&time::format_description::well_known::Rfc3339)
+                                .ok()
                         }),
                 })
             })
@@ -444,9 +446,13 @@ async fn chat_history(
         has_more,
         next_before,
         latest_context_budget: conversation.latest_context_budget,
-        latest_context_budget_updated_at: conversation
-            .latest_context_budget_updated_at
-            .and_then(|value| value.format(&time::format_description::well_known::Rfc3339).ok()),
+        latest_context_budget_updated_at: conversation.latest_context_budget_updated_at.and_then(
+            |value| {
+                value
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .ok()
+            },
+        ),
     }))
 }
 

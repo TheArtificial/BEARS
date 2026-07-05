@@ -58,9 +58,9 @@ impl EmbeddingClient {
     /// Embed a single string, returning its vector.
     pub async fn embed_one(&self, input: &str) -> Result<Vec<f32>, DenError> {
         let mut vectors = self.embed(std::slice::from_ref(&input.to_string())).await?;
-        vectors.pop().ok_or_else(|| {
-            DenError::System("embeddings response contained no vectors".to_string())
-        })
+        vectors
+            .pop()
+            .ok_or_else(|| DenError::System("embeddings response contained no vectors".to_string()))
     }
 
     /// Embed a batch of strings, returning vectors in input order.
@@ -212,7 +212,9 @@ mod tests {
     fn rejects_dimension_mismatch() {
         let value = json!({ "data": [ { "index": 0, "embedding": [0.1, 0.2, 0.3] } ] });
         let err = parse_embedding_response(&value, 1, 2).unwrap_err();
-        assert!(err.to_string().contains("does not match configured dimensions"));
+        assert!(err
+            .to_string()
+            .contains("does not match configured dimensions"));
     }
 
     #[test]

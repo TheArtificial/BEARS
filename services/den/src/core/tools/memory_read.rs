@@ -16,8 +16,8 @@ use crate::{
     core::tools::{prompt_memory::DenPromptMemoryStore, session::DenToolInvocationContext},
     errors::{CustomError, DenError},
 };
-use den_service::bears::BearProfile;
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
+use den_service::bears::BearProfile;
 
 /// Concrete [`RoleMemoryStore`] over the native SQLite memory runtime.
 pub(crate) struct DenRoleMemoryStore<'a> {

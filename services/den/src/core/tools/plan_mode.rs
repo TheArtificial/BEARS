@@ -16,15 +16,15 @@ use crate::{
     core::tools::{session::DenToolInvocationContext, support::clean_optional},
     errors::DenError,
 };
-use den_memory::{tools as sqlite_memory, MemoryStoreManager};
 use den_core::client_tools::{ResolvedSessionPolicy, ToolEnablementState};
-use den_service::{client_sessions, bears::BearProfile};
+use den_memory::{tools as sqlite_memory, MemoryStoreManager};
 use den_runtime::{
     plan_mode::{
         self, EnterPlanModeParams, PlanModeRequestedBy, PlanModeSessionRow, SubmitPlanModeParams,
     },
     turn_state,
 };
+use den_service::{bears::BearProfile, client_sessions};
 
 type WorkplanPayloadFn = fn(&PlanModeSessionRow) -> Value;
 type NoActiveWorkplanFn = fn() -> Value;
@@ -188,7 +188,9 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             plan_mode_id,
         )
         .await?
-        .ok_or_else(|| DenError::NotFound("active client plan mode session not found".to_string()))?;
+        .ok_or_else(|| {
+            DenError::NotFound("active client plan mode session not found".to_string())
+        })?;
         let artifact_path = {
             let artifact_id = format!("plan-mode-{}", current_plan.id);
             let logical_path = format!("pair/plans/{artifact_id}.md");

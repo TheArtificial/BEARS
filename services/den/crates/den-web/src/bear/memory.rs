@@ -30,7 +30,8 @@ use den_memory::{
     self as store, bear_memory_admin_stats, count_records_by_kind, count_records_by_profile,
     get_memory_record_detail, head_entry_count, import_legacy_memory_bundle, list_path_summaries,
     list_recent_memory_records, list_relations_for_entity, list_relations_for_source,
-    search_memory_records, LegacyMemoryImportOptions, MemoryRecordRow, MemoryStoreManager, PathSummary,
+    search_memory_records, LegacyMemoryImportOptions, MemoryRecordRow, MemoryStoreManager,
+    PathSummary,
 };
 use den_service::bears::{db as bears_db, BearProfile};
 use den_service::recall::{registry as recall_registry, semantic_search_for_bear};

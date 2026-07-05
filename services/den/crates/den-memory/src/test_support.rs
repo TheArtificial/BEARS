@@ -21,7 +21,11 @@ pub async fn new_test_store() -> BearMemoryStore {
         .connect_with(options)
         .await
         .expect("connect test sqlite");
-    for statement in SCHEMA_SQL.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+    for statement in SCHEMA_SQL
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         sqlx::query(statement)
             .execute(&pool)
             .await

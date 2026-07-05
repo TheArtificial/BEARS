@@ -434,13 +434,15 @@ pub async fn fetch_records_min(
         .map_err(|e| DenError::System(format!("fetch records min failed: {e}")))?;
     Ok(rows
         .into_iter()
-        .map(|(memory_id, logical_path, kind, content_text, salience)| RecallRecordMin {
-            memory_id,
-            logical_path,
-            kind,
-            content_text,
-            salience,
-        })
+        .map(
+            |(memory_id, logical_path, kind, content_text, salience)| RecallRecordMin {
+                memory_id,
+                logical_path,
+                kind,
+                content_text,
+                salience,
+            },
+        )
         .collect())
 }
 
@@ -551,9 +553,7 @@ pub async fn head_record_as_of(
 
     let best = parsed
         .into_iter()
-        .filter(|(row, effective)| {
-            *effective <= at && !superseded_as_of.contains(&row.memory_id)
-        })
+        .filter(|(row, effective)| *effective <= at && !superseded_as_of.contains(&row.memory_id))
         .max_by(|(a, ta), (b, tb)| ta.cmp(tb).then(a.sequence_no.cmp(&b.sequence_no)));
     Ok(best.map(|(row, _)| row.into_row()))
 }
@@ -623,10 +623,12 @@ mod as_of_tests {
         insert_version(&store, "v2", 2, "2026-03-01T00:00:00Z", Some("v1")).await;
 
         // Before anything existed.
-        assert!(head_record_as_of(&store, "core/policy.md", at("2025-12-01T00:00:00Z"))
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            head_record_as_of(&store, "core/policy.md", at("2025-12-01T00:00:00Z"))
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         // v1 is current until v2 becomes effective.
         let feb = head_record_as_of(&store, "core/policy.md", at("2026-02-01T00:00:00Z"))
@@ -739,7 +741,10 @@ mod as_of_tests {
         .await
         .unwrap();
 
-        assert!(list_entity_anchor_head_records(&store, 10).await.unwrap().is_empty());
+        assert!(list_entity_anchor_head_records(&store, 10)
+            .await
+            .unwrap()
+            .is_empty());
 
         let anchor_path = LogicalMemoryPath::from_logical_path("core/people/ryan-dahl/profile.md");
         let anchor = append_memory_record(

@@ -7,8 +7,8 @@
 //! - [`user`] / [`email`] — the identity layer the auth backend depends on.
 //! - [`web_policy`] — bear web-fetch approval/source policy (shared by the api edge
 //!   and the web admin/settings handlers); kept here because it returns `CustomError`.
-pub mod armature_tokens;
 pub mod api_utils;
+pub mod armature_tokens;
 pub mod auth_backend;
 pub mod build_info;
 pub mod email;
