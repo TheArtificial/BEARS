@@ -355,8 +355,6 @@ impl TaskListSyncState {
 pub struct TaskListSourceRef {
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub work_plan_id: Option<Uuid>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub docket_job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docket_task_id: Option<String>,
@@ -365,20 +363,9 @@ pub struct TaskListSourceRef {
 }
 
 impl TaskListSourceRef {
-    pub fn legacy_work_plan(work_plan_id: Uuid) -> Self {
-        Self {
-            kind: "legacy_work_plan".to_string(),
-            work_plan_id: Some(work_plan_id),
-            docket_job_id: None,
-            docket_task_id: None,
-            refs: Vec::new(),
-        }
-    }
-
     pub fn local(refs: Vec<String>) -> Self {
         Self {
             kind: "local".to_string(),
-            work_plan_id: None,
             docket_job_id: None,
             docket_task_id: None,
             refs,
@@ -388,7 +375,6 @@ impl TaskListSourceRef {
     pub fn docket_job(job_id: String, refs: Vec<String>) -> Self {
         Self {
             kind: "docket_job".to_string(),
-            work_plan_id: None,
             docket_job_id: Some(job_id),
             docket_task_id: None,
             refs,
@@ -398,7 +384,6 @@ impl TaskListSourceRef {
     pub fn docket_task(job_id: Option<String>, task_id: String, refs: Vec<String>) -> Self {
         Self {
             kind: "docket_task".to_string(),
-            work_plan_id: None,
             docket_job_id: job_id,
             docket_task_id: Some(task_id),
             refs,
@@ -534,7 +519,7 @@ pub fn task_list_projection_from_work_plan(plan: &WorkPlanProjection) -> TaskLis
         visibility: plan.visibility.clone(),
         status: plan.status.clone(),
         version: plan.version,
-        source_ref: TaskListSourceRef::legacy_work_plan(plan.id),
+        source_ref: TaskListSourceRef::local(vec![format!("work_plan:{}", plan.id)]),
         items,
         current_item,
         source_conversation_id: plan.source_conversation_id.clone(),
@@ -554,7 +539,6 @@ impl WorkPlanProjection {
 
 #[derive(Debug, Clone)]
 pub enum TaskListCheckoutSource {
-    LegacyWorkPlan(WorkPlanLookup),
     DocketJob {
         job_id: Uuid,
         parent_task_id: Option<Uuid>,
@@ -1917,13 +1901,13 @@ mod tests {
     }
 
     #[test]
-    fn task_list_projection_wraps_legacy_work_plan_without_relabeling_as_docket() {
+    fn task_list_projection_wraps_work_plan_as_local_projection() {
         let plan = projection_fixture(vec![item("one", WorkPlanItemStatus::InProgress)]);
 
         let task_list = plan.to_task_list_projection();
 
-        assert_eq!(task_list.source_ref.kind, "legacy_work_plan");
-        assert_eq!(task_list.source_ref.work_plan_id, Some(plan.id));
+        assert_eq!(task_list.source_ref.kind, "local");
+        assert_eq!(task_list.source_ref.refs, vec![format!("work_plan:{}", plan.id)]);
         assert_eq!(task_list.items.len(), 1);
         assert_eq!(task_list.items[0].source_ref.kind, "local");
         assert_eq!(task_list.items[0].sync_state, TaskListSyncState::LocalOnly);
