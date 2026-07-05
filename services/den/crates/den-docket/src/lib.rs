@@ -34,9 +34,13 @@ pub use model::{
     DocketTaskRunStateRow, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
     DocketTaskUpdate, DocketValidationError, TaskListCheckoutRequest, TaskListCheckoutSource,
     TaskListHandoffOutcome, TaskListHandoffRequest, TaskListItem, TaskListProjection,
-    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState, TaskListUpdateItem,
-    TaskListItemStatus, TaskListListFilter, TaskListLookup, TaskListLocalProjection, TaskListStatus,
-    TaskListUpdate, TaskListUpsert, TaskListValidationError, TaskListVisibility,
+    TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    TaskListUpdateItem, TaskListItemStatus, TaskListListFilter, TaskListLookup,
+    TaskListLocalProjection, TaskListStatus, TaskListUpdate, TaskListUpsert,
+    TaskListValidationError, TaskListVisibility, WorkPlanItem, WorkPlanItemStatus,
+    WorkPlanListFilter, WorkPlanLookup, WorkPlanProjection, WorkPlanStatus, WorkPlanUpdate,
+    WorkPlanUpsert, WorkPlanValidationError, WorkPlanVisibility, normalize_work_plan_item_ids,
+    task_list_projection_from_work_plan,
 };
 pub use dispatcher::TaskDispatcher;
 pub use service::{DocketService, PgDocketService};

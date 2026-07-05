@@ -16,9 +16,44 @@ use super::model::{
     DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest,
     DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate,
     DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
-    TaskListHandoffRequest, TaskListProjection, TaskListSyncOutcome, TaskListSyncRequest,
+    HistoricalTaskListRow, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
+    TaskListHandoffRequest, TaskListListFilter, TaskListLookup, TaskListProjection,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListUpsert,
 };
+
+impl PgDocketService {
+    // ponytail: compatibility-only methods keep den.work_plan.* callers compiling
+    // after bear_work_plans storage retirement; remove with the public tool API
+    // migration to den.task_list.* / Docket-backed operations.
+    pub async fn list_visible_work_plans(
+        &self,
+        _bear_id: Uuid,
+        _viewer_role: BearProfile,
+        _user_id: i32,
+        _filter: TaskListListFilter,
+    ) -> Result<Vec<HistoricalTaskListRow>, DenError> {
+        Ok(Vec::new())
+    }
+
+    pub async fn get_visible_work_plan(
+        &self,
+        _bear_id: Uuid,
+        _viewer_role: BearProfile,
+        _user_id: i32,
+        _lookup: TaskListLookup,
+    ) -> Result<Option<HistoricalTaskListRow>, DenError> {
+        Ok(None)
+    }
+
+    pub async fn upsert_work_plan(
+        &self,
+        _upsert: TaskListUpsert,
+    ) -> Result<HistoricalTaskListRow, DenError> {
+        Err(DenError::system(
+            "den.work_plan.update no longer writes retired bear_work_plans storage; use Docket task/job tools",
+        ))
+    }
+}
 
 /// Orchestration API for Docket work plans. The only public entry point to the
 /// subsystem's persistence; never execute task bodies here (ADR-0034 execution
@@ -191,6 +226,7 @@ impl DocketService for PgDocketService {
                 .get_job(bear_id, job_id)
                 .await?
                 .map(|job| task_list_projection_from_docket_job(&job, parent_task_id))),
+            TaskListCheckoutSource::LegacyWorkPlan(_) => Ok(None),
             TaskListCheckoutSource::LocalProjection(task_list) => Ok(Some(task_list)),
         }
     }
