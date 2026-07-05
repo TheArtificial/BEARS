@@ -30,6 +30,8 @@ A portable Bear is the cognition side of that line plus its configuration. Becau
 
 Keeping conversations and secrets out of the package is what makes packages shareable: moving a Bear's knowledge does not leak the source host's chat history or credentials.
 
+Because transcripts stay behind, continuity across a move rides on curated memory, not chat logs. Export first **flushes pending curation** — the async harvest lane ([ADR-0041](docs/decisions/adr-0041-archival-recall-and-async-curation.md)) drains so recent salient context is promoted into `memory.sqlite` before the snapshot — so an imported Bear still knows you because it remembers, not because its transcript traveled. See [pre-export curation flush](docs/guides/bear-package.md#continuity-across-a-move-pre-export-curation-flush).
+
 ## The package format
 
 ```text

@@ -118,8 +118,9 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 - Entity tables ship automatically in the **cognition export**; bump `memory_schema_version`.
 - Import: existing `bear_id` rewrite covers the new tables; `entity_id` stays stable; **re-link `canonical_ref`** against destination registries via strong handles; demote non-re-resolving entities to `provisional` (clear `canonical_ref`); access rules **inert until re-resolved** (fail-closed).
 - Optional manifest **entity summary** (counts by type, resolved vs provisional).
+- **Pre-export curation flush** (cross-cutting, not entity-specific — surfaced here because export/import lands in this phase): before an export snapshots `memory.sqlite`, drain the pending curation/harvest backlog so salient recent context is promoted into canonical memory instead of being stranded in the non-portable Den transcript (conversations stay Postgres-only per [bear package](../guides/bear-package.md)). Continuity after import rides on curated memory, never on shipping transcripts. Mechanism is the async curation / `archive_harvest` lane ([ADR-0041 — Archival recall and async curation](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_AUTOMATION_ROADMAP.md](MEMORY_AUTOMATION_ROADMAP.md)); export blocks on — or at minimum reports — a drained/bounded backlog.
 
-**Exit:** export/import round-trip tests — cross-host `canonical_ref` re-link + demotion; access rules fail-closed after import; entity counts reported.
+**Exit:** export/import round-trip tests — cross-host `canonical_ref` re-link + demotion; access rules fail-closed after import; entity counts reported; **pre-export flush** drains pending harvest/curation so a fresh import reflects the last session's salient context with no transcript carried.
 
 ## Likely files
 

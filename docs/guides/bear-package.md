@@ -24,6 +24,12 @@ How to **export**, **transport**, and **import** a Bear's **cognition and config
 
 The boundary matches [den-runtime storage](../architecture/den-runtime.md#storage-boundary-bear-cognition-vs-den-control-plane): **Bear cognition → per-Bear SQLite**; **control plane → Den Postgres**. A package is the portable half of that split plus human-authored artifacts.
 
+### Continuity across a move: pre-export curation flush
+
+Transcripts stay Postgres-only (table above), so a package carries what the Bear *remembers*, not the log of how a conversation went. That is the intended model — a Bear is its curated memory, not its transcript — but it creates one timing hazard: salient context from a recent session that the async curation/harvest lane ([ADR-0041 — Archival recall and async curation](../decisions/adr-0041-archival-recall-and-async-curation.md)) has not yet promoted into `memory.sqlite` would be stranded in the non-portable transcript, and a freshly imported Bear could feel amnesiac about the last hour.
+
+Export therefore **flushes pending curation first**: drain (or bound) the harvest/curation backlog so recent salient context is promoted into canonical memory before the SQLite snapshot is taken. After import the Bear still knows you because that knowledge is now memory — not because any transcript traveled. Never resolve this by adding transcripts to the package; the fix is always to curate before export, never to widen what the package carries.
+
 ## Package layout
 
 ```
