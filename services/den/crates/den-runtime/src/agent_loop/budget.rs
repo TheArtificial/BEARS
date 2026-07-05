@@ -128,6 +128,10 @@ pub struct TurnBudgetState {
     pub consecutive_tool_failures: u32,
     pub last_batch_signature: Option<String>,
     pub same_batch_signature_repeats: u32,
+    /// A one-shot escape hatch after a just-completed tool result pushes the turn over a
+    /// tool-count budget. The model gets one finalization continuation to consume the result and
+    /// answer without tools; another over-budget tool continuation hard-stops the turn.
+    pub budget_finalization_grace_used: bool,
 }
 
 impl Default for TurnBudgetState {
@@ -138,6 +142,7 @@ impl Default for TurnBudgetState {
             consecutive_tool_failures: 0,
             last_batch_signature: None,
             same_batch_signature_repeats: 0,
+            budget_finalization_grace_used: false,
         }
     }
 }
@@ -377,7 +382,7 @@ pub fn evaluate_turn_budget(
         next_state.consecutive_tool_failures = 0;
     }
 
-    let stop_reason = if elapsed_ms >= policy.max_wall_clock_ms {
+    let stop_candidate = if elapsed_ms >= policy.max_wall_clock_ms {
         Some(TurnBudgetStopReason::WallClockLimit {
             elapsed_ms,
             limit_ms: policy.max_wall_clock_ms,
@@ -416,8 +421,22 @@ pub fn evaluate_turn_budget(
         None
     };
 
+    let over_tool_budget = matches!(
+        stop_candidate,
+        Some(
+            TurnBudgetStopReason::TotalToolCallLimit { .. }
+                | TurnBudgetStopReason::ToolClassCallLimit { .. }
+        )
+    );
+    let stop_reason = if over_tool_budget && !prior_state.budget_finalization_grace_used {
+        next_state.budget_finalization_grace_used = true;
+        None
+    } else {
+        stop_candidate
+    };
+
     let warning = if stop_reason.is_none() {
-        budget_warning(policy, step, elapsed_ms, &next_state)
+        budget_warning(policy, step, elapsed_ms, &next_state, over_tool_budget)
     } else {
         None
     };
@@ -434,7 +453,15 @@ fn budget_warning(
     step: u32,
     elapsed_ms: u64,
     state: &TurnBudgetState,
+    over_tool_budget_finalization: bool,
 ) -> Option<TurnBudgetWarning> {
+    if over_tool_budget_finalization {
+        return Some(TurnBudgetWarning {
+            code: "tool_budget_finalization_warning",
+            message: "Budget advisory: this turn has exceeded a tool budget after recording the latest tool result. Do not call more tools in this turn; provide the best final answer now.".to_string(),
+        });
+    }
+
     if step + 1 >= policy.emergency_hard_steps {
         return Some(TurnBudgetWarning {
             code: "emergency_hard_step_warning",
@@ -721,7 +748,7 @@ mod tests {
     }
 
     #[test]
-    fn read_budget_exhaustion_stops_before_step_fuse() {
+    fn read_budget_exhaustion_gets_one_finalization_warning() {
         let mut prior = state();
         prior.tool_usage.read = 12;
         prior.tool_usage.total = 12;
@@ -734,20 +761,19 @@ mod tests {
             &[observation("memory_read", r#"{"path":"a"}"#, false)],
         );
 
-        assert!(matches!(
-            evaluation.stop_reason,
-            Some(TurnBudgetStopReason::ToolClassCallLimit {
-                class: ToolBudgetClass::Read,
-                count: 13,
-                limit: 12,
-            })
-        ));
+        assert!(evaluation.stop_reason.is_none());
+        assert!(evaluation.next_state.budget_finalization_grace_used);
+        assert_eq!(
+            evaluation.warning.as_ref().map(|warning| warning.code),
+            Some("tool_budget_finalization_warning")
+        );
     }
 
     #[test]
-    fn total_tool_budget_stops_after_limit() {
+    fn total_tool_budget_stops_after_finalization_grace_is_used() {
         let mut prior = state();
         prior.tool_usage.total = 20;
+        prior.budget_finalization_grace_used = true;
 
         let evaluation = evaluate_turn_budget(
             policy(),
@@ -903,6 +929,7 @@ mod tests {
         let mut prior = state();
         prior.tool_usage.read = 12;
         prior.tool_usage.total = 20;
+        prior.budget_finalization_grace_used = true;
 
         let evaluation = evaluate_turn_budget(
             policy(),

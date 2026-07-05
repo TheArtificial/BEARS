@@ -2931,11 +2931,8 @@ async fn handle_request(
                                 id,
                                 Err(json_rpc_error(
                                     -32003,
-                                    "BEARS prompt failed",
-                                    Some(json!({
-                                        "message": message,
-                                        "server_version": server_version.map(server_version_json),
-                                    })),
+                                    &format!("BEARS prompt failed: {message}"),
+                                    None,
                                 )),
                             )
                             .await;
@@ -5802,15 +5799,6 @@ fn server_version_from_json(value: &Value) -> ServerVersion {
             .unwrap_or("unknown")
             .to_string(),
     }
-}
-
-fn server_version_json(server_version: ServerVersion) -> Value {
-    json!({
-        "service": server_version.service,
-        "version": server_version.version,
-        "git_sha": server_version.git_sha,
-        "built_at_utc": server_version.built_at_utc,
-    })
 }
 
 fn den_request_context(url: &str) -> String {
