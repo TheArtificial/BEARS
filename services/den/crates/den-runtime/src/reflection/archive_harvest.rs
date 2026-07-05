@@ -50,9 +50,8 @@ pub async fn harvest_compaction_artifacts_once(
         let summary = decode_summary(&artifact.artifact_json)?;
         let proposed_content = proposal_content_from_summary(&summary);
         if proposed_content.trim().is_empty() {
-            let _ =
-                record_harvest_mark(&store, "compaction_artifact", &source_ref, None, None, &[])
-                    .await?;
+            record_harvest_mark(&store, "compaction_artifact", &source_ref, None, None, &[])
+                .await?;
             continue;
         }
 
@@ -105,7 +104,7 @@ pub async fn harvest_compaction_artifacts_once(
         )
         .await?;
         output.created_proposal_ids.push(proposal.id);
-        let _ = record_harvest_mark(
+        record_harvest_mark(
             &store,
             "compaction_artifact",
             &source_ref,

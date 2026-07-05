@@ -540,7 +540,7 @@ pub enum TaskListCheckoutSource {
         job_id: Uuid,
         parent_task_id: Option<Uuid>,
     },
-    LocalProjection(TaskListProjection),
+    LocalProjection(Box<TaskListProjection>),
 }
 
 #[derive(Debug, Clone)]

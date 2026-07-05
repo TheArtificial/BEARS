@@ -14,7 +14,7 @@ pub struct ToolCallBudgetLimits {
     pub other: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ToolCallBudgetUsage {
     pub total: u32,
     pub read: u32,
@@ -61,21 +61,6 @@ impl ToolCallBudgetUsage {
             ToolBudgetClass::Write => limits.write,
             ToolBudgetClass::Destructive => limits.destructive,
             ToolBudgetClass::Other => limits.other,
-        }
-    }
-}
-
-impl Default for ToolCallBudgetUsage {
-    fn default() -> Self {
-        Self {
-            total: 0,
-            read: 0,
-            search: 0,
-            fetch: 0,
-            execute: 0,
-            write: 0,
-            destructive: 0,
-            other: 0,
         }
     }
 }

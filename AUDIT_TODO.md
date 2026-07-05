@@ -5,6 +5,45 @@ Scope: `services/den/crates/*`, `services/den/src`, `tools/bear-armature`.
 
 Legend: [ ] not fixed, [x] fixed, (file:line) pointer.
 
+---
+
+## Remediation progress (in-flight)
+
+Working through fixes in batches, running `cargo check`/`clippy` and committing at
+intervals. This section is the recoverable log of what has been changed.
+
+### Batch 1 — panic-safety + clippy-gate green (upstream crates) — DONE
+Key discovery: the repo clippy gate (`cargo clippy --workspace --all-targets -- -D
+warnings`, see `scripts/lint.sh`) was **red** under clippy 1.96.1. Fixing it is
+high-value and unblocks CI. Working through it crate-by-crate in dependency order.
+
+Panic-safety (audit theme 5 + UTF-8 byte-slice bugs):
+- [x] `den-runtime/gateway_events.rs` `preview_str_truncated` — char-boundary safe.
+- [x] `den-runtime/native_runtime/tools.rs` `first_sentence[..96]` — char-boundary safe.
+- [x] `den-runtime/agent_assist/conversation_title.rs` `truncate_at_word_boundary` — char-boundary safe.
+- [x] `den-runtime/agent_loop/session_store.rs` — 4x `.lock().expect()` → poison-tolerant `unwrap_or_else(PoisonError::into_inner)`.
+
+Idiomatic/clippy fixes:
+- [x] `den-runtime/agent_loop/budget.rs` — hand-rolled `Default` → `#[derive(Default)]`.
+- [x] `den-runtime/runtime/bearwire_projection/wire.rs` — hand-rolled `Default` → derive + `#[default]`.
+- [x] `den-runtime/reflection/archive_harvest.rs` — redundant `let _ = …?` removed (2x).
+- [x] `den-core/tools/environment/payloads.rs` — 2 redundant `.clone()` on `memory_scope`.
+- [x] `den-core/client_tools.rs:264` — `.filter().is_none()` → `is_none_or`.
+- [x] `den-core/tools/result_compaction/tests.rs` — `Some("".to_string())` → `Some(String::new())` (3x).
+- [x] `den-docket/integration_tests.rs` — needless raw-string hashes (2x).
+- [x] `den-docket/db.rs:1558` — `.filter().is_none()` → `is_none_or`.
+- [x] `den-docket/model.rs` — `TaskListCheckoutSource::LocalProjection` boxed (large_enum_variant); match site in `service.rs` deref'd.
+- [x] `den-llm/client.rs:160` — `push_str("…")` → `push('…')`.
+- [x] `den-llm/client.rs` + `embeddings.rs` — `Duration::from_secs` → `from_mins`.
+- [x] `den-llm/model_registry.rs` — `unwrap_or(fn call)` → `unwrap_or_else`; `iter().any()` → `contains`.
+- [x] `den-memory/import.rs:480` — `iter().any()` → `contains`.
+
+### Remaining clippy-gate work (downstream crates, cascading as upstream goes green)
+- [ ] `den-service` — ~21 lib + ~26 lib-test clippy errors (manual_string_new, etc.).
+- [ ] `den-runtime`, `den-http`, `den-oauth`, `den-api`, `den-web`, `den-bearwire`, root `den` bin — TBD once dependents build.
+
+---
+
 ## Crates covered so far
 - [x] den-protocol (full)
 - [x] den-api (full)

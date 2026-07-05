@@ -5,17 +5,12 @@ use den_protocol::{
     RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BearWireEventScope {
     Persistent,
+    #[default]
     Ephemeral,
-}
-
-impl Default for BearWireEventScope {
-    fn default() -> Self {
-        Self::Ephemeral
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -27,7 +27,7 @@ pub struct EmbeddingClient {
 impl EmbeddingClient {
     pub fn new(config: &Config) -> Self {
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_mins(1))
             .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("reqwest client for embeddings");
