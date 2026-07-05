@@ -187,15 +187,36 @@ pub fn runtime_semantic_event_to_bearwire_events(
             text,
             phase,
             detail,
-        } => vec![BearWireEvent::ephemeral(
-            "run.progress",
-            json!({
-                "kind": kind,
-                "text": text,
-                "phase": phase,
-                "detail": detail,
-            }),
-        )],
+        } => {
+            if kind == "session_info_update" {
+                let title = detail
+                    .as_ref()
+                    .and_then(|value| value.get("title"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let updated_at = detail
+                    .as_ref()
+                    .and_then(|value| value.get("updated_at"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                return vec![BearWireEvent::ephemeral(
+                    "session_info_update",
+                    json!({
+                        "title": title,
+                        "updated_at": updated_at,
+                    }),
+                )];
+            }
+            vec![BearWireEvent::ephemeral(
+                "run.progress",
+                json!({
+                    "kind": kind,
+                    "text": text,
+                    "phase": phase,
+                    "detail": detail,
+                }),
+            )]
+        }
         RuntimeSemanticEvent::RunPaused {
             reason,
             resume_token,

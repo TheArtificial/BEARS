@@ -179,6 +179,26 @@ fn session_info_update_progress_projects_to_session_info_gateway_event() {
 }
 
 #[test]
+fn session_info_update_progress_projects_to_dedicated_bearwire_event() {
+    let mapped = runtime_stream_event_to_bearwire_sse(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::RunProgress {
+            kind: "session_info_update".to_string(),
+            text: None,
+            phase: Some("tool_result".to_string()),
+            detail: Some(serde_json::json!({
+                "title": "New title",
+                "updated_at": "2026-07-05T12:00:00Z"
+            })),
+        },
+    ));
+
+    let text = std::str::from_utf8(mapped[0].as_ref()).expect("valid utf8 sse");
+    assert!(text.contains("\"type\":\"session_info_update\""), "{text}");
+    assert!(text.contains("\"title\":\"New title\""), "{text}");
+    assert!(text.contains("\"updated_at\":\"2026-07-05T12:00:00Z\""), "{text}");
+}
+
+#[test]
 fn lossy_projection_covers_core_semantic_variants() {
     let events = vec![
         RuntimeSemanticEvent::AssistantTextDelta {

@@ -1087,6 +1087,17 @@ async fn handle_bearwire_event(
                 .await?;
             }
         }
+        "session_info_update" => {
+            handle_den_event(
+                config,
+                adapter_state,
+                shared_state,
+                session_id,
+                event,
+                turn_token,
+            )
+            .await?;
+        }
         "session.bound" => {
             let conversation_id = event
                 .pointer("/data/binding/conversation_id")

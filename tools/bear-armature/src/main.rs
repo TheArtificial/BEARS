@@ -6846,6 +6846,10 @@ async fn handle_tool_request_event(
         .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
         .await;
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
+    let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
+    task_registry
+        .remember_input(session_id, tool_call_id, tool_name, args.clone())
+        .await;
     if is_den_server_tool_request(event) {
         let preparing = friendly_tool_status(tool_name, event, "preparing");
         send_tool_call_update(
@@ -6905,10 +6909,6 @@ async fn handle_tool_request_event(
         },
     )
     .await?;
-    let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
-    task_registry
-        .remember_input(session_id, tool_call_id, tool_name, args.clone())
-        .await;
     let policy = policy_from_event(event);
     let replace_plan = if tool_name == "fs_edit_file" || tool_name == "fs_replace_text" {
         let context = session_context(adapter_state, session_id)?;
