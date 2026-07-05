@@ -114,7 +114,7 @@ fn normalized_operational_outcome(
             "turn_budget_exhausted",
             false,
             "turn_budget",
-            "Operational note from Den: the previous turn stopped for budget or loop-safety reasons before delivering a final answer. Recent tool results were preserved. Continue from the latest successful state and prefer a narrower or more conclusive next step.",
+            "Operational note from Den: the previous turn stopped for budget or loop-safety reasons before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; continue from the latest successful state only if the user asks to proceed.",
         ),
         _ => (
             "operational_failure",
@@ -141,6 +141,62 @@ fn normalized_operational_outcome(
         content["context"] = context.clone();
     }
     (summary.to_string(), content)
+}
+
+fn is_budget_or_loop_failure(reason: &str, message: &str) -> bool {
+    reason == "runtime_internal" && (message.contains("budget") || message.contains("rule of ko"))
+}
+
+fn run_failed_user_message(reason: &str, message: &str) -> Option<&'static str> {
+    if is_budget_or_loop_failure(reason, message) {
+        return Some("BEARS stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.");
+    }
+    None
+}
+
+fn numeric_message_field(message: &str, field: &str) -> Option<u64> {
+    let start = message.find(field)? + field.len();
+    let rest = &message[start..];
+    let digits = rest
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    (!digits.is_empty())
+        .then(|| digits.parse::<u64>().ok())
+        .flatten()
+}
+
+fn failure_context_with_diagnostics(
+    reason: &str,
+    message: &str,
+    context: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    let mut context = context.unwrap_or_else(|| json!({}));
+    let Some(object) = context.as_object_mut() else {
+        return Some(json!({
+            "diagnostic": {
+                "reason": reason,
+                "raw_message": message,
+            },
+            "previous_context": context,
+        }));
+    };
+    let mut diagnostic = json!({
+        "reason": reason,
+        "raw_message": message,
+    });
+    if is_budget_or_loop_failure(reason, message) {
+        diagnostic["class"] = json!("turn_budget_exhausted");
+        diagnostic["model_action"] = json!("none");
+        if let Some(elapsed_ms) = numeric_message_field(message, "elapsed=") {
+            diagnostic["elapsed_ms"] = json!(elapsed_ms);
+        }
+        if let Some(limit_ms) = numeric_message_field(message, "limit=") {
+            diagnostic["limit_ms"] = json!(limit_ms);
+        }
+    }
+    object.insert("diagnostic".to_string(), diagnostic);
+    Some(context)
 }
 
 fn client_tool_descriptors_from_context(
@@ -816,12 +872,15 @@ pub(crate) async fn persist_run_failed(
     message: String,
     context: Option<serde_json::Value>,
 ) {
+    let user_message = run_failed_user_message(reason, &message);
+    let context = failure_context_with_diagnostics(reason, &message, context);
     tracing::warn!(
         session_id,
         run_id,
         bear_id = %bear_id,
         user_id,
         reason,
+        user_message = user_message,
         error_message = %log_sample(&message),
         "BearWire run failed"
     );
@@ -838,6 +897,7 @@ pub(crate) async fn persist_run_failed(
         json!({
             "run_id": run_id,
             "message": message,
+            "user_message": user_message,
             "reason": reason,
             "context": context,
         }),
@@ -1593,6 +1653,39 @@ mod tests {
             runtime_upstream_target("conv-existing", Some("   ")),
             "conv-existing"
         );
+    }
+
+    #[test]
+    fn budget_failure_has_friendly_user_message_and_diagnostics() {
+        let message = "I stopped because this turn exhausted its wall-clock budget \
+            (elapsed=252985ms/limit=240000ms).";
+
+        assert_eq!(
+            run_failed_user_message("runtime_internal", message),
+            Some("BEARS stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.")
+        );
+
+        let context = failure_context_with_diagnostics("runtime_internal", message, None)
+            .expect("diagnostic context");
+        assert_eq!(context["diagnostic"]["class"], "turn_budget_exhausted");
+        assert_eq!(context["diagnostic"]["model_action"], "none");
+        assert_eq!(context["diagnostic"]["elapsed_ms"], 252985);
+        assert_eq!(context["diagnostic"]["limit_ms"], 240000);
+    }
+
+    #[test]
+    fn budget_operational_outcome_tells_model_no_repair_action() {
+        let (summary, content) = normalized_operational_outcome(
+            "runtime_internal",
+            "I stopped because this turn exhausted its wall-clock budget \
+                (elapsed=252985ms/limit=240000ms).",
+            "run-1",
+            None,
+        );
+
+        assert!(summary.contains("no infrastructure repair action"), "{summary}");
+        assert_eq!(content["kind"], "turn_budget_exhausted");
+        assert_eq!(content["retryable"], false);
     }
 
     fn available_model(handle: &str, model: &str) -> den_service::bifrost::BifrostModelMetadata {

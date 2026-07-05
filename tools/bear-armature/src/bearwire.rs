@@ -81,7 +81,10 @@ fn default_tool_status_summary(tool_name: &str, failed: bool) -> String {
 
 fn command_name_from_tool_event(data: &Value) -> Option<String> {
     let tool_name = data.get("tool_name").and_then(Value::as_str)?;
-    if !matches!(tool_name, "run_command" | "process_run" | "terminal_run_command") {
+    if !matches!(
+        tool_name,
+        "run_command" | "process_run" | "terminal_run_command"
+    ) {
         return None;
     }
     let command = data
@@ -896,6 +899,11 @@ fn bearwire_plan_update_entries(event: &Value) -> Value {
 
 fn bearwire_run_failed_user_message(event: &Value) -> String {
     let data = event.get("data").unwrap_or(&Value::Null);
+    let user_message = data
+        .get("user_message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty());
     let message = data
         .get("message")
         .and_then(Value::as_str)
@@ -921,16 +929,20 @@ fn bearwire_run_failed_user_message(event: &Value) -> String {
         .get("run_id")
         .and_then(Value::as_str)
         .or_else(|| data.get("run_id").and_then(Value::as_str));
-    let mut rendered = if let Some(reason) = reason {
+    let mut rendered = if let Some(user_message) = user_message {
+        format!("BEARS prompt stopped: {user_message}")
+    } else if let Some(reason) = reason {
         format!("BEARS run failed ({reason}): {message}")
     } else {
         format!("BEARS run failed: {message}")
     };
-    if let Some(error_type) = error_type {
-        rendered.push_str(&format!("\n\nError type: `{error_type}`"));
-    }
-    if let Some(detail) = detail {
-        rendered.push_str(&format!("\n\nDetail: {}", truncate_for_log(detail, 1200)));
+    if user_message.is_none() {
+        if let Some(error_type) = error_type {
+            rendered.push_str(&format!("\n\nError type: `{error_type}`"));
+        }
+        if let Some(detail) = detail {
+            rendered.push_str(&format!("\n\nDetail: {}", truncate_for_log(detail, 1200)));
+        }
     }
     if let Some(run_id) = run_id {
         rendered.push_str(&format!("\n\nRun: `{run_id}`"));
@@ -1486,6 +1498,34 @@ mod tests {
     }
 
     #[test]
+    fn bearwire_run_failed_user_message_prefers_friendly_user_message() {
+        let event = json!({
+            "type": "run.failed",
+            "run_id": "run-budget",
+            "data": {
+                "reason": "runtime_internal",
+                "message": "I stopped because this turn exhausted its wall-clock budget (elapsed=252985ms/limit=240000ms).",
+                "user_message": "BEARS stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.",
+                "context": {
+                    "diagnostic": {
+                        "elapsed_ms": 252985,
+                        "limit_ms": 240000
+                    }
+                }
+            }
+        });
+
+        let message = bearwire_run_failed_user_message(&event);
+        let context = bearwire_run_failed_stderr_context(&event).expect("stderr context");
+
+        assert!(message.starts_with("BEARS prompt stopped:"), "{message}");
+        assert!(message.contains("ran too long"), "{message}");
+        assert!(!message.contains("runtime_internal"), "{message}");
+        assert!(!message.contains("elapsed=252985"), "{message}");
+        assert!(context.contains("252985"), "{context}");
+    }
+
+    #[test]
     fn bearwire_run_failed_user_message_omits_context_but_stderr_helper_keeps_it() {
         let event = json!({
             "type": "run.failed",
@@ -1551,7 +1591,10 @@ mod tests {
                 "summary": format!("Finished {tool_name}")
             });
 
-            assert_eq!(tool_call_finished_summary(&data, tool_name, false), expected);
+            assert_eq!(
+                tool_call_finished_summary(&data, tool_name, false),
+                expected
+            );
         }
     }
 
