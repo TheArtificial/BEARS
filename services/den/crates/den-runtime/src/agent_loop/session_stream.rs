@@ -33,7 +33,8 @@ use den_core::tools::{
 };
 use den_core::{config::Config, profile::BearProfile, DenError};
 use crate::runtime::turn_state::{
-    autonomous_execution_gate_for_task_list, should_allow_terminal_response_for_task_list,
+    autonomous_execution_gate_for_task_list, detect_task_focus_loop,
+    should_allow_terminal_response_for_task_list,
 };
 
 use super::session_store::AgentLoopSession;
@@ -854,6 +855,35 @@ impl Stream for SessionTrackingStream {
                     active_activity_plan.as_ref(),
                     &self.assistant_text,
                 ) {
+                    let recent_texts = self
+                        .store
+                        .get(&self.session_key)
+                        .map(|session| {
+                            session
+                                .messages
+                                .iter()
+                                .rev()
+                                .filter_map(|message| message.content.as_deref())
+                                .take(6)
+                                .map(str::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let loop_detection = detect_task_focus_loop(&recent_texts);
+                    if loop_detection.detected {
+                        self.finished = true;
+                        tracing::warn!(
+                            client_session_id = %self.client_session_id,
+                            profile = %self.profile.as_str(),
+                            terminal_objections = loop_detection.terminal_objections,
+                            continuation_nudges = loop_detection.continuation_nudges,
+                            repeated_objection_kind = ?loop_detection.repeated_objection_kind,
+                            "native runtime task-focus loop detected; accepting terminal objection instead of issuing another continuation nudge"
+                        );
+                        return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
+                            RuntimeSemanticEvent::TurnCompleted { turn: None },
+                        ))));
+                    }
                     let next_task = active_activity_plan.as_ref().and_then(|plan| {
                             autonomous_execution_gate_for_task_list(
                                 self.profile,

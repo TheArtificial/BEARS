@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use den_core::{client_tools::ResolvedSessionPolicy, profile::BearProfile};
 use crate::plan_mode;
-use den_docket::{TaskListItem, TaskListProjection, WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection};
+use den_docket::{TaskListItem, TaskListItemStatus, TaskListLocalProjection, TaskListProjection, TaskListUpdateItem};
 
 pub const TURN_STATE_SCHEMA: &str = "bears.turn_state/v1";
 pub const TURN_STATE_VERSION: u32 = 1;
@@ -17,6 +17,8 @@ pub enum AutonomousFinalResponseKind {
     CompletionFinal,
     BlockedFinal,
     ReasonedNonActionFinal,
+    ScopeEscalationFinal,
+    RuntimeLimitBlockedFinal,
     ProgressReport,
     ClarificationRequest,
     UnsafeActionPermissionRequest,
@@ -30,6 +32,14 @@ pub struct AutonomousExecutionGate {
     pub has_hard_blocker: bool,
     pub may_stop: bool,
     pub next_incomplete_task_title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskFocusLoopDetection {
+    pub detected: bool,
+    pub continuation_nudges: usize,
+    pub terminal_objections: usize,
+    pub repeated_objection_kind: Option<AutonomousFinalResponseKind>,
 }
 
 pub fn workflow_state_label(policy: &ResolvedSessionPolicy) -> &'static str {
@@ -56,7 +66,7 @@ pub fn approval_status_label(plan_mode_state: Option<&str>, mode_label: &str) ->
 
 pub fn turn_state_json(
     policy: &ResolvedSessionPolicy,
-    activity_plan: Option<&WorkPlanProjection>,
+    activity_plan: Option<&TaskListLocalProjection>,
 ) -> Value {
     turn_state_from_sources(policy, None, activity_plan)
 }
@@ -64,7 +74,7 @@ pub fn turn_state_json(
 pub fn turn_state_from_sources(
     policy: &ResolvedSessionPolicy,
     workplan_row: Option<&plan_mode::PlanModeSessionRow>,
-    activity_plan: Option<&WorkPlanProjection>,
+    activity_plan: Option<&TaskListLocalProjection>,
 ) -> Value {
     let workplan = workplan_domain_json(policy, workplan_row);
     let activity = activity_domain_json(activity_plan);
@@ -89,7 +99,7 @@ pub fn turn_state_from_sources(
 
 pub fn autonomous_execution_gate_for_plan(
     profile: BearProfile,
-    plan: Option<&WorkPlanProjection>,
+    plan: Option<&TaskListLocalProjection>,
     final_response_kind: AutonomousFinalResponseKind,
 ) -> AutonomousExecutionGate {
     let Some(plan) = plan.filter(|plan| is_autonomous_implementation_plan(profile, plan)) else {
@@ -105,7 +115,7 @@ pub fn autonomous_execution_gate_for_plan(
 
     let items = &plan.items;
     let acceptance_criteria_met = acceptance_criteria_met(plan);
-    let has_hard_blocker = items.iter().any(|item| item.status == WorkPlanItemStatus::Blocked)
+    let has_hard_blocker = items.iter().any(|item| item.status == TaskListItemStatus::Blocked)
         || matches!(plan.status.as_str(), "blocked");
     let next_incomplete_task_title = next_incomplete_unblocked_item(items).map(|item| item.title.clone());
     let has_incomplete_unblocked_items = next_incomplete_task_title.is_some();
@@ -116,16 +126,24 @@ pub fn autonomous_execution_gate_for_plan(
             final_response_kind,
             AutonomousFinalResponseKind::BlockedFinal
                 | AutonomousFinalResponseKind::ReasonedNonActionFinal
+                | AutonomousFinalResponseKind::ScopeEscalationFinal
+                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
                 | AutonomousFinalResponseKind::UnsafeActionPermissionRequest
         )
-    } else if !has_incomplete_unblocked_items {
+    } else if has_incomplete_unblocked_items {
+        matches!(
+            final_response_kind,
+            AutonomousFinalResponseKind::ScopeEscalationFinal
+                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
+        )
+    } else {
         matches!(
             final_response_kind,
             AutonomousFinalResponseKind::CompletionFinal
                 | AutonomousFinalResponseKind::ReasonedNonActionFinal
+                | AutonomousFinalResponseKind::ScopeEscalationFinal
+                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
         )
-    } else {
-        false
     };
 
     AutonomousExecutionGate {
@@ -141,11 +159,35 @@ pub fn autonomous_execution_gate_for_plan(
 pub fn classify_autonomous_final_response(text: &str) -> AutonomousFinalResponseKind {
     let trimmed = text.trim();
     let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("runtime limit")
+        || lower.contains("runtime limits")
+        || lower.contains("tool budget")
+        || lower.contains("write budget")
+        || lower.contains("loop-ko")
+        || lower.contains("further write")
+        || lower.contains("fresh turn")
+    {
+        return AutonomousFinalResponseKind::RuntimeLimitBlockedFinal;
+    }
     if lower.contains("need approval")
         || lower.contains("requires approval")
         || lower.contains("permission")
     {
         return AutonomousFinalResponseKind::UnsafeActionPermissionRequest;
+    }
+    if lower.contains("scope escalation")
+        || lower.contains("requires scope escalation")
+        || lower.contains("requires a separate")
+        || lower.contains("separate api migration")
+        || lower.contains("separate migration plan")
+        || lower.contains("public api migration")
+        || lower.contains("out of scope")
+        || lower.contains("outside scope")
+        || lower.contains("public tool protocol")
+        || lower.contains("external tool contract")
+        || lower.contains("external tool contracts")
+    {
+        return AutonomousFinalResponseKind::ScopeEscalationFinal;
     }
     if lower.contains("not applicable")
         || lower.contains("waived")
@@ -177,9 +219,67 @@ pub fn classify_autonomous_final_response(text: &str) -> AutonomousFinalResponse
     AutonomousFinalResponseKind::CompletionFinal
 }
 
+pub fn detect_task_focus_loop(recent_texts: &[impl AsRef<str>]) -> TaskFocusLoopDetection {
+    let continuation_nudges = recent_texts
+        .iter()
+        .filter(|text| looks_like_task_focus_continuation_nudge(text.as_ref()))
+        .count();
+    let mut terminal_objections = 0;
+    let mut previous_objection_kind = None;
+    let mut repeated_objection_kind = None;
+
+    for text in recent_texts {
+        let text = text.as_ref();
+        if looks_like_task_focus_continuation_nudge(text) {
+            continue;
+        }
+        let kind = classify_autonomous_final_response(text);
+        if is_terminal_objection_kind(kind) {
+            terminal_objections += 1;
+            if previous_objection_kind == Some(kind) {
+                repeated_objection_kind = Some(kind);
+            }
+            previous_objection_kind = Some(kind);
+        }
+    }
+
+    // ponytail: phrase-based loop detection is intentionally conservative;
+    // replace with structured assistant terminal-state events once final answers are typed.
+    let detected = continuation_nudges >= 2
+        && terminal_objections >= 2
+        && repeated_objection_kind.is_some();
+
+    TaskFocusLoopDetection {
+        detected,
+        continuation_nudges,
+        terminal_objections,
+        repeated_objection_kind,
+    }
+}
+
+fn is_terminal_objection_kind(kind: AutonomousFinalResponseKind) -> bool {
+    matches!(
+        kind,
+        AutonomousFinalResponseKind::BlockedFinal
+            | AutonomousFinalResponseKind::ReasonedNonActionFinal
+            | AutonomousFinalResponseKind::ScopeEscalationFinal
+            | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
+            | AutonomousFinalResponseKind::UnsafeActionPermissionRequest
+    )
+}
+
+fn looks_like_task_focus_continuation_nudge(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    (lower.contains("active task") && lower.contains("incomplete"))
+        || lower.contains("do not final-answer yet")
+        || lower.contains("continue with:")
+        || lower.contains("resume execution from the next incomplete")
+        || lower.contains("you still have incomplete")
+}
+
 pub fn should_allow_terminal_response(
     profile: BearProfile,
-    active_activity_plan: Option<&WorkPlanProjection>,
+    active_activity_plan: Option<&TaskListLocalProjection>,
     assistant_text: &str,
 ) -> bool {
     let kind = classify_autonomous_final_response(assistant_text);
@@ -206,7 +306,7 @@ pub fn autonomous_execution_gate_for_task_list(
     let has_hard_blocker = task_list
         .items
         .iter()
-        .any(|item| item.status == WorkPlanItemStatus::Blocked)
+        .any(|item| item.status == TaskListItemStatus::Blocked)
         || matches!(task_list.status.as_str(), "blocked");
     let next_incomplete_task_title = next_incomplete_unblocked_task_list_item(&task_list.items)
         .map(|item| item.title.clone());
@@ -218,15 +318,23 @@ pub fn autonomous_execution_gate_for_task_list(
             final_response_kind,
             AutonomousFinalResponseKind::BlockedFinal
                 | AutonomousFinalResponseKind::ReasonedNonActionFinal
+                | AutonomousFinalResponseKind::ScopeEscalationFinal
+                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
                 | AutonomousFinalResponseKind::UnsafeActionPermissionRequest
         )
     } else if has_incomplete_unblocked_items {
-        false
+        matches!(
+            final_response_kind,
+            AutonomousFinalResponseKind::ScopeEscalationFinal
+                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
+        )
     } else {
         matches!(
             final_response_kind,
             AutonomousFinalResponseKind::CompletionFinal
                 | AutonomousFinalResponseKind::ReasonedNonActionFinal
+                | AutonomousFinalResponseKind::ScopeEscalationFinal
+                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
         )
     };
 
@@ -249,7 +357,7 @@ pub fn should_allow_terminal_response_for_task_list(
     autonomous_execution_gate_for_task_list(profile, active_task_list, kind).may_stop
 }
 
-pub fn autonomous_resume_obligation_text(plan: &WorkPlanProjection) -> Option<String> {
+pub fn autonomous_resume_obligation_text(plan: &TaskListLocalProjection) -> Option<String> {
     if !matches!(plan.owner_profile.as_str(), "pair" | "work") {
         return None;
     }
@@ -258,7 +366,7 @@ pub fn autonomous_resume_obligation_text(plan: &WorkPlanProjection) -> Option<St
         .iter()
         .map(|item| {
             let marker = match item.status {
-                WorkPlanItemStatus::Completed => "[x]",
+                TaskListItemStatus::Completed => "[x]",
                 _ => "[ ]",
             };
             format!("- {marker} {}", item.title)
@@ -318,7 +426,7 @@ fn workplan_domain_json(
     })
 }
 
-fn activity_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
+fn activity_domain_json(plan: Option<&TaskListLocalProjection>) -> Value {
     match plan {
         Some(plan) => {
             let counts = activity_item_counts(plan);
@@ -375,7 +483,7 @@ fn activity_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
     }
 }
 
-fn autonomous_execution_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
+fn autonomous_execution_domain_json(plan: Option<&TaskListLocalProjection>) -> Value {
     let profile = plan
         .and_then(|plan| BearProfile::from_str(&plan.owner_profile).ok())
         .unwrap_or(BearProfile::Pair);
@@ -394,7 +502,7 @@ fn autonomous_execution_domain_json(plan: Option<&WorkPlanProjection>) -> Value 
         .items
         .iter()
         .rev()
-        .find(|item| item.status == WorkPlanItemStatus::Completed)
+        .find(|item| item.status == TaskListItemStatus::Completed)
         .map(|item| Value::from(item.title.clone()))
         .unwrap_or(Value::Null);
     json!({
@@ -410,14 +518,14 @@ fn autonomous_execution_domain_json(plan: Option<&WorkPlanProjection>) -> Value 
         ],
         "tasks": plan.items.iter().map(autonomous_task_json).collect::<Vec<_>>(),
         "current_in_progress_item": plan.current_item.as_ref().map(|item| item.title.clone()),
-        "known_blockers": plan.items.iter().filter(|item| item.status == WorkPlanItemStatus::Blocked).filter_map(|item| item.blocked_reason.clone()).collect::<Vec<_>>(),
+        "known_blockers": plan.items.iter().filter(|item| item.status == TaskListItemStatus::Blocked).filter_map(|item| item.blocked_reason.clone()).collect::<Vec<_>>(),
         "last_verified_completed_step": last_verified_completed_step,
         "has_incomplete_unblocked_items": gate.has_incomplete_unblocked_items,
         "next_incomplete_task_title": gate.next_incomplete_task_title,
     })
 }
 
-fn autonomous_task_json(item: &WorkPlanItem) -> Value {
+fn autonomous_task_json(item: &TaskListUpdateItem) -> Value {
     json!({
         "title": item.title,
         "status": item.status.as_str(),
@@ -426,7 +534,7 @@ fn autonomous_task_json(item: &WorkPlanItem) -> Value {
     })
 }
 
-fn is_autonomous_implementation_plan(profile: BearProfile, plan: &WorkPlanProjection) -> bool {
+fn is_autonomous_implementation_plan(profile: BearProfile, plan: &TaskListLocalProjection) -> bool {
     matches!(profile, BearProfile::Pair | BearProfile::Work)
         && matches!(plan.owner_profile.as_str(), "pair" | "work")
         && matches!(plan.status.as_str(), "active" | "blocked" | "completed" | "cancelled")
@@ -438,18 +546,18 @@ fn is_autonomous_task_list(profile: BearProfile, task_list: &TaskListProjection)
         && matches!(task_list.status.as_str(), "active" | "ready" | "running" | "blocked" | "completed" | "cancelled")
 }
 
-fn acceptance_criteria_met(plan: &WorkPlanProjection) -> bool {
+fn acceptance_criteria_met(plan: &TaskListLocalProjection) -> bool {
     !plan.items.is_empty()
         && plan
             .items
             .iter()
-            .all(|item| matches!(item.status, WorkPlanItemStatus::Completed | WorkPlanItemStatus::Cancelled))
+            .all(|item| matches!(item.status, TaskListItemStatus::Completed | TaskListItemStatus::Cancelled))
         && matches!(plan.status.as_str(), "completed" | "cancelled")
 }
 
-fn next_incomplete_unblocked_item(items: &[WorkPlanItem]) -> Option<&WorkPlanItem> {
+fn next_incomplete_unblocked_item(items: &[TaskListUpdateItem]) -> Option<&TaskListUpdateItem> {
     items.iter().find(|item| {
-        matches!(item.status, WorkPlanItemStatus::Pending | WorkPlanItemStatus::InProgress)
+        matches!(item.status, TaskListItemStatus::Pending | TaskListItemStatus::InProgress)
     })
 }
 
@@ -458,17 +566,17 @@ fn task_list_acceptance_criteria_met(task_list: &TaskListProjection) -> bool {
         && task_list
             .items
             .iter()
-            .all(|item| matches!(item.status, WorkPlanItemStatus::Completed | WorkPlanItemStatus::Cancelled))
+            .all(|item| matches!(item.status, TaskListItemStatus::Completed | TaskListItemStatus::Cancelled))
         && matches!(task_list.status.as_str(), "completed" | "cancelled")
 }
 
 fn next_incomplete_unblocked_task_list_item(items: &[TaskListItem]) -> Option<&TaskListItem> {
     items.iter().find(|item| {
-        matches!(item.status, WorkPlanItemStatus::Pending | WorkPlanItemStatus::InProgress)
+        matches!(item.status, TaskListItemStatus::Pending | TaskListItemStatus::InProgress)
     })
 }
 
-fn activity_item_json(item: &den_docket::WorkPlanItem) -> Value {
+fn activity_item_json(item: &den_docket::TaskListUpdateItem) -> Value {
     json!({
         "id": item.id,
         "title": item.title,
@@ -479,7 +587,7 @@ fn activity_item_json(item: &den_docket::WorkPlanItem) -> Value {
     })
 }
 
-fn activity_item_counts(plan: &WorkPlanProjection) -> Value {
+fn activity_item_counts(plan: &TaskListLocalProjection) -> Value {
     let mut pending = 0;
     let mut in_progress = 0;
     let mut blocked = 0;
@@ -541,23 +649,23 @@ fn summarize_text(body: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use den_docket::{TaskListItem, TaskListProjection, TaskListSourceRef, TaskListSyncState, WorkPlanProjection};
+    use den_docket::{TaskListItem, TaskListProjection, TaskListSourceRef, TaskListSyncState, TaskListLocalProjection};
     use time::OffsetDateTime;
     use uuid::Uuid;
 
-    fn item(title: &str, status: WorkPlanItemStatus) -> WorkPlanItem {
-        WorkPlanItem {
+    fn item(title: &str, status: TaskListItemStatus) -> TaskListUpdateItem {
+        TaskListUpdateItem {
             id: title.to_string(),
             title: title.to_string(),
             summary: Some(format!("evidence: {title}")),
             status,
-            blocked_reason: (status == WorkPlanItemStatus::Blocked).then(|| "waiting".to_string()),
+            blocked_reason: (status == TaskListItemStatus::Blocked).then(|| "waiting".to_string()),
             source_refs: Vec::new(),
         }
     }
 
-    fn plan(status: &str, items: Vec<WorkPlanItem>) -> WorkPlanProjection {
-        WorkPlanProjection {
+    fn plan(status: &str, items: Vec<TaskListUpdateItem>) -> TaskListLocalProjection {
+        TaskListLocalProjection {
             id: Uuid::nil(),
             bear_id: Uuid::nil(),
             title: "Complete Docket relational work management".to_string(),
@@ -568,7 +676,7 @@ mod tests {
             version: 1,
             current_item: items
                 .iter()
-                .find(|item| item.status == WorkPlanItemStatus::InProgress)
+                .find(|item| item.status == TaskListItemStatus::InProgress)
                 .cloned(),
             items,
             source_conversation_id: None,
@@ -580,13 +688,13 @@ mod tests {
         }
     }
 
-    fn task_list_item(title: &str, status: WorkPlanItemStatus) -> TaskListItem {
+    fn task_list_item(title: &str, status: TaskListItemStatus) -> TaskListItem {
         TaskListItem {
             id: title.to_string(),
             title: title.to_string(),
             summary: Some(format!("evidence: {title}")),
             status,
-            blocked_reason: (status == WorkPlanItemStatus::Blocked).then(|| "permission needed".to_string()),
+            blocked_reason: (status == TaskListItemStatus::Blocked).then(|| "permission needed".to_string()),
             source_ref: TaskListSourceRef::local(Vec::new()),
             sync_state: TaskListSyncState::LocalOnly,
         }
@@ -605,7 +713,7 @@ mod tests {
             source_ref: TaskListSourceRef::local(Vec::new()),
             current_item: items
                 .iter()
-                .find(|item| item.status == WorkPlanItemStatus::InProgress)
+                .find(|item| item.status == TaskListItemStatus::InProgress)
                 .cloned(),
             items,
             source_conversation_id: None,
@@ -622,8 +730,8 @@ mod tests {
         let plan = plan(
             "active",
             vec![
-                item("Inventory schema and Docket API coupling", WorkPlanItemStatus::Completed),
-                item("Add lifecycle/dispatcher tests", WorkPlanItemStatus::Pending),
+                item("Inventory schema and Docket API coupling", TaskListItemStatus::Completed),
+                item("Add lifecycle/dispatcher tests", TaskListItemStatus::Pending),
             ],
         );
         let text = autonomous_resume_obligation_text(&plan).expect("autonomous reminder");
@@ -636,8 +744,8 @@ mod tests {
         let plan = plan(
             "active",
             vec![
-                item("done", WorkPlanItemStatus::Completed),
-                item("remaining", WorkPlanItemStatus::InProgress),
+                item("done", TaskListItemStatus::Completed),
+                item("remaining", TaskListItemStatus::InProgress),
             ],
         );
         let gate = autonomous_execution_gate_for_plan(
@@ -656,7 +764,7 @@ mod tests {
     fn autonomous_gate_allows_completion_only_when_plan_complete() {
         let plan = plan(
             "completed",
-            vec![item("done", WorkPlanItemStatus::Completed)],
+            vec![item("done", TaskListItemStatus::Completed)],
         );
         let gate = autonomous_execution_gate_for_plan(
             BearProfile::Pair,
@@ -671,7 +779,7 @@ mod tests {
     fn autonomous_gate_allows_blocked_final_when_no_safe_path_remains() {
         let plan = plan(
             "blocked",
-            vec![item("blocked", WorkPlanItemStatus::Blocked)],
+            vec![item("blocked", TaskListItemStatus::Blocked)],
         );
         let gate = autonomous_execution_gate_for_plan(
             BearProfile::Pair,
@@ -696,8 +804,8 @@ mod tests {
         let task_list = task_list(
             "active",
             vec![
-                task_list_item("Implement change", WorkPlanItemStatus::Completed),
-                task_list_item("Commit changes", WorkPlanItemStatus::Cancelled),
+                task_list_item("Implement change", TaskListItemStatus::Completed),
+                task_list_item("Commit changes", TaskListItemStatus::Cancelled),
             ],
         );
 
@@ -719,8 +827,8 @@ mod tests {
         let task_list = task_list(
             "active",
             vec![
-                task_list_item("Implement change", WorkPlanItemStatus::Completed),
-                task_list_item("Commit changes", WorkPlanItemStatus::Blocked),
+                task_list_item("Implement change", TaskListItemStatus::Completed),
+                task_list_item("Commit changes", TaskListItemStatus::Blocked),
             ],
         );
 
@@ -734,5 +842,103 @@ mod tests {
 
         assert!(gate.has_hard_blocker);
         assert!(gate.may_stop);
+    }
+
+    #[test]
+    fn scope_escalation_final_allows_terminal_response_with_remaining_work() {
+        let task_list = task_list(
+            "active",
+            vec![
+                task_list_item("Rename internal Docket model names", TaskListItemStatus::Completed),
+                task_list_item("Rename public den.work_plan tools", TaskListItemStatus::Pending),
+            ],
+        );
+
+        let gate = autonomous_execution_gate_for_task_list(
+            BearProfile::Pair,
+            Some(&task_list),
+            classify_autonomous_final_response(
+                "Terminal status: requires scope escalation. Remaining work is a public API migration for public tool protocol names and needs a separate migration plan.",
+            ),
+        );
+
+        assert!(gate.has_incomplete_unblocked_items);
+        assert!(gate.may_stop);
+    }
+
+    #[test]
+    fn scope_escalation_classifier_beats_progress_report_language() {
+        assert_eq!(
+            classify_autonomous_final_response(
+                "Remaining work exists, but it is out of scope because it changes external tool contracts.",
+            ),
+            AutonomousFinalResponseKind::ScopeEscalationFinal
+        );
+    }
+
+
+    #[test]
+    fn runtime_limit_blocked_final_allows_terminal_response_with_remaining_work() {
+        let task_list = task_list(
+            "active",
+            vec![
+                task_list_item("Add runtime-limit terminal state", TaskListItemStatus::Completed),
+                task_list_item("Commit task-focus batch", TaskListItemStatus::Pending),
+            ],
+        );
+
+        let gate = autonomous_execution_gate_for_task_list(
+            BearProfile::Pair,
+            Some(&task_list),
+            classify_autonomous_final_response(
+                "Terminal status: blocked by runtime limits. The write budget is exhausted; continuing requires a fresh turn.",
+            ),
+        );
+
+        assert!(gate.has_incomplete_unblocked_items);
+        assert!(gate.may_stop);
+    }
+
+    #[test]
+    fn runtime_limit_blocked_classifier_beats_progress_report_language() {
+        assert_eq!(
+            classify_autonomous_final_response(
+                "Remaining work exists, but the tool budget and write budget are exhausted; resume in a fresh turn.",
+            ),
+            AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
+        );
+    }
+
+    #[test]
+    fn task_focus_loop_detects_repeated_scope_objections_after_nudges() {
+        let recent = [
+            "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet.",
+            "Terminal status: requires scope escalation. Remaining public tool protocol names need a separate API migration plan.",
+            "Continue with: finish the active task list.",
+            "Terminal status: requires scope escalation. Remaining public tool protocol names need a separate API migration plan.",
+        ];
+
+        let detection = detect_task_focus_loop(&recent);
+
+        assert!(detection.detected);
+        assert_eq!(detection.continuation_nudges, 2);
+        assert_eq!(detection.terminal_objections, 2);
+        assert_eq!(
+            detection.repeated_objection_kind,
+            Some(AutonomousFinalResponseKind::ScopeEscalationFinal)
+        );
+    }
+
+    #[test]
+    fn task_focus_loop_ignores_single_progress_report() {
+        let recent = [
+            "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet.",
+            "What I changed: updated one file. Remaining work: tests.",
+        ];
+
+        let detection = detect_task_focus_loop(&recent);
+
+        assert!(!detection.detected);
+        assert_eq!(detection.terminal_objections, 0);
     }
 }

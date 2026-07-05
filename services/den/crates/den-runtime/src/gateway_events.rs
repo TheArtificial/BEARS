@@ -10,7 +10,7 @@ use den_core::client_tools::{
     diag_phase, client_tool_display_for_provider, client_tool_policy_json_for_provider,
     supported_provider_tool_names, ClientToolName,
 };
-use den_docket::{WorkPlanItemStatus, WorkPlanProjection};
+use den_docket::{TaskListItemStatus, TaskListLocalProjection};
 use den_core::tools::descriptor::{
     builtin_den_tool_descriptor_for_provider_name, builtin_den_tool_descriptors,
     den_tool_display_json_for_provider, den_tool_policy_json_for_provider,
@@ -66,7 +66,7 @@ pub enum GatewayEvent {
         target: serde_json::Value,
         options: Vec<String>,
     },
-    PlanUpdate(WorkPlanProjection),
+    PlanUpdate(TaskListLocalProjection),
     PlanUpdateJson {
         entries: Vec<serde_json::Value>,
     },
@@ -963,18 +963,18 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                 let blocked_reason = item.blocked_reason.as_deref().unwrap_or("").trim();
                 let summary = item.summary.as_deref().unwrap_or("").trim();
                 let content = match item.status {
-                    WorkPlanItemStatus::Blocked if !blocked_reason.is_empty() => format!("Blocked: {} — {}", item.title, blocked_reason),
-                    WorkPlanItemStatus::Blocked => format!("Blocked: {}", item.title),
-                    WorkPlanItemStatus::Cancelled => format!("Cancelled: {}", item.title),
+                    TaskListItemStatus::Blocked if !blocked_reason.is_empty() => format!("Blocked: {} — {}", item.title, blocked_reason),
+                    TaskListItemStatus::Blocked => format!("Blocked: {}", item.title),
+                    TaskListItemStatus::Cancelled => format!("Cancelled: {}", item.title),
                     _ if !summary.is_empty() => format!("{} — {}", item.title, summary),
                     _ => item.title.clone(),
                 };
                 let status = match item.status {
-                    WorkPlanItemStatus::InProgress => "in_progress",
-                    WorkPlanItemStatus::Completed | WorkPlanItemStatus::Cancelled => "completed",
+                    TaskListItemStatus::InProgress => "in_progress",
+                    TaskListItemStatus::Completed | TaskListItemStatus::Cancelled => "completed",
                     _ => "pending",
                 };
-                let priority = if item.status == WorkPlanItemStatus::InProgress { "high" } else { "medium" };
+                let priority = if item.status == TaskListItemStatus::InProgress { "high" } else { "medium" };
                 serde_json::json!({
                     "content": content,
                     "priority": priority,
