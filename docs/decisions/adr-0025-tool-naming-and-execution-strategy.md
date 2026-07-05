@@ -284,6 +284,8 @@ Examples of soft-walled shell commands that should steer to dedicated tools when
 - `rg` / `grep` workspace searches -> `fs_search_files`
 - clearly targeted `sed` replacement invocations -> `fs_replace_text`
 
+The model-facing direct-tool capability context should reinforce these mappings with short descriptor hints so the model sees `fs_search_files` and `fs_replace_text` as the primary affordances before falling back to shell commands.
+
 #### Maintenance obligation
 
 When BEARS adds a new dedicated tool for an operation that models commonly attempt through command execution, the `run_command` router and soft-wall policy must be updated in the same change.

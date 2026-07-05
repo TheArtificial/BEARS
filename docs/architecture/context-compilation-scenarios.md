@@ -40,6 +40,12 @@ Den does not hand the model “everything.” It builds a bounded **turn context
 - If Den knows a runtime condition, Den should render the applicable instruction before inference instead of asking the model to choose.
 - Dynamic records may be formatted in Rust when they are primarily structured data, but standing behavioral prose should be a fragment.
 
+Exception, current ACP adapter direct-tool descriptors:
+
+- ACP `direct_tools` and `adapter.direct_tools` currently include short model-facing affordance hints in adapter-generated descriptor objects, for example "prefer this instead of `rg`/`grep`".
+- This is a narrow exception to improve tool discoverability for armature-local tools until the context compilation system owns the canonical text for those hints.
+- Treat these strings as temporary descriptor text, not a precedent for moving standing prompt prose out of compiled/runtime fragment assembly.
+
 ## Scenario Summary
 
 | Scenario | Pre-turn compiled | Turn-time rendered | Dynamic data | Deterministic branch? | Main regression risk |

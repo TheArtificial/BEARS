@@ -3069,35 +3069,36 @@ fn adapter_capabilities_context_with_client_mcp(has_client_mcp_tools: bool) -> V
         "built_at_utc": env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
         "api_contract": adapter_contract_context(),
         "direct_tools": {
-            "fs_read_text_file": { "supported": true, "version": 1 },
-            "fs_list_directory": { "supported": true, "version": 1 },
-            "fs_find_paths": { "supported": true, "version": 1 },
-            "fs_search_files": { "supported": true, "version": 1 },
-            "fs_stat": { "supported": true, "version": 1 },
-            "git_status": { "supported": true, "version": 1 },
-            "git_diff": { "supported": true, "version": 1 },
-            "git_log": { "supported": true, "version": 1 },
-            "git_show": { "supported": true, "version": 1 },
-            "git_add": { "supported": true, "version": 1 },
-            "git_restore": { "supported": true, "version": 1 },
-            "git_commit": { "supported": true, "version": 1 },
-            "git_stash": { "supported": true, "version": 1 },
-            "run_command": { "supported": true, "version": 1 },
-            "process_run": { "supported": true, "version": 1 },
-            "terminal_run_command": { "supported": true, "version": 1 },
-            "bear_environment": { "supported": true, "version": 1 },
-            "chrome_open": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
-            "chrome_snapshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
-            "chrome_console_messages": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
-            "chrome_network_requests": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
-            "chrome_screenshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
-            "fs_edit_file": { "supported": true, "version": 1 },
-            "fs_create_text_file": { "supported": true, "version": 1 },
-            "fs_create_directory": { "supported": true, "version": 1 },
-            "fs_move_path": { "supported": true, "version": 1 },
-            "fs_copy_path": { "supported": true, "version": 1 },
-            "fs_apply_patch": { "supported": true, "version": 1 },
-            "fs_delete_path": { "supported": true, "version": 1 }
+            "fs_read_text_file": direct_tool_descriptor(true, "Read a text file from the workspace.", &["cat", "head", "tail", "sed -n"]),
+            "fs_list_directory": direct_tool_descriptor(true, "List files and directories under a workspace path.", &["ls"]),
+            "fs_find_paths": direct_tool_descriptor(true, "Find workspace paths by glob pattern.", &["find"]),
+            "fs_search_files": direct_tool_descriptor(true, "Search workspace files by text query or pattern. Prefer this over shell search commands for repo text search.", &["rg", "grep"]),
+            "fs_stat": direct_tool_descriptor(true, "Inspect a workspace path's type, size, and metadata.", &["stat"]),
+            "git_status": direct_tool_descriptor(true, "Show repository status.", &["git status"]),
+            "git_diff": direct_tool_descriptor(true, "Show repository diff.", &["git diff"]),
+            "git_log": direct_tool_descriptor(true, "Show repository history.", &["git log"]),
+            "git_show": direct_tool_descriptor(true, "Show a git object or revision.", &["git show"]),
+            "git_add": direct_tool_descriptor(true, "Stage tracked changes in a repository.", &["git add"]),
+            "git_restore": direct_tool_descriptor(true, "Restore files in a repository.", &["git restore"]),
+            "git_commit": direct_tool_descriptor(true, "Create a git commit.", &["git commit"]),
+            "git_stash": direct_tool_descriptor(true, "Stash repository changes.", &["git stash"]),
+            "run_command": direct_tool_descriptor(true, "Run a local command when no dedicated filesystem or git tool clearly fits.", &[]),
+            "process_run": direct_tool_descriptor(true, "Run a short, bounded local command and capture its result.", &[]),
+            "terminal_run_command": direct_tool_descriptor(true, "Run a local terminal command with live output for interactive or long-running work.", &[]),
+            "bear_environment": direct_tool_descriptor(true, "Inspect BEARS adapter and environment diagnostics.", &[]),
+            "chrome_open": direct_tool_descriptor(chrome_supported, "Open a URL in Chrome.", &[]),
+            "chrome_snapshot": direct_tool_descriptor(chrome_supported, "Capture a Chrome page snapshot.", &[]),
+            "chrome_console_messages": direct_tool_descriptor(chrome_supported, "Read Chrome console messages.", &[]),
+            "chrome_network_requests": direct_tool_descriptor(chrome_supported, "Read Chrome network requests.", &[]),
+            "chrome_screenshot": direct_tool_descriptor(chrome_supported, "Capture a Chrome screenshot.", &[]),
+            "fs_edit_file": direct_tool_descriptor(true, "Edit a workspace file directly.", &[]),
+            "fs_replace_text": direct_tool_descriptor(true, "Replace exact text in a workspace file. Prefer this over `sed` when the edit is a targeted replacement.", &["sed"]),
+            "fs_create_text_file": direct_tool_descriptor(true, "Create a new workspace text file.", &[]),
+            "fs_create_directory": direct_tool_descriptor(true, "Create a new workspace directory.", &[]),
+            "fs_move_path": direct_tool_descriptor(true, "Move or rename a workspace path.", &[]),
+            "fs_copy_path": direct_tool_descriptor(true, "Copy a workspace path.", &[]),
+            "fs_apply_patch": direct_tool_descriptor(true, "Apply a patch to workspace files.", &[]),
+            "fs_delete_path": direct_tool_descriptor(true, "Delete a workspace path.", &[])
         }
     })
 }
@@ -3106,40 +3107,53 @@ fn direct_tools_context() -> Value {
     direct_tools_context_with_client_mcp(false)
 }
 
+fn direct_tool_descriptor(
+    supported: bool,
+    description: &'static str,
+    prefer_instead_of_shell: &[&'static str],
+) -> Value {
+    json!({
+        "supported": supported,
+        "description": description,
+        "prefer_instead_of_shell": prefer_instead_of_shell,
+    })
+}
+
 fn direct_tools_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
     let chrome_available = chrome_tools_available() && !has_client_mcp_tools;
     json!({
-        "fs_read_text_file": true,
-        "fs_list_directory": true,
-        "fs_find_paths": true,
-        "fs_search_files": true,
-        "fs_stat": true,
-        "git_status": true,
-        "git_diff": true,
-        "git_log": true,
-        "git_show": true,
-        "git_add": true,
-        "git_restore": true,
-        "git_commit": true,
-        "git_stash": true,
-        "run_command": true,
-        "process_run": true,
-        "terminal_run_command": true,
-        "bear_environment": true,
-        "chrome_open": chrome_available,
-        "chrome_snapshot": chrome_available,
-        "chrome_console_messages": chrome_available,
-        "chrome_network_requests": chrome_available,
-        "chrome_screenshot": chrome_available,
+        "fs_read_text_file": direct_tool_descriptor(true, "Read a text file from the workspace.", &["cat", "head", "tail", "sed -n"]),
+        "fs_list_directory": direct_tool_descriptor(true, "List files and directories under a workspace path.", &["ls"]),
+        "fs_find_paths": direct_tool_descriptor(true, "Find workspace paths by glob pattern.", &["find"]),
+        "fs_search_files": direct_tool_descriptor(true, "Search workspace files by text query or pattern. Prefer this over shell search commands for repo text search.", &["rg", "grep"]),
+        "fs_stat": direct_tool_descriptor(true, "Inspect a workspace path's type, size, and metadata.", &["stat"]),
+        "git_status": direct_tool_descriptor(true, "Show repository status.", &["git status"]),
+        "git_diff": direct_tool_descriptor(true, "Show repository diff.", &["git diff"]),
+        "git_log": direct_tool_descriptor(true, "Show repository history.", &["git log"]),
+        "git_show": direct_tool_descriptor(true, "Show a git object or revision.", &["git show"]),
+        "git_add": direct_tool_descriptor(true, "Stage tracked changes in a repository.", &["git add"]),
+        "git_restore": direct_tool_descriptor(true, "Restore files in a repository.", &["git restore"]),
+        "git_commit": direct_tool_descriptor(true, "Create a git commit.", &["git commit"]),
+        "git_stash": direct_tool_descriptor(true, "Stash repository changes.", &["git stash"]),
+        "run_command": direct_tool_descriptor(true, "Run a local command when no dedicated filesystem or git tool clearly fits.", &[]),
+        "process_run": direct_tool_descriptor(true, "Run a short, bounded local command and capture its result.", &[]),
+        "terminal_run_command": direct_tool_descriptor(true, "Run a local terminal command with live output for interactive or long-running work.", &[]),
+        "bear_environment": direct_tool_descriptor(true, "Inspect BEARS adapter and environment diagnostics.", &[]),
+        "chrome_open": direct_tool_descriptor(chrome_available, "Open a URL in Chrome.", &[]),
+        "chrome_snapshot": direct_tool_descriptor(chrome_available, "Capture a Chrome page snapshot.", &[]),
+        "chrome_console_messages": direct_tool_descriptor(chrome_available, "Read Chrome console messages.", &[]),
+        "chrome_network_requests": direct_tool_descriptor(chrome_available, "Read Chrome network requests.", &[]),
+        "chrome_screenshot": direct_tool_descriptor(chrome_available, "Capture a Chrome screenshot.", &[]),
         "client_mcp_tools_present": has_client_mcp_tools,
         "chrome_tools_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" },
-        "fs_edit_file": true,
-        "fs_create_text_file": true,
-        "fs_create_directory": true,
-        "fs_move_path": true,
-        "fs_copy_path": true,
-        "fs_apply_patch": true,
-        "fs_delete_path": true,
+        "fs_edit_file": direct_tool_descriptor(true, "Edit a workspace file directly.", &[]),
+        "fs_replace_text": direct_tool_descriptor(true, "Replace exact text in a workspace file. Prefer this over `sed` when the edit is a targeted replacement.", &["sed"]),
+        "fs_create_text_file": direct_tool_descriptor(true, "Create a new workspace text file.", &[]),
+        "fs_create_directory": direct_tool_descriptor(true, "Create a new workspace directory.", &[]),
+        "fs_move_path": direct_tool_descriptor(true, "Move or rename a workspace path.", &[]),
+        "fs_copy_path": direct_tool_descriptor(true, "Copy a workspace path.", &[]),
+        "fs_apply_patch": direct_tool_descriptor(true, "Apply a patch to workspace files.", &[]),
+        "fs_delete_path": direct_tool_descriptor(true, "Delete a workspace path.", &[]),
     })
 }
 
@@ -11248,7 +11262,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let direct = direct_tools_context_with_client_mcp(false);
         let map = direct.as_object().expect("direct tools object");
         for (tool, value) in map {
-            if !value.as_bool().unwrap_or(false)
+            if !value.get("supported").and_then(Value::as_bool).unwrap_or(false)
                 || tool.ends_with("_present")
                 || tool.ends_with("_reason")
             {
@@ -11258,6 +11272,25 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             assert_ne!(title, "Tool call", "{tool} should have a specific title");
             assert_ne!(title, "Unknown tool", "{tool} should have a specific title");
         }
+    }
+
+    #[test]
+    fn direct_tools_context_includes_search_and_replace_affordance_hints() {
+        let direct = direct_tools_context_with_client_mcp(false);
+        assert_eq!(direct["fs_search_files"]["prefer_instead_of_shell"], json!(["rg", "grep"]));
+        assert!(direct["fs_search_files"]["description"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Prefer this over shell search commands"));
+        assert_eq!(direct["fs_replace_text"]["prefer_instead_of_shell"], json!(["sed"]));
+    }
+
+    #[test]
+    fn adapter_capabilities_context_direct_tools_match_affordance_shape() {
+        let direct = adapter_capabilities_context_with_client_mcp(false)["direct_tools"].clone();
+        assert_eq!(direct["fs_search_files"]["prefer_instead_of_shell"], json!(["rg", "grep"]));
+        assert_eq!(direct["fs_replace_text"]["prefer_instead_of_shell"], json!(["sed"]));
+        assert!(direct["run_command"]["supported"].as_bool().unwrap_or(false));
     }
 
     #[test]

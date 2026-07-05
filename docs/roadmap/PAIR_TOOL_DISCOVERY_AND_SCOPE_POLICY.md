@@ -100,6 +100,8 @@ The redirect should be a **soft wall**:
 
 Near-term soft-wall coverage should include common shell fallbacks for existing file tools, especially `rg`/`grep` for content search and clearly mappable `sed` replacements for structured text edits.
 
+That policy should be paired with stronger tool discoverability in the advertised direct-tool context so models learn the dedicated search/edit affordances instead of rediscovering them through failed command attempts.
+
 This keeps the model-facing surface simple while preserving transparency and an escape hatch.
 
 ### Level 0: Hidden Den/runtime mechanisms
@@ -222,6 +224,12 @@ Every model-facing tool descriptor should answer:
 7. Does it create durable memory, active work state, transient observations, or external effects?
 
 Descriptors should prefer compact, structured wording. Avoid repeating the whole role prompt in every tool.
+
+Temporary exception for ACP adapter-local direct tools:
+
+- Until compiled context owns canonical affordance hints for armature-local tools, the adapter may attach short model-facing guidance strings directly to `direct_tools` descriptor objects.
+- This exception is limited to compact discoverability hints such as "prefer `fs_search_files` over `rg`/`grep`" or "prefer `fs_replace_text` over targeted `sed` replacements".
+- Do not use this exception for broader behavioral prose, workflow policy, or stance guidance.
 
 Every user-visible tool must also provide descriptor-owned display metadata. Do not add scattered adapter/client `match` arms, hardcoded allowlists, or one-off UI labels when a descriptor resolver can own the messaging. The same logical tool should render consistently whether Den executes it directly or the ACP adapter executes it locally.
 

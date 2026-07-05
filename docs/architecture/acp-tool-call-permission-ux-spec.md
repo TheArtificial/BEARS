@@ -104,6 +104,8 @@ Initial soft-wall examples:
 - `rg` / `grep` should redirect to `fs_search_files` for workspace text search.
 - `sed` should redirect to a dedicated edit tool only when the requested operation is clearly representable as a structured text edit.
 
+To reduce reliance on redirects alone, model-facing direct-tool descriptors should also carry concise intent hints, including preferred use instead of common shell fallbacks such as `rg`, `grep`, and targeted `sed` replacements.
+
 ## Initial tool mapping targets
 
 This table defines the intended near-term mapping for common current tools.

@@ -15,6 +15,12 @@ It intentionally excludes ordinary validation errors, UI labels, database SQL, t
 - Prompt text should not be hardcoded into source code. It should live in repository context fragments, or, when runtime-configured, in the database with explicit defaults alongside the fragment/configuration model.
 - Prompts should not ask models to make choices when Den already has the state needed to choose. Use Rust or MiniJinja to render the applicable instruction before inference.
 
+Current narrow exception:
+
+- ACP adapter direct-tool descriptor objects currently carry short model-facing affordance hints for armature-local tools, such as preferring `fs_search_files` over `rg`/`grep` and `fs_replace_text` over targeted `sed` replacements.
+- Keep this exception narrow and descriptor-scoped. It exists to improve tool discoverability in the absence of a canonical compiled-context home for adapter-local tool hints.
+- Do not generalize this into freeform adapter-side prompt prose.
+
 ## High-priority migration candidates
 
 ### ACP direct tool/runtime prompt context
