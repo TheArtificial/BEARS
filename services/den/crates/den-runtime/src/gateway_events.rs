@@ -467,6 +467,19 @@ fn native_provider_tool_request_event_with_args(
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let display = den_tool_display_json_for_provider(tool_name, &args)
+        .unwrap_or_else(|| client_tool_display_for_provider(tool_name, &args));
+    let title = display
+        .get("title")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            client_tool
+                .map(|tool| tool.descriptor().title.to_string())
+                .unwrap_or_else(|| tool_name.to_string())
+        });
     let (result_tx, result_rx) = oneshot::channel();
     Some(GatewayEvent::ToolRequest {
         request_id,
@@ -474,9 +487,7 @@ fn native_provider_tool_request_event_with_args(
         tool_call_id,
         approval_request_id: provider_approval_request_id,
         tool_name: tool_name.to_string(),
-        title: client_tool
-            .map(|tool| tool.descriptor().title.to_string())
-            .unwrap_or_else(|| tool_name.to_string()),
+        title,
         kind: if unsupported_tool_detail.is_some() {
             "unsupported".to_string()
         } else {
@@ -1084,6 +1095,77 @@ mod tests {
                 "arguments": args.to_string(),
             }
         })
+    }
+
+    fn tool_card_payload_from_mock_provider(
+        name: &str,
+        args: serde_json::Value,
+    ) -> serde_json::Value {
+        let event = tool_call_event(name, args);
+        let mapped = map_provider_stream_event_to_gateway_event(&event).expect("mapped event");
+        let bytes = gateway_event_to_adapter_sse(mapped);
+        let text = std::str::from_utf8(bytes.as_ref()).expect("valid utf8 sse");
+        let json = text.trim().strip_prefix("data: ").expect("sse data frame");
+        serde_json::from_str(json).expect("json payload")
+    }
+
+    #[test]
+    fn mock_provider_to_client_card_includes_conversation_title_target() {
+        let payload = tool_card_payload_from_mock_provider(
+            "set_conversation_title",
+            serde_json::json!({ "title": "Real Title Value" }),
+        );
+
+        assert_eq!(payload["type"], "tool_request");
+        let title = payload["title"].as_str().expect("title string");
+        assert!(title.contains("Real Title Value"), "{payload}");
+        assert!(!title.ends_with(": conversation"), "{payload}");
+        assert_eq!(payload["display"]["subtitle"], "Real Title Value");
+    }
+
+    #[test]
+    fn mock_provider_to_client_card_includes_run_command_args() {
+        let payload = tool_card_payload_from_mock_provider(
+            "run_command",
+            serde_json::json!({
+                "command": "git",
+                "args": ["status", "--short"],
+                "cwd": "/workspace/services/den"
+            }),
+        );
+
+        assert_eq!(payload["type"], "tool_request");
+        let title = payload["title"].as_str().expect("title string");
+        assert!(title.contains("git status --short"), "{payload}");
+        assert_ne!(title, "Run command", "{payload}");
+        assert_eq!(
+            payload["display"]["subtitle"],
+            "git status --short → …/workspace/services/den"
+        );
+    }
+
+    #[test]
+    fn mock_provider_to_client_card_includes_create_job_goal_without_branding() {
+        let payload = tool_card_payload_from_mock_provider(
+            "create_job",
+            serde_json::json!({
+                "goal": "Fix ACP tool-card display summaries",
+                "tasks": []
+            }),
+        );
+
+        assert_eq!(payload["type"], "tool_request");
+        let title = payload["title"].as_str().expect("title string");
+        assert!(
+            title.contains("Fix ACP tool-card display summaries"),
+            "{payload}"
+        );
+        assert!(title.contains("job"), "{payload}");
+        assert!(!title.contains("Docket"), "{payload}");
+        assert_eq!(
+            payload["display"]["subtitle"],
+            "Fix ACP tool-card display summaries"
+        );
     }
 
     #[test]
