@@ -54,7 +54,7 @@ fn spawn_bifrost_management_mock(mode: LoginMode) -> (String, Arc<Mutex<Vec<Requ
 
             match (mode, path.as_str()) {
                 (LoginMode::BearerToken, "/api/session/login") => {
-                    write_response(&mut stream, 200, &[], r#"{"token":"bearer-token-123"}"#)
+                    write_response(&mut stream, 200, &[], r#"{"token":"bearer-token-123"}"#);
                 }
                 (LoginMode::CookieSession, "/api/session/login") => write_response(
                     &mut stream,

@@ -102,8 +102,8 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
                     work_surface_ref,
                     kind,
                     visibility,
-                    salience,
                     content_text,
+                    salience,
                     entity_ids,
                 })
             },

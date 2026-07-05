@@ -18,8 +18,8 @@ fn cipher(secret_key: &str) -> Result<Aes256Gcm, DenError> {
         ));
     }
     let digest = Sha256::digest(secret_key.as_bytes());
-    Ok(Aes256Gcm::new_from_slice(&digest)
-        .map_err(|err| DenError::System(format!("initialize Den secret cipher: {err}")))?)
+    Aes256Gcm::new_from_slice(&digest)
+        .map_err(|err| DenError::System(format!("initialize Den secret cipher: {err}")))
 }
 
 pub fn encrypt_secret(plaintext: &str, secret_key: &str) -> Result<String, DenError> {

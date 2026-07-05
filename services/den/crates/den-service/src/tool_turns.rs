@@ -12,7 +12,7 @@ use uuid::Uuid;
 use den_core::DenError;
 use den_protocol::{RuntimeApprovalDecision, RuntimeContinuation, RuntimeToolResultStatus};
 
-const ACTIVE_TURN_TTL: Duration = Duration::from_secs(10 * 60);
+const ACTIVE_TURN_TTL: Duration = Duration::from_mins(10);
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ToolResultRequest {
@@ -32,7 +32,7 @@ pub struct ToolResultRequest {
     pub adapter_contract: Option<serde_json::Value>,
 }
 
-const SETTLED_RESULT_TTL: Duration = Duration::from_secs(5 * 60);
+const SETTLED_RESULT_TTL: Duration = Duration::from_mins(5);
 const SETTLED_RESULT_MAX_ENTRIES: usize = 256;
 
 #[derive(Debug, Clone)]
@@ -466,19 +466,13 @@ impl ToolTurnCoordinator {
                 tool_call_id: tool_call_id.to_string(),
             });
         }
-        if body
-            .tool_call_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .is_none()
-        {
+        if body.tool_call_id.as_deref().is_none_or(str::is_empty) {
             body.tool_call_id = Some(turn.tool_call_id.clone());
         }
         if body
             .approval_request_id
             .as_deref()
-            .filter(|s| !s.is_empty())
-            .is_none()
+            .is_none_or(str::is_empty)
         {
             body.approval_request_id
                 .clone_from(&turn.approval_request_id);

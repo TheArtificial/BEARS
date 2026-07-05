@@ -38,9 +38,14 @@ Idiomatic/clippy fixes:
 - [x] `den-llm/model_registry.rs` — `unwrap_or(fn call)` → `unwrap_or_else`; `iter().any()` → `contains`.
 - [x] `den-memory/import.rs:480` — `iter().any()` → `contains`.
 
+### Batch 2 — den-service clippy green — DONE
+- [x] `den-service` — all lib + test clippy errors fixed (raw-string hashes, `is_none_or`,
+  `unwrap_or_else`, `from_mins`, `String::new()`, struct field order, needless `Ok(?)`).
+  Verified `cargo clippy -p den-service --all-targets -- -D warnings` exits 0.
+
 ### Remaining clippy-gate work (downstream crates, cascading as upstream goes green)
-- [ ] `den-service` — ~21 lib + ~26 lib-test clippy errors (manual_string_new, etc.).
-- [ ] `den-runtime`, `den-http`, `den-oauth`, `den-api`, `den-web`, `den-bearwire`, root `den` bin — TBD once dependents build.
+- [ ] `den-runtime` — next (depends on den-service).
+- [ ] `den-http`, `den-oauth`, `den-api`, `den-web`, `den-bearwire`, root `den` bin — after den-runtime.
 
 ---
 
