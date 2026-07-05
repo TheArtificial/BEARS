@@ -86,6 +86,11 @@ fn normalized_operational_outcome(
     run_id: &str,
     context: Option<&serde_json::Value>,
 ) -> (String, serde_json::Value) {
+    let autonomous_resume = context
+        .and_then(|value| value.get("autonomous_resume_obligation"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let (kind, retryable, subsystem, summary) = match reason {
         "continuation_stream_error" => (
             "provider_stream_error",
@@ -118,6 +123,7 @@ fn normalized_operational_outcome(
             "Operational note from Den: the previous turn ended with an operational failure before final answer delivery. Do not assume the requested work completed; continue from the latest successful state.",
         ),
     };
+    let summary = autonomous_resume.unwrap_or(summary);
     let mut content = json!({
             "source": "den.bearwire",
             "event": "operational_outcome",

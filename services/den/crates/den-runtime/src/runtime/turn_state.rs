@@ -2,11 +2,32 @@ use serde_json::{Value, json};
 
 use den_core::client_tools::ResolvedSessionPolicy;
 use crate::plan_mode;
-use den_docket::WorkPlanProjection;
+use den_docket::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection};
 
 pub const TURN_STATE_SCHEMA: &str = "bears.turn_state/v1";
 pub const TURN_STATE_VERSION: u32 = 1;
 pub const TURN_STATE_AUTHORITY: &str = "current_turn_capabilities";
+
+const AUTONOMOUS_CONTINUATION_POLICY: &str = "continue_until_complete_or_blocked";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutonomousFinalResponseKind {
+    CompletionFinal,
+    BlockedFinal,
+    ProgressReport,
+    ClarificationRequest,
+    UnsafeActionPermissionRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutonomousExecutionGate {
+    pub is_active_autonomous_task: bool,
+    pub has_incomplete_unblocked_items: bool,
+    pub acceptance_criteria_met: bool,
+    pub has_hard_blocker: bool,
+    pub may_stop: bool,
+    pub next_incomplete_task_title: Option<String>,
+}
 
 pub fn workflow_state_label(policy: &ResolvedSessionPolicy) -> &'static str {
     match policy.plan_mode_state.as_deref() {
@@ -44,6 +65,7 @@ pub fn turn_state_from_sources(
 ) -> Value {
     let workplan = workplan_domain_json(policy, workplan_row);
     let activity = activity_domain_json(activity_plan);
+    let autonomous_execution = autonomous_execution_domain_json(activity_plan);
     json!({
         "schema": TURN_STATE_SCHEMA,
         "state_version": TURN_STATE_VERSION,
@@ -56,9 +78,106 @@ pub fn turn_state_from_sources(
         },
         "workplan": workplan,
         "activity": activity,
+        "autonomous_execution": autonomous_execution,
         "memory": memory_domain_json(),
         "execution": execution_domain_json(policy),
     })
+}
+
+pub fn autonomous_execution_gate_for_plan(
+    plan: Option<&WorkPlanProjection>,
+    final_response_kind: AutonomousFinalResponseKind,
+) -> AutonomousExecutionGate {
+    let Some(plan) = plan.filter(|plan| is_autonomous_implementation_plan(plan)) else {
+        return AutonomousExecutionGate {
+            is_active_autonomous_task: false,
+            has_incomplete_unblocked_items: false,
+            acceptance_criteria_met: false,
+            has_hard_blocker: false,
+            may_stop: true,
+            next_incomplete_task_title: None,
+        };
+    };
+
+    let items = &plan.items;
+    let acceptance_criteria_met = acceptance_criteria_met(plan);
+    let has_hard_blocker = items.iter().any(|item| item.status == WorkPlanItemStatus::Blocked)
+        || matches!(plan.status.as_str(), "blocked");
+    let next_incomplete_task_title = next_incomplete_unblocked_item(items).map(|item| item.title.clone());
+    let has_incomplete_unblocked_items = next_incomplete_task_title.is_some();
+    let may_stop = if acceptance_criteria_met {
+        final_response_kind == AutonomousFinalResponseKind::CompletionFinal
+    } else if has_hard_blocker {
+        matches!(
+            final_response_kind,
+            AutonomousFinalResponseKind::BlockedFinal
+                | AutonomousFinalResponseKind::UnsafeActionPermissionRequest
+        )
+    } else {
+        false
+    };
+
+    AutonomousExecutionGate {
+        is_active_autonomous_task: true,
+        has_incomplete_unblocked_items,
+        acceptance_criteria_met,
+        has_hard_blocker,
+        may_stop,
+        next_incomplete_task_title,
+    }
+}
+
+pub fn classify_autonomous_final_response(text: &str) -> AutonomousFinalResponseKind {
+    let trimmed = text.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("need approval")
+        || lower.contains("requires approval")
+        || lower.contains("permission")
+    {
+        return AutonomousFinalResponseKind::UnsafeActionPermissionRequest;
+    }
+    if lower.contains("blocked") || lower.contains("cannot continue") {
+        return AutonomousFinalResponseKind::BlockedFinal;
+    }
+    if lower.contains("what i changed")
+        || lower.contains("remaining work")
+        || lower.contains("next useful steps")
+        || lower.contains("next i would")
+        || lower.contains("i can continue if")
+    {
+        // heuristic progress-report detection only catches common partial-summary shapes;
+        // replace with structured assistant turn intent once final responses are explicitly typed.
+        return AutonomousFinalResponseKind::ProgressReport;
+    }
+    if lower.ends_with('?') {
+        return AutonomousFinalResponseKind::ClarificationRequest;
+    }
+    AutonomousFinalResponseKind::CompletionFinal
+}
+
+pub fn autonomous_resume_obligation_text(plan: &WorkPlanProjection) -> Option<String> {
+    if !is_autonomous_implementation_plan(plan) {
+        return None;
+    }
+    let items = plan
+        .items
+        .iter()
+        .map(|item| {
+            let marker = match item.status {
+                WorkPlanItemStatus::Completed => "[x]",
+                _ => "[ ]",
+            };
+            format!("- {marker} {}", item.title)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let next = next_incomplete_unblocked_item(&plan.items)
+        .map(|item| item.title.as_str())
+        .unwrap_or("resolve blocker before proceeding");
+    Some(format!(
+        "Previous assistant turn ended before completing an autonomous implementation task.\n\nActive goal:\n{}\n\nContinuation policy:\nContinue the next incomplete, unblocked task. Do not provide a progress-only final answer unless the work is complete or blocked.\n\nCurrent task state:\n{}\n\nRequired action:\nResume execution from the next incomplete item: {}.",
+        plan.title, items, next
+    ))
 }
 
 fn workplan_domain_json(
@@ -162,6 +281,70 @@ fn activity_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
     }
 }
 
+fn autonomous_execution_domain_json(plan: Option<&WorkPlanProjection>) -> Value {
+    let Some(plan) = plan.filter(|plan| is_autonomous_implementation_plan(plan)) else {
+        return json!({
+            "mode": Value::Null,
+            "active": false,
+        });
+    };
+    let gate = autonomous_execution_gate_for_plan(Some(plan), AutonomousFinalResponseKind::ProgressReport);
+    let last_verified_completed_step = plan
+        .items
+        .iter()
+        .rev()
+        .find(|item| item.status == WorkPlanItemStatus::Completed)
+        .map(|item| Value::from(item.title.clone()))
+        .unwrap_or(Value::Null);
+    json!({
+        "mode": "autonomous_implementation",
+        "active": true,
+        "goal": plan.title,
+        "acceptance_criteria": plan.summary,
+        "continuation_policy": AUTONOMOUS_CONTINUATION_POLICY,
+        "stop_conditions": [
+            "acceptance_criteria_met",
+            "hard_blocker",
+            "unsafe_or_external_action_required"
+        ],
+        "tasks": plan.items.iter().map(autonomous_task_json).collect::<Vec<_>>(),
+        "current_in_progress_item": plan.current_item.as_ref().map(|item| item.title.clone()),
+        "known_blockers": plan.items.iter().filter(|item| item.status == WorkPlanItemStatus::Blocked).filter_map(|item| item.blocked_reason.clone()).collect::<Vec<_>>(),
+        "last_verified_completed_step": last_verified_completed_step,
+        "has_incomplete_unblocked_items": gate.has_incomplete_unblocked_items,
+        "next_incomplete_task_title": gate.next_incomplete_task_title,
+    })
+}
+
+fn autonomous_task_json(item: &WorkPlanItem) -> Value {
+    json!({
+        "title": item.title,
+        "status": item.status.as_str(),
+        "evidence": item.summary,
+        "blocked_reason": item.blocked_reason,
+    })
+}
+
+fn is_autonomous_implementation_plan(plan: &WorkPlanProjection) -> bool {
+    matches!(plan.owner_profile.as_str(), "pair")
+        && matches!(plan.status.as_str(), "active" | "blocked" | "completed" | "cancelled")
+}
+
+fn acceptance_criteria_met(plan: &WorkPlanProjection) -> bool {
+    !plan.items.is_empty()
+        && plan
+            .items
+            .iter()
+            .all(|item| matches!(item.status, WorkPlanItemStatus::Completed | WorkPlanItemStatus::Cancelled))
+        && matches!(plan.status.as_str(), "completed" | "cancelled")
+}
+
+fn next_incomplete_unblocked_item(items: &[WorkPlanItem]) -> Option<&WorkPlanItem> {
+    items.iter().find(|item| {
+        matches!(item.status, WorkPlanItemStatus::Pending | WorkPlanItemStatus::InProgress)
+    })
+}
+
 fn activity_item_json(item: &den_docket::WorkPlanItem) -> Value {
     json!({
         "id": item.id,
@@ -229,5 +412,110 @@ fn summarize_text(body: &str, max_chars: usize) -> String {
         let mut summary = trimmed.chars().take(max_chars).collect::<String>();
         summary.push('…');
         summary
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use den_docket::WorkPlanProjection;
+    use time::OffsetDateTime;
+    use uuid::Uuid;
+
+    fn item(title: &str, status: WorkPlanItemStatus) -> WorkPlanItem {
+        WorkPlanItem {
+            id: title.to_string(),
+            title: title.to_string(),
+            summary: Some(format!("evidence: {title}")),
+            status,
+            blocked_reason: (status == WorkPlanItemStatus::Blocked).then(|| "waiting".to_string()),
+            source_refs: Vec::new(),
+        }
+    }
+
+    fn plan(status: &str, items: Vec<WorkPlanItem>) -> WorkPlanProjection {
+        WorkPlanProjection {
+            id: Uuid::nil(),
+            bear_id: Uuid::nil(),
+            title: "Complete Docket relational work management".to_string(),
+            summary: "Acceptance criteria".to_string(),
+            owner_profile: "pair".to_string(),
+            visibility: "bear_visible".to_string(),
+            status: status.to_string(),
+            version: 1,
+            current_item: items
+                .iter()
+                .find(|item| item.status == WorkPlanItemStatus::InProgress)
+                .cloned(),
+            items,
+            source_conversation_id: None,
+            source_client_session_id: None,
+            handoff_intent_path: None,
+            handoff_task_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn autonomous_resume_obligation_lists_next_incomplete_item() {
+        let plan = plan(
+            "active",
+            vec![
+                item("Inventory schema and Docket API coupling", WorkPlanItemStatus::Completed),
+                item("Add lifecycle/dispatcher tests", WorkPlanItemStatus::Pending),
+            ],
+        );
+        let text = autonomous_resume_obligation_text(&plan).expect("autonomous reminder");
+        assert!(text.contains("Add lifecycle/dispatcher tests"));
+        assert!(text.contains("Do not provide a progress-only final answer"));
+    }
+
+    #[test]
+    fn autonomous_gate_blocks_progress_report_while_work_remains() {
+        let plan = plan(
+            "active",
+            vec![
+                item("done", WorkPlanItemStatus::Completed),
+                item("remaining", WorkPlanItemStatus::InProgress),
+            ],
+        );
+        let gate = autonomous_execution_gate_for_plan(
+            Some(&plan),
+            classify_autonomous_final_response(
+                "What I changed: added one test. Remaining work: gate final answers.",
+            ),
+        );
+        assert!(gate.is_active_autonomous_task);
+        assert!(gate.has_incomplete_unblocked_items);
+        assert!(!gate.may_stop);
+    }
+
+    #[test]
+    fn autonomous_gate_allows_completion_only_when_plan_complete() {
+        let plan = plan(
+            "completed",
+            vec![item("done", WorkPlanItemStatus::Completed)],
+        );
+        let gate = autonomous_execution_gate_for_plan(
+            Some(&plan),
+            AutonomousFinalResponseKind::CompletionFinal,
+        );
+        assert!(gate.acceptance_criteria_met);
+        assert!(gate.may_stop);
+    }
+
+    #[test]
+    fn autonomous_gate_allows_blocked_final_when_no_safe_path_remains() {
+        let plan = plan(
+            "blocked",
+            vec![item("blocked", WorkPlanItemStatus::Blocked)],
+        );
+        let gate = autonomous_execution_gate_for_plan(
+            Some(&plan),
+            AutonomousFinalResponseKind::BlockedFinal,
+        );
+        assert!(gate.has_hard_blocker);
+        assert!(gate.may_stop);
     }
 }
