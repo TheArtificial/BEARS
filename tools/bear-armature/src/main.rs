@@ -9411,7 +9411,7 @@ fn tool_status_from_str(status: &str) -> ToolCallStatus {
 fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay) -> String {
     if matches!(
         tool_name,
-        "run_command" | "process_run" | "terminal_run_command"
+        "set_conversation_title" | "run_command" | "process_run" | "terminal_run_command"
     ) {
         return event
             .map(|event| tool_call_title(tool_name, event))
@@ -9491,7 +9491,7 @@ async fn send_tool_call_update(
         if let Some(locations) = tool_locations_from_event(tool_name, event) {
             tool_call = tool_call.locations(locations);
         }
-        if let Some(args) = event.get("args") {
+        if let Some(args) = command_args_from_event(event) {
             tool_call = tool_call.raw_input(Some(args.clone()));
         }
     }
@@ -11353,8 +11353,12 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
 
     #[test]
     fn run_command_defaults_to_terminal_when_command_is_present() {
-        assert!(run_command_prefers_terminal(&json!({ "command": "cargo", "args": ["check"] })));
-        assert!(run_command_prefers_terminal(&json!({ "command": "docker", "args": ["build", "."] })));
+        assert!(run_command_prefers_terminal(
+            &json!({ "command": "cargo", "args": ["check"] })
+        ));
+        assert!(run_command_prefers_terminal(
+            &json!({ "command": "docker", "args": ["build", "."] })
+        ));
         assert!(run_command_prefers_terminal(&json!({ "command": "pwd" })));
         assert!(!run_command_prefers_terminal(&json!({ "args": ["check"] })));
     }
@@ -11475,6 +11479,25 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                 &json!({ "data": { "tool_call": { "arguments": { "title": "Nested ACP card title" } } } })
             ),
             "Set conversation title: Nested ACP card title"
+        );
+        let stale_display_event = json!({
+            "display": { "title": "Set conversation title: conversation" },
+            "arguments": { "title": "Actual ACP card title" }
+        });
+        let display = ToolDisplay::from_event("set_conversation_title", &stale_display_event);
+        assert_eq!(
+            tool_card_title(
+                "set_conversation_title",
+                Some(&stale_display_event),
+                &display
+            ),
+            "Set conversation title: Actual ACP card title"
+        );
+        assert_eq!(
+            command_args_from_event(&stale_display_event)
+                .and_then(|args| args.get("title"))
+                .and_then(Value::as_str),
+            Some("Actual ACP card title")
         );
         assert_eq!(
             tool_call_title(
