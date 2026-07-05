@@ -83,6 +83,9 @@ use tower_service::Service;
 use tools::adapter_env::{
     collect_bear_environment, fetch_den_runtime_state, handle_bear_environment,
 };
+use tools::command_policy::{
+    command_workspace_scope_label, process_command_preferred, terminal_command_allowed,
+};
 use tools::fs::{
     handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
     handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
@@ -92,9 +95,6 @@ use tools::fs::{
 use tools::git::{
     handle_git_add, handle_git_commit, handle_git_diff, handle_git_log, handle_git_restore,
     handle_git_show, handle_git_stash, handle_git_status,
-};
-use tools::command_policy::{
-    command_workspace_scope_label, process_command_preferred, terminal_command_allowed,
 };
 use tools::mcp::{
     host_browser_bridge_config_from_env, host_browser_bridge_env_summary, parse_acp_mcp_servers,
@@ -7416,6 +7416,14 @@ fn command_scope_label_from_value(value: &Value) -> Option<String> {
     Some(command_workspace_scope_label(&full).unwrap_or(full))
 }
 
+fn command_args_from_event(event: &Value) -> Option<&Value> {
+    event
+        .get("args")
+        .or_else(|| event.get("arguments"))
+        .or_else(|| event.pointer("/data/arguments"))
+        .or_else(|| event.pointer("/data/tool_call/arguments"))
+}
+
 fn compact_tool_raw_output(value: Value) -> Value {
     if value.to_string().chars().count() <= 24 * 1024 {
         return value;
@@ -7449,7 +7457,10 @@ pub(crate) fn tool_completion_preview(tool_name: &str, value: &Value) -> String 
             return format!("Conversation title set to {}.", markdown_inline_code(title));
         }
     }
-    if matches!(tool_name, "run_command" | "process_run" | "terminal_run_command") {
+    if matches!(
+        tool_name,
+        "run_command" | "process_run" | "terminal_run_command"
+    ) {
         let command = command_line_from_value(value).unwrap_or_else(|| "command".to_string());
         let cwd = value
             .get("cwd")
@@ -7483,7 +7494,10 @@ pub(crate) fn tool_completion_preview(tool_name: &str, value: &Value) -> String 
         return text;
     }
 
-    if matches!(tool_name, "request_task_list_handoff" | "request_work_handoff") {
+    if matches!(
+        tool_name,
+        "request_task_list_handoff" | "request_work_handoff"
+    ) {
         return String::new();
     }
     if matches!(tool_name, "update_task_list" | "update_plan") {
@@ -8234,7 +8248,10 @@ async fn handle_permission_request_event(
         body
     } else if matches!(
         tool_name,
-        "chrome_snapshot" | "chrome_console_messages" | "chrome_network_requests" | "chrome_screenshot"
+        "chrome_snapshot"
+            | "chrome_console_messages"
+            | "chrome_network_requests"
+            | "chrome_screenshot"
     ) {
         let mut body = format!("{reason}\n\nAction: {}", display.permission_operation);
         if let Some(url) = url {
@@ -8263,8 +8280,7 @@ async fn handle_permission_request_event(
     } else if let Some(path) = path {
         format!(
             "{reason}\n\nAction: {}\nPath: {}",
-            display.permission_operation,
-            path
+            display.permission_operation, path
         )
     } else {
         format!(
@@ -8285,7 +8301,10 @@ async fn handle_permission_request_event(
             .unwrap_or_else(|| display.title.clone())
     } else if matches!(
         tool_name,
-        "chrome_snapshot" | "chrome_console_messages" | "chrome_network_requests" | "chrome_screenshot"
+        "chrome_snapshot"
+            | "chrome_console_messages"
+            | "chrome_network_requests"
+            | "chrome_screenshot"
     ) {
         if let Some(url) = url {
             format!("{}: {}", display.title, truncate_title(url))
@@ -9118,15 +9137,17 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
             .unwrap_or("conversation");
         return format!("Set conversation title: {}", truncate_title(title));
     }
-    if matches!(tool_name, "run_command" | "process_run" | "terminal_run_command") {
-        let command = event
-            .get("args")
+    if matches!(
+        tool_name,
+        "run_command" | "process_run" | "terminal_run_command"
+    ) {
+        let command_args = command_args_from_event(event);
+        let command = command_args
             .and_then(|args| args.get("command"))
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim();
-        let args = event
-            .get("args")
+        let args = command_args
             .and_then(|args| args.get("args"))
             .and_then(Value::as_array)
             .map(|items| {
@@ -9144,8 +9165,7 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
                 format!(" {}", args.join(" "))
             };
             let rendered = if tool_name == "run_command" {
-                event
-                    .get("args")
+                command_args
                     .and_then(command_scope_label_from_value)
                     .unwrap_or_else(|| format!("{command}{suffix}"))
             } else {
@@ -9396,7 +9416,10 @@ fn tool_status_from_str(status: &str) -> ToolCallStatus {
 }
 
 fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay) -> String {
-    if matches!(tool_name, "run_command" | "process_run" | "terminal_run_command") {
+    if matches!(
+        tool_name,
+        "run_command" | "process_run" | "terminal_run_command"
+    ) {
         return event
             .map(|event| tool_call_title(tool_name, event))
             .unwrap_or_else(|| display.title.clone());
@@ -11361,7 +11384,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let direct = direct_tools_context_with_client_mcp(false);
         let map = direct.as_object().expect("direct tools object");
         for (tool, value) in map {
-            if !value.get("supported").and_then(Value::as_bool).unwrap_or(false)
+            if !value
+                .get("supported")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
                 || tool.ends_with("_present")
                 || tool.ends_with("_reason")
             {
@@ -11376,20 +11402,34 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     #[test]
     fn direct_tools_context_includes_search_and_replace_affordance_hints() {
         let direct = direct_tools_context_with_client_mcp(false);
-        assert_eq!(direct["fs_search_files"]["prefer_instead_of_shell"], json!(["rg", "grep"]));
+        assert_eq!(
+            direct["fs_search_files"]["prefer_instead_of_shell"],
+            json!(["rg", "grep"])
+        );
         assert!(direct["fs_search_files"]["description"]
             .as_str()
             .unwrap_or("")
             .contains("Prefer this over shell search commands"));
-        assert_eq!(direct["fs_replace_text"]["prefer_instead_of_shell"], json!(["sed"]));
+        assert_eq!(
+            direct["fs_replace_text"]["prefer_instead_of_shell"],
+            json!(["sed"])
+        );
     }
 
     #[test]
     fn adapter_capabilities_context_direct_tools_match_affordance_shape() {
         let direct = adapter_capabilities_context_with_client_mcp(false)["direct_tools"].clone();
-        assert_eq!(direct["fs_search_files"]["prefer_instead_of_shell"], json!(["rg", "grep"]));
-        assert_eq!(direct["fs_replace_text"]["prefer_instead_of_shell"], json!(["sed"]));
-        assert!(direct["run_command"]["supported"].as_bool().unwrap_or(false));
+        assert_eq!(
+            direct["fs_search_files"]["prefer_instead_of_shell"],
+            json!(["rg", "grep"])
+        );
+        assert_eq!(
+            direct["fs_replace_text"]["prefer_instead_of_shell"],
+            json!(["sed"])
+        );
+        assert!(direct["run_command"]["supported"]
+            .as_bool()
+            .unwrap_or(false));
     }
 
     #[test]
@@ -11653,6 +11693,24 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
+    fn run_command_title_reads_bearwire_argument_shape() {
+        let event = json!({
+            "data": {
+                "arguments": {
+                    "command": "git",
+                    "args": ["status", "--short"]
+                }
+            },
+            "display": { "title": "Run Command" }
+        });
+
+        assert_eq!(
+            tool_call_title("run_command", &event),
+            "Run Command: git status"
+        );
+    }
+
+    #[test]
     fn update_task_list_completion_preview_summarizes_entries() {
         let value = json!({
             "plan": {
@@ -11675,7 +11733,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let value = json!({ "title": "Investigate Bifrost stream framing" });
         let preview = tool_completion_preview("set_conversation_title", &value);
         assert!(preview.contains("Conversation title set to"), "{preview}");
-        assert!(preview.contains("Investigate Bifrost stream framing"), "{preview}");
+        assert!(
+            preview.contains("Investigate Bifrost stream framing"),
+            "{preview}"
+        );
     }
 
     #[test]
@@ -13560,7 +13621,11 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             assert_eq!(redirected["ok"], false, "{command}");
             assert_eq!(redirected["kind"], "prefer_dedicated_tool", "{command}");
             assert_eq!(redirected["suggested_tool"], "fs_search_files", "{command}");
-            assert_eq!(redirected["suggested_args"]["path"], root.to_string_lossy().to_string(), "{command}");
+            assert_eq!(
+                redirected["suggested_args"]["path"],
+                root.to_string_lossy().to_string(),
+                "{command}"
+            );
             assert_eq!(redirected["suggested_args"]["query"], "src", "{command}");
         }
 
@@ -13591,7 +13656,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(redirected["ok"], false);
         assert_eq!(redirected["kind"], "prefer_dedicated_tool");
         assert_eq!(redirected["suggested_tool"], "fs_replace_text");
-        assert_eq!(redirected["suggested_args"]["path"], file.to_string_lossy().to_string());
+        assert_eq!(
+            redirected["suggested_args"]["path"],
+            file.to_string_lossy().to_string()
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -13678,7 +13746,9 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     async fn empty_client_read_result_requires_existing_file() {
         let existing = std::path::PathBuf::from("/tmp/opencode/read-text-file-empty-ok.txt");
         tokio::fs::write(&existing, "").await.unwrap();
-        verify_empty_client_read_result(&existing, "").await.unwrap();
+        verify_empty_client_read_result(&existing, "")
+            .await
+            .unwrap();
         tokio::fs::remove_file(&existing).await.unwrap();
 
         let missing = std::path::PathBuf::from("/tmp/opencode/read-text-file-missing.txt");
