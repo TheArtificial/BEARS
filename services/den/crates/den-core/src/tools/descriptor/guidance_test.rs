@@ -1,7 +1,7 @@
 use crate::tools::{
     constants::{
         DEN_MEMORY_WRITE_ENTRY_PROVIDER, DEN_PROMPT_MEMORY_UPSERT_PROVIDER,
-        DEN_SITUATION_GET_PROVIDER, DEN_WORK_PLAN_UPDATE_PROVIDER,
+        DEN_SITUATION_GET_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
     },
     descriptor::builtin_den_tool_descriptors,
 };
@@ -48,7 +48,7 @@ fn memory_write_descriptor_includes_shared_guidance() {
 fn work_plan_update_descriptor_includes_active_work_state_guidance() {
     let descriptor = builtin_den_tool_descriptors()
         .into_iter()
-        .find(|descriptor| descriptor.provider_name == DEN_WORK_PLAN_UPDATE_PROVIDER)
+        .find(|descriptor| descriptor.provider_name == DEN_TASK_LISTS_UPDATE_PROVIDER)
         .expect("update_task_list descriptor");
 
     assert!(descriptor.description.contains("Scope:"));

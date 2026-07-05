@@ -52,12 +52,12 @@ use crate::tools::{
         DEN_TASK_UPDATE_PROVIDER, DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ,
         DEN_TOOL_OUTPUT_READ_PROVIDER, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
         DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_FETCH_PROVIDER, DEN_WEB_SEARCH,
-        DEN_WEB_SEARCH_PROVIDER, DEN_WORK_PLAN_GET_STATUS,
-        DEN_WORK_PLAN_GET_STATUS_LEGACY_PROVIDER, DEN_WORK_PLAN_GET_STATUS_PROVIDER,
-        DEN_WORK_PLAN_LIST, DEN_WORK_PLAN_LIST_LEGACY_PROVIDER, DEN_WORK_PLAN_LIST_PROVIDER,
-        DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_REQUEST_HANDOFF_LEGACY_PROVIDER,
-        DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER, DEN_WORK_PLAN_UPDATE,
-        DEN_WORK_PLAN_UPDATE_LEGACY_PROVIDER, DEN_WORK_PLAN_UPDATE_PROVIDER,
+        DEN_WEB_SEARCH_PROVIDER, DEN_TASK_LISTS_GET_STATUS,
+        DEN_TASK_LISTS_GET_STATUS_LEGACY_PROVIDER, DEN_TASK_LISTS_GET_STATUS_PROVIDER,
+        DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_LIST_LEGACY_PROVIDER, DEN_TASK_LISTS_LIST_PROVIDER,
+        DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_LISTS_REQUEST_HANDOFF_LEGACY_PROVIDER,
+        DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE,
+        DEN_TASK_LISTS_UPDATE_LEGACY_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
     },
     display::ToolDisplayDescriptor,
     tool_descriptor_guidance::{
@@ -121,10 +121,10 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_READ_PROPOSAL => return DEN_MEMORY_READ_PROPOSAL_PROVIDER.to_string(),
         DEN_MEMORY_RESOLVE_PROPOSAL => return DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER.to_string(),
         DEN_MEMORY_APPLY_CORE_UPDATE => return DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER.to_string(),
-        DEN_WORK_PLAN_LIST => return DEN_WORK_PLAN_LIST_PROVIDER.to_string(),
-        DEN_WORK_PLAN_GET_STATUS => return DEN_WORK_PLAN_GET_STATUS_PROVIDER.to_string(),
-        DEN_WORK_PLAN_UPDATE => return DEN_WORK_PLAN_UPDATE_PROVIDER.to_string(),
-        DEN_WORK_PLAN_REQUEST_HANDOFF => return DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER.to_string(),
+        DEN_TASK_LISTS_LIST => return DEN_TASK_LISTS_LIST_PROVIDER.to_string(),
+        DEN_TASK_LISTS_GET_STATUS => return DEN_TASK_LISTS_GET_STATUS_PROVIDER.to_string(),
+        DEN_TASK_LISTS_UPDATE => return DEN_TASK_LISTS_UPDATE_PROVIDER.to_string(),
+        DEN_TASK_LISTS_REQUEST_HANDOFF => return DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER.to_string(),
         DEN_JOB_CREATE => return DEN_JOB_CREATE_PROVIDER.to_string(),
         DEN_JOB_LIST => return DEN_JOB_LIST_PROVIDER.to_string(),
         DEN_JOB_GET => return DEN_JOB_GET_PROVIDER.to_string(),
@@ -496,38 +496,38 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","rejection_reason"],"additionalProperties":false}),
         ),
         descriptor(
-            DEN_WORK_PLAN_LIST,
+            DEN_TASK_LISTS_LIST,
             "List task lists",
             "List visible session task-list state for the current Bear/session, including legacy activity-board state, submitted workplan gates, and saved workplan artifacts where available. A task list is the Bear/human working view; it may contain local-only items or checked-out Docket-backed items. Call session_info first if current thread/session/work-surface scope is unclear.",
             "bear.activity",
-            &["work_plan.read"],
+            &["task_list.read"],
             WORK_PLAN_READ_PROFILES,
             json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["active","blocked","completed","cancelled","archived"]}},"owner_profile":{"enum":ALL_PROFILES},"include_archived":{"type":"boolean"},"include_completed":{"type":"boolean"},"include_plan_mode":{"type":"boolean"},"include_artifacts":{"type":"boolean"}},"additionalProperties":false}),
         ),
         descriptor(
-            DEN_WORK_PLAN_GET_STATUS,
+            DEN_TASK_LISTS_GET_STATUS,
             "Get task list status",
             "Return current status for one visible session task list or this session's active task-list projection. Use to recover focus before continuing, updating, syncing, or handing off task-list work; call session_info first if session scope is unclear.",
             "bear.activity",
-            &["work_plan.read"],
+            &["task_list.read"],
             WORK_PLAN_READ_PROFILES,
             json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"source_acp_session_id":{"type":"string"},"source_conversation_id":{"type":"string"}},"additionalProperties":false}),
         ),
         descriptor(
-            DEN_WORK_PLAN_UPDATE,
+            DEN_TASK_LISTS_UPDATE,
             "Update task list",
             "Create or update the visible task list for the current session. Prefer this whenever you need to remember 3 or more things to do, work has multiple steps, the user asks to create/show/update a task list, or visible progress would help. If you are mentally tracking 3+ pending tasks, put them in this visible task list instead of keeping them only in prose. A task list is active working state, not semantic memory; do not use memory_write_entry for task lists. Items may be local-only or linked to Docket-backed work through source refs. Items require title and status; Den auto-generates stable small slug IDs when id is omitted. Keep at most one item in_progress. Task status is factual, not aspirational: mark an item completed only after you actually performed the work or verified it was already done in this conversation/session, and keep items pending/in_progress/blocked when work remains. For completed non-trivial items, strongly prefer a concise summary of what was actually done or observed. Do not mark a task complete merely because you wrote, planned, or summarized that it should be done. Call session_info first if current session/work-surface scope is unclear.",
             "bear.activity",
-            &["work_plan.write"],
+            &["task_list.write"],
             WORK_PLAN_UPDATE_PROFILES,
             json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"expected_version":{"type":"integer","minimum":1},"title":{"type":"string"},"summary":{"type":"string"},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"status":{"enum":["active","blocked","completed","cancelled","archived"]},"items":{"type":"array","description":"Visible task-list items. Each item requires title and status. Optional id may be supplied for meaningful stable identifiers; Den auto-generates stable slug IDs when omitted. Exactly zero or one item should be in_progress. Items may be local-only or linked to Docket-backed work through source refs. The completed status is a factual claim: use it only after the item has actually been performed or verified done; otherwise leave it pending, in_progress, or blocked.","items":{"type":"object","properties":{"id":{"type":"string","description":"Optional stable identifier. Omit this unless you already have a meaningful item identity; Den will auto-generate a small slug ID from the item content."},"title":{"type":"string"},"summary":{"type":"string","description":"Optional concise factual state/evidence. For completed items, prefer noting what was actually done or observed, not what was intended."},"status":{"enum":["pending","in_progress","blocked","completed","cancelled"]},"blocked_reason":{"type":"string"},"source_refs":{"type":"array","items":{"type":"string"}}},"required":["title","status"],"additionalProperties":false}},"workspace_context":{"type":"object"}},"required":["title","visibility","status","items"],"additionalProperties":false}),
         ),
         descriptor(
-            DEN_WORK_PLAN_REQUEST_HANDOFF,
+            DEN_TASK_LISTS_REQUEST_HANDOFF,
             "Request task-list handoff",
             "Request review, promotion, or sync of selected task-list items or changes into durable Docket work. Local-only task-list items may become Docket work through this boundary; Docket-backed items may request reviewed reconciliation.",
             "bear.activity",
-            &["work_plan.handoff.request"],
+            &["task_list.handoff.request"],
             CHAT_AND_PAIR_PROFILES,
             json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"item_ids":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"summary":{"type":"string"},"requested_outcome":{"type":"string"},"constraints":{"type":"array","items":{"type":"string"}},"allowed_tools_hint":{"type":"array","items":{"type":"string"}}},"required":["plan_id","item_ids","title","summary","requested_outcome"],"additionalProperties":false}),
         ),
@@ -777,10 +777,10 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_MEMORY_READ,
         DEN_MEMORY_SEARCH,
         DEN_MEMORY_REQUEST_REVIEW,
-        DEN_WORK_PLAN_LIST,
-        DEN_WORK_PLAN_GET_STATUS,
-        DEN_WORK_PLAN_UPDATE,
-        DEN_WORK_PLAN_REQUEST_HANDOFF,
+        DEN_TASK_LISTS_LIST,
+        DEN_TASK_LISTS_GET_STATUS,
+        DEN_TASK_LISTS_UPDATE,
+        DEN_TASK_LISTS_REQUEST_HANDOFF,
         DEN_JOB_CREATE,
         DEN_JOB_LIST,
         DEN_JOB_GET,
@@ -825,10 +825,10 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
         DEN_WEB_FETCH => &[DEN_WEB_FETCH_LEGACY_PROVIDER],
         DEN_SITUATION_GET => &[DEN_SITUATION_GET_LEGACY_PROVIDER],
         DEN_MEMORY_TREE => &[DEN_MEMORY_TREE_LEGACY_PROVIDER],
-        DEN_WORK_PLAN_LIST => &[DEN_WORK_PLAN_LIST_LEGACY_PROVIDER],
-        DEN_WORK_PLAN_GET_STATUS => &[DEN_WORK_PLAN_GET_STATUS_LEGACY_PROVIDER],
-        DEN_WORK_PLAN_UPDATE => &[DEN_WORK_PLAN_UPDATE_LEGACY_PROVIDER],
-        DEN_WORK_PLAN_REQUEST_HANDOFF => &[DEN_WORK_PLAN_REQUEST_HANDOFF_LEGACY_PROVIDER],
+        DEN_TASK_LISTS_LIST => &[DEN_TASK_LISTS_LIST_LEGACY_PROVIDER],
+        DEN_TASK_LISTS_GET_STATUS => &[DEN_TASK_LISTS_GET_STATUS_LEGACY_PROVIDER],
+        DEN_TASK_LISTS_UPDATE => &[DEN_TASK_LISTS_UPDATE_LEGACY_PROVIDER],
+        DEN_TASK_LISTS_REQUEST_HANDOFF => &[DEN_TASK_LISTS_REQUEST_HANDOFF_LEGACY_PROVIDER],
         _ => &[],
     }
 }
@@ -875,12 +875,12 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
             side_effect: ToolSideEffectKind::WritesMemory,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
-        DEN_WORK_PLAN_LIST | DEN_WORK_PLAN_GET_STATUS => Some(ToolDescriptorGuidance {
+        DEN_TASK_LISTS_LIST | DEN_TASK_LISTS_GET_STATUS => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
             side_effect: ToolSideEffectKind::ReadOnly,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
-        DEN_WORK_PLAN_UPDATE | DEN_WORK_PLAN_REQUEST_HANDOFF => Some(ToolDescriptorGuidance {
+        DEN_TASK_LISTS_UPDATE | DEN_TASK_LISTS_REQUEST_HANDOFF => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
             side_effect: ToolSideEffectKind::ActiveWorkState,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
@@ -1214,7 +1214,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &["rejection_reason", "review_notes"],
             approval_summary: "Reject this skill proposal.",
         },
-        DEN_WORK_PLAN_LIST => ToolDisplayDescriptor {
+        DEN_TASK_LISTS_LIST => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Listing plans",
@@ -1223,7 +1223,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &[],
             approval_summary: "Read visible planning state.",
         },
-        DEN_WORK_PLAN_GET_STATUS => ToolDisplayDescriptor {
+        DEN_TASK_LISTS_GET_STATUS => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Checking plan status",
@@ -1232,7 +1232,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &[],
             approval_summary: "Read visible plan status.",
         },
-        DEN_WORK_PLAN_UPDATE => ToolDisplayDescriptor {
+        DEN_TASK_LISTS_UPDATE => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Updating visible plan",
@@ -1241,7 +1241,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &["summary", "items", "workspace_context"],
             approval_summary: "Update active visible work state.",
         },
-        DEN_WORK_PLAN_REQUEST_HANDOFF => ToolDisplayDescriptor {
+        DEN_TASK_LISTS_REQUEST_HANDOFF => ToolDisplayDescriptor {
             label,
             category: "plan",
             progress_verb: "Requesting work handoff",
@@ -1446,10 +1446,10 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_PLAN_MODE_RECORD_APPROVAL
         | DEN_PLAN_MODE_EXIT
         | DEN_PLAN_MODE_CANCEL => "workplan",
-        DEN_WORK_PLAN_LIST
-        | DEN_WORK_PLAN_GET_STATUS
-        | DEN_WORK_PLAN_UPDATE
-        | DEN_WORK_PLAN_REQUEST_HANDOFF => "activity",
+        DEN_TASK_LISTS_LIST
+        | DEN_TASK_LISTS_GET_STATUS
+        | DEN_TASK_LISTS_UPDATE
+        | DEN_TASK_LISTS_REQUEST_HANDOFF => "activity",
         DEN_JOB_CREATE
         | DEN_JOB_LIST
         | DEN_JOB_GET
@@ -1492,8 +1492,8 @@ fn tool_content_class(name: &str) -> Option<&'static str> {
         DEN_MEMORY_REQUEST_REVIEW => Some("semantic_memory"),
         DEN_BEAR_ENVIRONMENT => Some("activity_status"),
         DEN_PLAN_MODE_EXIT => Some("workplan_artifact"),
-        DEN_WORK_PLAN_UPDATE => Some("activity_status"),
-        DEN_WORK_PLAN_REQUEST_HANDOFF => Some("task_intent"),
+        DEN_TASK_LISTS_UPDATE => Some("activity_status"),
+        DEN_TASK_LISTS_REQUEST_HANDOFF => Some("task_intent"),
         DEN_MEMORY_APPLY_CORE_UPDATE => Some("core_update"),
         DEN_OBSERVATION_WRITE => Some("observation"),
         DEN_RUN_WRITE_RESULT => Some("run_result"),
