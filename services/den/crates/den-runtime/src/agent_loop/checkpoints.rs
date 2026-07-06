@@ -235,8 +235,8 @@ fn row_to_checkpoint(row: sqlx::postgres::PgRow) -> CheckpointArtifactRow {
 mod tests {
     use super::*;
     use crate::agent_loop::{
-        CheckpointEvidenceRef, CheckpointField, CheckpointNextAction, CheckpointTaskContext,
-        RuntimeCheckpointResponse,
+        CheckpointEvidenceRef, CheckpointField, CheckpointNextAction, CheckpointReason,
+        CheckpointTaskContext, RuntimeCheckpointResponse,
     };
     use den_core::AgentLoopControlLevel;
 
