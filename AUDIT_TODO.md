@@ -257,7 +257,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `agent_loop/key_memory_projection.rs:63-158` `BudgetTracker::new` takes magic `tier_index: usize` (0-3) instead of an enum; every call site hardcodes a bare integer.
 - [ ] `agent_loop/key_memory_projection.rs:132-157` magic number `3` for ellipsis length, plus inconsistent ellipsis style (`"..."` vs `"…"` in `recall/query.rs`) across files.
 - [ ] `agent_loop/assembler.rs:220-460` `assemble_native_turn_for_bear` — 240-line god function, biggest split candidate (natural seams already exist per `system_text.push_str` block).
-- [ ] `agent_loop/assembler.rs:409-453` `Pair`/`Chat` branches are byte-for-byte duplicates — merge via `matches!(ctx.profile, BearProfile::Pair | BearProfile::Chat)`.
+- [x] `agent_loop/assembler.rs:409-453` `Pair`/`Chat` branches are byte-for-byte duplicates — merge via `matches!(ctx.profile, BearProfile::Pair | BearProfile::Chat)`. **DONE** (structural batch 6): merged the two identical native-runtime fallback-pruning arms into one `matches!` guard. (Note: the `assembler.rs:113-121` dead ternary was already fixed in the clippy batch.)
 - [ ] `agent_loop/assembler.rs:113-121` dead/always-true ternary (`if selected_paths.is_empty() {"available"} else {"available"}`) — leftover copy-paste.
 - [ ] `agent_loop/assembler.rs:32-52` `AssembleTurnContext` has 16 public fields with semantic overlap — group into sub-structs.
 - [ ] `agent_loop/assembler.rs:322-323` `.expect("session_id checked above")` — invariant enforced across two separate functions, fragile; thread the checked `Option` explicitly instead.
