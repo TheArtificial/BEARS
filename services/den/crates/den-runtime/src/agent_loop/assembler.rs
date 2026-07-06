@@ -450,27 +450,9 @@ pub async fn assemble_native_turn_for_bear(
     let messages = repair_tool_call_message_chain(messages);
     let messages = if ctx.native_runtime && compaction_active && transcript_cutoff.is_some() {
         messages
-    } else if ctx.native_runtime && ctx.profile == BearProfile::Pair {
-        let pruned = prune_messages_for_native_pair_with_diagnostics(messages);
-        budget_components.transcript_fallback_pruned_chars =
-            pruned.diagnostics.pruned_character_count;
-        budget_components.transcript_fallback_pruned_messages =
-            pruned.diagnostics.pruned_message_count;
-        budget_components.transcript_chars = budget_components
-            .transcript_chars
-            .saturating_sub(pruned.diagnostics.pruned_character_count);
-        if pruned.diagnostics.pruned_message_count > 0 {
-            tracing::warn!(
-                bear_id = %ctx.bear_id,
-                conversation_id = %ctx.conversation_id,
-                profile = %ctx.profile.as_str(),
-                pruned_message_count = pruned.diagnostics.pruned_message_count,
-                pruned_character_count = pruned.diagnostics.pruned_character_count,
-                "transcript replay used fallback pruning instead of compaction"
-            );
-        }
-        pruned.messages
-    } else if ctx.native_runtime && ctx.profile == BearProfile::Chat {
+    } else if ctx.native_runtime
+        && matches!(ctx.profile, BearProfile::Pair | BearProfile::Chat)
+    {
         let pruned = prune_messages_for_native_pair_with_diagnostics(messages);
         budget_components.transcript_fallback_pruned_chars =
             pruned.diagnostics.pruned_character_count;
