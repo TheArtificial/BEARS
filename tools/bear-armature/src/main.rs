@@ -6620,7 +6620,11 @@ async fn handle_tool_request_event(
         .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
         .await;
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
-    let args = canonical.tool_call.arguments.clone().unwrap_or_else(|| json!({}));
+    let args = canonical
+        .tool_call
+        .arguments
+        .clone()
+        .unwrap_or_else(|| json!({}));
     task_registry
         .remember_input(session_id, tool_call_id, tool_name, args.clone())
         .await;
