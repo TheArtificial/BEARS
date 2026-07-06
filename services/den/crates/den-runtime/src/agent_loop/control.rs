@@ -1,7 +1,10 @@
 use den_core::{AgentLoopControlLevel, ThinkingEffort};
 use serde::{Deserialize, Serialize};
 
-use super::{PostMutationVerificationWindow, ToolCallBudgetLimits, TurnBudgetPolicy};
+use super::{
+    PostMutationVerificationWindow, ToolBudgetClass, ToolCallBudgetLimits,
+    ToolContinuationObservation, TurnBudgetPolicy,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,6 +66,27 @@ pub struct AgentLoopControlProfile {
     pub thinking: CheckpointThinkingPolicy,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CheckpointState {
+    pub read_search_since_mutation: u32,
+    pub consecutive_failures: u32,
+    pub same_signature_repeat_count: u32,
+    pub last_signature: Option<String>,
+    pub last_checkpoint_reason: Option<CheckpointReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointTrigger {
+    pub reason: CheckpointReason,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointEvaluation {
+    pub next_state: CheckpointState,
+    pub trigger: Option<CheckpointTrigger>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedAgentLoopControl {
     pub level: AgentLoopControlLevel,
@@ -118,6 +142,127 @@ pub fn resolve_agent_loop_control(
         source,
         model_handle: input.model_handle.map(str::to_string),
         profile: AgentLoopControlProfile::for_level(level),
+    }
+}
+
+pub fn evaluate_checkpoint_trigger(
+    profile: &AgentLoopControlProfile,
+    prior_state: &CheckpointState,
+    observations: &[ToolContinuationObservation],
+    low_budget: bool,
+) -> CheckpointEvaluation {
+    let mut next_state = prior_state.clone();
+    for observation in observations {
+        observe_checkpoint_tool_result(&mut next_state, observation);
+    }
+
+    let trigger = if !profile.checkpoints.enabled {
+        None
+    } else if profile.checkpoints.require_on_low_budget && low_budget {
+        Some(checkpoint_trigger(
+            CheckpointReason::LowBudget,
+            "Loop checkpoint: remaining budget is low; synthesize what is known before continuing.",
+        ))
+    } else if threshold_reached(
+        next_state.consecutive_failures,
+        profile.checkpoints.consecutive_failure_threshold,
+    ) {
+        Some(checkpoint_trigger(
+            CheckpointReason::ConsecutiveFailure,
+            "Loop checkpoint: recent tool calls are failing; identify the failure pattern and choose a different recovery action.",
+        ))
+    } else if threshold_reached(
+        next_state.same_signature_repeat_count,
+        profile.checkpoints.same_signature_warning_threshold,
+    ) {
+        Some(checkpoint_trigger(
+            CheckpointReason::SameSignatureNearKo,
+            "Loop checkpoint: the same tool-call signature is repeating; choose a different action or explain why task state should change.",
+        ))
+    } else if threshold_reached(
+        next_state.read_search_since_mutation,
+        profile
+            .checkpoints
+            .exploration_without_mutation_threshold,
+    ) {
+        Some(checkpoint_trigger(
+            CheckpointReason::OverExploration,
+            "Loop checkpoint: enough exploration has happened without a meaningful mutation; summarize evidence and choose the next action.",
+        ))
+    } else {
+        None
+    };
+
+    if let Some(trigger) = trigger.as_ref() {
+        next_state.last_checkpoint_reason = Some(trigger.reason);
+    }
+
+    CheckpointEvaluation {
+        next_state,
+        trigger,
+    }
+}
+
+pub fn task_gate_checkpoint_trigger(profile: &AgentLoopControlProfile) -> Option<CheckpointTrigger> {
+    profile
+        .checkpoints
+        .require_on_task_gate_rejection
+        .then(|| checkpoint_trigger(
+            CheckpointReason::TaskGateRejection,
+            "Loop checkpoint: the final answer did not satisfy the active task gate; continue or update task state with evidence.",
+        ))
+}
+
+pub fn pre_risk_checkpoint_trigger(profile: &AgentLoopControlProfile) -> Option<CheckpointTrigger> {
+    profile
+        .checkpoints
+        .require_before_broad_mutation
+        .then(|| checkpoint_trigger(
+            CheckpointReason::PreRiskMutation,
+            "Loop checkpoint: before a broad or risky mutation, state the evidence, intended change, and validation plan.",
+        ))
+}
+
+fn observe_checkpoint_tool_result(
+    state: &mut CheckpointState,
+    observation: &ToolContinuationObservation,
+) {
+    if observation.failed {
+        state.consecutive_failures = state.consecutive_failures.saturating_add(1);
+    } else {
+        state.consecutive_failures = 0;
+    }
+
+    if state.last_signature.as_deref() == Some(observation.signature.as_str()) {
+        state.same_signature_repeat_count = state.same_signature_repeat_count.saturating_add(1);
+    } else {
+        state.last_signature = Some(observation.signature.clone());
+        state.same_signature_repeat_count = 0;
+    }
+
+    if observation_is_meaningful_mutation(observation) {
+        state.read_search_since_mutation = 0;
+    } else if matches!(observation.class, ToolBudgetClass::Read | ToolBudgetClass::Search) {
+        state.read_search_since_mutation = state.read_search_since_mutation.saturating_add(1);
+    }
+}
+
+fn observation_is_meaningful_mutation(observation: &ToolContinuationObservation) -> bool {
+    !observation.failed
+        && matches!(
+            observation.class,
+            ToolBudgetClass::Write | ToolBudgetClass::Destructive
+        )
+}
+
+fn threshold_reached(count: u32, threshold: Option<u32>) -> bool {
+    threshold.is_some_and(|threshold| threshold > 0 && count >= threshold)
+}
+
+fn checkpoint_trigger(reason: CheckpointReason, message: &str) -> CheckpointTrigger {
+    CheckpointTrigger {
+        reason,
+        message: message.to_string(),
     }
 }
 
@@ -280,6 +425,15 @@ fn budget(
 mod tests {
     use super::*;
 
+    fn observation(class: ToolBudgetClass, signature: &str, failed: bool) -> ToolContinuationObservation {
+        ToolContinuationObservation {
+            tool_name: class.label().to_string(),
+            signature: signature.to_string(),
+            class,
+            failed,
+        }
+    }
+
     #[test]
     fn profiles_get_stricter_checkpoint_thresholds_by_level() {
         let light = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Light);
@@ -342,6 +496,92 @@ mod tests {
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Strict);
         assert_eq!(resolved.source, AgentLoopControlSource::TaskEscalation);
+    }
+
+    #[test]
+    fn checkpoint_evaluator_triggers_on_over_exploration() {
+        let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
+        let state = CheckpointState::default();
+        let evaluation = evaluate_checkpoint_trigger(
+            &profile,
+            &state,
+            &[
+                observation(ToolBudgetClass::Read, "read:a", false),
+                observation(ToolBudgetClass::Search, "search:b", false),
+                observation(ToolBudgetClass::Read, "read:c", false),
+            ],
+            false,
+        );
+
+        assert_eq!(
+            evaluation.trigger.as_ref().map(|trigger| trigger.reason),
+            Some(CheckpointReason::OverExploration)
+        );
+        assert_eq!(evaluation.next_state.read_search_since_mutation, 3);
+    }
+
+    #[test]
+    fn checkpoint_evaluator_resets_exploration_after_meaningful_mutation() {
+        let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
+        let state = CheckpointState {
+            read_search_since_mutation: 2,
+            ..CheckpointState::default()
+        };
+        let evaluation = evaluate_checkpoint_trigger(
+            &profile,
+            &state,
+            &[observation(ToolBudgetClass::Write, "write:a", false)],
+            false,
+        );
+
+        assert!(evaluation.trigger.is_none());
+        assert_eq!(evaluation.next_state.read_search_since_mutation, 0);
+    }
+
+    #[test]
+    fn checkpoint_evaluator_triggers_on_failures_and_low_budget() {
+        let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Standard);
+        let low_budget = evaluate_checkpoint_trigger(
+            &profile,
+            &CheckpointState::default(),
+            &[],
+            true,
+        );
+        assert_eq!(
+            low_budget.trigger.as_ref().map(|trigger| trigger.reason),
+            Some(CheckpointReason::LowBudget)
+        );
+
+        let failures = evaluate_checkpoint_trigger(
+            &profile,
+            &CheckpointState::default(),
+            &[
+                observation(ToolBudgetClass::Read, "read:a", true),
+                observation(ToolBudgetClass::Read, "read:b", true),
+            ],
+            false,
+        );
+        assert_eq!(
+            failures.trigger.as_ref().map(|trigger| trigger.reason),
+            Some(CheckpointReason::ConsecutiveFailure)
+        );
+    }
+
+    #[test]
+    fn task_gate_and_pre_risk_triggers_follow_profile_policy() {
+        let light = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Light);
+        let careful = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
+
+        assert!(task_gate_checkpoint_trigger(&light).is_none());
+        assert_eq!(
+            task_gate_checkpoint_trigger(&careful).map(|trigger| trigger.reason),
+            Some(CheckpointReason::TaskGateRejection)
+        );
+        assert!(pre_risk_checkpoint_trigger(&light).is_none());
+        assert_eq!(
+            pre_risk_checkpoint_trigger(&careful).map(|trigger| trigger.reason),
+            Some(CheckpointReason::PreRiskMutation)
+        );
     }
 
     #[test]
