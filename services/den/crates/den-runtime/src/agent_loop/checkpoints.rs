@@ -5,7 +5,7 @@ use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use super::{CheckpointReason, RuntimeCheckpointRequest, RuntimeCheckpointResponse};
+use super::{RuntimeCheckpointRequest, RuntimeCheckpointResponse};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -228,23 +228,6 @@ fn row_to_checkpoint(row: sqlx::postgres::PgRow) -> CheckpointArtifactRow {
         related_docket_task_id: row.get("related_docket_task_id"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
-    }
-}
-
-trait CheckpointStorageLabel {
-    fn as_str(self) -> &'static str;
-}
-
-impl CheckpointStorageLabel for CheckpointReason {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::OverExploration => "over_exploration",
-            Self::ConsecutiveFailure => "consecutive_failure",
-            Self::SameSignatureNearKo => "same_signature_near_ko",
-            Self::TaskGateRejection => "task_gate_rejection",
-            Self::LowBudget => "low_budget",
-            Self::PreRiskMutation => "pre_risk_mutation",
-        }
     }
 }
 

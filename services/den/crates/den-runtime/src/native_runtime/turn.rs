@@ -36,11 +36,13 @@ use crate::{
     agent_loop::{
         agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
         evaluate_checkpoint_trigger, evaluate_turn_budget, projected_memory_session_diagnostic,
-        recalled_memory_session_diagnostic, record_approval_decision, resolve_agent_loop_control,
-        run_agent_step_stream, tool_result_content_indicates_error, tool_signature_from_call,
-        AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
-        AgentStepOverflowContext, AssembleTurnContext,
-        NativeToolDispatchMode, SessionTrackingStream, ToolContinuationObservation,
+        recalled_memory_session_diagnostic, record_approval_decision, record_checkpoint_request,
+        resolve_agent_loop_control, run_agent_step_stream, tool_result_content_indicates_error,
+        tool_signature_from_call, AgentLoopControlResolutionInput, AgentLoopSession,
+        AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
+        CheckpointArtifactInput, CheckpointField, CheckpointReplayPolicy, CheckpointTaskContext,
+        CheckpointTrigger, CheckpointVisibility, NativeToolDispatchMode,
+        RuntimeCheckpointRequest, SessionTrackingStream, ToolContinuationObservation,
         TurnBudgetStopReason, TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
@@ -1021,9 +1023,7 @@ fn budget_warning_runtime_event(warning: &TurnBudgetWarning) -> RuntimeStreamEve
     })
 }
 
-fn checkpoint_trigger_runtime_event(
-    trigger: &crate::agent_loop::CheckpointTrigger,
-) -> RuntimeStreamEvent {
+fn checkpoint_trigger_runtime_event(trigger: &CheckpointTrigger) -> RuntimeStreamEvent {
     RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
         kind: "runtime_checkpoint_would_trigger".to_string(),
         text: Some(trigger.message.clone()),
@@ -1033,6 +1033,108 @@ fn checkpoint_trigger_runtime_event(
             "mode": "observe_only",
         })),
     })
+}
+
+fn runtime_checkpoint_request_for_trigger(
+    session: &AgentLoopSession,
+    trigger: &CheckpointTrigger,
+) -> Option<RuntimeCheckpointRequest> {
+    let run_id = session.run_id.clone()?;
+    Some(RuntimeCheckpointRequest {
+        checkpoint_id: format!(
+            "ckpt-{}-{}",
+            session.step.saturating_add(1),
+            trigger.reason.as_str()
+        ),
+        run_id,
+        reason: trigger.reason,
+        control_level: session.agent_loop_control.level,
+        active_objective: active_checkpoint_objective(session),
+        task_context: checkpoint_task_context(session),
+        evidence_refs: Vec::new(),
+        required_fields: vec![
+            CheckpointField::ActiveObjective,
+            CheckpointField::Learned,
+            CheckpointField::NextAction,
+        ],
+    })
+}
+
+fn active_checkpoint_objective(session: &AgentLoopSession) -> Option<String> {
+    session
+        .active_activity_plan
+        .as_ref()
+        .and_then(|plan| {
+            plan.current_item.as_ref().or_else(|| {
+                plan.items.iter().find(|item| {
+                    matches!(
+                        item.status,
+                        den_docket::TaskListItemStatus::Pending
+                            | den_docket::TaskListItemStatus::InProgress
+                    )
+                })
+            })
+        })
+        .map(|item| item.title.clone())
+}
+
+fn checkpoint_task_context(session: &AgentLoopSession) -> Option<CheckpointTaskContext> {
+    let plan = session.active_activity_plan.as_ref()?;
+    let active_item = plan.current_item.as_ref().or_else(|| {
+        plan.items.iter().find(|item| {
+            matches!(
+                item.status,
+                den_docket::TaskListItemStatus::Pending
+                    | den_docket::TaskListItemStatus::InProgress
+            )
+        })
+    });
+    Some(CheckpointTaskContext {
+        task_list_id: Some(plan.id.to_string()),
+        task_list_version: None,
+        active_item_id: active_item.map(|item| item.id.to_string()),
+        active_item_title: active_item.map(|item| item.title.clone()),
+        docket_job_id: plan.source_ref.docket_job_id.clone(),
+        docket_task_id: active_item.and_then(|item| item.source_ref.docket_task_id.clone()),
+    })
+}
+
+async fn record_work_checkpoint_request_if_needed(
+    pool: &PgPool,
+    session: &AgentLoopSession,
+    trigger: &CheckpointTrigger,
+) {
+    if session.profile != BearProfile::Work {
+        return;
+    }
+    let Some(request) = runtime_checkpoint_request_for_trigger(session, trigger) else {
+        tracing::debug!(
+            session_id = %session.client_session_id,
+            reason = %trigger.reason.as_str(),
+            "skipping work checkpoint artifact because run id is unavailable"
+        );
+        return;
+    };
+    if let Err(err) = record_checkpoint_request(
+        pool,
+        CheckpointArtifactInput {
+            run_id: request.run_id.clone(),
+            turn_step_id: None,
+            request,
+            visibility: CheckpointVisibility::AuditOnly,
+            replay_policy: CheckpointReplayPolicy::None,
+        },
+    )
+    .await
+    {
+        tracing::warn!(
+            error = %err,
+            session_id = %session.client_session_id,
+            run_id = session.run_id.as_deref().unwrap_or("<none>"),
+            reason = %trigger.reason.as_str(),
+            "failed to record observe-only work checkpoint artifact"
+        );
+    }
 }
 
 fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarning) -> bool {
@@ -1321,6 +1423,9 @@ pub async fn continue_native_client_turn_event_stream(
     let session = SESSION_STORE
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
+    if let Some(trigger) = checkpoint_evaluation.trigger.as_ref() {
+        record_work_checkpoint_request_if_needed(request.sqlx_pool, &session, trigger).await;
+    }
     if let Some(reason) = evaluation.stop_reason {
         return Ok(continuation_budget_stop(reason));
     }

@@ -27,6 +27,19 @@ pub enum CheckpointReason {
     PreRiskMutation,
 }
 
+impl CheckpointReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OverExploration => "over_exploration",
+            Self::ConsecutiveFailure => "consecutive_failure",
+            Self::SameSignatureNearKo => "same_signature_near_ko",
+            Self::TaskGateRejection => "task_gate_rejection",
+            Self::LowBudget => "low_budget",
+            Self::PreRiskMutation => "pre_risk_mutation",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KoPolicy {
     pub same_signature_warning_threshold: Option<u32>,
