@@ -615,7 +615,7 @@ impl SessionTrackingStream {
         let request_json = serde_json::to_string_pretty(request)
             .unwrap_or_else(|_| "{\"error\":\"checkpoint_request_unavailable\"}".to_string());
         format!(
-            "Runtime checkpoint required: {}\n\nReturn a structured checkpoint response before continuing. If the active task is done, blocked, not applicable, waived, cancelled, unsafe, or permission-gated, the checkpoint response may say so, but task state must still be updated through task tools with evidence.\n\nCheckpoint request:\n```json\n{request_json}\n```",
+            "Runtime checkpoint required: {}\n\nReturn ONLY a JSON checkpoint response before continuing. Do not put prose in `next_action`. `next_action` must be one of: `call_tool`, `edit`, `validate`, `update_task_list`, `sync_task_list`, `request_handoff`, `final_if_gate_allows`, or `stop_blocked`. If you choose `call_tool`, you may use an object like {{\"action\":\"call_tool\",\"tool_name\":\"memory_read\"}}.\n\nMinimum response shape:\n```json\n{{\n  \"checkpoint_id\": \"<copy from request>\",\n  \"active_objective\": \"one sentence\",\n  \"learned\": [\"fact with evidence\"],\n  \"remaining_uncertainty\": [],\n  \"more_exploration_justified\": false,\n  \"next_action\": \"edit\",\n  \"task_state_change_needed\": null,\n  \"evidence_refs\": [],\n  \"confidence\": \"medium\"\n}}\n```\n\nIf the active task is done, blocked, not applicable, waived, cancelled, unsafe, or permission-gated, the checkpoint response may say so, but task state must still be updated through task tools with evidence.\n\nCheckpoint request:\n```json\n{request_json}\n```",
             trigger.message
         )
     }

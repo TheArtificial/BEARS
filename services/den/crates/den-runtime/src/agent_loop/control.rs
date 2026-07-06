@@ -1,5 +1,5 @@
 use den_core::{AgentLoopControlLevel, ThinkingEffort};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{
     PostMutationVerificationWindow, ToolBudgetClass, ToolCallBudgetLimits,
@@ -154,7 +154,7 @@ pub struct RuntimeCheckpointResponse {
     pub confidence: Option<CheckpointConfidence>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckpointNextAction {
     CallTool { tool_name: Option<String> },
@@ -165,6 +165,106 @@ pub enum CheckpointNextAction {
     RequestHandoff,
     FinalIfGateAllows,
     StopBlocked,
+}
+
+impl<'de> Deserialize<'de> for CheckpointNextAction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        checkpoint_next_action_from_value(value).map_err(serde::de::Error::custom)
+    }
+}
+
+fn checkpoint_next_action_from_value(
+    value: serde_json::Value,
+) -> Result<CheckpointNextAction, String> {
+    match value {
+        serde_json::Value::String(value) => checkpoint_next_action_from_str(&value),
+        serde_json::Value::Object(mut object) => {
+            if let Some(tool_name) = object.remove("call_tool").or_else(|| object.remove("tool_name")) {
+                return Ok(CheckpointNextAction::CallTool {
+                    tool_name: tool_name.as_str().map(str::to_string),
+                });
+            }
+            let Some(action) = object
+                .remove("action")
+                .or_else(|| object.remove("type"))
+                .and_then(|value| value.as_str().map(str::to_string))
+            else {
+                return Err("next_action object must include action/type or call_tool/tool_name".to_string());
+            };
+            let mut action = checkpoint_next_action_from_str(&action)?;
+            if let CheckpointNextAction::CallTool { tool_name } = &mut action {
+                if tool_name.is_none() {
+                    *tool_name = object
+                        .remove("tool_name")
+                        .and_then(|value| value.as_str().map(str::to_string));
+                }
+            }
+            Ok(action)
+        }
+        other => Err(format!(
+            "next_action must be a string enum or object, got {other}"
+        )),
+    }
+}
+
+fn checkpoint_next_action_from_str(raw: &str) -> Result<CheckpointNextAction, String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    let compact = normalized.replace(['-', ' '], "_");
+    match compact.as_str() {
+        "call_tool" | "tool" | "use_tool" => Ok(CheckpointNextAction::CallTool { tool_name: None }),
+        "edit" => Ok(CheckpointNextAction::Edit),
+        "validate" => Ok(CheckpointNextAction::Validate),
+        "update_task_list" | "update_current_task_status" => Ok(CheckpointNextAction::UpdateTaskList),
+        "sync_task_list" => Ok(CheckpointNextAction::SyncTaskList),
+        "request_handoff" | "request_task_list_handoff" => Ok(CheckpointNextAction::RequestHandoff),
+        "final_if_gate_allows" => Ok(CheckpointNextAction::FinalIfGateAllows),
+        "stop_blocked" => Ok(CheckpointNextAction::StopBlocked),
+        _ => classify_natural_language_checkpoint_action(&normalized).ok_or_else(|| {
+            format!(
+                "unknown next_action `{raw}`; expected one of call_tool, edit, validate, update_task_list, sync_task_list, request_handoff, final_if_gate_allows, stop_blocked"
+            )
+        }),
+    }
+}
+
+fn classify_natural_language_checkpoint_action(text: &str) -> Option<CheckpointNextAction> {
+    if text.contains("update_task")
+        || text.contains("update task")
+        || text.contains("task status")
+        || text.contains("mark ")
+    {
+        return Some(CheckpointNextAction::UpdateTaskList);
+    }
+    if text.contains("sync_task") || text.contains("sync task") {
+        return Some(CheckpointNextAction::SyncTaskList);
+    }
+    if text.contains("handoff") || text.contains("human review") || text.contains("escalat") {
+        return Some(CheckpointNextAction::RequestHandoff);
+    }
+    if text.contains("test")
+        || text.contains("validate")
+        || text.contains("verify")
+        || text.contains("check")
+    {
+        return Some(CheckpointNextAction::Validate);
+    }
+    if text.contains("edit")
+        || text.contains("patch")
+        || text.contains("mutat")
+        || text.contains("change")
+        || text.contains("introduce")
+        || text.contains("implement")
+    {
+        return Some(CheckpointNextAction::Edit);
+    }
+    if text.contains("stop") || text.contains("blocked") {
+        return Some(CheckpointNextAction::StopBlocked);
+    }
+    None
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -804,6 +904,30 @@ mod tests {
             Err(CheckpointResponseValidationError::MissingRequiredField(
                 CheckpointField::Learned
             ))
+        );
+    }
+
+    #[test]
+    fn checkpoint_next_action_deserializes_natural_language_mutation() {
+        let value = serde_json::json!(
+            "Make the first meaningful mutation in den-runtime: introduce typed ToolCallWire payload structs."
+        );
+        let parsed: CheckpointNextAction = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed, CheckpointNextAction::Edit);
+    }
+
+    #[test]
+    fn checkpoint_next_action_deserializes_tool_object() {
+        let value = serde_json::json!({
+            "action": "call_tool",
+            "tool_name": "fs_read_text_file"
+        });
+        let parsed: CheckpointNextAction = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            parsed,
+            CheckpointNextAction::CallTool {
+                tool_name: Some("fs_read_text_file".to_string())
+            }
         );
     }
 
