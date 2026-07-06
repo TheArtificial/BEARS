@@ -655,11 +655,18 @@ async fn build_session(
         &deps.config.den_secret_encryption_key,
     )
     .await?;
+    let (bear_loop_control_override, stance_loop_control_override) =
+        den_service::bears::db::agent_loop_control_overrides_for_profile(
+            deps.pool,
+            bear.id,
+            profile.profile,
+        )
+        .await?;
     let agent_loop_control = resolve_agent_loop_control(AgentLoopControlResolutionInput {
         model_handle: Some(&model),
         model_default: None,
-        bear_override: None,
-        stance_override: None,
+        bear_override: bear_loop_control_override,
+        stance_override: stance_loop_control_override,
         task_escalation: None,
     });
     let agent_loop_control = crate::agent_loop::ResolvedAgentLoopControl {
