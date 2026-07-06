@@ -7216,64 +7216,50 @@ impl BearWireToolCallRequestData {
     }
 }
 
-pub(crate) fn tool_call_id_from_event(event: &Value) -> Option<&str> {
-    event
-        .pointer("/data/tool_call/id")
-        .or_else(|| event.pointer("/data/tool_call/tool_call_id"))
-        .or_else(|| event.pointer("/tool_call/id"))
-        .or_else(|| event.pointer("/tool_call/tool_call_id"))
-        .or_else(|| event.get("tool_call_id"))
-        .or_else(|| event.pointer("/data/tool_call_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| resource_ref_id(event, "tool_call"))
+#[derive(Debug, Clone, Deserialize)]
+struct BearWirePermissionInfo {
+    id: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    target: Option<Value>,
 }
 
-pub(crate) fn tool_name_from_event(event: &Value) -> Option<&str> {
-    event
-        .pointer("/data/tool_call/name")
-        .or_else(|| event.pointer("/tool_call/name"))
-        .or_else(|| event.get("tool_name"))
-        .or_else(|| event.pointer("/data/tool_name"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+#[derive(Debug, Clone, Deserialize)]
+struct BearWireClientWaitingData {
+    expected_client_method: String,
+    obligation_id: String,
+    permission: BearWirePermissionInfo,
+    tool_call: BearWireToolCallRequestCard,
 }
 
-fn permission_id_from_event(event: &Value) -> Option<&str> {
-    event
-        .pointer("/data/permission/id")
-        .or_else(|| event.get("permission_id"))
-        .or_else(|| event.pointer("/data/permission_id"))
-        .or_else(|| event.get("approval_request_id"))
-        .or_else(|| event.pointer("/data/approval_request_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| resource_ref_id(event, "permission_request"))
-}
-
-fn obligation_id_from_event(event: &Value) -> Option<&str> {
-    event
-        .get("obligation_id")
-        .or_else(|| event.pointer("/data/obligation_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| resource_ref_id(event, "client_obligation"))
-}
-
-fn resource_ref_id<'a>(event: &'a Value, kind: &str) -> Option<&'a str> {
-    event
-        .get("resource_refs")
-        .and_then(Value::as_array)?
-        .iter()
-        .find(|resource| resource.get("kind").and_then(Value::as_str) == Some(kind))?
-        .get("id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+impl BearWireClientWaitingData {
+    fn parse(event: &Value) -> Result<Self> {
+        let data = event
+            .get("data")
+            .cloned()
+            .ok_or_else(|| anyhow!("BearWire client.waiting missing data"))?;
+        let parsed: Self =
+            serde_json::from_value(data).context("parse canonical BearWire client.waiting data")?;
+        if parsed.expected_client_method.trim() != "client.permission.result" {
+            bail!("BearWire client.waiting has unsupported expected_client_method");
+        }
+        if parsed.obligation_id.trim().is_empty() {
+            bail!("BearWire client.waiting missing obligation_id");
+        }
+        if parsed.permission.id.trim().is_empty() {
+            bail!("BearWire client.waiting missing permission.id");
+        }
+        if parsed.tool_call.id.trim().is_empty() {
+            bail!("BearWire client.waiting missing tool_call.id");
+        }
+        if parsed.tool_call.name.trim().is_empty() {
+            bail!("BearWire client.waiting missing tool_call.name");
+        }
+        Ok(parsed)
+    }
 }
 
 fn tool_args_from_event(event: &Value) -> Option<&Value> {
@@ -7317,25 +7303,6 @@ fn approval_reason_from_event(event: &Value) -> Option<&str> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-}
-
-fn permission_title_from_event(event: &Value) -> Option<&str> {
-    event
-        .pointer("/data/tool_call/title")
-        .or_else(|| event.pointer("/data/permission/title"))
-        .or_else(|| event.get("title"))
-        .or_else(|| event.pointer("/data/title"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-fn permission_target_from_event(event: &Value) -> Option<&Value> {
-    event
-        .get("target")
-        .or_else(|| event.pointer("/data/tool_call/arguments"))
-        .or_else(|| event.pointer("/data/arguments"))
-        .or_else(|| event.pointer("/data/target"))
 }
 
 fn compact_tool_raw_output(value: Value) -> Value {
@@ -7974,15 +7941,30 @@ pub(crate) async fn handle_permission_request_event(
     session_id: &str,
     event: &Value,
 ) -> Result<()> {
-    let permission_id = permission_id_from_event(event)
-        .ok_or_else(|| anyhow!("permission request missing permission_id"))?;
-    let obligation_id = obligation_id_from_event(event);
-    let tool_call_id = tool_call_id_from_event(event).unwrap_or(permission_id);
-    let tool_name = tool_name_from_event(event).unwrap_or("web_fetch");
-    let title = permission_title_from_event(event).unwrap_or("Permission request");
-    let reason = approval_reason_from_event(event).unwrap_or("BEARS requests permission.");
-    let target = permission_target_from_event(event)
-        .cloned()
+    let canonical = BearWireClientWaitingData::parse(event)?;
+    let permission_id = canonical.permission.id.trim();
+    let obligation_id = Some(canonical.obligation_id.trim());
+    let tool_call_id = canonical.tool_call.id.trim();
+    let tool_name = canonical.tool_call.name.trim();
+    let title = canonical
+        .permission
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or("Permission request");
+    let reason = canonical
+        .permission
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or("BEARS requests permission.");
+    let target = canonical
+        .permission
+        .target
+        .clone()
+        .or_else(|| canonical.tool_call.arguments.clone())
         .unwrap_or_else(|| json!({}));
     let url = target.get("url").and_then(Value::as_str);
     let host = target.get("host").and_then(Value::as_str);
@@ -11131,7 +11113,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_bearwire_tool_request_accessors_prefer_nested_payload() {
+    fn canonical_bearwire_tool_request_parser_prefers_nested_payload() {
         let event = json!({
             "type": "tool_call.requested",
             "run_id": "run-1",
@@ -11148,12 +11130,10 @@ mod tests {
             }
         });
 
-        assert_eq!(tool_call_id_from_event(&event), Some("call-1"));
-        assert_eq!(tool_name_from_event(&event), Some("fs_read_text_file"));
-        assert_eq!(
-            tool_args_from_event(&event).unwrap()["path"],
-            "/workspace/README.md"
-        );
+        let parsed = BearWireToolCallRequestData::parse(&event).unwrap();
+        assert_eq!(parsed.tool_call.id, "call-1");
+        assert_eq!(parsed.tool_call.name, "fs_read_text_file");
+        assert_eq!(parsed.tool_call.arguments.unwrap()["path"], "/workspace/README.md");
         assert_eq!(tool_path(&event), Some("/workspace/README.md"));
         assert_eq!(
             tool_call_title("fs_read_text_file", &event),
@@ -11166,17 +11146,18 @@ mod tests {
     }
 
     #[test]
-    fn canonical_bearwire_client_waiting_accessors_read_permission_obligation() {
+    fn canonical_bearwire_client_waiting_parser_reads_permission_obligation() {
         let event = json!({
             "type": "client.waiting",
             "run_id": "run-web-1",
             "resource_refs": [
-                { "kind": "client_obligation", "id": "obl-web-1" },
-                { "kind": "tool_call", "id": "call-web-resource" },
-                { "kind": "permission_request", "id": "perm-web-resource" }
+                { "kind": "client_obligation", "id": "legacy-obligation" },
+                { "kind": "tool_call", "id": "legacy-tool-call" },
+                { "kind": "permission_request", "id": "legacy-permission" }
             ],
             "data": {
                 "expected_client_method": "client.permission.result",
+                "obligation_id": "obl-web-1",
                 "tool_call": {
                     "id": "call-web-1",
                     "name": "web_fetch",
@@ -11185,22 +11166,25 @@ mod tests {
                 },
                 "permission": {
                     "id": "perm-web-1",
-                    "reason": "BEARS wants to fetch https://example.com/."
+                    "title": "Fetch URL",
+                    "reason": "BEARS wants to fetch https://example.com/.",
+                    "target": { "kind": "url", "url": "https://example.com/", "host": "example.com" }
                 }
             }
         });
 
-        assert_eq!(permission_id_from_event(&event), Some("perm-web-1"));
-        assert_eq!(obligation_id_from_event(&event), Some("obl-web-1"));
-        assert_eq!(tool_call_id_from_event(&event), Some("call-web-1"));
-        assert_eq!(tool_name_from_event(&event), Some("web_fetch"));
-        assert_eq!(permission_title_from_event(&event), Some("Fetch URL"));
+        let parsed = BearWireClientWaitingData::parse(&event).unwrap();
+        assert_eq!(parsed.permission.id, "perm-web-1");
+        assert_eq!(parsed.obligation_id, "obl-web-1");
+        assert_eq!(parsed.tool_call.id, "call-web-1");
+        assert_eq!(parsed.tool_call.name, "web_fetch");
+        assert_eq!(parsed.permission.title.as_deref(), Some("Fetch URL"));
         assert_eq!(
-            approval_reason_from_event(&event),
+            parsed.permission.reason.as_deref(),
             Some("BEARS wants to fetch https://example.com/.")
         );
         assert_eq!(
-            permission_target_from_event(&event).unwrap()["url"],
+            parsed.permission.target.unwrap()["url"],
             "https://example.com/"
         );
     }
@@ -14331,5 +14315,38 @@ mod bearwire_tool_request_parser_tests {
         assert_eq!(parsed.tool_call.id, "call-req-1");
         assert_eq!(parsed.tool_call.name, "fs_read_text_file");
         assert_eq!(parsed.tool_call.arguments.unwrap()["path"], "README.md");
+    }
+
+    #[test]
+    fn parses_canonical_bearwire_client_waiting_data() {
+        let event = json!({
+            "type": "client.waiting",
+            "data": {
+                "expected_client_method": "client.permission.result",
+                "obligation_id": "obligation-1",
+                "permission": {
+                    "id": "permission-1",
+                    "title": "Approve command",
+                    "reason": "Need to run the command.",
+                    "target": { "command": "cargo", "args": ["check"] }
+                },
+                "tool_call": {
+                    "id": "call-perm-1",
+                    "name": "process_run",
+                    "arguments": { "command": "cargo", "args": ["test"] },
+                    "display": { "title": "Run cargo" }
+                },
+                "permission_id": "legacy-wrong",
+                "tool_call_id": "legacy-wrong"
+            }
+        });
+
+        let parsed = BearWireClientWaitingData::parse(&event).unwrap();
+
+        assert_eq!(parsed.permission.id, "permission-1");
+        assert_eq!(parsed.obligation_id, "obligation-1");
+        assert_eq!(parsed.tool_call.id, "call-perm-1");
+        assert_eq!(parsed.tool_call.name, "process_run");
+        assert_eq!(parsed.permission.target.unwrap()["command"], "cargo");
     }
 }

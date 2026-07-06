@@ -970,16 +970,6 @@ async fn handle_bearwire_tool_call_finished_event(
     .await
 }
 
-fn resource_ref_id<'a>(event: &'a Value, kind: &str) -> Option<&'a str> {
-    event
-        .get("resource_refs")
-        .and_then(Value::as_array)?
-        .iter()
-        .find(|resource| resource.get("kind").and_then(Value::as_str) == Some(kind))?
-        .get("id")
-        .and_then(Value::as_str)
-}
-
 fn bearwire_message_delta_text(event: &Value) -> &str {
     event
         .get("data")
@@ -1261,33 +1251,6 @@ async fn handle_bearwire_event(
             outcome.saw_visible_output = true;
             diagnostics.saw_tool_activity = true;
             diagnostics.saw_visible_output = true;
-            let data = event.get("data").unwrap_or(&Value::Null);
-            let expected = data
-                .get("expected_client_method")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let obligation_id = data
-                .get("obligation_id")
-                .and_then(Value::as_str)
-                .or_else(|| resource_ref_id(event, "client_obligation"))
-                .map(str::trim)
-                .filter(|id| !id.is_empty());
-            let permission_id = data
-                .pointer("/permission/id")
-                .and_then(Value::as_str)
-                .or_else(|| data.get("approval_request_id").and_then(Value::as_str))
-                .or_else(|| data.get("permission_id").and_then(Value::as_str))
-                .or_else(|| resource_ref_id(event, "permission_request"))
-                .map(str::trim)
-                .filter(|id| !id.is_empty());
-            if obligation_id.is_none()
-                || permission_id.is_none()
-                || expected != "client.permission.result"
-            {
-                return Err(anyhow!(
-                    "BearWire client.waiting missing answerable permission obligation for session {session_id}; refusing to show an unanswerable permission prompt"
-                ));
-            }
             handle_permission_request_event(
                 config,
                 adapter_state,
