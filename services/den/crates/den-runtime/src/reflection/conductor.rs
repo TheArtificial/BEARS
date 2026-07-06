@@ -726,10 +726,12 @@ fn memory_curate_output_summary(output: &MemoryCurateRunOutput) -> serde_json::V
 }
 
 fn native_curate_llm_briefing_enabled() -> bool {
-    match std::env::var("NATIVE_CURATE_LLM_BRIEFING") {
+    // Cached after first read: this is process-startup config, not a hot toggle.
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| match std::env::var("NATIVE_CURATE_LLM_BRIEFING") {
         Ok(value) => value == "1" || value.eq_ignore_ascii_case("true"),
         Err(_) => true,
-    }
+    })
 }
 
 async fn maybe_run_native_curate_briefing_turn(
