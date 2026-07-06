@@ -378,6 +378,7 @@ impl LazyAgentStepStream {
             tool_choice: request.tool_choice,
             temperature: request.temperature,
             max_tokens: request.max_tokens,
+            thinking_effort: request.thinking_effort,
             telemetry: request.telemetry,
         };
 
@@ -507,6 +508,7 @@ pub async fn run_agent_step_stream(
         tool_choice: None,
         temperature: None,
         max_tokens: None,
+        thinking_effort: None,
         telemetry: Some(session.llm_telemetry()),
     };
     let budget = estimate_context_budget(

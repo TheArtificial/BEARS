@@ -12,7 +12,7 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use den_core::{config::Config, DenError};
+use den_core::{config::Config, DenError, ThinkingEffort};
 
 #[cfg(test)]
 use crate::model_registry;
@@ -151,6 +151,7 @@ pub struct ChatCompletionRequest {
     pub tool_choice: Option<Value>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    pub thinking_effort: Option<ThinkingEffort>,
     pub telemetry: Option<LlmRequestTelemetry>,
 }
 
@@ -300,6 +301,9 @@ impl ChatCompletionRequest {
         if let Some(max_tokens) = self.max_tokens {
             body["max_tokens"] = json!(max_tokens);
         }
+        if let Some(thinking_effort) = self.thinking_effort {
+            body["reasoning_effort"] = json!(thinking_effort.as_str());
+        }
         body
     }
 
@@ -340,6 +344,11 @@ impl ChatCompletionRequest {
         }
         if let Some(max_tokens) = self.max_tokens {
             body["max_output_tokens"] = json!(max_tokens);
+        }
+        if let Some(thinking_effort) = self.thinking_effort {
+            body["reasoning"] = json!({
+                "effort": thinking_effort.as_str(),
+            });
         }
         body
     }
@@ -1122,6 +1131,7 @@ mod tests {
             tool_choice: None,
             temperature: None,
             max_tokens: None,
+            thinking_effort: None,
             telemetry: None,
         };
 
@@ -1130,6 +1140,33 @@ mod tests {
         // Bifrost `/v1/responses` requires the provider-qualified handle, not a bare id.
         assert_eq!(body["model"], "openai/gpt-5.5");
         assert_eq!(body["stream"], true);
+    }
+
+    #[test]
+    fn thinking_effort_serializes_for_chat_and_responses_requests() {
+        let request = ChatCompletionRequest {
+            model: "openai/gpt-5.5".to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: Some("ping".to_string()),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            }],
+            tools: Vec::new(),
+            stream: true,
+            tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+            thinking_effort: Some(ThinkingEffort::High),
+            telemetry: None,
+        };
+
+        let chat_body = request.to_body();
+        assert_eq!(chat_body["reasoning_effort"], "high");
+
+        let responses_body = request.to_responses_body();
+        assert_eq!(responses_body["reasoning"]["effort"], "high");
     }
 
     #[test]

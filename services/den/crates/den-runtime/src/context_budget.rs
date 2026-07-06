@@ -159,6 +159,7 @@ mod tests {
             tool_choice: None,
             temperature: None,
             max_tokens: Some(512),
+            thinking_effort: None,
             telemetry: None,
         };
         let report = estimate_context_budget(
@@ -213,6 +214,7 @@ mod tests {
             tool_choice: None,
             temperature: None,
             max_tokens: Some(4096),
+            thinking_effort: None,
             telemetry: None,
         };
         let report = estimate_context_budget(
