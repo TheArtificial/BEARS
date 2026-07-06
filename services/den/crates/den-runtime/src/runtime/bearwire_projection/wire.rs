@@ -85,14 +85,11 @@ impl BearWireEvent {
     }
 
     pub fn tool_call_finished(data: ToolCallFinishWire) -> Self {
-        // ponytail: BearWire tool-result statuses are still stringly at a few
-        // protocol edges; promote this to a shared enum when those inputs are
-        // typed too.
-        let event_type = match data.status.as_str() {
-            "ok" => "tool_call.completed",
-            "incomplete" => "tool_call.warning",
-            "cancelled" => "tool_call.cancelled",
-            _ => "tool_call.failed",
+        let event_type = match data.status {
+            ToolCallFinishStatusWire::Ok => "tool_call.completed",
+            ToolCallFinishStatusWire::Incomplete => "tool_call.warning",
+            ToolCallFinishStatusWire::Cancelled => "tool_call.cancelled",
+            ToolCallFinishStatusWire::Error => "tool_call.failed",
         };
         Self::ephemeral_typed(event_type, data)
     }
@@ -184,12 +181,32 @@ pub struct ToolCallRefWire {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallFinishStatusWire {
+    Ok,
+    Error,
+    Incomplete,
+    Cancelled,
+}
+
+impl ToolCallFinishStatusWire {
+    pub fn from_wire_str(status: &str) -> Self {
+        match status {
+            "ok" => Self::Ok,
+            "incomplete" => Self::Incomplete,
+            "cancelled" => Self::Cancelled,
+            _ => Self::Error,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallFinishWire {
     pub tool_call_id: String,
     pub tool_name: Option<String>,
     pub tool_call: ToolCallRefWire,
-    pub status: String,
+    pub status: ToolCallFinishStatusWire,
     pub summary: Option<String>,
     pub error_message: Option<String>,
     pub content: Option<String>,
@@ -289,7 +306,7 @@ pub fn tool_call_finish_wire(
             id: tool_call_id.to_string(),
             name: tool_name,
         },
-        status: status.to_string(),
+        status: ToolCallFinishStatusWire::from_wire_str(status),
         summary,
         error_message: error_message.map(str::to_string),
         content: content.map(str::to_string),
