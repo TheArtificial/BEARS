@@ -6620,11 +6620,7 @@ async fn handle_tool_request_event(
         .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
         .await;
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
-    let args = canonical
-        .tool_call
-        .arguments
-        .clone()
-        .unwrap_or_else(|| json!({}));
+    let args = canonical.tool_call.arguments.clone();
     task_registry
         .remember_input(session_id, tool_call_id, tool_name, args.clone())
         .await;
@@ -7197,8 +7193,7 @@ fn command_line_from_value(value: &Value) -> Option<String> {
 struct BearWireToolCallRequestCard {
     id: String,
     name: String,
-    #[serde(default)]
-    arguments: Option<Value>,
+    arguments: Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -7964,8 +7959,7 @@ pub(crate) async fn handle_permission_request_event(
         .permission
         .target
         .clone()
-        .or_else(|| canonical.tool_call.arguments.clone())
-        .unwrap_or_else(|| json!({}));
+        .unwrap_or_else(|| canonical.tool_call.arguments.clone());
     let url = target.get("url").and_then(Value::as_str);
     let host = target.get("host").and_then(Value::as_str);
     let plan_mode_id = target.get("plan_mode_id").and_then(Value::as_str);
@@ -11133,7 +11127,7 @@ mod tests {
         let parsed = BearWireToolCallRequestData::parse(&event).unwrap();
         assert_eq!(parsed.tool_call.id, "call-1");
         assert_eq!(parsed.tool_call.name, "fs_read_text_file");
-        assert_eq!(parsed.tool_call.arguments.unwrap()["path"], "/workspace/README.md");
+        assert_eq!(parsed.tool_call.arguments["path"], "/workspace/README.md");
         assert_eq!(tool_path(&event), Some("/workspace/README.md"));
         assert_eq!(
             tool_call_title("fs_read_text_file", &event),
@@ -14314,7 +14308,7 @@ mod bearwire_tool_request_parser_tests {
 
         assert_eq!(parsed.tool_call.id, "call-req-1");
         assert_eq!(parsed.tool_call.name, "fs_read_text_file");
-        assert_eq!(parsed.tool_call.arguments.unwrap()["path"], "README.md");
+        assert_eq!(parsed.tool_call.arguments["path"], "README.md");
     }
 
     #[test]
