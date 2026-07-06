@@ -34,7 +34,12 @@ use crate::{
 };
 use den_core::tools::{
     arguments::DenToolChannelContext,
-    constants::{DEN_TOOL_OUTPUT_READ, DEN_WEB_FETCH},
+    constants::{
+        DEN_TASK_LISTS_REQUEST_HANDOFF_LEGACY_PROVIDER, DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER,
+        DEN_TASK_LISTS_UPDATE_LEGACY_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
+        DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TOOL_OUTPUT_READ,
+        DEN_WEB_FETCH,
+    },
     context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_json_tool_result, compact_json_tool_result_with_artifact},
@@ -695,6 +700,69 @@ impl SessionTrackingStream {
         })
     }
 
+    fn required_task_action_satisfied(action: &crate::agent_loop::CheckpointNextAction, tool_name: &str) -> bool {
+        match action {
+            crate::agent_loop::CheckpointNextAction::UpdateTaskList => matches!(
+                tool_name,
+                DEN_TASK_LISTS_UPDATE_PROVIDER
+                    | DEN_TASK_LISTS_UPDATE_LEGACY_PROVIDER
+                    | DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER
+            ),
+            crate::agent_loop::CheckpointNextAction::SyncTaskList => {
+                tool_name == DEN_TASK_LIST_SYNC_PROVIDER
+            }
+            crate::agent_loop::CheckpointNextAction::RequestHandoff => matches!(
+                tool_name,
+                DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER | DEN_TASK_LISTS_REQUEST_HANDOFF_LEGACY_PROVIDER
+            ),
+            _ => false,
+        }
+    }
+
+    fn checkpoint_next_action_can_satisfy_task_state_change(
+        action: &crate::agent_loop::CheckpointNextAction,
+    ) -> bool {
+        matches!(
+            action,
+            crate::agent_loop::CheckpointNextAction::UpdateTaskList
+                | crate::agent_loop::CheckpointNextAction::SyncTaskList
+                | crate::agent_loop::CheckpointNextAction::RequestHandoff
+        )
+    }
+
+    fn pending_checkpoint_task_action(&self) -> Option<crate::agent_loop::CheckpointNextAction> {
+        self.store
+            .get(&self.session_key)
+            .and_then(|session| session.pending_checkpoint_task_action)
+    }
+
+    fn enforce_required_checkpoint_task_action(
+        &self,
+        tool_name: &str,
+    ) -> Result<(), RuntimeStreamEvent> {
+        let Some(action) = self.pending_checkpoint_task_action() else {
+            return Ok(());
+        };
+        if Self::required_task_action_satisfied(&action, tool_name) {
+            self.store.update(&self.session_key, |session| {
+                session.pending_checkpoint_task_action = None;
+            });
+            return Ok(());
+        }
+        Err(Self::checkpoint_failure_event(format!(
+            "Runtime checkpoint required task-state follow-through with `{action:?}`, but the assistant next called `{tool_name}`. Use the task-management tool indicated by the checkpoint response before other actions."
+        )))
+    }
+
+    fn fail_if_checkpoint_task_action_pending(&self) -> Result<(), RuntimeStreamEvent> {
+        if let Some(action) = self.pending_checkpoint_task_action() {
+            return Err(Self::checkpoint_failure_event(format!(
+                "Runtime checkpoint required task-state follow-through with `{action:?}`, but the assistant attempted to stop before using the required task-management tool."
+            )));
+        }
+        Ok(())
+    }
+
     fn validate_pending_checkpoint_response(&mut self) -> Result<bool, RuntimeStreamEvent> {
         if !self.enforce_checkpoint_responses() {
             return Ok(false);
@@ -712,9 +780,20 @@ impl SessionTrackingStream {
                 "Runtime checkpoint response failed validation: {err:?}"
             ))
         })?;
+        let required_task_action = if response.task_state_change_needed.is_some() {
+            if !Self::checkpoint_next_action_can_satisfy_task_state_change(&response.next_action) {
+                return Err(Self::checkpoint_failure_event(
+                    "Runtime checkpoint response declared task_state_change_needed, but next_action was not a task-management action. Use update_task_list, sync_task_list, or request_task_list_handoff.".to_string(),
+                ));
+            }
+            Some(response.next_action.clone())
+        } else {
+            None
+        };
 
         self.store.update(&self.session_key, |session| {
             session.pending_checkpoint_request = None;
+            session.pending_checkpoint_task_action = required_task_action.clone();
             session.checkpoint_state.last_checkpoint_reason = None;
         });
         self.record_checkpoint_response_if_audited(request, response);
@@ -963,6 +1042,10 @@ impl Stream for SessionTrackingStream {
                     self.finished = true;
                     return Poll::Ready(Some(Ok(event)));
                 }
+                if let Err(event) = self.enforce_required_checkpoint_task_action(&tool_name) {
+                    self.finished = true;
+                    return Poll::Ready(Some(Ok(event)));
+                }
                 self.pending_server_tool_continuation = None;
                 self.tool_calls.insert(
                     tool_call_id.clone(),
@@ -1102,6 +1185,10 @@ impl Stream for SessionTrackingStream {
                         self.finished = true;
                         return Poll::Ready(Some(Ok(event)));
                     }
+                }
+                if let Err(event) = self.fail_if_checkpoint_task_action_pending() {
+                    self.finished = true;
+                    return Poll::Ready(Some(Ok(event)));
                 }
                 if self.assistant_text.trim().is_empty() {
                     let fallback = "BEARS completed the turn without assistant output.".to_string();
@@ -1411,6 +1498,7 @@ mod tests {
             }),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
+            pending_checkpoint_task_action: None,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: true,
             key_memory_projection_cache_key: None,
@@ -1447,6 +1535,46 @@ mod tests {
         let parsed = SessionTrackingStream::parse_checkpoint_response_text(&fenced)
             .expect("fenced checkpoint response parses");
         assert_eq!(parsed.next_action, crate::agent_loop::CheckpointNextAction::Validate);
+    }
+
+    #[test]
+    fn checkpoint_task_state_change_requires_task_management_next_action() {
+        assert!(SessionTrackingStream::checkpoint_next_action_can_satisfy_task_state_change(
+            &crate::agent_loop::CheckpointNextAction::UpdateTaskList
+        ));
+        assert!(SessionTrackingStream::checkpoint_next_action_can_satisfy_task_state_change(
+            &crate::agent_loop::CheckpointNextAction::SyncTaskList
+        ));
+        assert!(SessionTrackingStream::checkpoint_next_action_can_satisfy_task_state_change(
+            &crate::agent_loop::CheckpointNextAction::RequestHandoff
+        ));
+        assert!(!SessionTrackingStream::checkpoint_next_action_can_satisfy_task_state_change(
+            &crate::agent_loop::CheckpointNextAction::CallTool { tool_name: None }
+        ));
+    }
+
+    #[test]
+    fn required_checkpoint_task_action_matches_only_task_management_tools() {
+        assert!(SessionTrackingStream::required_task_action_satisfied(
+            &crate::agent_loop::CheckpointNextAction::UpdateTaskList,
+            DEN_TASK_LISTS_UPDATE_PROVIDER,
+        ));
+        assert!(SessionTrackingStream::required_task_action_satisfied(
+            &crate::agent_loop::CheckpointNextAction::UpdateTaskList,
+            DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
+        ));
+        assert!(SessionTrackingStream::required_task_action_satisfied(
+            &crate::agent_loop::CheckpointNextAction::SyncTaskList,
+            DEN_TASK_LIST_SYNC_PROVIDER,
+        ));
+        assert!(SessionTrackingStream::required_task_action_satisfied(
+            &crate::agent_loop::CheckpointNextAction::RequestHandoff,
+            DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER,
+        ));
+        assert!(!SessionTrackingStream::required_task_action_satisfied(
+            &crate::agent_loop::CheckpointNextAction::SyncTaskList,
+            "memory_read",
+        ));
     }
 
     #[test]

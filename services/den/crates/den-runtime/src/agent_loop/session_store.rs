@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     agent_loop::{
-        CheckpointState, KeyMemoryProjectionCacheKey, ResolvedAgentLoopControl,
+        CheckpointNextAction, CheckpointState, KeyMemoryProjectionCacheKey, ResolvedAgentLoopControl,
         RuntimeCheckpointRequest, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
         TurnBudgetState,
     },
@@ -44,6 +44,7 @@ pub struct AgentLoopSession {
     pub agent_loop_control: ResolvedAgentLoopControl,
     pub checkpoint_state: CheckpointState,
     pub pending_checkpoint_request: Option<RuntimeCheckpointRequest>,
+    pub pending_checkpoint_task_action: Option<CheckpointNextAction>,
     pub strategy: StrategyProfile,
     pub stream_tokens: bool,
     pub key_memory_projection_cache_key: Option<KeyMemoryProjectionCacheKey>,
@@ -111,6 +112,7 @@ impl AgentLoopSession {
             })),
             "checkpoint_state": serde_json::to_value(&self.checkpoint_state).unwrap_or(Value::Null),
             "pending_checkpoint_request": serde_json::to_value(&self.pending_checkpoint_request).unwrap_or(Value::Null),
+            "pending_checkpoint_task_action": serde_json::to_value(&self.pending_checkpoint_task_action).unwrap_or(Value::Null),
             "budgets": {
                 "turn": {
                     "max_wall_clock_ms": self.turn_budget.max_wall_clock_ms,

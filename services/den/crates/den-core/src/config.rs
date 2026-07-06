@@ -184,7 +184,7 @@ pub struct Config {
     pub compaction_mode: String,
     /// When compaction writes run (`COMPACTION_TIMING`: `async` default, `sync`).
     pub compaction_timing: String,
-    /// Agent loop control rollout (`BEARS_AGENT_LOOP_CONTROL`: `observe` default, `off`, `enforce`).
+    /// Agent loop control mode (`BEARS_AGENT_LOOP_CONTROL`: `enforce` default, `observe`, `off`).
     pub agent_loop_control_mode: String,
     /// Checkpoint artifact audit retention (`BEARS_CHECKPOINT_AUDIT`: `work` default, `off`, `all`).
     pub checkpoint_audit_mode: String,
@@ -507,7 +507,7 @@ impl Config {
             std::env::var("COMPACTION_TIMING").unwrap_or_else(|_| "async".to_string());
         let agent_loop_control_mode = parse_choice_env(
             "BEARS_AGENT_LOOP_CONTROL",
-            "observe",
+            "enforce",
             &["off", "observe", "enforce"],
         );
         let checkpoint_audit_mode =
@@ -669,7 +669,7 @@ impl Config {
             embedding_dimensions: 1536,
             compaction_mode: "observe".into(),
             compaction_timing: "async".into(),
-            agent_loop_control_mode: "observe".into(),
+            agent_loop_control_mode: "enforce".into(),
             checkpoint_audit_mode: "work".into(),
             ui_fixture_profile: None,
         }
