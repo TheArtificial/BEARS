@@ -38,7 +38,7 @@ Out of scope:
 ## Core invariants
 
 1. **Runtime controls continuation; task tools control task state.** Checkpoints may identify that task state should change, but only `update_task_list`, `sync_task_list`, `checkout_task_list`, `request_task_list_handoff`, or Docket service APIs may mutate session task-list/Docket state.
-2. **Checkpoints are structured artifacts, not informal prose.** A checkpoint response must be parsed into typed fields or treated as absent/invalid for audit purposes.
+2. **Checkpoints are structured artifacts, not informal prose.** A checkpoint report should arrive as a runtime-owned `checkpoint` tool call whose arguments are parsed into typed fields. Assistant prose/JSON fallback is degraded and never the primary control path.
 3. **Checkpoint artifacts can be auditable without becoming Docket events.** `work` runs may retain checkpoint artifacts as run audit evidence, but Docket `bear_task_events`/`bear_job_events` remain the report-visible source of task progress, blockers, completion, and criteria evaluation.
 4. **Thinking effort is a quality knob, not a safety boundary.** Budget, ko, task-gate, and stop enforcement remain runtime-authoritative even if a provider ignores thinking-level metadata.
 5. **Runtime code consumes resolved typed profiles.** Model names and provider quirks belong in registry/configuration; the runtime must not scatter model-name `match` arms.
@@ -59,7 +59,7 @@ flowchart TD
     T -- continue --> M[Next model/tool step]
     T -- checkpoint --> Ck[Checkpoint request]
     Ck --> CT[Optional checkpoint thinking effort]
-    Ck --> CR[Structured checkpoint response]
+    Ck --> CR[Checkpoint tool report]
 
     CR --> A1[Run audit artifact]
     CR --> D1{Task state change needed?}
@@ -203,9 +203,9 @@ pub enum CheckpointReason {
 
 **Exit gate:** checkpoint triggers are observable and tested but may still run in observe-only mode.
 
-## Phase 5 — Structured checkpoint request and response protocol
+## Phase 5 — Structured checkpoint request and checkpoint tool protocol
 
-**Goal:** implement Option B: a typed checkpoint response artifact rather than unstructured assistant prose.
+**Goal:** implement Option B as a typed runtime-owned `checkpoint` tool call rather than unstructured assistant prose or assistant text JSON.
 
 A checkpoint request should include enough context to make the response auditable:
 
@@ -222,14 +222,13 @@ pub struct RuntimeCheckpointRequest {
 }
 ```
 
-Suggested model-facing response schema:
+The model-facing response should be a `checkpoint(...)` tool call. Suggested tool argument schema:
 
 ```rust
 pub struct RuntimeCheckpointResponse {
     pub checkpoint_id: CheckpointId,
     pub active_objective: String,
-    pub learned: Vec<String>,
-    pub remaining_uncertainty: Vec<String>,
+    pub summary: Option<String>, // short prose synthesis for audit
     pub more_exploration_justified: bool,
     pub next_action: CheckpointNextAction,
     pub task_state_change_needed: Option<TaskStateChangeIntent>,
@@ -237,6 +236,8 @@ pub struct RuntimeCheckpointResponse {
     pub confidence: Option<CheckpointConfidence>,
 }
 ```
+
+Do not force learned facts and uncertainty into required JSON arrays. Keep model reasoning/prose separate; structure only the decision fields and a short audit summary.
 
 `CheckpointNextAction` should be a typed enum, for example:
 
@@ -253,14 +254,14 @@ pub struct RuntimeCheckpointResponse {
 
 | Task | Done when |
 | --- | --- |
-| Define request/response DTOs | `RuntimeCheckpointRequest` and `RuntimeCheckpointResponse` are typed and serializable. |
-| Add checkpoint ids | Every request/response pair has a stable id scoped to run/turn. |
-| Add model instruction fragment | Runtime asks for the checkpoint response in structured form, not free prose. |
-| Parse response at boundary | JSON/tool/message-part parsing happens once at the runtime boundary into typed structs. |
-| Validate required fields | Missing/invalid checkpoint fields produce a typed recovery nudge or failure, not string matching. |
-| Add tests | Valid, missing-field, invalid-next-action, and stale-checkpoint-id responses are covered. |
+| Define request/report DTOs | `RuntimeCheckpointRequest` and `RuntimeCheckpointResponse` are typed and serializable; the response DTO is the `checkpoint` tool argument shape. |
+| Add checkpoint ids | Every request/report pair has a stable id scoped to run/turn. |
+| Add model instruction fragment | Runtime asks the model to call the `checkpoint` tool, not to answer with JSON text. |
+| Parse response at boundary | Tool arguments are parsed once at the runtime boundary into typed structs. Assistant-text JSON is degraded fallback only. |
+| Validate required fields | Missing/invalid checkpoint tool fields produce a typed recovery nudge/advisory result; hard failure is reserved for emergency fuses or unrecoverable protocol loops. |
+| Add tests | Valid, missing-field, invalid-next-action, stale-checkpoint-id, and degraded assistant-text fallback cases are covered. |
 
-**Exit gate:** the runtime can request and parse a structured checkpoint response, but it still does not mutate task state from it.
+**Exit gate:** the runtime can request and parse a structured checkpoint tool report, but it still does not mutate task state from it.
 
 ## Phase 6 — Checkpoint artifact retention and audit policy
 
@@ -313,9 +314,9 @@ When a trigger fires:
 
 1. runtime creates `RuntimeCheckpointRequest`,
 2. optional checkpoint thinking policy is resolved,
-3. next model inference must produce a checkpoint response before more exploration/risky action,
-4. runtime validates the response,
-5. runtime continues according to `next_action` and task-gate state.
+3. next model inference should call the runtime-owned `checkpoint` tool before more exploration/risky action,
+4. runtime validates the tool arguments and records an advisory/audit artifact,
+5. runtime continues according to deterministic loop signals plus advisory `next_action`/task-gate state.
 
 | Task | Done when |
 | --- | --- |
@@ -324,7 +325,7 @@ When a trigger fires:
 | Enforce same-signature checkpoint | Near-ko repeated signature forces different action or checkpoint. |
 | Enforce task-gate checkpoint | First/repeated gate rejection can require checkpoint before stronger gate behavior. |
 | Enforce pre-risk checkpoint | `careful`/`strict` can require checkpoint before broad/destructive actions. |
-| Add loop tests | Simulated turns prove checkpoint is required, parsed, and then permits appropriate continuation. |
+| Add loop tests | Simulated turns prove checkpoint tool calls are handled internally, invalid checkpoint reports degrade without killing the run, and valid reports can require task-tool follow-through. |
 
 **Exit gate:** checkpoints are part of runtime continuation, not merely diagnostics.
 
@@ -373,9 +374,9 @@ Required behavior:
 | Task | Done when |
 | --- | --- |
 | Attach active task context | Checkpoint requests include current task-list/Docket refs when available. |
-| Validate task-state intent | Response can recommend update/sync/handoff but cannot mutate state. |
-| Require tool call for state changes | Runtime continues to task tool when task-state change is needed. |
-| Preserve gate semantics | Checkpoint response alone cannot satisfy completion/blocker/non-applicable state. |
+| Validate task-state intent | Checkpoint tool report can recommend update/sync/handoff but cannot mutate state. |
+| Require tool call for state changes | Runtime requires the appropriate task-management tool when task-state change is needed. |
+| Preserve gate semantics | Checkpoint tool report alone cannot satisfy completion/blocker/non-applicable state. |
 | Add Docket audit correlation | `work` checkpoint artifacts can be queried by run/job/task refs. |
 | Add tests | Checkpoint saying “done” does not complete task; `update_task_list` with evidence does. |
 
@@ -399,7 +400,7 @@ Visibility defaults:
 | --- | --- | --- |
 | Control level resolution | diagnostic/live progress | diagnostic/live progress |
 | Checkpoint request | live progress | live progress + audit artifact |
-| Checkpoint response | hidden/ephemeral unless useful | audit artifact, optionally operator-visible |
+| Checkpoint tool report | hidden/ephemeral unless useful | audit artifact, optionally operator-visible |
 | Provider reasoning stream | live UI only | live UI only unless separate debug retention |
 | Task progress | task-list/Docket tools only | task-list/Docket tools only |
 

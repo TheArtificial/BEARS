@@ -174,22 +174,29 @@ Checkpoint triggers may include:
 - a low remaining wall-clock, tool-call, or context budget;
 - a broad, destructive, or otherwise risky mutative action about to be attempted.
 
-A checkpoint is a model-facing runtime nudge. The runtime may pair the checkpoint nudge with the control level's optional checkpoint thinking policy, such as temporarily raising reasoning effort for that model call when the provider supports it. It should ask the model to briefly state:
+A checkpoint is a model-facing runtime nudge whose primary response path is a runtime-owned **`checkpoint` tool call**, not assistant prose or JSON embedded in transcript text. The runtime may pair the checkpoint nudge with the control level's optional checkpoint thinking policy, such as temporarily raising reasoning effort for that model call when the provider supports it.
 
-- the active objective or task-list item;
-- what has been learned;
-- what uncertainty remains;
-- whether more exploration is justified;
-- the next single action;
-- whether task-list state needs an explicit update.
+The `checkpoint` tool schema should structure only the fields the runtime branches on or audits:
+
+- `checkpoint_id`;
+- active objective/task-list item;
+- short free-text `summary` for synthesis;
+- `more_exploration_justified`;
+- `next_action` as a small enum;
+- optional `task_state_change_needed` intent;
+- `evidence_refs`.
+
+Do not force the model's whole reasoning into JSON arrays. Let provider reasoning/thinking and ordinary prose remain separate; structure the checkpoint decision, not the thinking process.
 
 Checkpoints are **control-flow scaffolding, not work records**. They do not create, complete, block, waive, cancel, or sync task-list/Docket state. If a checkpoint concludes that task state should change, the model must use the appropriate task-management tool and provide evidence. Per ADR-0045, the task gate evaluates task-list/Docket state, not checkpoint prose.
+
+Checkpoint reports are advisory/audit records. Deterministic loop signals — budgets, ko, task gates, and grounding probes — remain authoritative; a checkpoint cannot grant itself more budget or override runtime stop policy. Invalid or missing checkpoint tool arguments should normally degrade to a recovery nudge or advisory tool result, not hard-fail the turn. Reserve hard failure for emergency fuses, repeated unrecoverable protocol errors, or unsafe states.
 
 Checkpoint thinking-level escalation must remain bounded to the checkpoint/pre-risk inference unless the resolved control profile explicitly says otherwise. It should improve synthesis quality without silently converting the whole run into a higher-cost reasoning mode.
 
 ### 7c. Grounding probes make post-mutation quality checkable per work surface
 
-Checkpoints as defined in §7b ask the model to self-assess ("what has been learned", "whether more exploration is justified"). Self-report is weak evidence: a drifting model narrates confidently. The runtime should, where the work surface allows, pair that self-assessment with **grounding probes** — cheap, automatic, surface-native validators run after a mutative action, whose typed findings feed the loop controller.
+Checkpoints as defined in §7b ask the model to report an advisory decision through the `checkpoint` tool. Self-report is weak evidence: a drifting model can choose plausible `summary` text and `next_action` values. The runtime should, where the work surface allows, pair that advisory report with **grounding probes** — cheap, automatic, surface-native validators run after a mutative action, whose typed findings feed the loop controller.
 
 This generalizes the useful idea behind editor/LSP feedback loops without assuming every Bear works on code. A Bear is "more than code," so grounding must be **work-surface dependent** (per [ADR-0006](adr-0006-bear-work-surfaces.md)) rather than a blind attempt to quality-review any artifact:
 
@@ -228,7 +235,7 @@ Candidate classifier signals:
 - **task-gate intent (§6a):** distinguishing a legitimate blocked/not-applicable/waived terminal response from evasion of an actionable item, which the gate-rejection signature alone cannot tell apart;
 - **semantic ko:** near-duplicate churn that normalized-signature ko (§6) misses because arguments were reworded rather than repeated;
 - **no-probe grounding fallback (§7c):** a coherence check on surfaces that declare no objective probe, which is explicitly the degraded path;
-- **checkpoint adherence (§7b):** whether a checkpoint response commits to a genuinely different next action or merely narrates.
+- **checkpoint adherence (§7b):** whether a checkpoint tool report commits to a genuinely different next action or merely narrates.
 
 Two constraints keep this safe rather than reckless, and both are load-bearing:
 
@@ -280,13 +287,13 @@ Den therefore promotes **context/token budget to a first-class loop-control dime
 - The loop controller *consumes* the ADR-0047 budget report as a live dimension of `TurnBudgetState`, so remaining-context thresholds are evaluated in the same place as ko, failure-streak, and wall-clock thresholds rather than in a separate compaction path.
 - Control levels tune context thresholds like any other budget: `careful`/`strict` may checkpoint earlier under context pressure than `light`.
 
-**Checkpoint-then-compact sequencing.** When context pressure crosses the checkpoint threshold, the controller should prefer to run a checkpoint (§7b) *before* compaction, then use the structured checkpoint response as a high-fidelity compaction seed:
+**Checkpoint-then-compact sequencing.** When context pressure crosses the checkpoint threshold, the controller should prefer to run a checkpoint (§7b) *before* compaction, then use the checkpoint tool report as a high-fidelity compaction seed:
 
-- the model-authored checkpoint (active objective, evidence, remaining uncertainty, next action) is produced at exactly the moment a good summary is needed;
-- compaction (per [ADR-0032](adr-0032-den-context-compaction-architecture.md)) then compacts from that structured synthesis instead of summarizing mid-thrash from generic instructions;
+- the model-authored checkpoint report (active objective, summary, evidence refs, next action) is produced at exactly the moment a good summary is needed;
+- compaction (per [ADR-0032](adr-0032-den-context-compaction-architecture.md)) can then use that concise checkpoint report as a seed instead of summarizing mid-thrash from generic instructions;
 - if context pressure is already critical — no room to afford a checkpoint turn — compaction runs first and the checkpoint is deferred, so the ordering is a preference, not an invariant that can itself exhaust the window.
 
-Compaction remains subordinate to the same boundaries as checkpoints: it is control-flow scaffolding, does not mutate task-list/Docket state, and does not turn checkpoint prose into history.
+Compaction remains subordinate to the same boundaries as checkpoints: it is control-flow scaffolding, does not mutate task-list/Docket state, and does not turn checkpoint tool reports or prose fallback into task history.
 
 ## Consequences
 
@@ -349,7 +356,8 @@ Enforcement, additional levels, per-class thinking escalation, and additional gr
 - Model-visible low-budget warnings and runtime checkpoints are desirable, but runtime enforcement still remains authoritative.
 - Normalized operational outcome records should be persisted for future transcript replay whenever a run/turn fails after work has already been attempted.
 - If `pair` or `chat` replenish read/search budget after a successful mutative step, the replenishment should be small and verification-oriented rather than a full license to restart the turn.
-- Checkpoint content should be compact and structured around active objective, evidence, uncertainty, next action, and any required task-state update.
+- Checkpoint reports should be delivered through the runtime-owned `checkpoint` tool whenever possible. Assistant-text JSON is only a degraded compatibility fallback and must not be the primary path.
+- Checkpoint content should be compact: active objective, a short synthesis summary, decision fields, evidence refs, and any required task-state update intent.
 - Checkpoints should reference task-list/Docket identifiers and versions when relevant, but task-state changes must still go through task-management tools.
 - Runtime code should depend on resolved control profiles and typed capability metadata, not on scattered string comparisons against provider or model names.
 - Thinking-level controls should be modeled as provider/model request metadata, separate from loop-control enforcement state, so unsupported providers can degrade gracefully.
@@ -364,7 +372,7 @@ Enforcement, additional levels, per-class thinking escalation, and additional gr
 - No free-form transcript string matching to detect loops.
 - No planner-only execution gate as a substitute for core continuation policy.
 - No use of checkpoints as a substitute for task-list/Docket updates, completion criteria, or history-visible task records.
-- No requirement for verbose chain-of-thought or open-ended self-explanation; checkpoints should be concise runtime synthesis.
+- No requirement for verbose chain-of-thought or open-ended self-explanation; checkpoints should be concise runtime synthesis through the `checkpoint` tool.
 - No hardcoded per-model loop behavior in the agent runtime; model association belongs in registry/configuration and resolves to typed control profiles before execution.
 - No reliance on thinking-level escalation as a substitute for budget, ko, checkpoint, or task-gate enforcement.
 - No grounding probe that mutates the work surface, performs LLM "is this good?" review, or blocks a task by itself; probes are objective validators whose findings are runtime evidence, and absent a declared profile the surface simply has no grounding signal.
