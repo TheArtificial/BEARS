@@ -63,7 +63,7 @@ use super::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bear/{slug}/overview", get(overview_view))
-        .route_with_tsr("/bear/{slug}/access", get(access_view))
+        .route_with_tsr("/bear/{slug}/people", get(access_view))
         .route_with_tsr("/bear/{slug}/persona", get(persona_view))
         .route_with_tsr("/bear/{slug}/stances", get(stances_view))
         .route_with_tsr("/bear/{slug}/profiles", get(stances_view))
@@ -82,13 +82,14 @@ pub fn router() -> Router<AppState> {
             "/bear/{slug}/profiles/{stance}/model",
             post(stance_model_post),
         )
+        .route_with_tsr("/bear/{slug}/activity", get(conversations_view))
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
         .route_with_tsr(
             "/bear/{slug}/conversations/{conversation_id}",
             get(conversation_detail_view),
         )
         .route_with_tsr("/bear/{slug}/context", get(context_view))
-        .route_with_tsr("/bear/{slug}/policy", get(policy_view))
+        .route_with_tsr("/bear/{slug}/resources", get(policy_view))
         .route_with_tsr("/bear/{slug}/advanced", get(advanced_view))
         .route_with_tsr("/bear/{slug}/export.bear", get(export_bear_bundle))
         .route_with_tsr("/bears/import", post(import_bear_bundle))
@@ -604,7 +605,7 @@ async fn conversation_checkpoint_artifacts(
         time::OffsetDateTime,
         time::OffsetDateTime,
     )>(
-        r#"
+        r"
         SELECT
             c.run_id,
             c.checkpoint_id,
@@ -624,7 +625,7 @@ async fn conversation_checkpoint_artifacts(
         WHERE r.bear_id = $1 AND r.session_id = $2
         ORDER BY c.created_at DESC, c.checkpoint_id DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(session_id)
@@ -1185,7 +1186,7 @@ async fn access_view(
             message => query.message,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "access"),
+            ..bear_nav_context(&bear, "people"),
         },
     )
     .await
@@ -1832,7 +1833,7 @@ async fn render_models_page(
             error,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "models"),
+            ..bear_nav_context(&bear, "identity"),
         },
     )
     .await
@@ -2202,7 +2203,7 @@ async fn conversations_view(
             conversations,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "conversations"),
+            ..bear_nav_context(&bear, "activity"),
         },
     )
     .await
@@ -2265,7 +2266,7 @@ async fn conversation_detail_view(
             checkpoint_artifacts,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "conversations"),
+            ..bear_nav_context(&bear, "activity"),
         },
     )
     .await
@@ -2339,7 +2340,7 @@ async fn policy_view(
             message => query.message,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "policy"),
+            ..bear_nav_context(&bear, "resources"),
         },
     )
     .await

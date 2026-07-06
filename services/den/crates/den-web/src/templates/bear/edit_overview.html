@@ -1,9 +1,9 @@
-{% extends "base.html" %}
+{% extends "bear/_manage.html" %}
 {% import "forms.jinja" as forms %}
 
 {% block title %}Edit overview · {{ bear.name | e }}{% endblock %}
 
-{% block content %}
+{% block manage %}
 <section>
     <h2>Edit overview</h2>
     <p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>

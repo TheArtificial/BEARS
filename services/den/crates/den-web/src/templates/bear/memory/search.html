@@ -1,10 +1,9 @@
-{% extends "base.html" %}
+{% extends "bear/_manage.html" %}
 {% set memory_subnav = "search" %}
 
 {% block title %}Search memory · {{ bear.slug }}{% endblock %}
 
-{% block content %}
-{% include "bear/settings/_bear_nav.html" %}
+{% block manage %}
 {% include "bear/memory/_memory_nav.html" %}
 
 <div class="box">

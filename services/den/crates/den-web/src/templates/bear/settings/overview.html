@@ -1,5 +1,5 @@
-{% extends "base.html" %} {% block title %}Bear · {{ bear.slug }}{% endblock %}
-{% block content %} {% include "bear/settings/_bear_nav.html" %}
+{% extends "bear/_manage.html" %} {% block title %}Bear · {{ bear.slug }}{% endblock %}
+{% block manage %}
 <div class="box">
     <h2>{{ bear.name }}</h2>
     <p><code>{{ bear.slug }}</code> · <code>{{ bear.id }}</code></p>

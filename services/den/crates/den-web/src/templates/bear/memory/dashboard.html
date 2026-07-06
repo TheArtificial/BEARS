@@ -1,6 +1,5 @@
-{% extends "base.html" %} {% set memory_subnav = "dashboard" %} {% block title
-%}Memory · {{ bear.slug }}{% endblock %} {% block content %} {% include
-"bear/settings/_bear_nav.html" %} {% include "bear/memory/_memory_nav.html" %}
+{% extends "bear/_manage.html" %} {% set memory_subnav = "dashboard" %} {% block title
+%}Memory · {{ bear.slug }}{% endblock %} {% block manage %} {% include "bear/memory/_memory_nav.html" %}
 
 <div class="box">
     <h2>Memory dashboard</h2>

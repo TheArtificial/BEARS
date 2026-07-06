@@ -969,3 +969,82 @@ body.page-bears-health .bears-health-row-warn td:first-of-type {
 body.page-bears-health .bears-health-row-fail td:first-of-type {
     border-left: solid calc(var(--thin-line-unit) * 3) var(--text-color);
 }
+
+/* Bear management shell (/bear/{slug}/… management pages).
+   Two-column on wide viewports, stacked on narrow. No JS required. */
+.bear-manage {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: calc(var(--spacing-unit) * 2);
+    align-items: start;
+}
+@media (min-width: 52rem) {
+    .bear-manage {
+        grid-template-columns: 13rem minmax(0, 1fr);
+    }
+}
+.bear-manage-nav ul {
+    list-style: none;
+    margin: 0 0 var(--spacing-unit);
+    padding: 0;
+}
+.bear-manage-nav li {
+    margin: 0;
+    padding: calc(var(--spacing-unit) / 4) 0;
+}
+.bear-manage-nav a[aria-current="page"] {
+    font-weight: bold;
+    text-decoration: none;
+}
+.bear-manage-nav-title {
+    margin: 0 0 var(--spacing-unit);
+}
+.bear-manage-nav-group {
+    margin: var(--spacing-unit) 0 calc(var(--spacing-unit) / 4);
+    color: var(--meta-color);
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.05em;
+}
+.bear-manage-nav-group .form-hint {
+    display: block;
+    text-transform: none;
+    letter-spacing: normal;
+}
+.bear-manage-nav-details summary {
+    cursor: pointer;
+    color: var(--meta-color);
+}
+.bear-manage-main > .box:first-child {
+    margin-top: 0;
+}
+
+/* Responsive disclosure: extra detail revealed by available space, via CSS
+   only. The compact core must stand alone; disclosed panels are additive. */
+.bear-manage-disclosed {
+    display: none;
+}
+@media (min-width: 68rem) {
+    .bear-manage-disclosed {
+        display: block;
+    }
+    .bear-manage-overview-wide {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+        gap: var(--spacing-unit);
+        align-items: start;
+    }
+}
+
+/* Simple CSS bar rows for activity-over-time (no JS). */
+.bear-manage-bar {
+    display: block;
+    height: 0.6rem;
+    background: var(--accent-color);
+    min-width: 1px;
+}
+.bear-manage-bar-track {
+    display: block;
+    width: 100%;
+    background: var(--field-fill-color);
+}

@@ -1051,7 +1051,7 @@ async fn entities_view(
             type_filter => type_filter.unwrap_or(""),
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "entities"),
+            ..bear_nav_context(&bear, "memory"),
         },
     )
     .await
@@ -1122,7 +1122,7 @@ async fn entity_detail_view(
             related,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "entities"),
+            ..bear_nav_context(&bear, "memory"),
         },
     )
     .await

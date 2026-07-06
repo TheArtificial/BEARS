@@ -786,6 +786,7 @@ async fn bear_code_token_get(
         auth_session,
         context! {
             bear,
+            bear_nav_active => "connections",
             token_name => format!("Zed - {}", bear.name),
             raw_token => None::<String>,
             api_server_url => state.config.api_server_url.clone(),
@@ -819,6 +820,7 @@ async fn bear_code_token_post(
         auth_session,
         context! {
             bear,
+            bear_nav_active => "connections",
             token_name => token_name,
             raw_token => created.raw_token,
             token_id => created.id.to_string(),
@@ -1003,6 +1005,7 @@ async fn bear_edit_overview_get(
         auth_session,
         context! {
             bear,
+            bear_nav_active => "identity",
             form,
             errors => ValidationErrors::new(),
         },
@@ -1076,6 +1079,7 @@ async fn bear_edit_overview_post(
                     errors => ValidationErrors::new(),
                     form => form,
                     bear,
+                    bear_nav_active => "identity",
                     provision_error => format!(
                         "Bear was saved in Den, but profile reconcile failed: {e}"
                     ),
@@ -1096,6 +1100,7 @@ async fn bear_edit_overview_post(
             errors => validation_errors,
             form => form,
             bear,
+            bear_nav_active => "identity",
         },
     )
     .await
@@ -1128,6 +1133,7 @@ async fn bear_edit_prompt_get(
         auth_session,
         context! {
             bear,
+            bear_nav_active => "identity",
             form,
             errors => ValidationErrors::new(),
         },
@@ -1191,6 +1197,7 @@ async fn bear_edit_prompt_post(
                     errors => ValidationErrors::new(),
                     form => form,
                     bear,
+                    bear_nav_active => "identity",
                     provision_error => format!(
                         "Bear was saved in Den, but profile reconcile failed: {e}"
                     ),
@@ -1210,6 +1217,7 @@ async fn bear_edit_prompt_post(
             errors => validation_errors,
             form => form,
             bear,
+            bear_nav_active => "identity",
         },
     )
     .await
@@ -1243,6 +1251,7 @@ async fn bear_edit_configuration_get(
         auth_session,
         context! {
             bear,
+            bear_nav_active => "identity",
             form,
             errors => ValidationErrors::new(),
             ..page
@@ -1320,6 +1329,7 @@ async fn bear_edit_configuration_post(
                     errors => ValidationErrors::new(),
                     form => form,
                     bear,
+                    bear_nav_active => "identity",
                     provision_error => format!(
                         "Bear was saved in Den, but profile reconcile failed: {e}"
                     ),
@@ -1341,6 +1351,7 @@ async fn bear_edit_configuration_post(
             errors => validation_errors,
             form => form,
             bear,
+            bear_nav_active => "identity",
             ..page
         },
     )
