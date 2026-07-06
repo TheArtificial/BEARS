@@ -1,4 +1,4 @@
-# ADR-0050: Runtime Loop Governance, Adaptive Budgets, and Progress Checkpoints
+# ADR-0050: Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints
 
 **Status:** Accepted  
 **Date:** 2026-07-04  
@@ -21,13 +21,41 @@ The failure mode is especially visible when a model is productively exploring a 
 
 This becomes more limiting as `work` grows into a long-running stance. We want Den to allow materially longer runs where appropriate, while still stopping models that are thrashing, repeating the same tool calls, blindly re-driving failed actions, or drifting through exploration without forming a useful next-action strategy.
 
-Loop governance therefore needs more than a stop rule. It also needs typed opportunities to steer recovery: low-budget warnings, task-gate nudges, and concise progress checkpoints that force synthesis without turning checkpoint prose into task history.
+Agent loop control therefore needs more than a stop rule. It also needs typed opportunities to steer recovery: low-budget warnings, task-gate nudges, and concise runtime checkpoints that force synthesis without turning checkpoint prose into task history.
 
 ## Decision
 
-Den will replace flat per-turn step ceilings with typed **runtime loop governance**: profile-owned budget policy, loop-health state, ko/failure detection, and adaptive model-facing nudges. Its primary job is to track spend and progression quality, not simply count continuations.
+Den will replace flat per-turn step ceilings with typed **agent loop control**: profile-owned budget policy, loop-health state, ko/failure detection, control levels, and adaptive model-facing nudges. Its primary job is to track spend and progression quality, not simply count continuations.
 
-### 1. Turn budgets are profile-owned typed policy and budget ledger
+**Agent loop control** is the runtime policy layer that decides how a tool-using model turn progresses across model calls and tool results: when to continue, checkpoint, retry, warn, stop, or require task-state reconciliation.
+
+### 1. Agent loop control levels resolve to typed policy profiles
+
+Agent loop control supports progressive **control levels**. A control level selects threshold defaults for budgets, checkpoint triggers, ko/failure tolerance, task-gate nudges, optional checkpoint-turn thinking-level behavior, and visibility behavior while preserving the same semantic invariants.
+
+Initial levels:
+
+| Level | Intended use | Checkpoint posture |
+| --- | --- | --- |
+| `light` | Strong tool-disciplined models on simple interactive tasks | Checkpoint mainly on repeated failures, repeated signatures, or low budget |
+| `standard` | Default `pair`/`chat` coding and ordinary `work` execution | Checkpoint after moderate over-exploration, repeated failure, task-gate rejection, or low budget |
+| `careful` | Weaker/less tool-disciplined models, risky edits, unfamiliar work surfaces, or autonomous work that benefits from stronger synthesis | Earlier exploration checkpoints, pre-broad-mutation checkpoint, stronger recovery nudges |
+| `strict` | High-risk/destructive workflows or future governed autonomy requiring tight runtime supervision | Frequent synthesis, explicit pre-risk checkpoints, stricter gates and lower retry tolerance |
+
+Control levels tune thresholds, triggers, and optional checkpoint-turn reasoning effort, not meaning. A `careful` checkpoint and a `light` checkpoint are both runtime scaffolding; neither mutates task state or substitutes for task-list/Docket records.
+
+Control-level selection should mirror model selection:
+
+1. the model registry provides a default agent-loop-control level for each model or model capability profile;
+2. a Bear-level configuration may override that default for the Bear;
+3. a stance-level configuration may override the Bear/model default for a specific stance such as `pair`, `chat`, or `work`;
+4. task/run policy may request an escalation for risk, difficulty, or governance mode, but runtime receives a resolved typed profile rather than hardcoding model names or inferring risk from prose.
+
+This lets a more tool-disciplined model run with lighter checkpointing by default, while a model known to over-explore or retry poorly can default to `standard` or `careful`. Bear and stance overrides preserve operator intent and local experience without scattering per-model conditionals throughout the runtime.
+
+Control levels may also specify a **checkpoint thinking policy**. When provider/model configuration exposes a thinking level or reasoning-effort control, a checkpoint turn may optionally request a different thinking level than ordinary continuation turns. For example, `light` may keep the model's default thinking level, `standard` may request moderate reasoning for checkpoint turns, and `careful`/`strict` may request higher reasoning for checkpoint or pre-risk turns. This is a quality/cost tuning knob, not a safety boundary: loop continuation, task gates, budgets, and ko enforcement remain runtime-authoritative even if a provider ignores or lacks thinking-level controls.
+
+### 2. Turn budgets are profile-owned typed policy and budget ledger
 
 Each role profile owns a typed `TurnBudgetPolicy` with at least:
 
@@ -49,13 +77,13 @@ The runtime also keeps a `TurnBudgetState` ledger with at least:
 
 This ledger is not required to be monotonic for every class. Budgets that primarily detect unproductive exploration may be reset or replenished after a meaningful state-changing action, as long as the reset rule is typed runtime policy rather than ad hoc edge behavior.
 
-### 2. Hard step ceilings remain only as emergency fuse
+### 3. Hard step ceilings remain only as emergency fuse
 
 Den keeps a hard continuation ceiling because runaway loops are still a real infrastructure and UX risk.
 
 But step count is not the primary budget dimension anymore. `emergency_hard_steps` is a deadman switch, not the main policy surface.
 
-### 3. Primary budgets are wall-clock and tool-class spend
+### 4. Primary budgets are wall-clock and tool-class spend
 
 The first-class budget dimensions are:
 
@@ -67,13 +95,13 @@ The first-class budget dimensions are:
 
 This lets Den distinguish productive long work from expensive or risky churn.
 
-### 4. Permission approvals are not themselves budget spend
+### 5. Permission approvals are not themselves budget spend
 
 Permission waits and approvals are workflow friction, not proof of runaway behavior.
 
 Den must budget what happens after approval, not merely that an approval occurred. A run must not fail simply because it encountered many legitimate permission handshakes.
 
-### 5. Rule of ko blocks repeated same-position retries
+### 6. Rule of ko blocks repeated same-position retries
 
 Den adopts a **rule-of-ko** style guard for agent loops:
 
@@ -83,7 +111,7 @@ Den adopts a **rule-of-ko** style guard for agent loops:
 
 This is the primary churn guard for long-running stances such as `work`.
 
-### 5a. Task outcome gates need their own ko signal
+### 6a. Task outcome gates need their own ko signal
 
 Tool-call ko is not enough. A run can also loop at a task outcome gate: the model repeatedly attempts to final-answer, Den rejects the terminal response because an active task-list item remains actionable, Den nudges continuation, and the model repeats the same invalid final answer.
 
@@ -102,13 +130,13 @@ Policy shape:
 
 This preserves the value of the continuation gate without creating an obstinate self-loop. It also keeps reasoned non-action distinct from failure: if the remaining task is blocked, not applicable, waived, or permission-gated with evidence, the terminal response should be allowed by the task gate rather than counted as a rejection.
 
-### 6. Repeated failures have their own budget
+### 7. Repeated failures have their own budget
 
 Den separately tracks consecutive failed tool batches.
 
 If the model keeps driving failure without recovering, the loop stops even if the hard step budget is not exhausted. This distinguishes useful long investigation from blind retry behavior.
 
-### 6a. Productive mutation can open a fresh verification window
+### 7a. Productive mutation can open a fresh verification window
 
 Interactive stances such as `pair` often need a short read/search phase, then a mutative action, then another short read/search phase to verify the change. Treating all post-mutation verification reads as the same exploration burst is too punitive and incorrectly classifies productive progress as churn.
 
@@ -123,9 +151,9 @@ Guardrails:
 
 The goal is not to make turns unbounded. The goal is to distinguish "keeps reading without acting" from "acted and now needs a bounded verification pass."
 
-### 6b. Adaptive progress checkpoints guide loop recovery without becoming task state
+### 7b. Adaptive runtime checkpoints guide loop recovery without becoming task state
 
-Den may require a short structured **runtime checkpoint** when loop-health signals indicate that the model may be drifting, over-exploring, retrying failures, approaching budget pressure, or about to take a broad/high-risk action.
+Den may require a short structured **runtime checkpoint** when loop-health signals indicate that the model may be drifting, over-exploring, retrying failures, approaching budget pressure, or about to take a broad/high-risk action. The resolved control level determines how early and how often these triggers fire.
 
 Checkpoint triggers may include:
 
@@ -136,7 +164,7 @@ Checkpoint triggers may include:
 - a low remaining wall-clock, tool-call, or context budget;
 - a broad, destructive, or otherwise risky mutative action about to be attempted.
 
-A checkpoint is a model-facing runtime nudge. It should ask the model to briefly state:
+A checkpoint is a model-facing runtime nudge. The runtime may pair the checkpoint nudge with the control level's optional checkpoint thinking policy, such as temporarily raising reasoning effort for that model call when the provider supports it. It should ask the model to briefly state:
 
 - the active objective or task-list item;
 - what has been learned;
@@ -147,19 +175,21 @@ A checkpoint is a model-facing runtime nudge. It should ask the model to briefly
 
 Checkpoints are **control-flow scaffolding, not work records**. They do not create, complete, block, waive, cancel, or sync task-list/Docket state. If a checkpoint concludes that task state should change, the model must use the appropriate task-management tool and provide evidence. Per ADR-0045, the task gate evaluates task-list/Docket state, not checkpoint prose.
 
-### 7. Work gets a larger total budget than interactive pair/chat
+Checkpoint thinking-level escalation must remain bounded to the checkpoint/pre-risk inference unless the resolved control profile explicitly says otherwise. It should improve synthesis quality without silently converting the whole run into a higher-cost reasoning mode.
+
+### 8. Work gets a larger total budget than interactive pair/chat
 
 `work` is expected to support materially longer runs than `pair`, `chat`, or `watch`.
 
 The runtime therefore must support materially larger wall-clock budgets, total tool-call budgets, and class-specific budgets for `work`, while still applying the same ko/failure protections.
 
-### 8. The decision is core runtime policy, not edge behavior
+### 9. The decision is core runtime policy, not edge behavior
 
-As with approvals and client obligations in ADR-0048, continuation-budget and checkpoint decisions are core runtime semantics.
+As with approvals and client obligations in ADR-0048, control-level resolution, continuation-budget, and checkpoint decisions are core runtime semantics.
 
 BearWire and ACP may project the resulting warning, checkpoint request, or stop reason, but they do not decide whether the model is allowed to continue.
 
-### 9. Runtime outcomes and checkpoints have explicit visibility semantics
+### 10. Runtime outcomes and checkpoints have explicit visibility semantics
 
 When a turn ends because of budget exhaustion, loop-ko, repeated tool failure, or operational runtime failure, Den should persist a normalized **model-visible but user-hidden** transcript record.
 
@@ -189,6 +219,7 @@ Runtime checkpoints may be projected as live/user-ephemeral run progress or pers
 - Repeated same-call churn is blocked explicitly instead of being indirectly caught only by a coarse step limit.
 - Failure loops are treated separately from exploratory progress.
 - Adaptive checkpoints can force concise synthesis before more exploration or risky mutation.
+- Control levels let Den tune checkpoint intensity and optional checkpoint-turn thinking level for different models, Bears, stances, task risks, and governance modes without changing checkpoint semantics.
 - The policy remains typed and role-owned.
 - Interactive verification after a real mutation is less likely to be cut off as false-positive read churn.
 - Checkpoints remain subordinate to task-list/Docket state instead of becoming informal task records.
@@ -196,21 +227,26 @@ Runtime checkpoints may be projected as live/user-ephemeral run progress or pers
 ### Negative / tradeoffs
 
 - The loop controller now carries more state.
-- Tool-class quotas and checkpoint triggers are policy choices that will need tuning with real usage.
+- Tool-class quotas, checkpoint triggers, and control-level defaults are policy choices that will need tuning with real usage.
 - Some borderline cases will still stop early or late until the policy evolves with more signals.
 - "Meaningful mutation" and "materially changed search state" remain policy judgments that require careful typed signals and test coverage.
 - Poorly worded checkpoints could encourage narration instead of action; prompts should require concise state, evidence, and next action rather than open-ended reasoning.
+- Model-associated defaults risk hiding product behavior in model configuration unless the resolved level is observable in run diagnostics.
+- Checkpoint-turn thinking escalation can increase latency/cost, and provider support may be uneven; it must be treated as best-effort model configuration rather than a guarantee.
 
 ## Initial policy shape
 
 The first implementation should use:
 
-- a profile-owned wall-clock budget;
+- model-registry defaults for `light`, `standard`, `careful`, or `strict` agent-loop-control levels;
+- Bear-level and stance-level overrides that resolve before turn execution;
+- a resolved profile-owned wall-clock budget;
 - profile-owned total and per-class tool-call budgets;
 - consecutive tool failure cutoff;
 - ko-style repeated identical tool signature cutoff;
 - ko-style repeated task-gate rejection cutoff;
-- checkpoint triggers for over-exploration, repeated failure, task-gate rejection, and low remaining budget;
+- checkpoint triggers for over-exploration, repeated failure, task-gate rejection, and low remaining budget, with thresholds selected by the resolved control level;
+- optional checkpoint thinking policy per control level, such as default/moderate/high reasoning for checkpoint and pre-risk turns when supported by the selected model/provider;
 - a high emergency hard-step fuse.
 
 Token-aware continuation budgets remain compatible future extensions, but are not required for the first implementation because Den already tracks context-window budget separately in ADR-0047.
@@ -219,12 +255,15 @@ Token-aware continuation budgets remain compatible future extensions, but are no
 
 - `pair` and `chat` should keep moderate wall-clock and tool-call budgets.
 - `work` should receive significantly higher wall-clock and tool-call budgets than interactive stances.
+- The runtime should log or expose the resolved agent-loop-control level, its source (`model_default`, `bear_override`, `stance_override`, or `task_escalation`), and any checkpoint thinking-level override applied to a model call for diagnostics.
 - The emergency step fuse should be high enough that it only catches pathological loops or missing health signals.
 - Model-visible low-budget warnings and runtime checkpoints are desirable, but runtime enforcement still remains authoritative.
 - Normalized operational outcome records should be persisted for future transcript replay whenever a run/turn fails after work has already been attempted.
 - If `pair` or `chat` replenish read/search budget after a successful mutative step, the replenishment should be small and verification-oriented rather than a full license to restart the turn.
 - Checkpoint content should be compact and structured around active objective, evidence, uncertainty, next action, and any required task-state update.
 - Checkpoints should reference task-list/Docket identifiers and versions when relevant, but task-state changes must still go through task-management tools.
+- Runtime code should depend on resolved control profiles and typed capability metadata, not on scattered string comparisons against provider or model names.
+- Thinking-level controls should be modeled as provider/model request metadata, separate from loop-control enforcement state, so unsupported providers can degrade gracefully.
 
 ## Non-goals
 
@@ -234,3 +273,5 @@ Token-aware continuation budgets remain compatible future extensions, but are no
 - No planner-only execution gate as a substitute for core continuation policy.
 - No use of checkpoints as a substitute for task-list/Docket updates, completion criteria, or history-visible task records.
 - No requirement for verbose chain-of-thought or open-ended self-explanation; checkpoints should be concise runtime synthesis.
+- No hardcoded per-model loop behavior in the agent runtime; model association belongs in registry/configuration and resolves to typed control profiles before execution.
+- No reliance on thinking-level escalation as a substitute for budget, ko, checkpoint, or task-gate enforcement.
