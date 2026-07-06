@@ -511,6 +511,24 @@ pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'
     }
 }
 
+fn canonical_client_waiting_ids(event: &BearWireEvent) -> Option<(&str, &str)> {
+    let permission_id = event
+        .data
+        .get("permission")
+        .and_then(|permission| permission.get("id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?;
+    let tool_call_id = event
+        .data
+        .get("tool_call")
+        .and_then(|tool_call| tool_call.get("id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?;
+    Some((permission_id, tool_call_id))
+}
+
 async fn append_answerable_client_waiting_event(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -571,11 +589,42 @@ async fn append_answerable_client_waiting_event(
         return Ok(());
     };
 
+    let Some((event_permission_id, event_tool_call_id)) = canonical_client_waiting_ids(&event)
+    else {
+        tracing::warn!(
+            session_id = %session_id,
+            run_id = %run_id,
+            obligation_id = %obligation.id,
+            "refusing to append client.waiting event without canonical permission.id/tool_call.id"
+        );
+        return Ok(());
+    };
+    if event_permission_id != permission_id {
+        tracing::warn!(
+            session_id = %session_id,
+            run_id = %run_id,
+            obligation_id = %obligation.id,
+            expected_permission_id = %permission_id,
+            event_permission_id = %event_permission_id,
+            "refusing to append client.waiting event with malformed canonical permission id"
+        );
+        return Ok(());
+    }
+    if event_tool_call_id != tool_call_id {
+        tracing::warn!(
+            session_id = %session_id,
+            run_id = %run_id,
+            obligation_id = %obligation.id,
+            expected_tool_call_id = %tool_call_id,
+            event_tool_call_id = %event_tool_call_id,
+            "refusing to append client.waiting event with malformed canonical tool_call id"
+        );
+        return Ok(());
+    }
+
     event.data["obligation_id"] = json!(obligation.id.to_string());
     event.data["expected_responder_action"] = json!(obligation.expected_responder_action);
     event.data["expected_client_method"] = json!(expected_client_method);
-    event.data["permission_id"] = json!(permission_id);
-    event.data["tool_call_id"] = json!(tool_call_id);
     event.data["turn_step_id"] = json!(obligation.turn_step_id.map(|id| id.to_string()));
     event.resource_refs.push(ResourceRef::new(
         "client_obligation",
@@ -1658,6 +1707,37 @@ mod tests {
             &available_model("openai/gpt-5.1", "gpt-5.1"),
             &resolved
         ));
+    }
+
+    #[test]
+    fn canonical_client_waiting_ids_require_nested_ids() {
+        let event = BearWireEvent::ephemeral(
+            "client.waiting",
+            json!({
+                "tool_call": { "id": "call-1", "name": "web_fetch" },
+                "permission": { "id": "perm-1" },
+                "tool_call_id": "legacy-wrong",
+                "permission_id": "legacy-wrong"
+            }),
+        );
+
+        assert_eq!(
+            canonical_client_waiting_ids(&event),
+            Some(("perm-1", "call-1"))
+        );
+    }
+
+    #[test]
+    fn canonical_client_waiting_ids_reject_legacy_only_ids() {
+        let event = BearWireEvent::ephemeral(
+            "client.waiting",
+            json!({
+                "tool_call_id": "call-1",
+                "permission_id": "perm-1"
+            }),
+        );
+
+        assert_eq!(canonical_client_waiting_ids(&event), None);
     }
 
     #[test]
