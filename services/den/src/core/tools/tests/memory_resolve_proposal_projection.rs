@@ -10,10 +10,8 @@ use crate::core::{
     },
     user::db::create_user,
 };
-use den_runtime::{
-    bears::{db, db::grant_membership, db::BearParams, BearProfile},
-    den_service::memory_proposals::CreateMemoryProposal,
-};
+use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
+use den_service::memory_proposals::CreateMemoryProposal;
 
 async fn seed_curate_agent(
     pool: &PgPool,
@@ -125,6 +123,8 @@ async fn memory_resolve_proposal_projects_typed_conversation_records(
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some(Uuid::new_v4().to_string()),
         channel: DenToolChannelContext::default(),
     };

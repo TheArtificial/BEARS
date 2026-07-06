@@ -1,13 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use den_runtime::{
-        role_runtime::{
-            ClientTurnLifecycleContext, ClientTurnLifecycleRuntime, RoleRuntimeRole,
-            TurnResultReason, TurnResultStatus,
-        },
-        tool_turns::ToolTurnCoordinator,
-        turn_controller::ActiveTurnCancelRegistry,
+    use den_runtime::role_runtime::{
+        ClientTurnLifecycleContext, ClientTurnLifecycleRuntime, RoleRuntimeRole,
+        TurnResultReason, TurnResultStatus,
     };
+    use den_service::tool_turns::ToolTurnCoordinator;
+    use den_service::turn_controller::ActiveTurnCancelRegistry;
     use uuid::Uuid;
 
     #[test]

@@ -6,11 +6,11 @@ use crate::{
     },
     errors::CustomError,
 };
-use den_runtime::{
-    prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite},
-    prompt_memory_blocks::{PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType},
-};
 use den_service::bears::BearProfile;
+use den_service::prompt_memory_block_store::{upsert_prompt_memory_block, PromptMemoryBlockWrite};
+use den_service::prompt_memory_blocks::{
+    PromptMemoryBlockScope, PromptMemoryBlockState, PromptMemoryBlockType,
+};
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -98,6 +98,8 @@ async fn prompt_memory_tools_round_trip_through_store() {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some("req-test".to_string()),
         channel: DenToolChannelContext {
             family: Some("armature".to_string()),
@@ -329,6 +331,8 @@ async fn prompt_memory_upsert_archives_superseded_block() {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some("req-test".to_string()),
         channel: DenToolChannelContext {
             family: Some("armature".to_string()),
@@ -418,6 +422,8 @@ async fn prompt_memory_upsert_archives_conflicting_active_block_in_same_scope() 
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some("req-test".to_string()),
         channel: DenToolChannelContext {
             family: Some("armature".to_string()),
@@ -503,6 +509,8 @@ async fn memory_status_includes_prompt_memory_diagnostic_summary() {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some("req-test".to_string()),
         channel: DenToolChannelContext {
             family: Some("armature".to_string()),

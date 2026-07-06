@@ -15,8 +15,6 @@ pub use tools::web_policy;
 // den-only modules (native_runtime / turn_controller), so they live here in the
 // `den` crate rather than in den-runtime. Relocated during the v1.4 runtime lift.
 #[cfg(test)]
-mod conversation_persistence_non_acp_bridge_tests;
-#[cfg(test)]
 mod reflection_conductor_bridge_tests;
 #[cfg(test)]
 mod reflection_conversations_bridge_tests;

@@ -292,7 +292,7 @@ async fn entity_scoped_recall_filters_by_payload_entity_ids() {
     assert_eq!(outcome.embedded_chunks, 1, "single-chunk body: {outcome:?}");
 
     let query_vec = embedder
-        .embed(&[body.clone()])
+        .embed(std::slice::from_ref(&body))
         .await
         .expect("embed query")
         .into_iter()

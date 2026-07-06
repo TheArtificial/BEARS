@@ -157,18 +157,18 @@ fn canonical_dotted_names_map_to_provider_safe_aliases() {
 
     let update_task_list = descriptors
         .iter()
-        .find(|descriptor| descriptor.name == DEN_WORK_PLAN_UPDATE)
+        .find(|descriptor| descriptor.name == DEN_TASK_LISTS_UPDATE)
         .expect("work plan update descriptor exists");
     assert_eq!(
         update_task_list.provider_name,
-        DEN_WORK_PLAN_UPDATE_PROVIDER
+        DEN_TASK_LISTS_UPDATE_PROVIDER
     );
     assert_eq!(update_task_list.provider_name, "update_task_list");
     assert_eq!(
         builtin_den_tool_descriptor_for_provider_name("update_plan")
             .expect("legacy update_plan alias resolves")
             .name,
-        DEN_WORK_PLAN_UPDATE
+        DEN_TASK_LISTS_UPDATE
     );
 
     let enter_plan_mode = descriptors
