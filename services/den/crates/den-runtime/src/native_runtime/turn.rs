@@ -1011,6 +1011,7 @@ fn continuation_budget_stop(
 }
 
 const BUDGET_WARNING_PREFIX: &str = "Budget advisory:";
+const CHECKPOINT_NUDGE_PREFIX: &str = "Runtime checkpoint required:";
 
 fn budget_warning_runtime_event(warning: &TurnBudgetWarning) -> RuntimeStreamEvent {
     RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
@@ -1106,12 +1107,50 @@ fn agent_loop_control_observe_enabled(config: &Config) -> bool {
     )
 }
 
+fn agent_loop_control_enforce_enabled(config: &Config) -> bool {
+    config.agent_loop_control_mode == "enforce"
+}
+
 fn checkpoint_audit_enabled_for_session(config: &Config, session: &AgentLoopSession) -> bool {
     match config.checkpoint_audit_mode.as_str() {
         "all" => true,
         "work" => session.profile == BearProfile::Work,
         _ => false,
     }
+}
+
+fn render_checkpoint_nudge(request: &RuntimeCheckpointRequest, trigger: &CheckpointTrigger) -> String {
+    let request_json = serde_json::to_string_pretty(request)
+        .unwrap_or_else(|_| "{\"error\":\"checkpoint_request_unavailable\"}".to_string());
+    format!(
+        "{CHECKPOINT_NUDGE_PREFIX} {}\n\nReturn a structured checkpoint response before more exploratory or risky tool use. The response must satisfy the checkpoint_id and required_fields below. If task state should change, call the appropriate task-management tool after the checkpoint; do not treat checkpoint prose as task state.\n\nCheckpoint request:\n```json\n{request_json}\n```",
+        trigger.message
+    )
+}
+
+fn apply_checkpoint_nudge(
+    session: &mut AgentLoopSession,
+    request: &RuntimeCheckpointRequest,
+    trigger: &CheckpointTrigger,
+) -> bool {
+    let message = render_checkpoint_nudge(request, trigger);
+    if session.messages.last().is_some_and(|message| {
+        message.role == "system"
+            && message
+                .content
+                .as_deref()
+                .is_some_and(|content| content.starts_with(CHECKPOINT_NUDGE_PREFIX))
+    }) {
+        session.messages.pop();
+    }
+    session.messages.push(ChatMessage {
+        role: "system".to_string(),
+        content: Some(message),
+        tool_call_id: None,
+        name: None,
+        tool_calls: None,
+    });
+    true
 }
 
 async fn record_checkpoint_request_if_audited(
@@ -1436,12 +1475,23 @@ pub async fn continue_native_client_turn_event_stream(
             warning_applied = apply_budget_warning(session, warning);
         }
     });
-    let session = SESSION_STORE
+    let mut session = SESSION_STORE
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
     if let Some(trigger) = checkpoint_evaluation.trigger.as_ref() {
         record_checkpoint_request_if_audited(request.sqlx_pool, request.config, &session, trigger)
             .await;
+        if agent_loop_control_enforce_enabled(request.config) {
+            if let Some(checkpoint_request) = runtime_checkpoint_request_for_trigger(&session, trigger)
+            {
+                SESSION_STORE.update(&session_key, |session| {
+                    apply_checkpoint_nudge(session, &checkpoint_request, trigger);
+                });
+                session = SESSION_STORE.get(&session_key).ok_or_else(|| {
+                    DenError::System("native agent loop session not found after checkpoint nudge".to_string())
+                })?;
+            }
+        }
     }
     if let Some(reason) = evaluation.stop_reason {
         return Ok(continuation_budget_stop(reason));
@@ -1609,6 +1659,31 @@ mod tests {
             session.messages[0].content.as_deref(),
             Some(replacement.model_message())
         );
+    }
+
+    #[test]
+    fn checkpoint_nudge_renders_structured_request_without_task_state_mutation() {
+        let request = RuntimeCheckpointRequest {
+            checkpoint_id: "ckpt-1".to_string(),
+            run_id: "run-1".to_string(),
+            reason: crate::agent_loop::CheckpointReason::OverExploration,
+            control_level: den_core::AgentLoopControlLevel::Careful,
+            active_objective: Some("Inspect routing".to_string()),
+            task_context: None,
+            evidence_refs: Vec::new(),
+            required_fields: vec![CheckpointField::Learned, CheckpointField::NextAction],
+        };
+        let trigger = CheckpointTrigger {
+            reason: crate::agent_loop::CheckpointReason::OverExploration,
+            message: "summarize before more reads".to_string(),
+        };
+
+        let rendered = render_checkpoint_nudge(&request, &trigger);
+
+        assert!(rendered.starts_with(CHECKPOINT_NUDGE_PREFIX));
+        assert!(rendered.contains("structured checkpoint response"));
+        assert!(rendered.contains("\"checkpoint_id\": \"ckpt-1\""));
+        assert!(rendered.contains("do not treat checkpoint prose as task state"));
     }
 
     #[test]
