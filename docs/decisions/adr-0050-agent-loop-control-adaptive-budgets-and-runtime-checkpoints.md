@@ -2,16 +2,25 @@
 
 **Status:** Accepted  
 **Date:** 2026-07-04  
+**Updated:** 2026-07-06  
 **Deciders:** Hans
 
 **Related:**
 
+- [ADR-0006: Bear work surfaces for planning and work activity](adr-0006-bear-work-surfaces.md)
+- [ADR-0032: Den context compaction architecture](adr-0032-den-context-compaction-architecture.md)
 - [ADR-0035: Den-native in-process agent runtime](adr-0035-den-native-in-process-agent-runtime.md)
 - [ADR-0039: Trust profiles and governance modes](adr-0039-trust-profiles-and-governance-modes.md)
 - [ADR-0047: Context window budget and token estimation](adr-0047-context-window-budget-and-token-estimation.md)
 - [ADR-0048: Core turn/client-obligation coordinator](adr-0048-core-turn-client-obligation-coordinator.md)
 - [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md)
 - [ADR-0037: Work sandbox, egress gateway, and upstream auth](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)
+
+> **2026-07-06 amendment.** Four changes were added after comparative review against OpenCode, Cursor, Letta Code, and Claude Code loop control:
+> 1. **§7c** introduces surface-declared **grounding probes** so post-mutation feedback is grounded in the work surface's own validators rather than only in model self-report, without assuming every surface is a code repository.
+> 2. **§7d** allows optional **cheap-model classifier signals** for the residual intent/similarity judgment calls, strictly advisory and ledgered, and deferred behind the measurement foundation.
+> 3. **§11** promotes **context/token budget** (previously deferred entirely to [ADR-0047](adr-0047-context-window-budget-and-token-estimation.md)) to a first-class loop-control dimension owned by the loop controller, and defines checkpoint-then-compact sequencing.
+> 4. The **Initial policy shape** now launches in **advisory mode** with a persisted budget ledger and offline replay, because Bear Den cannot fine-tune this policy without an automated measurement loop. Sequencing lives in [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md).
 
 ## Context
 
@@ -177,6 +186,56 @@ Checkpoints are **control-flow scaffolding, not work records**. They do not crea
 
 Checkpoint thinking-level escalation must remain bounded to the checkpoint/pre-risk inference unless the resolved control profile explicitly says otherwise. It should improve synthesis quality without silently converting the whole run into a higher-cost reasoning mode.
 
+### 7c. Grounding probes make post-mutation quality checkable per work surface
+
+Checkpoints as defined in §7b ask the model to self-assess ("what has been learned", "whether more exploration is justified"). Self-report is weak evidence: a drifting model narrates confidently. The runtime should, where the work surface allows, pair that self-assessment with **grounding probes** — cheap, automatic, surface-native validators run after a mutative action, whose typed findings feed the loop controller.
+
+This generalizes the useful idea behind editor/LSP feedback loops without assuming every Bear works on code. A Bear is "more than code," so grounding must be **work-surface dependent** (per [ADR-0006](adr-0006-bear-work-surfaces.md)) rather than a blind attempt to quality-review any artifact:
+
+- each work-surface kind may declare a typed **grounding profile** — an ordered set of probes appropriate to that surface;
+- probes are validators, not LLM quality review: they answer objective questions the surface can answer about itself;
+- a surface that declares no probes degrades to §7b self-report behavior; the runtime never invents a probe for a surface that has none.
+
+Illustrative probe families by surface kind:
+
+| Work-surface kind | Example grounding probes |
+| --- | --- |
+| Repository / checkout | LSP or type diagnostics, `cargo check`/`tsc`, linters, a targeted test subset |
+| Writing / document | prose/style linters, spelling, broken internal or `[[wikilink]]` references, frontmatter/schema validation, required-structure checks |
+| Photo / media metadata | file still parses after write (e.g. exiftool round-trip), required fields present, values within controlled vocabularies, no corruption/checksum change |
+| Structured data / config | schema validation, dry-run apply |
+| Any surface (generic floor) | mutation produced a non-empty diff; the artifact still opens/parses |
+
+Probe results are typed runtime signals, not prose. They serve two jobs:
+
+1. **Checkpoint evidence.** A checkpoint request (§7b) may carry probe findings as `evidence_refs`, so the model synthesizes against ground truth instead of unaided introspection. This directly answers the risk that checkpoints "encourage narration instead of action."
+2. **Mutation-meaningfulness arbitration for §7a.** §7a's "meaningful mutation" and "failed or obvious no-op mutative actions must not earn a fresh exploration window" are today unspecified policy judgments. A grounding probe is the natural arbiter: a passing probe over a non-empty diff marks the mutation meaningful and may open a bounded verification window; a failing probe feeds the consecutive-failure budget (§7) instead of granting a fresh window.
+
+Guardrails:
+
+- probes are budgeted like any other tool-class spend and must not themselves become an unbounded loop; a probe that times out or errors degrades to "no grounding signal," never to a hard failure of the turn;
+- probes must not mutate the work surface;
+- probe selection resolves from typed work-surface metadata, not from prose or hardcoded per-surface conditionals in the runtime;
+- probe findings are runtime evidence, not task state: a failing probe does not itself block a task; only task-management tools change task state (§7b, ADR-0045).
+
+### 7d. Optional cheap-model classifier signals (deferred)
+
+A cheap model may act as a bounded **classifier** feeding loop-control signals, but only for decisions that are genuinely judgment calls rather than objectively computable. The useful distinction is **classification vs. evaluation**: cheap models are acceptable classifiers ("is this a loop, is this evasion, are these two calls the same intent?") and poor evaluators ("is this output correct, is this the right approach?"). Deterministic signals (§2–§7) and grounding probes (§7c) already cover everything objectively computable; a classifier is worth introducing only for the residual intent/similarity classification the typed signals cannot make.
+
+Candidate classifier signals:
+
+- **task-gate intent (§6a):** distinguishing a legitimate blocked/not-applicable/waived terminal response from evasion of an actionable item, which the gate-rejection signature alone cannot tell apart;
+- **semantic ko:** near-duplicate churn that normalized-signature ko (§6) misses because arguments were reworded rather than repeated;
+- **no-probe grounding fallback (§7c):** a coherence check on surfaces that declare no objective probe, which is explicitly the degraded path;
+- **checkpoint adherence (§7b):** whether a checkpoint response commits to a genuinely different next action or merely narrates.
+
+Two constraints keep this safe rather than reckless, and both are load-bearing:
+
+1. **Advisory, never authoritative.** A classifier signal may raise a checkpoint or feed a would-stop diagnostic, but it must not overrule a deterministic budget/ko/failure decision or veto the strong model's action. A weaker model overseeing a stronger one on a hard task is inverted competence; it is exactly the component most likely to misjudge whether the primary model is thrashing or working. Classifier output is one more signal source, subordinate to the same advisory-mode discipline as everything else (§Initial policy shape).
+2. **Verdicts are ledgered.** A classifier verdict that influences a decision must be persisted as a typed signal in the budget ledger, so offline replay reads the recorded verdict instead of re-invoking the model. This preserves the zero-model-call replay property (§Initial policy shape) that the tuning loop depends on. A classifier signal that cannot be recorded and replayed must not gate behavior.
+
+Classifier invocation should be bounded to trigger boundaries (a checkpoint firing, a gate rejection, a no-probe mutation), never run per step, and must never be pointed at correctness of the primary model's work — that is the objective probes' job (§7c), not an LLM "is this good?" review. This capability is **deferred behind the advisory + replay foundation** and is not part of the first implementation slice.
+
 ### 8. Work gets a larger total budget than interactive pair/chat
 
 `work` is expected to support materially longer runs than `pair`, `chat`, or `watch`.
@@ -210,6 +269,24 @@ The marker should explain the behavioral change in product language, while the h
 
 Runtime checkpoints may be projected as live/user-ephemeral run progress or persisted as model-visible hidden continuity records when useful for replay. They must not be projected as Docket job/task events unless an explicit task-management tool call created a corresponding task-state change.
 
+### 11. Context/token budget is a first-class loop-control dimension
+
+The original decision deferred token-aware continuation budgets entirely to [ADR-0047](adr-0047-context-window-budget-and-token-estimation.md) as a "compatible future extension." That split is wrong for long `work` runs: context pressure is the dimension most likely to end a productive run, and the loop controller already lists "low remaining context budget" as a checkpoint trigger (§7b). Treating context as an external signal imported after the fact means the controller cannot coordinate its two most important end-of-turn behaviors — checkpointing and compaction.
+
+Den therefore promotes **context/token budget to a first-class loop-control dimension**, alongside wall-clock and tool-class spend (§4):
+
+- ADR-0047 remains the authority for *how* context is measured (per-component estimation on the assembled request, calibration against provider usage, precision labeling). This ADR does not re-specify tokenization.
+- The loop controller *consumes* the ADR-0047 budget report as a live dimension of `TurnBudgetState`, so remaining-context thresholds are evaluated in the same place as ko, failure-streak, and wall-clock thresholds rather than in a separate compaction path.
+- Control levels tune context thresholds like any other budget: `careful`/`strict` may checkpoint earlier under context pressure than `light`.
+
+**Checkpoint-then-compact sequencing.** When context pressure crosses the checkpoint threshold, the controller should prefer to run a checkpoint (§7b) *before* compaction, then use the structured checkpoint response as a high-fidelity compaction seed:
+
+- the model-authored checkpoint (active objective, evidence, remaining uncertainty, next action) is produced at exactly the moment a good summary is needed;
+- compaction (per [ADR-0032](adr-0032-den-context-compaction-architecture.md)) then compacts from that structured synthesis instead of summarizing mid-thrash from generic instructions;
+- if context pressure is already critical — no room to afford a checkpoint turn — compaction runs first and the checkpoint is deferred, so the ordering is a preference, not an invariant that can itself exhaust the window.
+
+Compaction remains subordinate to the same boundaries as checkpoints: it is control-flow scaffolding, does not mutate task-list/Docket state, and does not turn checkpoint prose into history.
+
 ## Consequences
 
 ### Positive
@@ -223,33 +300,44 @@ Runtime checkpoints may be projected as live/user-ephemeral run progress or pers
 - The policy remains typed and role-owned.
 - Interactive verification after a real mutation is less likely to be cut off as false-positive read churn.
 - Checkpoints remain subordinate to task-list/Docket state instead of becoming informal task records.
+- Grounding probes (§7c) let checkpoints synthesize against surface-native ground truth and give §7a's "meaningful mutation" judgment an objective arbiter, while degrading cleanly on surfaces that declare no probes.
+- Context/token budget (§11) is evaluated in the same controller as ko, failure, and wall-clock, and checkpoint-then-compact turns a forced synthesis into a high-fidelity compaction seed.
+- Advisory-first rollout with a persisted ledger and offline replay lets a single-maintainer project tune thresholds against recorded runs at near-zero cost, without a live eval platform.
+- Optional cheap-model classifier signals (§7d) can fill the residual intent/similarity judgment calls (gate evasion, semantic ko, no-probe coherence, checkpoint adherence) without displacing the deterministic and objective signals that remain authoritative.
 
 ### Negative / tradeoffs
 
 - The loop controller now carries more state.
 - Tool-class quotas, checkpoint triggers, and control-level defaults are policy choices that will need tuning with real usage.
 - Some borderline cases will still stop early or late until the policy evolves with more signals.
-- "Meaningful mutation" and "materially changed search state" remain policy judgments that require careful typed signals and test coverage.
 - Poorly worded checkpoints could encourage narration instead of action; prompts should require concise state, evidence, and next action rather than open-ended reasoning.
 - Model-associated defaults risk hiding product behavior in model configuration unless the resolved level is observable in run diagnostics.
 - Checkpoint-turn thinking escalation can increase latency/cost, and provider support may be uneven; it must be treated as best-effort model configuration rather than a guarantee.
+- Grounding probes add per-surface maintenance: each work-surface kind needs a declared, maintained probe set, and probes cost spend and latency of their own; a slow or flaky probe must degrade to "no grounding signal" rather than stalling or failing the turn.
+- Promoting context budget into the loop controller couples it to ADR-0047's estimation accuracy; a mis-estimated budget now influences checkpoint/compaction timing directly, so precision labeling and calibration matter more.
+- A cheap-model classifier (§7d) adds a nondeterministic, latency- and cost-bearing signal source and risks inverted competence if ever made authoritative; it is safe only while advisory, ledgered, bounded to trigger points, and kept away from correctness evaluation.
+- The policy is deliberately complex and performs best fine-tuned, yet Bear Den is a personal project: without the advisory-mode ledger and replay harness there is no feedback loop to justify the complexity, so that measurement machinery is a prerequisite, not an optional nicety.
 
 ## Initial policy shape
 
+Because the policy performs best when tuned and Bear Den has no live evaluation platform, the first implementation deliberately **launches in advisory mode with a narrow tunable surface** and earns additional dimensions from recorded evidence rather than shipping the fully-tuned end state on day one.
+
 The first implementation should use:
 
-- model-registry defaults for `light`, `standard`, `careful`, or `strict` agent-loop-control levels;
-- Bear-level and stance-level overrides that resolve before turn execution;
-- a resolved profile-owned wall-clock budget;
-- profile-owned total and per-class tool-call budgets;
-- consecutive tool failure cutoff;
-- ko-style repeated identical tool signature cutoff;
-- ko-style repeated task-gate rejection cutoff;
-- checkpoint triggers for over-exploration, repeated failure, task-gate rejection, and low remaining budget, with thresholds selected by the resolved control level;
-- optional checkpoint thinking policy per control level, such as default/moderate/high reasoning for checkpoint and pre-risk turns when supported by the selected model/provider;
+- **advisory (observe/log-only) mode by default.** The controller resolves the profile, maintains the full budget ledger, and evaluates every trigger, but only ko and the emergency hard-step fuse actually stop the loop. All other triggers emit `would_*` diagnostics without changing behavior until real-usage rates justify enforcement;
+- a **persisted per-turn budget ledger** (tool signatures, tool classes, timestamps, failure flags, gate-rejection signatures, context-budget snapshots — no transcript content required), so any recorded turn can be **replayed offline against alternative control profiles with zero model calls**. This replay harness is the project's tuning loop;
+- **two launch levels, not four:** `standard` and `careful`, with generous thresholds. `light` and `strict` are defined but deferred until replay evidence shows they behave better than a well-chosen `standard`/`careful`;
+- model-registry defaults plus Bear-level and stance-level overrides that resolve before turn execution;
+- a resolved profile-owned wall-clock budget, total and per-class tool-call budgets, consecutive-failure cutoff, ko-style repeated-signature cutoff, and ko-style repeated task-gate-rejection cutoff;
+- context/token budget consumed from ADR-0047 as a first-class ledger dimension (§11);
+- checkpoint triggers for over-exploration, repeated failure, task-gate rejection, and low remaining wall-clock/tool/context budget, evaluated in advisory mode first;
+- grounding probes (§7c) for at least the repository work-surface kind and the generic non-empty-diff floor, with other surface kinds added incrementally;
+- optional checkpoint thinking policy per control level, kept off at launch and enabled per level once checkpoint enforcement is on;
 - a high emergency hard-step fuse.
 
-Token-aware continuation budgets remain compatible future extensions, but are not required for the first implementation because Den already tracks context-window budget separately in ADR-0047.
+Cheap outcome labeling should accompany the ledger so replay has a signal to optimize against: a stop immediately followed by the user re-asking or saying "continue" is a probable false positive; a normal end after a long read-only tail with no mutation is a probable false negative. Heuristic labels over the run log give a tuning trend line without human annotation.
+
+Enforcement, additional levels, per-class thinking escalation, and additional grounding surfaces are unlocked from this advisory baseline as evidence accrues, per [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md).
 
 ## Implementation notes
 
@@ -264,6 +352,9 @@ Token-aware continuation budgets remain compatible future extensions, but are no
 - Checkpoints should reference task-list/Docket identifiers and versions when relevant, but task-state changes must still go through task-management tools.
 - Runtime code should depend on resolved control profiles and typed capability metadata, not on scattered string comparisons against provider or model names.
 - Thinking-level controls should be modeled as provider/model request metadata, separate from loop-control enforcement state, so unsupported providers can degrade gracefully.
+- Grounding profiles should resolve from work-surface metadata (ADR-0006) the same way control levels resolve from model/Bear/stance config; a surface with no declared profile uses only the generic non-empty-diff/parse floor. Probe execution should reuse existing tool-class budgeting and time out into a "no signal" result rather than failing the turn.
+- The context-budget dimension should be read from the ADR-0047 budget report object rather than recomputed; the loop controller stores the latest snapshot in `TurnBudgetState` and compares against level-tuned thresholds. Checkpoint-then-compact ordering should be a preference the controller can abandon when the window is already too tight to afford a checkpoint turn.
+- The budget ledger should be persisted in a form replayable offline against alternative profiles without any model calls; keep transcript content out of it so replay stays cheap and privacy-preserving. Advisory (`observe`) vs `enforce` should be a runtime flag so enforcement is switched on per trigger class as evidence accrues.
 
 ## Non-goals
 
@@ -275,3 +366,7 @@ Token-aware continuation budgets remain compatible future extensions, but are no
 - No requirement for verbose chain-of-thought or open-ended self-explanation; checkpoints should be concise runtime synthesis.
 - No hardcoded per-model loop behavior in the agent runtime; model association belongs in registry/configuration and resolves to typed control profiles before execution.
 - No reliance on thinking-level escalation as a substitute for budget, ko, checkpoint, or task-gate enforcement.
+- No grounding probe that mutates the work surface, performs LLM "is this good?" review, or blocks a task by itself; probes are objective validators whose findings are runtime evidence, and absent a declared profile the surface simply has no grounding signal.
+- No re-implementation of context/token estimation in the loop controller; §11 consumes the ADR-0047 budget report and only governs how the loop reacts to it.
+- No enforcement of adaptive triggers before advisory-mode replay evidence supports the specific trigger class; ko and the emergency hard-step fuse remain the only always-on stops.
+- No authoritative cheap-model overseer: classifier signals (§7d) may advise and feed the ledger but must never overrule deterministic budget/ko/failure decisions, veto the primary model's action, run per step, gate behavior without a recorded replayable verdict, or evaluate correctness of the primary model's work.

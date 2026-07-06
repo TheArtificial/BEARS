@@ -8,8 +8,11 @@
 - [ADR-0032 — Den Context Compaction Architecture](adr-0032-den-context-compaction-architecture.md)
 - [ADR-0035 — Den-native in-process agent runtime](adr-0035-den-native-in-process-agent-runtime.md)
 - [ADR-0046 — File-backed prompt fragments and compiled runtime prompts](adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md)
+- [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
 - [Den runtime architecture](../architecture/den-runtime.md)
 - [Den model registry and Bifrost config plan](../roadmap/DEN_MODEL_REGISTRY_AND_BIFROST_CONFIG_PLAN.md)
+
+> **Consumed by [ADR-0050 §11](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) (2026-07-06).** The budget report defined here is now read by the agent loop controller as a first-class continuation dimension alongside wall-clock and tool-class spend, driving checkpoint-then-compact sequencing. This ADR remains the authority for *how* context is estimated; ADR-0050 governs *how the loop reacts* to it.
 
 ## Context
 

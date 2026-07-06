@@ -1,0 +1,380 @@
+# Agent Loop Control — Grounding, Context Budget, and Tuning Plan
+
+## Status
+
+Planned. Implements the 2026-07-06 amendment to [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) (§7c grounding probes, §11 context/token budget as a loop dimension, and the advisory-first Initial policy shape).
+
+This plan is a **companion to** [AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md](AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md), which delivers the core control levels, profiles, budgets, ko/failure state, and structured checkpoints. Read that plan first; this one adds three capabilities on top of it and tightens its rollout into an advisory-first, measurable loop. Where the two overlap, the phase mapping is called out inline.
+
+Depends on:
+
+- [ADR-0006 — Bear work surfaces](../decisions/adr-0006-bear-work-surfaces.md) and [WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md](WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md) for surface kinds and anchors.
+- [ADR-0047 — Context window budget](../decisions/adr-0047-context-window-budget-and-token-estimation.md) and [CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md](CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md) for the budget report object.
+- [ADR-0032 — Den context compaction](../decisions/adr-0032-den-context-compaction-architecture.md) and [DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md) for compaction sequencing.
+
+## Goal
+
+Make ADR-0050's adaptive loop control **grounded** (evidence, not self-report), **context-aware** (compaction is a loop decision, not a side channel), and **tunable by a single maintainer** (advisory-first with an offline replay harness), so the policy's complexity is justified by measured behavior rather than intuition. A fourth, **deferred** capability (Part D) adds optional cheap-model classifier signals for the residual judgment calls — strictly advisory and ledgered — once the measurement foundation is mature.
+
+## Why this plan exists
+
+Comparative review against OpenCode, Cursor, Letta Code, and Claude Code surfaced three gaps in the original ADR-0050:
+
+1. **No environment-grounded feedback.** OpenCode feeds LSP diagnostics back after each edit; ADR-0050 checkpoints relied on model self-report. We want that grounding without assuming every Bear works on code.
+2. **Context budget lived outside the controller.** Claude Code treats compaction as loop control; ADR-0050 deferred it to ADR-0047 as a "future extension," so the two most important end-of-turn behaviors (checkpoint, compact) could not coordinate.
+3. **Best-when-tuned, but no tuning machinery.** The typed design shines fine-tuned, yet Bear Den is a personal project with no eval platform. Without automated measurement the complexity is unjustified.
+
+## Core invariants (in addition to the base plan's)
+
+1. **Grounding probes are validators, never mutators or LLM reviewers.** A probe answers an objective question the work surface can answer about itself. It must not edit the surface and must not be an LLM "is this good?" pass.
+2. **No probe, no problem.** A surface kind with no declared grounding profile degrades to §7b self-report plus the generic non-empty-diff/parse floor. The runtime never fabricates a probe for a surface that has none.
+3. **Probes are budgeted and time-bounded.** A probe that errors or times out yields `NoSignal`, never a turn failure, and its spend counts against normal tool-class budgets.
+4. **Context budget is read, not recomputed.** The loop controller consumes the ADR-0047 budget report; it does not re-implement tokenization.
+5. **Checkpoint-then-compact is a preference, not an invariant.** When the window is too tight to afford a checkpoint turn, compaction runs first.
+6. **Advisory mode is the default.** Only ko and the emergency hard-step fuse stop the loop until replay evidence justifies enforcing a given trigger class.
+7. **The ledger is replayable without model calls.** Persist typed signals, not transcript content, so any recorded turn can be re-scored against alternative profiles offline and cheaply.
+
+## Conceptual model
+
+```mermaid
+flowchart TD
+    subgraph Turn
+      Step[Model/tool step] --> Mut{Mutative action?}
+      Mut -- yes --> Probe[Resolve grounding profile\nfor work surface]
+      Probe --> PR{Probe result}
+      PR -- pass + non-empty diff --> Meaningful[Mark meaningful mutation\nopen bounded verify window §7a]
+      PR -- fail --> Fail[Feed consecutive-failure budget §7]
+      PR -- no signal --> SelfReport[Fall back to self-report §7b]
+      Mut -- no --> Ledger
+      Meaningful --> Ledger
+      Fail --> Ledger
+      SelfReport --> Ledger
+      Step --> Ctx[Read ADR-0047 budget report]
+      Ctx --> Ledger[(TurnBudgetState ledger)]
+    end
+
+    Ledger --> Eval{Trigger eval}
+    Eval -- context pressure --> CkC[Checkpoint then compact §11]
+    Eval -- other triggers --> Ck[Checkpoint §7b\ncarries probe findings as evidence]
+    Eval -- advisory mode --> Diag[[would_* diagnostics only]]
+
+    Ledger --> Persist[(Persisted ledger\nno transcript content)]
+    Persist --> Replay[Offline replay harness\nre-score vs alt profiles]
+    Replay --> Tune[Threshold tuning]
+    Tune --> Profiles[Control profiles]
+```
+
+---
+
+## Part A — Surface-declared grounding probes (ADR-0050 §7c)
+
+Builds on the base plan's Phase 4 (checkpoint trigger state, tool classification) and Phase 5 (checkpoint request/response, `evidence_refs`).
+
+### A1 — Grounding profile types and resolution
+
+Suggested types:
+
+```rust
+pub enum WorkSurfaceKind {
+    Repository,
+    Document,
+    MediaMetadata,
+    StructuredData,
+    Other(String),
+}
+
+pub struct GroundingProfile {
+    pub surface_kind: WorkSurfaceKind,
+    pub probes: Vec<GroundingProbeSpec>, // ordered, cheap-first
+}
+
+pub struct GroundingProbeSpec {
+    pub id: ProbeId,
+    pub kind: GroundingProbeKind,   // Diagnostics | TypeCheck | Lint | TestSubset | SchemaValidate | ParseRoundTrip | NonEmptyDiff ...
+    pub timeout_ms: u32,
+    pub tool_class: ToolClass,      // budgeted like any other spend
+    pub mutates: bool,              // must be false; validated at registration
+}
+
+pub enum GroundingSignal {
+    Pass { findings: Vec<GroundingFinding> },  // may still carry warnings
+    Fail { findings: Vec<GroundingFinding> },
+    NoSignal { reason: NoSignalReason },       // timeout | error | no-probe | surface-unresolved
+}
+```
+
+| Task | Done when |
+| --- | --- |
+| Define grounding types | Profile, probe spec, and signal types are typed and serializable. |
+| Enforce non-mutation at registration | A probe with `mutates = true` is rejected; probes cannot be file-writing tools. |
+| Resolve profile from surface metadata | Given a resolved work surface (ADR-0006 anchors), the runtime resolves its grounding profile or an empty profile. |
+| Provide generic floor | Every surface, including `Other`, has the non-empty-diff/parse floor available. |
+| Add tests | Repository, document, media, and no-profile surfaces resolve deterministically. |
+
+**Exit gate:** grounding profiles resolve per surface without executing anything.
+
+### A2 — Probe execution after mutation
+
+| Task | Done when |
+| --- | --- |
+| Hook post-mutation execution | After a mutative tool step, the controller runs the surface's ordered probes (cheap-first, short-circuit on hard fail where sensible). |
+| Budget and time-bound probes | Probe spend counts against tool-class budgets; a probe exceeding `timeout_ms` yields `NoSignal`, not a hang. |
+| Never fail the turn on probe error | Probe crash/timeout degrades to `NoSignal` with a reason; the turn continues. |
+| Emit probe diagnostics | Runtime emits `grounding_probe_result` diagnostics with probe id, signal, and duration. |
+| Add tests | Passing, failing, timeout, error, and no-probe paths each produce the correct signal without turn failure. |
+
+**Exit gate:** probes run, are bounded, and produce typed signals with zero turn-failure risk.
+
+### A3 — Wire grounding into §7a replenishment and §7b checkpoints
+
+| Task | Done when |
+| --- | --- |
+| Arbitrate meaningful mutation | A `Pass` over a non-empty diff marks the mutation meaningful and opens the bounded §7a verification window; a `Fail` does not, and feeds §7 consecutive-failure state instead. |
+| Guard against no-op windows | A no-op/empty-diff mutation never earns a fresh exploration window regardless of probe outcome. |
+| Attach findings as checkpoint evidence | Checkpoint requests (base plan Phase 5) carry recent `GroundingFinding`s as `evidence_refs`. |
+| Fall back cleanly | `NoSignal` reverts §7a to prior heuristic behavior and §7b to self-report only. |
+| Add tests | Replenishment fires only on `Pass`+non-empty diff; checkpoint requests include probe evidence when present. |
+
+**Exit gate:** grounding is the arbiter for "meaningful mutation" and enriches checkpoint synthesis, degrading safely where absent.
+
+### A4 — Initial probe sets
+
+| Task | Done when |
+| --- | --- |
+| Repository probes | At minimum: non-empty diff, plus one language diagnostic/type check available in the current sandbox (e.g. `cargo check` / `tsc`), behind capability detection. |
+| Generic floor | Non-empty-diff and parse/open checks work for any surface. |
+| Document probes (stretch) | Prose/link/frontmatter validators registered for the document surface kind. |
+| Media probes (stretch) | Parse round-trip and required-field checks for the media-metadata kind. |
+| Add tests | Repository and generic floor covered; document/media behind feature flags. |
+
+**Exit gate:** repository + generic grounding usable in real runs; other surfaces incrementally added.
+
+---
+
+## Part B — Context/token budget as a loop dimension (ADR-0050 §11)
+
+Extends the base plan's Phase 3 (budget integration) and Phase 7 (checkpoint enforcement).
+
+### B1 — Consume the ADR-0047 budget report in TurnBudgetState
+
+| Task | Done when |
+| --- | --- |
+| Add context dimension to ledger | `TurnBudgetState` stores the latest ADR-0047 budget snapshot (total, reserve, precision, over/near flags). |
+| Add level-tuned context thresholds | Control profiles carry near-budget/low-budget context thresholds; `careful`/`strict` trip earlier than `light`. |
+| Evaluate context alongside other triggers | Low-remaining-context is evaluated in the same trigger pass as ko/failure/wall-clock. |
+| Respect precision labeling | Approximate estimates widen safety margins; diagnostics record precision. |
+| Add tests | Context near/low thresholds fire per level; approximate estimates behave conservatively. |
+
+**Exit gate:** context pressure is a first-class trigger evaluated in the controller, in advisory mode.
+
+### B2 — Checkpoint-then-compact sequencing
+
+| Task | Done when |
+| --- | --- |
+| Sequence checkpoint before compaction | On context-pressure checkpoint, the controller requests a checkpoint (base plan Phase 5/7) before invoking compaction. |
+| Seed compaction from checkpoint | The structured checkpoint response is passed to compaction (ADR-0032) as the summary seed. |
+| Handle critical pressure | When the window cannot afford a checkpoint turn, compaction runs first and the checkpoint is deferred; ordering never exhausts the window. |
+| Keep compaction subordinate | Compaction mutates neither task-list/Docket state nor conversation history semantics. |
+| Add tests | Normal pressure → checkpoint-then-compact; critical pressure → compact-first; seed is used by the compactor. |
+
+**Exit gate:** compaction is a coordinated loop-control action seeded by forced synthesis.
+
+---
+
+## Part C — Advisory mode, ledger persistence, and offline tuning
+
+Tightens the base plan's Phase 11 (rollout) into a measurable, single-maintainer loop. This is the prerequisite that justifies the whole policy's complexity.
+
+### C1 — Advisory (observe/enforce) mode
+
+| Task | Done when |
+| --- | --- |
+| Add mode flag per trigger class | `BEARS_AGENT_LOOP_CONTROL=off|observe|enforce`, with per-trigger granularity (ko/fuse always enforced). |
+| Evaluate-but-don't-act in observe | In `observe`, all triggers compute and emit `would_stop` / `would_checkpoint` diagnostics; only ko and emergency fuse stop. |
+| Reduce launch levels | Only `standard` and `careful` are wired by default; `light`/`strict` defined but gated off. |
+| Add diagnostics | Every advisory decision is logged with reason, threshold, and observed ledger values. |
+| Add tests | Observe mode never stops except ko/fuse; enforce mode acts; per-trigger toggles work. |
+
+**Exit gate:** the controller can run against real traffic changing nothing but the diagnostics stream.
+
+### C2 — Persisted replayable ledger
+
+Preferred shape:
+
+```text
+bear_loop_ledger_turns
+- id uuid primary key
+- run_id text not null
+- turn_id text not null
+- stance text not null
+- resolved_level text not null
+- resolved_source text not null
+- profile_hash text not null          -- which thresholds were in effect
+- events jsonb not null               -- ordered typed signals, NO transcript content
+- context_snapshots jsonb not null    -- ADR-0047 budget snapshots over the turn
+- grounding_signals jsonb not null    -- probe outcomes over the turn
+- outcome text not null               -- completed | stopped_ko | stopped_fuse | stopped_advisory_would | error
+- outcome_label text nullable         -- heuristic: likely_false_positive | likely_false_negative | ok | unknown
+- created_at timestamptz not null
+```
+
+`events` entries are typed signals only — tool signature hash, tool class, timestamp, failure flag, gate-rejection signature, checkpoint-would markers — never assistant/user text.
+
+| Task | Done when |
+| --- | --- |
+| Add ledger schema/service | Per-turn ledgers persist with typed events and no transcript content. |
+| Capture context + grounding | ADR-0047 snapshots and probe outcomes are recorded per turn. |
+| Record profile hash | Each turn records which thresholds were in effect for fair replay comparison. |
+| Privacy check | No transcript, no file contents, no user text lands in the ledger. |
+| Add tests | Ledger round-trips; a recorded turn contains enough to re-score triggers. |
+
+**Exit gate:** every real turn produces a compact, transcript-free record sufficient for offline scoring.
+
+### C3 — Offline replay harness
+
+| Task | Done when |
+| --- | --- |
+| Build replay entrypoint | A CLI/test tool re-scores persisted turns against an arbitrary control profile with zero model calls. |
+| Report counterfactuals | Output answers "would profile X have stopped/checkpointed this turn, and how much earlier/later?" across a run corpus. |
+| Diff profiles | The harness compares two profiles over the same corpus (stop rate, checkpoint rate, over/under-cut counts). |
+| Add fixtures | A small corpus of recorded turns (thrash, productive-long, failure-loop, gate-loop, context-pressure) is checked in. |
+| Add tests | Replay is deterministic and model-call-free; known fixtures produce expected counterfactuals. |
+
+**Exit gate:** thresholds can be tuned against recorded reality without spending tokens.
+
+### C4 — Heuristic outcome labeling
+
+| Task | Done when |
+| --- | --- |
+| Label likely false positives | A stop (or `would_stop`) immediately followed by user "continue"/re-ask is labeled `likely_false_positive`. |
+| Label likely false negatives | A normal end after a long read-only tail with no mutation is labeled `likely_false_negative`. |
+| Feed labels to replay | The harness reports label rates per profile so tuning has a target signal. |
+| Keep labels advisory | Labels are heuristics for trend lines, never authoritative outcome truth. |
+| Add tests | Labeling rules fire on constructed transcripts; labels surface in replay summaries. |
+
+**Exit gate:** a tuning trend line exists without human annotation.
+
+### C5 — Graduation criteria (advisory → enforce)
+
+Enforce a trigger class only when replay over the accumulated corpus shows it would have improved outcomes:
+
+| Trigger class | Graduate to enforce when |
+| --- | --- |
+| Over-exploration checkpoint | `would_checkpoint` correlates with `likely_false_negative` tails and low probe-`Pass` density; false-positive rate under target. |
+| Consecutive-failure stop | `would_stop` reliably precedes runs the user abandoned or re-asked; near-zero productive-run cuts in replay. |
+| Task-gate rejection escalation | Repeated identical gate-rejection signatures dominate the flagged turns. |
+| Low-context checkpoint | Context-pressure checkpoints precede compaction cleanly without cutting productive work. |
+
+| Task | Done when |
+| --- | --- |
+| Document target rates | Concrete false-positive/false-negative targets per trigger class are recorded here and in run diagnostics. |
+| Wire graduation toggles | Each trigger class can be independently promoted from `observe` to `enforce`. |
+| Add tests | Promotion of one class does not force others; ko/fuse remain always-on. |
+
+**Exit gate:** enforcement is unlocked per trigger class from evidence, not intuition.
+
+---
+
+## Part D — Optional cheap-model classifier signals (ADR-0050 §7d, deferred)
+
+A cheap model may supply **classifier signals** for the residual judgment calls the deterministic signals (base plan) and objective grounding probes (Part A) cannot make. This is deliberately the **last** part to land: it depends on the advisory + ledger + replay foundation from Part C, and it must never become an authoritative overseer. Classification, not evaluation; advisory, not authoritative; ledgered, not ephemeral.
+
+### D1 — Classifier signal source and typed verdicts
+
+Suggested types:
+
+```rust
+pub enum ClassifierSignalKind {
+    TaskGateIntent,      // legitimate blocked/N-A/waived vs evasion (§6a)
+    SemanticKo,          // near-duplicate churn missed by normalized-signature ko (§6)
+    NoProbeCoherence,    // coherence check where §7c declares no objective probe
+    CheckpointAdherence, // did the checkpoint commit to a different next action, or narrate? (§7b)
+}
+
+pub struct ClassifierVerdict {
+    pub kind: ClassifierSignalKind,
+    pub label: String,        // typed per kind, e.g. Evasion | Legitimate | Duplicate | Distinct
+    pub confidence: f32,
+    pub model_handle: String, // which cheap model produced it
+    pub latency_ms: u32,
+    pub bounded_to: TriggerBoundary, // checkpoint | gate_rejection | no_probe_mutation
+}
+```
+
+| Task | Done when |
+| --- | --- |
+| Define verdict types | Classifier kinds and verdicts are typed and serializable. |
+| Bound invocation to triggers | The classifier runs only at defined trigger boundaries, never per step. |
+| Budget the classifier | Classifier calls count against a dedicated small budget with a hard cap per turn. |
+| Degrade on failure | Classifier timeout/error yields "no verdict," never a turn failure or a stop. |
+| Add tests | Each kind produces a typed verdict; invocation is bounded; failure degrades cleanly. |
+
+**Exit gate:** classifier verdicts exist as typed, bounded, fail-safe signals.
+
+### D2 — Advisory-only wiring and ledgered replay
+
+| Task | Done when |
+| --- | --- |
+| Feed verdicts as advisory signals | A verdict may raise a checkpoint or a `would_stop` diagnostic; it never overrules deterministic budget/ko/failure or vetoes an action. |
+| Record verdicts in the ledger | Every verdict that influences a decision is persisted in `bear_loop_ledger_turns.events` as a typed signal. |
+| Preserve zero-model-call replay | Offline replay (C3) reads recorded verdicts; it never re-invokes the classifier. A verdict that cannot be recorded cannot gate behavior. |
+| Guard against correctness review | The classifier is never invoked to judge correctness of the primary model's work; that path routes to grounding probes (Part A). |
+| Add tests | Verdicts are advisory only; replay is deterministic with recorded verdicts; no correctness-evaluation path exists. |
+
+**Exit gate:** classifier signals strengthen the advisory layer while replayability and the deterministic-authority boundary stay intact.
+
+### D3 — Graduation (advisory classifier → enforcing trigger)
+
+Same discipline as C5: a classifier-derived trigger enforces only when replay over recorded verdicts shows it improves outcomes.
+
+| Task | Done when |
+| --- | --- |
+| Score classifier value in replay | Replay reports whether classifier-flagged turns correlate with `likely_false_negative`/abandonment better than deterministic signals alone. |
+| Calibrate confidence thresholds | A per-kind confidence floor is chosen from recorded verdicts, not guessed. |
+| Promote per kind | Each classifier kind graduates independently; none is on by default. |
+| Add tests | Promotion is per-kind; unpromoted kinds stay advisory; ko/fuse remain the only always-on stops. |
+
+**Exit gate:** cheap-model classification enforces only where recorded evidence supports it, per kind.
+
+---
+
+## Rollout order
+
+1. **Ledger + advisory** (C1–C2): persist replayable ledgers; run everything in `observe`. Zero behavior change beyond diagnostics.
+2. **Replay + labels** (C3–C4): stand up offline scoring and heuristic labels over the growing corpus.
+3. **Context dimension** (B1): add context pressure as an advisory trigger; watch rates.
+4. **Grounding, repository + floor** (A1–A3, A4 repository): arbitrate §7a and enrich checkpoint evidence, still advisory.
+5. **Graduate first enforcers** (C5): promote consecutive-failure and over-exploration where replay supports it.
+6. **Checkpoint-then-compact** (B2): coordinate compaction with checkpoints.
+7. **Additional grounding surfaces** (A4 document/media) and **additional levels** (`light`/`strict`) as evidence accrues.
+8. **Cheap-model classifier signals** (D1–D2, advisory): only after replay is mature; feed verdicts as advisory signals, ledgered.
+9. **Graduate classifier kinds** (D3): promote per kind where recorded verdicts show value.
+
+## Validation matrix
+
+| Area | Required tests |
+| --- | --- |
+| Grounding types | non-mutation enforced, deterministic profile resolution, generic floor present |
+| Probe execution | pass/fail/timeout/error/no-probe all typed, budgeted, never fail the turn |
+| Grounding wiring | replenishment only on pass+non-empty diff; failing probe feeds failure budget; findings attached to checkpoints |
+| Context dimension | near/low thresholds per level; approximate estimates conservative |
+| Checkpoint-then-compact | normal → checkpoint-then-compact; critical → compact-first; seed used |
+| Advisory mode | observe never stops except ko/fuse; enforce acts; per-trigger toggles |
+| Ledger | transcript-free, replay-sufficient, profile-hash recorded |
+| Replay harness | deterministic, zero model calls, correct counterfactuals on fixtures |
+| Labeling | false-positive/false-negative rules fire; labels surface in replay |
+| Graduation | per-class promotion independent; ko/fuse always enforced |
+| Classifier signals | bounded to trigger points, budgeted, fail-safe; advisory only; never evaluates correctness |
+| Classifier replay | verdicts recorded in ledger; replay reads recorded verdicts with zero model calls; unrecordable verdict cannot gate |
+
+## First implementation slice
+
+The safest first slice is Part C's foundation, because it is the measurement machinery everything else is justified by:
+
+1. add the `bear_loop_ledger_turns` schema/service (transcript-free);
+2. run the existing/base loop controller in `observe` mode, emitting `would_*` diagnostics;
+3. record ADR-0047 context snapshots per turn (read-only consumption, no new triggers yet);
+4. build the offline replay harness with a small checked-in fixture corpus;
+5. add heuristic outcome labeling.
+
+This produces a working tuning loop before any new enforcement, grounding, or compaction behavior changes how Bears actually run — which is exactly the guarantee the ADR-0050 amendment asks for.
