@@ -1,8 +1,10 @@
 use std::time::Instant;
 
+use serde::{Deserialize, Serialize};
+
 use crate::llm::ChatToolCall;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCallBudgetLimits {
     pub total: u32,
     pub read: u32,
@@ -14,7 +16,7 @@ pub struct ToolCallBudgetLimits {
     pub other: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ToolCallBudgetUsage {
     pub total: u32,
     pub read: u32,
@@ -65,7 +67,8 @@ impl ToolCallBudgetUsage {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolBudgetClass {
     Read,
     Search,
@@ -90,7 +93,7 @@ impl ToolBudgetClass {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnBudgetPolicy {
     pub max_wall_clock_ms: u64,
     pub emergency_hard_steps: u32,
@@ -100,7 +103,7 @@ pub struct TurnBudgetPolicy {
     pub post_mutation_verification_window: Option<PostMutationVerificationWindow>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PostMutationVerificationWindow {
     pub replenish_read: u32,
     pub replenish_search: u32,

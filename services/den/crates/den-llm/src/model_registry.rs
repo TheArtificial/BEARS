@@ -6,6 +6,7 @@
 
 use std::collections::BTreeSet;
 
+use den_core::AgentLoopControlLevel;
 use serde::Serialize;
 
 use crate::ModelOption;
@@ -22,6 +23,7 @@ pub struct DenModelRegistryEntry {
     pub supports_tools: bool,
     pub supports_responses_api: bool,
     pub supports_vision: bool,
+    pub default_agent_loop_control: AgentLoopControlLevel,
     /// Simple lifecycle: selectable entries appear in Bear Admin. Non-selectable
     /// entries may still resolve by key/alias for compatibility later.
     pub selectable: bool,
@@ -75,6 +77,12 @@ pub fn resolve_model_handle(handle: &str) -> Option<&'static str> {
 
 pub fn provider_model_id_for_handle(handle: &str) -> Option<&'static str> {
     entry_for_handle(handle).map(|entry| entry.provider_model_id)
+}
+
+pub fn default_agent_loop_control_for_model(handle: &str) -> AgentLoopControlLevel {
+    entry_for_handle(handle)
+        .map(|entry| entry.default_agent_loop_control)
+        .unwrap_or_default()
 }
 
 pub fn execution_fallback_model_handles(handle: &str) -> &'static [&'static str] {
@@ -373,7 +381,23 @@ fn openai(
         supports_tools,
         supports_responses_api: true,
         supports_vision,
+        default_agent_loop_control: default_agent_loop_control_for_openai_model(key),
         selectable: true,
+    }
+}
+
+fn default_agent_loop_control_for_openai_model(key: &str) -> AgentLoopControlLevel {
+    match key {
+        "openai/gpt-5.5" | "openai/gpt-5.1" | "openai/gpt-5" | "openai/o3" => {
+            AgentLoopControlLevel::Light
+        }
+        "openai/gpt-5-mini" | "openai/gpt-4.1-mini" | "openai/gpt-4o-mini" => {
+            AgentLoopControlLevel::Careful
+        }
+        "openai/gpt-5-nano" | "openai/gpt-4.1-nano" | "openai/o1-mini" => {
+            AgentLoopControlLevel::Careful
+        }
+        _ => AgentLoopControlLevel::Standard,
     }
 }
 
@@ -436,6 +460,22 @@ mod tests {
         );
         assert_eq!(provider_model_id_for_handle("gpt-5.5"), Some("gpt-5.5"));
         assert_eq!(provider_model_id_for_handle("unknown-model"), None);
+    }
+
+    #[test]
+    fn resolves_default_agent_loop_control_levels() {
+        assert_eq!(
+            default_agent_loop_control_for_model("openai/gpt-5.5"),
+            AgentLoopControlLevel::Light
+        );
+        assert_eq!(
+            default_agent_loop_control_for_model("gpt-5-mini"),
+            AgentLoopControlLevel::Careful
+        );
+        assert_eq!(
+            default_agent_loop_control_for_model("unknown-model"),
+            AgentLoopControlLevel::Standard
+        );
     }
 
     #[test]

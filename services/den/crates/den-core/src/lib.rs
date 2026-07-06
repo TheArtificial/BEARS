@@ -3,6 +3,7 @@
 //! Holds shared configuration, domain types, and errors with third-party
 //! dependencies only. See `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
+pub mod agent_loop_control;
 pub mod client_tools;
 pub mod config;
 pub mod conversation_ids;
@@ -17,6 +18,7 @@ pub mod profile;
 /// (The concrete DB-backed executors live in the `den` binary's `core::tools`.)
 pub mod tools;
 
+pub use agent_loop_control::{AgentLoopControlLevel, ThinkingEffort};
 pub use error::DenError;
 pub use governance::{GovernanceMode, RunMode};
 pub use ids::{BearId, ConversationId, SessionId, UserId};

@@ -3,6 +3,7 @@
 mod approvals;
 mod assembler;
 mod budget;
+mod control;
 mod context;
 mod key_memory_projection;
 #[cfg(test)]
@@ -45,6 +46,11 @@ pub use budget::{
 pub use context::{
     assemble_agent_messages, load_transcript_grouping_rows, load_transcript_messages,
     prune_messages_for_native_chat, repair_tool_call_message_chain,
+};
+pub use control::{
+    resolve_agent_loop_control, AgentLoopControlProfile, AgentLoopControlResolutionInput,
+    AgentLoopControlSource, CheckpointPolicy, CheckpointReason, CheckpointThinkingPolicy, KoPolicy,
+    ResolvedAgentLoopControl, TaskGatePolicy,
 };
 pub use key_memory_projection::{
     project_key_memory, KeyMemoryProjectionCacheKey, KeyMemoryProjectionResult,
