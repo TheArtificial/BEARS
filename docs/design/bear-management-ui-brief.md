@@ -19,6 +19,7 @@ The test to hold every screen against: **does this let a non-expert _see, unders
 5. **Cause and effect is traceable.** From a conversation you can see the memories it formed and the work it dispatched; from a memory you can reach the conversation that formed it. The record is a graph you can walk, not disconnected logs.
 6. **No irreversible surprises.** Changes that weaken isolation or delete memory preview their effect in plain language before they happen. Destructive actions are clear without being frightening.
 7. **Honest about canonical vs derived.** Canonical memory is truth; recall indexes are rebuildable and labeled as such. The UI never dresses derived state up as authoritative.
+8. **Portability is legible where you stand (own).** A user should be able to tell, on whatever screen they're on, what of the Bear is theirs to take and what is bound to this Den — not discover it only at export. This is a requirement on the *information*, not a mandate of mechanism. Explicitly **do not** default to stamping every item with a blunt "portable / attached" badge; the elegant expression is still to be found, and may live in framing, grouping, wording, or how re-attach is handled on import rather than a per-row tag. The test is whether a user is ever *surprised* at export — not whether a flag exists.
 
 ## Information architecture (top-level areas)
 
@@ -30,7 +31,7 @@ The test to hold every screen against: **does this let a non-expert _see, unders
 - **People** — membership and access.
 - **Portability** — export and import.
 
-The spine is a pairing: **Memory** (what it learned — portable, the mind) and **Activity** (what it did — host-side, the record). Both are first-class and present; neither is buried under settings. The model behind Capabilities and Resources — the two axes and the connections that bridge them — is detailed in the [companion doc](bear-management-model.md).
+The spine is a pairing: **Memory** (what it learned — portable, the mind) and **Activity** (what it did — host-side, the record). That pairing is also the portability line — the mind travels with the Bear, the record stays with this Den. Both are first-class and present; neither is buried under settings. The model behind Capabilities and Resources — the two axes and the connections that bridge them — is detailed in the [companion doc](bear-management-model.md).
 
 ## Primary use cases (the test cases — actor, motivation, success bar)
 
@@ -60,9 +61,9 @@ The spine is a pairing: **Memory** (what it learned — portable, the mind) and 
 
 **Identity & charter.** Name, slug (human handle), charter/purpose text. Per-stance **model selection**, framed as *the engine is swappable and changing it does not change the mind* — never as "upgrading your Bear." Charter edits recompile prompts; say so honestly (takes effect next turn).
 
-**Capabilities.** Per stance, the granted tools, MCP servers (which supply tools), and skills (which direct tool use). Each item shows *what it exposes* (private-data reach / untrusted input / outbound), and for credentialed tools, *which connection enables it*. Add from the operator catalog; remove is first-class. **Self-proposed capability** (bear-authored skills) flows through the review queue — no stance self-installs executable capability. Risky combinations are flagged as **review**, never as a safety guarantee. Secrets are named, never shown.
+**Capabilities.** Per stance, the granted tools, MCP servers (which supply tools), and skills (which direct tool use). Each item shows *what it exposes* (private-data reach / untrusted input / outbound), and for credentialed tools, *which connection enables it*. Add from the operator catalog; remove is first-class. **Self-proposed capability** (bear-authored skills) flows through the review queue — no stance self-installs executable capability. Risky combinations are flagged as **review**, never as a safety guarantee. Secrets are named, never shown. A grant's *description* travels with the Bear; the connection, secret, and running server behind it stay on this Den and are re-attached on import — the screen should make that split feel natural, not a surprise sprung at export.
 
-**Resources.** External resources as typed cards (repository, document, server) reached through **Connections**; internal resources (Cabinet, Docket work surfaces). Granted per stance. Connections are set up once (owner-scoped, reused across Bears) and surfaced as the *enabler* behind credentialed tools. Secrets named, never shown, never exported.
+**Resources.** External resources as typed cards (repository, document, server) reached through **Connections**; internal resources (Cabinet, Docket work surfaces). Granted per stance. Connections are set up once (owner-scoped, reused across Bears) and surfaced as the *enabler* behind credentialed tools. Secrets named, never shown, never exported. The Bear's *knowledge* of a resource (anchors and overviews in `core/`) travels as memory; the resource itself and the connection to it stay — a distinction worth surfacing here, not only at export.
 
 **Activity.** Three streams:
 - **Conversations** — chat/pair dialogue. Each conversation is a **hub**: it links to the memories it formed (and when) and the jobs it dispatched. This is where a user understands what and when the Bear learned.
@@ -87,6 +88,7 @@ The spine is a pairing: **Memory** (what it learned — portable, the mind) and 
 - **Auto-remembering, or auto-installing capability, with no review** — betrays *own/control*.
 - Framing a model change as "upgrading your Bear" — conflates the swappable engine with the owned mind, which is precisely our differentiator inverted.
 - **Activity as a flat, disconnected log** — runs detached from their job, conversations detached from the memories they formed. Things feel buried when they're severed from their organizing parent, not merely one level too deep.
+- **Portability as a reveal, not ambient** — a user first learning at the export screen that a connection, secret, or Cabinet reference won't travel. What's yours to take should be legible where you stand. (And the remedy is not a blunt per-item badge — see principle 8.)
 
 ## Honesty notes (design now, ship as backend lands)
 

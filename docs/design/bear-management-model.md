@@ -8,15 +8,17 @@ This doc records the conceptual model the [UI brief](bear-management-ui-brief.md
 
 ## Information architecture at a glance
 
-| Area | What it answers |
-|------|-----------------|
-| **Overview** | Is it healthy, what has it done lately, what needs me? |
-| **Memory** | What does it know — and is that right? |
-| **Capabilities** | What can it *do*? |
-| **Resources** | What can it *act on and read*? |
-| **Activity** | What *did* it do? |
-| **People** | Who can use it? |
-| **Portability** | How do I back it up or move it? |
+| Area | What it answers | Travels with the Bear? |
+|------|-----------------|------------------------|
+| **Overview** | Is it healthy, what has it done lately, what needs me? | Stays (a host dashboard); identity is portable |
+| **Memory** | What does it know — and is that right? | **Travels** — the mind |
+| **Capabilities** | What can it *do*? | Grant travels; connection, secret, and server stay |
+| **Resources** | What can it *act on and read*? | Knowledge travels; the resource and its connection stay |
+| **Activity** | What *did* it do? | **Stays** — the record |
+| **People** | Who can use it? | Stays |
+| **Portability** | How do I back it up or move it? | — (this is the mover) |
+
+The "travels" column is the **conceptual boundary**, not a UI spec. How the UI makes it legible is deliberately left open — see the brief's portability-legibility principle (principle 8). A blunt per-item "portable / attached" badge is explicitly **not** the mandated answer; the test is only whether a user is ever surprised at export. Note that Capabilities and Resources each split *internally* — the grant or the knowledge travels while the live wiring (connection, secret, running server, the resource itself) stays — which is exactly the seam most likely to surprise, and the one an elegant expression most needs to cover.
 
 Two of these are the load-bearing pillars, and they are deliberately paired:
 
