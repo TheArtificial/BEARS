@@ -168,6 +168,7 @@ fn reasoning_delta_bearwire_event_is_display_only() {
     assert_eq!(events.len(), 1);
     let event = &events[0];
     assert_eq!(event.event_type, "message.reasoning.delta");
+    assert_ne!(event.event_type, "message.delta");
     assert_eq!(event.data["delta"], "thinking");
     assert_eq!(event.data["source"], "provider_reasoning");
     assert_eq!(event.data["replay_policy"], "none");

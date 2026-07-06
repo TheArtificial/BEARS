@@ -980,6 +980,54 @@ fn resource_ref_id<'a>(event: &'a Value, kind: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
 }
 
+fn bearwire_message_delta_text(event: &Value) -> &str {
+    event
+        .get("data")
+        .and_then(|data| {
+            data.get("delta")
+                .or_else(|| data.get("text"))
+                .or_else(|| data.get("reasoning"))
+                .or_else(|| data.get("thinking"))
+                .or_else(|| data.get("thought"))
+        })
+        .and_then(Value::as_str)
+        .unwrap_or("")
+}
+
+fn value_has_reasoning_marker(value: &Value) -> bool {
+    value
+        .as_str()
+        .map(|raw| {
+            let raw = raw.to_ascii_lowercase();
+            raw.contains("reasoning") || raw.contains("thinking") || raw.contains("thought")
+        })
+        .unwrap_or(false)
+}
+
+fn bearwire_message_delta_is_reasoning(event: &Value) -> bool {
+    let Some(data) = event.get("data") else {
+        return false;
+    };
+    [
+        data.get("kind"),
+        data.get("role"),
+        data.get("type"),
+        data.get("message_type"),
+        data.get("channel"),
+        data.get("source"),
+        data.get("part_kind"),
+        data.pointer("/delta/kind"),
+        data.pointer("/delta/role"),
+        data.pointer("/delta/type"),
+    ]
+    .into_iter()
+    .flatten()
+    .any(value_has_reasoning_marker)
+        || data.get("reasoning").is_some()
+        || data.get("thinking").is_some()
+        || data.get("thought").is_some()
+}
+
 fn parse_event_frame(frame: &[u8]) -> Result<BearWireFrame> {
     let text = String::from_utf8_lossy(frame);
     let mut sequence = None;
@@ -1018,23 +1066,29 @@ async fn handle_bearwire_event(
 
     match ty {
         "message.delta" => {
-            let text = event
-                .get("data")
-                .and_then(|data| data.get("delta").or_else(|| data.get("text")))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            outcome.saw_visible_output = !text.is_empty();
-            if !text.is_empty() {
-                send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, text)
-                    .await?;
+            let text = bearwire_message_delta_text(event);
+            if bearwire_message_delta_is_reasoning(event) {
+                if !text.is_empty() {
+                    if crate::bear_debug_verbose() {
+                        eprintln!(
+                            "bear-armature: reclassified reasoning-tagged message.delta as thought session_id={} sample={}",
+                            session_id,
+                            truncate_for_log(text, 160)
+                        );
+                    }
+                    send_agent_thought_chunk_for_turn(shared_state, session_id, turn_token, text)
+                        .await?;
+                }
+            } else {
+                outcome.saw_visible_output = !text.is_empty();
+                if !text.is_empty() {
+                    send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, text)
+                        .await?;
+                }
             }
         }
         "message.reasoning.delta" => {
-            let text = event
-                .get("data")
-                .and_then(|data| data.get("delta").or_else(|| data.get("text")))
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let text = bearwire_message_delta_text(event);
             if !text.is_empty() {
                 send_agent_thought_chunk_for_turn(shared_state, session_id, turn_token, text)
                     .await?;
@@ -1317,6 +1371,50 @@ async fn handle_bearwire_event(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn message_delta_with_reasoning_metadata_is_thought_not_visible_output() {
+        let event = json!({
+            "type": "message.delta",
+            "data": {
+                "kind": "reasoning_delta",
+                "delta": "thinking about the next step"
+            }
+        });
+
+        assert!(bearwire_message_delta_is_reasoning(&event));
+        assert_eq!(
+            bearwire_message_delta_text(&event),
+            "thinking about the next step"
+        );
+    }
+
+    #[test]
+    fn message_delta_without_reasoning_metadata_is_visible_text() {
+        let event = json!({
+            "type": "message.delta",
+            "data": {
+                "delta": "hello user"
+            }
+        });
+
+        assert!(!bearwire_message_delta_is_reasoning(&event));
+        assert_eq!(bearwire_message_delta_text(&event), "hello user");
+    }
+
+    #[test]
+    fn reasoning_text_fallback_is_extracted_from_compatibility_payload() {
+        let event = json!({
+            "type": "message.delta",
+            "data": {
+                "source": "provider_reasoning",
+                "reasoning": "compat reasoning"
+            }
+        });
+
+        assert!(bearwire_message_delta_is_reasoning(&event));
+        assert_eq!(bearwire_message_delta_text(&event), "compat reasoning");
+    }
 
     #[test]
     fn bearwire_finished_tool_prefers_canonical_tool_call_identity() {

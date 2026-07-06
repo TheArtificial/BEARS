@@ -159,7 +159,7 @@ impl ClientToolResultRequest {
         let error_message = (self.status != ToolResultStatus::Ok)
             .then(|| self.content.as_deref().or_else(|| self.error.as_str()))
             .flatten();
-        tool_call_finish_wire(
+        serde_json::to_value(tool_call_finish_wire(
             &self.tool_call_id,
             self.tool_name.as_deref(),
             self.status.as_str(),
@@ -169,7 +169,8 @@ impl ClientToolResultRequest {
             (!self.structured_content.is_null()).then(|| self.structured_content.clone()),
             (!self.error.is_null()).then(|| self.error.clone()),
             Some(compacted),
-        )
+        ))
+        .expect("ToolCallFinishWire serializes")
     }
 }
 
