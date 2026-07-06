@@ -705,6 +705,7 @@ async fn build_session(
         turn_budget_state: Default::default(),
         agent_loop_control,
         checkpoint_state: Default::default(),
+        pending_checkpoint_request: None,
         strategy: profile.strategy,
         stream_tokens,
         key_memory_projection_cache_key,
@@ -1143,6 +1144,7 @@ fn apply_checkpoint_nudge(
     }) {
         session.messages.pop();
     }
+    session.pending_checkpoint_request = Some(request.clone());
     session.messages.push(ChatMessage {
         role: "system".to_string(),
         content: Some(message),
@@ -1636,6 +1638,7 @@ mod tests {
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
             checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1767,6 +1770,7 @@ mod tests {
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
             checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1877,6 +1881,7 @@ mod tests {
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
             checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -2036,6 +2041,7 @@ mod tests {
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
             checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -2187,6 +2193,7 @@ mod tests {
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
             checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,

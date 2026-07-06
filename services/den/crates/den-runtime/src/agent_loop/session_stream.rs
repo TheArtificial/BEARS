@@ -15,6 +15,7 @@ use crate::runtime::turn_state::{
 use crate::{
     agent_loop::{
         approvals::create_native_approval,
+        record_checkpoint_response,
         run_agent_step_stream,
         session_store::AgentLoopSessionStore,
         tool_call_finished_event_for_content,
@@ -22,7 +23,8 @@ use crate::{
             maybe_pause_for_tool_approval, provider_tool_requires_approval,
             provider_tool_supports_unilateral_execution,
         },
-        AgentStepOverflowContext,
+        validate_checkpoint_response, AgentStepOverflowContext, CheckpointResponseInput,
+        CheckpointValidationStatus, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     runtime_compaction::enqueue_compaction_after_turn,
@@ -528,6 +530,130 @@ impl SessionTrackingStream {
         });
     }
 
+    fn enforce_checkpoint_responses(&self) -> bool {
+        self.config.agent_loop_control_mode == "enforce"
+    }
+
+    fn pending_checkpoint_request(&self) -> Option<RuntimeCheckpointRequest> {
+        self.store
+            .get(&self.session_key)
+            .and_then(|session| session.pending_checkpoint_request)
+    }
+
+    fn checkpoint_audit_enabled(&self) -> bool {
+        match self.config.checkpoint_audit_mode.as_str() {
+            "all" => true,
+            "work" => self.profile == BearProfile::Work,
+            _ => false,
+        }
+    }
+
+    fn parse_checkpoint_response_text(text: &str) -> Result<RuntimeCheckpointResponse, DenError> {
+        let trimmed = text.trim();
+        let json_text = if let Some(rest) = trimmed.strip_prefix("```json") {
+            rest.trim()
+                .strip_suffix("```")
+                .map(str::trim)
+                .unwrap_or(rest.trim())
+        } else if let Some(rest) = trimmed.strip_prefix("```") {
+            rest.trim()
+                .strip_suffix("```")
+                .map(str::trim)
+                .unwrap_or(rest.trim())
+        } else {
+            trimmed
+        };
+        serde_json::from_str(json_text)
+            .map_err(|err| DenError::Parsing(format!("invalid checkpoint response JSON: {err}")))
+    }
+
+    fn checkpoint_failure_event(message: String) -> RuntimeStreamEvent {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
+            turn: None,
+            category: den_protocol::RuntimeErrorCategory::BackendProtocol,
+            message,
+        })
+    }
+
+    fn validate_pending_checkpoint_response(&mut self) -> Result<bool, RuntimeStreamEvent> {
+        if !self.enforce_checkpoint_responses() {
+            return Ok(false);
+        }
+        let Some(request) = self.pending_checkpoint_request() else {
+            return Ok(false);
+        };
+        let response = Self::parse_checkpoint_response_text(&self.assistant_text).map_err(|err| {
+            Self::checkpoint_failure_event(format!(
+                "Runtime checkpoint response was required before continuation, but the assistant did not return valid checkpoint JSON: {err}"
+            ))
+        })?;
+        validate_checkpoint_response(&request, &response).map_err(|err| {
+            Self::checkpoint_failure_event(format!(
+                "Runtime checkpoint response failed validation: {err:?}"
+            ))
+        })?;
+
+        self.store.update(&self.session_key, |session| {
+            session.pending_checkpoint_request = None;
+            session.checkpoint_state.last_checkpoint_reason = None;
+        });
+        self.record_checkpoint_response_if_audited(request, response);
+        self.assistant_text.clear();
+        Ok(true)
+    }
+
+    fn record_checkpoint_response_if_audited(
+        &self,
+        request: RuntimeCheckpointRequest,
+        response: RuntimeCheckpointResponse,
+    ) {
+        if !self.checkpoint_audit_enabled() {
+            return;
+        }
+        let pool = self.pool.clone();
+        let session_id = self.client_session_id.clone();
+        tokio::spawn(async move {
+            if let Err(err) = record_checkpoint_response(
+                &pool,
+                CheckpointResponseInput {
+                    run_id: request.run_id,
+                    checkpoint_id: request.checkpoint_id,
+                    response,
+                    validation_status: CheckpointValidationStatus::Valid,
+                },
+            )
+            .await
+            {
+                tracing::warn!(
+                    error = %err,
+                    session_id = %session_id,
+                    "failed to record validated checkpoint response artifact"
+                );
+            }
+        });
+    }
+
+    fn begin_checkpoint_continuation(&mut self) {
+        let store = self.store.clone();
+        let session_key = self.session_key.clone();
+        let config = self.config.clone();
+        let pool = self.pool.clone();
+        let profile = self.profile;
+        self.pending_final_gate_continuation = Some(Box::pin(async move {
+            let session = store.get(&session_key).ok_or_else(|| {
+                DenError::System("native agent loop session not found".to_string())
+            })?;
+            let llm = LlmClient::new(config.as_ref());
+            let overflow = AgentStepOverflowContext {
+                pool,
+                config,
+                profile,
+                session_store: store,
+            };
+            run_agent_step_stream(&llm, &session, Some(overflow)).await
+        }));
+    }
+
     fn begin_final_gate_continuation(&mut self, next_task: &str) {
         let model_message = format!(
             "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet. Continue with: {next_task}."
@@ -713,6 +839,10 @@ impl Stream for SessionTrackingStream {
                     ..
                 },
             )))) => {
+                if let Err(event) = self.validate_pending_checkpoint_response() {
+                    self.finished = true;
+                    return Poll::Ready(Some(Ok(event)));
+                }
                 self.pending_server_tool_continuation = None;
                 self.tool_calls.insert(
                     tool_call_id.clone(),
@@ -840,6 +970,18 @@ impl Stream for SessionTrackingStream {
                         "native runtime suppressing TurnCompleted while tool calls are outstanding"
                     );
                     return Poll::Ready(None);
+                }
+                match self.validate_pending_checkpoint_response() {
+                    Ok(true) => {
+                        self.begin_checkpoint_continuation();
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
+                    Ok(false) => {}
+                    Err(event) => {
+                        self.finished = true;
+                        return Poll::Ready(Some(Ok(event)));
+                    }
                 }
                 if self.assistant_text.trim().is_empty() {
                     let fallback = "BEARS completed the turn without assistant output.".to_string();
@@ -1102,6 +1244,7 @@ mod tests {
                 task_escalation: None,
             }),
             checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: true,
             key_memory_projection_cache_key: None,
@@ -1113,6 +1256,38 @@ mod tests {
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         }
+    }
+
+    #[test]
+    fn parses_plain_and_fenced_checkpoint_response_json() {
+        let raw = serde_json::json!({
+            "checkpoint_id": "ckpt-1",
+            "active_objective": "Inspect routing",
+            "learned": ["The projector owns the mapping."],
+            "remaining_uncertainty": [],
+            "more_exploration_justified": false,
+            "next_action": "validate",
+            "task_state_change_needed": null,
+            "evidence_refs": [],
+            "confidence": "medium"
+        })
+        .to_string();
+
+        let parsed = SessionTrackingStream::parse_checkpoint_response_text(&raw)
+            .expect("plain checkpoint response parses");
+        assert_eq!(parsed.checkpoint_id, "ckpt-1");
+
+        let fenced = format!("```json\n{raw}\n```");
+        let parsed = SessionTrackingStream::parse_checkpoint_response_text(&fenced)
+            .expect("fenced checkpoint response parses");
+        assert_eq!(parsed.next_action, crate::agent_loop::CheckpointNextAction::Validate);
+    }
+
+    #[test]
+    fn rejects_non_json_checkpoint_response() {
+        let err = SessionTrackingStream::parse_checkpoint_response_text("I will keep reading")
+            .expect_err("non-json checkpoint response should fail");
+        assert!(err.to_string().contains("invalid checkpoint response JSON"));
     }
 
     fn sample_tool_call(id: &str) -> ChatToolCall {
