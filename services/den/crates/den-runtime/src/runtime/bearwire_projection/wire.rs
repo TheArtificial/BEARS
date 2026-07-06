@@ -6,7 +6,7 @@ use den_core::{
     tools::descriptor::den_tool_display_json_for_provider,
 };
 use den_protocol::{
-    RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
+    RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -74,6 +74,27 @@ impl BearWireEvent {
             event_type,
             serde_json::to_value(data).expect("BearWire typed event data serializes"),
         )
+    }
+
+    pub fn tool_call_requested(data: ToolCallRequestedWire) -> Self {
+        Self::ephemeral_typed("tool_call.requested", data)
+    }
+
+    pub fn tool_call_waiting(data: ToolCallWaitingWire) -> Self {
+        Self::ephemeral_typed("client.waiting", data)
+    }
+
+    pub fn tool_call_finished(data: ToolCallFinishWire) -> Self {
+        // ponytail: BearWire tool-result statuses are still stringly at a few
+        // protocol edges; promote this to a shared enum when those inputs are
+        // typed too.
+        let event_type = match data.status.as_str() {
+            "ok" => "tool_call.completed",
+            "incomplete" => "tool_call.warning",
+            "cancelled" => "tool_call.cancelled",
+            _ => "tool_call.failed",
+        };
+        Self::ephemeral_typed(event_type, data)
     }
 
     fn with_run_id(mut self, run_id: Option<String>) -> Self {
@@ -401,43 +422,37 @@ pub fn runtime_semantic_event_to_bearwire_events(
             );
             let event = if approval_required && has_permission_id {
                 let permission_id = approval_request_id.clone().unwrap_or_default();
-                BearWireEvent::ephemeral_typed(
-                    "client.waiting",
-                    ToolCallWaitingWire {
-                        expected_responder_action: None,
-                        expected_client_method: "client.permission.result".to_string(),
-                        obligation_id: None,
-                        tool_call_id: tool_call_id.clone(),
-                        tool_name: tool_name.clone(),
-                        tool_call,
-                        permission: ToolPermissionWire {
-                            id: permission_id.clone(),
-                            reason: approval_reason.clone(),
-                            title: None,
-                            target: None,
-                        },
-                        approval_required: true,
-                        approval_request_id: permission_id,
-                        permission_id: None,
-                        turn_step_id: None,
+                BearWireEvent::tool_call_waiting(ToolCallWaitingWire {
+                    expected_responder_action: None,
+                    expected_client_method: "client.permission.result".to_string(),
+                    obligation_id: None,
+                    tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    tool_call,
+                    permission: ToolPermissionWire {
+                        id: permission_id.clone(),
+                        reason: approval_reason.clone(),
+                        title: None,
+                        target: None,
                     },
-                )
+                    approval_required: true,
+                    approval_request_id: permission_id,
+                    permission_id: None,
+                    turn_step_id: None,
+                })
             } else {
-                BearWireEvent::ephemeral_typed(
-                    "tool_call.requested",
-                    ToolCallRequestedWire {
-                        tool_call_id: tool_call_id.clone(),
-                        tool_name: tool_name.clone(),
-                        title,
-                        display: tool_call.display.clone(),
-                        kind: effective_kind,
-                        arguments,
-                        tool_call,
-                        approval_required: false,
-                        approval_request_id: approval_request_id.clone(),
-                        reason: approval_reason,
-                    },
-                )
+                BearWireEvent::tool_call_requested(ToolCallRequestedWire {
+                    tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    title,
+                    display: tool_call.display.clone(),
+                    kind: effective_kind,
+                    arguments,
+                    tool_call,
+                    approval_required: false,
+                    approval_request_id: approval_request_id.clone(),
+                    reason: approval_reason,
+                })
             };
             vec![event
                 .with_run_id(run_id)
@@ -451,27 +466,17 @@ pub fn runtime_semantic_event_to_bearwire_events(
             summary,
             error_message,
         } => {
-            let event_type = match status {
-                ToolCallFinishStatus::Ok => "tool_call.completed",
-                ToolCallFinishStatus::Error => "tool_call.failed",
-                ToolCallFinishStatus::Incomplete => "tool_call.warning",
-                ToolCallFinishStatus::Cancelled => "tool_call.cancelled",
-            };
-            vec![BearWireEvent::ephemeral(
-                event_type,
-                serde_json::to_value(tool_call_finish_wire(
-                    &tool_call_id,
-                    Some(&tool_name),
-                    status.as_str(),
-                    summary.as_deref(),
-                    error_message.as_deref(),
-                    None,
-                    None,
-                    None,
-                    None,
-                ))
-                .expect("ToolCallFinishWire serializes"),
-            )
+            vec![BearWireEvent::tool_call_finished(tool_call_finish_wire(
+                &tool_call_id,
+                Some(&tool_name),
+                status.as_str(),
+                summary.as_deref(),
+                error_message.as_deref(),
+                None,
+                None,
+                None,
+                None,
+            ))
             .with_tool_call(tool_call_id)]
         }
         RuntimeSemanticEvent::Error {

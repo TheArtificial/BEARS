@@ -25,7 +25,7 @@ use den_runtime::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
     },
     native_runtime::continue_native_client_turn_event_stream,
-    runtime::bearwire_projection::wire::{tool_call_finish_wire, BearWireEvent},
+    runtime::bearwire_projection::wire::{tool_call_finish_wire, BearWireEvent, ToolCallFinishWire},
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
     turn_obligations::{self, ExpectedResponderAction},
     turn_runner::{default_tool_continue_stream_context, TurnContinueRequest},
@@ -155,11 +155,11 @@ impl ClientToolResultRequest {
         )
     }
 
-    fn bearwire_finish_payload(&self, compacted: Value) -> Value {
+    fn bearwire_finish_payload(&self, compacted: Value) -> ToolCallFinishWire {
         let error_message = (self.status != ToolResultStatus::Ok)
             .then(|| self.content.as_deref().or_else(|| self.error.as_str()))
             .flatten();
-        serde_json::to_value(tool_call_finish_wire(
+        tool_call_finish_wire(
             &self.tool_call_id,
             self.tool_name.as_deref(),
             self.status.as_str(),
@@ -169,8 +169,7 @@ impl ClientToolResultRequest {
             (!self.structured_content.is_null()).then(|| self.structured_content.clone()),
             (!self.error.is_null()).then(|| self.error.clone()),
             Some(compacted),
-        ))
-        .expect("ToolCallFinishWire serializes")
+        )
     }
 }
 
@@ -692,12 +691,7 @@ pub(crate) async fn client_tool_result_result(
             result,
         } => {
             let result = result.expect("record-and-settle tool outcome should include result row");
-            let event_type = if status == ToolResultStatus::Ok {
-                "tool_call.completed"
-            } else {
-                "tool_call.failed"
-            };
-            let mut event = BearWireEvent::ephemeral(event_type, event_payload.clone());
+            let mut event = BearWireEvent::tool_call_finished(event_payload.clone());
             event.bear_id = Some(bear.id.to_string());
             event.human_id = Some(user_id.to_string());
             event.session_id = Some(session_id.clone());
@@ -754,12 +748,7 @@ pub(crate) async fn client_tool_result_result(
             result,
         } => {
             let result = result.expect("record-and-settle tool outcome should include result row");
-            let event_type = if status == ToolResultStatus::Ok {
-                "tool_call.completed"
-            } else {
-                "tool_call.failed"
-            };
-            let mut event = BearWireEvent::ephemeral(event_type, event_payload.clone());
+            let mut event = BearWireEvent::tool_call_finished(event_payload.clone());
             event.bear_id = Some(bear.id.to_string());
             event.human_id = Some(user_id.to_string());
             event.session_id = Some(session_id.clone());
