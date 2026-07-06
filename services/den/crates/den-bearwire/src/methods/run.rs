@@ -211,7 +211,10 @@ fn available_model_matches(
 ) -> bool {
     // Either of the catalog model's identifiers matching either resolved identifier is a hit.
     let model_ids = [model.handle.as_str(), model.model.as_str()];
-    let resolved_ids = [resolved.handle.as_str(), resolved.provider_model_id.as_str()];
+    let resolved_ids = [
+        resolved.handle.as_str(),
+        resolved.provider_model_id.as_str(),
+    ];
     model_ids
         .iter()
         .any(|model_id| resolved_ids.contains(model_id))

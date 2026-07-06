@@ -1181,9 +1181,11 @@ fn form_profile_model_custom(form: &BearModelsForm, profile: BearProfile) -> &st
 }
 
 fn selected_or_custom_model<'a>(selected: &'a str, custom: &'a str) -> &'a str {
-    if custom
-        .trim()
-        .is_empty() { selected } else { custom }
+    if custom.trim().is_empty() {
+        selected
+    } else {
+        custom
+    }
 }
 
 fn is_inherit_model_value(raw: &str) -> bool {

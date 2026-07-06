@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// Axum panics on path conflicts at merge time. Merging the memory router alongside the
