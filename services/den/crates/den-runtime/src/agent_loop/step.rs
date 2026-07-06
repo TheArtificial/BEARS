@@ -5,8 +5,8 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use den_core::{config::Config, profile::BearProfile, DenError, ThinkingEffort};
-use den_protocol::{RuntimeEventStream, RuntimeStreamEvent};
-use futures::{Stream, TryStreamExt};
+use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
+use futures::{stream, Stream, StreamExt, TryStreamExt};
 use sqlx::PgPool;
 use tokio::time::timeout;
 
@@ -546,6 +546,22 @@ pub async fn run_agent_step_stream(
             budget.context_window.unwrap_or_default(),
         )));
     }
+    let checkpoint_thinking_event = request.thinking_effort.map(|effort| {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+            kind: "checkpoint_thinking_override_applied".to_string(),
+            text: Some(format!(
+                "Applied checkpoint thinking effort `{}` for this model call.",
+                effort.as_str()
+            )),
+            phase: Some("agent_loop_control".to_string()),
+            detail: Some(serde_json::json!({
+                "effort": effort.as_str(),
+                "reason": session.checkpoint_state.last_checkpoint_reason,
+                "model": session.model,
+                "control_level": session.agent_loop_control.level,
+            })),
+        })
+    });
     if let Some(overflow) = overflow.as_ref() {
         overflow
             .session_store
@@ -561,11 +577,16 @@ pub async fn run_agent_step_stream(
         )
         .await;
     }
-    Ok(Box::pin(LazyAgentStepStream::new(
+    let base_stream = Box::pin(LazyAgentStepStream::new(
         llm.clone(),
         request,
         session.session_key.clone(),
         session.api_style,
         overflow,
-    )))
+    )) as RuntimeEventStream;
+    if let Some(event) = checkpoint_thinking_event {
+        Ok(Box::pin(stream::iter(vec![Ok(event)]).chain(base_stream)) as RuntimeEventStream)
+    } else {
+        Ok(base_stream)
+    }
 }
