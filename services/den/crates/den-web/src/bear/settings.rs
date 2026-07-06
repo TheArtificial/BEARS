@@ -28,7 +28,7 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
-use den_core::DenError;
+use den_core::{AgentLoopControlLevel, DenError};
 use den_memory::{bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager};
 use den_protocol::ContextBudgetReport;
 use den_service::prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile;
@@ -136,25 +136,37 @@ struct BearModelsForm {
     #[serde(default)]
     bear_default_model_custom: String,
     #[serde(default)]
+    bear_loop_control: String,
+    #[serde(default)]
     chat_model: String,
     #[serde(default)]
     chat_model_custom: String,
+    #[serde(default)]
+    chat_loop_control: String,
     #[serde(default)]
     pair_model: String,
     #[serde(default)]
     pair_model_custom: String,
     #[serde(default)]
+    pair_loop_control: String,
+    #[serde(default)]
     curate_model: String,
     #[serde(default)]
     curate_model_custom: String,
+    #[serde(default)]
+    curate_loop_control: String,
     #[serde(default)]
     work_model: String,
     #[serde(default)]
     work_model_custom: String,
     #[serde(default)]
+    work_loop_control: String,
+    #[serde(default)]
     watch_model: String,
     #[serde(default)]
     watch_model_custom: String,
+    #[serde(default)]
+    watch_loop_control: String,
     #[serde(default)]
     bifrost_virtual_key_id: String,
     #[serde(default)]
@@ -183,6 +195,9 @@ struct BearProfileModelRow {
     source: String,
     availability_status: String,
     metadata_status: String,
+    configured_loop_control: String,
+    resolved_loop_control: String,
+    loop_control_source: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1180,6 +1195,32 @@ fn form_profile_model_custom(form: &BearModelsForm, profile: BearProfile) -> &st
     }
 }
 
+fn form_profile_loop_control(form: &BearModelsForm, profile: BearProfile) -> &str {
+    match profile {
+        BearProfile::Chat => &form.chat_loop_control,
+        BearProfile::Pair => &form.pair_loop_control,
+        BearProfile::Curate => &form.curate_loop_control,
+        BearProfile::Work => &form.work_loop_control,
+        BearProfile::Watch => &form.watch_loop_control,
+    }
+}
+
+fn parse_loop_control_form_value(raw: &str) -> Result<Option<AgentLoopControlLevel>, CustomError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("inherit") {
+        return Ok(None);
+    }
+    match trimmed {
+        "light" => Ok(Some(AgentLoopControlLevel::Light)),
+        "standard" => Ok(Some(AgentLoopControlLevel::Standard)),
+        "careful" => Ok(Some(AgentLoopControlLevel::Careful)),
+        "strict" => Ok(Some(AgentLoopControlLevel::Strict)),
+        other => Err(CustomError::ValidationError(format!(
+            "unsupported agent loop control level `{other}`"
+        ))),
+    }
+}
+
 fn selected_or_custom_model<'a>(selected: &'a str, custom: &'a str) -> &'a str {
     if custom.trim().is_empty() {
         selected
@@ -1260,6 +1301,7 @@ async fn model_page_rows(
     availability_options: &[ModelOption],
 ) -> Result<Vec<BearProfileModelRow>, CustomError> {
     let settings = bears_db::list_profile_model_settings(pool, bear.id).await?;
+    let bear_loop_control = bears_db::bear_agent_loop_control_setting(pool, bear.id).await?;
     let mut rows = Vec::new();
     for profile in BearProfile::ALL {
         let configured = settings
@@ -1273,6 +1315,22 @@ async fn model_page_rows(
             bear.default_model.as_deref().unwrap_or("")
         } else {
             configured
+        };
+        let profile_loop_control = settings
+            .iter()
+            .find(|row| row.profile == profile.as_str())
+            .and_then(|row| row.agent_loop_control_level.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let resolved_loop_control = profile_loop_control
+            .or_else(|| bear_loop_control.map(AgentLoopControlLevel::as_str))
+            .unwrap_or("model default");
+        let loop_control_source = if profile_loop_control.is_some() {
+            "Stance override"
+        } else if bear_loop_control.is_some() {
+            "Bear default"
+        } else {
+            "Model default"
         };
         rows.push(BearProfileModelRow {
             profile: profile.as_str().to_string(),
@@ -1295,6 +1353,9 @@ async fn model_page_rows(
             availability_status: model_availability_status(availability_options, resolved)
                 .to_string(),
             metadata_status: model_metadata_status(resolved).to_string(),
+            configured_loop_control: profile_loop_control.unwrap_or("").to_string(),
+            resolved_loop_control: resolved_loop_control.to_string(),
+            loop_control_source: loop_control_source.to_string(),
         });
     }
     Ok(rows)
@@ -1632,6 +1693,10 @@ async fn render_models_page(
     )
     .await?;
     let bear_default_model = bear.default_model.as_deref().unwrap_or("");
+    let bear_loop_control = bears_db::bear_agent_loop_control_setting(state.sqlx_pool(), bear.id)
+        .await?
+        .map(AgentLoopControlLevel::as_str)
+        .unwrap_or("inherit");
     let bear_default_availability_status =
         model_availability_status(&live_model_options, bear_default_model);
     let bear_default_metadata_status = model_metadata_status(bear_default_model);
@@ -1649,6 +1714,7 @@ async fn render_models_page(
             models_fetch_error,
             rows,
             bear_default_custom_model => if !bear_default_model.is_empty() && !model_available(&model_options, bear_default_model) { bear_default_model } else { "" },
+            bear_loop_control,
             bear_default_availability_status,
             bear_default_metadata_status,
             bifrost_virtual_key_id => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_id.as_deref()).unwrap_or(""),
@@ -1731,6 +1797,11 @@ async fn models_post(
         .into_response());
     }
     let default_model = configured_model_from_form(default_trim);
+    let bear_loop_control = parse_loop_control_form_value(&form.bear_loop_control)?;
+
+    for profile in BearProfile::ALL {
+        parse_loop_control_form_value(form_profile_loop_control(&form, profile))?;
+    }
 
     for profile in BearProfile::ALL {
         let raw = selected_or_custom_model(
@@ -1776,7 +1847,18 @@ async fn models_post(
         let model = configured_model_from_form(raw);
         bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, profile, model.as_deref())
             .await?;
+        let loop_control = parse_loop_control_form_value(form_profile_loop_control(&form, profile))?;
+        bears_db::set_profile_agent_loop_control_setting(
+            state.sqlx_pool(),
+            bear.id,
+            profile,
+            loop_control,
+        )
+        .await?;
     }
+
+    bears_db::set_bear_agent_loop_control_setting(state.sqlx_pool(), bear.id, bear_loop_control)
+        .await?;
 
     let clear_bifrost_key = matches!(
         form.bifrost_virtual_key_clear.trim(),
@@ -1820,7 +1902,7 @@ async fn models_post(
     Ok(Redirect::to(&format!(
         "/bear/{}/models?message={}",
         bear.slug,
-        urlencoding::encode("Model settings saved.")
+        urlencoding::encode("Model and loop-control settings saved.")
     ))
     .into_response())
 }

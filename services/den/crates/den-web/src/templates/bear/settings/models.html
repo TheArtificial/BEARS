@@ -35,6 +35,23 @@
             available for Bear or stance defaults yet.
         </p>
 
+        <label for="bear_loop_control">Agent loop control</label>
+        <select
+            id="bear_loop_control"
+            name="bear_loop_control"
+            {% if not can_manage_bear %}disabled{% endif %}
+        >
+            <option value="inherit" {% if bear_loop_control == "inherit" %}selected{% endif %}>Model default</option>
+            <option value="light" {% if bear_loop_control == "light" %}selected{% endif %}>Light</option>
+            <option value="standard" {% if bear_loop_control == "standard" %}selected{% endif %}>Standard</option>
+            <option value="careful" {% if bear_loop_control == "careful" %}selected{% endif %}>Careful</option>
+            <option value="strict" {% if bear_loop_control == "strict" %}selected{% endif %}>Strict</option>
+        </select>
+        <p class="form-hint">
+            Controls checkpoint intensity, loop budgets, and optional checkpoint thinking level.
+            Stances may inherit this value or override it below.
+        </p>
+
         <label for="bear_default_model">Model</label>
         <input
             id="bear_default_model"
@@ -305,8 +322,9 @@
                     <th>Stance</th>
                     <th>Model</th>
                     <th>Resolved</th>
+                    <th>Loop control</th>
                     <th>Status</th>
-                    <th>Source</th>
+                    <th>S</th>ource</th>
                     <th></th>
                 </tr>
             </thead>
@@ -392,7 +410,28 @@
                         >{% else %}<em>none</em>{% endif %}
                     </td>
                     <td>
-                        <span title="Bifrost availability"
+                        <label for="{{ row.profile | e }}_loop_control" class="sr-only"
+                            >{{ row.label | e }} loop control</label
+                        >
+                        <select
+                            id="{{ row.profile | e }}_loop_control"
+                            name="{{ row.profile | e }}_loop_control"
+                            {% if not can_manage_bear %}disabled{% endif %}
+                        >
+                            <option value="inherit" {% if not row.configured_loop_control %}selected{% endif %}>Inherit</option>
+                            <option value="light" {% if row.configured_loop_control == "light" %}selected{% endif %}>Light</option>
+                            <option value="standard" {% if row.configured_loop_control == "standard" %}selected{% endif %}>Standard</option>
+                            <option value="careful" {% if row.configured_loop_control == "careful" %}selected{% endif %}>Careful</option>
+                            <option value="strict" {% if row.configured_loop_control == "strict" %}selected{% endif %}>Strict</option>
+                        </select>
+                        <br />
+                        <small></small>
+                            Resolved: <code>{{ row.resolved_loop_control | e }}</code>
+                            · {{ row.loop_control_source | e }}
+                        </small>
+                    </td>
+                    <td>
+</td>                        <span title="Bifrost availability"
                             >{{ row.availability_status | e }}</span
                         >
                         ·
