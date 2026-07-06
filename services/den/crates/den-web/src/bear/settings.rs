@@ -1160,7 +1160,7 @@ fn profile_label(profile: BearProfile) -> &'static str {
     }
 }
 
-fn form_profile_model<'a>(form: &'a BearModelsForm, profile: BearProfile) -> &'a str {
+fn form_profile_model(form: &BearModelsForm, profile: BearProfile) -> &str {
     match profile {
         BearProfile::Chat => &form.chat_model,
         BearProfile::Pair => &form.pair_model,
@@ -1170,7 +1170,7 @@ fn form_profile_model<'a>(form: &'a BearModelsForm, profile: BearProfile) -> &'a
     }
 }
 
-fn form_profile_model_custom<'a>(form: &'a BearModelsForm, profile: BearProfile) -> &'a str {
+fn form_profile_model_custom(form: &BearModelsForm, profile: BearProfile) -> &str {
     match profile {
         BearProfile::Chat => &form.chat_model_custom,
         BearProfile::Pair => &form.pair_model_custom,
@@ -1181,11 +1181,9 @@ fn form_profile_model_custom<'a>(form: &'a BearModelsForm, profile: BearProfile)
 }
 
 fn selected_or_custom_model<'a>(selected: &'a str, custom: &'a str) -> &'a str {
-    custom
+    if custom
         .trim()
-        .is_empty()
-        .then_some(selected)
-        .unwrap_or(custom)
+        .is_empty() { selected } else { custom }
 }
 
 fn is_inherit_model_value(raw: &str) -> bool {
@@ -1481,7 +1479,7 @@ fn bifrost_usage_from_management(
     let mut view = bifrost_usage_from_quota(&quota);
     view.auth_mode = "management".to_string();
     if !details.name.trim().is_empty() {
-        view.virtual_key_name = details.name.clone();
+        view.virtual_key_name.clone_from(&details.name);
     }
 
     if let Some(ranking_rows) = rankings

@@ -9,10 +9,10 @@ use uuid::Uuid;
 use crate::config::Config;
 
 /// Presigned URL expiry for browser uploads (PUT).
-const UPLOAD_EXPIRY: Duration = Duration::from_secs(15 * 60);
+const UPLOAD_EXPIRY: Duration = Duration::from_mins(15);
 
 /// Presigned URL expiry for browser downloads / inline display (GET).
-const DOWNLOAD_EXPIRY: Duration = Duration::from_secs(60 * 60);
+const DOWNLOAD_EXPIRY: Duration = Duration::from_hours(1);
 
 /// Thin wrapper around `rusty_s3` for generating presigned S3 URLs.
 ///

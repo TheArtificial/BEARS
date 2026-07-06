@@ -66,7 +66,7 @@ struct RunCancelRequest {
     session_id: String,
 }
 
-const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_millis(3_000);
+const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(3);
 // Runtime status/error UX policy is surface-agnostic. Keep product copy,
 // model-continuity summaries, and marker wording in den-runtime::runtime_error_ux.
 // BearWire should only transport/persist those projections for this wire method.
@@ -201,7 +201,7 @@ const RESOLVE_PLACEHOLDER_API_STYLE: den_llm::LlmApiStyle =
 
 fn provider_model_id_for_den_handle(handle: &str) -> String {
     den_llm::model_registry::provider_model_id_for_handle(handle)
-        .unwrap_or(handle.trim())
+        .unwrap_or_else(|| handle.trim())
         .to_string()
 }
 
@@ -209,10 +209,12 @@ fn available_model_matches(
     model: &den_service::bifrost::BifrostModelMetadata,
     resolved: &ResolvedRunModel,
 ) -> bool {
-    model.handle == resolved.handle
-        || model.handle == resolved.provider_model_id
-        || model.model == resolved.handle
-        || model.model == resolved.provider_model_id
+    // Either of the catalog model's identifiers matching either resolved identifier is a hit.
+    let model_ids = [model.handle.as_str(), model.model.as_str()];
+    let resolved_ids = [resolved.handle.as_str(), resolved.provider_model_id.as_str()];
+    model_ids
+        .iter()
+        .any(|model_id| resolved_ids.contains(model_id))
 }
 
 fn available_model_sample(models: &[den_service::bifrost::BifrostModelMetadata]) -> String {
@@ -770,15 +772,13 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
             }
             continue;
         }
-        if event.event_type == "permission.requested" {
-            if active_obligation.is_none() {
-                tracing::warn!(
-                    session_id = %session_id,
-                    run_id = %run_id,
-                    "runtime emitted permission.requested event without persisted BearWire obligation; dropping unanswerable event"
-                );
-                continue;
-            }
+        if event.event_type == "permission.requested" && active_obligation.is_none() {
+            tracing::warn!(
+                session_id = %session_id,
+                run_id = %run_id,
+                "runtime emitted permission.requested event without persisted BearWire obligation; dropping unanswerable event"
+            );
+            continue;
         }
         event.bear_id = Some(bear_id.to_string());
         event.human_id = Some(user_id.to_string());
@@ -1203,7 +1203,7 @@ pub(crate) async fn run_start_result(
         compatibility_backend: Some("native".to_string()),
     };
     let resolved_model =
-        preflight_pair_run_model(&state, &bear, &session_id, &upstream_target).await?;
+        preflight_pair_run_model(state, &bear, &session_id, &upstream_target).await?;
     client_sessions::upsert_session(
         &state.sqlx_pool,
         client_sessions::UpsertClientSession {

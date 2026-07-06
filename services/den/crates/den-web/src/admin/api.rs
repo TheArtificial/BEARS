@@ -91,7 +91,7 @@ async fn create_bear(
             )));
         }
     }
-    let _legacy_tools_enabled = body.tools_enabled;
+    let _ = body.tools_enabled;
     let id = bears_db::create_bear(
         state.sqlx_pool(),
         BearParams {

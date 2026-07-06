@@ -203,7 +203,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
     let deletion_task = tokio::task::spawn(
         session_store
             .clone()
-            .continuously_delete_expired(tokio::time::Duration::from_secs(60)),
+            .continuously_delete_expired(tokio::time::Duration::from_mins(1)),
     );
     let deletion_task_abort_handle = deletion_task.abort_handle();
 

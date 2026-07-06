@@ -1091,6 +1091,7 @@ mod chat_history_map_tests {
             role: Some(role.to_string()),
             visibility: "default".to_string(),
             content_text: text.to_string(),
+            content_json: serde_json::Value::Null,
             provider_message_id: None,
             created_at: time::OffsetDateTime::now_utc(),
         }

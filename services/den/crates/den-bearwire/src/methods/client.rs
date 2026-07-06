@@ -764,7 +764,7 @@ pub(crate) async fn client_tool_result_result(
             };
             spawn_continuation_task(
                 state,
-                transitioned.clone().unwrap_or(run.clone()),
+                transitioned.clone().unwrap_or_else(|| run.clone()),
                 binding_id,
                 continuation_conversation_id,
                 RuntimeContinuation::ToolResult {
@@ -1009,7 +1009,7 @@ pub(crate) async fn client_permission_result_result(
                 .map(str::to_string);
             spawn_continuation_task(
                 state,
-                transitioned.clone().unwrap_or(run.clone()),
+                transitioned.clone().unwrap_or_else(|| run.clone()),
                 binding_id,
                 continuation_conversation_id,
                 RuntimeContinuation::ApprovalDecision {

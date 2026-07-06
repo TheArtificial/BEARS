@@ -51,8 +51,23 @@ Idiomatic/clippy fixes:
   dead `if selected_paths.is_empty() {"available"} else {"available"}` (audit
   assembler.rs:113 finding), `let...else` → `?`. Verified green; workspace compiles.
 
-### Remaining clippy-gate work
-- [ ] `den-http`, `den-oauth`, `den-api`, `den-web`, `den-bearwire`, root `den` bin.
+### Batch 4 — web-layer crates clippy green — DONE
+- [x] `den-http`, `den-oauth`, `den-api`, `den-web`, `den-bearwire` — all green
+  (`cargo clippy -p … --all-targets -- -D warnings` exits 0). Autofix + manual:
+  `clone_from`, `unwrap_or_else`, `from_secs`, needless-borrow, collapsible-if,
+  `doc_lazy_continuation`, and a restructure of `available_model_matches`
+  (bearwire run.rs) making the intentional id cross-product explicit (clippy
+  `suspicious_operation_groupings` false positive). Also fixed a genuine
+  pre-existing compile break in a den-web test helper (missing `content_json`
+  field on `PersistedConversationMessage`).
+
+### Batch 5 — root `den` package (bin + integration tests) — IN PROGRESS
+Root package `--all-targets` surfaced **pre-existing** broken test code (stale
+APIs, unrelated to lint work) that blocks the gate:
+- [ ] `src/core/tools/tests/apply_core_update_projection.rs:1` — stray leading `};`.
+- [ ] `tests/acp_plan_mode.rs` — uses removed field `acp_session_id`
+  (renamed `client_session_id`).
+- [ ] remaining root-package lint/compile errors (full inventory next).
 
 ---
 

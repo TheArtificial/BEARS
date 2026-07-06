@@ -77,6 +77,7 @@ async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, St
 /// - Configures secure session cookies with appropriate SameSite policy
 /// - Includes CORS headers for OAuth flows
 /// - Integrates with existing permission system
+///
 /// Assemble the JSON/REST + OAuth HTTP app.
 ///
 /// Peer edge surfaces are *injected* by the
