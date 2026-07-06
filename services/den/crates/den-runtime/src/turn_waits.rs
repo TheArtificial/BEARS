@@ -4,7 +4,10 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use crate::runtime::bearwire_projection::wire::{tool_call_wire, BearWireEvent, ResourceRef};
+use crate::runtime::bearwire_projection::wire::{
+    tool_call_wire, BearWireEvent, ResourceRef, ToolCallRequestedWire, ToolCallWaitingWire,
+    ToolPermissionWire,
+};
 use crate::{bearwire_events, surface_projection, turn_obligations, turn_runs};
 
 #[derive(Debug, Clone)]
@@ -371,37 +374,43 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         .map(ToOwned::to_owned)
         .or_else(|| input.title.clone());
     let mut event = if effective_approval_required {
-        BearWireEvent::ephemeral(
+        let permission_id = input.approval_request_id.clone().unwrap_or_default();
+        BearWireEvent::ephemeral_typed(
             "client.waiting",
-            json!({
-                "expected_responder_action": "permission_decision",
-                "expected_client_method": "client.permission.result",
-                "tool_call_id": input.tool_call_id,
-                "tool_name": input.tool_name,
-                "tool_call": tool_call,
-                "permission": {
-                    "id": input.approval_request_id,
-                    "reason": input.approval_reason,
+            ToolCallWaitingWire {
+                expected_responder_action: Some("permission_decision".to_string()),
+                expected_client_method: "client.permission.result".to_string(),
+                obligation_id: None,
+                tool_call_id: input.tool_call_id.to_string(),
+                tool_name: input.tool_name.to_string(),
+                tool_call,
+                permission: ToolPermissionWire {
+                    id: permission_id.clone(),
+                    reason: input.approval_reason.clone(),
+                    title: None,
+                    target: None,
                 },
-                "approval_required": true,
-                "approval_request_id": input.approval_request_id,
-            }),
+                approval_required: true,
+                approval_request_id: permission_id,
+                permission_id: None,
+                turn_step_id: None,
+            },
         )
     } else {
-        BearWireEvent::ephemeral(
+        BearWireEvent::ephemeral_typed(
             "tool_call.requested",
-            json!({
-                "tool_call_id": input.tool_call_id,
-                "tool_name": input.tool_name,
-                "title": display_title,
-                "display": tool_call.display.clone(),
-                "kind": effective_kind,
-                "arguments": input.arguments,
-                "tool_call": tool_call,
-                "approval_required": false,
-                "approval_request_id": input.approval_request_id,
-                "reason": input.approval_reason,
-            }),
+            ToolCallRequestedWire {
+                tool_call_id: input.tool_call_id.to_string(),
+                tool_name: input.tool_name.to_string(),
+                title: display_title,
+                display: tool_call.display.clone(),
+                kind: effective_kind,
+                arguments: input.arguments.clone(),
+                tool_call,
+                approval_required: false,
+                approval_request_id: input.approval_request_id.clone(),
+                reason: input.approval_reason.clone(),
+            },
         )
     };
     event.bear_id = Some(input.bear_id.to_string());

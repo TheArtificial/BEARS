@@ -69,6 +69,13 @@ impl BearWireEvent {
         }
     }
 
+    pub fn ephemeral_typed<T: Serialize>(event_type: impl Into<String>, data: T) -> Self {
+        Self::ephemeral(
+            event_type,
+            serde_json::to_value(data).expect("BearWire typed event data serializes"),
+        )
+    }
+
     fn with_run_id(mut self, run_id: Option<String>) -> Self {
         self.run_id.clone_from(&run_id);
         if let Some(run_id) = run_id {
@@ -168,6 +175,53 @@ pub struct ToolCallFinishWire {
     pub structured_content: Option<Value>,
     pub error: Option<Value>,
     pub compacted: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolPermissionWire {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallRequestedWire {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub display: Value,
+    pub kind: String,
+    pub arguments: Value,
+    pub tool_call: ToolCallWire,
+    pub approval_required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallWaitingWire {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_responder_action: Option<String>,
+    pub expected_client_method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub obligation_id: Option<String>,
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub tool_call: ToolCallWire,
+    pub permission: ToolPermissionWire,
+    pub approval_required: bool,
+    pub approval_request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_step_id: Option<String>,
 }
 
 pub fn tool_call_wire(
@@ -346,35 +400,43 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 &arguments,
             );
             let event = if approval_required && has_permission_id {
-                BearWireEvent::ephemeral(
+                let permission_id = approval_request_id.clone().unwrap_or_default();
+                BearWireEvent::ephemeral_typed(
                     "client.waiting",
-                    json!({
-                        "expected_client_method": "client.permission.result",
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "tool_call": tool_call,
-                        "permission": {
-                            "id": approval_request_id,
-                            "reason": approval_reason,
+                    ToolCallWaitingWire {
+                        expected_responder_action: None,
+                        expected_client_method: "client.permission.result".to_string(),
+                        obligation_id: None,
+                        tool_call_id: tool_call_id.clone(),
+                        tool_name: tool_name.clone(),
+                        tool_call,
+                        permission: ToolPermissionWire {
+                            id: permission_id.clone(),
+                            reason: approval_reason.clone(),
+                            title: None,
+                            target: None,
                         },
-                        "approval_required": true,
-                        "approval_request_id": approval_request_id,
-                    }),
+                        approval_required: true,
+                        approval_request_id: permission_id,
+                        permission_id: None,
+                        turn_step_id: None,
+                    },
                 )
             } else {
-                BearWireEvent::ephemeral(
+                BearWireEvent::ephemeral_typed(
                     "tool_call.requested",
-                    json!({
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "title": title,
-                        "kind": effective_kind,
-                        "arguments": arguments,
-                        "tool_call": tool_call,
-                        "approval_required": false,
-                        "approval_request_id": approval_request_id,
-                        "reason": approval_reason,
-                    }),
+                    ToolCallRequestedWire {
+                        tool_call_id: tool_call_id.clone(),
+                        tool_name: tool_name.clone(),
+                        title,
+                        display: tool_call.display.clone(),
+                        kind: effective_kind,
+                        arguments,
+                        tool_call,
+                        approval_required: false,
+                        approval_request_id: approval_request_id.clone(),
+                        reason: approval_reason,
+                    },
                 )
             };
             vec![event
