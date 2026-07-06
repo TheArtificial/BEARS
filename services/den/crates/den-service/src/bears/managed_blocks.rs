@@ -12,19 +12,20 @@ use super::prompt_fragments::{
 };
 use super::{context_composition, Bear, BearProfile};
 
-type ManagedBlockResolutionRow = (
-    String,
-    String,
-    String,
-    Option<i64>,
-    Option<i32>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<i64>,
-    Option<i64>,
-);
+#[derive(Debug, Clone, FromRow)]
+struct ManagedBlockResolutionRow {
+    key: String,
+    kind: String,
+    scope: String,
+    system_version_id: Option<i64>,
+    system_version_number: Option<i32>,
+    system_content: Option<String>,
+    system_content_hash: Option<String>,
+    mode: Option<String>,
+    custom_content: Option<String>,
+    forked_from_version_id: Option<i64>,
+    last_reviewed_version_id: Option<i64>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -424,20 +425,20 @@ pub async fn resolve_managed_blocks_for_bear(
     .await?;
 
     let mut blocks = Vec::with_capacity(rows.len());
-    for (
-        key,
-        kind,
-        scope,
-        system_version_id,
-        system_version_number,
-        system_content,
-        system_content_hash,
-        mode,
-        custom_content,
-        forked_from_version_id,
-        last_reviewed_version_id,
-    ) in rows
-    {
+    for row in rows {
+        let ManagedBlockResolutionRow {
+            key,
+            kind,
+            scope,
+            system_version_id,
+            system_version_number,
+            system_content,
+            system_content_hash,
+            mode,
+            custom_content,
+            forked_from_version_id,
+            last_reviewed_version_id,
+        } = row;
         let mode = mode.unwrap_or_else(|| BearBlockBindingMode::Inherit.as_str().to_string());
         let (effective_content, effective_hash, source_mode) = match mode.as_str() {
             "inherit" => {

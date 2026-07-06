@@ -30,19 +30,21 @@ pub struct ReconcileOutcome {
 
 /// The current indexable head record per logical path for a Bear (latest, normal-visibility,
 /// not superseded). Non-indexable kinds/scopes are filtered out per [`is_indexable`].
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct HeadRow {
+    memory_id: String,
+    scope_type: String,
+    scope_profile: Option<String>,
+    kind: String,
+    visibility: String,
+    salience: String,
+    logical_path: Option<String>,
+    work_surface_ref: Option<String>,
+    content_text: String,
+}
+
 pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRequest>, DenError> {
     let bear_id = store.bear_id();
-    type HeadRow = (
-        String,         // memory_id
-        String,         // scope_type
-        Option<String>, // scope_profile
-        String,         // kind
-        String,         // visibility
-        String,         // salience
-        Option<String>, // logical_path
-        Option<String>, // work_surface_ref
-        String,         // content_text
-    );
     let rows = sqlx::query_as::<_, HeadRow>(
         r"
         SELECT m.memory_id, m.scope_type, m.scope_profile, m.kind, m.visibility,
@@ -74,40 +76,28 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
 
     Ok(rows
         .into_iter()
-        .filter_map(
-            |(
-                memory_id,
-                scope_type,
-                scope_profile,
-                kind,
-                visibility,
-                salience,
-                logical_path,
-                work_surface_ref,
-                content_text,
-            )| {
-                if !is_indexable(&scope_type, &kind, &visibility) {
-                    return None;
-                }
-                let entity_ids = entity_ids_by_source
-                    .get(&memory_id)
-                    .cloned()
-                    .unwrap_or_default();
-                Some(IndexRequest {
-                    bear_id,
-                    memory_id,
-                    logical_path,
-                    scope_type,
-                    scope_profile,
-                    work_surface_ref,
-                    kind,
-                    visibility,
-                    content_text,
-                    salience,
-                    entity_ids,
-                })
-            },
-        )
+        .filter_map(|head| {
+            if !is_indexable(&head.scope_type, &head.kind, &head.visibility) {
+                return None;
+            }
+            let entity_ids = entity_ids_by_source
+                .get(&head.memory_id)
+                .cloned()
+                .unwrap_or_default();
+            Some(IndexRequest {
+                bear_id,
+                memory_id: head.memory_id,
+                logical_path: head.logical_path,
+                scope_type: head.scope_type,
+                scope_profile: head.scope_profile,
+                work_surface_ref: head.work_surface_ref,
+                kind: head.kind,
+                visibility: head.visibility,
+                content_text: head.content_text,
+                salience: head.salience,
+                entity_ids,
+            })
+        })
         .collect())
 }
 
