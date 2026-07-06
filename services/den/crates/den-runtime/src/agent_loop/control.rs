@@ -145,12 +145,19 @@ pub struct CheckpointEvidenceRef {
 pub struct RuntimeCheckpointResponse {
     pub checkpoint_id: String,
     pub active_objective: String,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
     pub learned: Vec<String>,
+    #[serde(default)]
     pub remaining_uncertainty: Vec<String>,
     pub more_exploration_justified: bool,
     pub next_action: CheckpointNextAction,
+    #[serde(default)]
     pub task_state_change_needed: Option<TaskStateChangeIntent>,
+    #[serde(default)]
     pub evidence_refs: Vec<CheckpointEvidenceRef>,
+    #[serde(default)]
     pub confidence: Option<CheckpointConfidence>,
 }
 
@@ -428,7 +435,15 @@ fn checkpoint_field_missing(
 ) -> bool {
     match field {
         CheckpointField::ActiveObjective => response.active_objective.trim().is_empty(),
-        CheckpointField::Learned => response.learned.is_empty(),
+        CheckpointField::Learned => {
+            response.learned.is_empty()
+                && response
+                    .summary
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or_default()
+                    .is_empty()
+        }
         CheckpointField::RemainingUncertainty => response.remaining_uncertainty.is_empty(),
         CheckpointField::MoreExplorationJustified => false,
         CheckpointField::NextAction => false,
@@ -869,6 +884,7 @@ mod tests {
         RuntimeCheckpointResponse {
             checkpoint_id: "ckpt-1".to_string(),
             active_objective: "Patch the failing path".to_string(),
+            summary: None,
             learned: vec!["The relevant logic is in the route projector.".to_string()],
             remaining_uncertainty: Vec::new(),
             more_exploration_justified: false,

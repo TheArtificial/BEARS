@@ -16,6 +16,7 @@ use crate::{
     agent_loop::{
         approvals::create_native_approval,
         record_checkpoint_request, record_checkpoint_response, run_agent_step_stream,
+        step::RUNTIME_CHECKPOINT_TOOL_NAME,
         session_store::AgentLoopSessionStore,
         task_gate_checkpoint_trigger, tool_call_finished_event_for_content,
         tool_policy::{
@@ -601,7 +602,7 @@ impl SessionTrackingStream {
             evidence_refs: Vec::new(),
             required_fields: vec![
                 CheckpointField::ActiveObjective,
-                CheckpointField::Learned,
+                CheckpointField::MoreExplorationJustified,
                 CheckpointField::NextAction,
                 CheckpointField::TaskStateChangeNeeded,
             ],
@@ -615,7 +616,7 @@ impl SessionTrackingStream {
         let request_json = serde_json::to_string_pretty(request)
             .unwrap_or_else(|_| "{\"error\":\"checkpoint_request_unavailable\"}".to_string());
         format!(
-            "Runtime checkpoint required: {}\n\nReturn ONLY a JSON checkpoint response before continuing. Do not put prose in `next_action`. `next_action` must be one of: `call_tool`, `edit`, `validate`, `update_task_list`, `sync_task_list`, `request_handoff`, `final_if_gate_allows`, or `stop_blocked`. If you choose `call_tool`, you may use an object like {{\"action\":\"call_tool\",\"tool_name\":\"memory_read\"}}.\n\nMinimum response shape:\n```json\n{{\n  \"checkpoint_id\": \"<copy from request>\",\n  \"active_objective\": \"one sentence\",\n  \"learned\": [\"fact with evidence\"],\n  \"remaining_uncertainty\": [],\n  \"more_exploration_justified\": false,\n  \"next_action\": \"edit\",\n  \"task_state_change_needed\": null,\n  \"evidence_refs\": [],\n  \"confidence\": \"medium\"\n}}\n```\n\nIf the active task is done, blocked, not applicable, waived, cancelled, unsafe, or permission-gated, the checkpoint response may say so, but task state must still be updated through task tools with evidence.\n\nCheckpoint request:\n```json\n{request_json}\n```",
+            "Runtime checkpoint required: {}\n\nCall the `checkpoint` tool before continuing. Do not answer with checkpoint JSON in assistant text. The tool schema validates the decision fields. Use `summary` for a short free-text synthesis; keep structure only for `more_exploration_justified`, `next_action`, `task_state_change_needed`, and `evidence_refs`.\n\nAllowed `next_action` values: `call_tool`, `edit`, `validate`, `update_task_list`, `sync_task_list`, `request_handoff`, `final_if_gate_allows`, `stop_blocked`. If task state should change, choose `update_task_list`, `sync_task_list`, or `request_handoff`, then call the corresponding task tool with evidence after the checkpoint.\n\nCheckpoint request:\n```json\n{request_json}\n```",
             trigger.message
         )
     }
@@ -769,6 +770,108 @@ impl SessionTrackingStream {
         Ok(())
     }
 
+    fn apply_valid_checkpoint_response(
+        &mut self,
+        request: RuntimeCheckpointRequest,
+        response: RuntimeCheckpointResponse,
+    ) {
+        let required_task_action = response.task_state_change_needed.as_ref().and_then(|_| {
+            Self::checkpoint_next_action_can_satisfy_task_state_change(&response.next_action)
+                .then_some(response.next_action.clone())
+        });
+        self.store.update(&self.session_key, |session| {
+            session.pending_checkpoint_request = None;
+            session.pending_checkpoint_task_action = required_task_action.clone();
+            session.checkpoint_state.last_checkpoint_reason = None;
+        });
+        self.record_checkpoint_response_if_audited(request, response);
+    }
+
+    fn degrade_invalid_checkpoint_response(&mut self, reason: String) {
+        tracing::warn!(
+            session_id = %self.client_session_id,
+            reason = %reason,
+            "degrading invalid checkpoint response without failing turn"
+        );
+        self.store.update(&self.session_key, |session| {
+            session.pending_checkpoint_request = None;
+            session.checkpoint_state.last_checkpoint_reason = None;
+        });
+    }
+
+    fn checkpoint_tool_result_content(ok: bool, message: &str) -> String {
+        serde_json::json!({
+            "ok": ok,
+            "message": message,
+            "source": "den.runtime.checkpoint",
+        })
+        .to_string()
+    }
+
+    fn handle_checkpoint_tool_call(
+        &mut self,
+        tool_call_id: String,
+        arguments: serde_json::Value,
+    ) -> RuntimeStreamEvent {
+        let call = ChatToolCall {
+            id: tool_call_id.clone(),
+            call_type: "function".to_string(),
+            function: crate::llm::ChatToolCallFunction {
+                name: RUNTIME_CHECKPOINT_TOOL_NAME.to_string(),
+                arguments: arguments.to_string(),
+            },
+        };
+        self.tool_calls.insert(
+            tool_call_id.clone(),
+            (RUNTIME_CHECKPOINT_TOOL_NAME.to_string(), arguments.to_string()),
+        );
+        self.sync_assistant_tool_step_to_session();
+        self.persist_assistant_tool_step();
+
+        let content = match self.pending_checkpoint_request() {
+            Some(request) => match serde_json::from_value::<RuntimeCheckpointResponse>(arguments) {
+                Ok(response) => match validate_checkpoint_response(&request, &response) {
+                    Ok(()) => {
+                        self.apply_valid_checkpoint_response(request, response);
+                        Self::checkpoint_tool_result_content(true, "checkpoint recorded")
+                    }
+                    Err(err) => {
+                        self.degrade_invalid_checkpoint_response(format!(
+                            "checkpoint tool arguments failed validation: {err:?}"
+                        ));
+                        Self::checkpoint_tool_result_content(
+                            false,
+                            "checkpoint arguments were not valid; continuing with deterministic runtime signals",
+                        )
+                    }
+                },
+                Err(err) => {
+                    self.degrade_invalid_checkpoint_response(format!(
+                        "checkpoint tool arguments were not parseable: {err}"
+                    ));
+                    Self::checkpoint_tool_result_content(
+                        false,
+                        "checkpoint arguments were not parseable; continuing with deterministic runtime signals",
+                    )
+                }
+            },
+            None => Self::checkpoint_tool_result_content(false, "no checkpoint was pending"),
+        };
+
+        self.tool_calls.remove(&tool_call_id);
+        self.store.update(&self.session_key, |session| {
+            session.messages.push(ChatMessage {
+                role: "tool".to_string(),
+                content: Some(content.clone()),
+                tool_call_id: Some(tool_call_id),
+                name: Some(RUNTIME_CHECKPOINT_TOOL_NAME.to_string()),
+                tool_calls: None,
+            });
+        });
+        self.begin_checkpoint_continuation();
+        RuntimeStreamEvent::Semantic(tool_call_finished_event_for_content(&call, Some(&content)))
+    }
+
     fn validate_pending_checkpoint_response(&mut self) -> Result<bool, RuntimeStreamEvent> {
         if !self.enforce_checkpoint_responses() {
             return Ok(false);
@@ -776,33 +879,22 @@ impl SessionTrackingStream {
         let Some(request) = self.pending_checkpoint_request() else {
             return Ok(false);
         };
-        let response = Self::parse_checkpoint_response_text(&self.assistant_text).map_err(|err| {
-            Self::checkpoint_failure_event(format!(
-                "Runtime checkpoint response was required before continuation, but the assistant did not return valid checkpoint JSON: {err}"
-            ))
-        })?;
-        validate_checkpoint_response(&request, &response).map_err(|err| {
-            Self::checkpoint_failure_event(format!(
-                "Runtime checkpoint response failed validation: {err:?}"
-            ))
-        })?;
-        let required_task_action = if response.task_state_change_needed.is_some() {
-            if !Self::checkpoint_next_action_can_satisfy_task_state_change(&response.next_action) {
-                return Err(Self::checkpoint_failure_event(
-                    "Runtime checkpoint response declared task_state_change_needed, but next_action was not a task-management action. Use update_task_list, sync_task_list, or request_task_list_handoff.".to_string(),
+        let response = match Self::parse_checkpoint_response_text(&self.assistant_text) {
+            Ok(response) => response,
+            Err(err) => {
+                self.degrade_invalid_checkpoint_response(format!(
+                    "assistant checkpoint text was not valid JSON: {err}"
                 ));
+                return Ok(false);
             }
-            Some(response.next_action.clone())
-        } else {
-            None
         };
-
-        self.store.update(&self.session_key, |session| {
-            session.pending_checkpoint_request = None;
-            session.pending_checkpoint_task_action = required_task_action.clone();
-            session.checkpoint_state.last_checkpoint_reason = None;
-        });
-        self.record_checkpoint_response_if_audited(request, response);
+        if let Err(err) = validate_checkpoint_response(&request, &response) {
+            self.degrade_invalid_checkpoint_response(format!(
+                "assistant checkpoint text failed validation: {err:?}"
+            ));
+            return Ok(false);
+        }
+        self.apply_valid_checkpoint_response(request, response);
         self.assistant_text.clear();
         Ok(true)
     }
@@ -1044,6 +1136,10 @@ impl Stream for SessionTrackingStream {
                     ..
                 },
             )))) => {
+                if tool_name == RUNTIME_CHECKPOINT_TOOL_NAME {
+                    let event = self.handle_checkpoint_tool_call(tool_call_id, arguments);
+                    return Poll::Ready(Some(Ok(event)));
+                }
                 if let Err(event) = self.validate_pending_checkpoint_response() {
                     self.finished = true;
                     return Poll::Ready(Some(Ok(event)));
@@ -1564,7 +1660,7 @@ mod tests {
             evidence_refs: Vec::new(),
             required_fields: vec![
                 crate::agent_loop::CheckpointField::ActiveObjective,
-                crate::agent_loop::CheckpointField::Learned,
+                crate::agent_loop::CheckpointField::MoreExplorationJustified,
                 crate::agent_loop::CheckpointField::NextAction,
             ],
         }
@@ -1665,12 +1761,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn checkpoint_task_state_change_rejects_non_task_next_action() {
+    async fn checkpoint_task_state_change_with_non_task_next_action_degrades_without_failure() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
-        session.pending_checkpoint_request = Some(checkpoint_request("ckpt-bad-action"));
+        session.pending_checkpoint_request = Some(checkpoint_request("ckpt-advisory-action"));
         let mut stream = test_tracking_stream_with_session(&session);
         stream.assistant_text = checkpoint_response_json(
-            "ckpt-bad-action",
+            "ckpt-advisory-action",
             serde_json::json!("validate"),
             serde_json::json!({
                 "target_state": "blocked",
@@ -1679,16 +1775,9 @@ mod tests {
             }),
         );
 
-        let err = stream
-            .validate_pending_checkpoint_response()
-            .expect_err("non-task next_action should fail task-state checkpoint");
-        match err {
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { message, .. }) => {
-                assert!(message.contains("task_state_change_needed"));
-                assert!(message.contains("next_action"));
-            }
-            other => panic!("unexpected checkpoint failure event: {other:?}"),
-        }
+        assert_eq!(stream.validate_pending_checkpoint_response(), Ok(true));
+        assert!(stream.pending_checkpoint_request().is_none());
+        assert!(stream.pending_checkpoint_task_action().is_none());
     }
 
     #[test]

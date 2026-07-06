@@ -344,6 +344,7 @@ mod tests {
         RuntimeCheckpointResponse {
             checkpoint_id: "ckpt-1".to_string(),
             active_objective: "Find the failing path".to_string(),
+            summary: None,
             learned: vec!["The runtime parser is involved.".to_string()],
             remaining_uncertainty: vec![],
             more_exploration_justified: false,

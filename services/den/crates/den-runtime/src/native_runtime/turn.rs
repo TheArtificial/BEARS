@@ -1064,7 +1064,7 @@ fn runtime_checkpoint_request_for_trigger(
         evidence_refs: Vec::new(),
         required_fields: vec![
             CheckpointField::ActiveObjective,
-            CheckpointField::Learned,
+            CheckpointField::MoreExplorationJustified,
             CheckpointField::NextAction,
         ],
     })
@@ -1132,7 +1132,7 @@ fn render_checkpoint_nudge(request: &RuntimeCheckpointRequest, trigger: &Checkpo
     let request_json = serde_json::to_string_pretty(request)
         .unwrap_or_else(|_| "{\"error\":\"checkpoint_request_unavailable\"}".to_string());
     format!(
-        "{CHECKPOINT_NUDGE_PREFIX} {}\n\nReturn ONLY a JSON checkpoint response before more exploratory or risky tool use. Do not put prose in `next_action`. `next_action` must be one of: `call_tool`, `edit`, `validate`, `update_task_list`, `sync_task_list`, `request_handoff`, `final_if_gate_allows`, or `stop_blocked`. If you choose `call_tool`, you may use an object like {{\"action\":\"call_tool\",\"tool_name\":\"memory_read\"}}.\n\nMinimum response shape:\n```json\n{{\n  \"checkpoint_id\": \"<copy from request>\",\n  \"active_objective\": \"one sentence\",\n  \"learned\": [\"fact with evidence\"],\n  \"remaining_uncertainty\": [],\n  \"more_exploration_justified\": false,\n  \"next_action\": \"edit\",\n  \"task_state_change_needed\": null,\n  \"evidence_refs\": [],\n  \"confidence\": \"medium\"\n}}\n```\n\nIf task state should change, call the appropriate task-management tool after the checkpoint; do not treat checkpoint prose as task state.\n\nCheckpoint request:\n```json\n{request_json}\n```",
+        "{CHECKPOINT_NUDGE_PREFIX} {}\n\nCall the `checkpoint` tool before more exploratory or risky tool use. Do not answer with checkpoint JSON in assistant text. The tool schema validates the decision fields. Use `summary` for a short free-text synthesis; keep structure only for `more_exploration_justified`, `next_action`, `task_state_change_needed`, and `evidence_refs`.\n\nAllowed `next_action` values: `call_tool`, `edit`, `validate`, `update_task_list`, `sync_task_list`, `request_handoff`, `final_if_gate_allows`, `stop_blocked`. If task state should change, choose `update_task_list`, `sync_task_list`, or `request_handoff`, then call the corresponding task tool with evidence after the checkpoint.\n\nCheckpoint request:\n```json\n{request_json}\n```",
         trigger.message
     )
 }
@@ -1693,10 +1693,10 @@ mod tests {
         let rendered = render_checkpoint_nudge(&request, &trigger);
 
         assert!(rendered.starts_with(CHECKPOINT_NUDGE_PREFIX));
-        assert!(rendered.contains("Return ONLY a JSON checkpoint response"));
+        assert!(rendered.contains("Call the `checkpoint` tool"));
         assert!(rendered.contains("\"checkpoint_id\": \"ckpt-1\""));
-        assert!(rendered.contains("do not treat checkpoint prose as task state"));
-        assert!(rendered.contains("`next_action` must be one of"));
+        assert!(rendered.contains("Do not answer with checkpoint JSON"));
+        assert!(rendered.contains("Allowed `next_action` values"));
     }
 
     #[test]

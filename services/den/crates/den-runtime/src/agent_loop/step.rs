@@ -484,12 +484,92 @@ impl Stream for LazyAgentStepStream {
 /// The prompt handler must return SSE headers before Bifrost accepts the chat/completions
 /// request; deferring the LLM call until the stream is polled avoids wedging client streams
 /// that wait on `POST /prompt` with no timeout.
+pub const RUNTIME_CHECKPOINT_TOOL_NAME: &str = "checkpoint";
+
 fn checkpoint_thinking_effort_for_session(session: &AgentLoopSession) -> Option<ThinkingEffort> {
     if session.checkpoint_state.last_checkpoint_reason.is_none() {
         return None;
     }
     let policy = session.agent_loop_control.profile.thinking;
     policy.enabled.then_some(policy.checkpoint_turn_effort).flatten()
+}
+
+fn checkpoint_tool_definition() -> crate::llm::LlmToolDefinition {
+    crate::llm::LlmToolDefinition {
+        name: RUNTIME_CHECKPOINT_TOOL_NAME.to_string(),
+        description: Some(
+            "Report a runtime checkpoint decision before continuing. Use this tool instead of replying with checkpoint JSON in assistant text. The fields are advisory/audit only; budgets and task tools remain authoritative.".to_string(),
+        ),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "checkpoint_id": { "type": "string" },
+                "active_objective": { "type": "string" },
+                "summary": { "type": "string", "description": "Short prose synthesis of learned facts, uncertainty, and rationale. Keep it concise." },
+                "more_exploration_justified": { "type": "boolean" },
+                "next_action": {
+                    "type": "string",
+                    "enum": [
+                        "call_tool",
+                        "edit",
+                        "validate",
+                        "update_task_list",
+                        "sync_task_list",
+                        "request_handoff",
+                        "final_if_gate_allows",
+                        "stop_blocked"
+                    ]
+                },
+                "task_state_change_needed": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "target_state": { "type": "string" },
+                        "reason": { "type": "string" },
+                        "evidence_refs": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "kind": { "type": "string" },
+                                    "id": { "type": "string" },
+                                    "summary": { "type": ["string", "null"] }
+                                },
+                                "required": ["kind", "id"],
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "required": ["target_state", "reason", "evidence_refs"],
+                    "additionalProperties": false
+                },
+                "evidence_refs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": { "type": "string" },
+                            "id": { "type": "string" },
+                            "summary": { "type": ["string", "null"] }
+                        },
+                        "required": ["kind", "id"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["checkpoint_id", "active_objective", "more_exploration_justified", "next_action"],
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn tools_with_checkpoint_tool(session: &AgentLoopSession) -> Vec<crate::llm::LlmToolDefinition> {
+    let mut tools = session.tools.clone();
+    if session.pending_checkpoint_request.is_some()
+        && !tools.iter().any(|tool| tool.name == RUNTIME_CHECKPOINT_TOOL_NAME)
+    {
+        tools.push(checkpoint_tool_definition());
+    }
+    tools
 }
 
 pub async fn run_agent_step_stream(
@@ -511,7 +591,7 @@ pub async fn run_agent_step_stream(
     let request = ChatCompletionRequest {
         model: session.model.clone(),
         messages,
-        tools: session.tools.clone(),
+        tools: tools_with_checkpoint_tool(session),
         stream: true,
         tool_choice: None,
         temperature: None,
