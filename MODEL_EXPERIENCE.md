@@ -40,6 +40,7 @@ The exclusions are as designed as the inclusions:
 - **Superseded record history.** Proactive projection shows latest heads; history stays tool-mediated.
 - **The whole transcript, forever.** Long conversations are compacted: older context becomes derived summary state, kept explicitly separate from raw transcript and from memory, with active goals, constraints, and tool/approval state preserved.
 - **Raw provider/protocol machinery.** ACP is an edge adapter; the model should never learn ACP-specific fake capabilities as core semantics ([ADR-0043](docs/decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md)).
+- **Provider reasoning display streams.** Provider-emitted reasoning deltas may be projected live to capable clients as thought UI, but they are display telemetry: not assistant answer content, not model transcript replay, not canonical conversation history, not task state, and not memory.
 
 ## The tool surface
 

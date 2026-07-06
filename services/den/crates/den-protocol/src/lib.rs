@@ -221,6 +221,9 @@ pub enum RuntimeSemanticEvent {
     AssistantTextDelta {
         text: String,
     },
+    ReasoningTextDelta {
+        text: String,
+    },
     StatusText {
         text: String,
     },

@@ -34,6 +34,9 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
         RuntimeSemanticEvent::AssistantTextDelta { text } => {
             vec![GatewayEvent::AssistantTextDelta { text }]
         }
+        RuntimeSemanticEvent::ReasoningTextDelta { text } => {
+            vec![GatewayEvent::ReasoningTextDelta { text }]
+        }
         RuntimeSemanticEvent::StatusText { text } => vec![GatewayEvent::StatusText { text }],
         RuntimeSemanticEvent::ConversationResolved { conversation } => {
             vec![GatewayEvent::ConversationResolved {

@@ -9,6 +9,7 @@ This table locks the semantic mapping from the legacy Den → armature adapter-S
 | Adapter-SSE `type` | BearWire `type` | Notes |
 | --- | --- | --- |
 | `assistant_text_delta` | `message.delta` | Payload carries `data.delta`; message/run ids are attached by the edge when known. |
+| `reasoning_text_delta` | `message.reasoning.delta` | Provider reasoning/thinking delta. Display as ACP thought chunk; not assistant answer content, model replay, conversation history, or task state. |
 | `status_text` | `run.progress` | `data.kind = "status_text"`, `data.text` is the display status. |
 | `tool_request` with `approval.required = false` | `tool_call.requested` | `data.tool_call_id`, `data.tool_name`, `data.arguments`; armature executes or translates locally. |
 | `tool_request` with `approval.required = true` | `client.waiting` | Canonical v1 armature-actionable wait. Payload includes `data.obligation_id`, `data.expected_client_method = "client.permission.result"`, nested `data.tool_call`, and nested `data.permission`. Legacy `tool_call.blocked` may be accepted during migration only when answerable. |

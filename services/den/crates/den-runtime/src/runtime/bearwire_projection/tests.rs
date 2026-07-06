@@ -25,6 +25,20 @@ fn semantic_assistant_text_projects_to_bearwire_gateway_event() {
 }
 
 #[test]
+fn semantic_reasoning_text_projects_to_reasoning_gateway_event() {
+    let mapped = runtime_semantic_event_to_bearwire_gateway_events(
+        RuntimeSemanticEvent::ReasoningTextDelta {
+            text: "thinking".to_string(),
+        },
+    );
+
+    assert!(matches!(
+        mapped.as_slice(),
+        [GatewayEvent::ReasoningTextDelta { text }] if text == "thinking"
+    ));
+}
+
+#[test]
 fn semantic_turn_completed_projects_to_bearwire_gateway_event() {
     let mapped =
         runtime_semantic_event_to_bearwire_gateway_events(RuntimeSemanticEvent::TurnCompleted {
@@ -35,6 +49,19 @@ fn semantic_turn_completed_projects_to_bearwire_gateway_event() {
         mapped.as_slice(),
         [GatewayEvent::TurnComplete { outcome }] if outcome == "ok"
     ));
+}
+
+#[test]
+fn semantic_reasoning_text_projects_to_dedicated_bearwire_event() {
+    let mapped = runtime_stream_event_to_bearwire_sse(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::ReasoningTextDelta {
+            text: "thinking".to_string(),
+        },
+    ));
+
+    let text = std::str::from_utf8(mapped[0].as_ref()).expect("valid utf8 sse");
+    assert!(text.contains("\"type\":\"reasoning_text_delta\""), "{text}");
+    assert!(text.contains("\"text\":\"thinking\""), "{text}");
 }
 
 #[test]

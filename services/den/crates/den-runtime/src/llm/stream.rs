@@ -18,6 +18,19 @@ fn delta_assistant_text(delta: &Value) -> Option<String> {
     None
 }
 
+fn delta_reasoning_text(delta: &Value) -> Option<String> {
+    for key in ["reasoning", "reasoning_content", "thinking", "thought"] {
+        if let Some(text) = delta
+            .get(key)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            return Some(text.to_string());
+        }
+    }
+    None
+}
+
 /// Accumulates OpenAI streaming tool-call argument fragments keyed by tool-call index.
 #[derive(Debug, Default)]
 pub struct OpenAiStreamAccumulator {
@@ -196,6 +209,9 @@ fn runtime_event_kind(event: &RuntimeStreamEvent) -> &'static str {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { .. }) => {
             "assistant_text_delta"
         }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ReasoningTextDelta { .. }) => {
+            "reasoning_text_delta"
+        }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { .. }) => "status_text",
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { .. }) => "run_progress",
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { .. }) => "run_paused",
@@ -266,6 +282,11 @@ impl OpenAiStreamAccumulator {
             if let Some(content) = delta_assistant_text(delta) {
                 out.events.push(RuntimeStreamEvent::Semantic(
                     RuntimeSemanticEvent::AssistantTextDelta { text: content },
+                ));
+            }
+            if let Some(reasoning) = delta_reasoning_text(delta) {
+                out.events.push(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::ReasoningTextDelta { text: reasoning },
                 ));
             }
             if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
@@ -459,7 +480,7 @@ impl ResponsesStreamAccumulator {
                     .filter(|s| !s.is_empty())
                 {
                     out.events.push(RuntimeStreamEvent::Semantic(
-                        RuntimeSemanticEvent::StatusText {
+                        RuntimeSemanticEvent::ReasoningTextDelta {
                             text: delta.to_string(),
                         },
                     ));

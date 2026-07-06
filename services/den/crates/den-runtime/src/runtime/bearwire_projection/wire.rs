@@ -170,6 +170,14 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 "delta": text,
             }),
         )],
+        RuntimeSemanticEvent::ReasoningTextDelta { text } => vec![BearWireEvent::ephemeral(
+            "message.reasoning.delta",
+            json!({
+                "delta": text,
+                "source": "provider_reasoning",
+                "replay_policy": "none",
+            }),
+        )],
         RuntimeSemanticEvent::StatusText { text } => vec![BearWireEvent::ephemeral(
             "run.progress",
             json!({

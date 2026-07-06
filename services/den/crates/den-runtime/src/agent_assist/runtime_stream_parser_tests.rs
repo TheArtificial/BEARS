@@ -2,14 +2,14 @@ use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 use crate::agent_assist::runtime_stream_parser::runtime_stream_event_from_provider_json;
 
 #[test]
-fn reasoning_message_maps_to_semantic_status_text() {
+fn reasoning_message_maps_to_semantic_reasoning_text_delta() {
     let event = serde_json::json!({
         "message_type": "reasoning_message",
         "reasoning": "thinking"
     });
     let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
     match mapped {
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText { text }) => {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ReasoningTextDelta { text }) => {
             assert_eq!(text, "thinking");
         }
         other => panic!("unexpected mapping: {other:?}"),

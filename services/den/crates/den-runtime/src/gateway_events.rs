@@ -21,6 +21,9 @@ pub enum GatewayEvent {
     AssistantTextDelta {
         text: String,
     },
+    ReasoningTextDelta {
+        text: String,
+    },
     StatusText {
         text: String,
     },
@@ -152,7 +155,7 @@ pub fn map_provider_stream_event_to_gateway_event(
                 Some(GatewayEvent::AssistantTextDelta { text })
             }
         }
-        "reasoning_message" => Some(GatewayEvent::StatusText {
+        "reasoning_message" => Some(GatewayEvent::ReasoningTextDelta {
             text: inner
                 .get("reasoning")
                 .and_then(|v| v.as_str())
@@ -251,7 +254,7 @@ fn extract_stream_text_delta(event: &serde_json::Value) -> Option<GatewayEvent> 
     }
     match kind {
         StreamTextDeltaKind::Assistant => Some(GatewayEvent::AssistantTextDelta { text }),
-        StreamTextDeltaKind::Reasoning => Some(GatewayEvent::StatusText { text }),
+        StreamTextDeltaKind::Reasoning => Some(GatewayEvent::ReasoningTextDelta { text }),
     }
 }
 
@@ -799,6 +802,7 @@ pub fn conversation_resolved_gateway_event(event: &serde_json::Value) -> Option<
 pub fn gateway_event_adapter_type(event: &GatewayEvent) -> &'static str {
     match event {
         GatewayEvent::AssistantTextDelta { .. } => "assistant_text_delta",
+        GatewayEvent::ReasoningTextDelta { .. } => "reasoning_text_delta",
         GatewayEvent::StatusText { .. } => "status_text",
         GatewayEvent::TurnComplete { .. } => "turn_complete",
         GatewayEvent::TurnResult { .. } => "turn_result",
@@ -819,6 +823,7 @@ pub fn gateway_event_has_visible_output(event: &GatewayEvent) -> bool {
         GatewayEvent::AssistantTextDelta { text } | GatewayEvent::StatusText { text } => {
             !text.is_empty()
         }
+        GatewayEvent::ReasoningTextDelta { .. } => false,
         GatewayEvent::Error { .. } => true,
         GatewayEvent::TurnComplete { .. }
         | GatewayEvent::TurnResult { .. }
@@ -837,6 +842,10 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
     let mapped = match event {
         GatewayEvent::AssistantTextDelta { text } => serde_json::json!({
             "type": "assistant_text_delta",
+            "text": text,
+        }),
+        GatewayEvent::ReasoningTextDelta { text } => serde_json::json!({
+            "type": "reasoning_text_delta",
             "text": text,
         }),
         GatewayEvent::StatusText { text } => serde_json::json!({
@@ -1405,7 +1414,7 @@ mod tests {
             "delta": { "text": "thinking" }
         });
         match map_provider_stream_event_to_gateway_event(&event) {
-            Some(GatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
+            Some(GatewayEvent::ReasoningTextDelta { text }) => assert_eq!(text, "thinking"),
             other => panic!("unexpected event: {other:?}"),
         }
     }
@@ -1417,7 +1426,7 @@ mod tests {
             "choices": [{ "delta": { "reasoning_content": "thinking" } }]
         });
         match map_provider_stream_event_to_gateway_event(&event) {
-            Some(GatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
+            Some(GatewayEvent::ReasoningTextDelta { text }) => assert_eq!(text, "thinking"),
             other => panic!("unexpected event: {other:?}"),
         }
     }

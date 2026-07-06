@@ -96,7 +96,7 @@ pub fn runtime_stream_event_from_provider_json(
                 })
                 .unwrap_or_default();
             Some(RuntimeStreamEvent::Semantic(
-                RuntimeSemanticEvent::StatusText { text },
+                RuntimeSemanticEvent::ReasoningTextDelta { text },
             ))
         }
         "error_message" => Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {

@@ -158,6 +158,22 @@ async fn golden_trace_multi_text_delta_preserves_each_chunk() {
 // --- Adapter-SSE → BearWire migration type parity ---------------------------
 
 #[test]
+fn reasoning_delta_bearwire_event_is_display_only() {
+    let events = runtime_semantic_event_to_bearwire_events(
+        RuntimeSemanticEvent::ReasoningTextDelta {
+            text: "thinking".to_string(),
+        },
+    );
+
+    assert_eq!(events.len(), 1);
+    let event = &events[0];
+    assert_eq!(event.event_type, "message.reasoning.delta");
+    assert_eq!(event.data["delta"], "thinking");
+    assert_eq!(event.data["source"], "provider_reasoning");
+    assert_eq!(event.data["replay_policy"], "none");
+}
+
+#[test]
 fn migration_type_mapping_covers_core_semantic_events() {
     assert_type_mapping(
         RuntimeSemanticEvent::AssistantTextDelta {
@@ -165,6 +181,13 @@ fn migration_type_mapping_covers_core_semantic_events() {
         },
         &["assistant_text_delta"],
         &["message.delta"],
+    );
+    assert_type_mapping(
+        RuntimeSemanticEvent::ReasoningTextDelta {
+            text: "Thinking".to_string(),
+        },
+        &["reasoning_text_delta"],
+        &["message.reasoning.delta"],
     );
     assert_type_mapping(
         RuntimeSemanticEvent::StatusText {

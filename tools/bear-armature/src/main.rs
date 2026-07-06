@@ -7923,6 +7923,14 @@ async fn handle_den_event(
             }
             Ok(false)
         }
+        "reasoning_text_delta" => {
+            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
+            if !text.is_empty() {
+                send_agent_thought_chunk_for_turn(shared_state, session_id, turn_token, text)
+                    .await?;
+            }
+            Ok(false)
+        }
         "status_text" => {
             let text = event.get("text").and_then(Value::as_str).unwrap_or("");
             if !text.is_empty() && bear_debug_mode().shows_thoughts() {

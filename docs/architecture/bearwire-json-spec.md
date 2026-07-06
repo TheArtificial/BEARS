@@ -492,6 +492,30 @@ Recommended pause reasons include:
 }
 ```
 
+#### `message.reasoning.delta`
+
+Provider/model reasoning delta intended for live deliberation display.
+
+```json
+{
+  "message_id": "msg_123",
+  "run_id": "run_123",
+  "index": 0,
+  "delta": "I should inspect the relevant file first.",
+  "source": "provider_reasoning",
+  "replay_policy": "none"
+}
+```
+
+Rules:
+
+- display-only by default;
+- not assistant answer content;
+- not included in model transcript replay;
+- not persisted as canonical conversation history;
+- not Docket/task state;
+- clients that do not support reasoning display may ignore it.
+
 #### `message.part`
 
 ```json
@@ -975,6 +999,7 @@ Implementations migrating from older event models should prefer these mappings:
 | Older semantic label | BearWire event type |
 | --- | --- |
 | assistant text delta | `message.delta` |
+| provider reasoning delta | `message.reasoning.delta` |
 | status text | `run.progress` with `kind: "status_text"` |
 | tool call requested | `tool_call.requested` |
 | waiting for continuation | `run.paused` with `reason: "awaiting_continuation"` |

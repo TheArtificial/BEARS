@@ -1097,6 +1097,25 @@ async fn handle_bearwire_event(
                 .await?;
             }
         }
+        "message.reasoning.delta" => {
+            let text = event
+                .get("data")
+                .and_then(|data| data.get("delta").or_else(|| data.get("text")))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if !text.is_empty() {
+                let legacy = json!({ "type": "reasoning_text_delta", "text": text });
+                handle_den_event(
+                    config,
+                    adapter_state,
+                    shared_state,
+                    session_id,
+                    &legacy,
+                    turn_token,
+                )
+                .await?;
+            }
+        }
         "run.progress" => {
             let data = event.get("data").unwrap_or(&Value::Null);
             let text = data.get("text").and_then(Value::as_str).unwrap_or("");
