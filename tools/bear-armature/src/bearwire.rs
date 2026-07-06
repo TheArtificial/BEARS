@@ -898,7 +898,7 @@ fn bearwire_permission_event_to_legacy_permission_request(event: &Value) -> Valu
         .or_else(|| data.get("tool_name"))
         .and_then(Value::as_str)
         .unwrap_or("tool");
-    json!({
+    let mut legacy = json!({
         "type": "permission_request",
         "run_id": event.get("run_id").and_then(Value::as_str),
         "obligation_id": data.get("obligation_id").cloned().unwrap_or(Value::Null),
@@ -922,7 +922,11 @@ fn bearwire_permission_event_to_legacy_permission_request(event: &Value) -> Valu
             .or_else(|| data.get("arguments"))
             .cloned()
             .unwrap_or_else(|| json!({ "kind": "tool_call" })),
-    })
+    });
+    if let Some(display) = tool_call.get("display").or_else(|| data.get("display")) {
+        legacy["display"] = display.clone();
+    }
+    legacy
 }
 
 fn bearwire_plan_update_entries(event: &Value) -> Value {
@@ -1004,22 +1008,20 @@ async fn handle_bearwire_tool_call_finished_event(
     failed: bool,
 ) -> Result<()> {
     let data = event.get("data").unwrap_or(&Value::Null);
-    let tool_call = data.get("tool_call").unwrap_or(&Value::Null);
-    let tool_call_id = tool_call
-        .get("id")
-        .or_else(|| data.get("tool_call_id"))
+    let lookup_tool_call_id = data
+        .pointer("/tool_call/id")
         .and_then(Value::as_str)
+        .or_else(|| data.get("tool_call_id").and_then(Value::as_str))
         .or_else(|| resource_ref_id(event, "tool_call"))
         .unwrap_or("unknown");
-    let cached = shared_state.tool_tasks.get(session_id, tool_call_id).await;
-    let tool_name = tool_call
-        .get("name")
-        .or_else(|| data.get("tool_name"))
-        .and_then(Value::as_str)
-        .filter(|name| !crate::is_placeholder_tool_name(name))
-        .map(str::to_string)
-        .or_else(|| cached.as_ref().map(|record| record.tool_name.clone()))
-        .unwrap_or_else(|| "tool".to_string());
+    let cached = shared_state
+        .tool_tasks
+        .get(session_id, lookup_tool_call_id)
+        .await;
+    let (tool_call_id, tool_name) = bearwire_finished_tool_identity(
+        event,
+        cached.as_ref().map(|record| record.tool_name.as_str()),
+    );
     let summary = tool_call_finished_summary(data, &tool_name, failed);
     let status = if failed { "failed" } else { "completed" };
     let mut legacy = json!({
@@ -1028,12 +1030,22 @@ async fn handle_bearwire_tool_call_finished_event(
         "tool_call_id": tool_call_id,
         "tool_name": tool_name.clone(),
     });
-    if let Some(args) = cached.and_then(|record| record.input_args) {
+    if let Some(args) = cached
+        .and_then(|record| record.input_args)
+        .or_else(|| data.pointer("/tool_call/arguments").cloned())
+        .or_else(|| data.get("arguments").cloned())
+    {
         legacy["args"] = args;
+    }
+    if let Some(display) = data
+        .pointer("/tool_call/display")
+        .or_else(|| data.get("display"))
+    {
+        legacy["display"] = display.clone();
     }
     send_tool_call_update(
         session_id,
-        tool_call_id,
+        &tool_call_id,
         &tool_name,
         ToolCallUpdatePayload {
             status,
@@ -1047,6 +1059,30 @@ async fn handle_bearwire_tool_call_finished_event(
         },
     )
     .await
+}
+
+fn bearwire_finished_tool_identity(
+    event: &Value,
+    cached_tool_name: Option<&str>,
+) -> (String, String) {
+    let data = event.get("data").unwrap_or(&Value::Null);
+    let tool_call = data.get("tool_call").unwrap_or(&Value::Null);
+    let tool_call_id = tool_call
+        .get("id")
+        .or_else(|| data.get("tool_call_id"))
+        .and_then(Value::as_str)
+        .or_else(|| resource_ref_id(event, "tool_call"))
+        .unwrap_or("unknown")
+        .to_string();
+    let tool_name = tool_call
+        .get("name")
+        .or_else(|| data.get("tool_name"))
+        .and_then(Value::as_str)
+        .filter(|name| !crate::is_placeholder_tool_name(name))
+        .map(str::to_string)
+        .or_else(|| cached_tool_name.map(str::to_string))
+        .unwrap_or_else(|| "tool".to_string());
+    (tool_call_id, tool_name)
 }
 
 fn resource_ref_id<'a>(event: &'a Value, kind: &str) -> Option<&'a str> {
@@ -1468,6 +1504,33 @@ mod tests {
     }
 
     #[test]
+    fn bearwire_finished_tool_prefers_canonical_tool_call_identity() {
+        let event = json!({
+            "type": "tool_call.completed",
+            "run_id": "run-1",
+            "resource_refs": [
+                { "kind": "tool_call", "id": "resource-call" }
+            ],
+            "data": {
+                "tool_call_id": "legacy-call",
+                "tool_name": "legacy_tool",
+                "tool_call": {
+                    "id": "call-1",
+                    "name": "fs_read_text_file",
+                    "title": "Read file",
+                    "arguments": { "path": "/workspace/README.md" }
+                },
+                "summary": "Read file."
+            }
+        });
+
+        let (tool_call_id, tool_name) = bearwire_finished_tool_identity(&event, Some("cached_tool"));
+
+        assert_eq!(tool_call_id, "call-1");
+        assert_eq!(tool_name, "fs_read_text_file");
+    }
+
+    #[test]
     fn bearwire_session_info_update_projects_nested_title_to_legacy_event() {
         let event = json!({
             "type": "session_info_update",
@@ -1502,7 +1565,12 @@ mod tests {
                     "name": "web_fetch",
                     "title": "Fetch URL",
                     "kind": "function",
-                    "arguments": { "kind": "url", "url": "https://example.com/", "host": "example.com" }
+                    "arguments": { "kind": "url", "url": "https://example.com/", "host": "example.com" },
+                    "display": {
+                        "label": "Fetch URL",
+                        "progress": "Waiting for permission",
+                        "category": "network"
+                    }
                 },
                 "permission": {
                     "id": "perm-web-1",
@@ -1521,6 +1589,8 @@ mod tests {
         assert_eq!(legacy["tool_call_id"], "call-web-1");
         assert_eq!(legacy["tool_name"], "web_fetch");
         assert_eq!(legacy["target"]["url"], "https://example.com/");
+        assert_eq!(legacy["display"]["progress"], "Waiting for permission");
+        assert_eq!(legacy["display"]["category"], "network");
     }
 
     #[test]
