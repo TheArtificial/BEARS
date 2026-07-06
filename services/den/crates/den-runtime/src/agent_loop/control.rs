@@ -294,9 +294,7 @@ pub fn evaluate_checkpoint_trigger(
         None
     };
 
-    if let Some(trigger) = trigger.as_ref() {
-        next_state.last_checkpoint_reason = Some(trigger.reason);
-    }
+    next_state.last_checkpoint_reason = trigger.as_ref().map(|trigger| trigger.reason);
 
     CheckpointEvaluation {
         next_state,
@@ -654,6 +652,25 @@ mod tests {
             Some(CheckpointReason::OverExploration)
         );
         assert_eq!(evaluation.next_state.read_search_since_mutation, 3);
+    }
+
+    #[test]
+    fn checkpoint_evaluator_clears_last_reason_when_no_trigger_fires() {
+        let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Standard);
+        let state = CheckpointState {
+            last_checkpoint_reason: Some(CheckpointReason::OverExploration),
+            ..CheckpointState::default()
+        };
+
+        let evaluation = evaluate_checkpoint_trigger(
+            &profile,
+            &state,
+            &[observation(ToolBudgetClass::Write, "write:a", false)],
+            false,
+        );
+
+        assert!(evaluation.trigger.is_none());
+        assert_eq!(evaluation.next_state.last_checkpoint_reason, None);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use den_core::{config::Config, profile::BearProfile, DenError};
+use den_core::{config::Config, profile::BearProfile, DenError, ThinkingEffort};
 use den_protocol::{RuntimeEventStream, RuntimeStreamEvent};
 use futures::{Stream, TryStreamExt};
 use sqlx::PgPool;
@@ -484,6 +484,14 @@ impl Stream for LazyAgentStepStream {
 /// The prompt handler must return SSE headers before Bifrost accepts the chat/completions
 /// request; deferring the LLM call until the stream is polled avoids wedging client streams
 /// that wait on `POST /prompt` with no timeout.
+fn checkpoint_thinking_effort_for_session(session: &AgentLoopSession) -> Option<ThinkingEffort> {
+    if session.checkpoint_state.last_checkpoint_reason.is_none() {
+        return None;
+    }
+    let policy = session.agent_loop_control.profile.thinking;
+    policy.enabled.then_some(policy.checkpoint_turn_effort).flatten()
+}
+
 pub async fn run_agent_step_stream(
     llm: &LlmClient,
     session: &AgentLoopSession,
@@ -508,7 +516,7 @@ pub async fn run_agent_step_stream(
         tool_choice: None,
         temperature: None,
         max_tokens: None,
-        thinking_effort: None,
+        thinking_effort: checkpoint_thinking_effort_for_session(session),
         telemetry: Some(session.llm_telemetry()),
     };
     let budget = estimate_context_budget(
