@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 use crate::{
     agent_loop::{
-        KeyMemoryProjectionCacheKey, ResolvedAgentLoopControl, StrategyProfile, ToolCallBudgetLimits,
-        TurnBudgetPolicy, TurnBudgetState,
+        CheckpointState, KeyMemoryProjectionCacheKey, ResolvedAgentLoopControl, StrategyProfile,
+        ToolCallBudgetLimits, TurnBudgetPolicy, TurnBudgetState,
     },
     context_budget::AssembledTurnBudgetComponents,
     llm::{ChatMessage, LlmApiStyle, LlmRequestTelemetry, LlmToolDefinition},
@@ -41,6 +41,7 @@ pub struct AgentLoopSession {
     pub turn_budget: TurnBudgetPolicy,
     pub turn_budget_state: TurnBudgetState,
     pub agent_loop_control: ResolvedAgentLoopControl,
+    pub checkpoint_state: CheckpointState,
     pub strategy: StrategyProfile,
     pub stream_tokens: bool,
     pub key_memory_projection_cache_key: Option<KeyMemoryProjectionCacheKey>,
@@ -106,6 +107,7 @@ impl AgentLoopSession {
             "agent_loop_control": serde_json::to_value(&self.agent_loop_control).unwrap_or_else(|_| json!({
                 "level": self.agent_loop_control.level.as_str(),
             })),
+            "checkpoint_state": serde_json::to_value(&self.checkpoint_state).unwrap_or(Value::Null),
             "budgets": {
                 "turn": {
                     "max_wall_clock_ms": self.turn_budget.max_wall_clock_ms,

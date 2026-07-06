@@ -1101,6 +1101,7 @@ mod tests {
                 stance_override: None,
                 task_escalation: None,
             }),
+            checkpoint_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: true,
             key_memory_projection_cache_key: None,

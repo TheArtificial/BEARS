@@ -35,7 +35,7 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 use crate::{
     agent_loop::{
         agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
-        evaluate_turn_budget, projected_memory_session_diagnostic,
+        evaluate_checkpoint_trigger, evaluate_turn_budget, projected_memory_session_diagnostic,
         recalled_memory_session_diagnostic, record_approval_decision, resolve_agent_loop_control,
         run_agent_step_stream, tool_result_content_indicates_error, tool_signature_from_call,
         AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
@@ -702,6 +702,7 @@ async fn build_session(
         turn_budget: agent_loop_control.profile.budget,
         turn_budget_state: Default::default(),
         agent_loop_control,
+        checkpoint_state: Default::default(),
         strategy: profile.strategy,
         stream_tokens,
         key_memory_projection_cache_key,
@@ -1020,6 +1021,20 @@ fn budget_warning_runtime_event(warning: &TurnBudgetWarning) -> RuntimeStreamEve
     })
 }
 
+fn checkpoint_trigger_runtime_event(
+    trigger: &crate::agent_loop::CheckpointTrigger,
+) -> RuntimeStreamEvent {
+    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+        kind: "runtime_checkpoint_would_trigger".to_string(),
+        text: Some(trigger.message.clone()),
+        phase: Some("agent_loop_control".to_string()),
+        detail: Some(serde_json::json!({
+            "reason": trigger.reason,
+            "mode": "observe_only",
+        })),
+    })
+}
+
 fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarning) -> bool {
     if session.messages.last().is_some_and(|message| {
         message.role == "system" && message.content.as_deref() == Some(warning.model_message())
@@ -1283,6 +1298,12 @@ pub async fn continue_native_client_turn_event_stream(
         &prior_session.turn_budget_state,
         &observations,
     );
+    let checkpoint_evaluation = evaluate_checkpoint_trigger(
+        &prior_session.agent_loop_control.profile,
+        &prior_session.checkpoint_state,
+        &observations,
+        evaluation.warning.is_some(),
+    );
     let mut warning_applied = false;
     SESSION_STORE.update(&session_key, |session| {
         session.request_id = Some(request.request_id.to_string());
@@ -1292,6 +1313,7 @@ pub async fn continue_native_client_turn_event_stream(
             .or_else(|| session.run_id.clone());
         session.messages.extend(tool_messages.clone());
         session.turn_budget_state = evaluation.next_state.clone();
+        session.checkpoint_state = checkpoint_evaluation.next_state.clone();
         if let Some(warning) = evaluation.warning.as_ref() {
             warning_applied = apply_budget_warning(session, warning);
         }
@@ -1309,15 +1331,22 @@ pub async fn continue_native_client_turn_event_stream(
         profile,
     );
     let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
-    let stream = if warning_applied {
+    let mut prefix_events = Vec::new();
+    if warning_applied {
         let warning_event = evaluation
             .warning
             .as_ref()
             .map(budget_warning_runtime_event)
             .expect("warning_applied requires warning payload");
-        Box::pin(stream::iter(vec![Ok(warning_event)]).chain(stream)) as RuntimeEventStream
-    } else {
+        prefix_events.push(Ok(warning_event));
+    }
+    if let Some(trigger) = checkpoint_evaluation.trigger.as_ref() {
+        prefix_events.push(Ok(checkpoint_trigger_runtime_event(trigger)));
+    }
+    let stream = if prefix_events.is_empty() {
         stream
+    } else {
+        Box::pin(stream::iter(prefix_events).chain(stream)) as RuntimeEventStream
     };
     let stream = wrap_session_stream(
         stream,
@@ -1432,6 +1461,7 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            checkpoint_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1537,6 +1567,7 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            checkpoint_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1646,6 +1677,7 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            checkpoint_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1804,6 +1836,7 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            checkpoint_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1954,6 +1987,7 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            checkpoint_state: Default::default(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
