@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use den_core::{
+    client_tools::client_tool_display_for_provider,
+    tools::descriptor::den_tool_display_json_for_provider,
+};
 use den_protocol::{
     RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
 };
@@ -134,6 +138,59 @@ pub struct JsonRpcNotification<T> {
     pub params: T,
 }
 
+pub fn tool_call_wire(
+    tool_call_id: &str,
+    tool_name: &str,
+    title: Option<&str>,
+    kind: &str,
+    arguments: &Value,
+) -> Value {
+    let display = den_tool_display_json_for_provider(tool_name, arguments)
+        .unwrap_or_else(|| client_tool_display_for_provider(tool_name, arguments));
+    json!({
+        "id": tool_call_id,
+        "name": tool_name,
+        "title": title,
+        "kind": kind,
+        "arguments": arguments,
+        "display": display,
+    })
+}
+
+pub fn tool_call_finish_wire(
+    tool_call_id: &str,
+    tool_name: Option<&str>,
+    status: &str,
+    summary: Option<&str>,
+    error_message: Option<&str>,
+    content: Option<&str>,
+    structured_content: Option<Value>,
+    error: Option<Value>,
+    compacted: Option<Value>,
+) -> Value {
+    // ponytail: content preview is deliberately simple; upgrade by sharing the
+    // client-tool result compactor's summary extraction if cards need richer text.
+    let summary = summary
+        .map(str::to_string)
+        .or_else(|| error_message.map(str::to_string))
+        .or_else(|| content.map(|text| text.chars().take(160).collect::<String>()));
+    json!({
+        "tool_call_id": tool_call_id,
+        "tool_name": tool_name,
+        "tool_call": {
+            "id": tool_call_id,
+            "name": tool_name,
+        },
+        "status": status,
+        "summary": summary,
+        "error_message": error_message,
+        "content": content,
+        "structured_content": structured_content,
+        "error": error,
+        "compacted": compacted,
+    })
+}
+
 pub fn bearwire_event_to_json_rpc_notification(
     event: BearWireEvent,
 ) -> JsonRpcNotification<BearWireEvent> {
@@ -248,18 +305,21 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 .map(str::trim)
                 .is_some_and(|id| !id.is_empty());
             let effective_kind = kind.unwrap_or_else(|| "function".to_string());
+            let tool_call = tool_call_wire(
+                &tool_call_id,
+                &tool_name,
+                title.as_deref(),
+                &effective_kind,
+                &arguments,
+            );
             let event = if approval_required && has_permission_id {
                 BearWireEvent::ephemeral(
                     "client.waiting",
                     json!({
                         "expected_client_method": "client.permission.result",
-                        "tool_call": {
-                            "id": tool_call_id,
-                            "name": tool_name,
-                            "title": title,
-                            "kind": effective_kind,
-                            "arguments": arguments,
-                        },
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "tool_call": tool_call,
                         "permission": {
                             "id": approval_request_id,
                             "reason": approval_reason,
@@ -277,6 +337,7 @@ pub fn runtime_semantic_event_to_bearwire_events(
                         "title": title,
                         "kind": effective_kind,
                         "arguments": arguments,
+                        "tool_call": tool_call,
                         "approval_required": false,
                         "approval_request_id": approval_request_id,
                         "reason": approval_reason,
@@ -303,13 +364,17 @@ pub fn runtime_semantic_event_to_bearwire_events(
             };
             vec![BearWireEvent::ephemeral(
                 event_type,
-                json!({
-                    "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
-                    "status": status.as_str(),
-                    "summary": summary,
-                    "error_message": error_message,
-                }),
+                tool_call_finish_wire(
+                    &tool_call_id,
+                    Some(&tool_name),
+                    status.as_str(),
+                    summary.as_deref(),
+                    error_message.as_deref(),
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
             )
             .with_tool_call(tool_call_id)]
         }

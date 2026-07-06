@@ -2,7 +2,8 @@ use crate::{
     gateway_events::GatewayEvent,
     runtime::bearwire_projection::{
         project_runtime_event_lossy, runtime_semantic_event_to_bearwire_gateway_events,
-        runtime_stream_event_to_bearwire_sse, RuntimeEventProjectionOutcome,
+        runtime_stream_event_to_bearwire_sse, wire::runtime_stream_event_to_bearwire_events,
+        RuntimeEventProjectionOutcome,
     },
 };
 use den_protocol::{
@@ -108,6 +109,60 @@ fn semantic_tool_call_projects_to_tool_request_gateway_event() {
             && *approval_required
             && approval_request_id.as_deref() == Some("approval-1")
     ));
+}
+
+#[test]
+fn tool_call_requested_bearwire_event_has_canonical_tool_call_payload() {
+    let mapped = runtime_stream_event_to_bearwire_events(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::ToolCallRequested {
+            tool_call_id: "call-1".to_string(),
+            tool_name: "fs_read_text_file".to_string(),
+            title: Some("Read file".to_string()),
+            kind: Some("read".to_string()),
+            arguments: serde_json::json!({"path":"/tmp/demo"}),
+            approval_request_id: None,
+            approval_required: false,
+            approval_reason: None,
+            run_id: None,
+        },
+    ));
+
+    let event = mapped
+        .iter()
+        .find(|event| event.event_type == "tool_call.requested")
+        .expect("tool_call.requested event");
+    assert_eq!(event.data["tool_call_id"], "call-1");
+    assert_eq!(event.data["tool_name"], "fs_read_text_file");
+    assert_eq!(event.data["arguments"]["path"], "/tmp/demo");
+    assert_eq!(event.data["tool_call"]["id"], "call-1");
+    assert_eq!(event.data["tool_call"]["name"], "fs_read_text_file");
+    assert_eq!(event.data["tool_call"]["arguments"]["path"], "/tmp/demo");
+    assert!(event.data["tool_call"]["display"].is_object());
+}
+
+#[test]
+fn tool_call_finished_bearwire_event_has_stable_finish_envelope() {
+    let mapped = runtime_stream_event_to_bearwire_events(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::ToolCallFinished {
+            tool_call_id: "call-1".to_string(),
+            tool_name: "fs_read_text_file".to_string(),
+            status: ToolCallFinishStatus::Ok,
+            summary: Some("Read 12 lines".to_string()),
+            error_message: None,
+        },
+    ));
+
+    let event = mapped
+        .iter()
+        .find(|event| event.event_type == "tool_call.completed")
+        .expect("tool_call.completed event");
+    assert_eq!(event.data["tool_call_id"], "call-1");
+    assert_eq!(event.data["tool_name"], "fs_read_text_file");
+    assert_eq!(event.data["tool_call"]["id"], "call-1");
+    assert_eq!(event.data["tool_call"]["name"], "fs_read_text_file");
+    assert_eq!(event.data["status"], "ok");
+    assert_eq!(event.data["summary"], "Read 12 lines");
+    assert!(event.data.get("compacted").is_some());
 }
 
 #[test]
