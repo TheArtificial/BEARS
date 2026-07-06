@@ -1018,8 +1018,8 @@ mod tests {
 
     use crate::{
         agent_loop::{
-            NativeToolDispatchMode, PostMutationVerificationWindow, StrategyProfile,
-            ToolCallBudgetLimits, TurnBudgetPolicy,
+            resolve_agent_loop_control, AgentLoopControlResolutionInput, NativeToolDispatchMode,
+            PostMutationVerificationWindow, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
         },
         llm::{ChatMessage, ChatToolCall, ChatToolCallFunction},
     };
@@ -1094,6 +1094,13 @@ mod tests {
                 }),
             },
             turn_budget_state: Default::default(),
+            agent_loop_control: resolve_agent_loop_control(AgentLoopControlResolutionInput {
+                model_handle: Some("openai/test"),
+                model_default: None,
+                bear_override: None,
+                stance_override: None,
+                task_escalation: None,
+            }),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: true,
             key_memory_projection_cache_key: None,

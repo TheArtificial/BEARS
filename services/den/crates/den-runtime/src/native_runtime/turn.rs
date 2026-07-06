@@ -36,9 +36,10 @@ use crate::{
     agent_loop::{
         agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
         evaluate_turn_budget, projected_memory_session_diagnostic,
-        recalled_memory_session_diagnostic, record_approval_decision, run_agent_step_stream,
-        tool_result_content_indicates_error, tool_signature_from_call, AgentLoopSession,
-        AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
+        recalled_memory_session_diagnostic, record_approval_decision, resolve_agent_loop_control,
+        run_agent_step_stream, tool_result_content_indicates_error, tool_signature_from_call,
+        AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
+        AgentStepOverflowContext, AssembleTurnContext,
         NativeToolDispatchMode, SessionTrackingStream, ToolContinuationObservation,
         TurnBudgetStopReason, TurnBudgetWarning,
     },
@@ -652,6 +653,23 @@ async fn build_session(
         &deps.config.den_secret_encryption_key,
     )
     .await?;
+    let agent_loop_control = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+        model_handle: Some(&model),
+        model_default: None,
+        bear_override: None,
+        stance_override: None,
+        task_escalation: None,
+    });
+    tracing::info!(
+        bear_id = %bear_id,
+        profile = %profile.profile.as_str(),
+        conversation_id,
+        client_session_id,
+        model = %model,
+        agent_loop_control_level = %agent_loop_control.level.as_str(),
+        agent_loop_control_source = ?agent_loop_control.source,
+        "resolved native agent loop control profile"
+    );
     let session = AgentLoopSession {
         session_key,
         bear_id,
@@ -679,6 +697,7 @@ async fn build_session(
         step: 0,
         turn_budget: profile.turn_budget,
         turn_budget_state: Default::default(),
+        agent_loop_control,
         strategy: profile.strategy,
         stream_tokens,
         key_memory_projection_cache_key,
@@ -1322,6 +1341,7 @@ pub async fn continue_native_client_turn_event_stream(
 mod tests {
     use super::*;
     use crate::agent_loop::{
+        resolve_agent_loop_control, AgentLoopControlResolutionInput,
         PostMutationVerificationWindow, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
     };
 
@@ -1353,6 +1373,16 @@ mod tests {
                 replenish_search: 1,
             }),
         }
+    }
+
+    fn test_agent_loop_control() -> crate::agent_loop::ResolvedAgentLoopControl {
+        resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/test"),
+            model_default: None,
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+        })
     }
 
     #[test]
@@ -1397,6 +1427,7 @@ mod tests {
             step: 0,
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1501,6 +1532,7 @@ mod tests {
             step: 8,
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1609,6 +1641,7 @@ mod tests {
             step: 1,
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1766,6 +1799,7 @@ mod tests {
             step: 1,
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
@@ -1915,6 +1949,7 @@ mod tests {
             step: 1,
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
