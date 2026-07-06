@@ -811,31 +811,47 @@ async fn fetch_events(
 
 fn bearwire_tool_event_to_legacy_tool_request(event: &Value, approval_required: bool) -> Value {
     let data = event.get("data").unwrap_or(&Value::Null);
-    let tool_call_id = data
-        .get("tool_call_id")
+    let tool_call = data.get("tool_call").unwrap_or(&Value::Null);
+    let tool_call_id = tool_call
+        .get("id")
+        .or_else(|| data.get("tool_call_id"))
         .and_then(Value::as_str)
+        .or_else(|| resource_ref_id(event, "tool_call"))
         .unwrap_or("unknown");
-    let tool_name = data
-        .get("tool_name")
+    let tool_name = tool_call
+        .get("name")
+        .or_else(|| data.get("tool_name"))
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     let approval_request_id = data
         .get("approval_request_id")
         .and_then(Value::as_str)
         .or_else(|| resource_ref_id(event, "permission_request"));
-    json!({
+    let mut legacy = json!({
         "type": "tool_request",
         "run_id": event.get("run_id").and_then(Value::as_str),
         "tool_call_id": tool_call_id,
         "tool_name": tool_name,
-        "title": data.get("title").cloned().unwrap_or(Value::Null),
-        "args": data.get("arguments").cloned().unwrap_or_else(|| json!({})),
+        "title": tool_call
+            .get("title")
+            .or_else(|| data.get("title"))
+            .cloned()
+            .unwrap_or(Value::Null),
+        "args": tool_call
+            .get("arguments")
+            .or_else(|| data.get("arguments"))
+            .cloned()
+            .unwrap_or_else(|| json!({})),
         "approval_request_id": approval_request_id,
         "approval": {
             "required": approval_required,
             "reason": data.get("reason").cloned().unwrap_or(Value::Null),
         },
-    })
+    });
+    if let Some(display) = tool_call.get("display").or_else(|| data.get("display")) {
+        legacy["display"] = display.clone();
+    }
+    legacy
 }
 
 fn bearwire_session_info_update_to_legacy(event: &Value) -> Value {
@@ -988,14 +1004,17 @@ async fn handle_bearwire_tool_call_finished_event(
     failed: bool,
 ) -> Result<()> {
     let data = event.get("data").unwrap_or(&Value::Null);
-    let tool_call_id = data
-        .get("tool_call_id")
+    let tool_call = data.get("tool_call").unwrap_or(&Value::Null);
+    let tool_call_id = tool_call
+        .get("id")
+        .or_else(|| data.get("tool_call_id"))
         .and_then(Value::as_str)
         .or_else(|| resource_ref_id(event, "tool_call"))
         .unwrap_or("unknown");
     let cached = shared_state.tool_tasks.get(session_id, tool_call_id).await;
-    let tool_name = data
-        .get("tool_name")
+    let tool_name = tool_call
+        .get("name")
+        .or_else(|| data.get("tool_name"))
         .and_then(Value::as_str)
         .filter(|name| !crate::is_placeholder_tool_name(name))
         .map(str::to_string)
@@ -1409,7 +1428,43 @@ mod tests {
 
         assert_eq!(legacy["type"], "tool_request");
         assert_eq!(legacy["tool_name"], "fs_read_text_file");
+        assert_eq!(legacy["args"]["path"], "/workspace/README.md");
         assert_eq!(legacy["approval"]["required"], false);
+    }
+
+    #[test]
+    fn bearwire_requested_tool_prefers_canonical_tool_call_shape() {
+        let event = json!({
+            "type": "tool_call.requested",
+            "run_id": "run-1",
+            "data": {
+                "tool_call_id": "legacy-call",
+                "tool_name": "legacy_tool",
+                "arguments": { "path": "/legacy" },
+                "display": { "title": "Legacy title" },
+                "tool_call": {
+                    "id": "call-1",
+                    "name": "fs_read_text_file",
+                    "title": "Read file",
+                    "kind": "function",
+                    "arguments": { "path": "/workspace/README.md" },
+                    "display": {
+                        "title": "Read /workspace/README.md",
+                        "progress": "Reading file"
+                    }
+                }
+            }
+        });
+
+        let legacy = bearwire_tool_event_to_legacy_tool_request(&event, false);
+
+        assert_eq!(legacy["type"], "tool_request");
+        assert_eq!(legacy["tool_call_id"], "call-1");
+        assert_eq!(legacy["tool_name"], "fs_read_text_file");
+        assert_eq!(legacy["title"], "Read file");
+        assert_eq!(legacy["args"]["path"], "/workspace/README.md");
+        assert_eq!(legacy["display"]["title"], "Read /workspace/README.md");
+        assert_eq!(legacy["display"]["progress"], "Reading file");
     }
 
     #[test]
