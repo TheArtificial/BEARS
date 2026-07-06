@@ -660,6 +660,10 @@ async fn build_session(
         stance_override: None,
         task_escalation: None,
     });
+    let agent_loop_control = crate::agent_loop::ResolvedAgentLoopControl {
+        profile: agent_loop_control.profile.with_budget(profile.turn_budget),
+        ..agent_loop_control
+    };
     tracing::info!(
         bear_id = %bear_id,
         profile = %profile.profile.as_str(),
@@ -695,7 +699,7 @@ async fn build_session(
         bifrost_virtual_key,
         api_style,
         step: 0,
-        turn_budget: profile.turn_budget,
+        turn_budget: agent_loop_control.profile.budget,
         turn_budget_state: Default::default(),
         agent_loop_control,
         strategy: profile.strategy,

@@ -199,6 +199,12 @@ impl AgentLoopControlProfile {
         }
     }
 
+    pub fn with_budget(mut self, budget: TurnBudgetPolicy) -> Self {
+        self.budget = budget;
+        self.ko.max_same_tool_signature_repeats = budget.max_same_tool_signature_repeats;
+        self
+    }
+
     fn new(
         level: AgentLoopControlLevel,
         budget: TurnBudgetPolicy,
@@ -336,6 +342,32 @@ mod tests {
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Strict);
         assert_eq!(resolved.source, AgentLoopControlSource::TaskEscalation);
+    }
+
+    #[test]
+    fn profile_budget_can_be_overlaid_without_losing_level_policy() {
+        let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
+        let replacement_budget = budget(
+            900_000,
+            128,
+            limits(160, 48, 32, 20, 24, 24, 6, 24),
+            4,
+            3,
+            Some((8, 4)),
+        );
+
+        let overlaid = profile.with_budget(replacement_budget);
+
+        assert_eq!(overlaid.budget, replacement_budget);
+        assert_eq!(overlaid.ko.max_same_tool_signature_repeats, 3);
+        assert_eq!(
+            overlaid.checkpoints.exploration_without_mutation_threshold,
+            Some(3)
+        );
+        assert_eq!(
+            overlaid.thinking.checkpoint_turn_effort,
+            Some(ThinkingEffort::High)
+        );
     }
 
     #[test]
