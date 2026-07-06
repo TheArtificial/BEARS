@@ -55,6 +55,7 @@ use crate::tools::{
         DEN_TASK_LISTS_UPDATE_LEGACY_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
         DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER,
         DEN_TASK_LIST_SYNC, DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_REJECT_INTENT, DEN_TASK_UPDATE,
+        DEN_TASK_UPDATE_CURRENT_STATUS, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER,
         DEN_TASK_UPDATE_PROVIDER, DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ,
         DEN_TOOL_OUTPUT_READ_PROVIDER, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
         DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_FETCH_PROVIDER, DEN_WEB_SEARCH,
@@ -137,6 +138,9 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_TASK_CREATE => return DEN_TASK_CREATE_PROVIDER.to_string(),
         DEN_TASK_LIST => return DEN_TASK_LIST_PROVIDER.to_string(),
         DEN_TASK_UPDATE => return DEN_TASK_UPDATE_PROVIDER.to_string(),
+        DEN_TASK_UPDATE_CURRENT_STATUS => {
+            return DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER.to_string()
+        }
         DEN_TASK_LIST_SYNC => return DEN_TASK_LIST_SYNC_PROVIDER.to_string(),
         DEN_TASK_LIST_CHECKOUT => return DEN_TASK_LIST_CHECKOUT_PROVIDER.to_string(),
         DEN_PLAN_MODE_ENTER => return DEN_PLAN_MODE_ENTER_PROVIDER.to_string(),
@@ -519,7 +523,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_UPDATE,
             "Update task list",
-            "Create or update the visible task list for the current session. Prefer this whenever you need to remember 3 or more things to do, work has multiple steps, the user asks to create/show/update a task list, or visible progress would help. If you are mentally tracking 3+ pending tasks, put them in this visible task list instead of keeping them only in prose. A task list is active working state, not semantic memory; do not use memory_write_entry for task lists. Items may be local-only or linked to Docket-backed work through source refs. Items require title and status; Den auto-generates stable small slug IDs when id is omitted. Keep at most one item in_progress. Task status is factual, not aspirational: mark an item completed only after you actually performed the work or verified it was already done in this conversation/session, and keep items pending/in_progress/blocked when work remains. For completed non-trivial items, strongly prefer a concise summary of what was actually done or observed. Do not mark a task complete merely because you wrote, planned, or summarized that it should be done. Call session_info first if current session/work-surface scope is unclear.",
+            "Deprecated compatibility tool: update_task_list no longer writes session-local task lists. For new durable work use create_job. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status, which infers the active run. Do not call this tool to create visible progress UI.",
             "bear.activity",
             &["task_list.write"],
             TASK_LIST_UPDATE_PROFILES,
@@ -608,12 +612,21 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_TASK_UPDATE,
-            "Update Docket task",
-            "Update a Docket task definition and/or its run-scoped state. Title/body/completion_criteria/hierarchy changes update the durable task definition; status/result fields update bear_task_run_state for the provided run_id. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not execute task bodies.",
+            "Update Docket task definition",
+            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort/assignment. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, in progress, done, blocked, or cancelled without passing a run_id.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
-            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"description":"Replacement concrete criteria that define when this task is done."},"parent_task_id":{"type":["string","null"],"format":"uuid"},"clear_parent_task_id":{"type":"boolean"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"difficulty":{"enum":["trivial","moderate","hard","unknown",null]},"effort_hint":{"enum":["low","medium","high",null]},"assigned_to_role":{"enum":["chat","pair","curate","work","watch",null]},"run_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"description":"Replacement concrete criteria that define when this task is done."},"parent_task_id":{"type":["string","null"],"format":"uuid"},"clear_parent_task_id":{"type":"boolean"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"difficulty":{"enum":["trivial","moderate","hard","unknown",null]},"effort_hint":{"enum":["low","medium","high",null]},"assigned_to_role":{"enum":["chat","pair","curate","work","watch",null]}} ,"required":["task_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_UPDATE_CURRENT_STATUS,
+            "Update current task status",
+            "Update a Docket task's status/results in the current active Docket run for this session. The tool infers run_id from active job/run context; do not pass run_id. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not edit durable task definitions or execute task bodies.",
+            "bear.docket",
+            &["docket.task.write"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id","status"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LIST_CHECKOUT,
@@ -793,6 +806,7 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_TASK_CREATE,
         DEN_TASK_LIST,
         DEN_TASK_UPDATE,
+        DEN_TASK_UPDATE_CURRENT_STATUS,
         DEN_TASK_LIST_SYNC,
         DEN_TASK_LIST_CHECKOUT,
     ]
@@ -899,6 +913,7 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
         | DEN_JOB_EVALUATE_CRITERION
         | DEN_TASK_CREATE
         | DEN_TASK_UPDATE
+        | DEN_TASK_UPDATE_CURRENT_STATUS
         | DEN_TASK_LIST_SYNC
         | DEN_TASK_LIST_CHECKOUT => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,

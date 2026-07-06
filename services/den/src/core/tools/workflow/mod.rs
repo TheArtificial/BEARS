@@ -7,16 +7,17 @@ use den_core::tools::constants::{
     DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
     DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
     DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
+    DEN_TASK_UPDATE_CURRENT_STATUS,
 };
 use den_docket::{
     self as work_plans, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
-    DocketCriterionStatus, DocketEffortHint, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobExecuteRequest, DocketJobListFilter, DocketJobStatus, DocketJobUpdate, DocketService,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
-    DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
-    DocketTaskStatus, DocketTaskUpdate, DocketValidationError, PgDocketService,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest,
-    TaskListVisibility,
+    DocketCriterionStatus, DocketEffortHint, DocketExecutionLookup, DocketJobCreate,
+    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter, DocketJobStatus,
+    DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
+    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus, DocketTaskUpdate,
+    DocketValidationError, PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource,
+    TaskListProjection, TaskListSyncRequest, TaskListVisibility,
 };
 
 use crate::{
@@ -43,6 +44,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_TASK_CREATE
             | DEN_TASK_LIST
             | DEN_TASK_UPDATE
+            | DEN_TASK_UPDATE_CURRENT_STATUS
             | DEN_TASK_LIST_SYNC
             | DEN_TASK_LIST_CHECKOUT
     )
@@ -194,6 +196,16 @@ pub(crate) struct DocketTaskUpdateArguments {
     pub(crate) run_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) status: Option<DocketTaskStatus>,
+    #[serde(default)]
+    pub(crate) result_refs: Option<Value>,
+    #[serde(default)]
+    pub(crate) result_summary: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketCurrentTaskStatusArguments {
+    pub(crate) task_id: Uuid,
+    pub(crate) status: DocketTaskStatus,
     #[serde(default)]
     pub(crate) result_refs: Option<Value>,
     #[serde(default)]
@@ -606,21 +618,16 @@ pub(crate) async fn update_task(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskUpdateArguments = serde_json::from_value(arguments)?;
-    let run_state = match (args.run_id, args.status) {
-        (Some(run_id), Some(status)) => Some(DocketTaskRunStateUpdate {
-            run_id,
-            status,
-            result_refs: args.result_refs,
-            result_summary: args.result_summary,
-        }),
-        (None, Some(_)) => {
-            return Err(DenError::ValidationError(
-                "update_task status requires run_id".to_string(),
-            )
-            .into());
-        }
-        _ => None,
-    };
+    if args.run_id.is_some()
+        || args.status.is_some()
+        || args.result_refs.is_some()
+        || args.result_summary.is_some()
+    {
+        return Err(DenError::ValidationError(
+            "update_task only edits durable task definition fields; use update_current_task_status for run-scoped status/results in the active run".to_string(),
+        )
+        .into());
+    }
     let task = PgDocketService::from_pool(pool)
         .update_task(DocketTaskUpdate {
             bear_id: context.bear_id,
@@ -643,13 +650,71 @@ pub(crate) async fn update_task(
                 effort_hint: args.effort_hint.map(Some),
                 assigned_to_role: args.assigned_to_role.map(Some),
             },
-            run_state,
+            run_state: None,
         })
         .await?;
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "task": task,
+        "notes": [
+            "Updated durable Docket task definition. Use update_current_task_status for active-run status/results."
+        ]
+    }))
+}
+
+pub(crate) async fn update_current_task_status(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketCurrentTaskStatusArguments = serde_json::from_value(arguments)?;
+    let lookup = DocketExecutionLookup {
+        session_id: Some(context.session_id.clone()),
+        source_conversation_id: clean_optional(&context.conversation_id),
+        source_client_session_id: context.client_session_id.clone(),
+    };
+    let Some(execution) = PgDocketService::from_pool(pool)
+        .get_active_execution_session(context.bear_id, role, lookup)
+        .await?
+    else {
+        return Err(DenError::ValidationError(
+            "update_current_task_status needs an active Docket run for this session; call execute_job or checkout_task_list for the job first".to_string(),
+        )
+        .into());
+    };
+    let task = PgDocketService::from_pool(pool)
+        .update_task(DocketTaskUpdate {
+            bear_id: context.bear_id,
+            task_id: args.task_id,
+            actor_role: role,
+            actor_user_id: Some(context.user_id),
+            actor_agent_id: clean_optional(&context.binding_id),
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id: execution.run_id,
+                status: args.status,
+                result_refs: args.result_refs,
+                result_summary: args.result_summary,
+            }),
+        })
+        .await?;
+    let task_list = PgDocketService::from_pool(pool)
+        .get_job(context.bear_id, execution.job_id)
+        .await?
+        .map(|job| den_docket::task_list_projection_from_docket_job(&job, None));
+    Ok(json!({
+        "domain": "docket",
+        "bear_id": context.bear_id,
+        "task": task,
+        "docket": {
+            "active_job_id": execution.job_id,
+            "active_run_id": execution.run_id,
+            "active_task_id": execution.task_id,
+            "source": "docket_execution_session"
+        },
+        "task_list": task_list,
     }))
 }
 

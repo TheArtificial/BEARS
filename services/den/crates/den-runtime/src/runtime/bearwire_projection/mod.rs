@@ -140,6 +140,16 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
                     meta: None,
                 }];
             }
+            if kind == "plan_update" {
+                if let Some(entries) = detail
+                    .as_ref()
+                    .and_then(|value| value.get("entries"))
+                    .and_then(|value| value.as_array())
+                    .cloned()
+                {
+                    return vec![GatewayEvent::PlanUpdateJson { entries }];
+                }
+            }
             vec![GatewayEvent::StatusText {
                 text: text.unwrap_or(kind),
             }]

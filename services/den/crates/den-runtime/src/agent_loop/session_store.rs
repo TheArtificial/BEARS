@@ -139,6 +139,7 @@ impl AgentLoopSession {
                     "inactive"
                 },
             },
+            "docket": docket_context_json(self.active_activity_plan.as_ref()),
             "last_budget_advisory": last_system_advisory(&self.messages, "Budget advisory:"),
             "last_task_focus_advisory": last_system_advisory(&self.messages, "You are in autonomous implementation mode."),
         })
@@ -151,6 +152,31 @@ fn pending_tool_call_count(messages: &[ChatMessage]) -> usize {
         .rev()
         .find_map(|message| message.tool_calls.as_ref().map(Vec::len))
         .unwrap_or(0)
+}
+
+fn docket_context_json(plan: Option<&TaskListProjection>) -> Value {
+    let active_task = plan
+        .and_then(|plan| plan.current_item.as_ref())
+        .or_else(|| {
+            plan.and_then(|plan| {
+                plan.items.iter().find(|item| {
+                    matches!(
+                        item.status,
+                        den_docket::TaskListItemStatus::Pending
+                            | den_docket::TaskListItemStatus::InProgress
+                    )
+                })
+            })
+        });
+    json!({
+        "active_job_id": plan
+            .and_then(|plan| plan.source_ref.docket_job_id.clone())
+            .or_else(|| plan.map(|plan| plan.id.to_string())),
+        "active_run_id": Value::Null,
+        "active_task_id": active_task.and_then(|item| item.source_ref.docket_task_id.clone()),
+        "active_task_title": active_task.map(|item| item.title.clone()),
+        "source": if plan.is_some() { "task_focus_projection" } else { "none" },
+    })
 }
 
 fn last_system_advisory(messages: &[ChatMessage], prefix: &str) -> Option<Value> {

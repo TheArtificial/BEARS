@@ -354,6 +354,13 @@ impl SessionTrackingStream {
         let entries = value
             .get("plan")
             .and_then(|plan| plan.get("items"))
+            .or_else(|| value.get("task_list").and_then(|plan| plan.get("items")))
+            .or_else(|| {
+                value
+                    .get("sync")
+                    .and_then(|sync| sync.get("task_list"))
+                    .and_then(|plan| plan.get("items"))
+            })
             .and_then(|items| items.as_array())?
             .clone();
         if entries.is_empty() {
