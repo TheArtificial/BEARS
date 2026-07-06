@@ -23,7 +23,8 @@ pub fn runtime_semantic_to_bear_channel_events(
         RuntimeSemanticEvent::AssistantTextDelta { text } => {
             vec![serde_json::json!({ "type": "assistant_delta", "text": text })]
         }
-        RuntimeSemanticEvent::StatusText { text } => {
+        RuntimeSemanticEvent::ReasoningTextDelta { text }
+        | RuntimeSemanticEvent::StatusText { text } => {
             vec![serde_json::json!({ "type": "reasoning_delta", "text": text })]
         }
         RuntimeSemanticEvent::ToolCallFinished {
