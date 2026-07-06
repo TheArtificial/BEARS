@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use futures_util::StreamExt;
 use reqwest::header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::time::{sleep, Duration, Instant};
 use uuid::Uuid;
@@ -884,6 +885,31 @@ fn bearwire_run_failed_stderr_context(event: &Value) -> Option<String> {
     Some(truncate_for_log(&context.to_string(), 1200))
 }
 
+#[derive(Debug, Deserialize)]
+struct BearWireToolCallCard {
+    id: String,
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<Value>,
+    #[serde(default)]
+    display: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BearWireToolCallFinishedData {
+    tool_call: BearWireToolCallCard,
+}
+
+impl BearWireToolCallFinishedData {
+    fn parse(event: &Value) -> Result<Self> {
+        let data = event
+            .get("data")
+            .cloned()
+            .ok_or_else(|| anyhow!("BearWire tool completion missing data"))?;
+        serde_json::from_value(data).context("parse canonical BearWire tool completion data")
+    }
+}
+
 async fn handle_bearwire_tool_call_finished_event(
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -891,20 +917,21 @@ async fn handle_bearwire_tool_call_finished_event(
     failed: bool,
 ) -> Result<()> {
     let data = event.get("data").unwrap_or(&Value::Null);
-    let lookup_tool_call_id = data
-        .pointer("/tool_call/id")
-        .and_then(Value::as_str)
-        .or_else(|| data.get("tool_call_id").and_then(Value::as_str))
-        .or_else(|| resource_ref_id(event, "tool_call"))
-        .unwrap_or("unknown");
+    let canonical = BearWireToolCallFinishedData::parse(event)?;
+    let lookup_tool_call_id = canonical.tool_call.id.as_str();
     let cached = shared_state
         .tool_tasks
         .get(session_id, lookup_tool_call_id)
         .await;
-    let (tool_call_id, tool_name) = bearwire_finished_tool_identity(
-        event,
-        cached.as_ref().map(|record| record.tool_name.as_str()),
-    );
+    let tool_call_id = canonical.tool_call.id;
+    let tool_name = canonical
+        .tool_call
+        .name
+        .as_deref()
+        .filter(|name| !crate::is_placeholder_tool_name(name))
+        .map(str::to_string)
+        .or_else(|| cached.as_ref().map(|record| record.tool_name.clone()))
+        .ok_or_else(|| anyhow!("canonical BearWire tool completion missing tool_call.name"))?;
     let summary = tool_call_finished_summary(data, &tool_name, failed);
     let status = if failed { "failed" } else { "completed" };
     let mut projection_event = json!({
@@ -918,16 +945,12 @@ async fn handle_bearwire_tool_call_finished_event(
     });
     if let Some(args) = cached
         .and_then(|record| record.input_args)
-        .or_else(|| data.pointer("/tool_call/arguments").cloned())
-        .or_else(|| data.get("arguments").cloned())
+        .or(canonical.tool_call.arguments)
     {
         projection_event["data"]["tool_call"]["arguments"] = args;
     }
-    if let Some(display) = data
-        .pointer("/tool_call/display")
-        .or_else(|| data.get("display"))
-    {
-        projection_event["data"]["tool_call"]["display"] = display.clone();
+    if let Some(display) = canonical.tool_call.display {
+        projection_event["data"]["tool_call"]["display"] = display;
     }
     send_tool_call_update(
         session_id,
@@ -945,30 +968,6 @@ async fn handle_bearwire_tool_call_finished_event(
         },
     )
     .await
-}
-
-fn bearwire_finished_tool_identity(
-    event: &Value,
-    cached_tool_name: Option<&str>,
-) -> (String, String) {
-    let data = event.get("data").unwrap_or(&Value::Null);
-    let tool_call = data.get("tool_call").unwrap_or(&Value::Null);
-    let tool_call_id = tool_call
-        .get("id")
-        .or_else(|| data.get("tool_call_id"))
-        .and_then(Value::as_str)
-        .or_else(|| resource_ref_id(event, "tool_call"))
-        .unwrap_or("unknown")
-        .to_string();
-    let tool_name = tool_call
-        .get("name")
-        .or_else(|| data.get("tool_name"))
-        .and_then(Value::as_str)
-        .filter(|name| !crate::is_placeholder_tool_name(name))
-        .map(str::to_string)
-        .or_else(|| cached_tool_name.map(str::to_string))
-        .unwrap_or_else(|| "tool".to_string());
-    (tool_call_id, tool_name)
 }
 
 fn resource_ref_id<'a>(event: &'a Value, kind: &str) -> Option<&'a str> {
@@ -1340,11 +1339,14 @@ mod tests {
             }
         });
 
-        let (tool_call_id, tool_name) =
-            bearwire_finished_tool_identity(&event, Some("cached_tool"));
+        let parsed = BearWireToolCallFinishedData::parse(&event).unwrap();
 
-        assert_eq!(tool_call_id, "call-1");
-        assert_eq!(tool_name, "fs_read_text_file");
+        assert_eq!(parsed.tool_call.id, "call-1");
+        assert_eq!(parsed.tool_call.name.as_deref(), Some("fs_read_text_file"));
+        assert_eq!(
+            parsed.tool_call.arguments.as_ref().unwrap()["path"],
+            "/workspace/README.md"
+        );
     }
 
     #[test]

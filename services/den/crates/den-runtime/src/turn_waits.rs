@@ -363,8 +363,8 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         input.arguments,
     );
     let display_title = tool_call
-        .get("display")
-        .and_then(|display| display.get("title"))
+        .display
+        .get("title")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|title| !title.is_empty())
@@ -394,7 +394,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
                 "tool_call_id": input.tool_call_id,
                 "tool_name": input.tool_name,
                 "title": display_title,
-                "display": tool_call.get("display").cloned().unwrap_or(Value::Null),
+                "display": tool_call.display.clone(),
                 "kind": effective_kind,
                 "arguments": input.arguments,
                 "tool_call": tool_call,

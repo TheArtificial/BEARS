@@ -138,23 +138,55 @@ pub struct JsonRpcNotification<T> {
     pub params: T,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallWire {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub kind: String,
+    pub arguments: Value,
+    pub display: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallRefWire {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallFinishWire {
+    pub tool_call_id: String,
+    pub tool_name: Option<String>,
+    pub tool_call: ToolCallRefWire,
+    pub status: String,
+    pub summary: Option<String>,
+    pub error_message: Option<String>,
+    pub content: Option<String>,
+    pub structured_content: Option<Value>,
+    pub error: Option<Value>,
+    pub compacted: Option<Value>,
+}
+
 pub fn tool_call_wire(
     tool_call_id: &str,
     tool_name: &str,
     title: Option<&str>,
     kind: &str,
     arguments: &Value,
-) -> Value {
+) -> ToolCallWire {
     let display = den_tool_display_json_for_provider(tool_name, arguments)
         .unwrap_or_else(|| client_tool_display_for_provider(tool_name, arguments));
-    json!({
-        "id": tool_call_id,
-        "name": tool_name,
-        "title": title,
-        "kind": kind,
-        "arguments": arguments,
-        "display": display,
-    })
+    ToolCallWire {
+        id: tool_call_id.to_string(),
+        name: tool_name.to_string(),
+        title: title.map(str::to_string),
+        kind: kind.to_string(),
+        arguments: arguments.clone(),
+        display,
+    }
 }
 
 pub fn tool_call_finish_wire(
@@ -167,28 +199,29 @@ pub fn tool_call_finish_wire(
     structured_content: Option<Value>,
     error: Option<Value>,
     compacted: Option<Value>,
-) -> Value {
+) -> ToolCallFinishWire {
     // ponytail: content preview is deliberately simple; upgrade by sharing the
     // client-tool result compactor's summary extraction if cards need richer text.
     let summary = summary
         .map(str::to_string)
         .or_else(|| error_message.map(str::to_string))
         .or_else(|| content.map(|text| text.chars().take(160).collect::<String>()));
-    json!({
-        "tool_call_id": tool_call_id,
-        "tool_name": tool_name,
-        "tool_call": {
-            "id": tool_call_id,
-            "name": tool_name,
+    let tool_name = tool_name.map(str::to_string);
+    ToolCallFinishWire {
+        tool_call_id: tool_call_id.to_string(),
+        tool_name: tool_name.clone(),
+        tool_call: ToolCallRefWire {
+            id: tool_call_id.to_string(),
+            name: tool_name,
         },
-        "status": status,
-        "summary": summary,
-        "error_message": error_message,
-        "content": content,
-        "structured_content": structured_content,
-        "error": error,
-        "compacted": compacted,
-    })
+        status: status.to_string(),
+        summary,
+        error_message: error_message.map(str::to_string),
+        content: content.map(str::to_string),
+        structured_content,
+        error,
+        compacted,
+    }
 }
 
 pub fn bearwire_event_to_json_rpc_notification(
@@ -364,7 +397,7 @@ pub fn runtime_semantic_event_to_bearwire_events(
             };
             vec![BearWireEvent::ephemeral(
                 event_type,
-                tool_call_finish_wire(
+                serde_json::to_value(tool_call_finish_wire(
                     &tool_call_id,
                     Some(&tool_name),
                     status.as_str(),
@@ -374,7 +407,8 @@ pub fn runtime_semantic_event_to_bearwire_events(
                     None,
                     None,
                     None,
-                ),
+                ))
+                .expect("ToolCallFinishWire serializes"),
             )
             .with_tool_call(tool_call_id)]
         }
