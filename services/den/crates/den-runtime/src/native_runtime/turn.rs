@@ -1099,12 +1099,28 @@ fn checkpoint_task_context(session: &AgentLoopSession) -> Option<CheckpointTaskC
     })
 }
 
-async fn record_work_checkpoint_request_if_needed(
+fn agent_loop_control_observe_enabled(config: &Config) -> bool {
+    matches!(
+        config.agent_loop_control_mode.as_str(),
+        "observe" | "enforce"
+    )
+}
+
+fn checkpoint_audit_enabled_for_session(config: &Config, session: &AgentLoopSession) -> bool {
+    match config.checkpoint_audit_mode.as_str() {
+        "all" => true,
+        "work" => session.profile == BearProfile::Work,
+        _ => false,
+    }
+}
+
+async fn record_checkpoint_request_if_audited(
     pool: &PgPool,
+    config: &Config,
     session: &AgentLoopSession,
     trigger: &CheckpointTrigger,
 ) {
-    if session.profile != BearProfile::Work {
+    if !checkpoint_audit_enabled_for_session(config, session) {
         return;
     }
     let Some(request) = runtime_checkpoint_request_for_trigger(session, trigger) else {
@@ -1132,7 +1148,7 @@ async fn record_work_checkpoint_request_if_needed(
             session_id = %session.client_session_id,
             run_id = session.run_id.as_deref().unwrap_or("<none>"),
             reason = %trigger.reason.as_str(),
-            "failed to record observe-only work checkpoint artifact"
+            "failed to record observe-only checkpoint artifact"
         );
     }
 }
@@ -1424,7 +1440,8 @@ pub async fn continue_native_client_turn_event_stream(
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
     if let Some(trigger) = checkpoint_evaluation.trigger.as_ref() {
-        record_work_checkpoint_request_if_needed(request.sqlx_pool, &session, trigger).await;
+        record_checkpoint_request_if_audited(request.sqlx_pool, request.config, &session, trigger)
+            .await;
     }
     if let Some(reason) = evaluation.stop_reason {
         return Ok(continuation_budget_stop(reason));
@@ -1445,8 +1462,10 @@ pub async fn continue_native_client_turn_event_stream(
             .expect("warning_applied requires warning payload");
         prefix_events.push(Ok(warning_event));
     }
-    if let Some(trigger) = checkpoint_evaluation.trigger.as_ref() {
-        prefix_events.push(Ok(checkpoint_trigger_runtime_event(trigger)));
+    if agent_loop_control_observe_enabled(request.config) {
+        if let Some(trigger) = checkpoint_evaluation.trigger.as_ref() {
+            prefix_events.push(Ok(checkpoint_trigger_runtime_event(trigger)));
+        }
     }
     let stream = if prefix_events.is_empty() {
         stream

@@ -184,6 +184,10 @@ pub struct Config {
     pub compaction_mode: String,
     /// When compaction writes run (`COMPACTION_TIMING`: `async` default, `sync`).
     pub compaction_timing: String,
+    /// Agent loop control rollout (`BEARS_AGENT_LOOP_CONTROL`: `observe` default, `off`, `enforce`).
+    pub agent_loop_control_mode: String,
+    /// Checkpoint artifact audit retention (`BEARS_CHECKPOINT_AUDIT`: `work` default, `off`, `all`).
+    pub checkpoint_audit_mode: String,
     ///
     /// This is a runtime selector, not a generic development mode switch. The named profile is
     /// only honored when the binary is compiled with the `web-ui-fixtures` Cargo feature.
@@ -501,6 +505,13 @@ impl Config {
 
         let compaction_timing =
             std::env::var("COMPACTION_TIMING").unwrap_or_else(|_| "async".to_string());
+        let agent_loop_control_mode = parse_choice_env(
+            "BEARS_AGENT_LOOP_CONTROL",
+            "observe",
+            &["off", "observe", "enforce"],
+        );
+        let checkpoint_audit_mode =
+            parse_choice_env("BEARS_CHECKPOINT_AUDIT", "work", &["off", "work", "all"]);
 
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
@@ -560,8 +571,27 @@ impl Config {
             embedding_dimensions,
             compaction_mode,
             compaction_timing,
+            agent_loop_control_mode,
+            checkpoint_audit_mode,
             ui_fixture_profile,
         }
+    }
+}
+
+fn parse_choice_env(name: &str, default: &str, allowed: &[&str]) -> String {
+    let value = std::env::var(name).unwrap_or_else(|_| default.to_string());
+    let normalized = value.trim().to_ascii_lowercase();
+    if allowed.contains(&normalized.as_str()) {
+        normalized
+    } else {
+        tracing::warn!(
+            "Invalid {} value '{}'. Expected one of {:?}. Defaulting to {}.",
+            name,
+            value,
+            allowed,
+            default
+        );
+        default.to_string()
     }
 }
 
@@ -639,6 +669,8 @@ impl Config {
             embedding_dimensions: 1536,
             compaction_mode: "observe".into(),
             compaction_timing: "async".into(),
+            agent_loop_control_mode: "observe".into(),
+            checkpoint_audit_mode: "work".into(),
             ui_fixture_profile: None,
         }
     }
