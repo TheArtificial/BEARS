@@ -80,7 +80,7 @@ Stances differ only by **capability profile**: tool roster, memory scope, approv
 5. Approvals pause the turn on a Den-stored decision and resume the same in-process task. The core turn coordinator — not any edge — decides when continuation is legal ([ADR-0048](docs/decisions/adr-0048-core-turn-client-obligation-coordinator.md)).
 6. Den persists replayable transcript artifacts (including tool calls/results as first-class model-history state) and projects user-visible updates to the edge.
 
-Adaptive budgets (wall-clock, tool-class, failure, context-window) govern loop health ([ADR-0050](docs/decisions/adr-0050-adaptive-turn-budgets-and-loop-ko.md), [ADR-0047](docs/decisions/adr-0047-context-window-budget-and-token-estimation.md)). Exploration-heavy classes such as `read`/`search` may receive a small fresh verification window after a successful meaningful mutative step, but turn-global safety fuses still do not reset.
+Runtime loop governance (wall-clock, tool-class, failure, ko, checkpoint, and context-window signals) governs loop health ([ADR-0050](docs/decisions/adr-0050-runtime-loop-governance-adaptive-budgets-and-progress-checkpoints.md), [ADR-0047](docs/decisions/adr-0047-context-window-budget-and-token-estimation.md)). Exploration-heavy classes such as `read`/`search` may receive a small fresh verification window after a successful meaningful mutative step, but turn-global safety fuses still do not reset.
 
 ## The storage boundary
 

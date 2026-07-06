@@ -185,6 +185,23 @@ Model-facing continuation instructions should therefore say:
 
 The runtime must not force an assistant to perform an unsafe, unauthorized, empty, or misleading action merely because the item remains unchecked.
 
+### Runtime checkpoint/task-list non-interference invariant
+
+Runtime progress checkpoints are loop-control scaffolding, not task-management records.
+
+A checkpoint may reference the active session task list, task-list item, Docket task, run id, and current task-list version. It may summarize what the model has learned, identify remaining uncertainty, and propose the next action. It must not itself mutate task-list or Docket state.
+
+Only task-management tools such as `update_task_list`, `sync_task_list`, `checkout_task_list`, and `request_task_list_handoff` may change task-list state or request propagation into Docket. Docket-backed mutations remain subject to source/sync policy.
+
+The continuation gate must evaluate active task-list/Docket state, not checkpoint prose. A checkpoint saying that work is done, blocked, waived, cancelled, unsafe, permission-gated, or not applicable is insufficient unless the corresponding task-list item is updated with evidence through the task tools.
+
+If a checkpoint identifies that the task list is stale or misclassified, the next action should normally be one of:
+
+- update the session task-list item with evidence;
+- request handoff/review for local-only or unsynced changes;
+- sync authorized changes to Docket;
+- continue execution if no state change is justified.
+
 ### Task-gate rejection loops
 
 The task outcome gate can itself create a loop if a model repeatedly tries the same invalid terminal response while the task list still has an actionable item. Den should treat repeated gate rejections as a first-class loop signal, distinct from tool-call rule-of-ko.
@@ -216,6 +233,7 @@ This ADR does not weaken ADR-0034’s execution invariant:
 - Execution flows through Bear role runtimes.
 - Docket remains the source of truth for Docket jobs/tasks and their hierarchy.
 - Session task lists are a working view and sync surface, not a replacement store for Docket.
+- Runtime checkpoints can guide execution but cannot substitute for session task-list updates, Docket events, or sync/handoff records.
 
 ## Non-goals
 
@@ -224,6 +242,7 @@ This ADR does not weaken ADR-0034’s execution invariant:
 - Do not force every session task-list item to be Docket-backed.
 - Do not require every task-list edit to immediately mutate Docket.
 - Do not hide source/sync state from Den just to make the UI vocabulary simpler.
+- Do not treat runtime checkpoints, status text, or assistant summaries as task-list/Docket state changes.
 
 ## Migration notes
 

@@ -1,4 +1,4 @@
-# ADR-0050: Budget-Ledger-First Turn Budgets and Rule-of-Ko Loop Detection
+# ADR-0050: Runtime Loop Governance, Adaptive Budgets, and Progress Checkpoints
 
 **Status:** Accepted  
 **Date:** 2026-07-04  
@@ -10,6 +10,7 @@
 - [ADR-0039: Trust profiles and governance modes](adr-0039-trust-profiles-and-governance-modes.md)
 - [ADR-0047: Context window budget and token estimation](adr-0047-context-window-budget-and-token-estimation.md)
 - [ADR-0048: Core turn/client-obligation coordinator](adr-0048-core-turn-client-obligation-coordinator.md)
+- [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md)
 - [ADR-0037: Work sandbox, egress gateway, and upstream auth](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)
 
 ## Context
@@ -18,11 +19,13 @@ The Den-native loop historically used a small, mostly flat `max_steps` ceiling a
 
 The failure mode is especially visible when a model is productively exploring a codebase or recovering from a failed tool call: a single fixed step ceiling treats productive search, partial recovery, and obvious churn as the same thing.
 
-This becomes more limiting as `work` grows into a long-running stance. We want Den to allow materially longer runs where appropriate, while still stopping models that are thrashing, repeating the same tool calls, or blindly re-driving failed actions.
+This becomes more limiting as `work` grows into a long-running stance. We want Den to allow materially longer runs where appropriate, while still stopping models that are thrashing, repeating the same tool calls, blindly re-driving failed actions, or drifting through exploration without forming a useful next-action strategy.
+
+Loop governance therefore needs more than a stop rule. It also needs typed opportunities to steer recovery: low-budget warnings, task-gate nudges, and concise progress checkpoints that force synthesis without turning checkpoint prose into task history.
 
 ## Decision
 
-Den will replace flat per-turn step ceilings with a typed **turn budget policy** and **turn budget state** whose primary job is to track spend and loop health, not simply count continuations.
+Den will replace flat per-turn step ceilings with typed **runtime loop governance**: profile-owned budget policy, loop-health state, ko/failure detection, and adaptive model-facing nudges. Its primary job is to track spend and progression quality, not simply count continuations.
 
 ### 1. Turn budgets are profile-owned typed policy and budget ledger
 
@@ -120,6 +123,30 @@ Guardrails:
 
 The goal is not to make turns unbounded. The goal is to distinguish "keeps reading without acting" from "acted and now needs a bounded verification pass."
 
+### 6b. Adaptive progress checkpoints guide loop recovery without becoming task state
+
+Den may require a short structured **runtime checkpoint** when loop-health signals indicate that the model may be drifting, over-exploring, retrying failures, approaching budget pressure, or about to take a broad/high-risk action.
+
+Checkpoint triggers may include:
+
+- several `read`/`search` tool calls since the last meaningful mutative action;
+- repeated same-tool or same-argument signatures approaching ko;
+- consecutive tool failures;
+- a task-gate rejection;
+- a low remaining wall-clock, tool-call, or context budget;
+- a broad, destructive, or otherwise risky mutative action about to be attempted.
+
+A checkpoint is a model-facing runtime nudge. It should ask the model to briefly state:
+
+- the active objective or task-list item;
+- what has been learned;
+- what uncertainty remains;
+- whether more exploration is justified;
+- the next single action;
+- whether task-list state needs an explicit update.
+
+Checkpoints are **control-flow scaffolding, not work records**. They do not create, complete, block, waive, cancel, or sync task-list/Docket state. If a checkpoint concludes that task state should change, the model must use the appropriate task-management tool and provide evidence. Per ADR-0045, the task gate evaluates task-list/Docket state, not checkpoint prose.
+
 ### 7. Work gets a larger total budget than interactive pair/chat
 
 `work` is expected to support materially longer runs than `pair`, `chat`, or `watch`.
@@ -128,11 +155,11 @@ The runtime therefore must support materially larger wall-clock budgets, total t
 
 ### 8. The decision is core runtime policy, not edge behavior
 
-As with approvals and client obligations in ADR-0048, continuation-budget decisions are core runtime semantics.
+As with approvals and client obligations in ADR-0048, continuation-budget and checkpoint decisions are core runtime semantics.
 
-BearWire and ACP may project the resulting stop reason, but they do not decide whether the model is allowed to continue.
+BearWire and ACP may project the resulting warning, checkpoint request, or stop reason, but they do not decide whether the model is allowed to continue.
 
-### 9. Budget and operational failures should leave model-visible hidden transcript records
+### 9. Runtime outcomes and checkpoints have explicit visibility semantics
 
 When a turn ends because of budget exhaustion, loop-ko, repeated tool failure, or operational runtime failure, Den should persist a normalized **model-visible but user-hidden** transcript record.
 
@@ -151,6 +178,8 @@ The detailed operational record being hidden from ordinary history does not mean
 
 The marker should explain the behavioral change in product language, while the hidden record retains the detailed model-continuity instruction and structured diagnostics.
 
+Runtime checkpoints may be projected as live/user-ephemeral run progress or persisted as model-visible hidden continuity records when useful for replay. They must not be projected as Docket job/task events unless an explicit task-management tool call created a corresponding task-state change.
+
 ## Consequences
 
 ### Positive
@@ -159,15 +188,18 @@ The marker should explain the behavioral change in product language, while the h
 - `work` can support longer runs without disabling loop safety.
 - Repeated same-call churn is blocked explicitly instead of being indirectly caught only by a coarse step limit.
 - Failure loops are treated separately from exploratory progress.
+- Adaptive checkpoints can force concise synthesis before more exploration or risky mutation.
 - The policy remains typed and role-owned.
 - Interactive verification after a real mutation is less likely to be cut off as false-positive read churn.
+- Checkpoints remain subordinate to task-list/Docket state instead of becoming informal task records.
 
 ### Negative / tradeoffs
 
 - The loop controller now carries more state.
-- Tool-class quotas are policy choices that will need tuning with real usage.
+- Tool-class quotas and checkpoint triggers are policy choices that will need tuning with real usage.
 - Some borderline cases will still stop early or late until the policy evolves with more signals.
 - "Meaningful mutation" and "materially changed search state" remain policy judgments that require careful typed signals and test coverage.
+- Poorly worded checkpoints could encourage narration instead of action; prompts should require concise state, evidence, and next action rather than open-ended reasoning.
 
 ## Initial policy shape
 
@@ -176,8 +208,9 @@ The first implementation should use:
 - a profile-owned wall-clock budget;
 - profile-owned total and per-class tool-call budgets;
 - consecutive tool failure cutoff;
-- ko-style repeated identical tool signature cutoff.
-- ko-style repeated task-gate rejection cutoff.
+- ko-style repeated identical tool signature cutoff;
+- ko-style repeated task-gate rejection cutoff;
+- checkpoint triggers for over-exploration, repeated failure, task-gate rejection, and low remaining budget;
 - a high emergency hard-step fuse.
 
 Token-aware continuation budgets remain compatible future extensions, but are not required for the first implementation because Den already tracks context-window budget separately in ADR-0047.
@@ -187,9 +220,11 @@ Token-aware continuation budgets remain compatible future extensions, but are no
 - `pair` and `chat` should keep moderate wall-clock and tool-call budgets.
 - `work` should receive significantly higher wall-clock and tool-call budgets than interactive stances.
 - The emergency step fuse should be high enough that it only catches pathological loops or missing health signals.
-- Model-visible low-budget warnings are desirable, but runtime enforcement still remains authoritative.
+- Model-visible low-budget warnings and runtime checkpoints are desirable, but runtime enforcement still remains authoritative.
 - Normalized operational outcome records should be persisted for future transcript replay whenever a run/turn fails after work has already been attempted.
 - If `pair` or `chat` replenish read/search budget after a successful mutative step, the replenishment should be small and verification-oriented rather than a full license to restart the turn.
+- Checkpoint content should be compact and structured around active objective, evidence, uncertainty, next action, and any required task-state update.
+- Checkpoints should reference task-list/Docket identifiers and versions when relevant, but task-state changes must still go through task-management tools.
 
 ## Non-goals
 
@@ -197,3 +232,5 @@ Token-aware continuation budgets remain compatible future extensions, but are no
 - No ACP-only or BearWire-only loop heuristics.
 - No free-form transcript string matching to detect loops.
 - No planner-only execution gate as a substitute for core continuation policy.
+- No use of checkpoints as a substitute for task-list/Docket updates, completion criteria, or history-visible task records.
+- No requirement for verbose chain-of-thought or open-ended self-explanation; checkpoints should be concise runtime synthesis.

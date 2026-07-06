@@ -214,6 +214,8 @@ bear_job_events
 
 The user-facing **status report** is a projection of `bear_job_events`, not a separate mutable text field. This keeps the report auditable and consistent with the event history.
 
+Runtime checkpoints from ADR-0050 are not `bear_task_events` or `bear_job_events`. They may reference Docket run/task ids for loop-control continuity, but durable task progress, blockers, completion, criteria evaluation, and report-visible history still require explicit task/job events produced through the task-management path.
+
 ### Decomposition, template vs. run scope, and learning
 
 Tasks created during planning by a human or `pair` default to `scope = template` — they are durable parts of the job definition. Tasks created by `work` mid-execution default to `scope = run` — they are run-local improvisation, not assumed wise. A run-scoped task may be **promoted** to `template` when observation justifies it (e.g. `work` recreates an equivalent child in most runs). Conversely, a chronically trivial or skipped template task may be **pruned**.
