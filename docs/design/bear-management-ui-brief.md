@@ -34,7 +34,8 @@ The nav is **one continuous list, softly grouped by ownership** — not two mode
 
 **This Den** — stays here for now:
 - **Tools** — every tool the Bear can call, whether built-in, run locally through the armature, or supplied by a remote MCP server; granted per stance. Each tool's origin is visible, because where a tool comes from is the trust-relevant fact.
-- **Resources** — what the Bear *acts on and reads*: external resources reached through **Connections** (repositories, documents, servers) and internal ones (Cabinet, Docket work surfaces).
+- **Connections** — authenticated links to external providers (GitHub, Google, an SSH host), set up once and reused across your Bears. The bridge behind credentialed tools and external resources; secrets named, never shown.
+- **Resources** — what the Bear *acts on and reads*: external resources reached through a Connection (repositories, documents, servers) and internal ones (Cabinet, Docket work surfaces).
 - **Activity** — what the Bear *did*: **Conversations**, **Jobs**, and **Cabinet activity**.
 - **People** — membership and access.
 
@@ -74,7 +75,9 @@ Two things make this honest rather than clever. The second group is labeled by *
 
 **Tools** *(This Den).* One list of every tool the Bear can call, each tagged by **origin** — built-in (Den-hosted), local (run through the armature on your machine), or remote (supplied by an MCP server) — and granted per stance. Origin is first-class because it *is* the trust signal: a remote MCP tool is adjacent network capability, an armature tool runs on your machine. Each tool shows *what it exposes* (private-data reach / untrusted input / outbound), and for credentialed tools, *which connection enables it*. Add from the operator catalog; remove is first-class. Risky combinations are flagged as **review**, never as a safety guarantee. Secrets are named, never shown. A tool's *grant* travels with the Bear; the connection, secret, and the remote server behind it stay on this Den and are re-attached on import — the screen should make that split feel natural, not a surprise sprung at export.
 
-**Resources.** External resources as typed cards (repository, document, server) reached through **Connections**; internal resources (Cabinet, Docket work surfaces). Granted per stance. Connections are set up once (owner-scoped, reused across Bears) and surfaced as the *enabler* behind credentialed tools. Secrets named, never shown, never exported. The Bear's *knowledge* of a resource (anchors and overviews in `core/`) travels as memory; the resource itself and the connection to it stay — a distinction worth surfacing here, not only at export.
+**Connections.** Owner-scoped authenticated links to external providers (GitHub, Google, SSH), set up once and reused across your Bears. Per connection: provider type, auth/secret status (named, never shown), and which stances of this Bear use it. Connect and revoke here; the bridge itself is also surfaced *at* the tools and resources it enables. Connections stay on this Den — secrets never travel; re-attached on import.
+
+**Resources.** What the Bear acts on and reads: external resources as typed cards (repository, document, server) reached through a **Connection**; internal resources (Cabinet, Docket work surfaces). Granted per stance. The Bear's *knowledge* of a resource (anchors and overviews in `core/`) travels as memory; the resource itself and the connection behind it stay — a distinction worth surfacing here, not only at export.
 
 **Activity.** Three streams:
 - **Conversations** — chat/pair dialogue. Each conversation is a **hub**: it links to the memories it formed (and when) and the jobs it dispatched. This is where a user understands what and when the Bear learned.

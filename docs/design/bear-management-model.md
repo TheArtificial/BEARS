@@ -15,6 +15,7 @@ This doc records the conceptual model the [UI brief](bear-management-ui-brief.md
 | Yours | **Memory** | What does it know — and is that right? | **Travels** — the mind |
 | Yours | **Skills** | How does it work (owned procedures)? | **Travels** |
 | This Den | **Tools** | What can it *do* (built-in, local, remote/MCP)? | Grant travels; server and secret stay |
+| This Den | **Connections** | What accounts does it reach through? | Stays — secrets never travel; re-attached on import |
 | This Den | **Resources** | What can it *act on and read*? | Knowledge travels; the resource and its connection stay |
 | This Den | **Activity** | What *did* it do? | **Stays** — the record |
 | This Den | **People** | Who can use it? | Stays |
@@ -64,6 +65,8 @@ The durable things a Bear works against (work surfaces, in model-facing terms �
 ### Connections are the bridge
 
 A connection is not simply a "tool-enabler" — that is the visible half. Underneath, a connection is an **authenticated bridge to external resources**: it exposes specific resources (which repos, which docs) *and* enables the credentialed tools that act on them. It is owner-scoped and set up once, then reused across Bears and granted per stance. "Connect GitHub, get git tools on your repos" is the right thing to *show* users; the resource axis is what makes the model *correct*.
+
+In the IA, **Connections is its own top-level area** under *This Den* — the accounts you authenticate, distinct from both the Tools they enable and the Resources they reach, and also surfaced *at* those places as the enabler. This refines [ADR-0040](../decisions/adr-0040-connections-and-work-surface-presentation.md), which presented typed external resources under a single "Connections"-labeled area: separating the accounts (Connections) from the things reached (Resources) is clearer now that Resources is its own area and Tools reference connections too. Connections stay on this Den — secrets never travel — and are re-attached on import.
 
 ### Why two axes matter: honest risk, not a promise
 
@@ -157,6 +160,7 @@ Cross-links (the graph, not the nav):
 - Memory record ⇄ Conversation — a memory names its source conversation; a conversation lists the memories it formed.
 - Conversation → Jobs — a conversation lists the jobs it dispatched; a job run names the conversation that spawned it.
 - Tools → Connections — a credentialed tool shows the connection that enables it; a missing connection prompts to connect.
+- Resources → Connections — an external resource is reached through the connection that authenticates it.
 - Resources ⇄ Activity — Cabinet (and later repos) are granted in Resources and generate a Cabinet-activity stream in Activity.
 - Cabinet activity → Cabinet (external) — link out for the full/ownership view.
 - Overview → review queue (Memory) / Jobs / Activity — the pending-review count and recent activity are entry points.
