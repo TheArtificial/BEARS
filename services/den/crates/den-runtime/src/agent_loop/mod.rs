@@ -45,7 +45,8 @@ pub use budget::{
     TurnBudgetStopReason, TurnBudgetWarning,
 };
 pub use checkpoints::{
-    list_checkpoints_for_run, record_checkpoint_request, record_checkpoint_response,
+    list_checkpoints_for_run, list_checkpoints_for_session, record_checkpoint_request,
+    record_checkpoint_response,
     CheckpointArtifactInput, CheckpointArtifactRow, CheckpointReplayPolicy,
     CheckpointResponseInput, CheckpointValidationStatus, CheckpointVisibility,
 };

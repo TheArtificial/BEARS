@@ -323,6 +323,23 @@ struct CompactionEventAdminRow {
 }
 
 #[derive(Debug, Serialize)]
+struct CheckpointArtifactAdminRow {
+    run_id: String,
+    checkpoint_id: String,
+    reason: String,
+    control_level: String,
+    validation_status: String,
+    visibility: String,
+    replay_policy: String,
+    related_task_list_id: Option<String>,
+    related_task_item_id: Option<String>,
+    request_json: String,
+    response_json: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
 struct CompactionArtifactAdminRow {
     id: Uuid,
     artifact_kind: String,
@@ -558,6 +575,93 @@ async fn conversation_compaction_events(
                     .map(pretty_json)
                     .unwrap_or_else(|| "null".to_string()),
                 created_at: created_at.to_string(),
+            },
+        )
+        .collect())
+}
+
+async fn conversation_checkpoint_artifacts(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    session_id: Option<&str>,
+    limit: i64,
+) -> Result<Vec<CheckpointArtifactAdminRow>, CustomError> {
+    let Some(session_id) = session_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let rows = sqlx::query_as::<_, (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        serde_json::Value,
+        Option<serde_json::Value>,
+        time::OffsetDateTime,
+        time::OffsetDateTime,
+    )>(
+        r#"
+        SELECT
+            c.run_id,
+            c.checkpoint_id,
+            c.reason,
+            c.control_level,
+            c.validation_status,
+            c.visibility,
+            c.replay_policy,
+            c.related_task_list_id,
+            c.related_task_item_id,
+            c.request,
+            c.response,
+            c.created_at,
+            c.updated_at
+        FROM bear_run_checkpoints c
+        INNER JOIN turn_runs r ON r.run_id = c.run_id
+        WHERE r.bear_id = $1 AND r.session_id = $2
+        ORDER BY c.created_at DESC, c.checkpoint_id DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(bear_id)
+    .bind(session_id)
+    .bind(limit.max(1))
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                run_id,
+                checkpoint_id,
+                reason,
+                control_level,
+                validation_status,
+                visibility,
+                replay_policy,
+                related_task_list_id,
+                related_task_item_id,
+                request,
+                response,
+                created_at,
+                updated_at,
+            )| CheckpointArtifactAdminRow {
+                run_id,
+                checkpoint_id,
+                reason,
+                control_level,
+                validation_status,
+                visibility,
+                replay_policy,
+                related_task_list_id,
+                related_task_item_id,
+                request_json: pretty_json(request),
+                response_json: response.map(pretty_json).unwrap_or_else(|| "null".to_string()),
+                created_at: created_at.to_string(),
+                updated_at: updated_at.to_string(),
             },
         )
         .collect())
@@ -2128,6 +2232,13 @@ async fn conversation_detail_view(
     .await?;
     let compaction_artifacts =
         conversation_compaction_artifacts(state.sqlx_pool(), conversation_id, 10).await?;
+    let checkpoint_artifacts = conversation_checkpoint_artifacts(
+        state.sqlx_pool(),
+        bear.id,
+        conv.source_client_session_id.as_deref(),
+        20,
+    )
+    .await?;
     let message_rows: Vec<MessageAdminRow> = messages
         .into_iter()
         .rev()
@@ -2151,6 +2262,7 @@ async fn conversation_detail_view(
             message_rows,
             compaction_events,
             compaction_artifacts,
+            checkpoint_artifacts,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "conversations"),

@@ -210,6 +210,35 @@ pub async fn list_checkpoints_for_run(
     Ok(rows.into_iter().map(row_to_checkpoint).collect())
 }
 
+pub async fn list_checkpoints_for_session(
+    pool: &PgPool,
+    bear_id: Uuid,
+    session_id: &str,
+    limit: i64,
+) -> Result<Vec<CheckpointArtifactRow>, DenError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            c.id, c.run_id, c.turn_step_id, c.checkpoint_id, c.reason, c.control_level,
+            c.request, c.response, c.validation_status, c.visibility, c.replay_policy,
+            c.related_task_list_id, c.related_task_item_id, c.related_docket_task_id,
+            c.created_at, c.updated_at
+        FROM bear_run_checkpoints c
+        INNER JOIN turn_runs r ON r.run_id = c.run_id
+        WHERE r.bear_id = $1 AND r.session_id = $2
+        ORDER BY c.created_at DESC, c.checkpoint_id DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(bear_id)
+    .bind(session_id)
+    .bind(limit.max(1))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(row_to_checkpoint).collect())
+}
+
 fn row_to_checkpoint(row: sqlx::postgres::PgRow) -> CheckpointArtifactRow {
     CheckpointArtifactRow {
         id: row.get("id"),
@@ -328,7 +357,7 @@ mod tests {
     #[sqlx::test(migrations = "../../migrations")]
     async fn records_checkpoint_request_and_response(pool: PgPool) {
         let run_id = format!("run-{}", Uuid::new_v4().simple());
-        seed_run(&pool, &run_id).await;
+        let (bear_id, _) = seed_run(&pool, &run_id).await;
 
         let recorded = record_checkpoint_request(
             &pool,
@@ -371,5 +400,11 @@ mod tests {
             .expect("list checkpoints");
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].checkpoint_id, "ckpt-1");
+
+        let by_session = list_checkpoints_for_session(&pool, bear_id, &format!("session-{run_id}"), 10)
+            .await
+            .expect("list checkpoints by session");
+        assert_eq!(by_session.len(), 1);
+        assert_eq!(by_session[0].checkpoint_id, "ckpt-1");
     }
 }

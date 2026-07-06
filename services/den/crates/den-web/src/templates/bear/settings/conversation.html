@@ -93,6 +93,36 @@
 <p><em>No compaction events recorded for this conversation.</em></p>
 {% endif %}
 
+<h3>Agent Loop Checkpoints</h3>
+{% if checkpoint_artifacts and checkpoint_artifacts | length > 0 %}
+<table></table>
+  <thead><tr><th>When</</th>th><th>Run</th><</th>th>Reason</th><th>Level</th><th</th>>Status</th><th>Task ref</th</th>></tr></thead>
+  <tbody>
+  {% for checkpoint in checkpoint</tbody>_artifacts %}
+    <tr>
+</tr>      <td>{{ checkpoint.created_at }}</td>
+      <td><code>{{ checkpoint.run_id | e }}</code><br /><small>{{ checkpoint.checkpoint_id | e }}</small></td>
+      <td>{{ checkpoint.reason | e }}</td>
+      <td>{{ checkpoint.control_level | e }}</td>
+      <td>{{ checkpoint.validation_status | e }} · {{ checkpoint.visibility | e }} · replay {{ checkpoint.replay_policy | e }}</td>
+      <td>
+</td>        {% if checkpoint.related_task_list_id %}<code>{{ checkpoint.related_task_list_id | e }}</code>{% else %}<em>none</em></em>{% endif %}
+        {% if checkpoint.related_task_item_id %}<br /><small>{{ checkpoint.related_task_item_id | e }}</small>{% endif %}
+      </td>
+    </tr>
+    <tr>
+</tr>      <td colspan="6">
+        <details><summary>Checkpoint request</summary><</summary>pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ checkpoint.request_json | e }}</pre></details>
+        <details><summary>Checkpoint response</summary><pre</summary> style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ checkpoint.response_json | e }}</pre></details>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No agent loop checkpoint artifacts recorded for this conversation/session.</em></p>
+{% endif %}
+
 <h3>Compaction Artifacts</h3>
 {% if compaction_artifacts and compaction_artifacts | length > 0 %}
 {% for artifact in compaction_artifacts %}
