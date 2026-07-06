@@ -87,6 +87,94 @@ pub struct CheckpointEvaluation {
     pub trigger: Option<CheckpointTrigger>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointField {
+    ActiveObjective,
+    Learned,
+    RemainingUncertainty,
+    MoreExplorationJustified,
+    NextAction,
+    TaskStateChangeNeeded,
+    EvidenceRefs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeCheckpointRequest {
+    pub checkpoint_id: String,
+    pub run_id: String,
+    pub reason: CheckpointReason,
+    pub control_level: AgentLoopControlLevel,
+    pub active_objective: Option<String>,
+    pub task_context: Option<CheckpointTaskContext>,
+    pub evidence_refs: Vec<CheckpointEvidenceRef>,
+    pub required_fields: Vec<CheckpointField>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointTaskContext {
+    pub task_list_id: Option<String>,
+    pub task_list_version: Option<String>,
+    pub active_item_id: Option<String>,
+    pub active_item_title: Option<String>,
+    pub docket_job_id: Option<String>,
+    pub docket_task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointEvidenceRef {
+    pub kind: String,
+    pub id: String,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeCheckpointResponse {
+    pub checkpoint_id: String,
+    pub active_objective: String,
+    pub learned: Vec<String>,
+    pub remaining_uncertainty: Vec<String>,
+    pub more_exploration_justified: bool,
+    pub next_action: CheckpointNextAction,
+    pub task_state_change_needed: Option<TaskStateChangeIntent>,
+    pub evidence_refs: Vec<CheckpointEvidenceRef>,
+    pub confidence: Option<CheckpointConfidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointNextAction {
+    CallTool { tool_name: Option<String> },
+    Edit,
+    Validate,
+    UpdateTaskList,
+    SyncTaskList,
+    RequestHandoff,
+    FinalIfGateAllows,
+    StopBlocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskStateChangeIntent {
+    pub target_state: String,
+    pub reason: String,
+    pub evidence_refs: Vec<CheckpointEvidenceRef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointConfidence {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckpointResponseValidationError {
+    CheckpointIdMismatch { expected: String, actual: String },
+    MissingRequiredField(CheckpointField),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedAgentLoopControl {
     pub level: AgentLoopControlLevel,
@@ -200,6 +288,41 @@ pub fn evaluate_checkpoint_trigger(
     CheckpointEvaluation {
         next_state,
         trigger,
+    }
+}
+
+pub fn validate_checkpoint_response(
+    request: &RuntimeCheckpointRequest,
+    response: &RuntimeCheckpointResponse,
+) -> Result<(), CheckpointResponseValidationError> {
+    if response.checkpoint_id != request.checkpoint_id {
+        return Err(CheckpointResponseValidationError::CheckpointIdMismatch {
+            expected: request.checkpoint_id.clone(),
+            actual: response.checkpoint_id.clone(),
+        });
+    }
+
+    for field in &request.required_fields {
+        if checkpoint_field_missing(*field, response) {
+            return Err(CheckpointResponseValidationError::MissingRequiredField(*field));
+        }
+    }
+
+    Ok(())
+}
+
+fn checkpoint_field_missing(
+    field: CheckpointField,
+    response: &RuntimeCheckpointResponse,
+) -> bool {
+    match field {
+        CheckpointField::ActiveObjective => response.active_objective.trim().is_empty(),
+        CheckpointField::Learned => response.learned.is_empty(),
+        CheckpointField::RemainingUncertainty => response.remaining_uncertainty.is_empty(),
+        CheckpointField::MoreExplorationJustified => false,
+        CheckpointField::NextAction => false,
+        CheckpointField::TaskStateChangeNeeded => response.task_state_change_needed.is_none(),
+        CheckpointField::EvidenceRefs => response.evidence_refs.is_empty(),
     }
 }
 
@@ -582,6 +705,82 @@ mod tests {
             pre_risk_checkpoint_trigger(&careful).map(|trigger| trigger.reason),
             Some(CheckpointReason::PreRiskMutation)
         );
+    }
+
+    fn checkpoint_request() -> RuntimeCheckpointRequest {
+        RuntimeCheckpointRequest {
+            checkpoint_id: "ckpt-1".to_string(),
+            run_id: "run-1".to_string(),
+            reason: CheckpointReason::OverExploration,
+            control_level: AgentLoopControlLevel::Careful,
+            active_objective: Some("Patch the failing path".to_string()),
+            task_context: Some(CheckpointTaskContext {
+                task_list_id: Some("list-1".to_string()),
+                task_list_version: Some("3".to_string()),
+                active_item_id: Some("item-1".to_string()),
+                active_item_title: Some("Inspect routing".to_string()),
+                docket_job_id: Some("job-1".to_string()),
+                docket_task_id: Some("task-1".to_string()),
+            }),
+            evidence_refs: vec![CheckpointEvidenceRef {
+                kind: "tool_result".to_string(),
+                id: "call-1".to_string(),
+                summary: Some("Read routing module".to_string()),
+            }],
+            required_fields: vec![
+                CheckpointField::ActiveObjective,
+                CheckpointField::Learned,
+                CheckpointField::NextAction,
+            ],
+        }
+    }
+
+    fn checkpoint_response() -> RuntimeCheckpointResponse {
+        RuntimeCheckpointResponse {
+            checkpoint_id: "ckpt-1".to_string(),
+            active_objective: "Patch the failing path".to_string(),
+            learned: vec!["The relevant logic is in the route projector.".to_string()],
+            remaining_uncertainty: Vec::new(),
+            more_exploration_justified: false,
+            next_action: CheckpointNextAction::Edit,
+            task_state_change_needed: None,
+            evidence_refs: Vec::new(),
+            confidence: Some(CheckpointConfidence::Medium),
+        }
+    }
+
+    #[test]
+    fn checkpoint_response_validation_accepts_structured_response() {
+        let request = checkpoint_request();
+        let response = checkpoint_response();
+
+        assert_eq!(validate_checkpoint_response(&request, &response), Ok(()));
+    }
+
+    #[test]
+    fn checkpoint_response_validation_rejects_wrong_id_and_missing_required_field() {
+        let request = checkpoint_request();
+        let mut response = checkpoint_response();
+        response.checkpoint_id = "other".to_string();
+        assert!(matches!(
+            validate_checkpoint_response(&request, &response),
+            Err(CheckpointResponseValidationError::CheckpointIdMismatch { .. })
+        ));
+
+        response.checkpoint_id = request.checkpoint_id.clone();
+        response.learned.clear();
+        assert_eq!(
+            validate_checkpoint_response(&request, &response),
+            Err(CheckpointResponseValidationError::MissingRequiredField(
+                CheckpointField::Learned
+            ))
+        );
+    }
+
+    #[test]
+    fn checkpoint_next_action_serializes_to_snake_case() {
+        let serialized = serde_json::to_value(CheckpointNextAction::UpdateTaskList).unwrap();
+        assert_eq!(serialized, serde_json::json!("update_task_list"));
     }
 
     #[test]

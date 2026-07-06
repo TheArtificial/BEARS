@@ -50,9 +50,12 @@ pub use context::{
 pub use control::{
     resolve_agent_loop_control, AgentLoopControlProfile, AgentLoopControlResolutionInput,
     evaluate_checkpoint_trigger, pre_risk_checkpoint_trigger, task_gate_checkpoint_trigger,
-    AgentLoopControlSource, CheckpointEvaluation, CheckpointPolicy, CheckpointReason,
-    CheckpointState, CheckpointThinkingPolicy, CheckpointTrigger, KoPolicy, ResolvedAgentLoopControl,
-    TaskGatePolicy,
+    validate_checkpoint_response, AgentLoopControlSource, CheckpointConfidence,
+    CheckpointEvaluation, CheckpointEvidenceRef, CheckpointField, CheckpointNextAction,
+    CheckpointPolicy, CheckpointReason, CheckpointResponseValidationError, CheckpointState,
+    CheckpointTaskContext, CheckpointThinkingPolicy, CheckpointTrigger, KoPolicy,
+    ResolvedAgentLoopControl, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
+    TaskGatePolicy, TaskStateChangeIntent,
 };
 pub use key_memory_projection::{
     project_key_memory, KeyMemoryProjectionCacheKey, KeyMemoryProjectionResult,
