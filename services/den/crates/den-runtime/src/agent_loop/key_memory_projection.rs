@@ -12,7 +12,7 @@ use den_llm::model_registry;
 use den_memory::{
     has_work_surface_canonical_anchor, head_record_for_logical_path,
     list_entity_anchor_head_records, list_profile_local_head_records, memory_sequence_high_water,
-    record_visible, AccessContext, MemoryRecordRow, MemoryStoreManager,
+    record_visible, AccessContext, BearMemoryStore, MemoryRecordRow, MemoryStoreManager,
 };
 use den_service::bears::{
     managed_blocks::get_compiled_bear_config, model::BearProfile, provision::profile_config_hash,
@@ -162,6 +162,59 @@ fn format_record_block(record: &MemoryRecordRow, body: &str) -> String {
     format!("### {path}\n{body}")
 }
 
+/// Running record of what each projection tier included or dropped, surfaced in
+/// the projection diagnostic.
+#[derive(Default)]
+struct ProjectionTallies {
+    included: Vec<Value>,
+    omitted_budget: Vec<String>,
+    omitted_no_surface: Vec<String>,
+    omitted_by_access: Vec<String>,
+}
+
+/// Shared per-record admission used by every tier: enforce the tier budget, apply
+/// the mandatory access gate, and try to fit the record's content. Returns the
+/// rendered block body when the record is admitted, recording the omission reason
+/// otherwise.
+///
+/// `omission_path` labels the record in the omission tallies; pass `None` for
+/// records with no logical path (Tier 3), which are dropped silently rather than
+/// listed. `included_entry` is the diagnostic entry pushed only on admission.
+async fn admit_record(
+    store: &BearMemoryStore,
+    access: &AccessContext,
+    tracker: &mut BudgetTracker,
+    record: &MemoryRecordRow,
+    omission_path: Option<String>,
+    included_entry: Value,
+    tallies: &mut ProjectionTallies,
+) -> Result<Option<String>, DenError> {
+    if tracker.tier_remaining_records == 0 {
+        if let Some(path) = omission_path {
+            tallies.omitted_budget.push(path);
+        }
+        return Ok(None);
+    }
+    if !record_visible(store, &record.memory_id, access).await? {
+        if let Some(path) = omission_path {
+            tallies.omitted_by_access.push(path);
+        }
+        return Ok(None);
+    }
+    match tracker.try_take_record(&record.content_text) {
+        Some(body) => {
+            tallies.included.push(included_entry);
+            Ok(Some(format_record_block(record, &body)))
+        }
+        None => {
+            if let Some(path) = omission_path {
+                tallies.omitted_budget.push(path);
+            }
+            Ok(None)
+        }
+    }
+}
+
 pub(crate) async fn compiled_prompt_cache_token(
     pool: &PgPool,
     bear: &Bear,
@@ -210,10 +263,7 @@ pub async fn project_key_memory(
         input.profile,
         model_metadata.map(|entry| entry.context_window),
     );
-    let mut included = Vec::<Value>::new();
-    let mut omitted_budget = Vec::<String>::new();
-    let mut omitted_no_surface = Vec::<String>::new();
-    let mut omitted_by_access = Vec::<String>::new();
+    let mut tallies = ProjectionTallies::default();
     let mut sections = Vec::<String>::new();
 
     // Tier 1 — shared identity anchors
@@ -221,27 +271,32 @@ pub async fn project_key_memory(
         let mut tracker = BudgetTracker::new(&budget, 0);
         let mut blocks = Vec::new();
         for path in TIER1_SHARED_PATHS {
+            // Pre-check the budget so an exhausted tier records the omission without
+            // spending a lookup on the record.
             if tracker.tier_remaining_records == 0 {
-                omitted_budget.push(path.to_string());
+                tallies.omitted_budget.push((*path).to_string());
                 continue;
             }
             let Some(record) = head_record_for_logical_path(&store, path).await? else {
                 continue;
             };
-            if !record_visible(&store, &record.memory_id, &input.access).await? {
-                omitted_by_access.push(path.to_string());
-                continue;
-            }
-            match tracker.try_take_record(&record.content_text) {
-                Some(body) => {
-                    included.push(json!({
-                        "tier": 1,
-                        "memory_id": record.memory_id,
-                        "logical_path": path,
-                    }));
-                    blocks.push(format_record_block(&record, &body));
-                }
-                None => omitted_budget.push(path.to_string()),
+            let entry = json!({
+                "tier": 1,
+                "memory_id": record.memory_id,
+                "logical_path": path,
+            });
+            if let Some(body) = admit_record(
+                &store,
+                &input.access,
+                &mut tracker,
+                &record,
+                Some((*path).to_string()),
+                entry,
+                &mut tallies,
+            )
+            .await?
+            {
+                blocks.push(body);
             }
         }
         if !blocks.is_empty() {
@@ -268,36 +323,45 @@ pub async fn project_key_memory(
             status,
             WorkSurfaceProjectionStatus::Unresolved | WorkSurfaceProjectionStatus::Ambiguous
         ) {
-            omitted_no_surface.push(format!("tier2:status={}", status.as_str()));
+            tallies
+                .omitted_no_surface
+                .push(format!("tier2:status={}", status.as_str()));
         } else if matches!(status, WorkSurfaceProjectionStatus::Candidate) && !tier2_active {
-            omitted_no_surface.push(format!("tier2:slug={slug}:anchor_required"));
+            tallies
+                .omitted_no_surface
+                .push(format!("tier2:slug={slug}:anchor_required"));
         } else if tier2_active {
             let (canonical_paths, _) = work_surface_anchor_paths(input.profile, slug);
             let mut tracker = BudgetTracker::new(&budget, 1);
             let mut blocks = Vec::new();
             for path in canonical_paths {
+                // Pre-check the budget so an exhausted tier records the omission
+                // without spending a lookup on the record.
                 if tracker.tier_remaining_records == 0 {
-                    omitted_budget.push(path.clone());
+                    tallies.omitted_budget.push(path);
                     continue;
                 }
                 let Some(record) = head_record_for_logical_path(&store, &path).await? else {
                     continue;
                 };
-                if !record_visible(&store, &record.memory_id, &input.access).await? {
-                    omitted_by_access.push(path.clone());
-                    continue;
-                }
-                match tracker.try_take_record(&record.content_text) {
-                    Some(body) => {
-                        included.push(json!({
-                            "tier": 2,
-                            "memory_id": record.memory_id,
-                            "logical_path": path,
-                            "work_surface_slug": slug,
-                        }));
-                        blocks.push(format_record_block(&record, &body));
-                    }
-                    None => omitted_budget.push(path),
+                let entry = json!({
+                    "tier": 2,
+                    "memory_id": record.memory_id,
+                    "logical_path": path,
+                    "work_surface_slug": slug,
+                });
+                if let Some(body) = admit_record(
+                    &store,
+                    &input.access,
+                    &mut tracker,
+                    &record,
+                    Some(path),
+                    entry,
+                    &mut tallies,
+                )
+                .await?
+                {
+                    blocks.push(body);
                 }
             }
             if !blocks.is_empty() {
@@ -319,24 +383,23 @@ pub async fn project_key_memory(
                 .logical_path
                 .clone()
                 .unwrap_or_else(|| "<unmapped>".to_string());
-            if tracker.tier_remaining_records == 0 {
-                omitted_budget.push(path);
-                continue;
-            }
-            if !record_visible(&store, &record.memory_id, &input.access).await? {
-                omitted_by_access.push(path);
-                continue;
-            }
-            match tracker.try_take_record(&record.content_text) {
-                Some(body) => {
-                    included.push(json!({
-                        "tier": "2b",
-                        "memory_id": record.memory_id,
-                        "logical_path": record.logical_path,
-                    }));
-                    blocks.push(format_record_block(&record, &body));
-                }
-                None => omitted_budget.push(path),
+            let entry = json!({
+                "tier": "2b",
+                "memory_id": record.memory_id,
+                "logical_path": record.logical_path,
+            });
+            if let Some(body) = admit_record(
+                &store,
+                &input.access,
+                &mut tracker,
+                &record,
+                Some(path),
+                entry,
+                &mut tallies,
+            )
+            .await?
+            {
+                blocks.push(body);
             }
         }
         if !blocks.is_empty() {
@@ -379,33 +442,24 @@ pub async fn project_key_memory(
             .await?
         };
         for record in records {
-            if tracker.tier_remaining_records == 0 {
-                if let Some(path) = record.logical_path.clone() {
-                    omitted_budget.push(path);
-                }
-                continue;
-            }
-            if !record_visible(&store, &record.memory_id, &input.access).await? {
-                if let Some(path) = record.logical_path.clone() {
-                    omitted_by_access.push(path);
-                }
-                continue;
-            }
-            match tracker.try_take_record(&record.content_text) {
-                Some(body) => {
-                    included.push(json!({
-                        "tier": 3,
-                        "memory_id": record.memory_id,
-                        "logical_path": record.logical_path,
-                        "work_surface_ref": record.work_surface_ref,
-                    }));
-                    blocks.push(format_record_block(&record, &body));
-                }
-                None => {
-                    if let Some(path) = record.logical_path.clone() {
-                        omitted_budget.push(path);
-                    }
-                }
+            let entry = json!({
+                "tier": 3,
+                "memory_id": record.memory_id,
+                "logical_path": record.logical_path,
+                "work_surface_ref": record.work_surface_ref,
+            });
+            if let Some(body) = admit_record(
+                &store,
+                &input.access,
+                &mut tracker,
+                &record,
+                record.logical_path.clone(),
+                entry,
+                &mut tallies,
+            )
+            .await?
+            {
+                blocks.push(body);
             }
         }
         if !blocks.is_empty() {
@@ -421,20 +475,23 @@ pub async fn project_key_memory(
     {
         let mut tracker = BudgetTracker::new(&budget, 3);
         if let Some(record) = head_record_for_logical_path(&store, TIER4_SITUATION_PATH).await? {
-            if !record_visible(&store, &record.memory_id, &input.access).await? {
-                omitted_by_access.push(TIER4_SITUATION_PATH.to_string());
-            } else if let Some(body) = tracker.try_take_record(&record.content_text) {
-                included.push(json!({
-                    "tier": 4,
-                    "memory_id": record.memory_id,
-                    "logical_path": TIER4_SITUATION_PATH,
-                }));
-                sections.push(format!(
-                    "## Situation\n\n{}",
-                    format_record_block(&record, &body)
-                ));
-            } else {
-                omitted_budget.push(TIER4_SITUATION_PATH.to_string());
+            let entry = json!({
+                "tier": 4,
+                "memory_id": record.memory_id,
+                "logical_path": TIER4_SITUATION_PATH,
+            });
+            if let Some(body) = admit_record(
+                &store,
+                &input.access,
+                &mut tracker,
+                &record,
+                Some(TIER4_SITUATION_PATH.to_string()),
+                entry,
+                &mut tallies,
+            )
+            .await?
+            {
+                sections.push(format!("## Situation\n\n{body}"));
             }
         }
     }
@@ -450,10 +507,10 @@ pub async fn project_key_memory(
         "primary_work_surface_slug": primary_slug,
         "tier2_active": tier2_active,
         "sequence_high_water": sequence_high_water,
-        "included": included,
-        "omitted_by_budget": omitted_budget,
-        "omitted_because_no_surface": omitted_no_surface,
-        "omitted_by_access": omitted_by_access,
+        "included": tallies.included,
+        "omitted_by_budget": tallies.omitted_budget,
+        "omitted_because_no_surface": tallies.omitted_no_surface,
+        "omitted_by_access": tallies.omitted_by_access,
         "global_char_cap": budget.global_cap,
         "model_metadata": model_metadata.map(|entry| json!({
             "key": entry.key,
