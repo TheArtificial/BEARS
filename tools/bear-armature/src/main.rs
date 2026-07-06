@@ -6503,22 +6503,19 @@ pub(crate) fn spawn_tool_request_task(
     turn_token: Uuid,
 ) {
     tokio::spawn(async move {
-        let Some(tool_call_id) = tool_call_id_from_event(&event).map(str::to_string) else {
-            eprintln!(
-                "bear-armature: ignoring malformed tool request missing tool_call_id session_id={} event={}",
-                session_id,
-                truncate_for_log(&event.to_string(), 400)
-            );
-            return;
+        let canonical = match BearWireToolCallRequestData::parse(&event) {
+            Ok(canonical) => canonical,
+            Err(err) => {
+                eprintln!(
+                    "bear-armature: ignoring malformed canonical tool request session_id={} error={err:#} event={}",
+                    session_id,
+                    truncate_for_log(&event.to_string(), 400)
+                );
+                return;
+            }
         };
-        let Some(tool_name) = tool_name_from_event(&event).map(str::to_string) else {
-            eprintln!(
-                "bear-armature: ignoring malformed tool request missing tool_name session_id={} event={}",
-                session_id,
-                truncate_for_log(&event.to_string(), 400)
-            );
-            return;
-        };
+        let tool_call_id = canonical.tool_call.id.clone();
+        let tool_name = canonical.tool_call.name.clone();
         shared_state
             .tool_tasks
             .register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
@@ -6616,17 +6613,14 @@ async fn handle_tool_request_event(
     session_id: &str,
     event: &Value,
 ) -> Result<()> {
-    let tool_call_id = tool_call_id_from_event(event)
-        .ok_or_else(|| anyhow!("tool request missing tool_call_id"))?;
-    let tool_name =
-        tool_name_from_event(event).ok_or_else(|| anyhow!("tool request missing tool_name"))?;
+    let canonical = BearWireToolCallRequestData::parse(event)?;
+    let tool_call_id = canonical.tool_call.id.as_str();
+    let tool_name = canonical.tool_call.name.as_str();
     task_registry
         .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
         .await;
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
-    let args = tool_args_from_event(event)
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let args = canonical.tool_call.arguments.clone().unwrap_or_else(|| json!({}));
     task_registry
         .remember_input(session_id, tool_call_id, tool_name, args.clone())
         .await;
@@ -7193,6 +7187,29 @@ fn command_line_from_value(value: &Value) -> Option<String> {
     } else {
         format!("{} {}", command, args.join(" "))
     })
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BearWireToolCallRequestCard {
+    id: String,
+    name: String,
+    #[serde(default)]
+    arguments: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BearWireToolCallRequestData {
+    tool_call: BearWireToolCallRequestCard,
+}
+
+impl BearWireToolCallRequestData {
+    fn parse(event: &Value) -> Result<Self> {
+        let data = event
+            .get("data")
+            .cloned()
+            .ok_or_else(|| anyhow!("BearWire tool request missing data"))?;
+        serde_json::from_value(data).context("parse canonical BearWire tool request data")
+    }
 }
 
 pub(crate) fn tool_call_id_from_event(event: &Value) -> Option<&str> {
@@ -14282,5 +14299,33 @@ mod tests {
         assert!(report.contains("Den:"));
         assert!(report.contains("unreachable"));
         assert!(report.contains("Warning: Den runtime is unreachable from the adapter"));
+    }
+}
+
+#[cfg(test)]
+mod bearwire_tool_request_parser_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_canonical_bearwire_tool_request_data() {
+        let event = json!({
+            "type": "tool_call.requested",
+            "data": {
+                "tool_call": {
+                    "id": "call-req-1",
+                    "name": "fs_read_text_file",
+                    "arguments": { "path": "README.md" }
+                },
+                "tool_call_id": "legacy-wrong",
+                "tool_name": "legacy_wrong"
+            }
+        });
+
+        let parsed = BearWireToolCallRequestData::parse(&event).unwrap();
+
+        assert_eq!(parsed.tool_call.id, "call-req-1");
+        assert_eq!(parsed.tool_call.name, "fs_read_text_file");
+        assert_eq!(parsed.tool_call.arguments.unwrap()["path"], "README.md");
     }
 }
