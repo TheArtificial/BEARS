@@ -90,7 +90,7 @@ Initial lane model:
 |---|---|---|---|---|
 | `memory_curate` | Review role memory, maintain `core/`, compact/prune memory. | `curate` + Den | Medium | Frequent when active |
 | `archive_index` | Sync selected canonical memory/Cabinet sources to Letta Archives. | Den/indexer | Low/medium | After curation or periodic |
-| `introspection` | Review role behavior, tool-use issues, failures, and patterns. | `curate` or future reviewer | Medium | Periodic or event-triggered |
+| `introspection` | Review role behavior, tool-use issues, failures, and patterns. Its typed output is a **performance assessment** — see [ADR-0051](adr-0051-reflection-performance-assessments.md). | `curate` or future reviewer | Medium | Periodic or event-triggered |
 | `skill_review` | Draft skill/workflow/prompt proposals from evidence. | `curate` or future reviewer | Medium/high | Less frequent |
 | `skill_apply` | Apply approved skill/workflow/prompt changes. | Den + human-gated policy | High | Manual or tightly gated |
 | `health_check` | Check agents, services, tools, stale queues, and drift. | Den | Low | Frequent |

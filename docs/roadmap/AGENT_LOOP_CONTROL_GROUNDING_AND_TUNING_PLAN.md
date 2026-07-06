@@ -11,10 +11,11 @@ Depends on:
 - [ADR-0006 — Bear work surfaces](../decisions/adr-0006-bear-work-surfaces.md) and [WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md](WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md) for surface kinds and anchors.
 - [ADR-0047 — Context window budget](../decisions/adr-0047-context-window-budget-and-token-estimation.md) and [CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md](CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md) for the budget report object.
 - [ADR-0032 — Den context compaction](../decisions/adr-0032-den-context-compaction-architecture.md) and [DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md) for compaction sequencing.
+- [ADR-0018 — Reflection system](../decisions/adr-0018-reflection-system.md) and [ADR-0051 — Reflection performance assessments](../decisions/adr-0051-reflection-performance-assessments.md) for the `curate` assessment/tuning lanes in Part E.
 
 ## Goal
 
-Make ADR-0050's adaptive loop control **grounded** (evidence, not self-report), **context-aware** (compaction is a loop decision, not a side channel), and **tunable by a single maintainer** (advisory-first with an offline replay harness), so the policy's complexity is justified by measured behavior rather than intuition. A fourth, **deferred** capability (Part D) adds optional cheap-model classifier signals for the residual judgment calls — strictly advisory and ledgered — once the measurement foundation is mature.
+Make ADR-0050's adaptive loop control **grounded** (evidence, not self-report), **context-aware** (compaction is a loop decision, not a side channel), and **tunable** (advisory-first with an offline replay harness), so the policy's complexity is justified by measured behavior rather than intuition. A fourth, **deferred** capability (Part D) adds optional cheap-model classifier signals for the residual in-run judgment calls — strictly advisory and ledgered. A fifth (Part E) gives the tuning loop its **owner**: since a small, non-technical userbase has no maintainer to read ledgers, Reflection's `curate` role runs the [ADR-0051](../decisions/adr-0051-reflection-performance-assessments.md) `observe → assess → propose → apply` pipeline — producing longitudinal performance assessments (valuable on their own) and, under governance, proposing per-model profile deltas.
 
 ## Why this plan exists
 
@@ -338,6 +339,87 @@ Same discipline as C5: a classifier-derived trigger enforces only when replay ov
 
 ---
 
+## Part E — `curate` assessment and tuning lanes (ADR-0051)
+
+Parts A–D produce evidence and in-run signals; they do not decide *who* learns from runs and adjusts model profiles over time. For a small, non-technical userbase there is no maintainer to read ledgers, so that owner is Reflection's `curate` role. This part implements the [ADR-0051](../decisions/adr-0051-reflection-performance-assessments.md) pipeline on top of the Part C foundation:
+
+```text
+observe  →  assess  →  propose  →  apply
+(Parts A–D)  (E1–E2)    (E3)       (E4, governed)
+```
+
+`assess` is separable from and prerequisite to `propose`; it has standalone longitudinal value and lands first. `apply` inherits ADR-0018's High-risk governance for behavior-changing adaptation. The hard safety floor (ko, emergency fuse) is never tuned.
+
+### E1 — Assessment records and scopes
+
+Suggested types:
+
+```rust
+pub enum AssessmentScope { Run, Session, Model }
+
+pub struct PerformanceAssessment {
+    pub id: AssessmentId,
+    pub scope: AssessmentScope,
+    pub subject: AssessmentSubject,     // bear/role/model handle(s)
+    pub profile_hash: String,           // control profile in effect
+    pub dimensions: Vec<DimensionScore>,// churn, recovery, grounding, efficiency, outcome-label ...
+    pub confidence: f32,
+    pub sample: SampleContext,          // n, window, floor-met?
+    pub evidence_refs: Vec<LedgerRef>,  // into bear_loop_ledger_turns
+    pub produced_by: AssessmentSource,  // lane + optional classifier model handle
+    pub created_at: DateTime<Utc>,
+}
+```
+
+| Task | Done when |
+| --- | --- |
+| Define assessment types | Scope, dimensions, confidence, sample context, and evidence refs are typed and serializable. |
+| Reuse Reflection tables | Assessments use ADR-0018 shared run/event tables plus a lane-specific assessment table, not a bespoke store. |
+| Enforce model-invisibility | Assessments are never injected into model context, task-list/Docket state, or conversation history by default. |
+| Make assessments reproducible | An assessment can be recomputed from the referenced ledger evidence. |
+| Add tests | Run/session assessments round-trip; model-invisibility and reproducibility are covered. |
+
+**Exit gate:** typed, reproducible, model-invisible assessment records exist.
+
+### E2 — Assessment lane (`introspection` extension)
+
+| Task | Done when |
+| --- | --- |
+| Consume ledger/replay | The lane reads `bear_loop_ledger_turns` (and the replay harness) to score runs and sessions offline, model-call-free where possible. |
+| Emit run + session assessments | Runs and sessions are assessed on the typed dimensions. |
+| Roll up model assessments | Model-scoped assessments are derived from run/session records with an explicit sample floor and confidence function. |
+| Encode thin-data discipline | Below the sample floor, model assessments report low confidence rather than a firm conclusion; under-cutting is weighted at least as heavily as over-running. |
+| Budget the lane | The lane runs under Reflection budgets/cadence per ADR-0018. |
+| Add tests | Sparse-data cases report low confidence; rollups honor the floor; scoring is deterministic given the ledger. |
+
+**Exit gate:** `curate` produces longitudinal assessments with honest confidence — valuable even with no tuning attached.
+
+### E3 — Tuning lane: proposals (`skill_review` sibling)
+
+| Task | Done when |
+| --- | --- |
+| Generate proposals from assessments | A tuning proposal recommends a bounded per-model profile delta and cites the assessments justifying it. |
+| Gate on confidence | Low-confidence assessments cannot justify a proposal. |
+| Exclude the safety floor | Proposals can adjust advisory thresholds only; ko and emergency fuse are off-limits. |
+| Keep proposals inert | A proposal changes nothing until accepted/applied. |
+| Add tests | Proposal requires citing assessments above the confidence floor; proposals never touch the safety floor. |
+
+**Exit gate:** proposals exist as governed, inert recommendations grounded in assessments.
+
+### E4 — Tuning lane: apply (`skill_apply` sibling, governed)
+
+| Task | Done when |
+| --- | --- |
+| Version profiles | Control profiles are versioned and reversible; every applied delta is auditable. |
+| Bound the envelope | An applied delta is small and within a configured envelope; large deltas require escalation. |
+| Escalate to human review | Low-confidence or large-delta proposals route to ADR-0018 `human_review_escalation` rather than auto-applying. |
+| Scope registry vs override | Model-registry (shared) changes are more conservative and more escalation-prone than per-Bear/per-stance overrides. |
+| Add tests | Apply is reversible; envelope and escalation thresholds hold; registry-level changes require stricter gates. |
+
+**Exit gate:** learned tuning can change behavior only within a bounded, reversible, governed envelope.
+
+---
+
 ## Rollout order
 
 1. **Ledger + advisory** (C1–C2): persist replayable ledgers; run everything in `observe`. Zero behavior change beyond diagnostics.
@@ -347,8 +429,11 @@ Same discipline as C5: a classifier-derived trigger enforces only when replay ov
 5. **Graduate first enforcers** (C5): promote consecutive-failure and over-exploration where replay supports it.
 6. **Checkpoint-then-compact** (B2): coordinate compaction with checkpoints.
 7. **Additional grounding surfaces** (A4 document/media) and **additional levels** (`light`/`strict`) as evidence accrues.
-8. **Cheap-model classifier signals** (D1–D2, advisory): only after replay is mature; feed verdicts as advisory signals, ledgered.
-9. **Graduate classifier kinds** (D3): promote per kind where recorded verdicts show value.
+8. **Assessment lane** (E1–E2): `curate` produces run/session/model assessments from the ledger — standalone longitudinal value, no behavior change. Can start as early as replay (step 2) is usable.
+9. **Cheap-model classifier signals** (D1–D2, advisory): only after replay is mature; feed verdicts as advisory signals, ledgered.
+10. **Graduate classifier kinds** (D3): promote per kind where recorded verdicts show value.
+11. **Tuning proposals** (E3): turn assessments into inert, cited per-model profile deltas.
+12. **Governed apply** (E4): bounded, reversible, escalation-gated application of accepted proposals.
 
 ## Validation matrix
 
@@ -366,6 +451,9 @@ Same discipline as C5: a classifier-derived trigger enforces only when replay ov
 | Graduation | per-class promotion independent; ko/fuse always enforced |
 | Classifier signals | bounded to trigger points, budgeted, fail-safe; advisory only; never evaluates correctness |
 | Classifier replay | verdicts recorded in ledger; replay reads recorded verdicts with zero model calls; unrecordable verdict cannot gate |
+| Assessments | run/session round-trip; model-invisible; reproducible from ledger; sparse data → low confidence, not firm conclusions |
+| Tuning proposals | require cited assessments above confidence floor; never touch ko/fuse; inert until applied |
+| Governed apply | reversible/versioned; envelope + escalation enforced; registry changes stricter than per-Bear overrides |
 
 ## First implementation slice
 

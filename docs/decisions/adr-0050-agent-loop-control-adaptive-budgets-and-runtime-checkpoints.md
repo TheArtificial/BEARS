@@ -15,6 +15,7 @@
 - [ADR-0048: Core turn/client-obligation coordinator](adr-0048-core-turn-client-obligation-coordinator.md)
 - [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md)
 - [ADR-0037: Work sandbox, egress gateway, and upstream auth](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)
+- [ADR-0051: Reflection performance assessments](adr-0051-reflection-performance-assessments.md)
 
 > **2026-07-06 amendment.** Four changes were added after comparative review against OpenCode, Cursor, Letta Code, and Claude Code loop control:
 > 1. **§7c** introduces surface-declared **grounding probes** so post-mutation feedback is grounded in the work surface's own validators rather than only in model self-report, without assuming every surface is a code repository.
@@ -337,7 +338,7 @@ The first implementation should use:
 
 Cheap outcome labeling should accompany the ledger so replay has a signal to optimize against: a stop immediately followed by the user re-asking or saying "continue" is a probable false positive; a normal end after a long read-only tail with no mutation is a probable false negative. Heuristic labels over the run log give a tuning trend line without human annotation.
 
-Enforcement, additional levels, per-class thinking escalation, and additional grounding surfaces are unlocked from this advisory baseline as evidence accrues, per [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md).
+Enforcement, additional levels, per-class thinking escalation, and additional grounding surfaces are unlocked from this advisory baseline as evidence accrues, per [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md). Because Bear Den's userbase is small and non-technical, the party that reads this ledger and learns per-model tuning is not a human maintainer but Reflection's `curate` role, via the `observe → assess → propose → apply` pipeline in [ADR-0051](adr-0051-reflection-performance-assessments.md); loop-control assessments produced there must never be made model-visible or allowed to tune the hard safety floor (rule-of-ko, emergency fuse).
 
 ## Implementation notes
 
