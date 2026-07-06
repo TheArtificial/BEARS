@@ -39,11 +39,7 @@
   <dt>Max output tokens</dt>
   <dd>{% if conv.latest_context_budget.max_output_tokens is not none %}{{ conv.latest_context_budget.max_output_tokens }}{% else %}<em>unknown</em>{% endif %}</dd>
   <dt>Status</dt>
-  <dd>
-    {% if conv.latest_context_budget.over_budget %}<strong>over budget</strong>
-    {% elif conv.latest_context_budget.near_budget %}<strong>near budget</strong>
-    {% else %}ok{% endif %}
-  </dd>
+  <dd>{% if conv.latest_context_budget.over_budget %}<strong>over budget</strong>{% elif conv.latest_context_budget.near_budget %}<strong>near budget</strong>{% else %}ok{% endif %}</dd>
   <dt>Updated</dt>
   <dd>{% if conv.latest_context_budget_updated_at %}{{ conv.latest_context_budget_updated_at }}{% else %}<em>unknown</em>{% endif %}</dd>
 </dl>
@@ -51,11 +47,7 @@
   <thead><tr><th>Component</th><th>Characters</th><th>Estimated tokens</th></tr></thead>
   <tbody>
   {% for component in conv.latest_context_budget.components %}
-    <tr>
-      <td>{{ component.label | e }}</td>
-      <td>{{ component.estimated_characters }}</td>
-      <td>{{ component.estimated_tokens }}</td>
-    </tr>
+    <tr><td>{{ component.label | e }}</td><td>{{ component.estimated_characters }}</td><td>{{ component.estimated_tokens }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -74,18 +66,10 @@
       <td>{{ event.status | e }}</td>
       <td>{{ event.trigger | e }}</td>
       <td><code>{{ event.policy_version | e }}</code></td>
-      <td>
-        {% if event.source_group_start is not none and event.source_group_end is not none %}
-          {{ event.source_group_start }}–{{ event.source_group_end }}
-        {% else %}
-          <em>none</em>
-        {% endif %}
-      </td>
+      <td>{% if event.source_group_start is not none and event.source_group_end is not none %}{{ event.source_group_start }}–{{ event.source_group_end }}{% else %}<em>none</em>{% endif %}</td>
       <td>{% if event.diagnostic %}{{ event.diagnostic | e }}{% else %}<em>none</em>{% endif %}</td>
     </tr>
-    <tr>
-      <td colspan="6"><details><summary>Event artifact reference</summary><pre style="white-space: pre-wrap; max-height:16rem; overflow:auto;">{{ event.artifact_json | e }}</pre></details></td>
-    </tr>
+    <tr><td colspan="6"><details><summary>Event artifact reference</summary><pre style="white-space: pre-wrap; max-height:16rem; overflow:auto;">{{ event.artifact_json | e }}</pre></details></td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -95,25 +79,22 @@
 
 <h3>Agent Loop Checkpoints</h3>
 {% if checkpoint_artifacts and checkpoint_artifacts | length > 0 %}
-<table></table>
-  <thead><tr><th>When</</th>th><th>Run</th><</th>th>Reason</th><th>Level</th><th</th>>Status</th><th>Task ref</th</th>></tr></thead>
+<table>
+  <thead><tr><th>When</th><th>Run</th><th>Reason</th><th>Level</th><th>Status</th><th>Task ref</th></tr></thead>
   <tbody>
-  {% for checkpoint in checkpoint</tbody>_artifacts %}
+  {% for checkpoint in checkpoint_artifacts %}
     <tr>
-</tr>      <td>{{ checkpoint.created_at }}</td>
-      <td><code>{{ checkpoint.run_id | e }}</code><br /><small>{{ checkpoint.checkpoint_id | e }}</small></td>
+      <td>{{ checkpoint.created_at }}</td>
+      <td><code>{{ checkpoint.run_id | e }}</code><br><small>{{ checkpoint.checkpoint_id | e }}</small></td>
       <td>{{ checkpoint.reason | e }}</td>
       <td>{{ checkpoint.control_level | e }}</td>
       <td>{{ checkpoint.validation_status | e }} · {{ checkpoint.visibility | e }} · replay {{ checkpoint.replay_policy | e }}</td>
-      <td>
-</td>        {% if checkpoint.related_task_list_id %}<code>{{ checkpoint.related_task_list_id | e }}</code>{% else %}<em>none</em></em>{% endif %}
-        {% if checkpoint.related_task_item_id %}<br /><small>{{ checkpoint.related_task_item_id | e }}</small>{% endif %}
-      </td>
+      <td>{% if checkpoint.related_task_list_id %}<code>{{ checkpoint.related_task_list_id | e }}</code>{% else %}<em>none</em>{% endif %}{% if checkpoint.related_task_item_id %}<br><small>{{ checkpoint.related_task_item_id | e }}</small>{% endif %}</td>
     </tr>
     <tr>
-</tr>      <td colspan="6">
-        <details><summary>Checkpoint request</summary><</summary>pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ checkpoint.request_json | e }}</pre></details>
-        <details><summary>Checkpoint response</summary><pre</summary> style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ checkpoint.response_json | e }}</pre></details>
+      <td colspan="6">
+        <details><summary>Checkpoint request</summary><pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ checkpoint.request_json | e }}</pre></details>
+        <details><summary>Checkpoint response</summary><pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ checkpoint.response_json | e }}</pre></details>
       </td>
     </tr>
   {% endfor %}
@@ -129,16 +110,11 @@
 <details{% if loop.first %} open{% endif %}>
   <summary><code>{{ artifact.id }}</code> · {{ artifact.artifact_kind | e }} · {{ artifact.created_at }}</summary>
   <dl>
-    <dt>Policy</dt>
-    <dd><code>{{ artifact.policy_version | e }}</code></dd>
-    <dt>Trigger</dt>
-    <dd>{{ artifact.trigger | e }}</dd>
-    <dt>Source messages</dt>
-    <dd>{{ artifact.source_message_start_seq }}–{{ artifact.source_message_end_seq }}</dd>
-    <dt>Source groups</dt>
-    <dd>{% if artifact.source_group_start is not none and artifact.source_group_end is not none %}{{ artifact.source_group_start }}–{{ artifact.source_group_end }}{% else %}<em>none</em>{% endif %}</dd>
-    <dt>Superseded by</dt>
-    <dd>{% if artifact.superseded_by %}<code>{{ artifact.superseded_by }}</code>{% else %}<em>current</em>{% endif %}</dd>
+    <dt>Policy</dt><dd><code>{{ artifact.policy_version | e }}</code></dd>
+    <dt>Trigger</dt><dd>{{ artifact.trigger | e }}</dd>
+    <dt>Source messages</dt><dd>{{ artifact.source_message_start_seq }}–{{ artifact.source_message_end_seq }}</dd>
+    <dt>Source groups</dt><dd>{% if artifact.source_group_start is not none and artifact.source_group_end is not none %}{{ artifact.source_group_start }}–{{ artifact.source_group_end }}{% else %}<em>none</em>{% endif %}</dd>
+    <dt>Superseded by</dt><dd>{% if artifact.superseded_by %}<code>{{ artifact.superseded_by }}</code>{% else %}<em>current</em>{% endif %}</dd>
   </dl>
   <pre style="white-space: pre-wrap; max-height:28rem; overflow:auto;">{{ artifact.artifact_json | e }}</pre>
 </details>
@@ -153,13 +129,7 @@
   <thead><tr><th>#</th><th>Type</th><th>Role</th><th>Visibility</th><th>Preview</th></tr></thead>
   <tbody>
   {% for m in message_rows %}
-    <tr>
-      <td>{{ m.sequence_no }}</td>
-      <td>{{ m.message_type | e }}</td>
-      <td>{{ m.role | e }}</td>
-      <td>{{ m.visibility | e }}</td>
-      <td><pre style="white-space: pre-wrap; margin:0; max-height:6rem; overflow:auto;">{{ m.preview | e }}</pre></td>
-    </tr>
+    <tr><td>{{ m.sequence_no }}</td><td>{{ m.message_type | e }}</td><td>{{ m.role | e }}</td><td>{{ m.visibility | e }}</td><td><pre style="white-space: pre-wrap; margin:0; max-height:6rem; overflow:auto;">{{ m.preview | e }}</pre></td></tr>
   {% endfor %}
   </tbody>
 </table>
