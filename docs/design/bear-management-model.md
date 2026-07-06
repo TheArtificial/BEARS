@@ -8,17 +8,21 @@ This doc records the conceptual model the [UI brief](bear-management-ui-brief.md
 
 ## Information architecture at a glance
 
-| Area | What it answers | Travels with the Bear? |
-|------|-----------------|------------------------|
-| **Overview** | Is it healthy, what has it done lately, what needs me? | Stays (a host dashboard); identity is portable |
-| **Memory** | What does it know — and is that right? | **Travels** — the mind |
-| **Capabilities** | What can it *do*? | Grant travels; connection, secret, and server stay |
-| **Resources** | What can it *act on and read*? | Knowledge travels; the resource and its connection stay |
-| **Activity** | What *did* it do? | **Stays** — the record |
-| **People** | Who can use it? | Stays |
-| **Portability** | How do I back it up or move it? | — (this is the mover) |
+| Group | Area | What it answers | Travels? |
+|-------|------|-----------------|----------|
+| — | **Overview** | Is it healthy, what has it done lately, what needs me? | Spans (host dashboard; identity portable) |
+| Yours | **Identity & charter** | Who is it? | **Travels** |
+| Yours | **Memory** | What does it know — and is that right? | **Travels** — the mind |
+| Yours | **Skills** | How does it work (owned procedures)? | **Travels** |
+| This Den | **Capabilities** | What can it *do* (tools, MCP)? | Grant travels; server and secret stay |
+| This Den | **Resources** | What can it *act on and read*? | Knowledge travels; the resource and its connection stay |
+| This Den | **Activity** | What *did* it do? | **Stays** — the record |
+| This Den | **People** | Who can use it? | Stays |
+| — | **Portability** | How do I back it up or move it? | — (the mover) |
 
-The "travels" column is the **conceptual boundary**, not a UI spec. How the UI makes it legible is deliberately left open — see the brief's portability-legibility principle (principle 8). A blunt per-item "portable / attached" badge is explicitly **not** the mandated answer; the test is only whether a user is ever surprised at export. Note that Capabilities and Resources each split *internally* — the grant or the knowledge travels while the live wiring (connection, secret, running server, the resource itself) stays — which is exactly the seam most likely to surprise, and the one an elegant expression most needs to cover.
+The nav is **one continuous list, softly grouped by ownership** — *Yours* (travels with the Bear) and *This Den* (stays here for now) — not two modes. The grouping is the leading candidate for making portability legible (brief principle 8) without a per-item badge. Label the second group by ownership honesty, never "server": the split should read *this is intrinsically yours; that's just where it lives today*.
+
+The "travels" column is the **conceptual boundary**, not a UI spec; the test is only whether a user is ever surprised at export. Note that Capabilities and Resources each split *internally* — the grant or the knowledge travels while the live wiring (connection, secret, running server, the resource itself) stays. Those items sit under *This Den* while their portable counterpart (a skill, a memory) sits under *Yours*, so the soft grouping still has to make that seam feel natural — it is the case most likely to surprise.
 
 Two of these are the load-bearing pillars, and they are deliberately paired:
 
@@ -26,6 +30,8 @@ Two of these are the load-bearing pillars, and they are deliberately paired:
 - **Activity** — what the Bear *did*. Conversations, jobs, and Cabinet activity. **Host-side**, forensic, does **not** travel.
 
 Keeping these distinct is what lets us say honestly that *a Bear is its memory, not its transcript*: the transcript gets a first-class home as the doing-record without being mistaken for the mind.
+
+In the IA these pillars head a soft ownership grouping. **Memory** and **Skills** — owned, portable knowledge — sit with identity under *Yours*; **Activity**, along with capabilities-wiring and resources, sits under *This Den*. The grouping is one nav, not two modes, and is the leading way to make the portability boundary legible without per-item flags.
 
 ## Two axes of reach: capabilities × resources
 
@@ -42,6 +48,8 @@ Three kinds of capability-expander, distinguished by *how* they extend the base 
 | **Skill** | **directs** | A reviewed procedure/knowledge package shaping *how* tools are used. |
 
 Note the seams: a tool-bearing skill can also *supply* capability (so it is review-gated), and a connection is the *visible half* of a bridge — see below.
+
+These three also sort cleanly by ownership: **direct** (skills) is owned, reviewed knowledge that travels with the Bear — so in the IA it sits with memory under *Yours* — while **enable** (connections) and **supply** (MCP servers) are host infrastructure that stays, grouped with resources under *This Den*. That sort is why "Capabilities" as a single lumped area dissolved: it had been mixing a mind-thing (skills) with plumbing (tools, connections).
 
 ### Resources — what the Bear *acts on and reads*
 
@@ -93,7 +101,7 @@ And a **memory** links *back* to its **source conversation** (the provenance alr
 
 ## Screen map (text frames)
 
-Low-fidelity frames: each box lists the elements on a screen as a flat set — no layout or visual hierarchy is implied. Edges below are cross-links, not navigation order.
+Low-fidelity frames: each box lists the elements on a screen as a flat set — no layout or visual hierarchy is implied. The nav groups these softly as *Yours* / *This Den* (see the IA); the map implies neither that grouping nor any layout. Edges below are cross-links, not navigation order.
 
 ```
 ┌─ Overview ─────────────────────┐   ┌─ Memory ───────────────────────┐
@@ -135,10 +143,12 @@ Low-fidelity frames: each box lists the elements on a screen as a flat set — n
 │ · does not travel on export    │   │ · pre-export curation flush    │
 └────────────────────────────────┘   │ · import re-attach checklist   │
                                       └────────────────────────────────┘
-┌─ Identity & charter ───────────┐
-│ · name / slug / charter        │
-│ · per-stance model (swappable) │
-└────────────────────────────────┘
+┌─ Identity & charter ───────────┐   ┌─ Skills ───────────────────────┐
+│ · name / slug / charter        │   │ · owned procedures             │
+│ · per-stance model (swappable) │   │ · directs how tools are used   │
+└────────────────────────────────┘   │ · source / trust / roles       │
+                                      │ · review self-proposed         │
+                                      └────────────────────────────────┘
 ```
 
 Cross-links (the graph, not the nav):

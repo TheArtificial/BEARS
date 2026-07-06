@@ -19,19 +19,28 @@ The test to hold every screen against: **does this let a non-expert _see, unders
 5. **Cause and effect is traceable.** From a conversation you can see the memories it formed and the work it dispatched; from a memory you can reach the conversation that formed it. The record is a graph you can walk, not disconnected logs.
 6. **No irreversible surprises.** Changes that weaken isolation or delete memory preview their effect in plain language before they happen. Destructive actions are clear without being frightening.
 7. **Honest about canonical vs derived.** Canonical memory is truth; recall indexes are rebuildable and labeled as such. The UI never dresses derived state up as authoritative.
-8. **Portability is legible where you stand (own).** A user should be able to tell, on whatever screen they're on, what of the Bear is theirs to take and what is bound to this Den — not discover it only at export. This is a requirement on the *information*, not a mandate of mechanism. Explicitly **do not** default to stamping every item with a blunt "portable / attached" badge; the elegant expression is still to be found, and may live in framing, grouping, wording, or how re-attach is handled on import rather than a per-row tag. The test is whether a user is ever *surprised* at export — not whether a flag exists.
+8. **Portability is legible where you stand (own).** A user should be able to tell, on whatever screen they're on, what of the Bear is theirs to take and what is bound to this Den — not discover it only at export. This is a requirement on the *information*, not a mandate of mechanism. Explicitly **do not** default to stamping every item with a blunt "portable / attached" badge; the elegant expression is still to be found, and may live in framing, grouping, wording, or how re-attach is handled on import rather than a per-row tag. The test is whether a user is ever *surprised* at export — not whether a flag exists. (Current leading expression: the ownership-grouped nav in the IA section below.)
 
 ## Information architecture (top-level areas)
 
-- **Overview** — health, recent activity, and what's pending your review.
-- **Memory** — the mind: the curated, portable store the Bear knows itself by. Kept prominent.
-- **Capabilities** — what the Bear can *do*: tools, MCP servers (which supply tools), and skills (which direct tool use), granted per stance.
-- **Resources** — what the Bear *acts on and reads*: external resources reached through **Connections** (repositories, documents, servers) and internal ones (Cabinet, Docket work surfaces).
-- **Activity** — what the Bear *did* (the host-side record): **Conversations**, **Jobs**, and **Cabinet activity**.
-- **People** — membership and access.
-- **Portability** — export and import.
+The nav is **one continuous list, softly grouped by ownership** — not two modes you switch between. The grouping itself makes the portability boundary legible (the leading candidate for principle 8's mechanism): what is intrinsically the Bear's and travels with it, versus what is wiring and record that stays on this Den.
 
-The spine is a pairing: **Memory** (what it learned — portable, the mind) and **Activity** (what it did — host-side, the record). That pairing is also the portability line — the mind travels with the Bear, the record stays with this Den. Both are first-class and present; neither is buried under settings. The model behind Capabilities and Resources — the two axes and the connections that bridge them — is detailed in the [companion doc](bear-management-model.md).
+**Overview** — health, recent activity, and what's pending your review. (Spans both groups.)
+
+**Yours** — travels with the Bear:
+- **Identity & charter** — name, slug, charter, per-stance model choice.
+- **Memory** — the mind: the curated store the Bear knows itself by. Kept prominent.
+- **Skills** — reviewed, owned procedures that direct how the Bear works. Owned knowledge, not host wiring — which is why they sit here, with the mind, rather than with tools and connections.
+
+**This Den** — stays here for now:
+- **Capabilities** — what the Bear can *do*: tools and MCP servers (which supply tools), granted per stance.
+- **Resources** — what the Bear *acts on and reads*: external resources reached through **Connections** (repositories, documents, servers) and internal ones (Cabinet, Docket work surfaces).
+- **Activity** — what the Bear *did*: **Conversations**, **Jobs**, and **Cabinet activity**.
+- **People** — membership and access.
+
+**Portability** — export and import. (The mover; belongs to neither group.)
+
+Two things make this honest rather than clever. The second group is labeled by **ownership** ("This Den — stays here for now"), never by infrastructure ("server"): the split should read *this is intrinsically yours; that's just where it lives today*, which reinforces the pitch instead of centering the plumbing. And the grouping is **soft** — everything stays in one visible nav, so routine tasks never require deciding "which half is this in." The Memory/Activity pairing still anchors it (the mind travels, the record stays), and the deeper model behind Capabilities and Resources — the two axes bridged by connections — is in the [companion doc](bear-management-model.md).
 
 ## Primary use cases (the test cases — actor, motivation, success bar)
 
@@ -61,7 +70,9 @@ The spine is a pairing: **Memory** (what it learned — portable, the mind) and 
 
 **Identity & charter.** Name, slug (human handle), charter/purpose text. Per-stance **model selection**, framed as *the engine is swappable and changing it does not change the mind* — never as "upgrading your Bear." Charter edits recompile prompts; say so honestly (takes effect next turn).
 
-**Capabilities.** Per stance, the granted tools, MCP servers (which supply tools), and skills (which direct tool use). Each item shows *what it exposes* (private-data reach / untrusted input / outbound), and for credentialed tools, *which connection enables it*. Add from the operator catalog; remove is first-class. **Self-proposed capability** (bear-authored skills) flows through the review queue — no stance self-installs executable capability. Risky combinations are flagged as **review**, never as a safety guarantee. Secrets are named, never shown. A grant's *description* travels with the Bear; the connection, secret, and running server behind it stay on this Den and are re-attached on import — the screen should make that split feel natural, not a surprise sprung at export.
+**Skills** *(Yours).* The reviewed, owned procedures that direct how the Bear works — grouped with Memory, not with tools, because they are owned knowledge that travels. Per skill: what it directs, its source and trust, and role applicability (which stances use it). **Self-proposed skills** (bear-authored) flow through the review queue — no stance self-installs executable capability. Approved skills travel with the Bear as package artifacts.
+
+**Capabilities** *(This Den).* Per stance, the granted tools and MCP servers (which supply tools). Each item shows *what it exposes* (private-data reach / untrusted input / outbound), and for credentialed tools, *which connection enables it*. Add from the operator catalog; remove is first-class. Risky combinations are flagged as **review**, never as a safety guarantee. Secrets are named, never shown. A grant's *description* travels with the Bear; the connection, secret, and running server behind it stay on this Den and are re-attached on import — the screen should make that split feel natural, not a surprise sprung at export.
 
 **Resources.** External resources as typed cards (repository, document, server) reached through **Connections**; internal resources (Cabinet, Docket work surfaces). Granted per stance. Connections are set up once (owner-scoped, reused across Bears) and surfaced as the *enabler* behind credentialed tools. Secrets named, never shown, never exported. The Bear's *knowledge* of a resource (anchors and overviews in `core/`) travels as memory; the resource itself and the connection to it stay — a distinction worth surfacing here, not only at export.
 
