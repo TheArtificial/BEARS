@@ -3,6 +3,7 @@
 mod approvals;
 mod assembler;
 mod budget;
+mod checkpoints;
 mod control;
 mod context;
 mod key_memory_projection;
@@ -42,6 +43,11 @@ pub use budget::{
     PostMutationVerificationWindow, ToolBudgetClass, ToolCallBudgetLimits, ToolCallBudgetUsage,
     ToolContinuationObservation, TurnBudgetEvaluation, TurnBudgetPolicy, TurnBudgetState,
     TurnBudgetStopReason, TurnBudgetWarning,
+};
+pub use checkpoints::{
+    list_checkpoints_for_run, record_checkpoint_request, record_checkpoint_response,
+    CheckpointArtifactInput, CheckpointArtifactRow, CheckpointReplayPolicy,
+    CheckpointResponseInput, CheckpointValidationStatus, CheckpointVisibility,
 };
 pub use context::{
     assemble_agent_messages, load_transcript_grouping_rows, load_transcript_messages,
