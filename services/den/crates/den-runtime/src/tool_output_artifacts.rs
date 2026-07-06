@@ -2,6 +2,17 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ToolOutputArtifactSelectRow {
+    id: Uuid,
+    tool_call_id: String,
+    tool_name: Option<String>,
+    source: String,
+    content_text: Option<String>,
+    content_json: Option<Value>,
+    metadata: Value,
+}
+
 use den_core::DenError;
 
 #[derive(Debug, Clone)]
@@ -108,18 +119,7 @@ pub async fn read_tool_output_artifact(
     limit_chars: usize,
 ) -> Result<ToolOutputArtifactRead, DenError> {
     let id = artifact_id_from_ref(artifact_ref)?;
-    let row = sqlx::query_as::<
-        _,
-        (
-            Uuid,
-            String,
-            Option<String>,
-            String,
-            Option<String>,
-            Option<Value>,
-            Value,
-        ),
-    >(
+    let row = sqlx::query_as::<_, ToolOutputArtifactSelectRow>(
         r"
         SELECT id, tool_call_id, tool_name, source, content_text, content_json, metadata
         FROM tool_output_artifacts
@@ -137,9 +137,9 @@ pub async fn read_tool_output_artifact(
     })?;
 
     let content = row
-        .4
+        .content_text
         .or_else(|| {
-            row.5.map(|value| {
+            row.content_json.map(|value| {
                 serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
             })
         })
@@ -154,17 +154,17 @@ pub async fn read_tool_output_artifact(
         .collect::<String>();
     let truncated = start + slice.chars().count() < total_chars;
     Ok(ToolOutputArtifactRead {
-        id: row.0,
-        artifact_ref: format!("tool-output://{}", row.0),
-        tool_call_id: row.1,
-        tool_name: row.2,
-        source: row.3,
+        id: row.id,
+        artifact_ref: format!("tool-output://{}", row.id),
+        tool_call_id: row.tool_call_id,
+        tool_name: row.tool_name,
+        source: row.source,
         content: slice,
         offset: start,
         limit_chars,
         total_chars,
         truncated,
-        metadata: row.6,
+        metadata: row.metadata,
     })
 }
 

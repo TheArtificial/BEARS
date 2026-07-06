@@ -7,7 +7,7 @@ use uuid::Uuid;
 use den_core::DenError;
 
 /// A live (non-deleted) registry row for an indexed chunk.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ExistingPassage {
     pub chunk_index: i32,
     pub content_hash: String,
@@ -21,7 +21,7 @@ pub async fn list_passages(
     memory_id: &str,
     embedding_standard: &str,
 ) -> Result<Vec<ExistingPassage>, DenError> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, ExistingPassage>(
         r"
         SELECT chunk_index, content_hash, point_id
         FROM recall_passages
@@ -37,14 +37,7 @@ pub async fn list_passages(
     .await
     .map_err(|e| DenError::System(format!("recall_passages list: {e}")))?;
 
-    Ok(rows
-        .into_iter()
-        .map(|r| ExistingPassage {
-            chunk_index: r.get::<i32, _>("chunk_index"),
-            content_hash: r.get::<String, _>("content_hash"),
-            point_id: r.get::<String, _>("point_id"),
-        })
-        .collect())
+    Ok(rows)
 }
 
 /// Distinct memory ids that currently have live passages for a bear (used by reconcile to

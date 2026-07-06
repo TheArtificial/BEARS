@@ -241,7 +241,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `memory/curate_executor.rs:256-264` manual JSON-Map tally counter reimplements `HashMap::entry().or_insert()`.
 - [ ] `memory/curate_executor.rs:397-451` `apply_core_promotion` needless tuple-then-immediate-use round trip.
 - [ ] `turn_obligations.rs:19-76` `TurnObligationKind`/`ExpectedResponderAction` are two enums with byte-identical variants/impls — merge or macro-generate both (~50 duplicated lines).
-- [ ] `turn_obligations.rs:149-167` `row_to_obligation` manually maps 15 fields — should derive `sqlx::FromRow` like `plan_mode.rs`/`managed_blocks.rs` do.
+- [ ] `turn_obligations.rs:149-167` `row_to_obligation` manually maps 15 fields — should derive `sqlx::FromRow` like `plan_mode.rs`/`managed_blocks.rs` do. **DEFERRED to DB env** (structural batch A): a clean FromRow conversion here (and in the sharing `turn_waits.rs`) requires adding `responder_ref_id`/`turn_step_id` to query shapes that currently omit them + dropping the tolerant `try_get().ok()` fallback — a change to *what the queries return / how the struct is populated*, which needs a runtime/DB test to trust. Held back from the no-DB batch.
 - [ ] `turn_obligations.rs` — 4 nearly-identical wrapper-pairs (`_for_step` delegation) suggest an options-struct would flatten the API.
 - [ ] `agent_loop/step.rs:203-293` `handshake_future` — 90-line god function, 4+ level nesting; extract retry/overflow-recovery branch.
 - [ ] `agent_loop/step.rs:322-438` `recover_from_overflow_and_retry` duplicates `connect_request_stream`'s dispatch-by-`api_style` logic instead of reusing it — risk of drift.
@@ -541,7 +541,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/recall/temporal.rs:262-289` `match_in_month_or_year` — densest/least readable function, nested Options with unexplained arithmetic — split into two helpers.
 - [ ] `src/recall/indexer.rs:74-174` `index_record` — 100-line function mixing indexability check/diffing/embed+upsert/pruning — split into `diff_chunks`/`embed_and_upsert`/`prune_stale`.
 - [ ] `src/recall/indexer.rs:113,129` — avoidable clones of embed text and embedding vectors that could be moved instead.
-- [ ] `src/recall/reconcile.rs:34-45` `HeadRow` is a 9-tuple type alias with a comment per field instead of a `#[derive(FromRow)]` struct.
+- [x] `src/recall/reconcile.rs:34-45` `HeadRow` is a 9-tuple type alias with a comment per field instead of a `#[derive(FromRow)]` struct.  **DONE** (structural batch A): converted to `#[derive(sqlx::FromRow)]` + `query_as` (pure decoding swap, SQL unchanged); verified clippy `--all-targets -D warnings` clean.
 - [ ] `src/memory/curation.rs:205-283` `sqlite_proposal_to_row` — ~15-step manual `.get().and_then().unwrap_or().to_string()` chain — replace with a `#[derive(Deserialize)]` struct.
 - [ ] `src/memory/curation.rs:212` `Uuid::parse_str(...).unwrap_or_else(|_| Uuid::new_v4())` silently manufactures a random id on parse failure instead of surfacing an error — risks hiding data corruption.
 - [ ] `src/memory/curation.rs:1-22` — every public fn takes unused `_pool`/`_config` params (7 occurrences) — vestigial signature clutter.
@@ -594,7 +594,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/turn_steps.rs` — `TurnStepState` lacks `Serialize`/`Deserialize` even though sibling `TurnRunState` derives both.
 - [ ] `src/turn_runner.rs:87-132` `materialize_runtime_conversation_if_needed` mixes 3 responsibilities (classification/creation/session upsert) with duplicated early-return branches.
 - [ ] `src/surface_projection.rs:114-120` `bearwire_client_method_for_action` and `expected_responder_action` string constants matched untyped in multiple places — an enum would give compiler-checked exhaustiveness.
-- [ ] `src/tool_output_artifacts.rs:105,120-145` `sqlx::query_as::<_, (7-tuple)>` decoded positionally via `row.0`..`row.6` — use a `#[derive(sqlx::FromRow)]` struct instead.
+- [x] `src/tool_output_artifacts.rs:105,120-145` `sqlx::query_as::<_, (7-tuple)>` decoded positionally via `row.0`..`row.6` — use a `#[derive(sqlx::FromRow)]` struct instead.  **DONE** (structural batch A): converted to `#[derive(sqlx::FromRow)]` + `query_as` (pure decoding swap, SQL unchanged); verified clippy `--all-targets -D warnings` clean.
 - [ ] `src/tool_output_artifacts.rs:16` `pub source: &'static str` on a public struct forces callers to only pass literals — unusual API choice, use `String` or an enum.
 - [ ] `src/bearwire_events.rs:46` `format!("evt_{id}")` embeds an ID-prefixing convention inline rather than a typed constructor, inconsistent with `conversation_ids.rs`/`turn_ids.rs`'s dedicated ID newtypes.
 - [ ] `src/turn_ids.rs:6-32` `string_id!` macro's `new()` returns `Option<Self>` (None on blank input) rather than `Result<Self, _>`, inconsistent with the crate's `DenError::ValidationError` convention used everywhere else.
@@ -659,8 +659,8 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/native_runtime/openai_stream.rs:44-56,130-142,158-169` — same terminal-event `matches!` check copy-pasted 3 times — extract `is_terminal_or_pause(&event)`.
 - [ ] `src/recall/registry.rs:38,68,90,139,165,194` — six near-identical sqlx-error-wrapping lines — extract a shared `wrap(op)` helper.
 - [ ] `src/recall/registry.rs:101` `#[allow(clippy::too_many_arguments)]` on `upsert_passage` (9 params) — use a `NewPassage<'a>` struct (matching the `CreateBearObservation` convention already used in `bear_observations.rs`).
-- [ ] `src/recall/registry.rs:42-47,167,196` — manual `Row::get` field mapping instead of `sqlx::FromRow` on `ExistingPassage`.
-- [ ] `src/memory/bear_observations.rs:109-124` `row_from_sql` manually maps every column instead of deriving `sqlx::FromRow`.
+- [x] `src/recall/registry.rs:42-47,167,196` — manual `Row::get` field mapping instead of `sqlx::FromRow` on `ExistingPassage`.  **DONE** (structural batch A): converted to `#[derive(sqlx::FromRow)]` + `query_as` (pure decoding swap, SQL unchanged); verified clippy `--all-targets -D warnings` clean.
+- [x] `src/memory/bear_observations.rs:109-124` `row_from_sql` manually maps every column instead of deriving `sqlx::FromRow`.  **DONE** (structural batch A): converted to `#[derive(sqlx::FromRow)]` + `query_as` (pure decoding swap, SQL unchanged); verified clippy `--all-targets -D warnings` clean.
 - [ ] `src/memory/bear_observations.rs:44-51,77-79,96-98` — same 12-column SELECT/RETURNING list repeated verbatim 3 times — extract a `const OBSERVATION_COLUMNS`.
 - [ ] `src/native_runtime/tools.rs:27` `den_tools_for_profile(_config, role)` — unused `_config` parameter.
 - [ ] `src/native_runtime/tools.rs:57-59` `&first_sentence[..96]` byte-slices a `&str` from arbitrary tool descriptions — will panic on non-ASCII char boundary.
@@ -692,8 +692,8 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - Overall: generally consistent `CustomError`+`?` usage, but two stray `.unwrap()`s in `settings/mod.rs` break that consistency, and `create_support.rs`/`onboarding.rs` show real duplication that would benefit from extraction.
 
 ### den-service — bears/managed_blocks.rs, client_sessions.rs, bears/prompt_fragments/*, recall/qdrant.rs, model_selection.rs, archived_conversations.rs
-- [ ] `src/bears/managed_blocks.rs:15-27` `ManagedBlockResolutionRow` — 11-tuple type alias, extremely poor readability at the destructuring site (427-439, named manually) — use `#[derive(FromRow)]`.
-- [ ] `src/client_sessions.rs:195-217` `client_session_row_from_sql` manually maps every column by string key instead of `#[derive(FromRow)]`+`query_as`, unlike other files in the same batch (`managed_blocks.rs`, `archived_conversations.rs`) — inconsistent with crate convention.
+- [x] `src/bears/managed_blocks.rs:15-27` `ManagedBlockResolutionRow` — 11-tuple type alias, extremely poor readability at the destructuring site (427-439, named manually) — use `#[derive(FromRow)]`.  **DONE** (structural batch A): converted to `#[derive(sqlx::FromRow)]` + `query_as` (pure decoding swap, SQL unchanged); verified clippy `--all-targets -D warnings` clean.
+- [x] `src/client_sessions.rs:195-217` `client_session_row_from_sql` manually maps every column by string key instead of `#[derive(FromRow)]`+`query_as`, unlike other files in the same batch (`managed_blocks.rs`, `archived_conversations.rs`) — inconsistent with crate convention.  **DONE** (structural batch A): converted to `#[derive(sqlx::FromRow)]` + `query_as` (pure decoding swap, SQL unchanged); verified clippy `--all-targets -D warnings` clean.
 - [ ] `src/client_sessions.rs:60-105` `trusted_workspace_context` — ~45-line chain of `.as_ref().and_then().and_then().map()...` — extract named helpers (`extract_roots`, `extract_cwd`).
 - [ ] `src/bears/prompt_fragments/render.rs:45-46,60-61` `render_turn_text`/`render_compile_time_text` construct a brand-new `minijinja::Environment` per call — cache/share if this is a hot path.
 - [ ] `src/bears/prompt_fragments/bundle.rs:26` — `DenError::Parsing` used here vs `DenError::ValidationError` used for the same "malformed input" family elsewhere (`frontmatter.rs`) — inconsistent error-variant choice.

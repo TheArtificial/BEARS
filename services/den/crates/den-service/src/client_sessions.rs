@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgRow, PgPool, Row as SqlxRow};
+use sqlx::{PgPool, Row as SqlxRow};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -20,7 +20,7 @@ pub struct UpsertClientSession {
     pub current_mode: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ClientSessionRow {
     pub id: Uuid,
     pub user_id: i32,
@@ -192,37 +192,13 @@ pub async fn mark_resolved(
     Ok(())
 }
 
-fn client_session_row_from_sql(row: &PgRow) -> ClientSessionRow {
-    ClientSessionRow {
-        id: row.get("id"),
-        user_id: row.get("user_id"),
-        bear_id: row.get("bear_id"),
-        bear_slug: row.get("bear_slug"),
-        client_session_id: row.get("client_session_id"),
-        runtime_session_id: row.get("runtime_session_id"),
-        conversation_id: row.get("conversation_id"),
-        resolved_conversation_id: row.get("resolved_conversation_id"),
-        client: row.get("client"),
-        cwd: row.get("cwd"),
-        adapter_environment: row.get("adapter_environment"),
-        current_mode: row.get("current_mode"),
-        conversation_title: row.get("conversation_title"),
-        conversation_title_updated_at: row.get("conversation_title_updated_at"),
-        conversation_title_synced_at: row.get("conversation_title_synced_at"),
-        closed_at: row.get("closed_at"),
-        archived_at: row.get("archived_at"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-    }
-}
-
 pub async fn find_for_user_bear_session(
     pool: &PgPool,
     user_id: i32,
     bear_slug: &str,
     client_session_id: &str,
 ) -> Result<Option<ClientSessionRow>, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
@@ -238,7 +214,7 @@ pub async fn find_for_user_bear_session(
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.as_ref().map(client_session_row_from_sql))
+    Ok(row)
 }
 
 pub async fn find_for_user_bear_session_id(
@@ -247,7 +223,7 @@ pub async fn find_for_user_bear_session_id(
     bear_id: Uuid,
     client_session_id: &str,
 ) -> Result<Option<ClientSessionRow>, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
@@ -263,7 +239,7 @@ pub async fn find_for_user_bear_session_id(
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.as_ref().map(client_session_row_from_sql))
+    Ok(row)
 }
 
 /// Lists persisted client sessions for a user on a bear, newest activity first.
@@ -283,7 +259,7 @@ pub async fn list_for_user_bear(
 ) -> Result<Vec<ClientSessionRow>, DenError> {
     let limit = params.limit.clamp(1, 100);
     let cwd_filter = params.cwd_filter.map(str::trim).filter(|s| !s.is_empty());
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, ClientSessionRow>(
         r"
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
@@ -312,7 +288,7 @@ pub async fn list_for_user_bear(
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.iter().map(client_session_row_from_sql).collect())
+    Ok(rows)
 }
 
 pub async fn update_adapter_environment(
