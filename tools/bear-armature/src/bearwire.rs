@@ -6,8 +6,11 @@ use tokio::time::{sleep, Duration, Instant};
 use uuid::Uuid;
 
 use crate::{
-    adapter_contract_context, den_request_context, env_bool, handle_den_event,
-    send_agent_message_chunk_for_turn, send_tool_call_update,
+    adapter_contract_context, den_request_context, env_bool,
+    handle_conversation_resolved_projection, handle_permission_request_event,
+    handle_plan_update_projection, handle_session_info_projection, handle_status_text_for_turn,
+    plan_entries_from_plan_update_event, send_agent_message_chunk_for_turn,
+    send_agent_thought_chunk_for_turn, send_tool_call_update, spawn_tool_request_task,
     stream_has_successful_terminal_condition, truncate_for_log, AdapterSharedState, AdapterState,
     Config, SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
 };
@@ -809,126 +812,6 @@ async fn fetch_events(
     Ok(BearWireReplay { frames })
 }
 
-fn bearwire_tool_event_to_legacy_tool_request(event: &Value, approval_required: bool) -> Value {
-    let data = event.get("data").unwrap_or(&Value::Null);
-    let tool_call = data.get("tool_call").unwrap_or(&Value::Null);
-    let tool_call_id = tool_call
-        .get("id")
-        .or_else(|| data.get("tool_call_id"))
-        .and_then(Value::as_str)
-        .or_else(|| resource_ref_id(event, "tool_call"))
-        .unwrap_or("unknown");
-    let tool_name = tool_call
-        .get("name")
-        .or_else(|| data.get("tool_name"))
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let approval_request_id = data
-        .get("approval_request_id")
-        .and_then(Value::as_str)
-        .or_else(|| resource_ref_id(event, "permission_request"));
-    let mut legacy = json!({
-        "type": "tool_request",
-        "run_id": event.get("run_id").and_then(Value::as_str),
-        "tool_call_id": tool_call_id,
-        "tool_name": tool_name,
-        "title": tool_call
-            .get("title")
-            .or_else(|| data.get("title"))
-            .cloned()
-            .unwrap_or(Value::Null),
-        "args": tool_call
-            .get("arguments")
-            .or_else(|| data.get("arguments"))
-            .cloned()
-            .unwrap_or_else(|| json!({})),
-        "approval_request_id": approval_request_id,
-        "approval": {
-            "required": approval_required,
-            "reason": data.get("reason").cloned().unwrap_or(Value::Null),
-        },
-    });
-    if let Some(display) = tool_call.get("display").or_else(|| data.get("display")) {
-        legacy["display"] = display.clone();
-    }
-    legacy
-}
-
-fn bearwire_session_info_update_to_legacy(event: &Value) -> Value {
-    let data = event.get("data").unwrap_or(&Value::Null);
-    json!({
-        "type": "session_info_update",
-        "title": event
-            .get("title")
-            .or_else(|| data.get("title"))
-            .cloned()
-            .unwrap_or(Value::Null),
-        "updated_at": event
-            .get("updated_at")
-            .or_else(|| data.get("updated_at"))
-            .cloned()
-            .unwrap_or(Value::Null),
-        "meta": event
-            .get("meta")
-            .or_else(|| data.get("meta"))
-            .cloned()
-            .unwrap_or(Value::Null),
-    })
-}
-
-fn bearwire_permission_event_to_legacy_permission_request(event: &Value) -> Value {
-    let data = event.get("data").unwrap_or(&Value::Null);
-    let tool_call = data.get("tool_call").unwrap_or(&Value::Null);
-    let permission = data.get("permission").unwrap_or(&Value::Null);
-    let permission_id = permission
-        .get("id")
-        .or_else(|| data.get("approval_request_id"))
-        .or_else(|| data.get("permission_id"))
-        .and_then(Value::as_str)
-        .or_else(|| resource_ref_id(event, "permission_request"))
-        .unwrap_or("unknown");
-    let tool_call_id = tool_call
-        .get("id")
-        .or_else(|| data.get("tool_call_id"))
-        .and_then(Value::as_str)
-        .or_else(|| resource_ref_id(event, "tool_call"))
-        .unwrap_or(permission_id);
-    let tool_name = tool_call
-        .get("name")
-        .or_else(|| data.get("tool_name"))
-        .and_then(Value::as_str)
-        .unwrap_or("tool");
-    let mut legacy = json!({
-        "type": "permission_request",
-        "run_id": event.get("run_id").and_then(Value::as_str),
-        "obligation_id": data.get("obligation_id").cloned().unwrap_or(Value::Null),
-        "expected_client_method": data.get("expected_client_method").cloned().unwrap_or(Value::Null),
-        "permission_id": permission_id,
-        "tool_call_id": tool_call_id,
-        "tool_name": tool_name,
-        "title": tool_call
-            .get("title")
-            .or_else(|| permission.get("title"))
-            .or_else(|| data.get("title"))
-            .and_then(Value::as_str)
-            .unwrap_or("Permission request"),
-        "reason": permission
-            .get("reason")
-            .or_else(|| data.get("reason"))
-            .and_then(Value::as_str)
-            .unwrap_or("BEARS requests permission."),
-        "target": tool_call
-            .get("arguments")
-            .or_else(|| data.get("arguments"))
-            .cloned()
-            .unwrap_or_else(|| json!({ "kind": "tool_call" })),
-    });
-    if let Some(display) = tool_call.get("display").or_else(|| data.get("display")) {
-        legacy["display"] = display.clone();
-    }
-    legacy
-}
-
 fn bearwire_plan_update_entries(event: &Value) -> Value {
     let data = event.get("data").unwrap_or(&Value::Null);
     data.pointer("/detail/entries")
@@ -1024,24 +907,27 @@ async fn handle_bearwire_tool_call_finished_event(
     );
     let summary = tool_call_finished_summary(data, &tool_name, failed);
     let status = if failed { "failed" } else { "completed" };
-    let mut legacy = json!({
-        "type": "tool_result",
+    let mut projection_event = json!({
         "run_id": event.get("run_id").and_then(Value::as_str),
-        "tool_call_id": tool_call_id,
-        "tool_name": tool_name.clone(),
+        "data": {
+            "tool_call": {
+                "id": tool_call_id,
+                "name": tool_name.clone(),
+            }
+        }
     });
     if let Some(args) = cached
         .and_then(|record| record.input_args)
         .or_else(|| data.pointer("/tool_call/arguments").cloned())
         .or_else(|| data.get("arguments").cloned())
     {
-        legacy["args"] = args;
+        projection_event["data"]["tool_call"]["arguments"] = args;
     }
     if let Some(display) = data
         .pointer("/tool_call/display")
         .or_else(|| data.get("display"))
     {
-        legacy["display"] = display.clone();
+        projection_event["data"]["tool_call"]["display"] = display.clone();
     }
     send_tool_call_update(
         session_id,
@@ -1050,7 +936,7 @@ async fn handle_bearwire_tool_call_finished_event(
         ToolCallUpdatePayload {
             status,
             text: &summary,
-            event: Some(&legacy),
+            event: Some(&projection_event),
             raw_output: Some(compact_json_preview(
                 data,
                 BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS,
@@ -1140,16 +1026,8 @@ async fn handle_bearwire_event(
                 .unwrap_or("");
             outcome.saw_visible_output = !text.is_empty();
             if !text.is_empty() {
-                let legacy = json!({ "type": "assistant_text_delta", "text": text });
-                handle_den_event(
-                    config,
-                    adapter_state,
-                    shared_state,
-                    session_id,
-                    &legacy,
-                    turn_token,
-                )
-                .await?;
+                send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, text)
+                    .await?;
             }
         }
         "message.reasoning.delta" => {
@@ -1159,16 +1037,8 @@ async fn handle_bearwire_event(
                 .and_then(Value::as_str)
                 .unwrap_or("");
             if !text.is_empty() {
-                let legacy = json!({ "type": "reasoning_text_delta", "text": text });
-                handle_den_event(
-                    config,
-                    adapter_state,
-                    shared_state,
-                    session_id,
-                    &legacy,
-                    turn_token,
-                )
-                .await?;
+                send_agent_thought_chunk_for_turn(shared_state, session_id, turn_token, text)
+                    .await?;
             }
         }
         "run.progress" => {
@@ -1179,18 +1049,21 @@ async fn handle_bearwire_event(
                 .and_then(Value::as_str)
                 .unwrap_or("progress");
             if kind == "plan_update" {
-                let entries = bearwire_plan_update_entries(event);
-                let legacy = json!({ "type": "plan_update", "entries": entries });
+                let entries_json = bearwire_plan_update_entries(event);
+                let plan_event = json!({ "entries": entries_json });
+                let entries = plan_entries_from_plan_update_event(&plan_event);
+                let approval_fallback = data
+                    .get("approval_fallback")
+                    .or_else(|| data.pointer("/detail/approval_fallback"));
                 outcome.saw_visible_output = true;
                 outcome.saw_tool_activity = true;
                 diagnostics.saw_tool_activity = true;
-                handle_den_event(
-                    config,
-                    adapter_state,
+                handle_plan_update_projection(
                     shared_state,
                     session_id,
-                    &legacy,
                     turn_token,
+                    entries,
+                    approval_fallback,
                 )
                 .await?;
                 return Ok(outcome);
@@ -1214,27 +1087,43 @@ async fn handle_bearwire_event(
                 );
             }
             if !text.is_empty() {
-                let legacy = json!({ "type": "status_text", "text": text });
-                handle_den_event(
-                    config,
-                    adapter_state,
-                    shared_state,
-                    session_id,
-                    &legacy,
-                    turn_token,
-                )
-                .await?;
+                handle_status_text_for_turn(shared_state, session_id, turn_token, text).await?;
             }
         }
         "session_info_update" => {
-            let legacy = bearwire_session_info_update_to_legacy(event);
-            handle_den_event(
-                config,
+            let data = event.get("data").unwrap_or(&Value::Null);
+            let title = event
+                .get("title")
+                .or_else(|| data.get("title"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let updated_at = event
+                .get("updated_at")
+                .or_else(|| data.get("updated_at"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let context_budget = event
+                .pointer("/meta/bears/context_budget")
+                .cloned()
+                .or_else(|| event.pointer("/_meta/bears/context_budget").cloned())
+                .or_else(|| data.pointer("/meta/bears/context_budget").cloned())
+                .or_else(|| data.get("context_budget").cloned());
+            let runtime = event
+                .pointer("/meta/bears/runtime")
+                .cloned()
+                .or_else(|| event.pointer("/_meta/bears/runtime").cloned())
+                .or_else(|| data.pointer("/meta/bears/runtime").cloned())
+                .or_else(|| data.get("runtime").cloned());
+            handle_session_info_projection(
                 adapter_state,
                 shared_state,
                 session_id,
-                &legacy,
-                turn_token,
+                title,
+                updated_at,
+                context_budget,
+                runtime,
             )
             .await?;
         }
@@ -1244,33 +1133,18 @@ async fn handle_bearwire_event(
                 .or_else(|| event.pointer("/data/conversation_id"))
                 .and_then(Value::as_str);
             if let Some(conversation_id) = conversation_id {
-                let legacy = json!({
-                    "type": "conversation_resolved",
-                    "conversation_id": conversation_id,
-                });
-                handle_den_event(
+                handle_conversation_resolved_projection(
                     config,
                     adapter_state,
                     shared_state,
                     session_id,
-                    &legacy,
-                    turn_token,
+                    conversation_id,
                 )
                 .await?;
             }
         }
         "run.completed" => {
             outcome.saw_done = true;
-            let legacy = json!({ "type": "turn_complete", "outcome": "ok" });
-            handle_den_event(
-                config,
-                adapter_state,
-                shared_state,
-                session_id,
-                &legacy,
-                turn_token,
-            )
-            .await?;
         }
         "run.failed" => {
             let message = bearwire_run_failed_user_message(event);
@@ -1308,16 +1182,13 @@ async fn handle_bearwire_event(
         "tool_call.requested" => {
             outcome.saw_tool_activity = true;
             diagnostics.saw_tool_activity = true;
-            let legacy = bearwire_tool_event_to_legacy_tool_request(event, false);
-            handle_den_event(
-                config,
-                adapter_state,
-                shared_state,
-                session_id,
-                &legacy,
+            spawn_tool_request_task(
+                config.clone(),
+                shared_state.clone(),
+                session_id.to_string(),
+                event.clone(),
                 turn_token,
-            )
-            .await?;
+            );
         }
         "tool_call.completed" | "tool_call.warning" | "tool_call.cancelled" => {
             outcome.saw_tool_activity = true;
@@ -1345,6 +1216,7 @@ async fn handle_bearwire_event(
             let obligation_id = data
                 .get("obligation_id")
                 .and_then(Value::as_str)
+                .or_else(|| resource_ref_id(event, "client_obligation"))
                 .map(str::trim)
                 .filter(|id| !id.is_empty());
             let permission_id = data
@@ -1363,14 +1235,13 @@ async fn handle_bearwire_event(
                     "BearWire client.waiting missing answerable permission obligation for session {session_id}; refusing to show an unanswerable permission prompt"
                 ));
             }
-            let legacy = bearwire_permission_event_to_legacy_permission_request(event);
-            handle_den_event(
+            handle_permission_request_event(
                 config,
                 adapter_state,
                 shared_state,
+                &shared_state.mcp_registry,
                 session_id,
-                &legacy,
-                turn_token,
+                event,
             )
             .await?;
         }
@@ -1449,61 +1320,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn bearwire_requested_tool_projects_to_executable_tool_request() {
-        let event = json!({
-            "type": "tool_call.requested",
-            "run_id": "run-1",
-            "data": {
-                "tool_call_id": "call-1",
-                "tool_name": "fs_read_text_file",
-                "arguments": { "path": "/workspace/README.md" }
-            }
-        });
-
-        let legacy = bearwire_tool_event_to_legacy_tool_request(&event, false);
-
-        assert_eq!(legacy["type"], "tool_request");
-        assert_eq!(legacy["tool_name"], "fs_read_text_file");
-        assert_eq!(legacy["args"]["path"], "/workspace/README.md");
-        assert_eq!(legacy["approval"]["required"], false);
-    }
-
-    #[test]
-    fn bearwire_requested_tool_prefers_canonical_tool_call_shape() {
-        let event = json!({
-            "type": "tool_call.requested",
-            "run_id": "run-1",
-            "data": {
-                "tool_call_id": "legacy-call",
-                "tool_name": "legacy_tool",
-                "arguments": { "path": "/legacy" },
-                "display": { "title": "Legacy title" },
-                "tool_call": {
-                    "id": "call-1",
-                    "name": "fs_read_text_file",
-                    "title": "Read file",
-                    "kind": "function",
-                    "arguments": { "path": "/workspace/README.md" },
-                    "display": {
-                        "title": "Read /workspace/README.md",
-                        "progress": "Reading file"
-                    }
-                }
-            }
-        });
-
-        let legacy = bearwire_tool_event_to_legacy_tool_request(&event, false);
-
-        assert_eq!(legacy["type"], "tool_request");
-        assert_eq!(legacy["tool_call_id"], "call-1");
-        assert_eq!(legacy["tool_name"], "fs_read_text_file");
-        assert_eq!(legacy["title"], "Read file");
-        assert_eq!(legacy["args"]["path"], "/workspace/README.md");
-        assert_eq!(legacy["display"]["title"], "Read /workspace/README.md");
-        assert_eq!(legacy["display"]["progress"], "Reading file");
-    }
-
-    #[test]
     fn bearwire_finished_tool_prefers_canonical_tool_call_identity() {
         let event = json!({
             "type": "tool_call.completed",
@@ -1524,101 +1340,11 @@ mod tests {
             }
         });
 
-        let (tool_call_id, tool_name) = bearwire_finished_tool_identity(&event, Some("cached_tool"));
+        let (tool_call_id, tool_name) =
+            bearwire_finished_tool_identity(&event, Some("cached_tool"));
 
         assert_eq!(tool_call_id, "call-1");
         assert_eq!(tool_name, "fs_read_text_file");
-    }
-
-    #[test]
-    fn bearwire_session_info_update_projects_nested_title_to_legacy_event() {
-        let event = json!({
-            "type": "session_info_update",
-            "data": {
-                "title": "Visible conversation title",
-                "updated_at": "2026-07-05T19:00:00Z"
-            }
-        });
-
-        let legacy = bearwire_session_info_update_to_legacy(&event);
-
-        assert_eq!(legacy["type"], "session_info_update");
-        assert_eq!(legacy["title"], "Visible conversation title");
-        assert_eq!(legacy["updated_at"], "2026-07-05T19:00:00Z");
-    }
-
-    #[test]
-    fn bearwire_client_waiting_projects_to_permission_request() {
-        let event = json!({
-            "type": "client.waiting",
-            "run_id": "run-web-1",
-            "resource_refs": [
-                { "kind": "client_obligation", "id": "obl-web-1" },
-                { "kind": "tool_call", "id": "call-web-1" },
-                { "kind": "permission_request", "id": "perm-web-1" }
-            ],
-            "data": {
-                "obligation_id": "obl-web-1",
-                "expected_client_method": "client.permission.result",
-                "tool_call": {
-                    "id": "call-web-1",
-                    "name": "web_fetch",
-                    "title": "Fetch URL",
-                    "kind": "function",
-                    "arguments": { "kind": "url", "url": "https://example.com/", "host": "example.com" },
-                    "display": {
-                        "label": "Fetch URL",
-                        "progress": "Waiting for permission",
-                        "category": "network"
-                    }
-                },
-                "permission": {
-                    "id": "perm-web-1",
-                    "reason": "BEARS wants to fetch https://example.com/."
-                }
-            }
-        });
-
-        let legacy = bearwire_permission_event_to_legacy_permission_request(&event);
-
-        assert_eq!(legacy["type"], "permission_request");
-        assert_eq!(legacy["run_id"], "run-web-1");
-        assert_eq!(legacy["obligation_id"], "obl-web-1");
-        assert_eq!(legacy["expected_client_method"], "client.permission.result");
-        assert_eq!(legacy["permission_id"], "perm-web-1");
-        assert_eq!(legacy["tool_call_id"], "call-web-1");
-        assert_eq!(legacy["tool_name"], "web_fetch");
-        assert_eq!(legacy["target"]["url"], "https://example.com/");
-        assert_eq!(legacy["display"]["progress"], "Waiting for permission");
-        assert_eq!(legacy["display"]["category"], "network");
-    }
-
-    #[test]
-    fn bearwire_blocked_tool_projects_to_permission_request() {
-        let event = json!({
-            "type": "tool_call.blocked",
-            "run_id": "run-web-1",
-            "resource_refs": [
-                { "kind": "tool_call", "id": "call-web-1" },
-                { "kind": "permission_request", "id": "perm-web-1" }
-            ],
-            "data": {
-                "tool_call_id": "call-web-1",
-                "tool_name": "web_fetch",
-                "title": "Fetch URL",
-                "reason": "BEARS wants to fetch https://example.com/.",
-                "arguments": { "kind": "url", "url": "https://example.com/", "host": "example.com" }
-            }
-        });
-
-        let legacy = bearwire_permission_event_to_legacy_permission_request(&event);
-
-        assert_eq!(legacy["type"], "permission_request");
-        assert_eq!(legacy["run_id"], "run-web-1");
-        assert_eq!(legacy["permission_id"], "perm-web-1");
-        assert_eq!(legacy["tool_call_id"], "call-web-1");
-        assert_eq!(legacy["tool_name"], "web_fetch");
-        assert_eq!(legacy["target"]["url"], "https://example.com/");
     }
 
     #[test]

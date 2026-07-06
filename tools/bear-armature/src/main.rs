@@ -600,7 +600,7 @@ fn plan_entry_from_acp_plan_item(item: &Value) -> Option<PlanEntry> {
     Some(PlanEntry::new(content, priority, status))
 }
 
-fn plan_entries_from_plan_update_event(event: &Value) -> Vec<PlanEntry> {
+pub(crate) fn plan_entries_from_plan_update_event(event: &Value) -> Vec<PlanEntry> {
     event
         .get("entries")
         .and_then(Value::as_array)
@@ -3530,7 +3530,11 @@ async fn handle_direct_read_text_file(
 }
 
 fn policy_from_event(event: &Value) -> ToolPolicy {
-    let policy = event.get("policy").unwrap_or(&Value::Null);
+    let policy = event
+        .get("policy")
+        .or_else(|| event.pointer("/data/tool_call/policy"))
+        .or_else(|| event.pointer("/data/policy"))
+        .unwrap_or(&Value::Null);
     ToolPolicy {
         max_lines: policy
             .get("max_lines")
@@ -3815,8 +3819,7 @@ async fn handle_direct_delete_path(
 
 fn create_text_file_diff_content(event: &Value) -> Option<ToolCallContent> {
     let path = tool_path(event)?;
-    let content = event
-        .get("args")
+    let content = tool_args_from_event(event)
         .and_then(|v| v.get("content"))
         .and_then(Value::as_str)?;
     Some(ToolCallContent::from(Diff::new(
@@ -6418,216 +6421,6 @@ fn prompt_text_for_display_from_params(params: &Value) -> Result<String> {
     }
 }
 
-#[allow(dead_code)]
-async fn handle_sse_frame(
-    config: &Config,
-    adapter_state: &mut AdapterState,
-    shared_state: &AdapterSharedState,
-    session_id: &str,
-    frame: &[u8],
-    diagnostics: &mut SseStreamDiagnostics,
-    turn_token: Uuid,
-) -> Result<SseFrameOutcome> {
-    diagnostics.frames += 1;
-    let text = String::from_utf8_lossy(frame);
-    let mut outcome = SseFrameOutcome::default();
-    for line in text.lines() {
-        let Some(data) = line.strip_prefix("data:") else {
-            continue;
-        };
-        let data = data.trim();
-        if data.is_empty() || data == "[DONE]" {
-            continue;
-        }
-        let event: Value = serde_json::from_str(data).context("parse Den SSE event JSON")?;
-        diagnostics.observe_event(&event);
-        let ty = event.get("type").and_then(Value::as_str).unwrap_or("");
-        if ty == "assistant_text_delta" || ty == "status_text" {
-            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
-            outcome.saw_visible_output |= !text.is_empty();
-        } else if den_event_type_is_tool_activity(ty) {
-            outcome.saw_tool_activity = true;
-            diagnostics.saw_tool_activity = true;
-            if ty == "permission_request" {
-                // Permission requests are visible ACP client activity. Some Den-side
-                // permission workflows settle via the permission result endpoint rather
-                // than a later streamed terminal event, so a stream containing only a
-                // permission request is not an empty/failed turn.
-                outcome.saw_visible_output = true;
-                diagnostics.saw_visible_output = true;
-            }
-        } else if ty == "error" {
-            outcome.saw_error = true;
-            diagnostics.saw_error = true;
-            if let Some(terminal) = event.get("terminal") {
-                if let Some(value) = terminal.get("outcome") {
-                    outcome.terminal_outcome = value.as_str().map(str::to_string);
-                }
-                if let Some(value) = terminal.get("recovery_hint") {
-                    outcome.recovery_hint = value.as_str().map(str::to_string);
-                }
-                if let Some(value) = terminal.get("user_message") {
-                    outcome.terminal_user_message = value.as_str().map(str::to_string);
-                }
-            }
-            let formatted = format_den_event_error(&event);
-            if looks_like_waiting_for_approval_error(&formatted) {
-                outcome.recover_and_retry = true;
-                outcome.upstream_errors.push(
-                    "The runtime reported unresolved approval state. Automatic compaction recovery is disabled because compaction does not settle unresolved approvals; Den-side recovery must settle or deny pending approvals directly."
-                        .to_string(),
-                );
-            } else {
-                outcome.saw_cancellation_error = outcome.terminal_outcome.as_deref()
-                    == Some("cancelled")
-                    || outcome.recovery_hint.as_deref() == Some("none")
-                        && event
-                            .get("terminal")
-                            .and_then(|terminal| terminal.get("outcome"))
-                            .and_then(Value::as_str)
-                            == Some("cancelled")
-                    || looks_like_cancellation_error(&formatted);
-                outcome.upstream_errors.push(formatted);
-            }
-        }
-        if outcome.recover_and_retry {
-            continue;
-        }
-        let handled = handle_den_event(
-            config,
-            adapter_state,
-            shared_state,
-            session_id,
-            &event,
-            turn_token,
-        )
-        .await?;
-        if ty == "turn_result" {
-            if let Some(value) = event.get("status").and_then(Value::as_str) {
-                outcome.terminal_outcome = Some(value.to_string());
-                if matches!(value, "failed" | "cancelled" | "needs_new_session") {
-                    outcome.saw_error = true;
-                    diagnostics.saw_error = true;
-                }
-            } else if let Some(value) = event.get("outcome").and_then(Value::as_str) {
-                outcome.terminal_outcome = Some(value.to_string());
-            }
-        } else if ty == "turn_complete" || ty == "done" {
-            if let Some(value) = event.get("outcome").and_then(Value::as_str) {
-                outcome.terminal_outcome = Some(value.to_string());
-            }
-            if let Some(value) = event.get("recovery_hint").and_then(Value::as_str) {
-                outcome.recovery_hint = Some(value.to_string());
-            }
-            if let Some(value) = event.get("user_message").and_then(Value::as_str) {
-                outcome.terminal_user_message = Some(value.to_string());
-            }
-        }
-        outcome.saw_done |= handled;
-        diagnostics.saw_turn_complete |= handled;
-        diagnostics.saw_visible_output |= outcome.saw_visible_output;
-        if !matches!(
-            ty,
-            "assistant_text_delta"
-                | "status_text"
-                | "error"
-                | "tool_request"
-                | "permission_request"
-                | "session_info_update"
-                | "plan_update"
-                | "mode_update"
-                | "conversation_resolved"
-                | "turn_complete"
-                | "turn_result"
-                | "done"
-        ) {
-            diagnostics.observe_unknown(&event);
-            eprintln!(
-                "bear-armature: unknown Den ACP event type {:?}; sample={}",
-                ty,
-                truncate_for_log(&event.to_string(), 240)
-            );
-        }
-    }
-    Ok(outcome)
-}
-
-#[allow(dead_code)]
-fn den_event_type_is_tool_activity(ty: &str) -> bool {
-    matches!(ty, "tool_request" | "permission_request")
-}
-
-#[allow(dead_code)]
-fn looks_like_waiting_for_approval_error(message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    message.contains("waiting for approval") || message.contains("please approve or deny")
-}
-
-#[allow(dead_code)]
-fn looks_like_cancellation_error(message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    message.contains("stop_reason: cancelled")
-        || message.contains("stop_reason=cancelled")
-        || message.contains("stop_reason: canceled")
-        || message.contains("stop_reason=canceled")
-        || message.contains("producing assistant output: cancelled")
-        || message.contains("producing assistant output: canceled")
-        || message == "cancelled"
-        || message == "canceled"
-        || message.ends_with(": cancelled")
-        || message.ends_with(": canceled")
-}
-
-#[allow(dead_code)]
-fn format_den_event_error(event: &Value) -> String {
-    let message = event
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or("BEARS upstream error");
-    let mut out = match event.get("detail").and_then(Value::as_str) {
-        Some(detail) if !detail.trim().is_empty() => format!("{message}: {detail}"),
-        _ => message.to_string(),
-    };
-    if let Some(context) = event.get("context") {
-        out.push_str("\nContext: ");
-        out.push_str(&format_error_context_for_display(context));
-    }
-    if let Some(request_id) = event.get("request_id").and_then(Value::as_str) {
-        out.push_str("\nDen request_id: ");
-        out.push_str(request_id);
-    }
-    out
-}
-
-#[allow(dead_code)]
-fn format_error_context_for_display(context: &Value) -> String {
-    let Some(object) = context.as_object() else {
-        return context.to_string();
-    };
-    if object.get("preview").and_then(Value::as_str).is_some() {
-        let mut compact = serde_json::Map::new();
-        for key in [
-            "tool_name",
-            "available_client_tools",
-            "client_tools_count",
-            "client_tools_bytes",
-        ] {
-            if let Some(value) = object.get(key) {
-                compact.insert(key.to_string(), value.clone());
-            }
-        }
-        compact.insert(
-            "preview".to_string(),
-            json!({
-                "redacted": true,
-                "reason": "assistant text preview omitted from ACP display; see Den request logs for details"
-            }),
-        );
-        return Value::Object(compact).to_string();
-    }
-    context.to_string()
-}
-
 fn cancellation_matches_turn(
     notice: &CancellationNotice,
     session_id: &str,
@@ -6702,7 +6495,7 @@ where
     }
 }
 
-fn spawn_tool_request_task(
+pub(crate) fn spawn_tool_request_task(
     config: Config,
     shared_state: AdapterSharedState,
     session_id: String,
@@ -6710,16 +6503,22 @@ fn spawn_tool_request_task(
     turn_token: Uuid,
 ) {
     tokio::spawn(async move {
-        let tool_call_id = event
-            .get("tool_call_id")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
-        let tool_name = event
-            .get("tool_name")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
+        let Some(tool_call_id) = tool_call_id_from_event(&event).map(str::to_string) else {
+            eprintln!(
+                "bear-armature: ignoring malformed tool request missing tool_call_id session_id={} event={}",
+                session_id,
+                truncate_for_log(&event.to_string(), 400)
+            );
+            return;
+        };
+        let Some(tool_name) = tool_name_from_event(&event).map(str::to_string) else {
+            eprintln!(
+                "bear-armature: ignoring malformed tool request missing tool_name session_id={} event={}",
+                session_id,
+                truncate_for_log(&event.to_string(), 400)
+            );
+            return;
+        };
         shared_state
             .tool_tasks
             .register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
@@ -6817,19 +6616,17 @@ async fn handle_tool_request_event(
     session_id: &str,
     event: &Value,
 ) -> Result<()> {
-    let tool_call_id = event
-        .get("tool_call_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("tool_request missing tool_call_id"))?;
-    let tool_name = event
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("tool_request missing tool_name"))?;
+    let tool_call_id = tool_call_id_from_event(event)
+        .ok_or_else(|| anyhow!("tool request missing tool_call_id"))?;
+    let tool_name =
+        tool_name_from_event(event).ok_or_else(|| anyhow!("tool request missing tool_name"))?;
     task_registry
         .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
         .await;
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
-    let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
+    let args = tool_args_from_event(event)
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     task_registry
         .remember_input(session_id, tool_call_id, tool_name, args.clone())
         .await;
@@ -6933,13 +6730,7 @@ async fn handle_tool_request_event(
             tool_path(event).unwrap_or("<unknown>")
         );
     }
-    if !approval_reused
-        && event
-            .get("approval")
-            .and_then(|v| v.get("required"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    {
+    if !approval_reused && approval_required_from_event(event) {
         task_registry
             .set_phase(
                 session_id,
@@ -7404,18 +7195,126 @@ fn command_line_from_value(value: &Value) -> Option<String> {
     })
 }
 
+pub(crate) fn tool_call_id_from_event(event: &Value) -> Option<&str> {
+    event
+        .pointer("/data/tool_call/id")
+        .or_else(|| event.pointer("/data/tool_call/tool_call_id"))
+        .or_else(|| event.pointer("/tool_call/id"))
+        .or_else(|| event.pointer("/tool_call/tool_call_id"))
+        .or_else(|| event.get("tool_call_id"))
+        .or_else(|| event.pointer("/data/tool_call_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| resource_ref_id(event, "tool_call"))
+}
+
+pub(crate) fn tool_name_from_event(event: &Value) -> Option<&str> {
+    event
+        .pointer("/data/tool_call/name")
+        .or_else(|| event.pointer("/tool_call/name"))
+        .or_else(|| event.get("tool_name"))
+        .or_else(|| event.pointer("/data/tool_name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn permission_id_from_event(event: &Value) -> Option<&str> {
+    event
+        .pointer("/data/permission/id")
+        .or_else(|| event.get("permission_id"))
+        .or_else(|| event.pointer("/data/permission_id"))
+        .or_else(|| event.get("approval_request_id"))
+        .or_else(|| event.pointer("/data/approval_request_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| resource_ref_id(event, "permission_request"))
+}
+
+fn obligation_id_from_event(event: &Value) -> Option<&str> {
+    event
+        .get("obligation_id")
+        .or_else(|| event.pointer("/data/obligation_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| resource_ref_id(event, "client_obligation"))
+}
+
+fn resource_ref_id<'a>(event: &'a Value, kind: &str) -> Option<&'a str> {
+    event
+        .get("resource_refs")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|resource| resource.get("kind").and_then(Value::as_str) == Some(kind))?
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
 fn tool_args_from_event(event: &Value) -> Option<&Value> {
     event
-        .get("args")
+        .pointer("/data/tool_call/arguments")
+        .or_else(|| event.pointer("/data/tool_call/input"))
+        .or_else(|| event.pointer("/data/tool_call/raw_input"))
+        .or_else(|| event.get("args"))
         .or_else(|| event.get("arguments"))
         .or_else(|| event.get("input"))
         .or_else(|| event.get("raw_input"))
         .or_else(|| event.pointer("/data/arguments"))
         .or_else(|| event.pointer("/data/input"))
         .or_else(|| event.pointer("/data/raw_input"))
+}
+
+fn event_display_from_event(event: &Value) -> Option<&Value> {
+    event
+        .pointer("/data/tool_call/display")
+        .or_else(|| event.get("display"))
+        .or_else(|| event.pointer("/data/display"))
+}
+
+fn approval_required_from_event(event: &Value) -> bool {
+    event
+        .get("approval")
+        .and_then(|approval| approval.get("required"))
+        .or_else(|| event.pointer("/data/approval/required"))
+        .or_else(|| event.pointer("/data/approval_required"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn approval_reason_from_event(event: &Value) -> Option<&str> {
+    event
+        .pointer("/data/permission/reason")
+        .or_else(|| event.get("reason"))
+        .or_else(|| event.pointer("/data/reason"))
+        .or_else(|| event.pointer("/data/approval/reason"))
+        .or_else(|| event.pointer("/approval/reason"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn permission_title_from_event(event: &Value) -> Option<&str> {
+    event
+        .pointer("/data/tool_call/title")
+        .or_else(|| event.pointer("/data/permission/title"))
+        .or_else(|| event.get("title"))
+        .or_else(|| event.pointer("/data/title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn permission_target_from_event(event: &Value) -> Option<&Value> {
+    event
+        .get("target")
         .or_else(|| event.pointer("/data/tool_call/arguments"))
-        .or_else(|| event.pointer("/data/tool_call/input"))
-        .or_else(|| event.pointer("/data/tool_call/raw_input"))
+        .or_else(|| event.pointer("/data/arguments"))
+        .or_else(|| event.pointer("/data/target"))
 }
 
 fn compact_tool_raw_output(value: Value) -> Value {
@@ -7712,8 +7611,7 @@ async fn request_tool_permission(
         target_url,
         target_command,
     } = request_context;
-    let path = event
-        .get("args")
+    let path = tool_args_from_event(event)
         .and_then(|v| v.get("path"))
         .and_then(Value::as_str)
         .or(target_url)
@@ -7721,10 +7619,7 @@ async fn request_tool_permission(
         .unwrap_or("the requested target");
     let display = ToolDisplay::from_event(tool_name, event);
     let title = display.title.clone();
-    let reason = event
-        .get("approval")
-        .and_then(|v| v.get("reason"))
-        .and_then(Value::as_str)
+    let reason = approval_reason_from_event(event)
         .unwrap_or("Runtime requested approval before running this local ACP tool.");
     eprintln!(
         "bear-armature: requesting permission session_id={} tool_call_id={} tool_name={} path={}",
@@ -7745,7 +7640,7 @@ async fn request_tool_permission(
     if let Some(locations) = tool_locations_from_event(tool_name, event) {
         fields = fields.locations(Some(locations));
     }
-    if let Some(args) = event.get("args") {
+    if let Some(args) = tool_args_from_event(event) {
         fields = fields.raw_input(Some(args.clone()));
     }
     let mut meta = serde_json::Map::new();
@@ -7906,228 +7801,151 @@ async fn post_tool_result(
     ))
 }
 
-async fn handle_den_event(
+pub(crate) async fn handle_status_text_for_turn(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    text: &str,
+) -> Result<()> {
+    if !text.is_empty() && bear_debug_mode().shows_thoughts() {
+        send_agent_thought_chunk_for_turn(
+            shared_state,
+            session_id,
+            turn_token,
+            normalize_thought_chunk_text(text).as_ref(),
+        )
+        .await?;
+    } else if !text.is_empty() && bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: suppressed thought chunk session_id={} text={}",
+            session_id,
+            truncate_for_log(text, 240)
+        );
+    }
+    Ok(())
+}
+
+pub(crate) async fn handle_session_info_projection(
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    title: Option<String>,
+    updated_at: Option<String>,
+    context_budget: Option<Value>,
+    runtime: Option<Value>,
+) -> Result<()> {
+    if let Some(context) = adapter_state.session_contexts.get_mut(session_id) {
+        context.thread_title = title.clone();
+    }
+    if let Some(context) = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get_mut(session_id)
+    {
+        context.thread_title = title.clone();
+    }
+    send_session_info_update(session_id, title, updated_at).await?;
+    if let Some(context_budget) = context_budget.clone() {
+        send_context_budget_usage_update(session_id, context_budget).await?;
+    }
+    if env_bool("BEAR_ARMATURE_SEND_RUNTIME_SESSION_META") {
+        send_den_runtime_session_info_update(session_id, runtime, context_budget).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn handle_plan_update_projection(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    entries: Vec<PlanEntry>,
+    approval_fallback: Option<&Value>,
+) -> Result<()> {
+    if let Some(fallback) = approval_fallback {
+        if let Some(message) = plan_approval_fallback_message(fallback) {
+            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message)
+                .await?;
+        }
+    }
+    if entries.is_empty() {
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: received empty plan update for session_id={}; not sending ACP plan UI update",
+                session_id
+            );
+        }
+    } else if should_send_plan_update(shared_state, session_id, &entries).await? {
+        if is_current_prompt_turn(shared_state, session_id, turn_token, "plan_update").await {
+            send_plan_update(session_id, entries).await?;
+        }
+    } else if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: skipped unchanged plan update for session_id={}",
+            session_id
+        );
+    }
+    Ok(())
+}
+
+pub(crate) async fn handle_conversation_resolved_projection(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
-    event: &Value,
-    turn_token: Uuid,
-) -> Result<bool> {
-    match event.get("type").and_then(Value::as_str).unwrap_or("") {
-        "assistant_text_delta" => {
-            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
-            if !text.is_empty() {
-                send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, text)
-                    .await?;
-            }
-            Ok(false)
+    conversation_id: &str,
+) -> Result<()> {
+    let conversation_id = conversation_id.trim();
+    if !conversation_id.starts_with("conv-") {
+        return Ok(());
+    }
+    let context = adapter_state
+        .session_contexts
+        .entry(session_id.to_string())
+        .or_default();
+    context.resolved_conversation_id = Some(conversation_id.to_string());
+    let thread_title = context.thread_title.clone();
+    {
+        let mut shared_contexts = shared_state.session_contexts.lock().await;
+        let shared = shared_contexts.entry(session_id.to_string()).or_default();
+        shared.resolved_conversation_id = Some(conversation_id.to_string());
+        if thread_title.is_some() {
+            shared.thread_title = thread_title.clone();
         }
-        "reasoning_text_delta" => {
-            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
-            if !text.is_empty() {
-                send_agent_thought_chunk_for_turn(shared_state, session_id, turn_token, text)
-                    .await?;
-            }
-            Ok(false)
-        }
-        "status_text" => {
-            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
-            if !text.is_empty() && bear_debug_mode().shows_thoughts() {
-                send_agent_thought_chunk_for_turn(
-                    shared_state,
-                    session_id,
-                    turn_token,
-                    normalize_thought_chunk_text(text).as_ref(),
-                )
-                .await?;
-            } else if !text.is_empty() && bear_debug_verbose() {
-                eprintln!(
-                    "bear-armature: suppressed thought chunk session_id={} text={}",
-                    session_id,
-                    truncate_for_log(text, 240)
-                );
-            }
-            Ok(false)
-        }
-        "error" => Ok(false),
-        "tool_request" => {
-            let has_tool_name = event.get("tool_name").and_then(Value::as_str).is_some();
-            let has_tool_call_id = event.get("tool_call_id").and_then(Value::as_str).is_some();
-            if has_tool_name && has_tool_call_id {
-                spawn_tool_request_task(
-                    config.clone(),
-                    shared_state.clone(),
-                    session_id.to_string(),
-                    event.clone(),
-                    turn_token,
-                );
-            } else {
-                eprintln!(
-                    "bear-armature: ignoring malformed Den tool_request event session_id={} event={}",
-                    session_id,
-                    truncate_for_log(&event.to_string(), 400)
-                );
-            }
-            Ok(false)
-        }
-        "permission_request" => {
-            handle_permission_request_event(
-                config,
-                adapter_state,
-                shared_state,
-                &shared_state.mcp_registry,
-                session_id,
-                event,
-            )
-            .await?;
-            Ok(false)
-        }
-        "session_info_update" => {
-            let title = event
-                .get("title")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
-            if let Some(context) = adapter_state.session_contexts.get_mut(session_id) {
-                context.thread_title = title.clone();
-            }
-            if let Some(context) = shared_state
-                .session_contexts
-                .lock()
-                .await
-                .get_mut(session_id)
+    }
+    if let Some(title) = thread_title.as_deref() {
+        if let Ok(snapshot) = collect_bear_environment(
+            adapter_state,
+            session_id,
+            Some(config),
+            None,
+            &json!({
+                "include_session_mcp": true,
+                "include_client_capabilities": true,
+                "include_raw_context": true,
+                "inspect_den": false,
+            }),
+        )
+        .await
+        {
+            if let Err(err) =
+                post_adapter_environment(config, session_id, snapshot, Some(title)).await
             {
-                context.thread_title = title.clone();
-            }
-            let updated_at = event
-                .get("updated_at")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            send_session_info_update(session_id, title, updated_at).await?;
-            let context_budget = event
-                .pointer("/meta/bears/context_budget")
-                .cloned()
-                .or_else(|| event.pointer("/_meta/bears/context_budget").cloned())
-                .or_else(|| event.get("context_budget").cloned());
-            if let Some(context_budget) = context_budget.clone() {
-                send_context_budget_usage_update(session_id, context_budget).await?;
-            }
-            if env_bool("BEAR_ARMATURE_SEND_RUNTIME_SESSION_META") {
-                let runtime = event
-                    .pointer("/meta/bears/runtime")
-                    .cloned()
-                    .or_else(|| event.pointer("/_meta/bears/runtime").cloned())
-                    .or_else(|| event.get("runtime").cloned());
-                send_den_runtime_session_info_update(session_id, runtime, context_budget).await?;
-            }
-            Ok(false)
-        }
-        "plan_update" => {
-            if let Some(fallback) = event.get("approval_fallback") {
-                if let Some(message) = plan_approval_fallback_message(fallback) {
-                    send_agent_message_chunk_for_turn(
-                        shared_state,
-                        session_id,
-                        turn_token,
-                        &message,
-                    )
-                    .await?;
-                }
-            }
-            let entries = plan_entries_from_plan_update_event(event);
-            if entries.is_empty() {
-                if bear_debug_verbose() {
-                    eprintln!(
-                        "bear-armature: received empty plan update for session_id={}; not sending ACP plan UI update",
-                        session_id
-                    );
-                }
-            } else if should_send_plan_update(shared_state, session_id, &entries).await? {
-                if is_current_prompt_turn(shared_state, session_id, turn_token, "plan_update").await
-                {
-                    send_plan_update(session_id, entries).await?;
-                }
-            } else if bear_debug_verbose() {
                 eprintln!(
-                    "bear-armature: skipped unchanged plan update for session_id={}",
+                    "bear-armature: failed to publish adapter environment after conversation_resolved session_id={} error={err:#}",
                     session_id
                 );
             }
-            Ok(false)
         }
-        "mode_update" => {
-            if let Some(mode) = event.get("mode").and_then(Value::as_str) {
-                if matches!(mode, MODE_ASK | MODE_PLAN | MODE_WRITE) {
-                    notify_mode_state(session_id, mode).await?;
-                }
-            }
-            Ok(false)
-        }
-        "conversation_resolved" => {
-            if let Some(conversation_id) = event
-                .get("conversation_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| s.starts_with("conv-"))
-            {
-                let context = adapter_state
-                    .session_contexts
-                    .entry(session_id.to_string())
-                    .or_default();
-                context.resolved_conversation_id = Some(conversation_id.to_string());
-                let thread_title = context.thread_title.clone();
-                {
-                    let mut shared_contexts = shared_state.session_contexts.lock().await;
-                    let shared = shared_contexts.entry(session_id.to_string()).or_default();
-                    shared.resolved_conversation_id = Some(conversation_id.to_string());
-                    if thread_title.is_some() {
-                        shared.thread_title = thread_title.clone();
-                    }
-                }
-                if let Some(title) = thread_title.as_deref() {
-                    if let Ok(snapshot) = collect_bear_environment(
-                        adapter_state,
-                        session_id,
-                        Some(config),
-                        None,
-                        &json!({
-                            "include_session_mcp": true,
-                            "include_client_capabilities": true,
-                            "include_raw_context": true,
-                            "inspect_den": false,
-                        }),
-                    )
-                    .await
-                    {
-                        if let Err(err) =
-                            post_adapter_environment(config, session_id, snapshot, Some(title))
-                                .await
-                        {
-                            eprintln!(
-                                "bear-armature: failed to publish adapter environment after conversation_resolved session_id={} error={err:#}",
-                                session_id
-                            );
-                        }
-                    }
-                }
-                eprintln!(
-                    "bear-armature: session_id={} resolved conversation_id={}",
-                    session_id, conversation_id
-                );
-            }
-            Ok(false)
-        }
-
-        "turn_result" => Ok(true),
-        "turn_complete" => Ok(true),
-        "done" => Ok(true),
-        _ => Ok(false),
     }
+    eprintln!(
+        "bear-armature: session_id={} resolved conversation_id={}",
+        session_id, conversation_id
+    );
+    Ok(())
 }
 
-async fn handle_permission_request_event(
+pub(crate) async fn handle_permission_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
@@ -8135,28 +7953,16 @@ async fn handle_permission_request_event(
     session_id: &str,
     event: &Value,
 ) -> Result<()> {
-    let permission_id = event
-        .get("permission_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("permission_request missing permission_id"))?;
-    let obligation_id = event.get("obligation_id").and_then(Value::as_str);
-    let tool_call_id = event
-        .get("tool_call_id")
-        .and_then(Value::as_str)
-        .unwrap_or(permission_id);
-    let tool_name = event
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .unwrap_or("web_fetch");
-    let title = event
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or("Permission request");
-    let reason = event
-        .get("reason")
-        .and_then(Value::as_str)
-        .unwrap_or("BEARS requests permission.");
-    let target = event.get("target").cloned().unwrap_or_else(|| json!({}));
+    let permission_id = permission_id_from_event(event)
+        .ok_or_else(|| anyhow!("permission request missing permission_id"))?;
+    let obligation_id = obligation_id_from_event(event);
+    let tool_call_id = tool_call_id_from_event(event).unwrap_or(permission_id);
+    let tool_name = tool_name_from_event(event).unwrap_or("web_fetch");
+    let title = permission_title_from_event(event).unwrap_or("Permission request");
+    let reason = approval_reason_from_event(event).unwrap_or("BEARS requests permission.");
+    let target = permission_target_from_event(event)
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let url = target.get("url").and_then(Value::as_str);
     let host = target.get("host").and_then(Value::as_str);
     let plan_mode_id = target.get("plan_mode_id").and_then(Value::as_str);
@@ -8606,11 +8412,14 @@ async fn handle_permission_request_event(
                 }
                 let preview = tool_completion_preview(tool_name, &value);
                 let local_event = json!({
-                    "type": "tool_request",
-                    "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
-                    "args": args,
                     "run_id": event.get("run_id").and_then(Value::as_str),
+                    "data": {
+                        "tool_call": {
+                            "id": tool_call_id,
+                            "name": tool_name,
+                            "arguments": args,
+                        }
+                    }
                 });
                 send_tool_call_update(
                     session_id,
@@ -8639,11 +8448,14 @@ async fn handle_permission_request_event(
             Err(err) => {
                 let message = format!("{err:#}");
                 let local_event = json!({
-                    "type": "tool_request",
-                    "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
-                    "args": args,
                     "run_id": event.get("run_id").and_then(Value::as_str),
+                    "data": {
+                        "tool_call": {
+                            "id": tool_call_id,
+                            "name": tool_name,
+                            "arguments": args,
+                        }
+                    }
                 });
                 send_tool_call_update(
                     session_id,
@@ -8710,7 +8522,7 @@ impl ToolDisplay {
 
     fn from_event(tool_name: &str, event: &Value) -> Self {
         let mut display = tool_display(tool_name);
-        let Some(event_display) = event.get("display") else {
+        let Some(event_display) = event_display_from_event(event) else {
             if is_placeholder_tool_name(tool_name) {
                 display.title = fallback_tool_title_from_event(event);
                 display.permission_operation = display.title.to_ascii_lowercase();
@@ -8771,10 +8583,7 @@ impl ToolDisplay {
 }
 
 fn fallback_tool_title_from_event(event: &Value) -> String {
-    let args = event
-        .get("args")
-        .or_else(|| event.pointer("/data/tool_call/arguments"))
-        .or_else(|| event.pointer("/data/arguments"));
+    let args = tool_args_from_event(event);
     for key in ["path", "command", "url", "query", "glob", "cwd"] {
         if let Some(value) = args
             .and_then(|args| args.get(key))
@@ -9218,8 +9027,7 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
         };
     }
     if matches!(tool_name, "fs_search_files") {
-        let query = event
-            .get("args")
+        let query = tool_args_from_event(event)
             .and_then(|args| args.get("query"))
             .and_then(Value::as_str)
             .map(str::trim)
@@ -9228,8 +9036,7 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
         return format!("Search files: {}", truncate_title(query));
     }
     if matches!(tool_name, "fs_find_paths") {
-        let glob = event
-            .get("args")
+        let glob = tool_args_from_event(event)
             .and_then(|args| args.get("glob"))
             .and_then(Value::as_str)
             .map(str::trim)
@@ -9249,13 +9056,12 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
         );
     }
     if matches!(tool_name, "fs_move_path" | "fs_copy_path") {
-        let source = event
-            .get("args")
+        let args = tool_args_from_event(event);
+        let source = args
             .and_then(|a| a.get("source_path"))
             .and_then(Value::as_str)
             .unwrap_or("source");
-        let destination = event
-            .get("args")
+        let destination = args
             .and_then(|a| a.get("destination_path"))
             .and_then(Value::as_str)
             .unwrap_or("destination");
@@ -9354,8 +9160,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
 }
 
 fn tool_path(event: &Value) -> Option<&str> {
-    event
-        .get("args")
+    tool_args_from_event(event)
         .and_then(|v| {
             v.get("path")
                 .or_else(|| v.get("source_path"))
@@ -9368,15 +9173,13 @@ fn tool_path(event: &Value) -> Option<&str> {
 }
 
 fn tool_url(event: &Value) -> Option<&str> {
-    event
-        .get("args")
+    tool_args_from_event(event)
         .and_then(|v| v.get("url"))
         .and_then(Value::as_str)
 }
 
 fn tool_command(event: &Value) -> Option<&str> {
-    event
-        .get("args")
+    tool_args_from_event(event)
         .and_then(|v| v.get("command"))
         .and_then(Value::as_str)
 }
@@ -9391,8 +9194,7 @@ fn tool_locations_from_event(tool_name: &str, event: &Value) -> Option<Vec<ToolC
         return None;
     }
     let mut location = ToolCallLocation::new(path_buf);
-    if let Some(line) = event
-        .get("args")
+    if let Some(line) = tool_args_from_event(event)
         .and_then(|v| v.get("line"))
         .and_then(Value::as_u64)
         .filter(|line| *line > 0)
@@ -9409,8 +9211,7 @@ fn tool_supports_input_location(tool_name: &str, event: &Value) -> bool {
         | "fs_edit_file"
         | "fs_replace_text"
         | "fs_create_text_file" => true,
-        "fs_delete_path" => event
-            .get("args")
+        "fs_delete_path" => tool_args_from_event(event)
             .and_then(|v| v.get("expected_kind"))
             .and_then(Value::as_str)
             .map(|kind| kind == "file")
@@ -9460,7 +9261,7 @@ fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay
             .map(|event| tool_call_title(tool_name, event))
             .unwrap_or_else(|| display.title.clone());
     }
-    if event.is_some_and(|event| event.get("display").is_some()) {
+    if event.is_some_and(|event| event_display_from_event(event).is_some()) {
         display.title.clone()
     } else {
         event
@@ -10884,30 +10685,6 @@ mod tests {
         assert!(report.contains("Den:"));
     }
 
-    #[test]
-    fn waiting_for_approval_detection_is_case_insensitive() {
-        assert!(looks_like_waiting_for_approval_error(
-            "Runtime stopped before producing assistant output: error; upstream is Waiting For Approval"
-        ));
-        assert!(looks_like_waiting_for_approval_error(
-            "Please Approve Or Deny this stale request"
-        ));
-    }
-
-    #[test]
-    fn cancellation_detection_matches_cancelled_and_canceled_errors() {
-        assert!(looks_like_cancellation_error(
-            "Runtime stopped before producing assistant output: cancelled"
-        ));
-        assert!(looks_like_cancellation_error(
-            "Runtime stopped before producing assistant output: canceled"
-        ));
-        assert!(looks_like_cancellation_error("cancelled"));
-        assert!(!looks_like_cancellation_error(
-            "Runtime stopped before producing assistant output: max_steps"
-        ));
-    }
-
     #[tokio::test]
     async fn adapter_keeps_pending_mode_until_den_session_exists() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -11009,86 +10786,6 @@ mod tests {
         assert!(!rendered.contains("tool-call-secret"));
         assert!(!rendered.contains("message-secret"));
         assert!(!rendered.contains("raw upstream compaction response"));
-    }
-
-    #[tokio::test]
-    async fn stale_approval_event_does_not_request_compaction_recovery() {
-        let config = Config {
-            api_url: "http://example.invalid".to_string(),
-            bear: "test-bear".to_string(),
-            token: "token".to_string(),
-            client: "test".to_string(),
-        };
-        let root = unique_test_dir("stale-approval");
-        let mut adapter_state = test_adapter_state("session-1", &root);
-        let shared_state = test_shared_state();
-        let mut diagnostics = SseStreamDiagnostics::default();
-        let frame = br#"data: {"type":"error","message":"Runtime stopped before producing assistant output: error","detail":"conversation is waiting for approval"}
-
-"#;
-
-        let outcome = handle_sse_frame(
-            &config,
-            &mut adapter_state,
-            &shared_state,
-            "session-1",
-            frame,
-            &mut diagnostics,
-            Uuid::new_v4(),
-        )
-        .await
-        .unwrap();
-
-        assert!(outcome.saw_error);
-        assert!(!outcome.saw_visible_output);
-        assert!(outcome.recover_and_retry);
-        assert_eq!(outcome.recovery_hint.as_deref(), None);
-        assert_eq!(outcome.upstream_errors.len(), 1);
-        assert!(outcome.upstream_errors[0].contains("compaction recovery is disabled"));
-        assert!(!outcome.upstream_errors[0].contains("compact if needed"));
-    }
-
-    #[tokio::test]
-    async fn typed_terminal_metadata_is_captured_from_error_and_done_events() {
-        let config = Config {
-            api_url: "http://example.invalid".to_string(),
-            bear: "test-bear".to_string(),
-            token: "token".to_string(),
-            client: "test".to_string(),
-        };
-        let root = unique_test_dir("typed-terminal");
-        let mut adapter_state = test_adapter_state("session-1", &root);
-        let shared_state = test_shared_state();
-        let mut diagnostics = SseStreamDiagnostics::default();
-        let frame = br#"data: {"type":"error","message":"No response from the assistant.","detail":"empty stream","terminal":{"outcome":"empty_fallback","recovery_hint":"check_upstream_logs","user_message":"Check upstream runtime logs and retry if appropriate."}}
-
-data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_logs","user_message":"Check upstream runtime logs and retry if appropriate."}
-
-"#;
-
-        let outcome = handle_sse_frame(
-            &config,
-            &mut adapter_state,
-            &shared_state,
-            "session-1",
-            frame,
-            &mut diagnostics,
-            Uuid::new_v4(),
-        )
-        .await
-        .unwrap();
-
-        assert!(outcome.saw_error);
-        assert!(outcome.saw_done);
-        assert_eq!(outcome.terminal_outcome.as_deref(), Some("empty_fallback"));
-        assert_eq!(
-            outcome.recovery_hint.as_deref(),
-            Some("check_upstream_logs")
-        );
-        assert_eq!(
-            outcome.terminal_user_message.as_deref(),
-            Some("Check upstream runtime logs and retry if appropriate.")
-        );
     }
 
     #[test]
@@ -11362,13 +11059,6 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
-    fn permission_request_counts_as_tool_activity() {
-        assert!(den_event_type_is_tool_activity("permission_request"));
-        assert!(den_event_type_is_tool_activity("tool_request"));
-        assert!(!den_event_type_is_tool_activity("conversation_resolved"));
-    }
-
-    #[test]
     fn permission_request_activity_is_successful_without_stream_terminal() {
         assert!(stream_has_successful_terminal_condition(
             true, false, false, true
@@ -11416,6 +11106,81 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(
             tool_call_title("process_run", &event),
             "Run process: cargo test --manifest-path tools/bear-armature/Cargo.toml"
+        );
+    }
+
+    #[test]
+    fn canonical_bearwire_tool_request_accessors_prefer_nested_payload() {
+        let event = json!({
+            "type": "tool_call.requested",
+            "run_id": "run-1",
+            "data": {
+                "tool_call_id": "legacy-call",
+                "tool_name": "legacy_tool",
+                "arguments": { "path": "/legacy" },
+                "tool_call": {
+                    "id": "call-1",
+                    "name": "fs_read_text_file",
+                    "arguments": { "path": "/workspace/README.md", "line": 4 },
+                    "display": { "title": "Read workspace README", "progress": "Reading file" }
+                }
+            }
+        });
+
+        assert_eq!(tool_call_id_from_event(&event), Some("call-1"));
+        assert_eq!(tool_name_from_event(&event), Some("fs_read_text_file"));
+        assert_eq!(
+            tool_args_from_event(&event).unwrap()["path"],
+            "/workspace/README.md"
+        );
+        assert_eq!(tool_path(&event), Some("/workspace/README.md"));
+        assert_eq!(
+            tool_call_title("fs_read_text_file", &event),
+            "Read file: /workspace/README.md"
+        );
+        assert_eq!(
+            ToolDisplay::from_event("fs_read_text_file", &event).title,
+            "Read workspace README"
+        );
+    }
+
+    #[test]
+    fn canonical_bearwire_client_waiting_accessors_read_permission_obligation() {
+        let event = json!({
+            "type": "client.waiting",
+            "run_id": "run-web-1",
+            "resource_refs": [
+                { "kind": "client_obligation", "id": "obl-web-1" },
+                { "kind": "tool_call", "id": "call-web-resource" },
+                { "kind": "permission_request", "id": "perm-web-resource" }
+            ],
+            "data": {
+                "expected_client_method": "client.permission.result",
+                "tool_call": {
+                    "id": "call-web-1",
+                    "name": "web_fetch",
+                    "title": "Fetch URL",
+                    "arguments": { "kind": "url", "url": "https://example.com/", "host": "example.com" }
+                },
+                "permission": {
+                    "id": "perm-web-1",
+                    "reason": "BEARS wants to fetch https://example.com/."
+                }
+            }
+        });
+
+        assert_eq!(permission_id_from_event(&event), Some("perm-web-1"));
+        assert_eq!(obligation_id_from_event(&event), Some("obl-web-1"));
+        assert_eq!(tool_call_id_from_event(&event), Some("call-web-1"));
+        assert_eq!(tool_name_from_event(&event), Some("web_fetch"));
+        assert_eq!(permission_title_from_event(&event), Some("Fetch URL"));
+        assert_eq!(
+            approval_reason_from_event(&event),
+            Some("BEARS wants to fetch https://example.com/.")
+        );
+        assert_eq!(
+            permission_target_from_event(&event).unwrap()["url"],
+            "https://example.com/"
         );
     }
 
