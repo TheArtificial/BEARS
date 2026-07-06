@@ -203,8 +203,6 @@ impl ToolCallFinishStatusWire {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallFinishWire {
-    pub tool_call_id: String,
-    pub tool_name: Option<String>,
     pub tool_call: ToolCallRefWire,
     pub status: ToolCallFinishStatusWire,
     pub summary: Option<String>,
@@ -228,13 +226,6 @@ pub struct ToolPermissionWire {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallRequestedWire {
-    pub tool_call_id: String,
-    pub tool_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub display: Value,
-    pub kind: String,
-    pub arguments: Value,
     pub tool_call: ToolCallWire,
     pub approval_required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -250,14 +241,9 @@ pub struct ToolCallWaitingWire {
     pub expected_client_method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub obligation_id: Option<String>,
-    pub tool_call_id: String,
-    pub tool_name: String,
     pub tool_call: ToolCallWire,
     pub permission: ToolPermissionWire,
     pub approval_required: bool,
-    pub approval_request_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_step_id: Option<String>,
 }
@@ -300,8 +286,6 @@ pub fn tool_call_finish_wire(
         .or_else(|| content.map(|text| text.chars().take(160).collect::<String>()));
     let tool_name = tool_name.map(str::to_string);
     ToolCallFinishWire {
-        tool_call_id: tool_call_id.to_string(),
-        tool_name: tool_name.clone(),
         tool_call: ToolCallRefWire {
             id: tool_call_id.to_string(),
             name: tool_name,
@@ -443,8 +427,6 @@ pub fn runtime_semantic_event_to_bearwire_events(
                     expected_responder_action: None,
                     expected_client_method: "client.permission.result".to_string(),
                     obligation_id: None,
-                    tool_call_id: tool_call_id.clone(),
-                    tool_name: tool_name.clone(),
                     tool_call,
                     permission: ToolPermissionWire {
                         id: permission_id.clone(),
@@ -453,18 +435,10 @@ pub fn runtime_semantic_event_to_bearwire_events(
                         target: None,
                     },
                     approval_required: true,
-                    approval_request_id: permission_id,
-                    permission_id: None,
                     turn_step_id: None,
                 })
             } else {
                 BearWireEvent::tool_call_requested(ToolCallRequestedWire {
-                    tool_call_id: tool_call_id.clone(),
-                    tool_name: tool_name.clone(),
-                    title,
-                    display: tool_call.display.clone(),
-                    kind: effective_kind,
-                    arguments,
                     tool_call,
                     approval_required: false,
                     approval_request_id: approval_request_id.clone(),

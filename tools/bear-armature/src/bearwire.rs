@@ -1380,16 +1380,11 @@ mod tests {
     }
 
     #[test]
-    fn bearwire_finished_tool_prefers_canonical_tool_call_identity() {
+    fn bearwire_finished_tool_requires_canonical_tool_call_identity() {
         let event = json!({
             "type": "tool_call.completed",
             "run_id": "run-1",
-            "resource_refs": [
-                { "kind": "tool_call", "id": "resource-call" }
-            ],
             "data": {
-                "tool_call_id": "legacy-call",
-                "tool_name": "legacy_tool",
                 "tool_call": {
                     "id": "call-1",
                     "name": "fs_read_text_file",

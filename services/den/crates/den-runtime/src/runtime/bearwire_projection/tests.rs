@@ -131,12 +131,12 @@ fn tool_call_requested_bearwire_event_has_canonical_tool_call_payload() {
         .iter()
         .find(|event| event.event_type == "tool_call.requested")
         .expect("tool_call.requested event");
-    assert_eq!(event.data["tool_call_id"], "call-1");
-    assert_eq!(event.data["tool_name"], "fs_read_text_file");
-    assert_eq!(event.data["arguments"]["path"], "/tmp/demo");
     assert_eq!(event.data["tool_call"]["id"], "call-1");
     assert_eq!(event.data["tool_call"]["name"], "fs_read_text_file");
     assert_eq!(event.data["tool_call"]["arguments"]["path"], "/tmp/demo");
+    assert!(event.data.get("tool_call_id").is_none());
+    assert!(event.data.get("tool_name").is_none());
+    assert!(event.data.get("arguments").is_none());
     assert!(event.data["tool_call"]["display"].is_object());
 }
 
@@ -156,10 +156,10 @@ fn tool_call_finished_bearwire_event_has_stable_finish_envelope() {
         .iter()
         .find(|event| event.event_type == "tool_call.completed")
         .expect("tool_call.completed event");
-    assert_eq!(event.data["tool_call_id"], "call-1");
-    assert_eq!(event.data["tool_name"], "fs_read_text_file");
     assert_eq!(event.data["tool_call"]["id"], "call-1");
     assert_eq!(event.data["tool_call"]["name"], "fs_read_text_file");
+    assert!(event.data.get("tool_call_id").is_none());
+    assert!(event.data.get("tool_name").is_none());
     assert_eq!(event.data["status"], "ok");
     assert_eq!(event.data["summary"], "Read 12 lines");
     assert!(event.data.get("compacted").is_some());
