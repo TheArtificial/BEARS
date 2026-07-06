@@ -28,10 +28,25 @@ use crate::{
     runtime_compaction::{den_error_indicates_context_overflow, CompactionMode},
 };
 
-/// Max wait for Bifrost to accept `POST /chat/completions` and return response headers.
-const NATIVE_LLM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Default max wait for Bifrost/upstream model to accept a streaming request and return
+/// response headers. Idle providers can be cold after a long session pause; keep this
+/// comfortably above the old 30s watchdog while still bounded.
+const DEFAULT_NATIVE_LLM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(120);
+const MIN_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS: u64 = 15;
+const MAX_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS: u64 = 900;
 /// Max silence between upstream SSE byte chunks after the handshake.
 const NATIVE_LLM_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn native_llm_handshake_timeout() -> Duration {
+    native_llm_handshake_timeout_from_raw(std::env::var("BEARS_LLM_HANDSHAKE_TIMEOUT_SECS").ok().as_deref())
+}
+
+fn native_llm_handshake_timeout_from_raw(raw: Option<&str>) -> Duration {
+    raw.and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|secs| secs.clamp(MIN_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS, MAX_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS))
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_NATIVE_LLM_HANDSHAKE_TIMEOUT)
+}
 
 /// Dependencies for one-shot context-overflow recovery during an agent step.
 #[derive(Clone)]
@@ -129,7 +144,7 @@ impl LazyAgentStepStream {
                 "retrying LLM stream with fallback model after Bifrost key-selection error"
             );
             match timeout(
-                NATIVE_LLM_HANDSHAKE_TIMEOUT,
+                native_llm_handshake_timeout(),
                 Self::connect_request_stream(
                     llm,
                     &fallback_request,
@@ -166,7 +181,7 @@ impl LazyAgentStepStream {
                         session_key = %session_key,
                         requested_model = %request.model,
                         fallback_model,
-                        handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
+                        handshake_timeout_secs = native_llm_handshake_timeout().as_secs(),
                         "fallback model handshake timed out"
                     );
                 }
@@ -214,17 +229,19 @@ impl LazyAgentStepStream {
             let started = Instant::now();
             let api_style =
                 api_style_override.unwrap_or_else(|| preferred_api_style_for_model(&model));
+            let handshake_timeout = native_llm_handshake_timeout();
             tracing::info!(
                 session_key = %session_key,
                 model = %model,
                 api_style = %api_style.as_str(),
                 message_count,
                 tool_count,
-                handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
+                handshake_timeout_secs = handshake_timeout.as_secs(),
+                handshake_timeout_source = "BEARS_LLM_HANDSHAKE_TIMEOUT_SECS",
                 "LLM stream handshake starting"
             );
             let handshake = timeout(
-                NATIVE_LLM_HANDSHAKE_TIMEOUT,
+                handshake_timeout,
                 Self::connect_request_stream(
                     &llm,
                     &request,
@@ -241,13 +258,13 @@ impl LazyAgentStepStream {
                         session_key = %session_key,
                         model = %model,
                         duration_ms = started.elapsed().as_millis(),
-                        handshake_timeout_secs = NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs(),
+                        handshake_timeout_secs = handshake_timeout.as_secs(),
                         api_style = %api_style.as_str(),
                         "LLM stream handshake timed out"
                     );
                     Err(DenError::System(format!(
-                        "LLM stream handshake timed out after {}s",
-                        NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs()
+                        "LLM stream handshake timed out after {}s (set BEARS_LLM_HANDSHAKE_TIMEOUT_SECS to tune cold/idle upstream startup tolerance)",
+                        handshake_timeout.as_secs()
                     )))
                 }
                 Ok(Err(err)) => {
@@ -390,7 +407,8 @@ impl LazyAgentStepStream {
             "retrying LLM stream after emergency compaction"
         );
 
-        let handshake = timeout(NATIVE_LLM_HANDSHAKE_TIMEOUT, async {
+        let handshake_timeout = native_llm_handshake_timeout();
+        let handshake = timeout(handshake_timeout, async {
             match api_style {
                 LlmApiStyle::ChatCompletionsStream => {
                     let byte_stream = llm.chat_completions_byte_stream(&retry_request).await?;
@@ -421,7 +439,7 @@ impl LazyAgentStepStream {
         match handshake {
             Err(_) => Err(DenError::System(format!(
                 "LLM stream retry timed out after {}s",
-                NATIVE_LLM_HANDSHAKE_TIMEOUT.as_secs()
+                handshake_timeout.as_secs()
             ))),
             Ok(Err(err)) => {
                 tracing::warn!(
@@ -668,5 +686,38 @@ pub async fn run_agent_step_stream(
         Ok(Box::pin(stream::iter(vec![Ok(event)]).chain(base_stream)) as RuntimeEventStream)
     } else {
         Ok(base_stream)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_llm_handshake_timeout_defaults_to_cold_start_tolerant_value() {
+        assert_eq!(
+            native_llm_handshake_timeout_from_raw(None),
+            DEFAULT_NATIVE_LLM_HANDSHAKE_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn native_llm_handshake_timeout_parses_and_clamps_env_value() {
+        assert_eq!(
+            native_llm_handshake_timeout_from_raw(Some("90")),
+            Duration::from_secs(90)
+        );
+        assert_eq!(
+            native_llm_handshake_timeout_from_raw(Some("1")),
+            Duration::from_secs(MIN_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            native_llm_handshake_timeout_from_raw(Some("9999")),
+            Duration::from_secs(MAX_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            native_llm_handshake_timeout_from_raw(Some("not-a-number")),
+            DEFAULT_NATIVE_LLM_HANDSHAKE_TIMEOUT
+        );
     }
 }
