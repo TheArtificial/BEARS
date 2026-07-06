@@ -29,11 +29,11 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     let username = format!("u{}", &suffix[..20]);
     let email = format!("{label}-{suffix}@example.test");
     let (user_id,): (i32,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO users (email, username, display_name)
         VALUES ($1, $2, $3)
         RETURNING id
-        "#,
+        ",
     )
     .bind(email)
     .bind(username)
@@ -44,11 +44,11 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
 
     let slug = format!("docket-{label}-{}", &suffix[..12]);
     let (bear_id,): (Uuid,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO bears (slug, name, description)
         VALUES ($1, $2, $3)
         RETURNING id
-        "#,
+        ",
     )
     .bind(slug)
     .bind("Docket Test Bear")

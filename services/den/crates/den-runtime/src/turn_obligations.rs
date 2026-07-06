@@ -179,7 +179,7 @@ pub async fn create_turn_obligation_for_step(
     let kind = kind.as_str();
     let expected_responder_action = expected_responder_action.as_str();
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             responder_ref_id, state, request_payload
@@ -187,7 +187,7 @@ pub async fn create_turn_obligation_for_step(
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
                   request_payload, result_payload, created_at, updated_at, completed_at
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(session_id)
@@ -231,7 +231,7 @@ pub async fn upsert_tool_result_obligation_for_step(
     request_payload: Value,
 ) -> Result<TurnObligationRow, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             tool_call_id, permission_id, state, request_payload
@@ -251,7 +251,7 @@ pub async fn upsert_tool_result_obligation_for_step(
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(session_id)
@@ -295,7 +295,7 @@ pub async fn upsert_permission_decision_obligation_for_step(
 ) -> Result<TurnObligationRow, DenError> {
     if let Some(tool_call_id) = tool_call_id {
         if let Some(row) = sqlx::query(
-            r#"
+            r"
             UPDATE turn_obligations
             SET session_id = $2,
                 turn_step_id = COALESCE($6, turn_step_id),
@@ -315,7 +315,7 @@ pub async fn upsert_permission_decision_obligation_for_step(
             RETURNING id, run_id, session_id, kind, expected_responder_action,
                       tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                       created_at, updated_at, completed_at
-            "#,
+            ",
         )
         .bind(run_id)
         .bind(session_id)
@@ -331,7 +331,7 @@ pub async fn upsert_permission_decision_obligation_for_step(
     }
 
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             tool_call_id, permission_id, state, request_payload
@@ -350,7 +350,7 @@ pub async fn upsert_permission_decision_obligation_for_step(
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(session_id)
@@ -369,13 +369,13 @@ pub async fn get_tool_call_obligation(
     tool_call_id: &str,
 ) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
         FROM turn_obligations
         WHERE run_id = $1 AND tool_call_id = $2
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(tool_call_id)
@@ -390,13 +390,13 @@ pub async fn get_permission_obligation(
     permission_id: &str,
 ) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
         FROM turn_obligations
         WHERE run_id = $1 AND permission_id = $2
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(permission_id)
@@ -411,7 +411,7 @@ pub async fn mark_result_received(
     result_payload: Value,
 ) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE turn_obligations
         SET state = 'result_received',
             result_payload = $2,
@@ -421,7 +421,7 @@ pub async fn mark_result_received(
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
-        "#,
+        ",
     )
     .bind(obligation_id)
     .bind(result_payload)
@@ -435,7 +435,7 @@ pub async fn mark_waiting_for_tool_result(
     obligation_id: Uuid,
 ) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE turn_obligations
         SET kind = 'tool_result',
             expected_responder_action = 'tool_result',
@@ -447,7 +447,7 @@ pub async fn mark_waiting_for_tool_result(
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
-        "#,
+        ",
     )
     .bind(obligation_id)
     .fetch_optional(pool)
@@ -460,7 +460,7 @@ pub async fn mark_continued(
     obligation_id: Uuid,
 ) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE turn_obligations
         SET state = 'continued',
             completed_at = COALESCE(completed_at, NOW()),
@@ -470,7 +470,7 @@ pub async fn mark_continued(
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
-        "#,
+        ",
     )
     .bind(obligation_id)
     .fetch_optional(pool)
@@ -483,7 +483,7 @@ pub async fn open_client_obligations_for_step(
     turn_step_id: Uuid,
 ) -> Result<Vec<TurnObligationRow>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
@@ -491,7 +491,7 @@ pub async fn open_client_obligations_for_step(
         WHERE turn_step_id = $1
           AND state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
-        "#,
+        ",
     )
     .bind(turn_step_id)
     .fetch_all(pool)
@@ -504,7 +504,7 @@ pub async fn open_client_obligations_for_run(
     run_id: &str,
 ) -> Result<Vec<TurnObligationRow>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
@@ -512,7 +512,7 @@ pub async fn open_client_obligations_for_run(
         WHERE run_id = $1
           AND state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
-        "#,
+        ",
     )
     .bind(run_id)
     .fetch_all(pool)
@@ -527,14 +527,14 @@ pub async fn settle_outstanding_for_run(
 ) -> Result<u64, DenError> {
     let state = state.as_str();
     let result = sqlx::query(
-        r#"
+        r"
         UPDATE turn_obligations
         SET state = $2,
             completed_at = COALESCE(completed_at, NOW()),
             updated_at = NOW()
         WHERE run_id = $1
           AND state IN ('requested','waiting_for_client','result_received')
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(state)

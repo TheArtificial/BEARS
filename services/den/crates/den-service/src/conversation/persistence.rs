@@ -354,8 +354,7 @@ impl TryFrom<&serde_json::Value> for PersistedToolResultPayload {
                 .output_summary
                 .as_deref()
                 .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .is_none()
+                .is_none_or(str::is_empty)
         {
             return Err(DenError::ValidationError(
                 "strict typed payloads require output_summary on persisted tool_result rows"
@@ -1074,13 +1073,13 @@ pub async fn get_conversation_model_state(
     conversation_id: Uuid,
 ) -> Result<Option<ConversationModelState>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT conversation_id, selection_mode, requested_model, selected_model,
                selected_reason, actual_last_model, actual_last_provider,
                fallback_count, metadata_json
         FROM conversation_model_state
         WHERE conversation_id = $1
-        "#,
+        ",
     )
     .bind(conversation_id)
     .fetch_optional(pool)
@@ -1106,7 +1105,7 @@ pub async fn set_conversation_model_state(
     let selected_model = selected_model.map(str::trim).filter(|s| !s.is_empty());
     let selected_reason = selected_reason.map(str::trim).filter(|s| !s.is_empty());
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO conversation_model_state (
             conversation_id, selection_mode, requested_model, selected_model,
             selected_reason, updated_at
@@ -1120,7 +1119,7 @@ pub async fn set_conversation_model_state(
         RETURNING conversation_id, selection_mode, requested_model, selected_model,
                   selected_reason, actual_last_model, actual_last_provider,
                   fallback_count, metadata_json
-        "#,
+        ",
     )
     .bind(conversation_id)
     .bind(mode)

@@ -33,7 +33,7 @@ pub(crate) fn split_frontmatter<'a>(
     let yaml = &rest[..end];
     let body = rest[end + "\n---".len()..]
         .strip_prefix('\n')
-        .unwrap_or(&rest[end + "\n---".len()..]);
+        .unwrap_or_else(|| &rest[end + "\n---".len()..]);
     Ok((yaml, body))
 }
 

@@ -13,10 +13,8 @@ use crate::{
         user::db::create_user,
     },
 };
-use den_runtime::{
-    bears::{db, db::grant_membership, db::BearParams, BearProfile},
-    den_memory::MemoryStoreManager,
-};
+use den_memory::MemoryStoreManager;
+use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
 
 async fn seed_watch_agent(
     pool: &PgPool,
@@ -88,6 +86,8 @@ async fn observation_write_persists_and_enqueues_memory_curate(
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some(Uuid::new_v4().to_string()),
         channel: DenToolChannelContext::default(),
     };
@@ -145,6 +145,8 @@ async fn observation_write_persists_and_enqueues_memory_curate(
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some(Uuid::new_v4().to_string()),
         channel: DenToolChannelContext::default(),
     };

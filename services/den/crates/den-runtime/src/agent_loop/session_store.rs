@@ -207,14 +207,14 @@ impl AgentLoopSessionStore {
         let key = session.session_key.clone();
         self.inner
             .lock()
-            .expect("agent loop session lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(key, session);
     }
 
     pub fn get(&self, key: &str) -> Option<AgentLoopSession> {
         self.inner
             .lock()
-            .expect("agent loop session lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(key)
             .cloned()
     }
@@ -223,7 +223,7 @@ impl AgentLoopSessionStore {
         if let Some(session) = self
             .inner
             .lock()
-            .expect("agent loop session lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get_mut(key)
         {
             update(session);
@@ -233,7 +233,7 @@ impl AgentLoopSessionStore {
     pub fn remove(&self, key: &str) {
         self.inner
             .lock()
-            .expect("agent loop session lock")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(key);
     }
 

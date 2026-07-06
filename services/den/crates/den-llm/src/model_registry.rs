@@ -55,7 +55,7 @@ impl DenModelRegistryEntry {
         let normalized = handle.trim();
         normalized == self.key
             || normalized == self.provider_model_id
-            || self.aliases.iter().any(|alias| *alias == normalized)
+            || self.aliases.contains(&normalized)
     }
 }
 
@@ -78,7 +78,7 @@ pub fn provider_model_id_for_handle(handle: &str) -> Option<&'static str> {
 }
 
 pub fn execution_fallback_model_handles(handle: &str) -> &'static [&'static str] {
-    match resolve_model_handle(handle).unwrap_or(handle.trim()) {
+    match resolve_model_handle(handle).unwrap_or_else(|| handle.trim()) {
         "openai/gpt-5.5" => &["openai/gpt-5.1", "openai/gpt-5"],
         "openai/gpt-5.1" => &["openai/gpt-5"],
         _ => &[],

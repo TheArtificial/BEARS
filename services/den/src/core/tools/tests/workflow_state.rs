@@ -19,6 +19,8 @@ fn pair_context() -> DenToolInvocationContext {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: None,
         channel: Default::default(),
     }
@@ -303,6 +305,8 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: None,
         channel: Default::default(),
     };
@@ -365,6 +369,8 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: None,
         channel: Default::default(),
     };

@@ -55,7 +55,12 @@ fn compact_client_tool_description(description: Option<&str>) -> Option<String> 
         .map(|(head, _)| head)
         .unwrap_or(description);
     let compact = if first_sentence.len() > 96 {
-        format!("{}…", &first_sentence[..96])
+        // Back off to a UTF-8 char boundary so multi-byte input can't panic.
+        let mut end = 96;
+        while end > 0 && !first_sentence.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &first_sentence[..end])
     } else {
         first_sentence.to_string()
     };

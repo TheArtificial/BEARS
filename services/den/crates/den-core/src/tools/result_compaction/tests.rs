@@ -27,7 +27,7 @@ fn compact_client_tool_result_preserves_tool_name_for_projection() {
         "call_named",
         Some("fs_read_text_file".to_string()),
         ToolResultStatus::Ok,
-        Some("".to_string()),
+        Some(String::new()),
         json!({ "content": "hello" }),
         Value::Null,
     );
@@ -48,7 +48,7 @@ fn compact_client_tool_result_adds_bounded_summary_without_preview() {
         "call_status_only",
         Some("session_info".to_string()),
         ToolResultStatus::Ok,
-        Some("".to_string()),
+        Some(String::new()),
         Value::Null,
         Value::Null,
     );
@@ -67,7 +67,7 @@ fn compact_client_tool_result_falls_back_to_structured_content_when_content_is_e
         "call_read_file",
         Some("fs_read_text_file".to_string()),
         ToolResultStatus::Ok,
-        Some("".to_string()),
+        Some(String::new()),
         json!({ "content": "hello from file" }),
         Value::Null,
     );

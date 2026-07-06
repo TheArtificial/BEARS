@@ -80,11 +80,11 @@ async fn create_test_user(pool: &sqlx::PgPool) -> i32 {
     let username = format!("bw{}", &suffix[..16]);
     let email = format!("{username}@example.test");
     let (user_id,): (i32,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO users (email, username, display_name, passhash)
         VALUES ($1, $2, $3, $4)
         RETURNING id
-        "#,
+        ",
     )
     .bind(email)
     .bind(&username)
@@ -544,7 +544,7 @@ async fn run_start_persists_user_prompt_for_future_history(pool: sqlx::PgPool) {
         .as_deref()
         .expect("run.start should resolve conversation");
     let (count,): (i64,) = sqlx::query_as(
-        r#"
+        r"
         SELECT COUNT(*)
         FROM conversation_messages
         WHERE conversation_id = (
@@ -555,7 +555,7 @@ async fn run_start_persists_user_prompt_for_future_history(pool: sqlx::PgPool) {
         AND message_type = 'user'
         AND role = 'user'
         AND content_text = $3
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(resolved)
@@ -634,7 +634,7 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
         .expect("run.start should resolve conversation");
 
     let row = sqlx::query(
-        r#"
+        r"
         SELECT content_text, content_json
         FROM conversation_messages
         WHERE conversation_id = (
@@ -646,7 +646,7 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
         AND role = 'user'
         ORDER BY sequence_no DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(resolved)
@@ -755,7 +755,7 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
                 .await
                 .expect("load first run state");
         let assistant_count: i64 = sqlx::query_scalar(
-            r#"
+            r"
             SELECT COUNT(*)::bigint
             FROM conversation_messages
             WHERE conversation_id = (
@@ -765,7 +765,7 @@ async fn run_start_second_turn_replays_first_user_and_assistant_once(pool: sqlx:
             )
             AND message_type = 'assistant'
             AND content_text = 'hello from bearwire'
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(&resolved)
@@ -1490,7 +1490,7 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
     .await;
 
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT message_type, role, visibility, content_text, content_json
         FROM conversation_messages
         WHERE conversation_id = (
@@ -1499,7 +1499,7 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
             LIMIT 1
         )
         ORDER BY sequence_no ASC
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(&session.conversation_id)
@@ -1592,7 +1592,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                 "call-history",
                 None,
                 den_core::tools::result_compaction::ToolResultStatus::Ok,
-                Some("".to_string()),
+                Some(String::new()),
                 json!({ "content": "hello from file" }),
                 Value::Null,
                 Some("req-history".to_string()),

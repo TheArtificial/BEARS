@@ -45,7 +45,7 @@ pub enum ToolResultCoordinatorOutcome {
 pub enum PermissionResultCoordinatorOutcome {
     DispatchLocalTool {
         run: Option<turn_runs::TurnRunRow>,
-        tool_obligation: turn_obligations::TurnObligationRow,
+        tool_obligation: Box<turn_obligations::TurnObligationRow>,
         tool_call_id: String,
         tool_name: String,
         args: Value,
@@ -460,7 +460,7 @@ pub async fn settle_permission_result(
             .unwrap_or_else(|| serde_json::json!({}));
         return Ok(PermissionResultCoordinatorOutcome::DispatchLocalTool {
             run: transitioned,
-            tool_obligation,
+            tool_obligation: Box::new(tool_obligation),
             tool_call_id,
             tool_name,
             args,

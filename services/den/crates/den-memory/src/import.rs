@@ -477,7 +477,7 @@ fn normalize_legacy_memory_path(raw: &str) -> Option<String> {
         .split('/')
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
-    if parts.is_empty() || parts.iter().any(|segment| *segment == "..") {
+    if parts.is_empty() || parts.contains(&"..") {
         return None;
     }
     let normalized = parts.join("/");

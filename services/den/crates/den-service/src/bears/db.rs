@@ -674,11 +674,11 @@ pub async fn get_bear_bifrost_virtual_key(
     bear_id: Uuid,
 ) -> Result<Option<BearBifrostVirtualKey>, DenError> {
     match sqlx::query_as::<_, BearBifrostVirtualKey>(
-        r#"
+        r"
         SELECT bear_id, virtual_key_id, virtual_key_name, virtual_key_value, virtual_key_value_encrypted
         FROM bear_bifrost_virtual_keys
         WHERE bear_id = $1
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_optional(pool)
@@ -688,11 +688,11 @@ pub async fn get_bear_bifrost_virtual_key(
         Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("42P01") => Ok(None),
         Err(sqlx::Error::Database(err)) if err.code().as_deref() == Some("42703") => {
             sqlx::query_as::<_, BearBifrostVirtualKey>(
-                r#"
+                r"
                 SELECT bear_id, virtual_key_id, virtual_key_name, virtual_key_value, NULL::TEXT AS virtual_key_value_encrypted
                 FROM bear_bifrost_virtual_keys
                 WHERE bear_id = $1
-                "#,
+                ",
             )
             .bind(bear_id)
             .fetch_optional(pool)
@@ -772,7 +772,7 @@ pub async fn set_bear_bifrost_virtual_key(
         return Ok(());
     }
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_bifrost_virtual_keys (
             bear_id, virtual_key_id, virtual_key_name, virtual_key_value, virtual_key_value_encrypted, updated_at
         )
@@ -783,7 +783,7 @@ pub async fn set_bear_bifrost_virtual_key(
             virtual_key_value = NULL,
             virtual_key_value_encrypted = EXCLUDED.virtual_key_value_encrypted,
             updated_at = NOW()
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(virtual_key_id)
@@ -806,7 +806,7 @@ pub async fn set_bear_bifrost_virtual_key_metadata(
         return Ok(());
     }
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_bifrost_virtual_keys (
             bear_id, virtual_key_id, virtual_key_name, updated_at
         )
@@ -815,7 +815,7 @@ pub async fn set_bear_bifrost_virtual_key_metadata(
         SET virtual_key_id = EXCLUDED.virtual_key_id,
             virtual_key_name = EXCLUDED.virtual_key_name,
             updated_at = NOW()
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(virtual_key_id)
@@ -838,12 +838,12 @@ pub async fn list_profile_model_settings(
     bear_id: Uuid,
 ) -> Result<Vec<BearProfileModelSetting>, DenError> {
     sqlx::query_as::<_, BearProfileModelSetting>(
-        r#"
+        r"
         SELECT bear_id, profile, model
         FROM bear_profile_model_settings
         WHERE bear_id = $1
         ORDER BY profile
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_all(pool)
@@ -857,11 +857,11 @@ pub async fn profile_model_setting(
     profile: BearProfile,
 ) -> Result<Option<String>, DenError> {
     sqlx::query_scalar::<_, Option<String>>(
-        r#"
+        r"
         SELECT model
         FROM bear_profile_model_settings
         WHERE bear_id = $1 AND profile = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile.as_str())
@@ -884,13 +884,13 @@ pub async fn set_profile_model_setting(
 ) -> Result<(), DenError> {
     let model = model.map(str::trim).filter(|s| !s.is_empty());
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_profile_model_settings (bear_id, profile, model, updated_at)
         VALUES ($1, $2, $3, NOW())
         ON CONFLICT (bear_id, profile) DO UPDATE
         SET model = EXCLUDED.model,
             updated_at = NOW()
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(profile.as_str())

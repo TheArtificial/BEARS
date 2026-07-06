@@ -97,7 +97,7 @@ pub async fn page(State(state): State<AppState>) -> Result<Response, crate::erro
         json_path => "/status.json",
         deploy_rows => deploy_rows,
         ghcr_note => ghcr_note,
-        model_registry => payload.model_registry.clone(),
+        model_registry => payload.model_registry,
     };
     let template = state
         .template_env
@@ -124,9 +124,9 @@ fn build_deploy_rows(payload: &StatusPayload) -> Vec<DeployRow> {
     let den = &payload.den_version;
     let out = vec![DeployRow {
         component: "Den".to_string(),
-        git_sha: den.git_sha.to_string(),
-        semver: den.version.to_string(),
-        built_at: den.built_at_utc.to_string(),
+        git_sha: den.git_sha.clone(),
+        semver: den.version.clone(),
+        built_at: den.built_at_utc.clone(),
         ghcr_tags: payload
             .ghcr_den
             .as_ref()

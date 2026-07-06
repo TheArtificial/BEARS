@@ -12,11 +12,11 @@ async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
     let username = format!("obl{}", &suffix[..16]);
     let email = format!("{username}@example.test");
     let (user_id,): (i32,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO users (email, username, display_name, passhash)
         VALUES ($1, $2, $3, $4)
         RETURNING id
-        "#,
+        ",
     )
     .bind(email)
     .bind(&username)
@@ -29,10 +29,10 @@ async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
     let bear_id = Uuid::new_v4();
     let slug = format!("bear-{}", &suffix[..16]);
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bears (id, slug, name)
         VALUES ($1, $2, $3)
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(slug)
@@ -337,11 +337,11 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
     assert_eq!(run.state, "waiting_for_permission");
 
     let step_state: String = sqlx::query(
-        r#"
+        r"
         SELECT state
         FROM turn_steps
         WHERE id = $1
-        "#,
+        ",
     )
     .bind(persisted.turn_step_id)
     .fetch_one(&pool)

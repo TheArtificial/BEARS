@@ -12,7 +12,7 @@ use crate::config::Config;
 use den_memory::MemoryStoreManager;
 use den_runtime::memory_curate_executor;
 use den_runtime::reflection_conductor::*;
-use den_service::{bears::BearProfile, memory_proposals};
+use den_service::bears::BearProfile;
 
 async fn test_pool() -> Option<PgPool> {
     let database_url = std::env::var("TEST_DATABASE_URL")

@@ -75,11 +75,11 @@ pub async fn persist_surface_obligation_transactionally(
 ) -> Result<PersistedSurfaceObligation, DenError> {
     let mut tx = pool.begin().await?;
     sqlx::query(
-        r#"
+        r"
         UPDATE turn_runs
         SET state = $2, terminal_reason = NULL, updated_at = NOW()
         WHERE run_id = $1
-        "#,
+        ",
     )
     .bind(input.run_id)
     .bind(turn_runs::TurnRunState::WaitingForClient.as_str())
@@ -87,14 +87,14 @@ pub async fn persist_surface_obligation_transactionally(
     .await?;
 
     let step_row = if let Some(row) = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
         FROM turn_steps
         WHERE run_id = $1
           AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
         ORDER BY step_index DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(input.run_id)
     .fetch_optional(&mut *tx)
@@ -103,7 +103,7 @@ pub async fn persist_surface_obligation_transactionally(
         row
     } else {
         sqlx::query(
-            r#"
+            r"
             WITH next_step AS (
                 SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
                 FROM turn_steps
@@ -113,7 +113,7 @@ pub async fn persist_surface_obligation_transactionally(
             SELECT $1, step_index, 'streaming_model'
             FROM next_step
             RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-            "#,
+            ",
         )
         .bind(input.run_id)
         .fetch_one(&mut *tx)
@@ -121,19 +121,19 @@ pub async fn persist_surface_obligation_transactionally(
     };
     let turn_step_id: Uuid = step_row.get("id");
     sqlx::query(
-        r#"
+        r"
         UPDATE turn_steps
         SET state = 'waiting_for_client'
         WHERE id = $1
           AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
-        "#,
+        ",
     )
     .bind(turn_step_id)
     .execute(&mut *tx)
     .await?;
 
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             responder_ref_id, state, request_payload
@@ -141,7 +141,7 @@ pub async fn persist_surface_obligation_transactionally(
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
                   request_payload, result_payload, created_at, updated_at, completed_at
-        "#,
+        ",
     )
     .bind(input.run_id)
     .bind(input.session_id)
@@ -219,11 +219,11 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
 
     let mut tx = pool.begin().await?;
     sqlx::query(
-        r#"
+        r"
         UPDATE turn_runs
         SET state = $2, terminal_reason = NULL, updated_at = NOW()
         WHERE run_id = $1
-        "#,
+        ",
     )
     .bind(input.run_id)
     .bind(run_state.as_str())
@@ -231,14 +231,14 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     .await?;
 
     let step_row = if let Some(row) = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
         FROM turn_steps
         WHERE run_id = $1
           AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
         ORDER BY step_index DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(input.run_id)
     .fetch_optional(&mut *tx)
@@ -247,7 +247,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         row
     } else {
         sqlx::query(
-            r#"
+            r"
             WITH next_step AS (
                 SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
                 FROM turn_steps
@@ -257,7 +257,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             SELECT $1, step_index, 'streaming_model'
             FROM next_step
             RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-            "#,
+            ",
         )
         .bind(input.run_id)
         .fetch_one(&mut *tx)
@@ -265,12 +265,12 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     };
     let turn_step_id: Uuid = step_row.get("id");
     sqlx::query(
-        r#"
+        r"
         UPDATE turn_steps
         SET state = 'waiting_for_client'
         WHERE id = $1
           AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
-        "#,
+        ",
     )
     .bind(turn_step_id)
     .execute(&mut *tx)
@@ -279,7 +279,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     let obligation_row = if effective_approval_required {
         let permission_id = input.approval_request_id.as_deref().unwrap_or_default();
         if let Some(row) = sqlx::query(
-            r#"
+            r"
             UPDATE turn_obligations
             SET session_id = $2,
                 turn_step_id = COALESCE($6, turn_step_id),
@@ -298,7 +298,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             RETURNING id, run_id, session_id, kind, expected_responder_action,
                       tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                       created_at, updated_at, completed_at
-            "#,
+            ",
         )
         .bind(input.run_id)
         .bind(input.session_id)
@@ -312,7 +312,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             row
         } else {
             sqlx::query(
-                r#"
+                r"
                 INSERT INTO turn_obligations (
                     run_id, session_id, turn_step_id, kind, expected_responder_action,
                     tool_call_id, permission_id, state, request_payload
@@ -331,7 +331,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
                 RETURNING id, run_id, session_id, kind, expected_responder_action,
                           tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                           created_at, updated_at, completed_at
-                "#,
+                ",
             )
             .bind(input.run_id)
             .bind(input.session_id)
@@ -344,7 +344,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         }
     } else {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO turn_obligations (
                 run_id, session_id, turn_step_id, kind, expected_responder_action,
                 tool_call_id, permission_id, state, request_payload
@@ -364,7 +364,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             RETURNING id, run_id, session_id, kind, expected_responder_action,
                       tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                       created_at, updated_at, completed_at
-            "#,
+            ",
         )
         .bind(input.run_id)
         .bind(input.session_id)

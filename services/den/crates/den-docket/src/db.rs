@@ -1559,8 +1559,7 @@ pub(super) async fn sync_task_list(
                     .summary
                     .as_deref()
                     .map(str::trim)
-                    .filter(|summary| !summary.is_empty() && *summary != existing.body.trim())
-                    .is_none()
+                    .is_none_or(|summary| summary.is_empty() || summary == existing.body.trim())
             {
                 conflicts.push(format!(
                     "Completed Docket-backed item `{}` requires a completion summary/evidence distinct from the task body",

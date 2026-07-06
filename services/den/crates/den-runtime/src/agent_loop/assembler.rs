@@ -152,7 +152,7 @@ pub fn projected_memory_session_diagnostic(projection: &KeyMemoryProjectionResul
         .cloned()
         .unwrap_or_else(|| json!([]));
     json!({
-        "status": if selected_paths.is_empty() { "available" } else { "available" },
+        "status": "available",
         "count": included.len(),
         "selected_paths": selected_paths,
         "matched_block_ids": matched_block_ids,

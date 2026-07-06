@@ -739,8 +739,8 @@ impl Stream for SessionTrackingStream {
                     let approval_tool_name = tool_name.clone();
                     self.pending_tool_event = Some(RuntimeStreamEvent::Semantic(
                         RuntimeSemanticEvent::ToolCallRequested {
-                            tool_call_id: tool_call_id.clone(),
-                            tool_name: tool_name.clone(),
+                            tool_call_id,
+                            tool_name,
                             title: None,
                             kind: Some("function".to_string()),
                             arguments: permission_target,
@@ -775,10 +775,10 @@ impl Stream for SessionTrackingStream {
                 if self.should_execute_den_tool_server_side(&tool_name) {
                     self.persist_assistant_tool_step();
                     let call = ChatToolCall {
-                        id: tool_call_id.clone(),
+                        id: tool_call_id,
                         call_type: "function".to_string(),
                         function: crate::llm::ChatToolCallFunction {
-                            name: tool_name.clone(),
+                            name: tool_name,
                             arguments: arguments.to_string(),
                         },
                     };
@@ -836,16 +836,15 @@ impl Stream for SessionTrackingStream {
                 }
                 if self.assistant_text.trim().is_empty() {
                     let fallback = "BEARS completed the turn without assistant output.".to_string();
-                    self.assistant_text = fallback.clone();
+                    self.assistant_text.clone_from(&fallback);
                     self.persist_assistant_tool_step();
                     self.pending_pause_after_tool =
                         Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
                     return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                         RuntimeSemanticEvent::AssistantTextDelta { text: fallback },
                     ))));
-                } else {
-                    self.persist_assistant_tool_step();
                 }
+                self.persist_assistant_tool_step();
                 let active_activity_plan = self
                     .store
                     .get(&self.session_key)
@@ -889,7 +888,7 @@ impl Stream for SessionTrackingStream {
                         .and_then(|plan| {
                             autonomous_execution_gate_for_task_list(
                                 self.profile,
-                                Some(&plan),
+                                Some(plan),
                                 crate::runtime::turn_state::classify_autonomous_final_response(
                                     &self.assistant_text,
                                 ),

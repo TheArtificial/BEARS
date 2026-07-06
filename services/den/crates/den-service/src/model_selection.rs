@@ -50,12 +50,12 @@ fn option_from_row(row: ModelSelectionOptionRow) -> ModelOption {
 /// should not flicker when Bifrost's live catalog temporarily shrinks or expands.
 pub async fn list_selectable_model_options(pool: &PgPool) -> Result<Vec<ModelOption>, DenError> {
     let rows = match sqlx::query_as::<_, ModelSelectionOptionRow>(
-        r#"
+        r"
         SELECT handle, display_name, metadata_json
         FROM model_selection_options
         WHERE selectable = TRUE
         ORDER BY COALESCE(sort_order, 100000), display_name, handle
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await
@@ -81,10 +81,10 @@ fn simplify_model_option_label_for_acp(label: &str) -> String {
     label
         .trim()
         .strip_suffix(" — metadata unknown")
-        .unwrap_or(label.trim())
+        .unwrap_or_else(|| label.trim())
         .split(" (")
         .next()
-        .unwrap_or(label.trim())
+        .unwrap_or_else(|| label.trim())
         .trim()
         .to_string()
 }
@@ -236,12 +236,12 @@ pub async fn resolve_model_option(
         return Ok(None);
     }
     if let Ok(Some(row)) = sqlx::query_as::<_, ModelSelectionOptionRow>(
-        r#"
+        r"
         SELECT handle, display_name, metadata_json
         FROM model_selection_options
         WHERE handle = $1
         LIMIT 1
-        "#,
+        ",
     )
     .bind(trimmed)
     .fetch_optional(pool)

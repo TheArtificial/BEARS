@@ -157,7 +157,7 @@ pub struct ChatCompletionRequest {
 fn log_sample(value: &str, max_chars: usize) -> String {
     let mut sample = value.chars().take(max_chars).collect::<String>();
     if value.chars().count() > max_chars {
-        sample.push_str("…");
+        sample.push('…');
     }
     sample
 }
@@ -680,7 +680,7 @@ pub struct LlmClient {
 impl LlmClient {
     pub fn new(config: &Config) -> Self {
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(300))
+            .timeout(Duration::from_mins(5))
             .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("reqwest client for llm");

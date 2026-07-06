@@ -1,7 +1,7 @@
 #[sqlx::test(migrations = "../../migrations")]
 async fn turn_core_schema_uses_neutral_names(pool: sqlx::PgPool) {
     let tables: Vec<String> = sqlx::query_scalar(
-        r#"
+        r"
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = 'public'
@@ -16,7 +16,7 @@ async fn turn_core_schema_uses_neutral_names(pool: sqlx::PgPool) {
             'bearwire_events'
           )
         ORDER BY table_name
-        "#,
+        ",
     )
     .fetch_all(&pool)
     .await
@@ -60,7 +60,7 @@ async fn turn_core_schema_uses_neutral_names(pool: sqlx::PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn turn_obligation_schema_supports_neutral_actions(pool: sqlx::PgPool) {
     let columns: Vec<String> = sqlx::query_scalar(
-        r#"
+        r"
         SELECT column_name
         FROM information_schema.columns
         WHERE table_schema = 'public'
@@ -73,7 +73,7 @@ async fn turn_obligation_schema_supports_neutral_actions(pool: sqlx::PgPool) {
             'step_id'
           )
         ORDER BY column_name
-        "#,
+        ",
     )
     .fetch_all(&pool)
     .await
@@ -101,13 +101,13 @@ async fn turn_obligation_schema_supports_neutral_actions(pool: sqlx::PgPool) {
     );
 
     let check_clause: Option<String> = sqlx::query_scalar(
-        r#"
+        r"
         SELECT check_clause
         FROM information_schema.check_constraints
         WHERE constraint_schema = 'public'
           AND constraint_name = 'turn_obligations_expected_responder_action_check'
         LIMIT 1
-        "#,
+        ",
     )
     .fetch_optional(&pool)
     .await

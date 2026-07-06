@@ -7,9 +7,9 @@ use den_runtime::{
     runtime::bearwire_projection::{
         runtime_semantic_event_to_bearwire_gateway_events, runtime_stream_event_to_bearwire_sse,
     },
-    runtime_contracts::{
-        RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
-    },
+};
+use den_protocol::{
+    RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
 };
 
 fn adapter_sse_event_types(sse_bytes: &[Bytes]) -> Vec<String> {

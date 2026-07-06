@@ -32,15 +32,9 @@ fn projection_workflow_content_json_is_derived_from_typed_event() {
 
 #[test]
 fn projection_requires_canonical_conversation_id_shape() {
-    assert!(Some("conv-123")
-        .filter(|id| id.starts_with("conv-"))
-        .is_some());
-    assert!(Some("conversation-123")
-        .filter(|id| id.starts_with("conv-"))
-        .is_none());
-    assert!(Option::<&str>::None
-        .filter(|id| id.starts_with("conv-"))
-        .is_none());
+    assert!(Some("conv-123").is_some_and(|id| id.starts_with("conv-")));
+    assert!(Some("conversation-123").is_none_or(|id| !id.starts_with("conv-")));
+    assert!(Option::<&str>::None.is_none_or(|id| !id.starts_with("conv-")));
 }
 
 #[test]
@@ -180,7 +174,7 @@ fn canonical_tool_result_record_normalizes_empty_content_and_derives_preview() {
         "call-1",
         None,
         ToolResultStatus::Ok,
-        Some("".to_string()),
+        Some(String::new()),
         serde_json::json!({ "content": "hello from file" }),
         serde_json::Value::Null,
         None,

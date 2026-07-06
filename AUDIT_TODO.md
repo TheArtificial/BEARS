@@ -5,6 +5,107 @@ Scope: `services/den/crates/*`, `services/den/src`, `tools/bear-armature`.
 
 Legend: [ ] not fixed, [x] fixed, (file:line) pointer.
 
+---
+
+## Remediation progress (in-flight)
+
+Working through fixes in batches, running `cargo check`/`clippy` and committing at
+intervals. This section is the recoverable log of what has been changed.
+
+### Batch 1 — panic-safety + clippy-gate green (upstream crates) — DONE
+Key discovery: the repo clippy gate (`cargo clippy --workspace --all-targets -- -D
+warnings`, see `scripts/lint.sh`) was **red** under clippy 1.96.1. Fixing it is
+high-value and unblocks CI. Working through it crate-by-crate in dependency order.
+
+Panic-safety (audit theme 5 + UTF-8 byte-slice bugs):
+- [x] `den-runtime/gateway_events.rs` `preview_str_truncated` — char-boundary safe.
+- [x] `den-runtime/native_runtime/tools.rs` `first_sentence[..96]` — char-boundary safe.
+- [x] `den-runtime/agent_assist/conversation_title.rs` `truncate_at_word_boundary` — char-boundary safe.
+- [x] `den-runtime/agent_loop/session_store.rs` — 4x `.lock().expect()` → poison-tolerant `unwrap_or_else(PoisonError::into_inner)`.
+
+Idiomatic/clippy fixes:
+- [x] `den-runtime/agent_loop/budget.rs` — hand-rolled `Default` → `#[derive(Default)]`.
+- [x] `den-runtime/runtime/bearwire_projection/wire.rs` — hand-rolled `Default` → derive + `#[default]`.
+- [x] `den-runtime/reflection/archive_harvest.rs` — redundant `let _ = …?` removed (2x).
+- [x] `den-core/tools/environment/payloads.rs` — 2 redundant `.clone()` on `memory_scope`.
+- [x] `den-core/client_tools.rs:264` — `.filter().is_none()` → `is_none_or`.
+- [x] `den-core/tools/result_compaction/tests.rs` — `Some("".to_string())` → `Some(String::new())` (3x).
+- [x] `den-docket/integration_tests.rs` — needless raw-string hashes (2x).
+- [x] `den-docket/db.rs:1558` — `.filter().is_none()` → `is_none_or`.
+- [x] `den-docket/model.rs` — `TaskListCheckoutSource::LocalProjection` boxed (large_enum_variant); match site in `service.rs` deref'd.
+- [x] `den-llm/client.rs:160` — `push_str("…")` → `push('…')`.
+- [x] `den-llm/client.rs` + `embeddings.rs` — `Duration::from_secs` → `from_mins`.
+- [x] `den-llm/model_registry.rs` — `unwrap_or(fn call)` → `unwrap_or_else`; `iter().any()` → `contains`.
+- [x] `den-memory/import.rs:480` — `iter().any()` → `contains`.
+
+### Batch 2 — den-service clippy green — DONE
+- [x] `den-service` — all lib + test clippy errors fixed (raw-string hashes, `is_none_or`,
+  `unwrap_or_else`, `from_mins`, `String::new()`, struct field order, needless `Ok(?)`).
+  Verified `cargo clippy -p den-service --all-targets -- -D warnings` exits 0.
+
+### Batch 3 — den-runtime clippy green — DONE
+- [x] `den-runtime` — 69 lib / 73 test errors. Bulk via `cargo clippy --fix` (raw-string
+  hashes ×52, derive `Eq`, `redundant_clone`, `clone_from`), remainder by hand:
+  `large_enum_variant` on `PermissionResultCoordinatorOutcome::DispatchLocalTool`
+  (boxed `tool_obligation`; consumers auto-deref), `unwrap_or_else`/`or_else`,
+  dead `if selected_paths.is_empty() {"available"} else {"available"}` (audit
+  assembler.rs:113 finding), `let...else` → `?`. Verified green; workspace compiles.
+
+### Batch 4 — web-layer crates clippy green — DONE
+- [x] `den-http`, `den-oauth`, `den-api`, `den-web`, `den-bearwire` — all green
+  (`cargo clippy -p … --all-targets -- -D warnings` exits 0). Autofix + manual:
+  `clone_from`, `unwrap_or_else`, `from_secs`, needless-borrow, collapsible-if,
+  `doc_lazy_continuation`, and a restructure of `available_model_matches`
+  (bearwire run.rs) making the intentional id cross-product explicit (clippy
+  `suspicious_operation_groupings` false positive). Also fixed a genuine
+  pre-existing compile break in a den-web test helper (missing `content_json`
+  field on `PersistedConversationMessage`).
+
+### Batch 5 — root `den` package (bin + integration tests) — IN PROGRESS
+Root package production code (lib + bins) is clippy-green. The remaining gate
+failures are **pre-existing broken test targets** from recent refactors:
+- commit "Remove re-exports" dropped `den_runtime`'s public re-exports, so tests
+  importing `den_runtime::{bears,tool_turns,turn_controller,prompt_memory_block_store,
+  prompt_memory_blocks,conversation_persistence,runtime_contracts,…}` no longer resolve.
+- work-plan tools were removed, so `DEN_WORK_PLAN_*` constants are gone.
+- one test file (`apply_core_update_projection.rs`) had been truncated to 8 lines.
+
+Module remap table (test imports → canonical crate):
+- `den_runtime::bears` → `den_service::bears`
+- `den_runtime::tool_turns` → `den_service::tool_turns`
+- `den_runtime::turn_controller` → `den_service::turn_controller`
+- `den_runtime::prompt_memory_block_store` → `den_service::prompt_memory_block_store`
+- `den_runtime::prompt_memory_blocks` → `den_service::prompt_memory_blocks`
+- `den_runtime::conversation_persistence` → `den_service::conversation::persistence`
+- `den_runtime::runtime_contracts::{Runtime*}` → `den_protocol::{…}`
+- `den_runtime::den_memory` → `den_memory`
+- `DEN_WORK_PLAN_*` → removed; delete the assertions/tests exercising them.
+
+Batch 5 — DONE. The whole workspace gate is green:
+`cargo clippy --workspace --all-targets -- -D warnings` exits 0, and
+`cargo test -p den --no-run` compiles clean.
+- [x] Restored full `apply_core_update_projection.rs` from git (pre-truncation),
+  fixed its malformed use-block, remapped `bears`→`den_service`.
+- [x] Deleted obsolete `tests/work_plans.rs` (its `WorkPlan*` docket types were removed).
+- [x] `tests/acp_plan_mode.rs` — `acp_session_id` → `client_session_id`.
+- [x] Applied the module remap table across ~15 root test files (bears/tool_turns/
+  turn_controller/prompt_memory_*/conversation_persistence → den_service;
+  runtime_contracts → den_protocol; den_memory).
+- [x] Correction: the work-plan **tools** were **renamed** to `task_lists`, not removed —
+  `DEN_WORK_PLAN_*` → `DEN_TASK_LISTS_*` (not deleted) in descriptor_aliases/role_scoping/session_info.
+- [x] Added new `projected_memory`/`recalled_memory: None` fields to `DenToolInvocationContext`
+  literals across 8 test files (struct gained fields upstream).
+- [x] Deleted `src/core/conversation_persistence_non_acp_bridge_tests.rs` — imports-only,
+  zero test fns (gutted by an earlier bad commit); removed its `mod` decl in `core/mod.rs`.
+- [x] `tests/recall_indexer.rs` — `cloned_ref_to_slice_refs`: `&[body.clone()]` → `std::slice::from_ref(&body)`.
+
+## Overall status of clippy-gate remediation
+The strict clippy gate (`scripts/lint.sh`) was RED workspace-wide under clippy 1.96.1.
+It is now GREEN across every crate and every target. Note: `#[sqlx::test]` DB-backed
+tests are verified to COMPILE only — they were not executed (no database available).
+
+---
+
 ## Crates covered so far
 - [x] den-protocol (full)
 - [x] den-api (full)

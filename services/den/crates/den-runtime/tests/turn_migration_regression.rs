@@ -8,7 +8,7 @@ async fn turn_obligation_rename_migration_rewrites_legacy_values_before_new_chec
     pool: sqlx::PgPool,
 ) {
     sqlx::raw_sql(
-        r#"
+        r"
         CREATE TABLE bearwire_runs (
             id UUID PRIMARY KEY,
             run_id TEXT NOT NULL UNIQUE,
@@ -102,7 +102,7 @@ async fn turn_obligation_rename_migration_rewrites_legacy_values_before_new_chec
             'perm-legacy',
             'waiting_for_client'
         );
-        "#,
+        ",
     )
     .execute(&pool)
     .await
@@ -114,11 +114,11 @@ async fn turn_obligation_rename_migration_rewrites_legacy_values_before_new_chec
         .expect("apply turn rename migration over legacy rows");
 
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT kind, expected_responder_action
         FROM turn_obligations
         ORDER BY id
-        "#,
+        ",
     )
     .fetch_all(&pool)
     .await
@@ -140,7 +140,7 @@ async fn turn_obligation_rename_migration_rewrites_legacy_values_before_new_chec
     );
 
     let stale_constraints: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)::bigint
         FROM pg_constraint con
         JOIN pg_class cls ON cls.oid = con.conrelid
@@ -151,7 +151,7 @@ async fn turn_obligation_rename_migration_rewrites_legacy_values_before_new_chec
               'bearwire_run_obligations_kind_check',
               'bearwire_run_obligations_expected_client_method_check'
           )
-        "#,
+        ",
     )
     .fetch_one(&pool)
     .await

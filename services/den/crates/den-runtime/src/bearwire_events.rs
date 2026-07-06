@@ -26,11 +26,11 @@ pub async fn append_bearwire_event_on(
     let initial_json = serde_json::to_value(&event)
         .map_err(|err| DenError::System(format!("serialize BearWire event failed: {err}")))?;
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)
         VALUES ($1, $2, $3, $4, $5)
         RETURNING id, sequence_no, created_at
-        "#,
+        ",
     )
     .bind(session_id)
     .bind(bear_id)
@@ -90,14 +90,14 @@ pub async fn list_bearwire_events_after(
 ) -> Result<Vec<BearWireEventRow>, DenError> {
     let limit = limit.clamp(1, 500);
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, sequence_no, session_id, event_type, event_json, created_at
         FROM bearwire_events
         WHERE session_id = $1
           AND ($2::bigint IS NULL OR sequence_no > $2)
         ORDER BY sequence_no ASC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(session_id)
     .bind(after_sequence)
