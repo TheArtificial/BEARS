@@ -104,18 +104,26 @@ The record is a graph you can walk, not disconnected logs. A **conversation** is
 
 And a **memory** links *back* to its **source conversation** (the provenance already on the memory record). This closed loop is what makes ownership and audit feel real: from any belief you reach the moment it formed, and from any conversation you see what the Bear learned and did as a result.
 
+## Build posture
+
+Build simple first: plain semantic HTML styled from the existing CSS, no fancy chrome, and **no JavaScript for basic functionality** — every core action works server-rendered, with JS as progressive enhancement only. **Responsive disclosure** (breadth by viewport, distinct from depth-on-demand progressive disclosure) lets a screen's core stand alone on small screens while larger screens reveal more via CSS; the Overview is the main beneficiary (see its frame — a compact core, plus model usage/budget, memory statistics, and activity-over-time disclosed when there's room). Full statement: [UI brief, Implementation posture](bear-management-ui-brief.md#implementation-posture).
+
 ## Screen map (text frames)
 
 Low-fidelity frames: each box lists the elements on a screen as a flat set — no layout or visual hierarchy is implied. The nav groups these softly as *Yours* / *This Den* (see the IA); the map implies neither that grouping nor any layout. Edges below are cross-links, not navigation order.
 
 ```
-┌─ Overview ─────────────────────┐   ┌─ Memory ───────────────────────┐
-│ · health                       │   │ · browse by scope              │
-│ · recent activity              │   │ · search (hybrid / keyword)    │
+┌─ Overview (home) ──────────────┐   ┌─ Memory ───────────────────────┐
+│ core (all sizes):              │   │ · browse by scope              │
+│ · health                       │   │ · search (hybrid / keyword)    │
 │ · pending reviews              │   │ · entity view                  │
 │ · identity + active stances    │   │ · review queue                 │
-└────────────────────────────────┘   │ · [open a record]              │
-                                      └────────────────────────────────┘
+│ · recent activity              │   │ · [open a record]              │
+│ disclosed (larger screens):    │   └────────────────────────────────┘
+│ · model usage & budget         │
+│ · memory statistics            │
+│ · activity over time           │
+└────────────────────────────────┘
 ┌─ Memory record ────────────────┐   ┌─ Tools ────────────────────────┐
 │ · content                      │   │ · one list, tagged by origin   │
 │ · scope + author stance        │   │ · built-in / local / remote    │

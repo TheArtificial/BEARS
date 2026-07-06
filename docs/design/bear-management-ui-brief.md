@@ -65,7 +65,12 @@ Two things make this honest rather than clever. The second group is labeled by *
 
 ## Screens & must-not-be-left-out details
 
-**Overview.** Health (model gateway reachable; recall index state, labeled rebuildable); recent activity across stances; a **pending-review count** as a call to action; identity and active stances at a glance.
+**Overview.** The Bear's home. A compact **core is present at every screen size** — health (model gateway reachable; recall index state, labeled rebuildable), a **pending-review count** as a call to action, identity and active stances, and recent activity. On larger screens, **responsive disclosure** fills the extra room with summaries drawn from the areas below, each linking into its area:
+- **Model usage & budget** — recent token/cost usage by model and stance, and context-budget headroom (depends on Bifrost metrics and context-budget tracking).
+- **Memory statistics** — counts by scope (`core/`, per-stance, shared), entities known, pending proposals, recent promotions, recall index state.
+- **Activity over time** — conversations, jobs, and Cabinet activity by period. Baseline is a simple table or CSS bars (works without JavaScript); a richer chart is progressive enhancement.
+
+The small-screen core stands alone; the disclosed detail is additive, revealed by available space via CSS, and never required for the page to function.
 
 **Memory (kept prominent).** Browse by logical scope (`core/`, per-stance, shared). Each record shows content, scope, **author stance, dates (created / valid-from / invalid-at), provenance lineage** (proposal → promotion), and a link to the **source conversation**. Per-record actions: **correct** (honest supersession, not silent overwrite), **forget/invalidate** (confirm + visible effect), **promote** (curate). A **review queue** for proposed memories and watch observations awaiting approval. Search (hybrid when recall is on; keyword fallback honestly labeled). Entity view: people/projects/things the Bear knows, their relations and resolution/trust state, with curate-only merge/split/correct. Canonical memory and derived recall are visually distinct.
 
@@ -103,6 +108,16 @@ Two things make this honest rather than clever. The second group is labeled by *
 - Framing a model change as "upgrading your Bear" — conflates the swappable engine with the owned mind, which is precisely our differentiator inverted.
 - **Activity as a flat, disconnected log** — runs detached from their job, conversations detached from the memories they formed. Things feel buried when they're severed from their organizing parent, not merely one level too deep.
 - **Portability as a reveal, not ambient** — a user first learning at the export screen that a connection, secret, or Cabinet reference won't travel. What's yours to take should be legible where you stand. (And the remedy is not a blunt per-item badge — see principle 8.)
+
+## Implementation posture
+
+Build it simple first. The richness is in the information, not the chrome.
+
+- **Simple, semantic HTML.** Plain, semantic markup styled from the existing CSS as inspiration — nothing fancy. Structure and legibility over decoration.
+- **Works without JavaScript.** Every basic function — viewing, navigating, correcting or forgetting a memory, granting a tool, dispatching a job, exporting — works with server-rendered HTML and forms. JavaScript is **progressive enhancement only** (smoother interactions, live charts), never required for a page to work.
+- **Responsive disclosure.** The core of each screen is present at every size; extra detail is revealed by available *space*, via CSS, not JS. This is distinct from *progressive disclosure* (depth on demand, revealed by *interaction*) — responsive disclosure is breadth by viewport. The Overview is the main beneficiary — a complete compact core on small screens, richer summaries on large ones — but any screen may use it. The small-screen version must stand alone; disclosed detail is additive, never load-bearing.
+
+This posture is also on-thesis: a tool you own should be robust and inspectable. Semantic HTML that degrades gracefully — and doesn't hide its function behind a JavaScript black box — is the honest build for something a person is meant to run, audit, and trust.
 
 ## Honesty notes (design now, ship as backend lands)
 
