@@ -9655,6 +9655,9 @@ mod tests {
     // ponytail: this is a narrow BearWire mock for ACP boundary tests, not a fake server.
     // Keep these mocked methods in sync with `services/den/crates/den-bearwire/src/methods`;
     // if a BearWire method contract changes, update this mock in the same change.
+    // Do not make tests generous by emitting downstream success projections directly; script
+    // the upstream BearWire cause first (for example tool_call.requested/completed before a
+    // session_info_update) so ACP tests fail when the bridge stops exposing the causal event.
     async fn bearwire_test_handler(
         State(state): State<BearWireTestServerState>,
         request: Request<Body>,
@@ -11725,43 +11728,71 @@ mod tests {
         );
     }
 
+    fn set_conversation_title_tool_events(
+        call_id: &str,
+        title: &str,
+        updated_at: Option<&str>,
+    ) -> Vec<Value> {
+        let tool_call = json!({
+            "id": call_id,
+            "name": "set_conversation_title",
+            "arguments": { "title": title },
+            "display": { "title": format!("Set conversation title: {title}") }
+        });
+        let mut title_data = json!({ "title": title });
+        if let Some(updated_at) = updated_at {
+            title_data["updated_at"] = json!(updated_at);
+        }
+        vec![
+            json!({
+                "type": "tool_call.requested",
+                "run_id": "run-test-title",
+                "data": { "tool_call": tool_call.clone() },
+                "policy": { "execution_target": "den" }
+            }),
+            json!({
+                "type": "tool_call.completed",
+                "run_id": "run-test-title",
+                "data": {
+                    "tool_call": tool_call,
+                    "summary": format!("Conversation title set to {title}.")
+                }
+            }),
+            json!({
+                "type": "session_info_update",
+                "run_id": "run-test-title",
+                "data": title_data
+            }),
+        ]
+    }
+
     #[tokio::test]
     async fn set_conversation_title_acp_prompt_roundtrip_emits_update_before_result() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
         let title = "Retire legacy BearWire tool payload aliases";
-        let (api_url, paths) = start_bearwire_test_server_with_events(
-            false,
-            vec![
-                json!({
-                    "type": "session_info_update",
-                    "run_id": "run-test-title",
-                    "data": {
-                        "title": title,
-                        "updated_at": "2026-01-02T03:04:05Z"
-                    }
-                }),
-                json!({
-                    "type": "message.delta",
-                    "run_id": "run-test-title",
-                    "data": { "delta": "Done." }
-                }),
-                json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }),
-            ],
-        )
-        .await;
+        let mut events =
+            set_conversation_title_tool_events("call-title-1", title, Some("2026-01-02T03:04:05Z"));
+        events.push(json!({
+            "type": "message.delta",
+            "run_id": "run-test-title",
+            "data": { "delta": "Done." }
+        }));
+        events.push(json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }));
+        let (api_url, paths) = start_bearwire_test_server_with_events(false, events).await;
         let http = reqwest::Client::new();
         let root = unique_test_dir("title-acp-roundtrip-immediate");
         let mut runtime = test_runtime_config(api_url);
         let mut state = test_adapter_state("session-1", &root);
         let shared_state = test_shared_state();
-        shared_state
-            .session_contexts
-            .lock()
-            .await
-            .insert("session-1".to_string(), state.session_contexts["session-1"].clone());
+        shared_state.session_contexts.lock().await.insert(
+            "session-1".to_string(),
+            state.session_contexts["session-1"].clone(),
+        );
 
         let (result, output) = capture_json_output_for_test(|| async {
             run_acp_request_for_test(
@@ -11786,11 +11817,24 @@ mod tests {
         .await;
         result.unwrap();
 
+        let tool_index = output
+            .iter()
+            .position(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+                    && frame.to_string().contains("call-title-1")
+            })
+            .expect("set_conversation_title tool_call frame");
         let update_index = output
             .iter()
             .position(|frame| {
                 frame.get("method").and_then(Value::as_str) == Some("session/update")
-                    && frame.pointer("/params/update/sessionUpdate").and_then(Value::as_str)
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
                         == Some("session_info_update")
             })
             .expect("session_info_update frame");
@@ -11798,6 +11842,7 @@ mod tests {
             .iter()
             .position(|frame| frame.get("id").and_then(Value::as_str) == Some("prompt-1"))
             .expect("prompt result frame");
+        assert!(tool_index < update_index, "{output:#?}");
         assert!(update_index < result_index, "{output:#?}");
         assert_eq!(output[update_index]["jsonrpc"], "2.0");
         assert_eq!(output[update_index]["params"]["sessionId"], "session-1");
@@ -11822,48 +11867,42 @@ mod tests {
         );
         let paths = paths.lock().await.clone();
         assert!(paths.iter().any(|path| path == "/bearwire/v1/rpc"));
-        assert!(paths.iter().any(|path| path.starts_with("/bearwire/v1/sessions/session-1/events")));
+        assert!(paths
+            .iter()
+            .any(|path| path.starts_with("/bearwire/v1/sessions/session-1/events")));
         let _ = fs::remove_dir_all(root);
     }
 
     #[tokio::test]
     async fn set_conversation_title_acp_roundtrip_title_sticks_for_later_update_output() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         unsafe {
             std::env::set_var("BEARS_BEARWIRE", "true");
         }
-        let (api_url, _paths) = start_bearwire_test_server_with_events(
-            false,
-            vec![
-                json!({
-                    "type": "session_info_update",
-                    "run_id": "run-test-title",
-                    "data": { "title": "Old title" }
-                }),
-                json!({
-                    "type": "session_info_update",
-                    "run_id": "run-test-title",
-                    "data": { "title": "New sticky title" }
-                }),
-                json!({
-                    "type": "message.delta",
-                    "run_id": "run-test-title",
-                    "data": { "delta": "Done." }
-                }),
-                json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }),
-            ],
-        )
-        .await;
+        let mut events = set_conversation_title_tool_events("call-title-old", "Old title", None);
+        events.extend(set_conversation_title_tool_events(
+            "call-title-new",
+            "New sticky title",
+            None,
+        ));
+        events.push(json!({
+            "type": "message.delta",
+            "run_id": "run-test-title",
+            "data": { "delta": "Done." }
+        }));
+        events.push(json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }));
+        let (api_url, _paths) = start_bearwire_test_server_with_events(false, events).await;
         let http = reqwest::Client::new();
         let root = unique_test_dir("title-acp-roundtrip-sticky");
         let mut runtime = test_runtime_config(api_url);
         let mut state = test_adapter_state("session-1", &root);
         let shared_state = test_shared_state();
-        shared_state
-            .session_contexts
-            .lock()
-            .await
-            .insert("session-1".to_string(), state.session_contexts["session-1"].clone());
+        shared_state.session_contexts.lock().await.insert(
+            "session-1".to_string(),
+            state.session_contexts["session-1"].clone(),
+        );
 
         let (result, output) = capture_json_output_for_test(|| async {
             run_acp_request_for_test(
@@ -11895,17 +11934,152 @@ mod tests {
         .await;
         result.unwrap();
 
+        let tool_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            tool_frames
+                .iter()
+                .any(|frame| frame.contains("call-title-old")),
+            "{output:#?}"
+        );
+        assert!(
+            tool_frames
+                .iter()
+                .any(|frame| frame.contains("call-title-new")),
+            "{output:#?}"
+        );
         let titles = output
             .iter()
-            .filter(|frame| frame.get("method").and_then(Value::as_str) == Some("session/update"))
-            .filter_map(|frame| frame.pointer("/params/update/title").and_then(Value::as_str))
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("session_info_update")
+            })
+            .filter_map(|frame| {
+                frame
+                    .pointer("/params/update/title")
+                    .and_then(Value::as_str)
+            })
             .collect::<Vec<_>>();
-        assert_eq!(titles, vec!["Old title", "New sticky title", "New sticky title"]);
+        assert_eq!(
+            titles,
+            vec!["Old title", "New sticky title", "New sticky title"]
+        );
         assert!(
-            output
-                .iter()
-                .any(|frame| frame.get("id").and_then(Value::as_str) == Some("prompt-1") && frame.get("result").is_some()),
+            output.iter().any(
+                |frame| frame.get("id").and_then(Value::as_str) == Some("prompt-1")
+                    && frame.get("result").is_some()
+            ),
             "{output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn reasoning_bearwire_delta_roundtrips_to_acp_thought_not_agent_message() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_events(
+            false,
+            vec![
+                json!({
+                    "type": "message.reasoning.delta",
+                    "run_id": "run-test-title",
+                    "data": { "delta": "private reasoning" }
+                }),
+                json!({
+                    "type": "message.delta",
+                    "run_id": "run-test-title",
+                    "data": { "delta": "visible answer" }
+                }),
+                json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }),
+            ],
+        )
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("reasoning-acp-roundtrip");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        shared_state.session_contexts.lock().await.insert(
+            "session-1".to_string(),
+            state.session_contexts["session-1"].clone(),
+        );
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "prompt-1",
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "session-1",
+                        "prompt": [{ "type": "text", "text": "think then answer" }]
+                    }
+                }),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let reasoning_frames = output
+            .iter()
+            .filter(|frame| {
+                frame
+                    .pointer("/params/update/sessionUpdate")
+                    .and_then(Value::as_str)
+                    == Some("agent_thought_chunk")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(reasoning_frames.len(), 1, "{output:#?}");
+        assert!(
+            reasoning_frames[0]
+                .to_string()
+                .contains("private reasoning"),
+            "{output:#?}"
+        );
+
+        let agent_frames = output
+            .iter()
+            .filter(|frame| {
+                frame
+                    .pointer("/params/update/sessionUpdate")
+                    .and_then(Value::as_str)
+                    == Some("agent_message_chunk")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(agent_frames.len(), 1, "{output:#?}");
+        assert!(
+            agent_frames[0].to_string().contains("visible answer"),
+            "{output:#?}"
+        );
+        assert!(
+            !agent_frames
+                .iter()
+                .any(|frame| frame.to_string().contains("private reasoning")),
+            "reasoning leaked as agent message: {output:#?}"
         );
         let _ = fs::remove_dir_all(root);
     }

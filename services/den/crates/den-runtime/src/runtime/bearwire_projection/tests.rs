@@ -66,6 +66,20 @@ fn semantic_reasoning_text_projects_to_dedicated_bearwire_event() {
 }
 
 #[test]
+fn semantic_reasoning_text_projects_to_bearwire_reasoning_delta_not_message_delta() {
+    let mapped = runtime_stream_event_to_bearwire_events(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::ReasoningTextDelta {
+            text: "thinking".to_string(),
+        },
+    ));
+
+    assert_eq!(mapped.len(), 1);
+    assert_eq!(mapped[0].event_type, "message.reasoning.delta");
+    assert_eq!(mapped[0].data["delta"], "thinking");
+    assert_ne!(mapped[0].event_type, "message.delta");
+}
+
+#[test]
 fn semantic_run_paused_projects_to_status_text_gateway_event() {
     let mapped =
         runtime_semantic_event_to_bearwire_gateway_events(RuntimeSemanticEvent::RunPaused {

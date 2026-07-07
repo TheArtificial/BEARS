@@ -230,19 +230,29 @@ pub fn map_provider_stream_event_to_gateway_event(
 
 fn extract_stream_text_delta(event: &serde_json::Value) -> Option<GatewayEvent> {
     let kind = stream_text_delta_kind(event);
+    let reasoning_text = stream_reasoning_delta_text(event);
+    let assistant_text = stream_assistant_delta_text(event);
     let (kind, text) = match kind {
         Some(StreamTextDeltaKind::Assistant) => (
-            StreamTextDeltaKind::Assistant,
-            stream_assistant_delta_text(event).or_else(|| stream_text_delta_text(event))?,
+            // ponytail: providers sometimes label every stream item as a message_delta;
+            // an explicit reasoning field is still reasoning unless there is separate
+            // assistant content in the same event. If providers start sending both in one
+            // item, split the event upstream instead of guessing here.
+            if reasoning_text.is_some() && assistant_text.is_none() {
+                StreamTextDeltaKind::Reasoning
+            } else {
+                StreamTextDeltaKind::Assistant
+            },
+            assistant_text.or_else(|| reasoning_text.clone())?,
         ),
         Some(StreamTextDeltaKind::Reasoning) => (
             StreamTextDeltaKind::Reasoning,
-            stream_reasoning_delta_text(event).or_else(|| stream_text_delta_text(event))?,
+            reasoning_text.or_else(|| assistant_text.clone())?,
         ),
         None => {
-            if let Some(text) = stream_reasoning_delta_text(event) {
+            if let Some(text) = reasoning_text {
                 (StreamTextDeltaKind::Reasoning, text)
-            } else if let Some(text) = stream_assistant_delta_text(event) {
+            } else if let Some(text) = assistant_text {
                 (StreamTextDeltaKind::Assistant, text)
             } else {
                 return None;
@@ -333,10 +343,6 @@ fn stream_reasoning_delta_text(event: &serde_json::Value) -> Option<String> {
         }
     }
     None
-}
-
-fn stream_text_delta_text(event: &serde_json::Value) -> Option<String> {
-    stream_reasoning_delta_text(event).or_else(|| stream_assistant_delta_text(event))
 }
 
 fn pseudo_tool_call_name(text: &str) -> Option<String> {
@@ -1424,6 +1430,18 @@ mod tests {
         let event = serde_json::json!({
             "type": "chat.completion.chunk",
             "choices": [{ "delta": { "reasoning_content": "thinking" } }]
+        });
+        match map_provider_stream_event_to_gateway_event(&event) {
+            Some(GatewayEvent::ReasoningTextDelta { text }) => assert_eq!(text, "thinking"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn explicit_reasoning_field_beats_generic_message_delta_kind() {
+        let event = serde_json::json!({
+            "type": "message_delta",
+            "delta": { "reasoning_content": "thinking" }
         });
         match map_provider_stream_event_to_gateway_event(&event) {
             Some(GatewayEvent::ReasoningTextDelta { text }) => assert_eq!(text, "thinking"),
