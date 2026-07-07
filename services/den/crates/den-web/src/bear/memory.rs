@@ -398,6 +398,9 @@ async fn dashboard_view(
     let proposals = memory_proposals::list_for_bear(state.sqlx_pool(), id, None, 10)
         .await
         .unwrap_or_default();
+    let pending_proposals = memory_proposals::list_for_bear(state.sqlx_pool(), id, Some("pending"), 10)
+        .await
+        .unwrap_or_default();
     let pair_reflection_runs = pair_reflection::list_recent_for_bear(state.sqlx_pool(), id, 8)
         .await
         .unwrap_or_default();
@@ -415,6 +418,7 @@ async fn dashboard_view(
             entity_summary,
             recent,
             proposals,
+            pending_proposals,
             pair_reflection_runs,
             import_notice => query.import_notice.as_deref().map(str::trim).filter(|s| !s.is_empty()),
             import_error => query.import_error.as_deref().map(str::trim).filter(|s| !s.is_empty()),
