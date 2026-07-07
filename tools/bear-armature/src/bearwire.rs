@@ -1548,7 +1548,6 @@ mod tests {
     fn tool_call_finished_summary_replaces_provider_name_finished_summary_for_common_den_tools() {
         for (tool_name, expected) in [
             ("session_info", "Inspected session."),
-            ("set_conversation_title", "Set conversation title."),
             ("memory_read", "Read memory."),
             ("memory_search", "Searched memory."),
             ("web_search", "Searched web."),
@@ -1564,6 +1563,23 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn set_conversation_title_finished_summary_is_specific_for_acp_tool_card() {
+        let data = json!({
+            "tool_call": {
+                "id": "call-title",
+                "name": "set_conversation_title",
+                "arguments": { "title": "Test Armature ACP conversation title tool" }
+            },
+            "summary": "Finished set_conversation_title"
+        });
+
+        assert_eq!(
+            tool_call_finished_summary(&data, "set_conversation_title", false),
+            "Set conversation title."
+        );
     }
 
     #[test]
