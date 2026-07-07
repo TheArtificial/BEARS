@@ -4272,6 +4272,7 @@ struct ReloadHistoryMessage {
     raw_output: Value,
     title: Option<String>,
     title_updated_at: Option<String>,
+    replay_policy: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -4289,6 +4290,7 @@ impl ReloadHistoryMessage {
             raw_output: Value::Null,
             title: None,
             title_updated_at: None,
+            replay_policy: None,
         }
     }
 }
@@ -4326,7 +4328,11 @@ fn reload_history_message_from_value(m: Value) -> Result<Option<ReloadHistoryMes
         .unwrap_or("message")
         .to_string();
     let role = m.get("role").and_then(Value::as_str).unwrap_or("");
-    let text = m.get("text").and_then(Value::as_str).unwrap_or("");
+    let text = m
+        .get("text")
+        .or_else(|| m.get("delta"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if matches!(kind.as_str(), "message" | "") && text.trim().is_empty() {
         return Ok(None);
     }
@@ -4347,6 +4353,10 @@ fn reload_history_message_from_value(m: Value) -> Result<Option<ReloadHistoryMes
         .or_else(|| m.get("updated_at"))
         .and_then(Value::as_str)
         .map(str::to_string);
+    let replay_policy = m
+        .get("replay_policy")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     if matches!(kind.as_str(), "tool_call" | "tool_result") {
         if tool_call_id.as_deref().unwrap_or_default().is_empty() {
@@ -4365,6 +4375,11 @@ fn reload_history_message_from_value(m: Value) -> Result<Option<ReloadHistoryMes
             ));
         }
     }
+    if matches!(kind.as_str(), "reasoning_delta" | "reasoning") && text.trim().is_empty() {
+        return Err(anyhow!(
+            "BearWire surface history {kind} missing required text or delta"
+        ));
+    }
 
     Ok(Some(ReloadHistoryMessage {
         id,
@@ -4378,6 +4393,7 @@ fn reload_history_message_from_value(m: Value) -> Result<Option<ReloadHistoryMes
         raw_output: m.get("raw_output").cloned().unwrap_or(Value::Null),
         title,
         title_updated_at,
+        replay_policy,
     }))
 }
 
@@ -4509,6 +4525,11 @@ async fn replay_history_for_den_session(
                             message.title_updated_at.clone(),
                         )
                         .await?;
+                    }
+                }
+                "reasoning_delta" | "reasoning" => {
+                    if !matches!(message.replay_policy.as_deref(), Some("none")) {
+                        send_agent_thought_chunk(session_id, &message.text).await?;
                     }
                 }
                 _ => match message.role.as_str() {
@@ -10371,6 +10392,37 @@ mod tests {
     }
 
     #[test]
+    fn structured_surface_reasoning_history_parses_delta_not_as_message() {
+        let message = reload_history_message_from_value(json!({
+            "kind": "reasoning_delta",
+            "delta": "private reasoning",
+            "source": "provider_reasoning",
+            "replay_policy": "thought"
+        }))
+        .expect("reasoning surface event should parse")
+        .expect("reasoning surface event should not be filtered");
+
+        assert_eq!(message.kind, "reasoning_delta");
+        assert_eq!(message.text, "private reasoning");
+        assert_eq!(message.replay_policy.as_deref(), Some("thought"));
+    }
+
+    #[test]
+    fn sparse_surface_reasoning_history_is_rejected_before_replay() {
+        let err = reload_history_message_from_value(json!({
+            "kind": "reasoning_delta",
+            "source": "provider_reasoning",
+            "replay_policy": "thought"
+        }))
+        .expect_err("structured reasoning history missing text should fail");
+
+        assert!(
+            err.to_string().contains("missing required text or delta"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
     fn prompt_den_message_without_resources_is_plain_human_message() {
         let params = json!({
             "prompt": [{"type": "text", "text": "Please continue."}]
@@ -11204,6 +11256,7 @@ mod tests {
                 raw_output: Value::Null,
                 title: None,
                 title_updated_at: None,
+                replay_policy: None,
             })
             .collect::<Vec<_>>();
         assert_eq!(page[0].id.as_deref(), Some("msg-1"));
@@ -12408,6 +12461,91 @@ mod tests {
                     && frame.get("result").is_some()
             ),
             "{output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_load_replays_surface_reasoning_as_thought_not_agent_message() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_history(vec![
+            json!({
+                "id": "reasoning-1",
+                "kind": "reasoning_delta",
+                "delta": "private reasoning",
+                "source": "provider_reasoning",
+                "replay_policy": "thought"
+            }),
+            json!({
+                "id": "answer-1",
+                "kind": "message",
+                "role": "assistant",
+                "text": "visible answer"
+            }),
+        ])
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("history-reasoning-replay");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "load-1",
+                    "method": "session/load",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let thought_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_thought_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(thought_frames.len(), 1, "{output:#?}");
+        assert!(thought_frames[0].contains("private reasoning"), "{output:#?}");
+
+        let agent_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_message_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(agent_frames.len(), 1, "{output:#?}");
+        assert!(agent_frames[0].contains("visible answer"), "{output:#?}");
+        assert!(
+            !agent_frames
+                .iter()
+                .any(|frame| frame.contains("private reasoning")),
+            "reasoning leaked as agent message: {output:#?}"
         );
         let _ = fs::remove_dir_all(root);
     }
