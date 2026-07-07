@@ -13,6 +13,7 @@
   <ul>
     <li><a href="/bear/{{ bear.slug | e }}/identity"{% if nav_active == "identity" %} aria-current="page"{% endif %}>Identity &amp; charter</a></li>
     <li><a href="/bear/{{ bear.slug | e }}/memory"{% if nav_active == "memory" %} aria-current="page"{% endif %}>Memory</a></li>
+    <li><a href="/bear/{{ bear.slug | e }}/context"{% if nav_active == "context" %} aria-current="page"{% endif %}>Context</a></li>
     <li><a href="/bear/{{ bear.slug | e }}/skills"{% if nav_active == "skills" %} aria-current="page"{% endif %}>Skills</a></li>
   </ul>
 
@@ -29,11 +30,9 @@
     <li><a href="/bear/{{ bear.slug | e }}/portability"{% if nav_active == "portability" %} aria-current="page"{% endif %}>Portability</a></li>
   </ul>
 
-  <details class="bear-manage-nav-details"{% if nav_active in ["persona", "stances", "context", "advanced"] %} open{% endif %}>
+  <details class="bear-manage-nav-details"{% if nav_active in ["stances", "advanced"] %} open{% endif %}>
     <summary>Internals</summary>
     <ul>
-      <li><a href="/bear/{{ bear.slug | e }}/persona"{% if nav_active == "persona" %} aria-current="page"{% endif %}>Compiled prompts</a></li>
-      <li><a href="/bear/{{ bear.slug | e }}/context"{% if nav_active == "context" %} aria-current="page"{% endif %}>Prompt memory</a></li>
       <li><a href="/bear/{{ bear.slug | e }}/advanced"{% if nav_active == "advanced" %} aria-current="page"{% endif %}>Advanced</a></li>
     </ul>
   </details>

@@ -1059,3 +1059,17 @@ body.page-bears-health .bears-health-row-fail td:first-of-type {
 .bear-manage-bar-w80 { width: 80%; }
 .bear-manage-bar-w90 { width: 90%; }
 .bear-manage-bar-w100 { width: 100%; }
+
+/* Context (prompt assembly) page previews. */
+.bear-manage-prompt-preview,
+.bear-manage-note-preview {
+    white-space: pre-wrap;
+    margin: 0;
+    overflow: auto;
+}
+.bear-manage-prompt-preview {
+    max-height: 16rem;
+}
+.bear-manage-note-preview {
+    max-height: 5rem;
+}

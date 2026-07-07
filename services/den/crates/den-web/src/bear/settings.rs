@@ -36,7 +36,7 @@ use den_service::{
     bears::{
         context_profile_from_json, db as bears_db,
         db::{role_is_bear_admin, BEAR_ROLE_ADMIN, BEAR_ROLE_MEMBER},
-        get_compiled_bear_config, list_bear_block_bindings,
+        get_compiled_bear_config,
         managed_blocks::BearCompiledConfigRow,
         provision, BearProfile,
     },
@@ -46,7 +46,7 @@ use den_service::{
 use crate::web::admin::bears::{
     bear_agent_health_rows, bear_plan_mode_rows, bear_web_approvals, bear_web_fetches,
     bear_web_sources, membership_role_label, AddWebApprovalForm, AddWebSourceForm,
-    BearMemberAdminRow, BearPlanModeRow, BearProfileBindingHealthRow, BearWebApprovalRow,
+    BearMemberAdminRow, BearPlanModeRow, BearWebApprovalRow,
     BearWebFetchRow, BearWebSourceRow,
 };
 use crate::web::bear::create_support::{
@@ -1239,54 +1239,10 @@ async fn access_view(
     .await
 }
 
-async fn persona_view(
-    Path(slug): Path<String>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r.into_response()),
-    };
-    let id = bear.id;
-    let context_profile_enabled = bear.context_profile.is_some();
-    let template_id = context_profile_from_json(&bear.context_profile)?.and_then(|p| p.template_id);
-    let compiled: Option<BearCompiledConfigRow> =
-        get_compiled_bear_config(state.sqlx_pool(), id).await?;
-    let mut compiled_roles: Vec<CompiledRolePromptRow> = Vec::new();
-    if let Some(ref row) = compiled {
-        if let Ok(prompts) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
-            row.rendered_prompts_json.0.clone(),
-        ) {
-            for role in ["chat", "pair", "curate", "work", "watch"] {
-                if let Some(text) = prompts.get(role).and_then(|v| v.as_str()) {
-                    let preview: String = text.chars().take(600).collect();
-                    compiled_roles.push(CompiledRolePromptRow {
-                        role: role.to_string(),
-                        prompt_preview: preview,
-                        char_count: text.len(),
-                    });
-                }
-            }
-        }
-    }
-    let block_bindings = list_bear_block_bindings(state.sqlx_pool(), id).await?;
-    web::render_template(
-        &state,
-        "bear/settings/persona.html",
-        auth_session,
-        context! {
-            context_profile_enabled,
-            template_id,
-            compiled,
-            compiled_roles,
-            block_bindings,
-            can_manage_bear,
-            native_runtime => true,
-            ..bear_nav_context(&bear, "persona"),
-        },
-    )
-    .await
+/// The standalone compiled-prompts page merged into `/context` (prompt
+/// assembly). Keep the old path working.
+async fn persona_view(Path(slug): Path<String>) -> Redirect {
+    Redirect::permanent(&format!("/bear/{slug}/context"))
 }
 
 /// The standalone stance-binding table is retired: binding status lives in
@@ -2297,39 +2253,110 @@ async fn conversation_detail_view(
     .await
 }
 
+/// Context: the explanatory view of per-turn prompt assembly. Merges the
+/// former compiled-prompts (persona) and prompt-memory-block pages into one
+/// page organized by assembly layer, not by storage.
 async fn context_view(
     Path(slug): Path<String>,
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
+    use den_core::tools::prompt_memory::{PromptMemoryBlockScope, PromptMemoryBlockState};
+
     let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let mut prompt_blocks: Vec<PromptMemoryAdminRow> = Vec::new();
-    for role in ["pair", "chat", "curate", "work", "watch"] {
-        if let Ok(blocks) =
-            list_prompt_memory_blocks_for_bear_profile(state.sqlx_pool(), bear.id, role).await
-        {
-            for block in blocks {
-                let body_preview: String = block.body.chars().take(200).collect();
-                prompt_blocks.push(PromptMemoryAdminRow {
-                    block_id: block.id,
-                    scope: format!("{:?}", block.scope),
-                    block_type: format!("{:?}", block.block_type),
-                    state: format!("{:?}", block.state),
-                    title: block.title,
-                    body_preview,
-                });
+    let id = bear.id;
+
+    // Layer 1: the compiled stance prompt.
+    let context_profile_enabled = bear.context_profile.is_some();
+    let template_id = context_profile_from_json(&bear.context_profile)?.and_then(|p| p.template_id);
+    let compiled: Option<BearCompiledConfigRow> =
+        get_compiled_bear_config(state.sqlx_pool(), id).await?;
+    let mut compiled_roles: Vec<CompiledRolePromptRow> = Vec::new();
+    if let Some(ref row) = compiled {
+        if let Ok(prompts) = serde_json::from_value::<serde_json::Map<String, serde_json::Value>>(
+            row.rendered_prompts_json.0.clone(),
+        ) {
+            for role in ["chat", "pair", "curate", "work", "watch"] {
+                if let Some(text) = prompts.get(role).and_then(|v| v.as_str()) {
+                    let preview: String = text.chars().take(600).collect();
+                    compiled_roles.push(CompiledRolePromptRow {
+                        role: role.to_string(),
+                        prompt_preview: preview,
+                        char_count: text.len(),
+                    });
+                }
             }
         }
     }
+
+    // Layer 2: standing notes (durable prompt-memory blocks). Bear-wide
+    // blocks come back for every stance query, so dedupe by id. Session
+    // notes are transient working state and are only counted here.
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut standing_notes: Vec<PromptMemoryAdminRow> = Vec::new();
+    let mut session_note_count: usize = 0;
+    let mut inactive_note_count: usize = 0;
+    for role in ["chat", "pair", "curate", "work", "watch"] {
+        let Ok(blocks) =
+            list_prompt_memory_blocks_for_bear_profile(state.sqlx_pool(), id, role).await
+        else {
+            continue;
+        };
+        for block in blocks {
+            if !seen_ids.insert(block.id.clone()) {
+                continue;
+            }
+            if block.scope == PromptMemoryBlockScope::Session {
+                session_note_count += 1;
+                continue;
+            }
+            if block.state != PromptMemoryBlockState::Active {
+                inactive_note_count += 1;
+                continue;
+            }
+            let applies_to = match block.scope {
+                PromptMemoryBlockScope::BearWide => "every stance".to_string(),
+                PromptMemoryBlockScope::RoleLocal => format!(
+                    "{} stance",
+                    block.role.as_deref().unwrap_or("one")
+                ),
+                PromptMemoryBlockScope::WorkSurface => format!(
+                    "work surface {}",
+                    block.work_surface.as_deref().unwrap_or("(unnamed)")
+                ),
+                PromptMemoryBlockScope::Session => unreachable!(),
+            };
+            let body_preview: String = block.body.chars().take(200).collect();
+            standing_notes.push(PromptMemoryAdminRow {
+                block_id: block.id,
+                scope: applies_to,
+                block_type: format!("{:?}", block.block_type),
+                state: String::new(),
+                title: block.title,
+                body_preview,
+            });
+        }
+    }
+
+    // Layer 4: recall availability shapes what assembly can include.
+    let recall_configured = state.config.qdrant_url.is_some();
+
     web::render_template(
         &state,
         "bear/settings/context.html",
         auth_session,
         context! {
-            prompt_blocks,
+            context_profile_enabled,
+            template_id,
+            compiled,
+            compiled_roles,
+            standing_notes,
+            session_note_count,
+            inactive_note_count,
+            recall_configured,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "context"),
