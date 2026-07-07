@@ -1,34 +1,13 @@
 use axum::http::HeaderMap;
-use serde::Deserialize;
 use serde_json::{json, Value};
 
-use bearwire_protocol::surface::SurfaceHistoryEvent;
+use bearwire_protocol::{methods::ConversationHistoryRequest, surface::SurfaceHistoryEvent};
 use den_http::errors::CustomError;
 use den_runtime::bearwire_events;
 use den_service::{client_sessions, conversation::persistence, DenState};
 
 use crate::auth::authenticated_bear;
-use crate::methods::{
-    deserialize_optional_i64_from_value, deserialize_required_string, parse_params,
-};
-
-#[derive(Debug, Deserialize)]
-struct ConversationHistoryRequest {
-    #[serde(deserialize_with = "deserialize_required_string")]
-    conversation_id: String,
-    #[serde(
-        default,
-        alias = "before_sequence_no",
-        deserialize_with = "deserialize_optional_i64_from_value"
-    )]
-    before: Option<i64>,
-    #[serde(default = "default_history_limit")]
-    limit: i64,
-}
-
-fn default_history_limit() -> i64 {
-    50
-}
+use crate::methods::parse_params;
 
 pub(crate) async fn conversation_history_result(
     state: &DenState,

@@ -1,26 +1,13 @@
 use axum::http::HeaderMap;
-use serde::Deserialize;
 use serde_json::{json, Value};
 
-use bearwire_protocol::wire::BearWireEvent;
+use bearwire_protocol::{methods::ResourceUpdateRequest, wire::BearWireEvent};
 use den_http::errors::CustomError;
 use den_runtime::bearwire_events;
 use den_service::DenState;
 
 use crate::auth::authenticated_bear;
-use crate::methods::{deserialize_required_string, parse_params};
-
-#[derive(Debug, Deserialize)]
-struct ResourceUpdateRequest {
-    #[serde(deserialize_with = "deserialize_required_string")]
-    session_id: String,
-    /// Intentionally raw: adapter-owned resource envelopes are extensible and forwarded verbatim.
-    #[serde(default)]
-    resource: Option<Value>,
-    /// Legacy alias for `resource`; intentionally raw for the same reason.
-    #[serde(default)]
-    payload: Option<Value>,
-}
+use crate::methods::parse_params;
 
 pub(crate) async fn resource_update_result(
     state: &DenState,

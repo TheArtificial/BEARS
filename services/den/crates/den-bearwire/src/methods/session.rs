@@ -1,8 +1,10 @@
 use axum::http::HeaderMap;
-use serde::Deserialize;
 use serde_json::{json, Value};
 
-use bearwire_protocol::wire::BearWireEvent;
+use bearwire_protocol::{
+    methods::{SessionIdRequest, SessionModelSetRequest, SessionOpenRequest, SessionStateRequest},
+    wire::BearWireEvent,
+};
 use den_http::errors::CustomError;
 use den_runtime::{
     bearwire_events,
@@ -11,66 +13,7 @@ use den_runtime::{
 use den_service::{bears::BearProfile, client_sessions, DenState};
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
-use crate::methods::{
-    deserialize_optional_i64_from_value, deserialize_optional_string, deserialize_required_string,
-    parse_params,
-};
-
-#[derive(Debug, Deserialize)]
-struct SessionOpenRequest {
-    #[serde(deserialize_with = "deserialize_required_string")]
-    session_id: String,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    client: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    conversation_id: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    runtime_session_id: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    cwd: Option<String>,
-    #[serde(
-        default,
-        alias = "requested_mode",
-        deserialize_with = "deserialize_optional_string"
-    )]
-    mode: Option<String>,
-    /// Intentionally raw: adapter session snapshots are open-ended capability/context envelopes.
-    #[serde(default)]
-    client_context: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SessionIdRequest {
-    #[serde(deserialize_with = "deserialize_required_string")]
-    session_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct SessionStateRequest {
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    bear_slug: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    session_id: Option<String>,
-    #[serde(default)]
-    include_closed: Option<bool>,
-    #[serde(default)]
-    #[serde(deserialize_with = "deserialize_optional_i64_from_value")]
-    limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SessionModelSetRequest {
-    #[serde(deserialize_with = "deserialize_required_string")]
-    session_id: String,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    selection_mode: Option<String>,
-    #[serde(
-        default,
-        alias = "requested_model",
-        deserialize_with = "deserialize_optional_string"
-    )]
-    model: Option<String>,
-}
+use crate::methods::parse_params;
 
 async fn session_state_payload(
     state: &DenState,

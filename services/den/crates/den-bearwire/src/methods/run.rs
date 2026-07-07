@@ -2,11 +2,13 @@ use std::time::{Duration, Instant};
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
-use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use bearwire_protocol::wire::{BearWireEvent, ResourceRef};
+use bearwire_protocol::{
+    methods::{RunCancelRequest, RunStartRequest},
+    wire::{BearWireEvent, ResourceRef},
+};
 use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
 use den_runtime::{
@@ -31,39 +33,7 @@ use den_service::{
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::{deserialize_optional_string, deserialize_required_string, parse_params};
-
-#[derive(Debug, Deserialize)]
-struct RunStartRequest {
-    #[serde(deserialize_with = "deserialize_required_string")]
-    session_id: String,
-    #[serde(deserialize_with = "deserialize_required_string")]
-    prompt: String,
-    /// Intentionally raw: prompt context is a typed outer field carrying extensible structured payloads.
-    #[serde(default)]
-    prompt_context: Option<Value>,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    client: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    conversation_id: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    cwd: Option<String>,
-    #[serde(
-        default,
-        alias = "mode",
-        deserialize_with = "deserialize_optional_string"
-    )]
-    requested_mode: Option<String>,
-    /// Intentionally raw: adapter session/capability context is an extensible envelope.
-    #[serde(default)]
-    client_context: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RunCancelRequest {
-    #[serde(deserialize_with = "deserialize_required_string")]
-    session_id: String,
-}
+use crate::methods::parse_params;
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(3);
 // Runtime status/error UX policy is surface-agnostic. Keep product copy,

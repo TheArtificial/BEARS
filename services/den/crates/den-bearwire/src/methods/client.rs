@@ -7,7 +7,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use bearwire_protocol::wire::{BearWireEvent, ToolCallFinishWire};
+use bearwire_protocol::{
+    methods::{
+        deserialize_optional_string, deserialize_required_string, deserialize_string,
+        ClientPermissionResultRequest,
+    },
+    wire::{BearWireEvent, ToolCallFinishWire},
+};
 use den_core::tools::{
     constants::DEN_WEB_FETCH,
     result_compaction::{
@@ -38,11 +44,9 @@ use den_service::{
 };
 
 use crate::auth::authenticated_bear;
+use crate::methods::parse_params;
 use crate::methods::run::{
     persist_run_failed, persist_run_progress, persist_runtime_event_as_bearwire,
-};
-use crate::methods::{
-    deserialize_optional_string, deserialize_required_string, deserialize_string, parse_params,
 };
 
 fn deserialize_tool_result_status<'de, D>(deserializer: D) -> Result<ToolResultStatus, D::Error>
@@ -52,67 +56,6 @@ where
     let raw = deserialize_string(deserializer)?;
     ToolResultStatus::parse(&raw)
         .ok_or_else(|| serde::de::Error::custom(format!("unsupported tool result status: {raw}")))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum PermissionDecisionInput {
-    Approved,
-    Approve,
-    Granted,
-    Allow,
-    AllowOnce,
-    AllowSiteAccount,
-    AllowHost,
-    Denied,
-    Deny,
-    Rejected,
-    Reject,
-    RejectOnce,
-    RejectAlways,
-    Timeout,
-    TimedOut,
-}
-
-impl PermissionDecisionInput {
-    fn normalized(self) -> &'static str {
-        match self {
-            Self::Approved
-            | Self::Approve
-            | Self::Granted
-            | Self::Allow
-            | Self::AllowOnce
-            | Self::AllowSiteAccount
-            | Self::AllowHost => "granted",
-            Self::Denied
-            | Self::Deny
-            | Self::Rejected
-            | Self::Reject
-            | Self::RejectOnce
-            | Self::RejectAlways => "denied",
-            Self::Timeout | Self::TimedOut => "expired",
-        }
-    }
-
-    fn raw(self) -> &'static str {
-        match self {
-            Self::Approved => "approved",
-            Self::Approve => "approve",
-            Self::Granted => "granted",
-            Self::Allow => "allow",
-            Self::AllowOnce => "allow_once",
-            Self::AllowSiteAccount => "allow_site_account",
-            Self::AllowHost => "allow_host",
-            Self::Denied => "denied",
-            Self::Deny => "deny",
-            Self::Rejected => "rejected",
-            Self::Reject => "reject",
-            Self::RejectOnce => "reject_once",
-            Self::RejectAlways => "reject_always",
-            Self::Timeout => "timeout",
-            Self::TimedOut => "timed_out",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -172,27 +115,6 @@ impl ClientToolResultRequest {
             Some(compacted),
         )
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct ClientPermissionResultRequest {
-    #[serde(deserialize_with = "deserialize_required_string")]
-    run_id: String,
-    #[serde(deserialize_with = "deserialize_required_string")]
-    session_id: String,
-    #[serde(deserialize_with = "deserialize_required_string")]
-    permission_id: String,
-    #[serde(default, deserialize_with = "deserialize_optional_string")]
-    obligation_id: Option<String>,
-    #[serde(default = "default_permission_decision")]
-    decision: PermissionDecisionInput,
-    /// Intentionally raw: reason may be string or structured adapter metadata.
-    #[serde(default)]
-    reason: Option<Value>,
-}
-
-fn default_permission_decision() -> PermissionDecisionInput {
-    PermissionDecisionInput::Denied
 }
 
 fn continuation_watchdog_timeout() -> Duration {
