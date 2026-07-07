@@ -293,6 +293,41 @@ Implementation direction:
 
 **Exit gate:** The armature no longer performs archaeological reconstruction for normal active flows; compatibility fallbacks are rare, measured, and covered by migration tests.
 
+## Implementation progress (2026-07-07)
+
+The first implementation pass has landed the narrow surface replay contract and the most important ACP parity protections.
+
+Completed:
+
+- Added `bearwire-protocol` as the narrow shared BearWire DTO crate for method, wire, RPC, and surface replay contracts.
+- Moved BearWire wire/method DTOs out of broad Den-internal crates so `bear-armature` can depend on `bearwire-protocol` directly rather than `den-protocol`.
+- Added `conversation.surface_history` and wired ACP `session/load` / `session/resume` to replay typed surface records instead of text-only `conversation.history`.
+- Preserved `conversation.history` as the flattened text projection for simple/non-ACP history consumers.
+- Added typed `SurfaceHistoryEvent` replay records for messages, tool calls, tool results, reasoning deltas, and session info updates.
+- Fixed message timestamp serialization so `SurfaceHistoryEvent::Message.created_at` is a string, not an `OffsetDateTime` sequence.
+- Ensured surface replay omits reasoning with `replay_policy = none` and replays opt-in reasoning as ACP thought chunks, never assistant text.
+- Added Den-hosted and checkpoint tool started events before their completion events in the runtime stream.
+- Added descriptor/title/argument coverage for `set_conversation_title` started events.
+- Added checkpoint started-before-finished coverage.
+- Added `policy.execution_target = "den"` on Den-owned surfaced tool starts and taught the armature to treat canonical `data.policy.execution_target` as display-only Den execution ownership rather than an armature-local execution request.
+- Updated surface replay tool-card projection to use canonical BearWire `data.tool_call` payloads rather than legacy top-level `tool_call_id` / `tool_name` / `args` fields.
+- Updated armature title mapping to prefer Den `conversation_title` over legacy `title` on session list/load context.
+- Added focused tests covering:
+  - Den-hosted started events;
+  - checkpoint started/finished ordering;
+  - `conversation.surface_history` message/tool/session/reasoning records;
+  - ACP load/resume replaying tool records as tool cards rather than assistant text;
+  - live and replayed reasoning staying in thought UI;
+  - Den-owned tool starts rendering without `client.tool.result` local execution posts;
+  - provider Responses reasoning deltas becoming `ReasoningTextDelta`.
+
+Residual follow-up:
+
+- Replace the current merged `conversation.surface_history` implementation with a dedicated persisted surface-event stream when ordering/pagination across conversation rows and BearWire event rows needs to be exact.
+- Add a small checked-in golden fixture suite for the six target traces in Phase 6; current coverage is focused Rust integration/unit tests rather than file-backed trace fixtures.
+- Expand strict mode from focused decode tests to a broader development/test gate that rejects incomplete normal-path surface envelopes across all producers.
+- Decide whether any reasoning replay policy beyond `none` and `thought` should be supported in product UI.
+
 ## Delivery order
 
 Recommended sequence:
