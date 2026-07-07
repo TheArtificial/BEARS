@@ -67,17 +67,44 @@ pub(crate) async fn conversation_history_result(
         .rev()
         .filter_map(|row| {
             let message = row.to_user_history_record()?;
-            let text =
-                den_runtime::agent_assist::sanitize_visible_transcript_text(&message.content);
-            if text.trim().is_empty() {
-                return None;
-            }
-            Some(json!({
+            let mut record = json!({
                 "id": message.message_id.or_else(|| Some(message.sequence_no.to_string())),
+                "kind": message.kind,
                 "role": message.role,
-                "text": text,
                 "created_at": message.created_at,
-            }))
+            });
+            match record.get("kind").and_then(Value::as_str) {
+                Some("tool_call") => {
+                    record["tool_call_id"] = json!(message.tool_call_id);
+                    record["tool_name"] = json!(message.tool_name);
+                    record["status"] = json!(message.status);
+                    record["arguments"] = message.arguments;
+                    Some(record)
+                }
+                Some("tool_result") => {
+                    record["tool_call_id"] = json!(message.tool_call_id);
+                    record["tool_name"] = json!(message.tool_name);
+                    record["status"] = json!(message.status);
+                    record["raw_output"] = message.raw_output;
+                    if !message.content.trim().is_empty() {
+                        record["text"] =
+                            json!(den_runtime::agent_assist::sanitize_visible_transcript_text(
+                                &message.content
+                            ));
+                    }
+                    Some(record)
+                }
+                _ => {
+                    let text = den_runtime::agent_assist::sanitize_visible_transcript_text(
+                        &message.content,
+                    );
+                    if text.trim().is_empty() {
+                        return None;
+                    }
+                    record["text"] = json!(text);
+                    Some(record)
+                }
+            }
         })
         .collect::<Vec<_>>();
 

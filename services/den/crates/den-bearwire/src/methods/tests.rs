@@ -1554,7 +1554,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
-    ensure_conversation_for_external_id(
+    let conversation = ensure_conversation_for_external_id(
         &pool,
         bear_id,
         Some(user_id),
@@ -1584,6 +1584,25 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     )
     .await
     .expect("persist user message");
+    append_message(
+        &pool,
+        conversation.id,
+        &ConversationMessageWrite::structured(
+            ConversationMessageType::ToolCall,
+            Some(ConversationMessageRole::Assistant),
+            ConversationMessageVisibility::Default,
+            "",
+            json!({
+                "event": "tool_request",
+                "tool_call_id": "call-history",
+                "tool_name": "fs_read_text_file",
+                "args": { "path": "README.md" },
+                "approval_required": false
+            }),
+        ),
+    )
+    .await
+    .expect("persist tool call");
     persist_canonical_conversation_record(
         &context,
         &CanonicalConversationRecord::tool_result(
@@ -1617,12 +1636,26 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     let messages = response["result"]["messages"]
         .as_array()
         .expect("messages array");
-    assert!(
-        messages.iter().any(|message| {
-            message.get("text").and_then(Value::as_str)
-                == Some("Used fs_read_text_file (ok): hello from file")
-        }),
-        "{response}"
+    let tool_call = messages
+        .iter()
+        .find(|message| message.get("kind").and_then(Value::as_str) == Some("tool_call"))
+        .unwrap_or_else(|| panic!("missing structured tool_call in {response}"));
+    assert_eq!(tool_call["tool_call_id"], "call-history");
+    assert_eq!(tool_call["tool_name"], "fs_read_text_file");
+    assert_eq!(tool_call["status"], "pending");
+    assert_eq!(tool_call["arguments"]["path"], "README.md");
+
+    let tool_result = messages
+        .iter()
+        .find(|message| message.get("kind").and_then(Value::as_str) == Some("tool_result"))
+        .unwrap_or_else(|| panic!("missing structured tool_result in {response}"));
+    assert_eq!(tool_result["tool_call_id"], "call-history");
+    assert_eq!(tool_result["tool_name"], "fs_read_text_file");
+    assert_eq!(tool_result["status"], "ok");
+    assert_eq!(tool_result["raw_output"]["content"], "hello from file");
+    assert_ne!(
+        tool_result.get("text").and_then(Value::as_str),
+        Some("Used fs_read_text_file (incomplete)")
     );
 }
 

@@ -124,9 +124,15 @@ pub enum PersistedTranscriptRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistedUserHistoryMessage {
     pub sequence_no: i64,
+    pub kind: String,
     pub message_id: Option<String>,
     pub role: String,
     pub content: String,
+    pub tool_call_id: Option<String>,
+    pub tool_name: Option<String>,
+    pub status: Option<String>,
+    pub arguments: serde_json::Value,
+    pub raw_output: serde_json::Value,
     pub created_at: time::OffsetDateTime,
 }
 
@@ -280,21 +286,65 @@ impl PersistedConversationMessage {
         if let Some(message) = self.to_user_history_transcript_message() {
             return Some(PersistedUserHistoryMessage {
                 sequence_no: message.sequence_no,
+                kind: "message".to_string(),
                 message_id: message.message_id,
                 role: message.role,
                 content: message.content,
+                tool_call_id: None,
+                tool_name: None,
+                status: None,
+                arguments: serde_json::Value::Null,
+                raw_output: serde_json::Value::Null,
                 created_at: message.created_at,
             });
         }
 
         match self.storage_message_type().ok()? {
-            ConversationMessageType::ToolResult => Some(PersistedUserHistoryMessage {
-                sequence_no: self.sequence_no,
-                message_id: self.provider_message_id.clone(),
-                role: "assistant".to_string(),
-                content: tool_result_user_history_summary(self.content_json_value())?,
-                created_at: self.created_at,
-            }),
+            ConversationMessageType::ToolCall => {
+                let payload = self.tool_request_payload().ok()??;
+                Some(PersistedUserHistoryMessage {
+                    sequence_no: self.sequence_no,
+                    kind: "tool_call".to_string(),
+                    message_id: Some(payload.tool_call_id.clone()),
+                    role: "assistant".to_string(),
+                    content: String::new(),
+                    tool_call_id: Some(payload.tool_call_id),
+                    tool_name: Some(payload.tool_name),
+                    status: Some("pending".to_string()),
+                    arguments: payload.args,
+                    raw_output: serde_json::Value::Null,
+                    created_at: self.created_at,
+                })
+            }
+            ConversationMessageType::ToolResult => {
+                let payload = self.tool_result_payload().ok()??;
+                let raw_output = if !payload.structured_content.is_null() {
+                    payload.structured_content.clone()
+                } else if let Some(content) =
+                    payload.content.as_ref().or(payload.output_preview.as_ref())
+                {
+                    serde_json::json!({ "content": content })
+                } else {
+                    serde_json::Value::Null
+                };
+                Some(PersistedUserHistoryMessage {
+                    sequence_no: self.sequence_no,
+                    kind: "tool_result".to_string(),
+                    message_id: payload
+                        .tool_call_id
+                        .clone()
+                        .or_else(|| self.provider_message_id.clone()),
+                    role: "assistant".to_string(),
+                    content: tool_result_user_history_summary(self.content_json_value())
+                        .unwrap_or_default(),
+                    tool_call_id: payload.tool_call_id,
+                    tool_name: payload.tool_name,
+                    status: Some(payload.status.as_str().to_string()),
+                    arguments: serde_json::Value::Null,
+                    raw_output,
+                    created_at: self.created_at,
+                })
+            }
             _ => None,
         }
     }

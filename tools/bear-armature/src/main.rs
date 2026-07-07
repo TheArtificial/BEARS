@@ -4261,8 +4261,30 @@ async fn den_get_acp_session(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReloadHistoryMessage {
     id: Option<String>,
+    kind: String,
     role: String,
     text: String,
+    tool_call_id: Option<String>,
+    tool_name: Option<String>,
+    status: Option<String>,
+    arguments: Value,
+    raw_output: Value,
+}
+
+impl ReloadHistoryMessage {
+    fn text(id: &str, role: &str, text: &str) -> Self {
+        Self {
+            id: Some(id.to_string()),
+            kind: "message".to_string(),
+            role: role.to_string(),
+            text: text.to_string(),
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            arguments: Value::Null,
+            raw_output: Value::Null,
+        }
+    }
 }
 
 fn flatten_history_pages_chronological(
@@ -4278,7 +4300,8 @@ fn history_replay_chunks_with_boundaries(
     messages
         .into_iter()
         .map(|mut message| {
-            if previous_role.as_deref() == Some(message.role.as_str())
+            if message.kind == "message"
+                && previous_role.as_deref() == Some(message.role.as_str())
                 && matches!(message.role.as_str(), "user" | "assistant")
                 && !message.text.starts_with("\n")
             {
@@ -4317,15 +4340,32 @@ async fn fetch_conversation_history_chronological(
             .unwrap_or_default();
         let mut page = Vec::new();
         for m in messages {
+            let kind = m
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("message")
+                .to_string();
             let role = m.get("role").and_then(Value::as_str).unwrap_or("");
             let text = m.get("text").and_then(Value::as_str).unwrap_or("");
-            if text.trim().is_empty() {
+            if matches!(kind.as_str(), "message" | "") && text.trim().is_empty() {
                 continue;
             }
             page.push(ReloadHistoryMessage {
                 id: m.get("id").and_then(Value::as_str).map(str::to_string),
+                kind,
                 role: role.to_string(),
                 text: text.to_string(),
+                tool_call_id: m
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                tool_name: m
+                    .get("tool_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                status: m.get("status").and_then(Value::as_str).map(str::to_string),
+                arguments: m.get("arguments").cloned().unwrap_or(Value::Null),
+                raw_output: m.get("raw_output").cloned().unwrap_or(Value::Null),
             });
         }
         pages_newest_first.push(page);
@@ -4373,10 +4413,51 @@ async fn replay_history_for_den_session(
             );
         }
         for message in history_replay_chunks_with_boundaries(messages) {
-            match message.role.as_str() {
-                "user" => send_user_message_chunk(session_id, &message.text).await?,
-                "assistant" => send_agent_message_chunk(session_id, &message.text).await?,
-                _ => {}
+            match message.kind.as_str() {
+                "tool_call" | "tool_result" => {
+                    let Some(tool_call_id) =
+                        message.tool_call_id.as_deref().or(message.id.as_deref())
+                    else {
+                        continue;
+                    };
+                    let Some(tool_name) = message.tool_name.as_deref() else {
+                        continue;
+                    };
+                    let event = json!({
+                        "type": if message.kind == "tool_call" { "tool_call.requested" } else { "tool_call.completed" },
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "args": message.arguments,
+                    });
+                    send_tool_call_update(
+                        session_id,
+                        tool_call_id,
+                        tool_name,
+                        ToolCallUpdatePayload {
+                            status: message.status.as_deref().unwrap_or(
+                                if message.kind == "tool_call" {
+                                    "pending"
+                                } else {
+                                    "ok"
+                                },
+                            ),
+                            text: &message.text,
+                            event: Some(&event),
+                            raw_output: if message.raw_output.is_null() {
+                                None
+                            } else {
+                                Some(message.raw_output.clone())
+                            },
+                            extra_content: Vec::new(),
+                        },
+                    )
+                    .await?;
+                }
+                _ => match message.role.as_str() {
+                    "user" => send_user_message_chunk(session_id, &message.text).await?,
+                    "assistant" => send_agent_message_chunk(session_id, &message.text).await?,
+                    _ => {}
+                },
             }
         }
     } else {
@@ -9263,8 +9344,9 @@ fn tool_status_from_str(status: &str) -> ToolCallStatus {
     match status {
         "pending" => ToolCallStatus::Pending,
         "running" | "in_progress" => ToolCallStatus::InProgress,
-        "completed" => ToolCallStatus::Completed,
+        "completed" | "complete" | "ok" | "success" => ToolCallStatus::Completed,
         "failed" | "error" => ToolCallStatus::Failed,
+        "incomplete" => ToolCallStatus::InProgress,
         _ => ToolCallStatus::Pending,
     }
 }
@@ -9650,6 +9732,7 @@ mod tests {
         fail_bearwire: bool,
         paths: Arc<TokioMutex<Vec<String>>>,
         events: Arc<TokioMutex<Vec<Value>>>,
+        history_messages: Arc<TokioMutex<Vec<Value>>>,
     }
 
     // ponytail: this is a narrow BearWire mock for ACP boundary tests, not a fake server.
@@ -9769,6 +9852,17 @@ mod tests {
                     "effective_model": "openai/test-model"
                 }
             }),
+            Some("conversation.history") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "kind": "conversation_history",
+                    "conversation_id": value.pointer("/params/conversation_id").and_then(Value::as_str).unwrap_or("default"),
+                    "messages": state.history_messages.lock().await.clone(),
+                    "has_more": false,
+                    "next_before": null
+                }
+            }),
             Some("run.start") => json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -9806,6 +9900,29 @@ mod tests {
             fail_bearwire,
             paths: paths.clone(),
             events: Arc::new(TokioMutex::new(events)),
+            history_messages: Arc::new(TokioMutex::new(Vec::new())),
+        };
+        let app = Router::new()
+            .route("/bearwire/v1/rpc", any(bearwire_test_handler))
+            .fallback(any(bearwire_test_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), paths)
+    }
+
+    async fn start_bearwire_test_server_with_history(
+        history_messages: Vec<Value>,
+    ) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        let paths = Arc::new(TokioMutex::new(Vec::new()));
+        let state = BearWireTestServerState {
+            fail_bearwire: false,
+            paths: paths.clone(),
+            events: Arc::new(TokioMutex::new(Vec::new())),
+            history_messages: Arc::new(TokioMutex::new(history_messages)),
         };
         let app = Router::new()
             .route("/bearwire/v1/rpc", any(bearwire_test_handler))
@@ -10103,16 +10220,8 @@ mod tests {
     #[test]
     fn history_replay_boundaries_separate_adjacent_user_messages() {
         let messages = history_replay_chunks_with_boundaries(vec![
-            ReloadHistoryMessage {
-                id: Some("1".to_string()),
-                role: "user".to_string(),
-                text: "first prompt".to_string(),
-            },
-            ReloadHistoryMessage {
-                id: Some("2".to_string()),
-                role: "user".to_string(),
-                text: "second prompt after failed turn".to_string(),
-            },
+            ReloadHistoryMessage::text("1", "user", "first prompt"),
+            ReloadHistoryMessage::text("2", "user", "second prompt after failed turn"),
         ]);
 
         assert_eq!(messages[0].text, "first prompt");
@@ -10122,21 +10231,9 @@ mod tests {
     #[test]
     fn history_replay_boundaries_do_not_modify_alternating_roles() {
         let messages = history_replay_chunks_with_boundaries(vec![
-            ReloadHistoryMessage {
-                id: Some("1".to_string()),
-                role: "user".to_string(),
-                text: "prompt".to_string(),
-            },
-            ReloadHistoryMessage {
-                id: Some("2".to_string()),
-                role: "assistant".to_string(),
-                text: "reply".to_string(),
-            },
-            ReloadHistoryMessage {
-                id: Some("3".to_string()),
-                role: "user".to_string(),
-                text: "follow-up".to_string(),
-            },
+            ReloadHistoryMessage::text("1", "user", "prompt"),
+            ReloadHistoryMessage::text("2", "assistant", "reply"),
+            ReloadHistoryMessage::text("3", "user", "follow-up"),
         ]);
 
         assert_eq!(
@@ -10957,6 +11054,11 @@ mod tests {
             .iter()
             .map(|m| ReloadHistoryMessage {
                 id: m.get("id").and_then(Value::as_str).map(str::to_string),
+                kind: m
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("message")
+                    .to_string(),
                 role: m
                     .get("role")
                     .and_then(Value::as_str)
@@ -10967,6 +11069,11 @@ mod tests {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string(),
+                tool_call_id: None,
+                tool_name: None,
+                status: None,
+                arguments: Value::Null,
+                raw_output: Value::Null,
             })
             .collect::<Vec<_>>();
         assert_eq!(page[0].id.as_deref(), Some("msg-1"));
@@ -10977,28 +11084,12 @@ mod tests {
     fn history_pages_flatten_oldest_to_newest_across_desc_pagination() {
         let pages = vec![
             vec![
-                ReloadHistoryMessage {
-                    id: Some("m3".to_string()),
-                    role: "user".to_string(),
-                    text: "ask 2".to_string(),
-                },
-                ReloadHistoryMessage {
-                    id: Some("m4".to_string()),
-                    role: "assistant".to_string(),
-                    text: "reply 2".to_string(),
-                },
+                ReloadHistoryMessage::text("m3", "user", "ask 2"),
+                ReloadHistoryMessage::text("m4", "assistant", "reply 2"),
             ],
             vec![
-                ReloadHistoryMessage {
-                    id: Some("m1".to_string()),
-                    role: "user".to_string(),
-                    text: "ask 1".to_string(),
-                },
-                ReloadHistoryMessage {
-                    id: Some("m2".to_string()),
-                    role: "assistant".to_string(),
-                    text: "reply 1".to_string(),
-                },
+                ReloadHistoryMessage::text("m1", "user", "ask 1"),
+                ReloadHistoryMessage::text("m2", "assistant", "reply 1"),
             ],
         ];
         let messages = flatten_history_pages_chronological(pages);
@@ -12080,6 +12171,113 @@ mod tests {
                 .iter()
                 .any(|frame| frame.to_string().contains("private reasoning")),
             "reasoning leaked as agent message: {output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_load_replays_history_tool_records_as_acp_tool_updates_not_text() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_history(vec![
+            json!({
+                "id": "call-history",
+                "kind": "tool_call",
+                "role": "assistant",
+                "tool_call_id": "call-history",
+                "tool_name": "run_command",
+                "status": "pending",
+                "arguments": { "command": "true" }
+            }),
+            json!({
+                "id": "call-history",
+                "kind": "tool_result",
+                "role": "assistant",
+                "tool_call_id": "call-history",
+                "tool_name": "run_command",
+                "status": "ok",
+                "text": "Used run_command (ok)",
+                "raw_output": { "exit_code": 0 }
+            }),
+        ])
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("history-tool-replay");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "load-1",
+                    "method": "session/load",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let tool_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(tool_frames.len(), 2, "{output:#?}");
+        assert!(
+            tool_frames
+                .iter()
+                .all(|frame| frame.contains("call-history")),
+            "{output:#?}"
+        );
+        assert!(
+            tool_frames.iter().any(|frame| frame.contains("completed")),
+            "{output:#?}"
+        );
+        assert!(
+            tool_frames
+                .iter()
+                .all(|frame| !frame.contains("incomplete")),
+            "{output:#?}"
+        );
+        let agent_text = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_message_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!agent_text.contains("Used run_command"), "{output:#?}");
+        assert!(!agent_text.contains("incomplete"), "{output:#?}");
+        assert!(
+            output.iter().any(
+                |frame| frame.get("id").and_then(Value::as_str) == Some("load-1")
+                    && frame.get("result").is_some()
+            ),
+            "{output:#?}"
         );
         let _ = fs::remove_dir_all(root);
     }
