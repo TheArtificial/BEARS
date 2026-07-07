@@ -88,32 +88,6 @@ fn approval_request_with_nested_tool_call_preserves_identity_and_args() {
 }
 
 #[test]
-fn tool_call_with_top_level_fields_still_parses() {
-    // Compatibility: providers that put identity/args at the top level must still work.
-    let event = serde_json::json!({
-        "message_type": "tool_call_message",
-        "tool_call_id": "call-top",
-        "tool_name": "fs_list_directory",
-        "args": { "path": "/tmp" }
-    });
-    let mapped = runtime_stream_event_from_provider_json(&event).expect("mapped event");
-    match mapped {
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
-            tool_call_id,
-            tool_name,
-            approval_required,
-            ..
-        }) => {
-            assert_eq!(tool_call_id, "call-top");
-            assert_eq!(tool_name, "fs_list_directory");
-            // `tool_call_message` (not `approval_request_message`) is not approval-gated.
-            assert!(!approval_required);
-        }
-        other => panic!("unexpected mapping: {other:?}"),
-    }
-}
-
-#[test]
 fn end_turn_stop_reason_maps_to_semantic_turn_completed() {
     let event = serde_json::json!({
         "message_type": "stop_reason",

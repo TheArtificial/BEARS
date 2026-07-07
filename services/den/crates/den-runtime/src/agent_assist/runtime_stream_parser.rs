@@ -153,24 +153,19 @@ pub fn runtime_stream_event_from_provider_json(
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
                 // The provider tool-call SSE nests identity and arguments under `tool_call`
                 // (e.g. `{ "id": "approval-…", "tool_call": { "name", "tool_call_id",
-                // "arguments" } }`). Check the nested locations before top-level fallbacks,
-                // mirroring the legacy native mapper. Missing this dropped `tool_call_id`,
-                // which broke `/tool-results` delivery (every post was `late_result_ignored`).
+                // "arguments" } }`). Keep this path canonical instead of accepting stale
+                // top-level aliases that cannot represent the tool-card contract cleanly.
                 tool_call_id: event
                     .pointer("/tool_call/tool_call_id")
                     .or_else(|| inner.pointer("/tool_call/tool_call_id"))
                     .or_else(|| event.pointer("/tool_call/id"))
                     .or_else(|| inner.pointer("/tool_call/id"))
                     .or_else(|| event.pointer("/tool_call/function/tool_call_id"))
-                    .or_else(|| event.get("tool_call_id"))
-                    .or_else(|| inner.get("tool_call_id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string(),
                 tool_name: event
-                    .get("tool_name")
-                    .or_else(|| inner.get("tool_name"))
-                    .or_else(|| event.pointer("/tool_call/name"))
+                    .pointer("/tool_call/name")
                     .or_else(|| inner.pointer("/tool_call/name"))
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
@@ -189,16 +184,10 @@ pub fn runtime_stream_event_from_provider_json(
                     .or_else(|| event.pointer("/tool_call/input"))
                     .or_else(|| event.pointer("/tool_call/args"))
                     .or_else(|| event.pointer("/tool_call/function/arguments"))
-                    .or_else(|| event.get("args"))
-                    .or_else(|| inner.get("args"))
-                    .or_else(|| event.get("arguments"))
-                    .or_else(|| inner.get("arguments"))
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({})),
                 approval_request_id: event
-                    .get("approval_request_id")
-                    .or_else(|| inner.get("approval_request_id"))
-                    .or_else(|| event.pointer("/tool_call/approval_request_id"))
+                    .pointer("/tool_call/approval_request_id")
                     .or_else(|| event.get("id"))
                     .or_else(|| inner.get("id"))
                     .and_then(|v| v.as_str())
