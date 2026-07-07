@@ -119,12 +119,14 @@ async fn identity_view(
             Ok(v) => v,
             Err(r) => return Ok(r.into_response()),
         };
+    let stances: Vec<&'static str> = BearProfile::ALL.iter().map(|p| p.as_str()).collect();
     web::render_template(
         &state,
         "bear/manage/identity.html",
         auth_session,
         context! {
             can_manage_bear,
+            stances,
             manage_title => "Identity & charter",
             ..bear_nav_context(&bear, "identity"),
         },

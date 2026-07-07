@@ -27,6 +27,21 @@
         </dd>
     </dl>
 
+    <h3>Stances</h3>
+    <p class="form-hint">
+        The same Bear in five trust postures. Each stance has its own
+        compiled prompt, tool surface, and model.
+    </p>
+    <ul>
+        {% for stance in stances %}
+        <li>
+            <a href="/bear/{{ bear.slug | e }}/stances/{{ stance }}"
+                >{{ stance }}</a
+            >
+        </li>
+        {% endfor %}
+    </ul>
+
     {% if can_manage_bear %}
     <p class="button-row">
         <a class="button-link" href="/bear/{{ bear.slug | e }}/edit/overview"

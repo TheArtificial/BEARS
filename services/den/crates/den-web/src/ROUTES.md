@@ -47,8 +47,8 @@ Member-facing bear management at `/bear/{slug}/…` (read for members, write for
 - `GET /bear/{slug}/activity` — activity hub: conversations stream (jobs and Cabinet when they land); `GET /bear/{slug}/conversations/{conversation_id}` — transcript detail
 - `GET /bear/{slug}/people` — membership; bear admins grant/revoke via POST actions
 - `GET /bear/{slug}/portability` — bundle export (`GET /bear/{slug}/export.bear`), import (`POST /bears/import`), what-moves/what-stays
-- Internals (kept reachable): `GET /bear/{slug}/persona` (compiled prompts), `GET /bear/{slug}/stances` (+ `/stances/{stance}` detail, model POSTs), `GET|POST /bear/{slug}/models`, `GET /bear/{slug}/context` (prompt memory blocks), `GET /bear/{slug}/advanced` (diagnostics, provision action)
-- Retired paths redirect: `/access` → `/people`, `/policy` → `/resources`; `/conversations` remains as an alias of the activity stream
+- Internals (kept reachable): `GET /bear/{slug}/persona` (compiled prompts), `GET /bear/{slug}/stances/{stance}` (stance detail + model POSTs; linked from identity/models), `GET|POST /bear/{slug}/models`, `GET /bear/{slug}/context` (prompt memory blocks), `GET /bear/{slug}/advanced` (diagnostics incl. stance-binding status, provision action)
+- Retired paths redirect: `/access` → `/people`, `/policy` → `/resources`, `/stances` (list) → `/advanced`; `/conversations` remains as an alias of the activity stream
 
 ## Bear memory & entities (`src/bear_memory.rs`)
 

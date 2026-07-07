@@ -65,8 +65,8 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bear/{slug}/overview", get(overview_view))
         .route_with_tsr("/bear/{slug}/people", get(access_view))
         .route_with_tsr("/bear/{slug}/persona", get(persona_view))
-        .route_with_tsr("/bear/{slug}/stances", get(stances_view))
-        .route_with_tsr("/bear/{slug}/profiles", get(stances_view))
+        .route_with_tsr("/bear/{slug}/stances", get(stances_list_redirect))
+        .route_with_tsr("/bear/{slug}/profiles", get(stances_list_redirect))
         .route_with_tsr("/bear/{slug}/models", get(models_view).post(models_post))
         .route_with_tsr(
             "/bear/{slug}/models/provision-bifrost-key",
@@ -1289,32 +1289,10 @@ async fn persona_view(
     .await
 }
 
-async fn stances_view(
-    Path(slug): Path<String>,
-    Query(query): Query<DomainQuery>,
-    State(state): State<AppState>,
-    auth_session: AuthSession,
-) -> Result<Response, CustomError> {
-    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r.into_response()),
-    };
-    let runtime_configured = true;
-    let agent_health_rows: Vec<BearProfileBindingHealthRow> =
-        bear_agent_health_rows(&state, bear.id, runtime_configured).await?;
-    web::render_template(
-        &state,
-        "bear/settings/stances.html",
-        auth_session,
-        context! {
-            agent_health_rows,
-            message => query.message,
-            can_manage_bear,
-            native_runtime => true,
-            ..bear_nav_context(&bear, "stances"),
-        },
-    )
-    .await
+/// The standalone stance-binding table is retired: binding status lives in
+/// diagnostics (`/advanced`), stance detail is linked from identity/models.
+async fn stances_list_redirect(Path(slug): Path<String>) -> Redirect {
+    Redirect::permanent(&format!("/bear/{slug}/advanced"))
 }
 
 fn profile_label(profile: BearProfile) -> &'static str {
@@ -2404,12 +2382,14 @@ async fn advanced_view(
         Err(r) => return Ok(r.into_response()),
     };
     let stats = memory_stats_for_bear(&state, bear.id).await?;
+    let agent_health_rows = bear_agent_health_rows(&state, bear.id, true).await?;
     web::render_template(
         &state,
         "bear/settings/advanced.html",
         auth_session,
         context! {
             stats,
+            agent_health_rows,
             runtime_configured => true,
             message => query.message,
             can_manage_bear,
