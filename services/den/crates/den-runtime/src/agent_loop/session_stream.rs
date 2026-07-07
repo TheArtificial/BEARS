@@ -332,6 +332,11 @@ impl SessionTrackingStream {
             && !self.should_request_den_tool_permission(tool_name)
     }
 
+    fn started_tool_title(tool_name: &str) -> Option<String> {
+        builtin_den_tool_descriptor_for_provider_name(tool_name)
+            .map(|descriptor| descriptor.label.to_string())
+    }
+
     fn web_fetch_permission_target(arguments: &serde_json::Value) -> serde_json::Value {
         let mut target = arguments.clone();
         if !target.is_object() {
@@ -1181,7 +1186,7 @@ impl Stream for SessionTrackingStream {
                 let event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
                     tool_call_id: tool_call_id.clone(),
                     tool_name: tool_name.clone(),
-                    title: None,
+                    title: Self::started_tool_title(&tool_name),
                     kind: Some("function".to_string()),
                     arguments: arguments.clone(),
                     approval_request_id: None,
@@ -1205,8 +1210,8 @@ impl Stream for SessionTrackingStream {
                     self.pending_tool_event = Some(RuntimeStreamEvent::Semantic(
                         RuntimeSemanticEvent::ToolCallRequested {
                             tool_call_id,
-                            tool_name,
-                            title: None,
+                            tool_name: tool_name.clone(),
+                            title: Self::started_tool_title(&tool_name),
                             kind: Some("function".to_string()),
                             arguments: permission_target,
                             approval_request_id: None,
@@ -2081,6 +2086,63 @@ mod tests {
         assert!(
             stream.pending_server_tool.is_some(),
             "server-side execution should be queued after the visible started event"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_conversation_title_started_event_has_descriptor_title_and_arguments() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::new();
+        store.insert(session.clone());
+        let inner = futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call-title".to_string(),
+                tool_name: "set_conversation_title".to_string(),
+                title: None,
+                kind: Some("function".to_string()),
+                arguments: serde_json::json!({"title":"Roadmap replay hardening"}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            },
+        ))]);
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(inner),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+
+        let first = stream.next().await.expect("started event").expect("ok");
+        assert!(matches!(
+            first,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                ref tool_call_id,
+                ref tool_name,
+                ref title,
+                ref arguments,
+                ..
+            }) if tool_call_id == "call-title"
+                && tool_name == "set_conversation_title"
+                && title.as_deref() == Some("Set conversation title")
+                && arguments == &serde_json::json!({"title":"Roadmap replay hardening"})
+        ));
+        assert!(
+            stream.pending_server_tool.is_some(),
+            "Den-hosted tool execution should be queued after a full started event"
         );
     }
 
