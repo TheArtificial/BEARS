@@ -1623,7 +1623,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .expect("persist tool result");
 
     let response = rpc_value(
-        test_state(pool),
+        test_state(pool.clone()),
         &token,
         "conversation.history",
         json!({
@@ -1656,6 +1656,32 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     assert_ne!(
         tool_result.get("text").and_then(Value::as_str),
         Some("Used fs_read_text_file (incomplete)")
+    );
+    let surface_response = rpc_value(
+        test_state(pool),
+        &token,
+        "conversation.surface_history",
+        json!({
+            "bear_slug": bear_slug,
+            "conversation_id": conversation_id,
+            "limit": 20
+        }),
+    )
+    .await;
+    assert_eq!(
+        surface_response["result"]["kind"],
+        "conversation_surface_history"
+    );
+    assert!(
+        surface_response["result"]["surface_events"]
+            .as_array()
+            .expect("surface_events array")
+            .iter()
+            .any(
+                |event| event.get("kind").and_then(Value::as_str) == Some("tool_result")
+                    && event.get("status").and_then(Value::as_str) == Some("ok")
+            ),
+        "surface history should expose structured ok tool result: {surface_response}"
     );
 }
 

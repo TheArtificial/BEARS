@@ -4271,6 +4271,7 @@ struct ReloadHistoryMessage {
     raw_output: Value,
 }
 
+#[allow(dead_code)]
 impl ReloadHistoryMessage {
     fn text(id: &str, role: &str, text: &str) -> Self {
         Self {
@@ -4313,7 +4314,7 @@ fn history_replay_chunks_with_boundaries(
         .collect()
 }
 
-async fn fetch_conversation_history_chronological(
+async fn fetch_conversation_surface_history_chronological(
     http: &reqwest::Client,
     config: &Config,
     conversation_id: &str,
@@ -4330,16 +4331,19 @@ async fn fetch_conversation_history_chronological(
         if let Some(before) = before.as_deref() {
             params["before"] = json!(before);
         }
-        let body = bearwire::rpc_call(http, config, "conversation.history", params)
+        let body = bearwire::rpc_call(http, config, "conversation.surface_history", params)
             .await
-            .with_context(|| format!("get BearWire conversation history for {conversation_id}"))?;
-        let messages = body
-            .get("messages")
+            .with_context(|| {
+                format!("get BearWire conversation surface history for {conversation_id}")
+            })?;
+        let records = body
+            .get("surface_events")
+            .or_else(|| body.get("messages"))
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
         let mut page = Vec::new();
-        for m in messages {
+        for m in records {
             let kind = m
                 .get("kind")
                 .and_then(Value::as_str)
@@ -4402,7 +4406,8 @@ async fn replay_history_for_den_session(
     lifecycle_method: &str,
 ) -> Result<()> {
     if let Some(conv) = conversation_id_for_history(den) {
-        let messages = fetch_conversation_history_chronological(http, config, &conv).await?;
+        let messages =
+            fetch_conversation_surface_history_chronological(http, config, &conv).await?;
         if bear_debug_verbose() {
             eprintln!(
                 "bear-armature: {} session_id={} replaying {} history messages for conversation_id={}",
@@ -9731,6 +9736,7 @@ mod tests {
     struct BearWireTestServerState {
         fail_bearwire: bool,
         paths: Arc<TokioMutex<Vec<String>>>,
+        rpc_methods: Arc<TokioMutex<Vec<String>>>,
         events: Arc<TokioMutex<Vec<Value>>>,
         history_messages: Arc<TokioMutex<Vec<Value>>>,
     }
@@ -9784,6 +9790,9 @@ mod tests {
 
         let body = to_bytes(request.into_body(), 1024 * 1024).await.unwrap();
         let value: Value = serde_json::from_slice(&body).unwrap();
+        if let Some(method) = value.get("method").and_then(Value::as_str) {
+            state.rpc_methods.lock().await.push(method.to_string());
+        }
         let id = value.get("id").cloned().unwrap_or(Value::Null);
         let result = match value.get("method").and_then(Value::as_str) {
             Some("initialize") => json!({
@@ -9863,6 +9872,17 @@ mod tests {
                     "next_before": null
                 }
             }),
+            Some("conversation.surface_history") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "kind": "conversation_surface_history",
+                    "conversation_id": value.pointer("/params/conversation_id").and_then(Value::as_str).unwrap_or("default"),
+                    "surface_events": state.history_messages.lock().await.clone(),
+                    "has_more": false,
+                    "next_before": null
+                }
+            }),
             Some("run.start") => json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -9899,6 +9919,7 @@ mod tests {
         let state = BearWireTestServerState {
             fail_bearwire,
             paths: paths.clone(),
+            rpc_methods: Arc::new(TokioMutex::new(Vec::new())),
             events: Arc::new(TokioMutex::new(events)),
             history_messages: Arc::new(TokioMutex::new(Vec::new())),
         };
@@ -9921,6 +9942,7 @@ mod tests {
         let state = BearWireTestServerState {
             fail_bearwire: false,
             paths: paths.clone(),
+            rpc_methods: Arc::new(TokioMutex::new(Vec::new())),
             events: Arc::new(TokioMutex::new(Vec::new())),
             history_messages: Arc::new(TokioMutex::new(history_messages)),
         };

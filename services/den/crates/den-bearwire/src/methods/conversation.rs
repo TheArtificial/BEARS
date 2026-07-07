@@ -33,6 +33,35 @@ pub(crate) async fn conversation_history_result(
     headers: &HeaderMap,
     params: &Value,
 ) -> Result<Value, CustomError> {
+    conversation_history_like_result(state, headers, params, "conversation_history", "messages")
+        .await
+}
+
+pub(crate) async fn conversation_surface_history_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    // ponytail: surface replay currently reuses structured conversation rows. The ceiling is
+    // missing live-only surface facts (session updates, reasoning replay policy); replace this
+    // with a dedicated persisted surface-event stream when Phase 3 grows beyond tool replay.
+    conversation_history_like_result(
+        state,
+        headers,
+        params,
+        "conversation_surface_history",
+        "surface_events",
+    )
+    .await
+}
+
+async fn conversation_history_like_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+    response_kind: &str,
+    records_key: &str,
+) -> Result<Value, CustomError> {
     let (_user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: ConversationHistoryRequest = parse_params(params)?;
     let conversation_id = request.conversation_id;
@@ -43,14 +72,15 @@ pub(crate) async fn conversation_history_result(
         persistence::get_conversation_for_external_id(&state.sqlx_pool, bear.id, &conversation_id)
             .await?
     else {
-        return Ok(json!({
-            "kind": "conversation_history",
+        let mut response = json!({
+            "kind": response_kind,
             "conversation_id": conversation_id,
-            "messages": [],
             "has_more": false,
             "next_before": null,
             "missing": true,
-        }));
+        });
+        response[records_key] = json!([]);
+        return Ok(response);
     };
 
     let rows = persistence::list_messages_page(
@@ -108,11 +138,12 @@ pub(crate) async fn conversation_history_result(
         })
         .collect::<Vec<_>>();
 
-    Ok(json!({
-        "kind": "conversation_history",
+    let mut response = json!({
+        "kind": response_kind,
         "conversation_id": conversation_id,
-        "messages": messages,
         "has_more": has_more,
         "next_before": next_before,
-    }))
+    });
+    response[records_key] = json!(messages);
+    Ok(response)
 }
