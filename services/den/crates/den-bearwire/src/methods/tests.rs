@@ -1676,6 +1676,21 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         Some(bear_id),
         Some(user_id),
         den_runtime::runtime::bearwire_projection::wire::BearWireEvent::ephemeral(
+            "session_info_update",
+            json!({
+                "title": "Persisted replay title",
+                "updated_at": "2026-07-07T00:00:00Z"
+            }),
+        ),
+    )
+    .await
+    .expect("persist session info surface event");
+    bearwire_events::append_bearwire_event(
+        &pool,
+        &session_id,
+        Some(bear_id),
+        Some(user_id),
+        den_runtime::runtime::bearwire_projection::wire::BearWireEvent::ephemeral(
             "message.reasoning.delta",
             json!({
                 "delta": "thinking privately",
@@ -1727,7 +1742,16 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                 && event.get("title").and_then(Value::as_str) == Some("History replay title")
                 && event.get("current_mode").and_then(Value::as_str) == Some("write")
         }),
-        "surface history should expose typed session metadata update: {surface_response}"
+        "surface history should expose typed session metadata update from latest session state: {surface_response}"
+    );
+    assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("session_info_update")
+                && event.get("title").and_then(Value::as_str) == Some("Persisted replay title")
+                && event.get("title_updated_at").and_then(Value::as_str)
+                    == Some("2026-07-07T00:00:00Z")
+        }),
+        "surface history should expose persisted typed session metadata update: {surface_response}"
     );
     assert!(
         !surface_events.iter().any(|event| {

@@ -173,6 +173,39 @@ async fn conversation_history_like_result(
             )
             .await?;
             for row in surface_event_rows {
+                if row.event_type == "session_info_update" {
+                    let title = row
+                        .event
+                        .data
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|title| !title.is_empty());
+                    let updated_at = row.event.data.get("updated_at").and_then(Value::as_str);
+                    if title.is_none() && updated_at.is_none() {
+                        continue;
+                    }
+                    let event_id = row
+                        .event
+                        .event_id
+                        .unwrap_or_else(|| format!("bearwire:{}", row.id));
+                    let mut event = json!({
+                        "id": event_id,
+                        "kind": "session_info_update",
+                        "role": "system",
+                        "session_id": session.client_session_id,
+                        "created_at": row.created_at,
+                    });
+                    if let Some(title) = title {
+                        event["title"] = json!(title);
+                    }
+                    if let Some(updated_at) = updated_at {
+                        event["title_updated_at"] = json!(updated_at);
+                    }
+                    messages.push(event);
+                    continue;
+                }
+
                 if row.event_type != "message.reasoning.delta" {
                     continue;
                 }
