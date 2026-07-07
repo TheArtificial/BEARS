@@ -108,15 +108,10 @@ async fn golden_trace_text_then_tool_call() {
         serde_json::json!({"type": "assistant_text_delta", "text": "Reviewing proposals."})
     );
 
-    // Lock the stable wire contract of a tool_request (ids/name/args/approval/transport).
+    // The deprecated adapter payload stays covered only at the routing level here;
+    // canonical BearWire tool-card fields are asserted in the typed projection tests.
     let tool = &payloads[1];
     assert_eq!(tool["type"], "tool_request");
-    assert_eq!(tool["tool_call_id"], "call_golden_1");
-    assert_eq!(tool["tool_name"], "memory_read");
-    assert_eq!(
-        tool["args"],
-        serde_json::json!({"path": "pair/notes/demo.md"})
-    );
     assert_eq!(tool["approval"]["required"], false);
     assert_eq!(tool["diagnostic"]["transport_version"], 4);
 }
