@@ -34,21 +34,21 @@ real-page smoke testing in development.
 
 - `GET|POST /onboarding/first-bear` — first Bear setup flow for verified users with no Bear memberships; creates a stance-aware `context_profile`, provisions native stance bindings, and redirects to chat
 
-## Bear settings (`src/web/bear_settings.rs`)
+## Bear management (`src/web/bear/settings.rs`, `src/web/bear/manage.rs`)
 
-Member-facing bear administration at `/bear/{slug}/…` (read for members, write for bear admins):
+Member-facing bear management at `/bear/{slug}/…` (read for members, write for bear admins), organized by ownership: **Yours** (identity, memory, skills — travels with the Bear) and **This Den** (tools, connections, resources, activity, people — stays here).
 
-- `GET /bear/{slug}/overview` — readiness summary and navigation hub
-- `GET /bear/{slug}/access` — membership list; bear admins grant/revoke via POST actions
-- `GET /bear/{slug}/persona` — compiled prompts and block bindings
-- `GET /bear/{slug}/stances` — native stance binding table
-- `GET|POST /bear/{slug}/models` — Bear default model plus per-profile model overrides (`inherit` or configured Den model selection option); lane-specific assignments are TBD
-- `GET /bear/{slug}/stances/{profile}` — stance detail for `chat`, `pair`, `curate`, `work`, or `watch`
-- `GET /bear/{slug}/conversations`, `GET /bear/{slug}/conversations/{conversation_id}` — conversation list and transcript
-- `GET /bear/{slug}/context` — prompt memory blocks
-- `GET /bear/{slug}/policy` — web sources, approvals, fetches, plan mode
-- `GET /bear/{slug}/advanced` — diagnostics and provision action
-- `POST /bear/{slug}/provision-missing-stances` — provision missing native stance bindings (redirects to `/stances`); legacy `/provision-missing-roles` aliases here
+- `GET /bear/{slug}/overview` — health, pending-review call to action, recent activity; wide viewports disclose memory statistics and activity-over-time (CSS only)
+- `GET /bear/{slug}/identity` — identity & charter summary; links to edit forms and per-stance models
+- `GET /bear/{slug}/skills` — owned procedures (honest placeholder until Skills land)
+- `GET /bear/{slug}/tools` — per-stance tool roster with origin (built-in / armature-local; MCP when it lands)
+- `GET /bear/{slug}/connections` — editor (armature) code token; provider connections when they land
+- `GET /bear/{slug}/resources` — the web as a resource under policy (sources/approvals/fetches; POST actions as before), internal resources noted
+- `GET /bear/{slug}/activity` — activity hub: conversations stream (jobs and Cabinet when they land); `GET /bear/{slug}/conversations/{conversation_id}` — transcript detail
+- `GET /bear/{slug}/people` — membership; bear admins grant/revoke via POST actions
+- `GET /bear/{slug}/portability` — bundle export (`GET /bear/{slug}/export.bear`), import (`POST /bears/import`), what-moves/what-stays
+- Internals (kept reachable): `GET /bear/{slug}/persona` (compiled prompts), `GET /bear/{slug}/stances` (+ `/stances/{stance}` detail, model POSTs), `GET|POST /bear/{slug}/models`, `GET /bear/{slug}/context` (prompt memory blocks), `GET /bear/{slug}/advanced` (diagnostics, provision action)
+- Retired paths redirect: `/access` → `/people`, `/policy` → `/resources`; `/conversations` remains as an alias of the activity stream
 
 ## Bear memory & entities (`src/bear_memory.rs`)
 

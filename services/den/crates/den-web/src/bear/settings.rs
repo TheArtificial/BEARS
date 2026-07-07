@@ -2436,7 +2436,7 @@ async fn grant_member_action(
         let uname = form.username.trim();
         if uname.is_empty() {
             return Ok(Redirect::to(&format!(
-                "/bear/{}/access?message={}",
+                "/bear/{}/people?message={}",
                 bear.slug,
                 urlencoding::encode("Username is required.")
             ))
@@ -2446,7 +2446,7 @@ async fn grant_member_action(
             Some(u) => u.id,
             None => {
                 return Ok(Redirect::to(&format!(
-                    "/bear/{}/access?message={}",
+                    "/bear/{}/people?message={}",
                     bear.slug,
                     urlencoding::encode("User not found.")
                 ))
@@ -2462,7 +2462,7 @@ async fn grant_member_action(
     };
     bears_db::grant_membership(state.sqlx_pool(), target_id, bear.id, role_opt).await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/access?message={}",
+        "/bear/{}/people?message={}",
         bear.slug,
         urlencoding::encode("Access granted.")
     ))
@@ -2487,7 +2487,7 @@ async fn revoke_member_action(
         let n = bears_db::count_bear_admins(state.sqlx_pool(), bear.id).await?;
         if n <= 1 {
             return Ok(Redirect::to(&format!(
-                "/bear/{}/access?message={}",
+                "/bear/{}/people?message={}",
                 bear.slug,
                 urlencoding::encode("Cannot remove the last bear admin.")
             ))
@@ -2496,13 +2496,13 @@ async fn revoke_member_action(
     }
     match bears_db::revoke_membership(state.sqlx_pool(), user_id, bear.id).await {
         Ok(()) => Ok(Redirect::to(&format!(
-            "/bear/{}/access?message={}",
+            "/bear/{}/people?message={}",
             bear.slug,
             urlencoding::encode("Access removed.")
         ))
         .into_response()),
         Err(DenError::NotFound(_)) => Ok(Redirect::to(&format!(
-            "/bear/{}/access?message={}",
+            "/bear/{}/people?message={}",
             bear.slug,
             urlencoding::encode("Membership not found.")
         ))
@@ -2528,7 +2528,7 @@ async fn add_web_source_action(
         || !matches!(policy, "preferred" | "allowed" | "blocked")
     {
         return Ok(Redirect::to(&format!(
-            "/bear/{}/policy?message={}",
+            "/bear/{}/resources?message={}",
             bear.slug,
             urlencoding::encode("Invalid web source policy form.")
         ))
@@ -2538,7 +2538,7 @@ async fn add_web_source_action(
         Ok(scope_value) => scope_value,
         Err(err) => {
             return Ok(Redirect::to(&format!(
-                "/bear/{}/policy?message={}",
+                "/bear/{}/resources?message={}",
                 bear.slug,
                 urlencoding::encode(&err.to_string())
             ))
@@ -2565,7 +2565,7 @@ async fn add_web_source_action(
     .execute(state.sqlx_pool())
     .await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/policy?message={}",
+        "/bear/{}/resources?message={}",
         bear.slug,
         urlencoding::encode("Web source saved.")
     ))
@@ -2587,7 +2587,7 @@ async fn delete_web_source_action(
         .execute(state.sqlx_pool())
         .await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/policy?message={}",
+        "/bear/{}/resources?message={}",
         bear.slug,
         urlencoding::encode("Web source deleted.")
     ))
@@ -2607,7 +2607,7 @@ async fn add_web_approval_action(
     let scope_kind = form.scope_kind.trim();
     if !matches!(scope_kind, "host" | "url") {
         return Ok(Redirect::to(&format!(
-            "/bear/{}/policy?message={}",
+            "/bear/{}/resources?message={}",
             bear.slug,
             urlencoding::encode("Invalid web approval scope.")
         ))
@@ -2617,7 +2617,7 @@ async fn add_web_approval_action(
         Ok(scope_value) => scope_value,
         Err(err) => {
             return Ok(Redirect::to(&format!(
-                "/bear/{}/policy?message={}",
+                "/bear/{}/resources?message={}",
                 bear.slug,
                 urlencoding::encode(&err.to_string())
             ))
@@ -2635,7 +2635,7 @@ async fn add_web_approval_action(
     )
     .await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/policy?message={}",
+        "/bear/{}/resources?message={}",
         bear.slug,
         urlencoding::encode("Web approval added.")
     ))
@@ -2657,7 +2657,7 @@ async fn revoke_web_approval_action(
         .execute(state.sqlx_pool())
         .await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/policy?message={}",
+        "/bear/{}/resources?message={}",
         bear.slug,
         urlencoding::encode("Web approval revoked.")
     ))

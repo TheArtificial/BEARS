@@ -1089,7 +1089,7 @@ async fn bear_edit_overview_post(
         }
 
         let out_slug = form.slug.trim().to_string();
-        return Ok(Redirect::to(&format!("/bear/{out_slug}/overview")).into_response());
+        return Ok(Redirect::to(&format!("/bear/{out_slug}/identity")).into_response());
     }
 
     render_template(
@@ -1206,7 +1206,7 @@ async fn bear_edit_prompt_post(
             .await;
         }
 
-        return Ok(Redirect::to(&format!("/bear/{}/overview", bear.slug)).into_response());
+        return Ok(Redirect::to(&format!("/bear/{}/identity", bear.slug)).into_response());
     }
 
     render_template(
@@ -1339,7 +1339,7 @@ async fn bear_edit_configuration_post(
             .await;
         }
 
-        return Ok(Redirect::to(&format!("/bear/{}/overview", bear.slug)).into_response());
+        return Ok(Redirect::to(&format!("/bear/{}/identity", bear.slug)).into_response());
     }
 
     let page = bear_configuration_page_context(&state, &bear, &form).await;
@@ -1446,7 +1446,7 @@ async fn member_add_post(
 
     bears_db::grant_membership(state.sqlx_pool(), target.id, bear.id, role_db).await?;
 
-    Ok(Redirect::to(&format!("/bear/{}/access", bear.slug)).into_response())
+    Ok(Redirect::to(&format!("/bear/{}/people", bear.slug)).into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1494,5 +1494,5 @@ async fn member_remove_post(
 
     bears_db::revoke_membership(state.sqlx_pool(), body.remove_user_id, bear.id).await?;
 
-    Ok(Redirect::to(&format!("/bear/{}/access", bear.slug)).into_response())
+    Ok(Redirect::to(&format!("/bear/{}/people", bear.slug)).into_response())
 }
