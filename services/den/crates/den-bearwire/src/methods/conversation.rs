@@ -3,6 +3,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
+use den_runtime::bearwire_events;
 use den_service::{client_sessions, conversation::persistence, DenState};
 
 use crate::auth::authenticated_bear;
@@ -42,9 +43,9 @@ pub(crate) async fn conversation_surface_history_result(
     headers: &HeaderMap,
     params: &Value,
 ) -> Result<Value, CustomError> {
-    // ponytail: surface replay currently reuses structured conversation rows. The ceiling is
-    // missing live-only surface facts (session updates, reasoning replay policy); replace this
-    // with a dedicated persisted surface-event stream when Phase 3 grows beyond tool replay.
+    // ponytail: surface replay currently merges structured conversation rows with a small
+    // allowlist of persisted BearWire events. The ceiling is pagination/order across independent
+    // sequences; replace this with a dedicated persisted surface-event stream when Phase 3 grows.
     conversation_history_like_result(
         state,
         headers,
@@ -163,6 +164,57 @@ async fn conversation_history_like_result(
                 session_event["title_updated_at"] = json!(updated_at);
             }
             messages.insert(0, session_event);
+
+            let surface_event_rows = bearwire_events::list_bearwire_events_after(
+                &state.sqlx_pool,
+                &session.client_session_id,
+                None,
+                limit,
+            )
+            .await?;
+            for row in surface_event_rows {
+                if row.event_type != "message.reasoning.delta" {
+                    continue;
+                }
+                let delta = row
+                    .event
+                    .data
+                    .get("delta")
+                    .or_else(|| row.event.data.get("text"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if delta.is_empty() {
+                    continue;
+                }
+                let source = row
+                    .event
+                    .data
+                    .get("source")
+                    .and_then(Value::as_str)
+                    .unwrap_or("provider_reasoning")
+                    .to_string();
+                let replay_policy = row
+                    .event
+                    .data
+                    .get("replay_policy")
+                    .and_then(Value::as_str)
+                    .unwrap_or("none")
+                    .to_string();
+                let event_id = row
+                    .event
+                    .event_id
+                    .unwrap_or_else(|| format!("bearwire:{}", row.id));
+                messages.push(json!({
+                    "id": event_id,
+                    "kind": "reasoning_delta",
+                    "role": "assistant",
+                    "text": delta,
+                    "source": source,
+                    "replay_policy": replay_policy,
+                    "created_at": row.created_at,
+                }));
+            }
         }
     }
 

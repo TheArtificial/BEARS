@@ -21,7 +21,9 @@ use den_protocol::{
     RoleRuntimeBinding, RuntimeConversationBackend, RuntimeConversationRef, RuntimeHistoryRecord,
     RuntimeSemanticEvent, RuntimeStreamEvent,
 };
-use den_runtime::{native_runtime::NativeRuntimeConversationBackend, turn_obligations, turn_runs};
+use den_runtime::{
+    bearwire_events, native_runtime::NativeRuntimeConversationBackend, turn_obligations, turn_runs,
+};
 use den_service::{
     bears::{db as bears_db, db::BearParams},
     client_sessions,
@@ -1668,6 +1670,23 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         tool_result.get("text").and_then(Value::as_str),
         Some("Used fs_read_text_file (incomplete)")
     );
+    bearwire_events::append_bearwire_event(
+        &pool,
+        &session_id,
+        Some(bear_id),
+        Some(user_id),
+        den_runtime::runtime::bearwire_projection::wire::BearWireEvent::ephemeral(
+            "message.reasoning.delta",
+            json!({
+                "delta": "thinking privately",
+                "source": "provider_reasoning",
+                "replay_policy": "none"
+            }),
+        ),
+    )
+    .await
+    .expect("persist reasoning surface event");
+
     let surface_response = rpc_value(
         test_state(pool),
         &token,
@@ -1693,6 +1712,14 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                 && event.get("current_mode").and_then(Value::as_str) == Some("write")
         }),
         "surface history should expose typed session metadata update: {surface_response}"
+    );
+    assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("reasoning_delta")
+                && event.get("text").and_then(Value::as_str) == Some("thinking privately")
+                && event.get("replay_policy").and_then(Value::as_str) == Some("none")
+        }),
+        "surface history should expose typed persisted reasoning with replay policy: {surface_response}"
     );
     assert!(
         surface_events
