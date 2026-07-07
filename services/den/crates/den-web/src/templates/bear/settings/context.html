@@ -11,6 +11,54 @@
         by layer — what your Bear sees when it thinks.
     </p>
 
+    {% if latest_budget %}
+    <h3>The last assembled turn</h3>
+    <p class="form-hint">
+        Where the context went on the most recent turn — from
+        <a
+            href="/bear/{{ bear.slug | e }}/conversations/{{ latest_budget.conversation_id | e }}"
+            >{{ latest_budget.conversation_title | e }}</a
+        >
+        at {{ latest_budget.updated_at | e }}, estimated against
+        <code>{{ latest_budget.model | e }}</code>.
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>Source</th>
+                <th>Tokens (est.)</th>
+                <th>Share</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in latest_budget.components %}
+            <tr>
+                <td>{{ c.label | e }}</td>
+                <td>{{ c.tokens }}</td>
+                <td>{{ c.pct_display }}%</td>
+                <td class="full-width">
+                    <span class="bear-manage-bar-track"
+                        ><span
+                            class="bear-manage-bar bear-manage-bar-w{{ c.pct }}"
+                        ></span
+                    ></span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="form-hint">
+        {{ latest_budget.estimated_input_tokens }} input tokens estimated{%
+        if latest_budget.context_window %} of a
+        {{ latest_budget.context_window }}-token window{% endif %} ·
+        {{ latest_budget.reserved_output_tokens }} reserved for output{% if
+        latest_budget.over_budget %} · <strong>over budget</strong>{% elif
+        latest_budget.near_budget %} · <strong>near budget</strong>{% endif
+        %}. Estimates, not provider-exact counts.
+    </p>
+    {% endif %}
+
     <h3>1 · Compiled stance prompt</h3>
     <p class="form-hint">
         The foundation: your charter combined with each stance's protected

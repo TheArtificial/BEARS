@@ -2344,6 +2344,60 @@ async fn context_view(
     // Layer 4: recall availability shapes what assembly can include.
     let recall_configured = state.config.qdrant_url.is_some();
 
+    // The most recent turn's budget report: per-component attribution of the
+    // assembled context, persisted per conversation on every turn.
+    let latest_budget_row: Option<(serde_json::Value, Uuid, Option<String>, String)> =
+        sqlx::query_as(
+            "SELECT latest_context_budget_json, id, current_title, \
+                    to_char(latest_context_budget_updated_at, 'YYYY-MM-DD HH24:MI') \
+             FROM conversations \
+             WHERE bear_id = $1 AND latest_context_budget_json IS NOT NULL \
+             ORDER BY latest_context_budget_updated_at DESC NULLS LAST LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(|err| CustomError::Database(format!("latest bear context budget: {err}")))?;
+    let latest_budget = latest_budget_row.and_then(|(value, conv_id, title, at)| {
+        let report: ContextBudgetReport = serde_json::from_value(value).ok()?;
+        let denominator: u32 = report.estimated_input_tokens.max(1);
+        let mut components: Vec<serde_json::Value> = report
+            .components
+            .iter()
+            .filter(|c| c.estimated_tokens > 0)
+            .map(|c| {
+                let pct_exact = f64::from(c.estimated_tokens) / f64::from(denominator) * 100.0;
+                // Bucket to tens for the CSS bar width classes; keep the
+                // exact value for display.
+                let pct_bucket = ((pct_exact / 10.0).ceil() as i64).clamp(0, 10) * 10;
+                json!({
+                    "label": c.label,
+                    "tokens": c.estimated_tokens,
+                    "pct_display": format!("{pct_exact:.0}"),
+                    "pct": pct_bucket,
+                })
+            })
+            .collect();
+        components.sort_by(|a, b| {
+            b["tokens"]
+                .as_u64()
+                .unwrap_or(0)
+                .cmp(&a["tokens"].as_u64().unwrap_or(0))
+        });
+        Some(json!({
+            "model": report.model,
+            "context_window": report.context_window,
+            "estimated_input_tokens": report.estimated_input_tokens,
+            "reserved_output_tokens": report.reserved_output_tokens,
+            "near_budget": report.near_budget,
+            "over_budget": report.over_budget,
+            "components": components,
+            "conversation_id": conv_id.to_string(),
+            "conversation_title": title.unwrap_or_else(|| "Untitled conversation".to_string()),
+            "updated_at": at,
+        }))
+    });
+
     web::render_template(
         &state,
         "bear/settings/context.html",
@@ -2357,6 +2411,7 @@ async fn context_view(
             session_note_count,
             inactive_note_count,
             recall_configured,
+            latest_budget,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "context"),
