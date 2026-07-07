@@ -73,6 +73,16 @@ pub enum SurfaceHistoryEvent {
 }
 
 impl SurfaceHistoryEvent {
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            SurfaceHistoryEvent::Message { .. } => "message",
+            SurfaceHistoryEvent::ToolCall { .. } => "tool_call",
+            SurfaceHistoryEvent::ToolResult { .. } => "tool_result",
+            SurfaceHistoryEvent::ReasoningDelta { .. } => "reasoning_delta",
+            SurfaceHistoryEvent::SessionInfoUpdate { .. } => "session_info_update",
+        }
+    }
+
     pub fn validate_replay_record(&self) -> Result<(), &'static str> {
         match self {
             SurfaceHistoryEvent::Message { role, text, .. } => {
@@ -127,5 +137,131 @@ impl SurfaceHistoryEvent {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn valid_surface_records_validate() {
+        let records = [
+            SurfaceHistoryEvent::Message {
+                id: Some("m1".to_string()),
+                role: "user".to_string(),
+                text: "hello".to_string(),
+                created_at: Some("2026-07-07T00:00:00Z".to_string()),
+            },
+            SurfaceHistoryEvent::ToolCall {
+                id: Some("call-1".to_string()),
+                role: Some("assistant".to_string()),
+                tool_call_id: "call-1".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                status: "pending".to_string(),
+                arguments: json!({ "path": "README.md" }),
+                created_at: None,
+            },
+            SurfaceHistoryEvent::ToolResult {
+                id: Some("call-1".to_string()),
+                role: Some("tool".to_string()),
+                tool_call_id: "call-1".to_string(),
+                tool_name: "fs_read_text_file".to_string(),
+                status: "ok".to_string(),
+                text: Some("Read file.".to_string()),
+                raw_output: json!({ "content": "hello" }),
+                created_at: None,
+            },
+            SurfaceHistoryEvent::ReasoningDelta {
+                id: Some("r1".to_string()),
+                role: Some("assistant".to_string()),
+                text: "thinking".to_string(),
+                source: Some("provider_reasoning".to_string()),
+                replay_policy: Some("thought".to_string()),
+                created_at: None,
+            },
+            SurfaceHistoryEvent::SessionInfoUpdate {
+                id: Some("s1".to_string()),
+                role: Some("system".to_string()),
+                session_id: Some("session-1".to_string()),
+                title: Some("Title".to_string()),
+                title_updated_at: None,
+                current_mode: Some("write".to_string()),
+                created_at: None,
+            },
+        ];
+
+        for record in records {
+            record
+                .validate_replay_record()
+                .unwrap_or_else(|err| panic!("{} should validate: {err}", record.kind()));
+        }
+    }
+
+    #[test]
+    fn invalid_surface_records_are_rejected() {
+        let cases = [
+            (
+                SurfaceHistoryEvent::Message {
+                    id: None,
+                    role: "".to_string(),
+                    text: "hello".to_string(),
+                    created_at: None,
+                },
+                "message missing required role",
+            ),
+            (
+                SurfaceHistoryEvent::ToolCall {
+                    id: None,
+                    role: None,
+                    tool_call_id: "".to_string(),
+                    tool_name: "tool".to_string(),
+                    status: "pending".to_string(),
+                    arguments: Value::Null,
+                    created_at: None,
+                },
+                "tool record missing required tool_call_id",
+            ),
+            (
+                SurfaceHistoryEvent::ReasoningDelta {
+                    id: None,
+                    role: None,
+                    text: "".to_string(),
+                    source: None,
+                    replay_policy: Some("thought".to_string()),
+                    created_at: None,
+                },
+                "reasoning record missing required text",
+            ),
+            (
+                SurfaceHistoryEvent::SessionInfoUpdate {
+                    id: None,
+                    role: None,
+                    session_id: None,
+                    title: None,
+                    title_updated_at: None,
+                    current_mode: None,
+                    created_at: None,
+                },
+                "session info update missing title or title_updated_at",
+            ),
+        ];
+
+        for (record, expected) in cases {
+            assert_eq!(record.validate_replay_record(), Err(expected));
+        }
+    }
+
+    #[test]
+    fn message_created_at_must_decode_as_string() {
+        let err = serde_json::from_value::<SurfaceHistoryEvent>(json!({
+            "kind": "message",
+            "role": "user",
+            "text": "hello",
+            "created_at": [2026, 7, 7]
+        }))
+        .expect_err("array timestamp should not decode as string created_at");
+        assert!(err.to_string().contains("expected a string"), "{err}");
     }
 }
