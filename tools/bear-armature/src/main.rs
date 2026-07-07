@@ -3906,6 +3906,16 @@ fn initialize_result(runtime: &RuntimeConfig) -> Result<Value> {
     )?)
 }
 
+fn den_session_display_title(session: &Value) -> Option<String> {
+    session
+        .get("conversation_title")
+        .or_else(|| session.get("title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+}
+
 fn map_den_sessions_list_to_acp(den: &Value) -> Result<Value> {
     let sessions_in = den
         .get("sessions")
@@ -3927,11 +3937,7 @@ fn map_den_sessions_list_to_acp(den: &Value) -> Result<Value> {
         if session_id.is_empty() || cwd.is_empty() {
             continue;
         }
-        let title = s
-            .get("title")
-            .and_then(Value::as_str)
-            .filter(|t| !t.is_empty())
-            .map(str::to_string)
+        let title = den_session_display_title(&s)
             .or_else(|| {
                 s.get("resolved_conversation_id")
                     .and_then(Value::as_str)
@@ -4094,12 +4100,7 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
             .get("resolved_conversation_id")
             .and_then(Value::as_str)
             .map(str::to_string),
-        thread_title: den_session
-            .get("title")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
+        thread_title: den_session_display_title(den_session),
         current_mode: Some(infer_mode_from_den_session(den_session).to_string()),
     };
     ctx.raw = json!({
@@ -14514,6 +14515,65 @@ mod tests {
         assert_eq!(m["nextCursor"], "abc");
         assert_eq!(m["sessions"][0]["sessionId"], "s1");
         assert_eq!(m["sessions"][0]["cwd"], "/tmp");
+    }
+
+    #[test]
+    fn map_den_sessions_list_prefers_conversation_title_over_legacy_title() {
+        let den = json!({
+            "sessions": [{
+                "acp_session_id": "s1",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "conversation_id": "conv-x",
+                "resolved_conversation_id": "den-conv-x",
+                "conversation_title": "Canonical title",
+                "title": "Legacy title",
+                "cwd": "/tmp"
+            }]
+        });
+        let m = map_den_sessions_list_to_acp(&den).unwrap();
+        assert_eq!(m["sessions"][0]["title"], "Canonical title");
+    }
+
+    #[test]
+    fn session_context_from_den_session_prefers_conversation_title() {
+        let context = session_context_from_den_session(
+            &json!({ "cwd": "/tmp" }),
+            &json!({
+                "cwd": "/tmp",
+                "conversation_id": "conv-x",
+                "conversation_title": "Canonical title",
+                "title": "Legacy title"
+            }),
+        )
+        .unwrap();
+        assert_eq!(context.thread_title.as_deref(), Some("Canonical title"));
+    }
+
+    #[test]
+    fn session_title_mapping_falls_back_to_legacy_title() {
+        let den = json!({
+            "sessions": [{
+                "acp_session_id": "s1",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "conversation_id": "conv-x",
+                "resolved_conversation_id": Value::Null,
+                "title": "Legacy title",
+                "cwd": "/tmp"
+            }]
+        });
+        let mapped = map_den_sessions_list_to_acp(&den).unwrap();
+        assert_eq!(mapped["sessions"][0]["title"], "Legacy title");
+
+        let context = session_context_from_den_session(
+            &json!({ "cwd": "/tmp" }),
+            &json!({
+                "cwd": "/tmp",
+                "conversation_id": "conv-x",
+                "title": "Legacy title"
+            }),
+        )
+        .unwrap();
+        assert_eq!(context.thread_title.as_deref(), Some("Legacy title"));
     }
 
     #[test]
