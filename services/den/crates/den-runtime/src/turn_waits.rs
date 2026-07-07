@@ -4,10 +4,11 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use crate::runtime::bearwire_projection::wire::{
-    tool_call_wire, BearWireEvent, ResourceRef, ToolCallRequestedWire, ToolCallWaitingWire,
-    ToolPermissionWire,
+use bearwire_protocol::wire::{
+    BearWireEvent, ResourceRef, ToolCallRequestedWire, ToolCallWaitingWire, ToolPermissionWire,
 };
+
+use crate::runtime::bearwire_projection::wire::tool_call_wire;
 use crate::{bearwire_events, turn_obligations, turn_runs};
 
 #[derive(Debug, Clone)]

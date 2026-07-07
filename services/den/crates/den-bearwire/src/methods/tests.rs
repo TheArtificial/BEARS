@@ -44,8 +44,9 @@ use den_service::{
 use crate::{
     events::{events, EventStreamQuery},
     methods::run::persist_run_failed,
-    rpc::{rpc, JsonRpcRequest},
+    rpc::rpc,
 };
+use bearwire_protocol::rpc::JsonRpcRequest;
 
 fn test_state(pool: sqlx::PgPool) -> DenState {
     test_state_with_config(pool, den_core::config::Config::test_stub())

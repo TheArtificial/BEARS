@@ -1,8 +1,7 @@
 use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
 use serde_json::{json, Value};
 
-pub(crate) use bearwire_protocol::rpc::JsonRpcRequest;
-use bearwire_protocol::rpc::JsonRpcResponse;
+use bearwire_protocol::rpc::{JsonRpcRequest, JsonRpcResponse};
 use den_http::errors::CustomError;
 use den_service::DenState;
 

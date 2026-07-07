@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use crate::runtime::bearwire_projection::wire::BearWireEvent;
+use bearwire_protocol::wire::BearWireEvent;
 
 #[derive(Debug, Clone)]
 pub struct BearWireEventRow {

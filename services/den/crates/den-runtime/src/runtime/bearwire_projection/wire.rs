@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
-pub use bearwire_protocol::wire::{
-    bearwire_event_to_json_rpc_notification, BearWireEvent, JsonRpcNotification, ResourceRef,
+use bearwire_protocol::wire::{
+    bearwire_event_to_json_rpc_notification, BearWireEvent, JsonRpcNotification,
     ToolCallFinishStatusWire, ToolCallFinishWire, ToolCallRefWire, ToolCallRequestedWire,
     ToolCallWaitingWire, ToolCallWire, ToolPermissionWire,
 };
