@@ -3,6 +3,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
+use den_protocol::surface::SurfaceHistoryEvent;
 use den_runtime::bearwire_events;
 use den_service::{client_sessions, conversation::persistence, DenState};
 
@@ -99,31 +100,41 @@ async fn conversation_history_like_result(
         .filter_map(|row| {
             let message = row.to_user_history_record()?;
             let mut record = json!({
-                "id": message.message_id.or_else(|| Some(message.sequence_no.to_string())),
+                "id": message.message_id.clone().or_else(|| Some(message.sequence_no.to_string())),
                 "kind": message.kind,
                 "role": message.role,
                 "created_at": message.created_at,
             });
             match record.get("kind").and_then(Value::as_str) {
-                Some("tool_call") => {
-                    record["tool_call_id"] = json!(message.tool_call_id);
-                    record["tool_name"] = json!(message.tool_name);
-                    record["status"] = json!(message.status);
-                    record["arguments"] = message.arguments;
-                    Some(record)
-                }
+                Some("tool_call") => Some(json!(SurfaceHistoryEvent::ToolCall {
+                    id: message
+                        .message_id
+                        .or_else(|| Some(message.sequence_no.to_string())),
+                    role: Some(message.role),
+                    tool_call_id: message.tool_call_id?,
+                    tool_name: message.tool_name?,
+                    status: message.status?,
+                    arguments: message.arguments,
+                    created_at: Some(message.created_at.to_string()),
+                })),
                 Some("tool_result") => {
-                    record["tool_call_id"] = json!(message.tool_call_id);
-                    record["tool_name"] = json!(message.tool_name);
-                    record["status"] = json!(message.status);
-                    record["raw_output"] = message.raw_output;
-                    if !message.content.trim().is_empty() {
-                        record["text"] =
-                            json!(den_runtime::agent_assist::sanitize_visible_transcript_text(
-                                &message.content
-                            ));
-                    }
-                    Some(record)
+                    let text = (!message.content.trim().is_empty()).then(|| {
+                        den_runtime::agent_assist::sanitize_visible_transcript_text(
+                            &message.content,
+                        )
+                    });
+                    Some(json!(SurfaceHistoryEvent::ToolResult {
+                        id: message
+                            .message_id
+                            .or_else(|| Some(message.sequence_no.to_string())),
+                        role: Some(message.role),
+                        tool_call_id: message.tool_call_id?,
+                        tool_name: message.tool_name?,
+                        status: message.status?,
+                        text,
+                        raw_output: message.raw_output,
+                        created_at: Some(message.created_at.to_string()),
+                    }))
                 }
                 _ => {
                     let text = den_runtime::agent_assist::sanitize_visible_transcript_text(

@@ -22,6 +22,7 @@ use agent_client_protocol::schema::{
     ToolKind, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, bail, Context, Result};
+use den_protocol::surface::SurfaceHistoryEvent;
 
 use approvals::{
     approval_url_host_scope, parse_permission_decision, permission_class_for_tool,
@@ -4321,80 +4322,132 @@ fn history_replay_chunks_with_boundaries(
         .collect()
 }
 
-fn reload_history_message_from_value(m: Value) -> Result<Option<ReloadHistoryMessage>> {
-    let kind = m
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or("message")
-        .to_string();
-    let role = m.get("role").and_then(Value::as_str).unwrap_or("");
-    let text = m
-        .get("text")
-        .or_else(|| m.get("delta"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if matches!(kind.as_str(), "message" | "") && text.trim().is_empty() {
-        return Ok(None);
+fn reload_history_message_from_value(mut m: Value) -> Result<Option<ReloadHistoryMessage>> {
+    if m.get("kind").is_none() {
+        m["kind"] = json!("message");
     }
-
-    let id = m.get("id").and_then(Value::as_str).map(str::to_string);
-    let tool_call_id = m
-        .get("tool_call_id")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let tool_name = m
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let status = m.get("status").and_then(Value::as_str).map(str::to_string);
-    let title = m.get("title").and_then(Value::as_str).map(str::to_string);
-    let title_updated_at = m
-        .get("title_updated_at")
-        .or_else(|| m.get("updated_at"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let replay_policy = m
-        .get("replay_policy")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-
-    if matches!(kind.as_str(), "tool_call" | "tool_result") {
-        if tool_call_id.as_deref().unwrap_or_default().is_empty() {
-            return Err(anyhow!(
-                "BearWire surface history {kind} missing required tool_call_id"
-            ));
-        }
-        if tool_name.as_deref().unwrap_or_default().is_empty() {
-            return Err(anyhow!(
-                "BearWire surface history {kind} missing required tool_name"
-            ));
-        }
-        if status.as_deref().unwrap_or_default().is_empty() {
-            return Err(anyhow!(
-                "BearWire surface history {kind} missing required status"
-            ));
+    let kind = m.get("kind").and_then(Value::as_str).unwrap_or("message");
+    if matches!(kind, "message" | "") {
+        let text = m.get("text").and_then(Value::as_str).unwrap_or("");
+        if text.trim().is_empty() {
+            return Ok(None);
         }
     }
-    if matches!(kind.as_str(), "reasoning_delta" | "reasoning") && text.trim().is_empty() {
-        return Err(anyhow!(
-            "BearWire surface history {kind} missing required text or delta"
-        ));
+    if matches!(kind, "reasoning_delta" | "reasoning")
+        && m.get("text").is_none()
+        && m.get("delta").is_some()
+    {
+        m["text"] = m.get("delta").cloned().unwrap_or(Value::Null);
     }
 
-    Ok(Some(ReloadHistoryMessage {
-        id,
-        kind,
-        role: role.to_string(),
-        text: text.to_string(),
-        tool_call_id,
-        tool_name,
-        status,
-        arguments: m.get("arguments").cloned().unwrap_or(Value::Null),
-        raw_output: m.get("raw_output").cloned().unwrap_or(Value::Null),
-        title,
-        title_updated_at,
-        replay_policy,
-    }))
+    let event: SurfaceHistoryEvent = serde_json::from_value(m)
+        .context("decode BearWire surface history record as shared SurfaceHistoryEvent")?;
+    event
+        .validate_replay_record()
+        .map_err(|message| anyhow!("BearWire surface history {message}"))?;
+
+    let message = match event {
+        SurfaceHistoryEvent::Message { id, role, text, .. } => ReloadHistoryMessage {
+            id,
+            kind: "message".to_string(),
+            role,
+            text,
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            arguments: Value::Null,
+            raw_output: Value::Null,
+            title: None,
+            title_updated_at: None,
+            replay_policy: None,
+        },
+        SurfaceHistoryEvent::ToolCall {
+            id,
+            role,
+            tool_call_id,
+            tool_name,
+            status,
+            arguments,
+            ..
+        } => ReloadHistoryMessage {
+            id,
+            kind: "tool_call".to_string(),
+            role: role.unwrap_or_else(|| "assistant".to_string()),
+            text: String::new(),
+            tool_call_id: Some(tool_call_id),
+            tool_name: Some(tool_name),
+            status: Some(status),
+            arguments,
+            raw_output: Value::Null,
+            title: None,
+            title_updated_at: None,
+            replay_policy: None,
+        },
+        SurfaceHistoryEvent::ToolResult {
+            id,
+            role,
+            tool_call_id,
+            tool_name,
+            status,
+            text,
+            raw_output,
+            ..
+        } => ReloadHistoryMessage {
+            id,
+            kind: "tool_result".to_string(),
+            role: role.unwrap_or_else(|| "tool".to_string()),
+            text: text.unwrap_or_default(),
+            tool_call_id: Some(tool_call_id),
+            tool_name: Some(tool_name),
+            status: Some(status),
+            arguments: Value::Null,
+            raw_output,
+            title: None,
+            title_updated_at: None,
+            replay_policy: None,
+        },
+        SurfaceHistoryEvent::ReasoningDelta {
+            id,
+            role,
+            text,
+            replay_policy,
+            ..
+        } => ReloadHistoryMessage {
+            id,
+            kind: "reasoning_delta".to_string(),
+            role: role.unwrap_or_else(|| "assistant".to_string()),
+            text,
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            arguments: Value::Null,
+            raw_output: Value::Null,
+            title: None,
+            title_updated_at: None,
+            replay_policy,
+        },
+        SurfaceHistoryEvent::SessionInfoUpdate {
+            id,
+            role,
+            title,
+            title_updated_at,
+            ..
+        } => ReloadHistoryMessage {
+            id,
+            kind: "session_info_update".to_string(),
+            role: role.unwrap_or_else(|| "system".to_string()),
+            text: String::new(),
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            arguments: Value::Null,
+            raw_output: Value::Null,
+            title,
+            title_updated_at,
+            replay_policy: None,
+        },
+    };
+    Ok(Some(message))
 }
 
 async fn fetch_conversation_surface_history_chronological(
@@ -10347,10 +10400,8 @@ mod tests {
         }))
         .expect_err("structured tool history missing name should fail");
 
-        assert!(
-            err.to_string().contains("missing required tool_name"),
-            "unexpected error: {err:#}"
-        );
+        let message = format!("{err:#}");
+        assert!(message.contains("tool_name"), "unexpected error: {message}");
     }
 
     #[test]
@@ -10416,10 +10467,8 @@ mod tests {
         }))
         .expect_err("structured reasoning history missing text should fail");
 
-        assert!(
-            err.to_string().contains("missing required text or delta"),
-            "unexpected error: {err:#}"
-        );
+        let message = format!("{err:#}");
+        assert!(message.contains("text"), "unexpected error: {message}");
     }
 
     #[test]

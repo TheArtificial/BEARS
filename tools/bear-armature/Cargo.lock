@@ -168,6 +168,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "axum",
+ "den-protocol",
  "futures-util",
  "http",
  "reqwest 0.12.28",
@@ -348,6 +349,15 @@ name = "data-encoding"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
+
+[[package]]
+name = "den-protocol"
+version = "0.1.2"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+]
 
 [[package]]
 name = "deranged"
@@ -2218,6 +2228,7 @@ checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
+ "serde_core",
  "wasm-bindgen",
 ]
 

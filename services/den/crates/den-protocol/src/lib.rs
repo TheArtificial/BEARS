@@ -1,11 +1,15 @@
+#[cfg(feature = "runtime-api")]
 use bytes::Bytes;
-use den_core::config::Config;
-use den_core::DenError;
+#[cfg(feature = "runtime-api")]
+use den_core::{config::Config, DenError};
+#[cfg(feature = "runtime-api")]
 use futures::Stream;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "runtime-api")]
 use std::pin::Pin;
 
 pub mod context_budget;
+pub mod surface;
 
 pub use context_budget::{
     ContextBudgetComponentReport, ContextBudgetEstimatePrecision, ContextBudgetReport,
@@ -166,8 +170,10 @@ pub struct RuntimeEventParser {
     pub parse_json_event: RuntimeParserFn,
 }
 
+#[cfg(feature = "runtime-api")]
 pub type RuntimeByteStream =
     Pin<Box<dyn Stream<Item = Result<Bytes, den_core::DenError>> + Send + 'static>>;
+#[cfg(feature = "runtime-api")]
 pub type RuntimeEventStream =
     Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, den_core::DenError>> + Send + 'static>>;
 
@@ -298,6 +304,7 @@ pub enum RuntimeErrorCategory {
     Internal,
 }
 
+#[cfg(feature = "runtime-api")]
 #[allow(async_fn_in_trait)]
 pub trait RuntimeHealthCheck {
     fn compatibility_backend_name(&self) -> &'static str;
@@ -305,11 +312,13 @@ pub trait RuntimeHealthCheck {
     async fn check_health(&self) -> Result<String, DenError>;
 }
 
+#[cfg(feature = "runtime-api")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeStartupCapabilities {
     pub runtime_required_for_edge_gateway: bool,
 }
 
+#[cfg(feature = "runtime-api")]
 impl RuntimeStartupCapabilities {
     pub fn from_config(config: &Config) -> Self {
         Self {
@@ -318,10 +327,12 @@ impl RuntimeStartupCapabilities {
     }
 }
 
+#[cfg(feature = "runtime-api")]
 pub fn edge_gateway_requires_runtime(config: &Config) -> bool {
     RuntimeStartupCapabilities::from_config(config).runtime_required_for_edge_gateway
 }
 
+#[cfg(feature = "runtime-api")]
 #[allow(async_fn_in_trait)]
 pub trait RoleProfileRegistry {
     async fn resolve_compatibility_binding(
@@ -331,6 +342,7 @@ pub trait RoleProfileRegistry {
     ) -> Result<Option<RoleRuntimeBinding>, DenError>;
 }
 
+#[cfg(feature = "runtime-api")]
 #[allow(async_fn_in_trait)]
 pub trait SessionConversationRuntime {
     async fn ensure_session_conversation(
@@ -346,6 +358,7 @@ pub trait SessionConversationRuntime {
 }
 
 /// Runtime conversation materialization backend (create, verify, load_history).
+#[cfg(feature = "runtime-api")]
 #[allow(async_fn_in_trait)]
 pub trait RuntimeConversationBackend {
     async fn create_conversation(
@@ -366,11 +379,13 @@ pub trait RuntimeConversationBackend {
     ) -> Result<RuntimeHistoryPage, DenError>;
 }
 
+#[cfg(feature = "runtime-api")]
 #[allow(async_fn_in_trait)]
 pub trait RoleRunner {
     async fn check_health(&self) -> Result<String, DenError>;
 }
 
+#[cfg(feature = "runtime-api")]
 #[allow(async_fn_in_trait)]
 pub trait InteractionRunStore {
     async fn check_health(&self) -> Result<String, DenError>;
@@ -378,12 +393,14 @@ pub trait InteractionRunStore {
 
 pub trait ToolActuatorRegistry {}
 
+#[cfg(feature = "runtime-api")]
 #[allow(async_fn_in_trait)]
 pub trait RetrievalService {
     async fn check_health(&self) -> Result<String, DenError>;
 }
 
 /// Classify a runtime-facing error into a stable Den-owned category for runner policy.
+#[cfg(feature = "runtime-api")]
 pub fn classify_runtime_error(err: &DenError) -> RuntimeErrorCategory {
     let message = err.to_string().to_ascii_lowercase();
     if message.contains("waiting on an unresolved tool approval")
@@ -409,10 +426,12 @@ pub fn classify_runtime_error(err: &DenError) -> RuntimeErrorCategory {
     }
 }
 
+#[cfg(feature = "runtime-api")]
 pub fn runtime_error_is_conflict_pending_approval(err: &DenError) -> bool {
     classify_runtime_error(err) == RuntimeErrorCategory::ConflictPendingApproval
 }
 
+#[cfg(feature = "runtime-api")]
 pub fn runtime_error_is_no_active_runs_cancel(err: &DenError) -> bool {
     err.to_string()
         .to_ascii_lowercase()
