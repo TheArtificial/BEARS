@@ -78,14 +78,9 @@ async fn conversation_history_like_result(
         .rev()
         .filter_map(|row| {
             let message = row.to_user_history_record()?;
-            let mut record = json!({
-                "id": message.message_id.clone().or_else(|| Some(message.sequence_no.to_string())),
-                "kind": message.kind,
-                "role": message.role,
-                "created_at": message.created_at,
-            });
-            match record.get("kind").and_then(Value::as_str) {
-                Some("tool_call") => Some(json!(SurfaceHistoryEvent::ToolCall {
+            let kind = message.kind.as_str();
+            match kind {
+                "tool_call" => Some(json!(SurfaceHistoryEvent::ToolCall {
                     id: message
                         .message_id
                         .or_else(|| Some(message.sequence_no.to_string())),
@@ -96,7 +91,7 @@ async fn conversation_history_like_result(
                     arguments: message.arguments,
                     created_at: Some(message.created_at.to_string()),
                 })),
-                Some("tool_result") => {
+                "tool_result" => {
                     let text = (!message.content.trim().is_empty()).then(|| {
                         den_runtime::agent_assist::sanitize_visible_transcript_text(
                             &message.content,
@@ -122,8 +117,14 @@ async fn conversation_history_like_result(
                     if text.trim().is_empty() {
                         return None;
                     }
-                    record["text"] = json!(text);
-                    Some(record)
+                    Some(json!(SurfaceHistoryEvent::Message {
+                        id: message
+                            .message_id
+                            .or_else(|| Some(message.sequence_no.to_string())),
+                        role: message.role,
+                        text,
+                        created_at: Some(message.created_at.to_string()),
+                    }))
                 }
             }
         })

@@ -4,22 +4,16 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     response::Response,
 };
-use bytes::Bytes;
-use serde::Deserialize;
-use serde_json::json;
-
 use bearwire_protocol::wire::{bearwire_event_to_json_rpc_notification, BearWireEvent};
+use bytes::Bytes;
 use den_http::errors::CustomError;
 use den_runtime::bearwire_events;
 use den_service::{client_sessions, DenState};
+use serde_json::json;
+
+pub(crate) use bearwire_protocol::methods::EventStreamQuery;
 
 use crate::auth::authenticate_for_bear_slug;
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct EventStreamQuery {
-    pub(crate) bear_slug: String,
-    pub(crate) after: Option<i64>,
-}
 
 pub(crate) fn events_sse_body(
     session_id: &str,

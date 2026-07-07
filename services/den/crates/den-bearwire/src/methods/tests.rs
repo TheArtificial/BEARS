@@ -46,7 +46,7 @@ use crate::{
     methods::run::persist_run_failed,
     rpc::rpc,
 };
-use bearwire_protocol::rpc::JsonRpcRequest;
+use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent};
 
 fn test_state(pool: sqlx::PgPool) -> DenState {
     test_state_with_config(pool, den_core::config::Config::test_stub())
@@ -1737,6 +1737,28 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     let surface_events = surface_response["result"]["surface_events"]
         .as_array()
         .expect("surface_events array");
+    let message_event = surface_events
+        .iter()
+        .find(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("message")
+                && event.get("role").and_then(Value::as_str) == Some("user")
+                && event.get("text").and_then(Value::as_str) == Some("Read that file")
+        })
+        .unwrap_or_else(|| panic!("missing typed message surface event in {surface_response}"));
+    assert!(
+        message_event
+            .get("created_at")
+            .and_then(Value::as_str)
+            .is_some(),
+        "message surface event created_at must be a string: {message_event}"
+    );
+    assert!(
+        matches!(
+            serde_json::from_value::<SurfaceHistoryEvent>(message_event.clone()),
+            Ok(SurfaceHistoryEvent::Message { .. })
+        ),
+        "message surface event should decode as shared SurfaceHistoryEvent::Message: {message_event}"
+    );
     assert!(
         surface_events.iter().any(|event| {
             event.get("kind").and_then(Value::as_str) == Some("session_info_update")
