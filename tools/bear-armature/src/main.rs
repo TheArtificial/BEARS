@@ -4315,6 +4315,60 @@ fn history_replay_chunks_with_boundaries(
         .collect()
 }
 
+fn reload_history_message_from_value(m: Value) -> Result<Option<ReloadHistoryMessage>> {
+    let kind = m
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("message")
+        .to_string();
+    let role = m.get("role").and_then(Value::as_str).unwrap_or("");
+    let text = m.get("text").and_then(Value::as_str).unwrap_or("");
+    if matches!(kind.as_str(), "message" | "") && text.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let id = m.get("id").and_then(Value::as_str).map(str::to_string);
+    let tool_call_id = m
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let tool_name = m
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let status = m.get("status").and_then(Value::as_str).map(str::to_string);
+
+    if matches!(kind.as_str(), "tool_call" | "tool_result") {
+        if tool_call_id.as_deref().unwrap_or_default().is_empty() {
+            return Err(anyhow!(
+                "BearWire surface history {kind} missing required tool_call_id"
+            ));
+        }
+        if tool_name.as_deref().unwrap_or_default().is_empty() {
+            return Err(anyhow!(
+                "BearWire surface history {kind} missing required tool_name"
+            ));
+        }
+        if status.as_deref().unwrap_or_default().is_empty() {
+            return Err(anyhow!(
+                "BearWire surface history {kind} missing required status"
+            ));
+        }
+    }
+
+    Ok(Some(ReloadHistoryMessage {
+        id,
+        kind,
+        role: role.to_string(),
+        text: text.to_string(),
+        tool_call_id,
+        tool_name,
+        status,
+        arguments: m.get("arguments").cloned().unwrap_or(Value::Null),
+        raw_output: m.get("raw_output").cloned().unwrap_or(Value::Null),
+    }))
+}
+
 async fn fetch_conversation_surface_history_chronological(
     http: &reqwest::Client,
     config: &Config,
@@ -4345,33 +4399,9 @@ async fn fetch_conversation_surface_history_chronological(
             .unwrap_or_default();
         let mut page = Vec::new();
         for m in records {
-            let kind = m
-                .get("kind")
-                .and_then(Value::as_str)
-                .unwrap_or("message")
-                .to_string();
-            let role = m.get("role").and_then(Value::as_str).unwrap_or("");
-            let text = m.get("text").and_then(Value::as_str).unwrap_or("");
-            if matches!(kind.as_str(), "message" | "") && text.trim().is_empty() {
-                continue;
+            if let Some(message) = reload_history_message_from_value(m)? {
+                page.push(message);
             }
-            page.push(ReloadHistoryMessage {
-                id: m.get("id").and_then(Value::as_str).map(str::to_string),
-                kind,
-                role: role.to_string(),
-                text: text.to_string(),
-                tool_call_id: m
-                    .get("tool_call_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                tool_name: m
-                    .get("tool_name")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                status: m.get("status").and_then(Value::as_str).map(str::to_string),
-                arguments: m.get("arguments").cloned().unwrap_or(Value::Null),
-                raw_output: m.get("raw_output").cloned().unwrap_or(Value::Null),
-            });
         }
         pages_newest_first.push(page);
         let has_more = body
@@ -10263,6 +10293,39 @@ mod tests {
             messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
             vec!["prompt", "reply", "follow-up"]
         );
+    }
+
+    #[test]
+    fn sparse_surface_tool_history_is_rejected_before_replay() {
+        let err = reload_history_message_from_value(json!({
+            "kind": "tool_result",
+            "tool_call_id": "call-1",
+            "status": "ok"
+        }))
+        .expect_err("structured tool history missing name should fail");
+
+        assert!(
+            err.to_string().contains("missing required tool_name"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn structured_surface_tool_history_parses_when_complete() {
+        let message = reload_history_message_from_value(json!({
+            "kind": "tool_result",
+            "tool_call_id": "call-1",
+            "tool_name": "run_command",
+            "status": "ok",
+            "raw_output": {"content": "done"}
+        }))
+        .expect("complete structured tool history should parse")
+        .expect("tool history should not be filtered");
+
+        assert_eq!(message.kind, "tool_result");
+        assert_eq!(message.tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(message.tool_name.as_deref(), Some("run_command"));
+        assert_eq!(message.status.as_deref(), Some("ok"));
     }
 
     #[test]
