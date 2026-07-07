@@ -1130,6 +1130,50 @@ async fn overview_view(
             .fetch_one(state.sqlx_pool())
             .await
             .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
+    let pending_reviews: i64 = memory_stats
+        .as_ref()
+        .map(|s| s.pending_proposals + s.pending_observations)
+        .unwrap_or(0);
+    let recent_rows: Vec<(Uuid, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, current_title, to_char(updated_at, 'YYYY-MM-DD HH24:MI') \
+         FROM conversations WHERE bear_id = $1 ORDER BY updated_at DESC LIMIT 5",
+    )
+    .bind(id)
+    .fetch_all(state.sqlx_pool())
+    .await
+    .map_err(|err| CustomError::Database(format!("recent bear conversations: {err}")))?;
+    let recent_conversations: Vec<serde_json::Value> = recent_rows
+        .into_iter()
+        .map(|(cid, title, updated)| {
+            json!({
+                "id": cid.to_string(),
+                "title": title.unwrap_or_else(|| "Untitled conversation".to_string()),
+                "updated_at": updated,
+            })
+        })
+        .collect();
+    let weekly_rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT to_char(date_trunc('week', updated_at), 'YYYY-MM-DD'), COUNT(*)::bigint \
+         FROM conversations WHERE bear_id = $1 \
+           AND updated_at > now() - interval '8 weeks' \
+         GROUP BY 1 ORDER BY 1 DESC",
+    )
+    .bind(id)
+    .fetch_all(state.sqlx_pool())
+    .await
+    .map_err(|err| CustomError::Database(format!("bear activity over time: {err}")))?;
+    let weekly_max = weekly_rows.iter().map(|(_, n)| *n).max().unwrap_or(0);
+    let weekly_activity: Vec<serde_json::Value> = weekly_rows
+        .into_iter()
+        .map(|(week, n)| {
+            let pct = if weekly_max > 0 {
+                (((n as f64 / weekly_max as f64) * 10.0).ceil() as i64) * 10
+            } else {
+                0
+            };
+            json!({ "week": week, "count": n, "pct": pct })
+        })
+        .collect();
 
     web::render_template(
         &state,
@@ -1147,6 +1191,9 @@ async fn overview_view(
             memory_stats,
             legacy_import_locked => memory_stats.as_ref().map(|stats| stats.record_count > 0).unwrap_or(true),
             conversation_count,
+            pending_reviews,
+            recent_conversations,
+            weekly_activity,
             can_manage_bear,
             bear_nav_active => "overview",
             ..bear_nav_context(&bear, "overview"),

@@ -1048,3 +1048,14 @@ body.page-bears-health .bears-health-row-fail td:first-of-type {
     width: 100%;
     background: var(--field-fill-color);
 }
+.bear-manage-bar-w0 { width: 0; }
+.bear-manage-bar-w10 { width: 10%; }
+.bear-manage-bar-w20 { width: 20%; }
+.bear-manage-bar-w30 { width: 30%; }
+.bear-manage-bar-w40 { width: 40%; }
+.bear-manage-bar-w50 { width: 50%; }
+.bear-manage-bar-w60 { width: 60%; }
+.bear-manage-bar-w70 { width: 70%; }
+.bear-manage-bar-w80 { width: 80%; }
+.bear-manage-bar-w90 { width: 90%; }
+.bear-manage-bar-w100 { width: 100%; }
