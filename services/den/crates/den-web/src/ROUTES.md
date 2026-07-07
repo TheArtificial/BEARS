@@ -41,7 +41,7 @@ Member-facing bear management at `/bear/{slug}/…` (read for members, write for
 - `GET /bear/{slug}/overview` — health, pending-review call to action, recent activity; wide viewports disclose memory statistics and activity-over-time (CSS only)
 - `GET /bear/{slug}/identity` — identity & charter summary; links to edit forms and per-stance models
 - `GET /bear/{slug}/skills` — owned procedures (honest placeholder until Skills land)
-- `GET /bear/{slug}/tools` — per-stance tool roster with origin (built-in / armature-local; MCP when it lands)
+- `GET /bear/{slug}/tools` — tool matrix: one row per unique tool with origin (built-in / armature-local; MCP when it lands), stance availability as columns
 - `GET /bear/{slug}/connections` — editor (armature) code token; provider connections when they land
 - `GET /bear/{slug}/resources` — the web as a resource under policy (sources/approvals/fetches; POST actions as before), internal resources noted
 - `GET /bear/{slug}/activity` — activity hub: conversations stream (jobs and Cabinet when they land); `GET /bear/{slug}/conversations/{conversation_id}` — transcript detail

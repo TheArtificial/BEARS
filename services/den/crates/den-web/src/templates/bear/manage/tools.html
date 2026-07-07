@@ -4,50 +4,51 @@
 <div class="box">
     <h2>Tools</h2>
     <p class="form-hint">
-        Everything this Bear can call, by stance. Origin matters: a tool's
-        provenance — built into Den, run locally through your armature, or
-        supplied by a remote server — is the trust-relevant fact.
+        Everything this Bear can call — one row per tool. A tool's identity,
+        origin, and (eventually) its configuration and enabling connection
+        are properties of the tool; stances only gate where it is available.
     </p>
 
-    {% if tool_stances is defined and tool_stances %}
-    {% for stance in tool_stances %}
-    <h3>{{ stance.name | e }}</h3>
-    {% if stance.tools %}
+    {% if tools and tools | length > 0 %}
     <table>
         <thead>
             <tr>
                 <th>Tool</th>
                 <th>Origin</th>
+                <th>chat</th>
+                <th>pair</th>
+                <th>curate</th>
+                <th>work</th>
+                <th>watch</th>
                 <th>Notes</th>
             </tr>
         </thead>
         <tbody>
-            {% for tool in stance.tools %}
+            {% for tool in tools %}
             <tr>
                 <td><code>{{ tool.name | e }}</code></td>
                 <td>{{ tool.origin | e }}</td>
+                {% for available in tool.stances %}
+                <td>
+                    {% if available %}<span aria-label="available">●</span
+                    >{% else %}<span class="form-hint" aria-label="not available"
+                        >–</span
+                    >{% endif %}
+                </td>
+                {% endfor %}
                 <td class="form-hint">{{ tool.note | e }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% else %}
-    <p class="form-hint">No tools for this stance.</p>
-    {% endif %}
-    {% endfor %}
-    {% else %}
-    <p>
-        <em>Tool roster unavailable.</em> Per-stance tool listings appear here
-        once descriptor data is wired to this page. See each stance's detail
-        under each stance's detail page (linked from <a href="/bear/{{ bear.slug | e }}/identity">identity</a>)
-        in the meantime.
-    </p>
+    <p><em>Tool roster unavailable.</em></p>
     {% endif %}
 
     <p class="form-hint">
         Remote (MCP) tool servers are not yet available in this build; when
-        they land, their tools appear in these lists tagged with the server
-        they come from.
+        they land, their tools appear as rows here tagged with the server
+        they come from, alongside the connection that enables them.
     </p>
 </div>
 {% endblock %}

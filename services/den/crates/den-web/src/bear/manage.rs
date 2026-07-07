@@ -27,66 +27,49 @@ use crate::{
 
 use super::settings::{bear_nav_context, load_session_bear};
 
+/// One tool, one row: identity and (future) configuration are per-tool;
+/// stances only gate availability, expressed as the boolean columns.
 #[derive(Serialize)]
-struct ToolStanceRow {
-    name: String,
-    tools: Vec<ToolRow>,
-}
-
-#[derive(Serialize)]
-struct ToolRow {
+struct ToolMatrixRow {
     name: &'static str,
     origin: &'static str,
     note: &'static str,
+    stances: Vec<bool>,
 }
 
-fn stance_label(stance: BearProfile) -> &'static str {
-    match stance {
-        BearProfile::Chat => "Chat",
-        BearProfile::Pair => "Pair",
-        BearProfile::Curate => "Curate",
-        BearProfile::Work => "Work",
-        BearProfile::Watch => "Watch",
-    }
-}
-
-/// Build the per-stance tool roster shown on the Tools management page.
+/// Build the tool matrix for the Tools management page: unique tools as
+/// rows, stance availability as columns.
 ///
 /// Source: `den_core::tools::descriptor::builtin_den_tool_descriptors()` for
-/// Den-hosted tools (each descriptor carries `allowed_roles`, so filtering
-/// per stance is exact), plus `den_core::client_tools::ClientToolName::all()`
+/// Den-hosted tools (each descriptor carries `allowed_roles`, so per-stance
+/// availability is exact), plus `den_core::client_tools::ClientToolName::all()`
 /// for armature-local tools, which are only ever exposed on the pair stance.
-fn tool_stances_context() -> Vec<ToolStanceRow> {
-    let builtin = builtin_den_tool_descriptors();
-
-    BearProfile::ALL
+fn tool_matrix_context() -> Vec<ToolMatrixRow> {
+    let mut rows: Vec<ToolMatrixRow> = builtin_den_tool_descriptors()
         .iter()
-        .map(|stance| {
-            let mut tools: Vec<ToolRow> = builtin
+        .map(|descriptor| ToolMatrixRow {
+            name: descriptor.name,
+            origin: "built-in",
+            note: descriptor.label,
+            stances: BearProfile::ALL
                 .iter()
-                .filter(|descriptor| descriptor.allowed_roles.contains(&stance.as_str()))
-                .map(|descriptor| ToolRow {
-                    name: descriptor.name,
-                    origin: "built-in",
-                    note: descriptor.label,
-                })
-                .collect();
-            if *stance == BearProfile::Pair {
-                tools.extend(ClientToolName::all().iter().map(|tool| {
-                    let descriptor = tool.descriptor();
-                    ToolRow {
-                        name: descriptor.provider_name,
-                        origin: "local (armature)",
-                        note: descriptor.title,
-                    }
-                }));
-            }
-            ToolStanceRow {
-                name: stance_label(*stance).to_string(),
-                tools,
-            }
+                .map(|stance| descriptor.allowed_roles.contains(&stance.as_str()))
+                .collect(),
         })
-        .collect()
+        .collect();
+    rows.extend(ClientToolName::all().iter().map(|tool| {
+        let descriptor = tool.descriptor();
+        ToolMatrixRow {
+            name: descriptor.provider_name,
+            origin: "local (armature)",
+            note: descriptor.title,
+            stances: BearProfile::ALL
+                .iter()
+                .map(|stance| *stance == BearProfile::Pair)
+                .collect(),
+        }
+    }));
+    rows
 }
 
 pub fn router() -> Router<AppState> {
@@ -165,7 +148,7 @@ async fn tools_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
-    let tool_stances = tool_stances_context();
+    let tools = tool_matrix_context();
     web::render_template(
         &state,
         "bear/manage/tools.html",
@@ -173,7 +156,7 @@ async fn tools_view(
         context! {
             can_manage_bear,
             manage_title => "Tools",
-            tool_stances,
+            tools,
             ..bear_nav_context(&bear, "tools"),
         },
     )
