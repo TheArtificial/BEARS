@@ -165,7 +165,7 @@ fn tool_call_finished_summary(data: &Value, tool_name: &str, failed: bool) -> St
             if crate::is_placeholder_tool_name(tool_name) {
                 let status = if failed { "failed" } else { "completed" };
                 let tool_call_id = data
-                    .get("tool_call_id")
+                    .pointer("/tool_call/id")
                     .and_then(Value::as_str)
                     .filter(|id| !id.trim().is_empty())
                     .unwrap_or("unknown");
