@@ -31,6 +31,8 @@ use approvals::{
 use axum::{extract::State, response::IntoResponse};
 
 use http::StatusCode;
+#[cfg(test)]
+use json_rpc::capture_json_output_for_test;
 use json_rpc::{id_key, write_json, JsonRpcTransport};
 use paths::{
     ensure_path_allowed_for_session, file_uri_or_path_to_path, is_absolute_local_path,
@@ -806,6 +808,18 @@ async fn send_session_info_update(
     title: Option<String>,
     updated_at: Option<String>,
 ) -> Result<()> {
+    write_notification(
+        "session/update",
+        acp_session_info_update_payload(session_id, title, updated_at)?,
+    )
+    .await
+}
+
+fn acp_session_info_update_payload(
+    session_id: &str,
+    title: Option<String>,
+    updated_at: Option<String>,
+) -> Result<Value> {
     let mut update = SessionInfoUpdate::new();
     if let Some(title) = title {
         update = update.title(title);
@@ -813,14 +827,10 @@ async fn send_session_info_update(
     if let Some(updated_at) = updated_at {
         update = update.updated_at(updated_at);
     }
-    write_notification(
-        "session/update",
-        json!({
-            "sessionId": session_id,
-            "update": serde_json::to_value(SessionUpdate::SessionInfoUpdate(update))?,
-        }),
-    )
-    .await
+    Ok(json!({
+        "sessionId": session_id,
+        "update": serde_json::to_value(SessionUpdate::SessionInfoUpdate(update))?,
+    }))
 }
 
 async fn send_den_runtime_session_info_update(
@@ -7738,14 +7748,7 @@ async fn post_adapter_environment(
     environment: Value,
     conversation_title: Option<&str>,
 ) -> Result<()> {
-    let title = conversation_title
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let resource = json!({
-        "kind": "acp_adapter",
-        "environment": environment.clone(),
-        "conversation_title": title,
-    });
+    let resource = adapter_environment_resource(environment, conversation_title);
     let value = bearwire::post_resource_update(config, session_id, resource).await?;
     if bear_debug_verbose() {
         eprintln!(
@@ -7755,6 +7758,17 @@ async fn post_adapter_environment(
         );
     }
     Ok(())
+}
+
+fn adapter_environment_resource(environment: Value, conversation_title: Option<&str>) -> Value {
+    let title = conversation_title
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    json!({
+        "kind": "acp_adapter",
+        "environment": environment,
+        "conversation_title": title,
+    })
 }
 
 async fn post_tool_result(
@@ -7817,6 +7831,24 @@ pub(crate) async fn handle_session_info_projection(
     context_budget: Option<Value>,
     runtime: Option<Value>,
 ) -> Result<()> {
+    apply_session_title_projection_state(adapter_state, shared_state, session_id, title.clone())
+        .await;
+    send_session_info_update(session_id, title, updated_at).await?;
+    if let Some(context_budget) = context_budget.clone() {
+        send_context_budget_usage_update(session_id, context_budget).await?;
+    }
+    if env_bool("BEAR_ARMATURE_SEND_RUNTIME_SESSION_META") {
+        send_den_runtime_session_info_update(session_id, runtime, context_budget).await?;
+    }
+    Ok(())
+}
+
+async fn apply_session_title_projection_state(
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    title: Option<String>,
+) {
     if let Some(context) = adapter_state.session_contexts.get_mut(session_id) {
         context.thread_title = title.clone();
     }
@@ -7826,16 +7858,8 @@ pub(crate) async fn handle_session_info_projection(
         .await
         .get_mut(session_id)
     {
-        context.thread_title = title.clone();
+        context.thread_title = title;
     }
-    send_session_info_update(session_id, title, updated_at).await?;
-    if let Some(context_budget) = context_budget.clone() {
-        send_context_budget_usage_update(session_id, context_budget).await?;
-    }
-    if env_bool("BEAR_ARMATURE_SEND_RUNTIME_SESSION_META") {
-        send_den_runtime_session_info_update(session_id, runtime, context_budget).await?;
-    }
-    Ok(())
 }
 
 pub(crate) async fn handle_plan_update_projection(
@@ -9611,7 +9635,7 @@ mod tests {
         body::{to_bytes, Body},
         extract::State,
         http::Request,
-        response::IntoResponse,
+        response::{IntoResponse, Response},
         routing::any,
         Json, Router,
     };
@@ -9625,25 +9649,51 @@ mod tests {
     struct BearWireTestServerState {
         fail_bearwire: bool,
         paths: Arc<TokioMutex<Vec<String>>>,
+        events: Arc<TokioMutex<Vec<Value>>>,
     }
 
+    // ponytail: this is a narrow BearWire mock for ACP boundary tests, not a fake server.
+    // Keep these mocked methods in sync with `services/den/crates/den-bearwire/src/methods`;
+    // if a BearWire method contract changes, update this mock in the same change.
     async fn bearwire_test_handler(
         State(state): State<BearWireTestServerState>,
         request: Request<Body>,
-    ) -> impl IntoResponse {
+    ) -> Response {
         let path = request.uri().path().to_string();
         state.paths.lock().await.push(path.clone());
+        if path.starts_with("/bearwire/v1/sessions/") && path.ends_with("/events") {
+            let events = state.events.lock().await.clone();
+            let body = events
+                .into_iter()
+                .enumerate()
+                .map(|(index, event)| {
+                    format!(
+                        "id: {}\ndata: {}\n\n",
+                        index + 1,
+                        json!({ "params": event })
+                    )
+                })
+                .collect::<String>();
+            return (
+                axum::http::StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                body,
+            )
+                .into_response();
+        }
         if path != "/bearwire/v1/rpc" {
             return (
                 axum::http::StatusCode::NOT_FOUND,
                 Json(json!({ "error": "not found" })),
-            );
+            )
+                .into_response();
         }
         if state.fail_bearwire {
             return (
                 axum::http::StatusCode::BAD_GATEWAY,
                 Json(json!({ "error": "bearwire unavailable" })),
-            );
+            )
+                .into_response();
         }
 
         let body = to_bytes(request.into_body(), 1024 * 1024).await.unwrap();
@@ -9707,22 +9757,52 @@ mod tests {
                     })
                 }
             }
+            Some("session.model.get") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "selection_mode": "auto",
+                    "model": null,
+                    "effective_model": "openai/test-model"
+                }
+            }),
+            Some("run.start") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "run_id": "run-test-title",
+                    "event_sequence": 1
+                }
+            }),
+            Some("resource.update") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "ok": true }
+            }),
             other => json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "error": { "code": -32601, "message": format!("unknown method: {other:?}") }
             }),
         };
-        (axum::http::StatusCode::OK, Json(result))
+        (axum::http::StatusCode::OK, Json(result)).into_response()
     }
 
     async fn start_bearwire_test_server(
         fail_bearwire: bool,
     ) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        start_bearwire_test_server_with_events(fail_bearwire, Vec::new()).await
+    }
+
+    async fn start_bearwire_test_server_with_events(
+        fail_bearwire: bool,
+        events: Vec<Value>,
+    ) -> (String, Arc<TokioMutex<Vec<String>>>) {
         let paths = Arc::new(TokioMutex::new(Vec::new()));
         let state = BearWireTestServerState {
             fail_bearwire,
             paths: paths.clone(),
+            events: Arc::new(TokioMutex::new(events)),
         };
         let app = Router::new()
             .route("/bearwire/v1/rpc", any(bearwire_test_handler))
@@ -9766,6 +9846,32 @@ mod tests {
             },
         );
         state
+    }
+
+    fn test_runtime_config(api_url: String) -> RuntimeConfig {
+        RuntimeConfig {
+            config: Some(test_config(api_url.clone())),
+            diagnostics: Vec::new(),
+            check_server: false,
+            doctor: false,
+            update_command: None,
+            browser_bridge: None,
+            api_url,
+            bear: "test-bear".to_string(),
+            token_env: "DEN_TOKEN".to_string(),
+            client: "zed".to_string(),
+        }
+    }
+
+    async fn run_acp_request_for_test(
+        http: &reqwest::Client,
+        runtime: &mut RuntimeConfig,
+        adapter_state: &mut AdapterState,
+        shared_state: &AdapterSharedState,
+        value: Value,
+    ) -> Result<()> {
+        let request = request_from_value(value)?;
+        handle_request(http, runtime, adapter_state, shared_state, request).await
     }
 
     fn test_shared_state() -> AdapterSharedState {
@@ -11617,6 +11723,191 @@ mod tests {
             preview.contains("Investigate Bifrost stream framing"),
             "{preview}"
         );
+    }
+
+    #[tokio::test]
+    async fn set_conversation_title_acp_prompt_roundtrip_emits_update_before_result() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let title = "Retire legacy BearWire tool payload aliases";
+        let (api_url, paths) = start_bearwire_test_server_with_events(
+            false,
+            vec![
+                json!({
+                    "type": "session_info_update",
+                    "run_id": "run-test-title",
+                    "data": {
+                        "title": title,
+                        "updated_at": "2026-01-02T03:04:05Z"
+                    }
+                }),
+                json!({
+                    "type": "message.delta",
+                    "run_id": "run-test-title",
+                    "data": { "delta": "Done." }
+                }),
+                json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }),
+            ],
+        )
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("title-acp-roundtrip-immediate");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        shared_state
+            .session_contexts
+            .lock()
+            .await
+            .insert("session-1".to_string(), state.session_contexts["session-1"].clone());
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "prompt-1",
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "session-1",
+                        "prompt": [{ "type": "text", "text": "please set the conversation title" }]
+                    }
+                }),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let update_index = output
+            .iter()
+            .position(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame.pointer("/params/update/sessionUpdate").and_then(Value::as_str)
+                        == Some("session_info_update")
+            })
+            .expect("session_info_update frame");
+        let result_index = output
+            .iter()
+            .position(|frame| frame.get("id").and_then(Value::as_str) == Some("prompt-1"))
+            .expect("prompt result frame");
+        assert!(update_index < result_index, "{output:#?}");
+        assert_eq!(output[update_index]["jsonrpc"], "2.0");
+        assert_eq!(output[update_index]["params"]["sessionId"], "session-1");
+        assert_eq!(
+            output[update_index]["params"]["update"]["sessionUpdate"],
+            "session_info_update"
+        );
+        assert_eq!(output[update_index]["params"]["update"]["title"], title);
+        assert_eq!(
+            output[update_index]["params"]["update"]["updatedAt"],
+            "2026-01-02T03:04:05Z"
+        );
+        assert!(output[result_index].get("result").is_some(), "{output:#?}");
+        assert_eq!(
+            shared_state
+                .session_contexts
+                .lock()
+                .await
+                .get("session-1")
+                .and_then(|context| context.thread_title.as_deref()),
+            Some(title)
+        );
+        let paths = paths.lock().await.clone();
+        assert!(paths.iter().any(|path| path == "/bearwire/v1/rpc"));
+        assert!(paths.iter().any(|path| path.starts_with("/bearwire/v1/sessions/session-1/events")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn set_conversation_title_acp_roundtrip_title_sticks_for_later_update_output() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_events(
+            false,
+            vec![
+                json!({
+                    "type": "session_info_update",
+                    "run_id": "run-test-title",
+                    "data": { "title": "Old title" }
+                }),
+                json!({
+                    "type": "session_info_update",
+                    "run_id": "run-test-title",
+                    "data": { "title": "New sticky title" }
+                }),
+                json!({
+                    "type": "message.delta",
+                    "run_id": "run-test-title",
+                    "data": { "delta": "Done." }
+                }),
+                json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }),
+            ],
+        )
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("title-acp-roundtrip-sticky");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        shared_state
+            .session_contexts
+            .lock()
+            .await
+            .insert("session-1".to_string(), state.session_contexts["session-1"].clone());
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "prompt-1",
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "session-1",
+                        "prompt": [{ "type": "text", "text": "please set the conversation title twice" }]
+                    }
+                }),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let sticky_title = shared_state
+                .session_contexts
+                .lock()
+                .await
+                .get("session-1")
+                .and_then(|context| context.thread_title.clone());
+            send_session_info_update("session-1", sticky_title, None).await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let titles = output
+            .iter()
+            .filter(|frame| frame.get("method").and_then(Value::as_str) == Some("session/update"))
+            .filter_map(|frame| frame.pointer("/params/update/title").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(titles, vec!["Old title", "New sticky title", "New sticky title"]);
+        assert!(
+            output
+                .iter()
+                .any(|frame| frame.get("id").and_then(Value::as_str) == Some("prompt-1") && frame.get("result").is_some()),
+            "{output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

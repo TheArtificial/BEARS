@@ -3,6 +3,11 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+#[cfg(test)]
+use std::{
+    future::Future,
+    sync::{Mutex as StdMutex, OnceLock},
+};
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -11,6 +16,12 @@ use tokio::{
     sync::Mutex as TokioMutex,
 };
 use uuid::Uuid;
+
+#[cfg(test)]
+static JSON_OUTPUT_CAPTURE: OnceLock<StdMutex<Option<Arc<TokioMutex<Vec<Value>>>>>> =
+    OnceLock::new();
+#[cfg(test)]
+static JSON_OUTPUT_CAPTURE_LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
 
 #[derive(Debug)]
 struct PendingResponse {
@@ -173,12 +184,61 @@ pub(crate) fn id_key(id: &Value) -> String {
 }
 
 pub(crate) async fn write_json(value: Value) -> Result<()> {
+    #[cfg(test)]
+    {
+        let captured = JSON_OUTPUT_CAPTURE
+            .get_or_init(|| StdMutex::new(None))
+            .lock()
+            .expect("json output capture lock")
+            .clone();
+        if let Some(buffer) = captured {
+            buffer.lock().await.push(value);
+            return Ok(());
+        }
+    }
+
     let mut stdout = io::stdout();
     let line = serde_json::to_string(&value)?;
     stdout.write_all(line.as_bytes()).await?;
     stdout.write_all(b"\n").await?;
     stdout.flush().await?;
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) async fn capture_json_output_for_test<F, Fut, T>(f: F) -> (T, Vec<Value>)
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = T>,
+{
+    let _guard = JSON_OUTPUT_CAPTURE_LOCK
+        .get_or_init(|| TokioMutex::new(()))
+        .lock()
+        .await;
+    let buffer = Arc::new(TokioMutex::new(Vec::new()));
+    {
+        let mut capture = JSON_OUTPUT_CAPTURE
+            .get_or_init(|| StdMutex::new(None))
+            .lock()
+            .expect("json output capture lock");
+        assert!(
+            capture.is_none(),
+            "nested JSON output capture is unsupported"
+        );
+        *capture = Some(buffer.clone());
+    }
+
+    let result = f().await;
+
+    {
+        let mut capture = JSON_OUTPUT_CAPTURE
+            .get_or_init(|| StdMutex::new(None))
+            .lock()
+            .expect("json output capture lock");
+        *capture = None;
+    }
+    let output = buffer.lock().await.clone();
+    (result, output)
 }
 
 #[cfg(test)]
