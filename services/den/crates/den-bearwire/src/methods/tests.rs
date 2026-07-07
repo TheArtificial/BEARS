@@ -1792,6 +1792,16 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         "surface history should expose only replayable typed reasoning with replay policy: {surface_response}"
     );
     assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("tool_call")
+                && event.get("tool_call_id").and_then(Value::as_str) == Some("call-history")
+                && event.get("tool_name").and_then(Value::as_str) == Some("fs_read_text_file")
+                && event.get("status").and_then(Value::as_str) == Some("pending")
+                && event.pointer("/arguments/path").and_then(Value::as_str) == Some("README.md")
+        }),
+        "surface history should expose full structured tool-call start: {surface_response}"
+    );
+    assert!(
         surface_events
             .iter()
             .any(
