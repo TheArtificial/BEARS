@@ -8,11 +8,9 @@ use bytes::Bytes;
 use serde::Deserialize;
 use serde_json::json;
 
+use bearwire_protocol::wire::{bearwire_event_to_json_rpc_notification, BearWireEvent};
 use den_http::errors::CustomError;
-use den_runtime::{
-    bearwire_events,
-    runtime::bearwire_projection::wire::{bearwire_event_to_json_rpc_notification, BearWireEvent},
-};
+use den_runtime::bearwire_events;
 use den_service::{client_sessions, DenState};
 
 use crate::auth::authenticate_for_bear_slug;

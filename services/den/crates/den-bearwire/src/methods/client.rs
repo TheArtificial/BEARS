@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use bearwire_protocol::wire::{BearWireEvent, ToolCallFinishWire};
 use den_core::tools::{
     constants::DEN_WEB_FETCH,
     result_compaction::{
@@ -25,7 +26,7 @@ use den_runtime::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
     },
     native_runtime::continue_native_client_turn_event_stream,
-    runtime::bearwire_projection::wire::{tool_call_finish_wire, BearWireEvent, ToolCallFinishWire},
+    runtime::bearwire_projection::wire::tool_call_finish_wire,
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
     turn_obligations::{self, ExpectedResponderAction},
     turn_runner::{default_tool_continue_stream_context, TurnContinueRequest},

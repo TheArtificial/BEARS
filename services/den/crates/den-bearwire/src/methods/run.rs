@@ -6,14 +6,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use bearwire_protocol::wire::{BearWireEvent, ResourceRef};
 use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
 use den_runtime::{
     bearwire_events,
     native_runtime::start_native_client_turn_event_stream,
-    runtime::bearwire_projection::wire::{
-        runtime_stream_event_to_bearwire_events, BearWireEvent, ResourceRef,
-    },
+    runtime::bearwire_projection::wire::runtime_stream_event_to_bearwire_events,
     runtime_error_ux::{log_sample, run_failure_projection, runtime_event_history_marker},
     surface_projection::bearwire_client_method_for_action,
     turn_obligations,

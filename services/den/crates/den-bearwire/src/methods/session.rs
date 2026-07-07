@@ -2,10 +2,10 @@ use axum::http::HeaderMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use bearwire_protocol::wire::BearWireEvent;
 use den_http::errors::CustomError;
 use den_runtime::{
     bearwire_events,
-    runtime::bearwire_projection::wire::BearWireEvent,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
 };
 use den_service::{bears::BearProfile, client_sessions, DenState};

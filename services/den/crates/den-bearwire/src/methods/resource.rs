@@ -2,8 +2,9 @@ use axum::http::HeaderMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use bearwire_protocol::wire::BearWireEvent;
 use den_http::errors::CustomError;
-use den_runtime::{bearwire_events, runtime::bearwire_projection::wire::BearWireEvent};
+use den_runtime::bearwire_events;
 use den_service::DenState;
 
 use crate::auth::authenticated_bear;

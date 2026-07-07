@@ -2,8 +2,8 @@ use axum::http::HeaderMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use den_http::errors::CustomError;
 use bearwire_protocol::surface::SurfaceHistoryEvent;
+use den_http::errors::CustomError;
 use den_runtime::bearwire_events;
 use den_service::{client_sessions, conversation::persistence, DenState};
 

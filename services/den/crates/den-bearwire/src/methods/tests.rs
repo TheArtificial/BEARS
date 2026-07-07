@@ -1675,7 +1675,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         &session_id,
         Some(bear_id),
         Some(user_id),
-        den_runtime::runtime::bearwire_projection::wire::BearWireEvent::ephemeral(
+        bearwire_protocol::wire::BearWireEvent::ephemeral(
             "session_info_update",
             json!({
                 "title": "Persisted replay title",
@@ -1690,7 +1690,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         &session_id,
         Some(bear_id),
         Some(user_id),
-        den_runtime::runtime::bearwire_projection::wire::BearWireEvent::ephemeral(
+        bearwire_protocol::wire::BearWireEvent::ephemeral(
             "message.reasoning.delta",
             json!({
                 "delta": "thinking privately",
@@ -1706,7 +1706,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         &session_id,
         Some(bear_id),
         Some(user_id),
-        den_runtime::runtime::bearwire_projection::wire::BearWireEvent::ephemeral(
+        bearwire_protocol::wire::BearWireEvent::ephemeral(
             "message.reasoning.delta",
             json!({
                 "delta": "replayable thought",
