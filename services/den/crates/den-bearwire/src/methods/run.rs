@@ -1715,9 +1715,7 @@ mod tests {
             "client.waiting",
             json!({
                 "tool_call": { "id": "call-1", "name": "web_fetch" },
-                "permission": { "id": "perm-1" },
-                "tool_call_id": "legacy-wrong",
-                "permission_id": "legacy-wrong"
+                "permission": { "id": "perm-1" }
             }),
         );
 
