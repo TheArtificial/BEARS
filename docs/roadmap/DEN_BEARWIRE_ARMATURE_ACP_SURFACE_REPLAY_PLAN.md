@@ -108,9 +108,15 @@ Capture one failing run for each target symptom across these layers:
 
 **Exit gate:** For each symptom, the team can identify the first boundary where type/display information is lost.
 
-### Phase 1 — Define the typed surface event DTOs
+### Phase 1 — Introduce `bearwire-protocol` and define typed surface event DTOs
 
-**Goal:** Introduce a narrow, serde-backed surface model shared by Den BearWire projection and armature replay/projection tests.
+**Goal:** Introduce a narrow, serde-backed `bearwire-protocol` crate shared by Den BearWire projection and armature replay/projection tests.
+
+The crate charter is intentionally small:
+
+> `bearwire-protocol` contains stable serde DTOs and lightweight validation helpers for the BearWire Den↔armature wire. It must not depend on Den runtime, Den service, HTTP server/client code, database crates, ACP, or model/provider clients.
+
+Allowed initial dependencies should be limited to `serde` and `serde_json`. Prefer string wire identifiers over `uuid` unless a field is explicitly UUID-typed in the BearWire contract.
 
 Candidate DTOs:
 
@@ -158,11 +164,15 @@ Required fields for reasoning:
 
 **Likely files:**
 
-- `services/den/crates/den-runtime/src/runtime/bearwire_projection/`
-- `services/den/crates/den-protocol/src/lib.rs` if shared protocol types belong there;
-- `tools/bear-armature/src/bearwire.rs` for typed decode.
+- `services/den/crates/bearwire-protocol/` for shared BearWire DTOs and validation helpers;
+- `services/den/Cargo.toml` workspace membership and workspace dependency wiring;
+- `services/den/crates/den-runtime/src/runtime/bearwire_projection/` for runtime-semantic → BearWire DTO projection;
+- `services/den/crates/den-bearwire/` for BearWire RPC responses that serialize these DTOs;
+- `tools/bear-armature/src/bearwire.rs` for typed decode and ACP projection.
 
-**Exit gate:** A malformed or sparse surface event fails focused tests in strict mode instead of silently becoming a generic text/card projection.
+`den-protocol` may re-export `bearwire-protocol` types later for Den-internal convenience, but `bear-armature` should depend on `bearwire-protocol` directly rather than on broad Den protocol/runtime crates.
+
+**Exit gate:** A malformed or sparse surface event fails focused tests in strict mode instead of silently becoming a generic text/card projection, and `bear-armature` does not depend on `den-protocol` for surface replay.
 
 ### Phase 2 — Require full tool-call start records for every surfaced tool
 
@@ -288,7 +298,7 @@ Implementation direction:
 Recommended sequence:
 
 1. trace capture and explicit boundary assertions;
-2. typed surface event DTOs;
+2. `bearwire-protocol` crate with typed surface event DTOs;
 3. full tool-call started records for Den-hosted and checkpoint tools;
 4. surface replay API;
 5. armature load/resume uses surface replay;
@@ -313,7 +323,7 @@ Recommended sequence:
 1. Should surface replay be backed primarily by persisted BearWire events, canonical conversation structured rows, or a merged projection over both?
 2. Should reasoning ever replay as ACP thought chunks, or should it always be live-only?
 3. How long should text-only `conversation.history` remain available for non-ACP/simple clients?
-4. Should the typed surface DTO live in `den-protocol`, `den-runtime`, or a new narrow shared crate?
+4. Which DTOs belong in the initial `bearwire-protocol` crate beyond `SurfaceHistoryEvent`? Keep the first cut narrow enough that armature compile time stays low.
 
 ## Immediate next step
 

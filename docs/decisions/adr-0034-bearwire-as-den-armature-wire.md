@@ -88,6 +88,26 @@ RuntimeSemanticEvent  (den-runtime, in-process)
 
 `GatewayEvent` may remain an **in-process orchestration** type during transition, but it must not be the armature wire. New code projects `RuntimeSemanticEvent` → BearWire wire types directly.
 
+### 4a. Surface replay invariant
+
+BearWire is not only a live stream. For every user-visible armature surface, Den must provide a **typed surface-event history** that can replay the same UI semantics as the live stream.
+
+The following invariant is mandatory:
+
+> A live BearWire event stream and a later session/history replay for the same run must project to equivalent user-visible armature state: assistant message chunks remain assistant chunks; provider reasoning remains thought/reasoning display or is omitted by explicit replay policy; tool calls remain tool cards with stable ids, names, inputs, display metadata, status, and bounded output; session title/mode/plan updates remain typed session/resource updates. The replay path must not collapse these typed surface facts into plain assistant text.
+
+Corollaries:
+
+1. **Complete tool-call start records are required for every surfaced tool.** Every user-visible or model-relevant tool call must have a durable full tool-call surface record before any completion/failure event is projected. This applies regardless of execution location: Den-hosted tools, armature-local tools, forwarded MCP tools, runtime checkpoint tools, and future channel-local tools. A sparse completion event may reference a full persisted tool-call resource, but it must not be the only source from which an armature is expected to render the card.
+2. **History replay must not use text-only conversation history for armature UI.** Human-readable conversation history may remain a flattened text projection, but ACP/session load must use the typed BearWire/surface replay projection when reconstructing UI state.
+3. **Reasoning is typed display telemetry, not assistant answer content.** Provider reasoning deltas must be represented as reasoning/thought surface events with explicit replay policy. They must not be persisted or replayed as visible assistant text.
+4. **Session metadata updates are first-class surface events.** Conversation title, mode, plan/task updates, and similar UI state changes must not depend on parsing arbitrary tool-result text at the armature edge. If a tool changes session-visible state, Den must emit and persist the corresponding typed surface event.
+5. **The armature projects; it does not perform archaeology.** The ACP adapter may translate BearWire surface events into ACP wire objects, but it must not be responsible for reconstructing missing action identity, display metadata, raw inputs, or replay policy from flattened transcript prose.
+
+This invariant strengthens §4. It does not make ACP canonical; it requires Den/BearWire to carry enough typed surface state for any trusted armature to project live and replayed UI consistently.
+
+The shared Rust DTOs for this wire contract should live in a narrow `bearwire-protocol` crate. `bearwire-protocol` may contain serde DTOs and lightweight validation helpers for BearWire, but it must not depend on Den runtime, Den service, HTTP server/client code, database crates, ACP, or model/provider clients. Armatures should depend on `bearwire-protocol` directly rather than importing broad Den-internal protocol crates for BearWire surface replay.
+
 ### 5. Control-method inventory replaces `/acp/**` routes
 
 Existing HTTP routes map to BearWire methods (see implementation plan for the full table). Examples:
