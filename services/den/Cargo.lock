@@ -290,6 +290,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bearwire-protocol"
+version = "0.1.2"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -649,6 +657,7 @@ name = "den-bearwire"
 version = "0.1.2"
 dependencies = [
  "axum",
+ "bearwire-protocol",
  "bytes",
  "den-core",
  "den-http",

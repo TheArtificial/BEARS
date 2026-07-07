@@ -11,14 +11,12 @@ edition = "2021"
 workspace = true
 
 [features]
-default = ["runtime-api"]
-runtime-api = ["bytes", "den-core", "futures"]
-production = ["runtime-api", "den-core/production"]
+production = ["den-core/production"]
 
 [dependencies]
-den-core = { path = "../den-core", optional = true }
-bytes = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
+den-core = { path = "../den-core" }
+bytes.workspace = true
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

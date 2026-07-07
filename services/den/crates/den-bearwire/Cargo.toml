@@ -14,6 +14,7 @@ production = ["den-core/production", "den-protocol/production", "den-service/pro
 
 [dependencies]
 den-core = { path = "../den-core" }
+bearwire-protocol = { path = "../bearwire-protocol" }
 den-protocol = { path = "../den-protocol" }
 den-service = { path = "../den-service" }
 den-llm = { path = "../den-llm" }

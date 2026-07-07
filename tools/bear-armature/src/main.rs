@@ -22,7 +22,7 @@ use agent_client_protocol::schema::{
     ToolKind, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, bail, Context, Result};
-use den_protocol::surface::SurfaceHistoryEvent;
+use bearwire_protocol::surface::SurfaceHistoryEvent;
 
 use approvals::{
     approval_url_host_scope, parse_permission_decision, permission_class_for_tool,

@@ -1,0 +1,15 @@
+[package]
+name = "bearwire-protocol"
+version.workspace = true
+edition = "2021"
+
+# Stable serde DTOs and lightweight validation helpers for the BearWire
+# Den ↔ armature wire. Keep this crate dependency-light: no Den runtime,
+# service, HTTP, database, ACP, or provider-client dependencies.
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
