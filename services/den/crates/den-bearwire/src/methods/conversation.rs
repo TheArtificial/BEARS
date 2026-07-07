@@ -158,23 +158,25 @@ async fn conversation_history_like_result(
         )
         .await?
         {
-            let mut session_event = json!({
-                "id": format!("session-info:{}", session.client_session_id),
-                "kind": "session_info_update",
-                "role": "system",
-                "session_id": session.client_session_id,
-                "current_mode": session.current_mode,
-                "created_at": session
-                    .conversation_title_updated_at
-                    .unwrap_or(session.updated_at),
-            });
-            if let Some(title) = session.conversation_title {
-                session_event["title"] = json!(title);
-            }
-            if let Some(updated_at) = session.conversation_title_updated_at {
-                session_event["title_updated_at"] = json!(updated_at);
-            }
-            messages.insert(0, session_event);
+            messages.insert(
+                0,
+                json!(SurfaceHistoryEvent::SessionInfoUpdate {
+                    id: Some(format!("session-info:{}", session.client_session_id)),
+                    role: Some("system".to_string()),
+                    session_id: Some(session.client_session_id.clone()),
+                    title: session.conversation_title.clone(),
+                    title_updated_at: session
+                        .conversation_title_updated_at
+                        .map(|value| value.to_string()),
+                    current_mode: Some(session.current_mode.clone()),
+                    created_at: Some(
+                        session
+                            .conversation_title_updated_at
+                            .unwrap_or(session.updated_at)
+                            .to_string(),
+                    ),
+                }),
+            );
 
             let surface_event_rows = bearwire_events::list_bearwire_events_after(
                 &state.sqlx_pool,
@@ -200,20 +202,15 @@ async fn conversation_history_like_result(
                         .event
                         .event_id
                         .unwrap_or_else(|| format!("bearwire:{}", row.id));
-                    let mut event = json!({
-                        "id": event_id,
-                        "kind": "session_info_update",
-                        "role": "system",
-                        "session_id": session.client_session_id,
-                        "created_at": row.created_at,
-                    });
-                    if let Some(title) = title {
-                        event["title"] = json!(title);
-                    }
-                    if let Some(updated_at) = updated_at {
-                        event["title_updated_at"] = json!(updated_at);
-                    }
-                    messages.push(event);
+                    messages.push(json!(SurfaceHistoryEvent::SessionInfoUpdate {
+                        id: Some(event_id),
+                        role: Some("system".to_string()),
+                        session_id: Some(session.client_session_id.clone()),
+                        title: title.map(str::to_string),
+                        title_updated_at: updated_at.map(str::to_string),
+                        current_mode: None,
+                        created_at: Some(row.created_at.to_string()),
+                    }));
                     continue;
                 }
 
@@ -252,14 +249,13 @@ async fn conversation_history_like_result(
                     .event
                     .event_id
                     .unwrap_or_else(|| format!("bearwire:{}", row.id));
-                messages.push(json!({
-                    "id": event_id,
-                    "kind": "reasoning_delta",
-                    "role": "assistant",
-                    "text": delta,
-                    "source": source,
-                    "replay_policy": replay_policy,
-                    "created_at": row.created_at,
+                messages.push(json!(SurfaceHistoryEvent::ReasoningDelta {
+                    id: Some(event_id),
+                    role: Some("assistant".to_string()),
+                    text: delta.to_string(),
+                    source: Some(source),
+                    replay_policy: Some(replay_policy),
+                    created_at: Some(row.created_at.to_string()),
                 }));
             }
         }
