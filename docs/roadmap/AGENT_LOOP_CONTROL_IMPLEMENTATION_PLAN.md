@@ -325,9 +325,10 @@ When a trigger fires:
 | Enforce same-signature checkpoint | Near-ko repeated signature forces different action or checkpoint. |
 | Enforce task-gate checkpoint | First/repeated gate rejection can require checkpoint before stronger gate behavior. |
 | Enforce pre-risk checkpoint | `careful`/`strict` can require checkpoint before broad/destructive actions. |
-| Add loop tests | Simulated turns prove checkpoint tool calls are handled internally, invalid checkpoint reports degrade without killing the run, and valid reports can require task-tool follow-through. |
+| Reset checkpoint observation window | A valid or degraded checkpoint report clears only checkpoint-trigger counters, giving the model a bounded fresh read/search or recovery window without resetting authoritative budgets/ko/fuses. |
+| Add loop tests | Simulated turns prove checkpoint tool calls are handled internally, invalid checkpoint reports degrade without killing the run, valid reports can require task-tool follow-through, and checkpoint reports open a fresh checkpoint-observation window. |
 
-**Exit gate:** checkpoints are part of runtime continuation, not merely diagnostics.
+**Exit gate:** checkpoints are part of runtime continuation, not merely diagnostics, and a checkpoint report prevents immediate re-triggering of the same checkpoint while preserving budget/ko authority.
 
 ## Phase 8 — Optional checkpoint thinking-level escalation
 

@@ -192,6 +192,8 @@ Checkpoints are **control-flow scaffolding, not work records**. They do not crea
 
 Checkpoint reports are advisory/audit records. Deterministic loop signals — budgets, ko, task gates, and grounding probes — remain authoritative; a checkpoint cannot grant itself more budget or override runtime stop policy. Invalid or missing checkpoint tool arguments should normally degrade to a recovery nudge or advisory tool result, not hard-fail the turn. Reserve hard failure for emergency fuses, repeated unrecoverable protocol errors, or unsafe states.
 
+After a checkpoint report is received, Den may reset the **checkpoint trigger observation window** that caused the nudge — for example read/search-since-mutation, consecutive-failure, and same-signature counters used only to decide when to ask for another checkpoint. This gives the model a bounded fresh chance to read/search or recover after synthesizing. It must not reset authoritative turn budgets, rule-of-ko hard stops, wall-clock limits, total tool-call fuses, or task gates.
+
 Checkpoint thinking-level escalation must remain bounded to the checkpoint/pre-risk inference unless the resolved control profile explicitly says otherwise. It should improve synthesis quality without silently converting the whole run into a higher-cost reasoning mode.
 
 ### 7c. Grounding probes make post-mutation quality checkable per work surface
