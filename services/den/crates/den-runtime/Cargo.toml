@@ -19,6 +19,7 @@ production = ["den-core/production"]
 test-util = ["den-service/test-util"]
 
 [dependencies]
+bearwire-protocol = { path = "../bearwire-protocol" }
 den-core = { path = "../den-core" }
 den-protocol = { path = "../den-protocol" }
 den-service = { path = "../den-service" }

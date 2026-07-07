@@ -809,6 +809,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "bearwire-protocol",
  "bytes",
  "den-core",
  "den-docket",
