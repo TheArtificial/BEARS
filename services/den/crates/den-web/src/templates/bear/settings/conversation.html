@@ -5,6 +5,7 @@
 {% block manage %}
 <div class="box">
 <h2>Conversation</h2>
+<p class="form-hint"><a href="/bear/{{ bear.slug | e }}/activity">Back to activity</a></p>
 <p><a href="/bear/{{ bear.slug }}/conversations">← Back to conversations</a></p>
 
 <dl>
@@ -121,6 +122,9 @@
 {% else %}
 <p><em>No persisted compaction artifacts for this conversation.</em></p>
 {% endif %}
+
+<h3>Memories formed</h3>
+<p class="form-hint">Linking a conversation to the memories it produced is not wired up yet — memory records do not carry a source-conversation reference in this build. Browse <a href="/bear/{{ bear.slug | e }}/memory/recent">recent memory</a> from the same period instead.</p>
 
 <h3>Messages (latest 40)</h3>
 {% if message_rows and message_rows | length > 0 %}

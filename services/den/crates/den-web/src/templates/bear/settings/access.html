@@ -1,16 +1,16 @@
 {% extends "bear/_manage.html" %}
 
-{% block title %}Access · {{ bear.slug }}{% endblock %}
+{% block title %}People · {{ bear.slug }}{% endblock %}
 
 {% block manage %}
 <div class="box">
-<h2>Access · {{ bear.name }}</h2>
+<h2>People</h2>
 
 {% if message %}
 <p><strong>{{ message | e }}</strong></p>
 {% endif %}
 
-<p class="form-hint"><strong>Admin</strong> can manage bear settings and members. <strong>Member</strong> can use the bear in chat and ACP.</p>
+<p class="form-hint">Who can use this Bear on this Den. <strong>Admin</strong> can manage settings and members; <strong>member</strong> can chat and pair. Membership stays with this Den — it does not travel with an export.</p>
 
 {% if members and members | length > 0 %}
 <table>
