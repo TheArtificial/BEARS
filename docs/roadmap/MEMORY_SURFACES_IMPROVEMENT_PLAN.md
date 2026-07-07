@@ -156,12 +156,22 @@ Deliverables:
 - Projection ranking by current request relevance, scope, recency, confidence, and lifecycle status.
 - Deprioritization of stale session summaries unless directly relevant.
 - Projection diagnostics explaining why each block was selected.
+- **Persist per-turn projection identities.** The per-turn `ContextBudgetReport`
+  (ADR-0047, landed) is persisted to `conversations.latest_context_budget_json`
+  and gives the management UI's Context page per-source *sizes* — but not
+  *identities*: which memory records were actually projected exists only in
+  in-memory assembly diagnostics and is discarded after the turn. Persist the
+  projected memory ids (and omission reasons) alongside the budget report so
+  the Context page's "last assembled turn" view can link each projected memory
+  to its record, closing the loop from prompt back to provenance.
 
 Acceptance checks:
 
 - Irrelevant old summaries are not projected by default.
 - The agent can explain why a memory appeared in context.
 - Relevant work-surface memory beats generic historical notes.
+- From the management UI, a user can see which memory records were in the
+  last turn's context and open each one.
 
 ### 8. Tool-description compression
 
