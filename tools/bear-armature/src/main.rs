@@ -12466,6 +12466,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_resume_replays_history_tool_records_as_acp_tool_updates_not_text() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_history(vec![
+            json!({
+                "id": "call-resume-history",
+                "kind": "tool_call",
+                "role": "assistant",
+                "tool_call_id": "call-resume-history",
+                "tool_name": "run_command",
+                "status": "pending",
+                "arguments": { "command": "true" }
+            }),
+            json!({
+                "id": "call-resume-history",
+                "kind": "tool_result",
+                "role": "assistant",
+                "tool_call_id": "call-resume-history",
+                "tool_name": "run_command",
+                "status": "ok",
+                "text": "Used run_command (ok)",
+                "raw_output": { "exit_code": 0 }
+            }),
+        ])
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("resume-history-tool-replay");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "resume-1",
+                    "method": "session/resume",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let tool_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(tool_frames.len(), 2, "{output:#?}");
+        assert!(
+            tool_frames
+                .iter()
+                .all(|frame| frame.contains("call-resume-history")),
+            "{output:#?}"
+        );
+        assert!(
+            tool_frames.iter().any(|frame| frame.contains("completed")),
+            "{output:#?}"
+        );
+
+        let agent_text = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_message_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!agent_text.contains("Used run_command"), "{output:#?}");
+        assert!(
+            output.iter().any(
+                |frame| frame.get("id").and_then(Value::as_str) == Some("resume-1")
+                    && frame.get("result").is_some()
+            ),
+            "{output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn session_load_replays_surface_reasoning_as_thought_not_agent_message() {
         let _guard = ENV_LOCK
             .lock()
@@ -12526,7 +12627,10 @@ mod tests {
             .map(Value::to_string)
             .collect::<Vec<_>>();
         assert_eq!(thought_frames.len(), 1, "{output:#?}");
-        assert!(thought_frames[0].contains("private reasoning"), "{output:#?}");
+        assert!(
+            thought_frames[0].contains("private reasoning"),
+            "{output:#?}"
+        );
 
         let agent_frames = output
             .iter()
