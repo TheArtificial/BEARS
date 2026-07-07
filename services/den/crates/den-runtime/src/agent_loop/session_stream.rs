@@ -16,8 +16,8 @@ use crate::{
     agent_loop::{
         approvals::create_native_approval,
         record_checkpoint_request, record_checkpoint_response, run_agent_step_stream,
-        step::RUNTIME_CHECKPOINT_TOOL_NAME,
         session_store::AgentLoopSessionStore,
+        step::RUNTIME_CHECKPOINT_TOOL_NAME,
         task_gate_checkpoint_trigger, tool_call_finished_event_for_content,
         tool_policy::{
             maybe_pause_for_tool_approval, provider_tool_requires_approval,
@@ -827,7 +827,10 @@ impl SessionTrackingStream {
         };
         self.tool_calls.insert(
             tool_call_id.clone(),
-            (RUNTIME_CHECKPOINT_TOOL_NAME.to_string(), arguments.to_string()),
+            (
+                RUNTIME_CHECKPOINT_TOOL_NAME.to_string(),
+                arguments.to_string(),
+            ),
         );
         self.sync_assistant_tool_step_to_session();
         self.persist_assistant_tool_step();
@@ -1142,8 +1145,23 @@ impl Stream for SessionTrackingStream {
                 },
             )))) => {
                 if tool_name == RUNTIME_CHECKPOINT_TOOL_NAME {
-                    let event = self.handle_checkpoint_tool_call(tool_call_id, arguments);
-                    return Poll::Ready(Some(Ok(event)));
+                    let started =
+                        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                            tool_call_id: tool_call_id.clone(),
+                            tool_name: tool_name.clone(),
+                            title: Some("Runtime checkpoint".to_string()),
+                            kind: Some("function".to_string()),
+                            arguments: arguments.clone(),
+                            approval_request_id: None,
+                            approval_required: false,
+                            approval_reason: None,
+                            run_id: None,
+                        });
+                    let finished = self.handle_checkpoint_tool_call(tool_call_id, arguments);
+                    if let RuntimeStreamEvent::Semantic(event) = finished {
+                        self.pending_pause_after_tool = Some(event);
+                    }
+                    return Poll::Ready(Some(Ok(started)));
                 }
                 if let Err(event) = self.validate_pending_checkpoint_response() {
                     self.finished = true;
@@ -1230,8 +1248,7 @@ impl Stream for SessionTrackingStream {
                         },
                     };
                     self.begin_server_tool_execution(call);
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
+                    return Poll::Ready(Some(Ok(event)));
                 }
                 if approval_required && self.dispatch_mode == NativeToolDispatchMode::DeferToClient
                 {
@@ -2012,6 +2029,120 @@ mod tests {
         let repaired = store.get(&session.session_key).expect("session");
         assert_eq!(repaired.messages.len(), 1);
         assert_eq!(repaired.messages[0].role, "user");
+    }
+
+    #[tokio::test]
+    async fn server_side_den_tool_emits_started_event_before_execution_result() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::new();
+        store.insert(session.clone());
+        let inner = futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call-list".to_string(),
+                tool_name: "list_task_lists".to_string(),
+                title: None,
+                kind: Some("function".to_string()),
+                arguments: serde_json::json!({}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            },
+        ))]);
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(inner),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+
+        let first = stream.next().await.expect("started event").expect("ok");
+        assert!(matches!(
+            first,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                ref tool_call_id,
+                ref tool_name,
+                ref arguments,
+                ..
+            }) if tool_call_id == "call-list" && tool_name == "list_task_lists" && arguments == &serde_json::json!({})
+        ));
+        assert!(
+            stream.pending_server_tool.is_some(),
+            "server-side execution should be queued after the visible started event"
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_tool_emits_started_event_before_finished_event() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::new();
+        store.insert(session.clone());
+        let inner = futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "call-checkpoint".to_string(),
+                tool_name: RUNTIME_CHECKPOINT_TOOL_NAME.to_string(),
+                title: None,
+                kind: Some("function".to_string()),
+                arguments: serde_json::json!({"checkpoint_id":"ckpt-test"}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            },
+        ))]);
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(inner),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+
+        let first = stream.next().await.expect("started event").expect("ok");
+        assert!(matches!(
+            first,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                ref tool_call_id,
+                ref tool_name,
+                ref title,
+                ..
+            }) if tool_call_id == "call-checkpoint"
+                && tool_name == RUNTIME_CHECKPOINT_TOOL_NAME
+                && title.as_deref() == Some("Runtime checkpoint")
+        ));
+
+        let second = stream.next().await.expect("finished event").expect("ok");
+        assert!(matches!(
+            second,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished {
+                ref tool_call_id,
+                ref tool_name,
+                ..
+            }) if tool_call_id == "call-checkpoint" && tool_name == RUNTIME_CHECKPOINT_TOOL_NAME
+        ));
     }
 
     #[tokio::test]
