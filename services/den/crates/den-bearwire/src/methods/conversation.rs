@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use den_http::errors::CustomError;
-use den_service::{conversation::persistence, DenState};
+use den_service::{client_sessions, conversation::persistence, DenState};
 
 use crate::auth::authenticated_bear;
 use crate::methods::{
@@ -92,7 +92,7 @@ async fn conversation_history_like_result(
     .await?;
     let has_more = rows.len() >= limit as usize;
     let next_before = rows.last().map(|row| row.sequence_no.to_string());
-    let messages = rows
+    let mut messages = rows
         .iter()
         .rev()
         .filter_map(|row| {
@@ -137,6 +137,34 @@ async fn conversation_history_like_result(
             }
         })
         .collect::<Vec<_>>();
+
+    if records_key == "surface_events" {
+        if let Some(session) = client_sessions::find_latest_for_bear_conversation(
+            &state.sqlx_pool,
+            bear.id,
+            &conversation_id,
+        )
+        .await?
+        {
+            let mut session_event = json!({
+                "id": format!("session-info:{}", session.client_session_id),
+                "kind": "session_info_update",
+                "role": "system",
+                "session_id": session.client_session_id,
+                "current_mode": session.current_mode,
+                "created_at": session
+                    .conversation_title_updated_at
+                    .unwrap_or(session.updated_at),
+            });
+            if let Some(title) = session.conversation_title {
+                session_event["title"] = json!(title);
+            }
+            if let Some(updated_at) = session.conversation_title_updated_at {
+                session_event["title_updated_at"] = json!(updated_at);
+            }
+            messages.insert(0, session_event);
+        }
+    }
 
     let mut response = json!({
         "kind": response_kind,

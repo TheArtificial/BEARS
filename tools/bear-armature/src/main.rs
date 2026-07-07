@@ -4270,6 +4270,8 @@ struct ReloadHistoryMessage {
     status: Option<String>,
     arguments: Value,
     raw_output: Value,
+    title: Option<String>,
+    title_updated_at: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -4285,6 +4287,8 @@ impl ReloadHistoryMessage {
             status: None,
             arguments: Value::Null,
             raw_output: Value::Null,
+            title: None,
+            title_updated_at: None,
         }
     }
 }
@@ -4337,6 +4341,12 @@ fn reload_history_message_from_value(m: Value) -> Result<Option<ReloadHistoryMes
         .and_then(Value::as_str)
         .map(str::to_string);
     let status = m.get("status").and_then(Value::as_str).map(str::to_string);
+    let title = m.get("title").and_then(Value::as_str).map(str::to_string);
+    let title_updated_at = m
+        .get("title_updated_at")
+        .or_else(|| m.get("updated_at"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     if matches!(kind.as_str(), "tool_call" | "tool_result") {
         if tool_call_id.as_deref().unwrap_or_default().is_empty() {
@@ -4366,6 +4376,8 @@ fn reload_history_message_from_value(m: Value) -> Result<Option<ReloadHistoryMes
         status,
         arguments: m.get("arguments").cloned().unwrap_or(Value::Null),
         raw_output: m.get("raw_output").cloned().unwrap_or(Value::Null),
+        title,
+        title_updated_at,
     }))
 }
 
@@ -4488,6 +4500,16 @@ async fn replay_history_for_den_session(
                         },
                     )
                     .await?;
+                }
+                "session_info_update" => {
+                    if message.title.is_some() || message.title_updated_at.is_some() {
+                        send_session_info_update(
+                            session_id,
+                            message.title.clone(),
+                            message.title_updated_at.clone(),
+                        )
+                        .await?;
+                    }
                 }
                 _ => match message.role.as_str() {
                     "user" => send_user_message_chunk(session_id, &message.text).await?,
@@ -10329,6 +10351,26 @@ mod tests {
     }
 
     #[test]
+    fn structured_surface_session_info_history_parses_title_update() {
+        let message = reload_history_message_from_value(json!({
+            "kind": "session_info_update",
+            "session_id": "session-1",
+            "title": "Loaded title",
+            "title_updated_at": "2026-01-02T03:04:05Z",
+            "current_mode": "write"
+        }))
+        .expect("session info surface event should parse")
+        .expect("session info surface event should not be filtered");
+
+        assert_eq!(message.kind, "session_info_update");
+        assert_eq!(message.title.as_deref(), Some("Loaded title"));
+        assert_eq!(
+            message.title_updated_at.as_deref(),
+            Some("2026-01-02T03:04:05Z")
+        );
+    }
+
+    #[test]
     fn prompt_den_message_without_resources_is_plain_human_message() {
         let params = json!({
             "prompt": [{"type": "text", "text": "Please continue."}]
@@ -11160,6 +11202,8 @@ mod tests {
                 status: None,
                 arguments: Value::Null,
                 raw_output: Value::Null,
+                title: None,
+                title_updated_at: None,
             })
             .collect::<Vec<_>>();
         assert_eq!(page[0].id.as_deref(), Some("msg-1"));

@@ -1554,6 +1554,17 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let conversation_id = format!("den-conv-{}", Uuid::new_v4().simple());
     upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    client_sessions::mark_resolved(&pool, user_id, bear_id, &session_id, &conversation_id)
+        .await
+        .expect("mark test session conversation resolved");
+    client_sessions::set_title_for_bear_conversation(
+        &pool,
+        bear_id,
+        &conversation_id,
+        "History replay title",
+    )
+    .await
+    .expect("set test conversation title");
     let conversation = ensure_conversation_for_external_id(
         &pool,
         bear_id,
@@ -1672,10 +1683,19 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         surface_response["result"]["kind"],
         "conversation_surface_history"
     );
+    let surface_events = surface_response["result"]["surface_events"]
+        .as_array()
+        .expect("surface_events array");
     assert!(
-        surface_response["result"]["surface_events"]
-            .as_array()
-            .expect("surface_events array")
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("session_info_update")
+                && event.get("title").and_then(Value::as_str) == Some("History replay title")
+                && event.get("current_mode").and_then(Value::as_str) == Some("write")
+        }),
+        "surface history should expose typed session metadata update: {surface_response}"
+    );
+    assert!(
+        surface_events
             .iter()
             .any(
                 |event| event.get("kind").and_then(Value::as_str) == Some("tool_result")
