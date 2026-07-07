@@ -10052,11 +10052,25 @@ mod tests {
         fail_bearwire: bool,
         events: Vec<Value>,
     ) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        let (api_url, paths, _rpc_methods) =
+            start_bearwire_test_server_with_events_and_methods(fail_bearwire, events).await;
+        (api_url, paths)
+    }
+
+    async fn start_bearwire_test_server_with_events_and_methods(
+        fail_bearwire: bool,
+        events: Vec<Value>,
+    ) -> (
+        String,
+        Arc<TokioMutex<Vec<String>>>,
+        Arc<TokioMutex<Vec<String>>>,
+    ) {
         let paths = Arc::new(TokioMutex::new(Vec::new()));
+        let rpc_methods = Arc::new(TokioMutex::new(Vec::new()));
         let state = BearWireTestServerState {
             fail_bearwire,
             paths: paths.clone(),
-            rpc_methods: Arc::new(TokioMutex::new(Vec::new())),
+            rpc_methods: rpc_methods.clone(),
             events: Arc::new(TokioMutex::new(events)),
             history_messages: Arc::new(TokioMutex::new(Vec::new())),
         };
@@ -10069,7 +10083,7 @@ mod tests {
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        (format!("http://{addr}"), paths)
+        (format!("http://{addr}"), paths, rpc_methods)
     }
 
     async fn start_bearwire_test_server_with_history(
@@ -12329,6 +12343,97 @@ mod tests {
                     && frame.get("result").is_some()
             ),
             "{output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn den_owned_tool_start_renders_without_local_result_post() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths, rpc_methods) = start_bearwire_test_server_with_events_and_methods(
+            false,
+            vec![
+                json!({
+                    "type": "tool_call.requested",
+                    "run_id": "run-den-owned",
+                    "data": {
+                        "policy": { "execution_target": "den" },
+                        "tool_call": {
+                            "id": "call-den-owned-title",
+                            "name": "set_conversation_title",
+                            "arguments": { "title": "Den owned title" },
+                            "display": { "title": "Set conversation title: Den owned title" }
+                        }
+                    }
+                }),
+                json!({
+                    "type": "message.delta",
+                    "run_id": "run-den-owned",
+                    "data": { "delta": "Done." }
+                }),
+                json!({ "type": "run.completed", "run_id": "run-den-owned", "data": {} }),
+            ],
+        )
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("den-owned-tool-start");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        shared_state.session_contexts.lock().await.insert(
+            "session-1".to_string(),
+            state.session_contexts["session-1"].clone(),
+        );
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "prompt-den-owned",
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "session-1",
+                        "prompt": [{ "type": "text", "text": "set title" }]
+                    }
+                }),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let tool_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            tool_frames
+                .iter()
+                .any(|frame| frame.contains("call-den-owned-title")),
+            "{output:#?}"
+        );
+        let methods = rpc_methods.lock().await.clone();
+        assert!(
+            !methods.iter().any(|method| method == "client.tool.result"),
+            "Den-owned surfaced tool starts must not be executed locally: {methods:?}"
         );
         let _ = fs::remove_dir_all(root);
     }
