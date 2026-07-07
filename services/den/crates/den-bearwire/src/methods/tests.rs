@@ -1685,7 +1685,23 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         ),
     )
     .await
-    .expect("persist reasoning surface event");
+    .expect("persist omitted reasoning surface event");
+    bearwire_events::append_bearwire_event(
+        &pool,
+        &session_id,
+        Some(bear_id),
+        Some(user_id),
+        den_runtime::runtime::bearwire_projection::wire::BearWireEvent::ephemeral(
+            "message.reasoning.delta",
+            json!({
+                "delta": "replayable thought",
+                "source": "provider_reasoning",
+                "replay_policy": "thought"
+            }),
+        ),
+    )
+    .await
+    .expect("persist replayable reasoning surface event");
 
     let surface_response = rpc_value(
         test_state(pool),
@@ -1714,12 +1730,19 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
         "surface history should expose typed session metadata update: {surface_response}"
     );
     assert!(
-        surface_events.iter().any(|event| {
+        !surface_events.iter().any(|event| {
             event.get("kind").and_then(Value::as_str) == Some("reasoning_delta")
                 && event.get("text").and_then(Value::as_str) == Some("thinking privately")
-                && event.get("replay_policy").and_then(Value::as_str) == Some("none")
         }),
-        "surface history should expose typed persisted reasoning with replay policy: {surface_response}"
+        "surface history should omit reasoning with replay_policy=none: {surface_response}"
+    );
+    assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("reasoning_delta")
+                && event.get("text").and_then(Value::as_str) == Some("replayable thought")
+                && event.get("replay_policy").and_then(Value::as_str) == Some("thought")
+        }),
+        "surface history should expose only replayable typed reasoning with replay policy: {surface_response}"
     );
     assert!(
         surface_events

@@ -201,6 +201,9 @@ async fn conversation_history_like_result(
                     .and_then(Value::as_str)
                     .unwrap_or("none")
                     .to_string();
+                if replay_policy == "none" {
+                    continue;
+                }
                 let event_id = row
                     .event
                     .event_id
