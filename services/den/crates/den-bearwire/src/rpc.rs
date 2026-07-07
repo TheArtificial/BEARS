@@ -1,68 +1,12 @@
 use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+pub(crate) use bearwire_protocol::rpc::JsonRpcRequest;
+use bearwire_protocol::rpc::JsonRpcResponse;
 use den_http::errors::CustomError;
 use den_service::DenState;
 
 use crate::methods;
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct JsonRpcRequest {
-    pub(crate) jsonrpc: Option<String>,
-    pub(crate) id: Option<Value>,
-    pub(crate) method: String,
-    #[serde(default)]
-    pub(crate) params: Value,
-}
-
-#[derive(Debug, Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<JsonRpcError>,
-}
-
-#[derive(Debug, Serialize)]
-struct JsonRpcError {
-    code: i64,
-    message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<Value>,
-}
-
-impl JsonRpcResponse {
-    fn ok(id: Option<Value>, result: Value) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            id,
-            result: Some(result),
-            error: None,
-        }
-    }
-
-    fn error(
-        id: Option<Value>,
-        code: i64,
-        message: impl Into<String>,
-        data: Option<Value>,
-    ) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            id,
-            result: None,
-            error: Some(JsonRpcError {
-                code,
-                message: message.into(),
-                data,
-            }),
-        }
-    }
-}
 
 pub(crate) async fn rpc(
     State(state): State<DenState>,
