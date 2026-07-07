@@ -118,6 +118,21 @@ fn responses_completed_emits_turn_completed() {
 }
 
 #[test]
+fn responses_reasoning_delta_emits_reasoning_text_delta() {
+    let mut acc = ResponsesStreamAccumulator::default();
+    let frame = br#"data: {"type":"response.reasoning_text.delta","delta":"private thought"}
+
+"#;
+    let events = responses_sse_frame_to_runtime_events(&mut acc, frame).expect("parse");
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        &events[0],
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ReasoningTextDelta { text })
+            if text == "private thought"
+    ));
+}
+
+#[test]
 fn responses_function_call_done_emits_tool_call_requested() {
     let mut acc = ResponsesStreamAccumulator::default();
     let frame = br#"data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"session_info","arguments":"{}"}}
