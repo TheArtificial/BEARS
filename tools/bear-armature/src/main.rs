@@ -8905,12 +8905,17 @@ fn mcp_tool_title(provider_name: &str) -> String {
     format!("{server_title}: {}", fallback_tool_title(tool))
 }
 
-fn is_den_server_tool_request(event: &Value) -> bool {
+fn tool_request_execution_target(event: &Value) -> Option<&str> {
     event
         .get("policy")
+        .or_else(|| event.pointer("/data/policy"))
+        .or_else(|| event.pointer("/data/tool_call/policy"))
         .and_then(|policy| policy.get("execution_target"))
         .and_then(Value::as_str)
-        == Some("den")
+}
+
+fn is_den_server_tool_request(event: &Value) -> bool {
+    tool_request_execution_target(event) == Some("den")
 }
 
 pub(crate) fn friendly_tool_title(tool_name: &str) -> String {
@@ -11820,12 +11825,26 @@ mod tests {
 
     #[test]
     fn den_server_tool_requests_are_detected() {
-        let event = json!({
+        let legacy_event = json!({
             "policy": { "execution_target": "den" },
             "tool_name": "memory_read"
         });
-        assert!(is_den_server_tool_request(&event));
-        let local = json!({ "policy": { "execution_target": "adapter" } });
+        assert!(is_den_server_tool_request(&legacy_event));
+
+        let canonical_event = json!({
+            "type": "tool_call.requested",
+            "data": {
+                "policy": { "execution_target": "den" },
+                "tool_call": {
+                    "id": "call-den",
+                    "name": "set_conversation_title",
+                    "arguments": { "title": "Loaded title" }
+                }
+            }
+        });
+        assert!(is_den_server_tool_request(&canonical_event));
+
+        let local = json!({ "data": { "policy": { "execution_target": "adapter" } } });
         assert!(!is_den_server_tool_request(&local));
     }
 

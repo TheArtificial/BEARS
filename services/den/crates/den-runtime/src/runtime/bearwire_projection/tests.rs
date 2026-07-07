@@ -151,7 +151,32 @@ fn tool_call_requested_bearwire_event_has_canonical_tool_call_payload() {
     assert!(event.data.get("tool_call_id").is_none());
     assert!(event.data.get("tool_name").is_none());
     assert!(event.data.get("arguments").is_none());
+    assert!(event.data.get("policy").is_none());
     assert!(event.data["tool_call"]["display"].is_object());
+}
+
+#[test]
+fn den_owned_tool_call_requested_bearwire_event_marks_den_execution_target() {
+    let mapped = runtime_stream_event_to_bearwire_events(RuntimeStreamEvent::Semantic(
+        RuntimeSemanticEvent::ToolCallRequested {
+            tool_call_id: "call-title".to_string(),
+            tool_name: "set_conversation_title".to_string(),
+            title: Some("Set conversation title".to_string()),
+            kind: Some("function".to_string()),
+            arguments: serde_json::json!({"title":"Surface replay"}),
+            approval_request_id: None,
+            approval_required: false,
+            approval_reason: None,
+            run_id: None,
+        },
+    ));
+
+    let event = mapped
+        .iter()
+        .find(|event| event.event_type == "tool_call.requested")
+        .expect("tool_call.requested event");
+    assert_eq!(event.data["policy"]["execution_target"], "den");
+    assert_eq!(event.data["tool_call"]["arguments"]["title"], "Surface replay");
 }
 
 #[test]

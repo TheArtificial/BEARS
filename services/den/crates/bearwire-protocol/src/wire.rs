@@ -220,6 +220,8 @@ pub struct ToolPermissionWire {
 pub struct ToolCallRequestedWire {
     pub tool_call: ToolCallWire,
     pub approval_required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_request_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

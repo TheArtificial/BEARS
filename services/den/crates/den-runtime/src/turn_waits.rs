@@ -8,8 +8,16 @@ use bearwire_protocol::wire::{
     BearWireEvent, ResourceRef, ToolCallRequestedWire, ToolCallWaitingWire, ToolPermissionWire,
 };
 
+use crate::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME;
 use crate::runtime::bearwire_projection::wire::tool_call_wire;
 use crate::{bearwire_events, turn_obligations, turn_runs};
+
+fn tool_call_requested_policy(tool_name: &str) -> Option<Value> {
+    let den_owned = tool_name == RUNTIME_CHECKPOINT_TOOL_NAME
+        || den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
+            .is_some_and(|descriptor| descriptor.approval_policy == "never");
+    den_owned.then(|| json!({ "execution_target": "den" }))
+}
 
 #[derive(Debug, Clone)]
 pub struct PersistToolCallWaitInput<'a> {
@@ -384,6 +392,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         })
     } else {
         BearWireEvent::tool_call_requested(ToolCallRequestedWire {
+            policy: tool_call_requested_policy(input.tool_name),
             tool_call,
             approval_required: false,
             approval_request_id: input.approval_request_id.clone(),

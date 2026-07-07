@@ -21,6 +21,8 @@ mod tool_outcome;
 mod tool_policy;
 mod transcript;
 
+pub use step::RUNTIME_CHECKPOINT_TOOL_NAME;
+
 pub use tool_outcome::{
     is_incomplete_tool_result, is_legacy_synthetic_interrupted_tool_result,
     tool_call_finished_event, tool_call_finished_event_for_content,

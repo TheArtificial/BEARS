@@ -7,7 +7,7 @@ use bearwire_protocol::wire::{
 };
 use den_core::{
     client_tools::client_tool_display_for_provider,
-    tools::descriptor::den_tool_display_json_for_provider,
+    tools::descriptor::{builtin_den_tool_descriptor_for_provider_name, den_tool_display_json_for_provider},
 };
 use den_protocol::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent};
 
@@ -28,6 +28,13 @@ pub fn tool_call_wire(
         arguments: arguments.clone(),
         display,
     }
+}
+
+fn tool_call_requested_policy(tool_name: &str) -> Option<Value> {
+    let den_owned = tool_name == crate::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME
+        || builtin_den_tool_descriptor_for_provider_name(tool_name)
+            .is_some_and(|descriptor| descriptor.approval_policy == "never");
+    den_owned.then(|| json!({ "execution_target": "den" }))
 }
 
 pub fn tool_call_finish_wire(
@@ -192,6 +199,7 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 })
             } else {
                 BearWireEvent::tool_call_requested(ToolCallRequestedWire {
+                    policy: tool_call_requested_policy(&tool_name),
                     tool_call,
                     approval_required: false,
                     approval_request_id: approval_request_id.clone(),
