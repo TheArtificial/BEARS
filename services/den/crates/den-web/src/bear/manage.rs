@@ -11,7 +11,13 @@ use axum::{
     Router,
 };
 use axum_extra::routing::RouterExt;
+use den_core::{
+    client_tools::ClientToolName,
+    tools::descriptor::builtin_den_tool_descriptors,
+    BearProfile,
+};
 use minijinja::context;
+use serde::Serialize;
 
 use crate::{
     auth_backend::AuthSession,
@@ -20,6 +26,68 @@ use crate::{
 };
 
 use super::settings::{bear_nav_context, load_session_bear};
+
+#[derive(Serialize)]
+struct ToolStanceRow {
+    name: String,
+    tools: Vec<ToolRow>,
+}
+
+#[derive(Serialize)]
+struct ToolRow {
+    name: &'static str,
+    origin: &'static str,
+    note: &'static str,
+}
+
+fn stance_label(stance: BearProfile) -> &'static str {
+    match stance {
+        BearProfile::Chat => "Chat",
+        BearProfile::Pair => "Pair",
+        BearProfile::Curate => "Curate",
+        BearProfile::Work => "Work",
+        BearProfile::Watch => "Watch",
+    }
+}
+
+/// Build the per-stance tool roster shown on the Tools management page.
+///
+/// Source: `den_core::tools::descriptor::builtin_den_tool_descriptors()` for
+/// Den-hosted tools (each descriptor carries `allowed_roles`, so filtering
+/// per stance is exact), plus `den_core::client_tools::ClientToolName::all()`
+/// for armature-local tools, which are only ever exposed on the pair stance.
+fn tool_stances_context() -> Vec<ToolStanceRow> {
+    let builtin = builtin_den_tool_descriptors();
+
+    BearProfile::ALL
+        .iter()
+        .map(|stance| {
+            let mut tools: Vec<ToolRow> = builtin
+                .iter()
+                .filter(|descriptor| descriptor.allowed_roles.contains(&stance.as_str()))
+                .map(|descriptor| ToolRow {
+                    name: descriptor.name,
+                    origin: "built-in",
+                    note: descriptor.label,
+                })
+                .collect();
+            if *stance == BearProfile::Pair {
+                tools.extend(ClientToolName::all().iter().map(|tool| {
+                    let descriptor = tool.descriptor();
+                    ToolRow {
+                        name: descriptor.provider_name,
+                        origin: "local (armature)",
+                        note: descriptor.title,
+                    }
+                }));
+            }
+            ToolStanceRow {
+                name: stance_label(*stance).to_string(),
+                tools,
+            }
+        })
+        .collect()
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -95,6 +163,7 @@ async fn tools_view(
         Ok(v) => v,
         Err(r) => return Ok(r.into_response()),
     };
+    let tool_stances = tool_stances_context();
     web::render_template(
         &state,
         "bear/manage/tools.html",
@@ -102,6 +171,7 @@ async fn tools_view(
         context! {
             can_manage_bear,
             manage_title => "Tools",
+            tool_stances,
             ..bear_nav_context(&bear, "tools"),
         },
     )
