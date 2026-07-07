@@ -88,6 +88,20 @@ pub struct CheckpointState {
     pub last_checkpoint_reason: Option<CheckpointReason>,
 }
 
+impl CheckpointState {
+    /// Open a fresh checkpoint-observation window after the model has responded to a checkpoint.
+    ///
+    /// This intentionally resets only checkpoint trigger state. It does not replenish the
+    /// authoritative turn-budget ledger or bypass rule-of-ko/failure hard stops.
+    pub fn reset_after_checkpoint_report(&mut self) {
+        self.read_search_since_mutation = 0;
+        self.consecutive_failures = 0;
+        self.same_signature_repeat_count = 0;
+        self.last_signature = None;
+        self.last_checkpoint_reason = None;
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointTrigger {
     pub reason: CheckpointReason,
@@ -767,6 +781,46 @@ mod tests {
             Some(CheckpointReason::OverExploration)
         );
         assert_eq!(evaluation.next_state.read_search_since_mutation, 3);
+    }
+
+    #[test]
+    fn checkpoint_state_reset_after_report_opens_fresh_observation_window() {
+        let mut state = CheckpointState {
+            read_search_since_mutation: 7,
+            consecutive_failures: 2,
+            same_signature_repeat_count: 3,
+            last_signature: Some("memory_read:{path=a}".to_string()),
+            last_checkpoint_reason: Some(CheckpointReason::OverExploration),
+        };
+
+        state.reset_after_checkpoint_report();
+
+        assert_eq!(state.read_search_since_mutation, 0);
+        assert_eq!(state.consecutive_failures, 0);
+        assert_eq!(state.same_signature_repeat_count, 0);
+        assert_eq!(state.last_signature, None);
+        assert_eq!(state.last_checkpoint_reason, None);
+    }
+
+    #[test]
+    fn checkpoint_reset_allows_bounded_fresh_read_search_window() {
+        let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
+        let mut state = CheckpointState {
+            read_search_since_mutation: 3,
+            last_checkpoint_reason: Some(CheckpointReason::OverExploration),
+            ..CheckpointState::default()
+        };
+        state.reset_after_checkpoint_report();
+
+        let evaluation = evaluate_checkpoint_trigger(
+            &profile,
+            &state,
+            &[observation(ToolBudgetClass::Read, "read:a", false)],
+            false,
+        );
+
+        assert!(evaluation.trigger.is_none());
+        assert_eq!(evaluation.next_state.read_search_since_mutation, 1);
     }
 
     #[test]

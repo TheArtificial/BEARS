@@ -786,7 +786,7 @@ impl SessionTrackingStream {
             session
                 .pending_checkpoint_task_action
                 .clone_from(&required_task_action);
-            session.checkpoint_state.last_checkpoint_reason = None;
+            session.checkpoint_state.reset_after_checkpoint_report();
         });
         self.record_checkpoint_response_if_audited(request, response);
     }
@@ -799,7 +799,7 @@ impl SessionTrackingStream {
         );
         self.store.update(&self.session_key, |session| {
             session.pending_checkpoint_request = None;
-            session.checkpoint_state.last_checkpoint_reason = None;
+            session.checkpoint_state.reset_after_checkpoint_report();
         });
     }
 
@@ -1740,6 +1740,10 @@ mod tests {
     async fn validated_checkpoint_response_sets_required_task_action_follow_through() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         session.pending_checkpoint_request = Some(checkpoint_request("ckpt-follow-through"));
+        session.checkpoint_state.read_search_since_mutation = 5;
+        session.checkpoint_state.consecutive_failures = 2;
+        session.checkpoint_state.same_signature_repeat_count = 2;
+        session.checkpoint_state.last_signature = Some("memory_read:{path=a}".to_string());
         let mut stream = test_tracking_stream_with_session(&session);
         stream.assistant_text = checkpoint_response_json(
             "ckpt-follow-through",
@@ -1759,6 +1763,14 @@ mod tests {
         assert!(stream
             .enforce_required_checkpoint_task_action("memory_read")
             .is_err());
+        let stored = stream
+            .store
+            .get(&stream.session_key)
+            .expect("stored checkpoint session");
+        assert_eq!(stored.checkpoint_state.read_search_since_mutation, 0);
+        assert_eq!(stored.checkpoint_state.consecutive_failures, 0);
+        assert_eq!(stored.checkpoint_state.same_signature_repeat_count, 0);
+        assert_eq!(stored.checkpoint_state.last_signature, None);
         assert!(stream
             .enforce_required_checkpoint_task_action(DEN_TASK_LISTS_UPDATE_PROVIDER)
             .is_ok());
