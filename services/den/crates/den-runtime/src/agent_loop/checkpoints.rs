@@ -112,7 +112,7 @@ pub async fn record_checkpoint_request(
         .and_then(|value| Uuid::parse_str(value).ok());
 
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_run_checkpoints (
             run_id, turn_step_id, checkpoint_id, reason, control_level, request,
             validation_status, visibility, replay_policy, related_task_list_id,
@@ -135,7 +135,7 @@ pub async fn record_checkpoint_request(
             id, run_id, turn_step_id, checkpoint_id, reason, control_level, request,
             response, validation_status, visibility, replay_policy, related_task_list_id,
             related_task_item_id, related_docket_task_id, created_at, updated_at
-        "#,
+        ",
     )
     .bind(&input.run_id)
     .bind(input.turn_step_id)
@@ -161,7 +161,7 @@ pub async fn record_checkpoint_response(
     let response_json = serde_json::to_value(&input.response)
         .map_err(|err| DenError::System(format!("serialize checkpoint response: {err}")))?;
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE bear_run_checkpoints
         SET response = $3,
             validation_status = $4,
@@ -171,7 +171,7 @@ pub async fn record_checkpoint_response(
             id, run_id, turn_step_id, checkpoint_id, reason, control_level, request,
             response, validation_status, visibility, replay_policy, related_task_list_id,
             related_task_item_id, related_docket_task_id, created_at, updated_at
-        "#,
+        ",
     )
     .bind(&input.run_id)
     .bind(&input.checkpoint_id)
@@ -193,7 +193,7 @@ pub async fn list_checkpoints_for_run(
     run_id: &str,
 ) -> Result<Vec<CheckpointArtifactRow>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT
             id, run_id, turn_step_id, checkpoint_id, reason, control_level, request,
             response, validation_status, visibility, replay_policy, related_task_list_id,
@@ -201,7 +201,7 @@ pub async fn list_checkpoints_for_run(
         FROM bear_run_checkpoints
         WHERE run_id = $1
         ORDER BY created_at ASC, checkpoint_id ASC
-        "#,
+        ",
     )
     .bind(run_id)
     .fetch_all(pool)
@@ -217,7 +217,7 @@ pub async fn list_checkpoints_for_session(
     limit: i64,
 ) -> Result<Vec<CheckpointArtifactRow>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT
             c.id, c.run_id, c.turn_step_id, c.checkpoint_id, c.reason, c.control_level,
             c.request, c.response, c.validation_status, c.visibility, c.replay_policy,
@@ -228,7 +228,7 @@ pub async fn list_checkpoints_for_session(
         WHERE r.bear_id = $1 AND r.session_id = $2
         ORDER BY c.created_at DESC, c.checkpoint_id DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(session_id)
@@ -274,11 +274,11 @@ mod tests {
         let username = format!("ckpt{}", &suffix[..12]);
         let email = format!("{username}@example.test");
         let (user_id,): (i32,) = sqlx::query_as(
-            r#"
+            r"
             INSERT INTO users (email, username, display_name, passhash)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-            "#,
+            ",
         )
         .bind(email)
         .bind(&username)
@@ -289,10 +289,10 @@ mod tests {
         .expect("create user");
         let bear_id = Uuid::new_v4();
         sqlx::query(
-            r#"
+            r"
             INSERT INTO bears (id, slug, name)
             VALUES ($1, $2, $3)
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(format!("checkpoint-bear-{}", &suffix[..12]))
@@ -301,10 +301,10 @@ mod tests {
         .await
         .expect("create bear");
         sqlx::query(
-            r#"
+            r"
             INSERT INTO turn_runs (run_id, session_id, bear_id, user_id, state)
             VALUES ($1, $2, $3, $4, 'running')
-            "#,
+            ",
         )
         .bind(run_id)
         .bind(format!("session-{run_id}"))

@@ -163,7 +163,7 @@ pub struct JsonRpcNotification<T> {
     pub params: T,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCallWire {
     pub id: String,
     pub name: String,
@@ -174,7 +174,7 @@ pub struct ToolCallWire {
     pub display: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCallRefWire {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -201,7 +201,7 @@ impl ToolCallFinishStatusWire {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCallFinishWire {
     pub tool_call: ToolCallRefWire,
     pub status: ToolCallFinishStatusWire,
@@ -213,7 +213,7 @@ pub struct ToolCallFinishWire {
     pub compacted: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolPermissionWire {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -224,7 +224,7 @@ pub struct ToolPermissionWire {
     pub target: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCallRequestedWire {
     pub tool_call: ToolCallWire,
     pub approval_required: bool,
@@ -234,7 +234,7 @@ pub struct ToolCallRequestedWire {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCallWaitingWire {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_responder_action: Option<String>,
@@ -429,8 +429,8 @@ pub fn runtime_semantic_event_to_bearwire_events(
                     obligation_id: None,
                     tool_call,
                     permission: ToolPermissionWire {
-                        id: permission_id.clone(),
-                        reason: approval_reason.clone(),
+                        id: permission_id,
+                        reason: approval_reason,
                         title: None,
                         target: None,
                     },

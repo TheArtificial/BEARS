@@ -373,7 +373,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             obligation_id: Some(obligation.id.to_string()),
             tool_call,
             permission: ToolPermissionWire {
-                id: permission_id.clone(),
+                id: permission_id,
                 reason: input.approval_reason.clone(),
                 title: None,
                 target: None,

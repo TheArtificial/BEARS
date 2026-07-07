@@ -31,7 +31,7 @@ use crate::{
 /// Default max wait for Bifrost/upstream model to accept a streaming request and return
 /// response headers. Idle providers can be cold after a long session pause; keep this
 /// comfortably above the old 30s watchdog while still bounded.
-const DEFAULT_NATIVE_LLM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(120);
+const DEFAULT_NATIVE_LLM_HANDSHAKE_TIMEOUT: Duration = Duration::from_mins(2);
 const MIN_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS: u64 = 15;
 const MAX_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS: u64 = 900;
 /// Max silence between upstream SSE byte chunks after the handshake.
@@ -505,9 +505,7 @@ impl Stream for LazyAgentStepStream {
 pub const RUNTIME_CHECKPOINT_TOOL_NAME: &str = "checkpoint";
 
 fn checkpoint_thinking_effort_for_session(session: &AgentLoopSession) -> Option<ThinkingEffort> {
-    if session.checkpoint_state.last_checkpoint_reason.is_none() {
-        return None;
-    }
+    session.checkpoint_state.last_checkpoint_reason?;
     let policy = session.agent_loop_control.profile.thinking;
     policy.enabled.then_some(policy.checkpoint_turn_effort).flatten()
 }
