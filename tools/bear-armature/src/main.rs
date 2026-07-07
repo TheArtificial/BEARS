@@ -4542,9 +4542,14 @@ async fn replay_history_for_den_session(
                     };
                     let event = json!({
                         "type": if message.kind == "tool_call" { "tool_call.requested" } else { "tool_call.completed" },
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "args": message.arguments,
+                        "data": {
+                            "tool_call": {
+                                "id": tool_call_id,
+                                "name": tool_name,
+                                "arguments": message.arguments,
+                            },
+                            "summary": message.text,
+                        },
                     });
                     send_tool_call_update(
                         session_id,
