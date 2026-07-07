@@ -100,6 +100,14 @@ For every model-relevant tool call, Den must be able to persist and later recons
 
 A `tool_call.completed` event that only carries `{ "status": "OK" }`, or UI content such as `Tool completed`, is not sufficient as the sole durable/projection source. If a later event is intentionally sparse, the referenced tool-call record must already be persisted and queryable by `tool_call_id`; otherwise the completion event must repeat enough detail for replay.
 
+### Message/reasoning separation invariant
+
+`message.delta` is assistant answer content only. Den must not project provider/model reasoning, thinking, scratchpad, checkpoint synthesis, status text, or diagnostic progress as `message.delta`.
+
+Provider/model reasoning belongs on `message.reasoning.delta`. Runtime status/progress belongs on `run.progress`. Clients that receive a malformed compatibility event carrying reasoning/thinking metadata on `message.delta` must treat it as reasoning display, not assistant answer content, and should not count it as visible assistant output for completion/liveness checks.
+
+This invariant prevents private/provisional model deliberation from becoming user-visible transcript text and keeps assistant answers, reasoning display, and runtime progress separately projectable.
+
 ### JSON-RPC framing
 
 All BearWire requests and responses use standard JSON-RPC 2.0 framing.
@@ -483,6 +491,8 @@ Recommended pause reasons include:
 
 #### `message.delta`
 
+Assistant answer-content delta. This is the content that clients may render as the Bear's user-visible assistant message.
+
 ```json
 {
   "message_id": "msg_123",
@@ -491,6 +501,13 @@ Recommended pause reasons include:
   "delta": "Hello"
 }
 ```
+
+Rules:
+
+- assistant answer content only;
+- may be persisted/replayed according to conversation transcript policy;
+- must not carry provider reasoning, thinking, status/progress, checkpoint reports, or diagnostics;
+- clients should treat reasoning-tagged `message.delta` compatibility payloads as malformed reasoning display and render them as thought, not assistant content.
 
 #### `message.reasoning.delta`
 
@@ -514,6 +531,8 @@ Rules:
 - not included in model transcript replay;
 - not persisted as canonical conversation history;
 - not Docket/task state;
+- should render as thought/deliberation UI when the client supports it;
+- must not satisfy assistant-output/completion checks;
 - clients that do not support reasoning display may ignore it.
 
 #### `message.part`
@@ -1006,6 +1025,8 @@ Implementations migrating from older event models should prefer these mappings:
 | turn completed | `run.completed` |
 | turn failed | `run.failed` |
 | turn cancelled | `run.cancelled` |
+
+Compatibility rule: if an older or malformed stream sends reasoning/thinking content as `message.delta` with fields such as `kind=reasoning_delta`, `source=provider_reasoning`, `reasoning`, `thinking`, or `thought`, clients must reclassify it as reasoning display. They must not render it as assistant answer text or count it as visible assistant output.
 
 ## Open design questions
 
