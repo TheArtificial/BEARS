@@ -1,12 +1,12 @@
-{% extends "base.html" %} {% set memory_subnav = "dashboard" %} {% block title
-%}Memory · {{ bear.slug }}{% endblock %} {% block content %} {% include
-"bear/settings/_bear_nav.html" %} {% include "bear/memory/_memory_nav.html" %}
+{% extends "bear/_manage.html" %} {% set memory_subnav = "dashboard" %} {% block title
+%}Memory · {{ bear.slug }}{% endblock %} {% block manage %} {% include "bear/memory/_memory_nav.html" %}
 
 <div class="box">
     <h2>Memory dashboard</h2>
     <p class="form-hint">
-        Canonical memory lives in this Bear's SQLite store; the recall index and
-        entity layer are derived.
+        This is the Bear's owned, portable mind: it travels with an export, unlike
+        the transcripts that formed it. Canonical memory lives in this Bear's
+        SQLite store; the recall index and entity layer are derived.
     </p>
 
     {% if import_notice %}
@@ -59,6 +59,45 @@
     <p class="form-errors">
         Memory store statistics are unavailable for this Bear.
     </p>
+    {% endif %}
+</div>
+
+<div class="box">
+    <h3>Review queue</h3>
+    {% if pending_proposals or (stats and stats.pending_observations > 0) %}
+    {% if pending_proposals %}
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>From</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in pending_proposals %}
+            <tr>
+                <td>
+                    <a
+                        href="/bear/{{ bear.slug | e }}/memory/proposals/{{ p.id }}"
+                        >{{ p.title | e }}</a
+                    >
+                </td>
+                <td>{{ p.source_profile | e }}</td>
+                <td class="form-hint">{{ p.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% if stats and stats.pending_observations > 0 %}
+    <p class="form-hint">
+        {{ stats.pending_observations }} watch observation{{
+        stats.pending_observations == 1 and "" or "s" }} also awaiting review.
+    </p>
+    {% endif %}
+    {% else %}
+    <p class="form-hint">Nothing awaiting review.</p>
     {% endif %}
 </div>
 

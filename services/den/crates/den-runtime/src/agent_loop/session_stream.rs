@@ -582,7 +582,7 @@ impl SessionTrackingStream {
             CheckpointTaskContext {
                 task_list_id: Some(plan.id.to_string()),
                 task_list_version: None,
-                active_item_id: active_item.map(|item| item.id.to_string()),
+                active_item_id: active_item.map(|item| item.id.clone()),
                 active_item_title: active_item.map(|item| item.title.clone()),
                 docket_job_id: plan.source_ref.docket_job_id.clone(),
                 docket_task_id: active_item.and_then(|item| item.source_ref.docket_task_id.clone()),
@@ -682,12 +682,12 @@ impl SessionTrackingStream {
             rest.trim()
                 .strip_suffix("```")
                 .map(str::trim)
-                .unwrap_or(rest.trim())
+                .unwrap_or_else(|| rest.trim())
         } else if let Some(rest) = trimmed.strip_prefix("```") {
             rest.trim()
                 .strip_suffix("```")
                 .map(str::trim)
-                .unwrap_or(rest.trim())
+                .unwrap_or_else(|| rest.trim())
         } else {
             trimmed
         };
@@ -743,6 +743,7 @@ impl SessionTrackingStream {
             .and_then(|session| session.pending_checkpoint_task_action)
     }
 
+    #[allow(clippy::result_large_err)]
     fn enforce_required_checkpoint_task_action(
         &self,
         tool_name: &str,
@@ -761,6 +762,7 @@ impl SessionTrackingStream {
         )))
     }
 
+    #[allow(clippy::result_large_err)]
     fn fail_if_checkpoint_task_action_pending(&self) -> Result<(), RuntimeStreamEvent> {
         if let Some(action) = self.pending_checkpoint_task_action() {
             return Err(Self::checkpoint_failure_event(format!(
@@ -781,7 +783,9 @@ impl SessionTrackingStream {
         });
         self.store.update(&self.session_key, |session| {
             session.pending_checkpoint_request = None;
-            session.pending_checkpoint_task_action = required_task_action.clone();
+            session
+                .pending_checkpoint_task_action
+                .clone_from(&required_task_action);
             session.checkpoint_state.last_checkpoint_reason = None;
         });
         self.record_checkpoint_response_if_audited(request, response);
@@ -872,6 +876,7 @@ impl SessionTrackingStream {
         RuntimeStreamEvent::Semantic(tool_call_finished_event_for_content(&call, Some(&content)))
     }
 
+    #[allow(clippy::result_large_err)]
     fn validate_pending_checkpoint_response(&mut self) -> Result<bool, RuntimeStreamEvent> {
         if !self.enforce_checkpoint_responses() {
             return Ok(false);

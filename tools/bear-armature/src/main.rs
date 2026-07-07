@@ -11107,14 +11107,11 @@ mod tests {
     }
 
     #[test]
-    fn canonical_bearwire_tool_request_parser_prefers_nested_payload() {
+    fn canonical_bearwire_tool_request_parser_requires_nested_payload() {
         let event = json!({
             "type": "tool_call.requested",
             "run_id": "run-1",
             "data": {
-                "tool_call_id": "legacy-call",
-                "tool_name": "legacy_tool",
-                "arguments": { "path": "/legacy" },
                 "tool_call": {
                     "id": "call-1",
                     "name": "fs_read_text_file",
@@ -11144,11 +11141,6 @@ mod tests {
         let event = json!({
             "type": "client.waiting",
             "run_id": "run-web-1",
-            "resource_refs": [
-                { "kind": "client_obligation", "id": "legacy-obligation" },
-                { "kind": "tool_call", "id": "legacy-tool-call" },
-                { "kind": "permission_request", "id": "legacy-permission" }
-            ],
             "data": {
                 "expected_client_method": "client.permission.result",
                 "obligation_id": "obl-web-1",
@@ -14298,9 +14290,7 @@ mod bearwire_tool_request_parser_tests {
                     "id": "call-req-1",
                     "name": "fs_read_text_file",
                     "arguments": { "path": "README.md" }
-                },
-                "tool_call_id": "legacy-wrong",
-                "tool_name": "legacy_wrong"
+                }
             }
         });
 
@@ -14329,9 +14319,7 @@ mod bearwire_tool_request_parser_tests {
                     "name": "process_run",
                     "arguments": { "command": "cargo", "args": ["test"] },
                     "display": { "title": "Run cargo" }
-                },
-                "permission_id": "legacy-wrong",
-                "tool_call_id": "legacy-wrong"
+                }
             }
         });
 

@@ -1,0 +1,65 @@
+{% extends "bear/_manage.html" %}
+{% block title %}Portability · {{ bear.slug }}{% endblock %}
+{% block manage %}
+<div class="box">
+    <h2>Portability</h2>
+    <p class="form-hint">
+        A Bear is its curated memory and configuration — not its transcripts.
+        Export produces a bundle you can carry to another Den; this server
+        keeps its own record.
+    </p>
+
+    <h3>Export</h3>
+    <p>
+        <a class="button-link" href="/bear/{{ bear.slug | e }}/export.bear"
+            >Download bundle (.bear)</a
+        >
+    </p>
+    <p class="form-hint">
+        The bundle contains identity, configuration, and the Bear's canonical
+        SQLite memory as of this moment. Anything the reflection lanes have
+        not yet curated into memory stays behind in this Den's transcripts.
+    </p>
+
+    <h3>What moves, what stays</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Concern</th>
+                <th>In the bundle?</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>Identity, charter, stance configuration</td><td>Yes</td></tr>
+            <tr><td>Canonical memory (all scopes), promotions, proposals</td><td>Yes</td></tr>
+            <tr><td>Conversations and transcripts</td><td>No — stay on this Den</td></tr>
+            <tr><td>Jobs, runs, approvals in flight</td><td>No — stay on this Den</td></tr>
+            <tr><td>Membership (people)</td><td>No — re-granted on the target</td></tr>
+            <tr><td>Connections, tokens, secrets</td><td>Never — re-attached on the target</td></tr>
+            <tr><td>Recall index (derived)</td><td>No — rebuilt from memory on import</td></tr>
+        </tbody>
+    </table>
+
+    <h3>Import</h3>
+    {% if can_manage_bear %}
+    <form
+        method="post"
+        action="/bears/import"
+        enctype="multipart/form-data"
+        class="bear-manage-import-form"
+    >
+        <p>
+            <label for="bundle">Bundle file (.bear)</label>
+            <input type="file" id="bundle" name="bundle" required />
+        </p>
+        <p class="form-hint">
+            Importing creates a <strong>new Bear</strong> on this Den from the
+            bundle. It does not modify this one.
+        </p>
+        <p><button type="submit">Import bundle</button></p>
+    </form>
+    {% else %}
+    <p class="form-hint">Bear admins can import bundles.</p>
+    {% endif %}
+</div>
+{% endblock %}

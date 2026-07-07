@@ -1102,7 +1102,7 @@ fn checkpoint_task_context(session: &AgentLoopSession) -> Option<CheckpointTaskC
     Some(CheckpointTaskContext {
         task_list_id: Some(plan.id.to_string()),
         task_list_version: None,
-        active_item_id: active_item.map(|item| item.id.to_string()),
+        active_item_id: active_item.map(|item| item.id.clone()),
         active_item_title: active_item.map(|item| item.title.clone()),
         docket_job_id: plan.source_ref.docket_job_id.clone(),
         docket_task_id: active_item.and_then(|item| item.source_ref.docket_task_id.clone()),

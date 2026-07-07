@@ -63,7 +63,7 @@ use super::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bear/{slug}/overview", get(overview_view))
-        .route_with_tsr("/bear/{slug}/access", get(access_view))
+        .route_with_tsr("/bear/{slug}/people", get(access_view))
         .route_with_tsr("/bear/{slug}/persona", get(persona_view))
         .route_with_tsr("/bear/{slug}/stances", get(stances_view))
         .route_with_tsr("/bear/{slug}/profiles", get(stances_view))
@@ -82,13 +82,14 @@ pub fn router() -> Router<AppState> {
             "/bear/{slug}/profiles/{stance}/model",
             post(stance_model_post),
         )
+        .route_with_tsr("/bear/{slug}/activity", get(conversations_view))
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
         .route_with_tsr(
             "/bear/{slug}/conversations/{conversation_id}",
             get(conversation_detail_view),
         )
         .route_with_tsr("/bear/{slug}/context", get(context_view))
-        .route_with_tsr("/bear/{slug}/policy", get(policy_view))
+        .route_with_tsr("/bear/{slug}/resources", get(policy_view))
         .route_with_tsr("/bear/{slug}/advanced", get(advanced_view))
         .route_with_tsr("/bear/{slug}/export.bear", get(export_bear_bundle))
         .route_with_tsr("/bears/import", post(import_bear_bundle))
@@ -604,7 +605,7 @@ async fn conversation_checkpoint_artifacts(
         time::OffsetDateTime,
         time::OffsetDateTime,
     )>(
-        r#"
+        r"
         SELECT
             c.run_id,
             c.checkpoint_id,
@@ -624,7 +625,7 @@ async fn conversation_checkpoint_artifacts(
         WHERE r.bear_id = $1 AND r.session_id = $2
         ORDER BY c.created_at DESC, c.checkpoint_id DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(session_id)
@@ -1129,6 +1130,50 @@ async fn overview_view(
             .fetch_one(state.sqlx_pool())
             .await
             .map_err(|err| CustomError::Database(format!("count bear conversations: {err}")))?;
+    let pending_reviews: i64 = memory_stats
+        .as_ref()
+        .map(|s| s.pending_proposals + s.pending_observations)
+        .unwrap_or(0);
+    let recent_rows: Vec<(Uuid, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, current_title, to_char(updated_at, 'YYYY-MM-DD HH24:MI') \
+         FROM conversations WHERE bear_id = $1 ORDER BY updated_at DESC LIMIT 5",
+    )
+    .bind(id)
+    .fetch_all(state.sqlx_pool())
+    .await
+    .map_err(|err| CustomError::Database(format!("recent bear conversations: {err}")))?;
+    let recent_conversations: Vec<serde_json::Value> = recent_rows
+        .into_iter()
+        .map(|(cid, title, updated)| {
+            json!({
+                "id": cid.to_string(),
+                "title": title.unwrap_or_else(|| "Untitled conversation".to_string()),
+                "updated_at": updated,
+            })
+        })
+        .collect();
+    let weekly_rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT to_char(date_trunc('week', updated_at), 'YYYY-MM-DD'), COUNT(*)::bigint \
+         FROM conversations WHERE bear_id = $1 \
+           AND updated_at > now() - interval '8 weeks' \
+         GROUP BY 1 ORDER BY 1 DESC",
+    )
+    .bind(id)
+    .fetch_all(state.sqlx_pool())
+    .await
+    .map_err(|err| CustomError::Database(format!("bear activity over time: {err}")))?;
+    let weekly_max = weekly_rows.iter().map(|(_, n)| *n).max().unwrap_or(0);
+    let weekly_activity: Vec<serde_json::Value> = weekly_rows
+        .into_iter()
+        .map(|(week, n)| {
+            let pct = if weekly_max > 0 {
+                (((n as f64 / weekly_max as f64) * 10.0).ceil() as i64) * 10
+            } else {
+                0
+            };
+            json!({ "week": week, "count": n, "pct": pct })
+        })
+        .collect();
 
     web::render_template(
         &state,
@@ -1146,6 +1191,9 @@ async fn overview_view(
             memory_stats,
             legacy_import_locked => memory_stats.as_ref().map(|stats| stats.record_count > 0).unwrap_or(true),
             conversation_count,
+            pending_reviews,
+            recent_conversations,
+            weekly_activity,
             can_manage_bear,
             bear_nav_active => "overview",
             ..bear_nav_context(&bear, "overview"),
@@ -1185,7 +1233,7 @@ async fn access_view(
             message => query.message,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "access"),
+            ..bear_nav_context(&bear, "people"),
         },
     )
     .await
@@ -1832,7 +1880,7 @@ async fn render_models_page(
             error,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "models"),
+            ..bear_nav_context(&bear, "identity"),
         },
     )
     .await
@@ -2202,7 +2250,7 @@ async fn conversations_view(
             conversations,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "conversations"),
+            ..bear_nav_context(&bear, "activity"),
         },
     )
     .await
@@ -2265,7 +2313,7 @@ async fn conversation_detail_view(
             checkpoint_artifacts,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "conversations"),
+            ..bear_nav_context(&bear, "activity"),
         },
     )
     .await
@@ -2339,7 +2387,7 @@ async fn policy_view(
             message => query.message,
             can_manage_bear,
             native_runtime => true,
-            ..bear_nav_context(&bear, "policy"),
+            ..bear_nav_context(&bear, "resources"),
         },
     )
     .await
@@ -2388,7 +2436,7 @@ async fn grant_member_action(
         let uname = form.username.trim();
         if uname.is_empty() {
             return Ok(Redirect::to(&format!(
-                "/bear/{}/access?message={}",
+                "/bear/{}/people?message={}",
                 bear.slug,
                 urlencoding::encode("Username is required.")
             ))
@@ -2398,7 +2446,7 @@ async fn grant_member_action(
             Some(u) => u.id,
             None => {
                 return Ok(Redirect::to(&format!(
-                    "/bear/{}/access?message={}",
+                    "/bear/{}/people?message={}",
                     bear.slug,
                     urlencoding::encode("User not found.")
                 ))
@@ -2414,7 +2462,7 @@ async fn grant_member_action(
     };
     bears_db::grant_membership(state.sqlx_pool(), target_id, bear.id, role_opt).await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/access?message={}",
+        "/bear/{}/people?message={}",
         bear.slug,
         urlencoding::encode("Access granted.")
     ))
@@ -2439,7 +2487,7 @@ async fn revoke_member_action(
         let n = bears_db::count_bear_admins(state.sqlx_pool(), bear.id).await?;
         if n <= 1 {
             return Ok(Redirect::to(&format!(
-                "/bear/{}/access?message={}",
+                "/bear/{}/people?message={}",
                 bear.slug,
                 urlencoding::encode("Cannot remove the last bear admin.")
             ))
@@ -2448,13 +2496,13 @@ async fn revoke_member_action(
     }
     match bears_db::revoke_membership(state.sqlx_pool(), user_id, bear.id).await {
         Ok(()) => Ok(Redirect::to(&format!(
-            "/bear/{}/access?message={}",
+            "/bear/{}/people?message={}",
             bear.slug,
             urlencoding::encode("Access removed.")
         ))
         .into_response()),
         Err(DenError::NotFound(_)) => Ok(Redirect::to(&format!(
-            "/bear/{}/access?message={}",
+            "/bear/{}/people?message={}",
             bear.slug,
             urlencoding::encode("Membership not found.")
         ))
@@ -2480,7 +2528,7 @@ async fn add_web_source_action(
         || !matches!(policy, "preferred" | "allowed" | "blocked")
     {
         return Ok(Redirect::to(&format!(
-            "/bear/{}/policy?message={}",
+            "/bear/{}/resources?message={}",
             bear.slug,
             urlencoding::encode("Invalid web source policy form.")
         ))
@@ -2490,7 +2538,7 @@ async fn add_web_source_action(
         Ok(scope_value) => scope_value,
         Err(err) => {
             return Ok(Redirect::to(&format!(
-                "/bear/{}/policy?message={}",
+                "/bear/{}/resources?message={}",
                 bear.slug,
                 urlencoding::encode(&err.to_string())
             ))
@@ -2517,7 +2565,7 @@ async fn add_web_source_action(
     .execute(state.sqlx_pool())
     .await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/policy?message={}",
+        "/bear/{}/resources?message={}",
         bear.slug,
         urlencoding::encode("Web source saved.")
     ))
@@ -2539,7 +2587,7 @@ async fn delete_web_source_action(
         .execute(state.sqlx_pool())
         .await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/policy?message={}",
+        "/bear/{}/resources?message={}",
         bear.slug,
         urlencoding::encode("Web source deleted.")
     ))
@@ -2559,7 +2607,7 @@ async fn add_web_approval_action(
     let scope_kind = form.scope_kind.trim();
     if !matches!(scope_kind, "host" | "url") {
         return Ok(Redirect::to(&format!(
-            "/bear/{}/policy?message={}",
+            "/bear/{}/resources?message={}",
             bear.slug,
             urlencoding::encode("Invalid web approval scope.")
         ))
@@ -2569,7 +2617,7 @@ async fn add_web_approval_action(
         Ok(scope_value) => scope_value,
         Err(err) => {
             return Ok(Redirect::to(&format!(
-                "/bear/{}/policy?message={}",
+                "/bear/{}/resources?message={}",
                 bear.slug,
                 urlencoding::encode(&err.to_string())
             ))
@@ -2587,7 +2635,7 @@ async fn add_web_approval_action(
     )
     .await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/policy?message={}",
+        "/bear/{}/resources?message={}",
         bear.slug,
         urlencoding::encode("Web approval added.")
     ))
@@ -2609,7 +2657,7 @@ async fn revoke_web_approval_action(
         .execute(state.sqlx_pool())
         .await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/policy?message={}",
+        "/bear/{}/resources?message={}",
         bear.slug,
         urlencoding::encode("Web approval revoked.")
     ))

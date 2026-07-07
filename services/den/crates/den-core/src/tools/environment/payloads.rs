@@ -490,7 +490,6 @@ pub fn session_info_payload(
             "membership_role": context.membership_role,
             "is_bear_admin": role_is_bear_admin(context.membership_role.as_deref())
         },
-        "runtime": runtime.clone(),
         "docket": runtime.get("docket").cloned().unwrap_or_else(|| json!({
             "active_job_id": Value::Null,
             "active_run_id": Value::Null,
@@ -498,6 +497,7 @@ pub fn session_info_payload(
             "active_task_title": Value::Null,
             "source": "none"
         })),
+        "runtime": runtime,
         "context_budget": context_budget,
         "context_surfaces": context_layers,
         "model_experience": {

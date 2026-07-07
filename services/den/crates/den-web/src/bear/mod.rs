@@ -1,6 +1,7 @@
 pub mod chat;
 pub mod create_support;
 pub mod management;
+pub mod manage;
 pub mod member;
 pub mod memory;
 pub mod profile;

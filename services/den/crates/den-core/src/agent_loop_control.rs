@@ -5,10 +5,11 @@ use serde::{Deserialize, Serialize};
 /// The level is resolved before a run/turn and expands to a concrete runtime profile in
 /// `den-runtime`. Keep this shared enum in `den-core` so the model registry, service config,
 /// and runtime can agree on serialized values without dependency cycles.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentLoopControlLevel {
     Light,
+    #[default]
     Standard,
     Careful,
     Strict,
@@ -31,12 +32,6 @@ impl AgentLoopControlLevel {
         } else {
             other
         }
-    }
-}
-
-impl Default for AgentLoopControlLevel {
-    fn default() -> Self {
-        Self::Standard
     }
 }
 

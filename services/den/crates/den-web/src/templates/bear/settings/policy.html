@@ -1,18 +1,21 @@
-{% extends "base.html" %}
+{% extends "bear/_manage.html" %}
 
-{% block title %}Policy · {{ bear.slug }}{% endblock %}
+{% block title %}Resources · {{ bear.slug }}{% endblock %}
 
-{% block content %}
-{% include "bear/settings/_bear_nav.html" %}
+{% block manage %}
 <div class="box">
-<h2>Policy · {{ bear.name }}</h2>
+<h2>Resources</h2>
+<p class="form-hint">What this Bear acts on and reads. The Bear's <em>knowledge</em> of a resource travels with an export as memory; the resource itself — and the policy or connection behind it — stays with this Den.</p>
+
+<h3>The web</h3>
+<p class="form-hint">The open web is a resource under policy: sources you prefer, allow, or block, plus standing approvals — not a connection.</p>
 
 {% if message %}
 <p><strong>{{ message | e }}</strong></p>
 {% endif %}
 
 {% if can_manage_bear %}
-<h3>Web sources</h3>
+<h4>Sources</h4>
 <form method="post" action="/bear/{{ bear.slug | e }}/web-sources" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end;">
   <label>Scope<br><select name="scope_kind"><option value="host">host</option><option value="url">url</option></select></label>
   <label>Value<br><input type="text" name="scope_value" placeholder="docs.rs" size="36" required></label>
@@ -39,7 +42,7 @@
 {% endif %}
 
 {% if can_manage_bear %}
-<h3>Web approvals</h3>
+<h4>Approvals</h4>
 <form method="post" action="/bear/{{ bear.slug | e }}/web-approvals" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end;">
   <label>Scope<br><select name="scope_kind"><option value="host">host</option><option value="url">url</option></select></label>
   <label>Value<br><input type="text" name="scope_value" placeholder="example.com" size="36" required></label>
@@ -65,7 +68,7 @@
 <p><em>No active web approvals.</em></p>
 {% endif %}
 
-<h3>Recent web fetches</h3>
+<h4>Recent fetches</h4>
 {% if web_fetches and web_fetches | length > 0 %}
 <table>
   <thead><tr><th>Host</th><th>URL</th><th>Status</th><th>When</th></tr></thead>
@@ -83,6 +86,9 @@
 {% else %}
 <p><em>No recent fetches logged.</em></p>
 {% endif %}
+
+<h3>Internal</h3>
+<p class="form-hint">Cabinet (shared knowledge) and Docket projects will appear here as internal resources when they are deployed with this Den. External resources reached through <a href="/bear/{{ bear.slug | e }}/connections">connections</a> — repositories, documents, servers — are not yet available.</p>
 
 <h3>Plan mode sessions</h3>
 {% if plan_mode_rows and plan_mode_rows | length > 0 %}

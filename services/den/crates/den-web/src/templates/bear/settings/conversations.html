@@ -1,11 +1,13 @@
-{% extends "base.html" %}
+{% extends "bear/_manage.html" %}
 
-{% block title %}Conversations · {{ bear.slug }}{% endblock %}
+{% block title %}Activity · {{ bear.slug }}{% endblock %}
 
-{% block content %}
-{% include "bear/settings/_bear_nav.html" %}
+{% block manage %}
 <div class="box">
-<h2>Conversations · {{ bear.name }}</h2>
+<h2>Activity</h2>
+<p class="form-hint">What this Bear has done, on this Den: conversations now, jobs and Cabinet activity as they land. The record stays here — the Bear's memory is what travels.</p>
+
+<h3>Conversations</h3>
 
 {% if conversations and conversations | length > 0 %}
 <table>
@@ -41,5 +43,11 @@
 {% else %}
 <p><em>No persisted conversations yet.</em></p>
 {% endif %}
+
+<h3>Jobs</h3>
+<p class="form-hint">Structured, dispatched work. The <code>work</code> stance sandbox is not built yet in this Den, so there are no jobs to show — when it lands, you will create, dispatch, and prioritize jobs here, and each run will link back to the conversation that spawned it.</p>
+
+<h3>Cabinet</h3>
+<p class="form-hint">Shared knowledge-base activity (creates, edits, comments) will appear here when Cabinet is deployed with this Den.</p>
 </div>
 {% endblock %}
