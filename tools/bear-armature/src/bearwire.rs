@@ -923,6 +923,8 @@ async fn handle_bearwire_tool_call_finished_event(
         .tool_tasks
         .get(session_id, lookup_tool_call_id)
         .await;
+    let cached_input_args = cached.as_ref().and_then(|record| record.input_args.clone());
+    let had_cached_start = cached.is_some();
     let tool_call_id = canonical.tool_call.id;
     let tool_name = canonical
         .tool_call
@@ -943,10 +945,7 @@ async fn handle_bearwire_tool_call_finished_event(
             }
         }
     });
-    if let Some(args) = cached
-        .and_then(|record| record.input_args)
-        .or(canonical.tool_call.arguments)
-    {
+    if let Some(args) = cached_input_args.or(canonical.tool_call.arguments) {
         projection_event["data"]["tool_call"]["arguments"] = args;
     }
     if let Some(display) = canonical.tool_call.display {
@@ -967,7 +966,23 @@ async fn handle_bearwire_tool_call_finished_event(
             extra_content: Vec::new(),
         },
     )
-    .await
+    .await?;
+    if had_cached_start {
+        shared_state
+            .tool_tasks
+            .set_phase(
+                session_id,
+                &tool_call_id,
+                &tool_name,
+                crate::ToolTaskPhase::ResultPosted,
+            )
+            .await;
+        let _ = shared_state
+            .tool_tasks
+            .remove(session_id, &tool_call_id)
+            .await;
+    }
+    Ok(())
 }
 
 fn bearwire_message_delta_text(event: &Value) -> &str {

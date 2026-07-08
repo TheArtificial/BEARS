@@ -1,13 +1,10 @@
 use std::{
     collections::{HashMap, VecDeque},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 #[cfg(test)]
-use std::{
-    future::Future,
-    sync::{Mutex as StdMutex, OnceLock},
-};
+use std::{future::Future, sync::Mutex as StdMutex};
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -16,6 +13,8 @@ use tokio::{
     sync::Mutex as TokioMutex,
 };
 use uuid::Uuid;
+
+static JSON_WRITE_LOCK: OnceLock<TokioMutex<()>> = OnceLock::new();
 
 #[cfg(test)]
 static JSON_OUTPUT_CAPTURE: OnceLock<StdMutex<Option<Arc<TokioMutex<Vec<Value>>>>>> =
@@ -197,8 +196,12 @@ pub(crate) async fn write_json(value: Value) -> Result<()> {
         }
     }
 
-    let mut stdout = io::stdout();
     let line = serde_json::to_string(&value)?;
+    let _write_guard = JSON_WRITE_LOCK
+        .get_or_init(|| TokioMutex::new(()))
+        .lock()
+        .await;
+    let mut stdout = io::stdout();
     stdout.write_all(line.as_bytes()).await?;
     stdout.write_all(b"\n").await?;
     stdout.flush().await?;
@@ -270,5 +273,30 @@ mod tests {
                 .route_response(&json!("missing"), json!({ "id": "missing" }))
                 .await
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_notifications_are_distinct_json_rpc_messages() {
+        let (_result, output) = capture_json_output_for_test(|| async {
+            let left = tokio::spawn(async {
+                JsonRpcTransport::default()
+                    .notify("session/update", json!({ "side": "left" }))
+                    .await
+            });
+            let right = tokio::spawn(async {
+                JsonRpcTransport::default()
+                    .notify("session/update", json!({ "side": "right" }))
+                    .await
+            });
+            left.await.unwrap().unwrap();
+            right.await.unwrap().unwrap();
+        })
+        .await;
+
+        assert_eq!(output.len(), 2);
+        assert!(output.iter().all(|value| {
+            value.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
+                && value.get("method").and_then(Value::as_str) == Some("session/update")
+        }));
     }
 }

@@ -6757,6 +6757,7 @@ pub(crate) fn spawn_tool_request_task(
             session_contexts: shared_state.session_contexts.lock().await.clone(),
             transport: shared_state.transport.clone(),
         };
+        let den_owned_display_only = is_den_server_tool_request(&event);
         let tool_future = handle_tool_request_event(
             &config,
             &mut task_state,
@@ -6828,11 +6829,16 @@ pub(crate) fn spawn_tool_request_task(
                 std::time::Instant::now(),
             )
             .await;
+            let _ = shared_state
+                .tool_tasks
+                .remove(&session_id, &tool_call_id)
+                .await;
+        } else if !den_owned_display_only {
+            let _ = shared_state
+                .tool_tasks
+                .remove(&session_id, &tool_call_id)
+                .await;
         }
-        let _ = shared_state
-            .tool_tasks
-            .remove(&session_id, &tool_call_id)
-            .await;
     });
 }
 
@@ -12572,6 +12578,17 @@ mod tests {
                     }
                 }),
                 json!({
+                    "type": "tool_call.completed",
+                    "run_id": "run-den-owned",
+                    "data": {
+                        "tool_call": {
+                            "id": "call-den-owned-title",
+                            "name": "set_conversation_title"
+                        },
+                        "summary": "Conversation title set."
+                    }
+                }),
+                json!({
                     "type": "message.delta",
                     "run_id": "run-den-owned",
                     "data": { "delta": "Done." }
@@ -12629,6 +12646,12 @@ mod tests {
                 .iter()
                 .any(|frame| frame.contains("call-den-owned-title")),
             "{output:#?}"
+        );
+        assert!(
+            tool_frames
+                .iter()
+                .any(|frame| frame.contains("Set conversation title: Den owned title")),
+            "sparse Den-owned completion should use cached start arguments for the card title: {output:#?}"
         );
         let methods = rpc_methods.lock().await.clone();
         assert!(
