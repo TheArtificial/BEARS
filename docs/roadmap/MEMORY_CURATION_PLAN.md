@@ -113,7 +113,7 @@ Proactively scan **un-mined** closed sessions and compaction artifacts and run a
 
 Before writing `core/`, reconcile candidates against existing canonical memory:
 
-- **Dedup** — semantically identical candidate ⇒ no-op (optionally bump salience).
+- **Dedup** — semantically identical candidate ⇒ no-op (optionally bump salience). Exact duplicate core updates already record a `dedupe_core_noop` promotion without writing a new memory record; broader semantic dedup remains a consolidation follow-up.
 - **Supersession, not overwrite** — a contradicting candidate writes a *new* record that sets `supersedes_memory_id` and encodes the transition ("previously X; now Y"); the old record is marked `invalid_at` and preserved as history. This is the bears-native form of temporal fact invalidation, without a graph database.
 - **Synthesis** — when cumulative `salience` over recent records crosses a threshold, synthesize a higher-level `reflection` record (Generative-Agents-style) and store it as retrievable memory.
 

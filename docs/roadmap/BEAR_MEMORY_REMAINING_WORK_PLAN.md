@@ -118,7 +118,7 @@ pair learns → role-local SQLite → pair reflection → proposals
 | P2.5 | **`archive_harvest` reflection lane** (extraction-first mining of closed sessions / compaction artifacts) | 🟡 lane + compaction-artifact harvest proposals + deterministic quality/risk filter landed; broader conversation mining/model extraction open |
 | P3 | Derived recall indexing | ✅ (`recall_index` + `den reindex`) |
 | P4 | Semantic recall for **`work`** | 🟡 hybrid search exists; **`work` tool exposure** not done |
-| — | **Consolidation** (dedup, supersede-on-contradiction, synthesize `reflection` records, promote to shared) | 🟡 reviewed supersession + unsafe-promotion gates landed; semantic dedup/synthesis open |
+| — | **Consolidation** (dedup, supersede-on-contradiction, synthesize `reflection` records, promote to shared) | 🟡 reviewed supersession, exact duplicate no-op, and unsafe-promotion gates landed; semantic dedup/synthesis open |
 
 **Exit:** pair session → proposal → curate promotion → `work` finds it via `memory_search` without reading `pair/`.
 

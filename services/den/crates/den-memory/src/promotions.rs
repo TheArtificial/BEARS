@@ -77,9 +77,21 @@ pub async fn promote_to_shared_core_at_path(
             "core promotion target_path must be under core/".to_string(),
         ));
     }
-    let supersedes_memory_id = head_record_for_logical_path(store, target_path)
-        .await?
-        .map(|row| row.memory_id);
+    let prior_head = head_record_for_logical_path(store, target_path).await?;
+    if let Some(head) = &prior_head {
+        if normalized_memory_text(&head.content_text) == normalized_memory_text(content_text) {
+            let promotion_id = append_memory_promotion(
+                store,
+                source_memory_id,
+                Some(&head.memory_id),
+                "dedupe_core_noop",
+                Some("Candidate matched existing core head; no new memory record written."),
+            )
+            .await?;
+            return Ok((head.memory_id.clone(), promotion_id));
+        }
+    }
+    let supersedes_memory_id = prior_head.map(|row| row.memory_id);
     let row = store
         .append_record_with_options(
             &logical,
@@ -117,10 +129,62 @@ pub async fn promote_to_shared_core_at_path(
     Ok((row.memory_id, promotion_id))
 }
 
+fn normalized_memory_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::new_test_store;
+
+    #[tokio::test]
+    async fn duplicate_promotion_records_noop_provenance_without_new_record() {
+        let store = new_test_store().await;
+        let (first_id, _) = promote_to_shared_core_at_path(
+            &store,
+            "proposal-1",
+            "core/decisions/runtime.md",
+            "runtime",
+            "Same decision.",
+            "curate",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let (second_id, promotion_id) = promote_to_shared_core_at_path(
+            &store,
+            "proposal-2",
+            "core/decisions/runtime.md",
+            "runtime",
+            "Same   decision.\n",
+            "curate",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second_id, first_id);
+        let records_at_path: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND logical_path = ?",
+        )
+        .bind(store.bear_id().to_string())
+        .bind("core/decisions/runtime.md")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(records_at_path, 1);
+        let action: String = sqlx::query_scalar(
+            "SELECT action FROM memory_promotions WHERE bear_id = ? AND promotion_id = ?",
+        )
+        .bind(store.bear_id().to_string())
+        .bind(promotion_id)
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(action, "dedupe_core_noop");
+    }
 
     #[tokio::test]
     async fn promotion_at_path_supersedes_previous_core_head() {
