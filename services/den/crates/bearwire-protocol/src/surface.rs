@@ -1,6 +1,18 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SurfaceResourceRef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SurfaceHistoryEvent {
@@ -9,6 +21,8 @@ pub enum SurfaceHistoryEvent {
         id: Option<String>,
         role: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        resources: Vec<SurfaceResourceRef>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         created_at: Option<String>,
     },
@@ -85,12 +99,25 @@ impl SurfaceHistoryEvent {
 
     pub fn validate_replay_record(&self) -> Result<(), &'static str> {
         match self {
-            SurfaceHistoryEvent::Message { role, text, .. } => {
+            SurfaceHistoryEvent::Message { role, text, resources, .. } => {
                 if role.trim().is_empty() {
                     return Err("message missing required role");
                 }
                 if text.trim().is_empty() {
                     return Err("message missing required text");
+                }
+                for resource in resources {
+                    if resource
+                        .label
+                        .as_deref()
+                        .or(resource.name.as_deref())
+                        .or(resource.uri.as_deref())
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty()
+                    {
+                        return Err("message resource missing label or uri");
+                    }
                 }
             }
             SurfaceHistoryEvent::ToolCall {
@@ -213,6 +240,12 @@ mod tests {
                 id: Some("m1".to_string()),
                 role: "user".to_string(),
                 text: "hello".to_string(),
+                resources: vec![SurfaceResourceRef {
+                    label: Some("README.md".to_string()),
+                    uri: Some("file:///workspace/README.md".to_string()),
+                    name: Some("README.md".to_string()),
+                    mime_type: Some("text/markdown".to_string()),
+                }],
                 created_at: Some("2026-07-07T00:00:00Z".to_string()),
             },
             SurfaceHistoryEvent::ToolCall {
@@ -268,9 +301,25 @@ mod tests {
                     id: None,
                     role: "".to_string(),
                     text: "hello".to_string(),
+                    resources: Vec::new(),
                     created_at: None,
                 },
                 "message missing required role",
+            ),
+            (
+                SurfaceHistoryEvent::Message {
+                    id: None,
+                    role: "user".to_string(),
+                    text: "hello".to_string(),
+                    resources: vec![SurfaceResourceRef {
+                        label: None,
+                        uri: None,
+                        name: None,
+                        mime_type: None,
+                    }],
+                    created_at: None,
+                },
+                "message resource missing label or uri",
             ),
             (
                 SurfaceHistoryEvent::ToolCall {

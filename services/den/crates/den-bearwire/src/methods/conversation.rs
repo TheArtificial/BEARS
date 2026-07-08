@@ -1,13 +1,91 @@
 use axum::http::HeaderMap;
 use serde_json::{json, Value};
 
-use bearwire_protocol::{methods::ConversationHistoryRequest, surface::SurfaceHistoryEvent};
+use bearwire_protocol::{
+    methods::ConversationHistoryRequest,
+    surface::{SurfaceHistoryEvent, SurfaceResourceRef},
+};
 use den_http::errors::CustomError;
 use den_runtime::bearwire_events;
 use den_service::{client_sessions, conversation::persistence, DenState};
 
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
+
+fn trimmed_string(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| value.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn surface_resource_refs_from_content_json(content_json: &Value) -> Vec<SurfaceResourceRef> {
+    let host_context = content_json
+        .get("host_context")
+        .or_else(|| content_json.pointer("/prompt_context/host_context"));
+    let Some(resources) = host_context
+        .and_then(|context| context.get("resources"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    resources
+        .iter()
+        .filter_map(|resource| {
+            let label = trimmed_string(resource, &["label"])
+                .or_else(|| trimmed_string(resource, &["name", "title"]))
+                .or_else(|| trimmed_string(resource, &["uri", "url"]));
+            let uri = trimmed_string(resource, &["uri", "url"]);
+            let name = trimmed_string(resource, &["name", "title"]);
+            let mime_type = trimmed_string(
+                resource,
+                &["mime_type", "mimeType", "media_type", "mediaType"],
+            );
+            if label.is_none() && uri.is_none() && name.is_none() {
+                return None;
+            }
+            Some(SurfaceResourceRef {
+                label,
+                uri,
+                name,
+                mime_type,
+            })
+        })
+        .collect()
+}
+
+fn surface_text_with_resource_refs(text: String, resources: &[SurfaceResourceRef]) -> String {
+    if resources.is_empty() {
+        return text;
+    }
+
+    let mut rendered = text;
+    rendered.push_str("\n\nReferenced resources:");
+    for resource in resources {
+        let label = resource
+            .label
+            .as_deref()
+            .or(resource.name.as_deref())
+            .or(resource.uri.as_deref())
+            .unwrap_or("unnamed resource");
+        rendered.push_str("\n- ");
+        rendered.push_str(label);
+        if let Some(uri) = resource.uri.as_deref() {
+            if uri != label {
+                rendered.push_str(" — ");
+                rendered.push_str(uri);
+            }
+        }
+        if let Some(mime_type) = resource.mime_type.as_deref() {
+            rendered.push_str(" (");
+            rendered.push_str(mime_type);
+            rendered.push(')');
+        }
+    }
+    rendered
+}
 
 pub(crate) async fn conversation_history_result(
     state: &DenState,
@@ -111,18 +189,25 @@ async fn conversation_history_like_result(
                     }))
                 }
                 _ => {
-                    let text = den_runtime::agent_assist::sanitize_visible_transcript_text(
+                    let mut text = den_runtime::agent_assist::sanitize_visible_transcript_text(
                         &message.content,
                     );
                     if text.trim().is_empty() {
                         return None;
                     }
+                    let resources = if records_key == "surface_events" && message.role == "user" {
+                        surface_resource_refs_from_content_json(&row.content_json)
+                    } else {
+                        Vec::new()
+                    };
+                    text = surface_text_with_resource_refs(text, &resources);
                     Some(json!(SurfaceHistoryEvent::Message {
                         id: message
                             .message_id
                             .or_else(|| Some(message.sequence_no.to_string())),
                         role: message.role,
                         text,
+                        resources,
                         created_at: Some(message.created_at.to_string()),
                     }))
                 }

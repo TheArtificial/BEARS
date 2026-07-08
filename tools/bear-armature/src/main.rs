@@ -4348,6 +4348,17 @@ fn history_replay_chunks_with_boundaries(
         .collect()
 }
 
+fn history_replay_text_update_kind(message: &ReloadHistoryMessage) -> Option<&'static str> {
+    if message.kind != "message" {
+        return None;
+    }
+    match message.role.as_str() {
+        "user" => Some("user"),
+        "assistant" => Some("agent"),
+        _ => None,
+    }
+}
+
 fn reload_history_message_from_value(mut m: Value) -> Result<Option<ReloadHistoryMessage>> {
     if m.get("kind").is_none() {
         m["kind"] = json!("message");
@@ -4616,13 +4627,12 @@ async fn replay_history_for_den_session(
                         send_agent_thought_chunk(session_id, &message.text).await?;
                     }
                 }
-                _ => match message.role.as_str() {
-                    // ACP has no passive historical user-message replay channel in
-                    // LoadSessionResponse. Re-emitting old user turns as UserMessageChunk can make
-                    // some clients treat the prior prompt as fresh input on the next turn; Den
-                    // already owns model replay from canonical conversation storage.
-                    "user" => {}
-                    "assistant" => send_agent_message_chunk(session_id, &message.text).await?,
+                _ => match history_replay_text_update_kind(&message) {
+                    // These chunks are UI reload projection only. Den owns model replay from
+                    // canonical conversation storage, so replaying user chunks here must not be
+                    // treated as a fresh prompt by the client.
+                    Some("user") => send_user_message_chunk(session_id, &message.text).await?,
+                    Some("agent") => send_agent_message_chunk(session_id, &message.text).await?,
                     _ => {}
                 },
             }
@@ -10516,6 +10526,18 @@ mod tests {
         assert_eq!(
             messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
             vec!["prompt", "reply", "follow-up"]
+        );
+    }
+
+    #[test]
+    fn history_replay_includes_user_and_assistant_text_chunks() {
+        assert_eq!(
+            history_replay_text_update_kind(&ReloadHistoryMessage::text("1", "user", "prompt")),
+            Some("user")
+        );
+        assert_eq!(
+            history_replay_text_update_kind(&ReloadHistoryMessage::text("2", "assistant", "reply")),
+            Some("agent")
         );
     }
 

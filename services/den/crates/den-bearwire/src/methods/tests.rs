@@ -581,6 +581,7 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
     seed_test_bifrost_virtual_key(&pool, bear_id, &config).await;
     let state = test_state_with_config(pool.clone(), config);
     let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let conversation_id = format!("new-acp-zed-{}", Uuid::new_v4().simple());
     let prompt = "Please inspect the library entrypoint.";
     let prompt_context = json!({
         "format": "acp_prompt_context.v1",
@@ -610,7 +611,7 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
             params: json!({
                 "bear_slug": bear_slug,
                 "session_id": session_id,
-                "conversation_id": format!("new-acp-zed-{}", Uuid::new_v4().simple()),
+                "conversation_id": conversation_id,
                 "client": "zed",
                 "prompt": prompt,
                 "prompt_context": prompt_context
@@ -676,6 +677,52 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
     assert_eq!(
         persisted_json["host_context"]["resources"][0]["uri"],
         "file:///workspace/src/lib.rs"
+    );
+
+    let surface_response = rpc_value(
+        state,
+        &token,
+        "conversation.surface_history",
+        json!({
+            "bear_slug": bear_slug,
+            "conversation_id": resolved,
+            "limit": 20
+        }),
+    )
+    .await;
+    let surface_events = surface_response["result"]["surface_events"]
+        .as_array()
+        .expect("surface_events array");
+    let user_event = surface_events
+        .iter()
+        .find(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("message")
+                && event.get("role").and_then(Value::as_str) == Some("user")
+        })
+        .unwrap_or_else(|| panic!("surface history should include user message: {surface_response}"));
+    let surface_text = user_event
+        .get("text")
+        .and_then(Value::as_str)
+        .expect("surface text");
+    assert!(
+        surface_text.contains("Please inspect the library entrypoint."),
+        "surface text should keep the human prompt: {surface_text}"
+    );
+    assert!(
+        surface_text.contains("Referenced resources:"),
+        "surface text should render referenced resource heading: {surface_text}"
+    );
+    assert!(
+        surface_text.contains("src/lib.rs") && surface_text.contains("file:///workspace/src/lib.rs"),
+        "surface text should render referenced resource label and URI: {surface_text}"
+    );
+    assert_eq!(
+        user_event.pointer("/resources/0/uri").and_then(Value::as_str),
+        Some("file:///workspace/src/lib.rs")
+    );
+    assert_eq!(
+        user_event.pointer("/resources/0/label").and_then(Value::as_str),
+        Some("src/lib.rs")
     );
 }
 
