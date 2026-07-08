@@ -98,6 +98,17 @@ pub struct ApplyCoreUpdateRequest {
     pub projection: ProposalProjection,
 }
 
+/// A validated lifecycle marker for an existing memory record.
+#[derive(Debug, Clone)]
+pub struct MarkMemoryLifecycleRequest {
+    pub bear_id: Uuid,
+    pub reviewer_profile: BearProfile,
+    pub binding_id: String,
+    pub memory_id: String,
+    pub status: String,
+    pub reason: Option<String>,
+}
+
 // Native async fn in trait: workspace-internal, consumed via generic bounds /
 // concrete impls only (never `dyn`), so Send flows through monomorphization.
 #[allow(async_fn_in_trait)]
@@ -139,4 +150,10 @@ pub trait MemoryReviewStore: Send + Sync {
     /// Promote a reviewed proposal to core, resolve it, and project the event;
     /// returns the full `{bear_id, proposal, core_update}` payload JSON.
     async fn apply_core_update(&self, request: ApplyCoreUpdateRequest) -> Result<Value, DenError>;
+
+    /// Mark an existing memory record's lifecycle status; returns the updated record JSON.
+    async fn mark_memory_lifecycle(
+        &self,
+        request: MarkMemoryLifecycleRequest,
+    ) -> Result<Value, DenError>;
 }

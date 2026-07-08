@@ -24,8 +24,8 @@ use den_core::tools::{
         PromptMemoryBlock, PromptMemoryBlockPatch, PromptMemoryBlockWrite, PromptMemoryStore,
     },
     review::{
-        ApplyCoreUpdateRequest, MemoryReviewStore, ObservationRecord, ObservationWriteRequest,
-        RequestReviewRequest, ResolveProposalRequest,
+        ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ObservationRecord,
+        ObservationWriteRequest, RequestReviewRequest, ResolveProposalRequest,
     },
     web::{WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl},
     work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome},
@@ -276,6 +276,13 @@ impl MemoryReviewStore for DenToolContext<'_> {
 
     async fn apply_core_update(&self, request: ApplyCoreUpdateRequest) -> Result<Value, DenError> {
         self.review().apply_core_update(request).await
+    }
+
+    async fn mark_memory_lifecycle(
+        &self,
+        request: MarkMemoryLifecycleRequest,
+    ) -> Result<Value, DenError> {
+        self.review().mark_memory_lifecycle(request).await
     }
 }
 

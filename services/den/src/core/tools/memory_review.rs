@@ -12,12 +12,12 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::tools::review::{
-    ApplyCoreUpdateRequest, MemoryReviewStore, ObservationRecord, ObservationWriteRequest,
-    ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
+    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ObservationRecord,
+    ObservationWriteRequest, ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
 };
 
 use crate::{config::Config, errors::DenError};
-use den_memory::MemoryStoreManager;
+use den_memory::{mark_memory_record_lifecycle, MemoryStoreManager};
 use den_runtime::{
     bear_observations::{self, BearObservationRow},
     memory::{
@@ -316,6 +316,39 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             ),
         );
         Ok(json!(proposal))
+    }
+
+    async fn mark_memory_lifecycle(
+        &self,
+        request: MarkMemoryLifecycleRequest,
+    ) -> Result<Value, DenError> {
+        let store = self.stores.store_for_bear(request.bear_id).await?;
+        let record = mark_memory_record_lifecycle(
+            &store,
+            &request.memory_id,
+            &request.status,
+            request.reason.as_deref(),
+        )
+        .await?;
+        reflection_conductor::enqueue_recall_index_if_enabled(
+            self.pool,
+            self.config,
+            request.bear_id,
+            "memory_mark_lifecycle",
+        )
+        .await;
+        Ok(json!({
+            "memory_id": record.memory_id,
+            "logical_path": record.logical_path,
+            "kind": record.kind,
+            "salience": record.salience,
+            "supersedes_memory_id": record.supersedes_memory_id,
+            "invalid_at": record.invalid_at,
+            "lifecycle_status": record.lifecycle_status,
+            "freshness_trend": record.freshness_trend,
+            "reviewer_profile": request.reviewer_profile.as_str(),
+            "reviewer_agent_id": request.binding_id,
+        }))
     }
 
     async fn apply_core_update(&self, request: ApplyCoreUpdateRequest) -> Result<Value, DenError> {

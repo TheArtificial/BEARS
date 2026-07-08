@@ -189,7 +189,8 @@ Initial `den.memory.request_review` input shape:
 | `den.memory.read_proposal` | `memory_read_proposal` | Read one proposal with source pointers and status. |
 | `den.memory.resolve_proposal` | `memory_resolve_proposal` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
 | `den.memory.apply_core_update` | `memory_apply_core_update` | Apply a reviewed shared memory update into `core/` with provenance. |
-| `den.memory.supersede_entry` | `memory_supersede_entry` | Mark or record that a role-local entry has been superseded by a core/Cabinet entry. |
+| `den.memory.mark_lifecycle` | `memory_mark_lifecycle` | Mark an existing memory record as `stale`, `superseded`, `archived`, `archive-candidate`, or back to `active` without rewriting content. |
+| `den.memory.supersede_entry` | `memory_supersede_entry` | Future specialized helper; current reviewed core updates write `supersedes_memory_id`, and `memory_mark_lifecycle` covers explicit lifecycle marking. |
 
 ### Cabinet tools
 

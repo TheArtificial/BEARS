@@ -17,8 +17,8 @@ use crate::tools::{
 };
 
 use super::store::{
-    ApplyCoreUpdateRequest, MemoryReviewStore, ProposalProjection, RequestReviewRequest,
-    ResolveProposalRequest,
+    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ProposalProjection,
+    RequestReviewRequest, ResolveProposalRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +59,14 @@ pub struct MemoryResolveProposalArguments {
     pub review_notes: Option<String>,
     #[serde(default)]
     pub decision_summary: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemoryMarkLifecycleArguments {
+    pub memory_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,6 +143,46 @@ pub async fn apply_core_update(
             projection: projection(context, context.bear_id, role),
         })
         .await
+}
+
+pub async fn mark_memory_lifecycle(
+    store: &impl MemoryReviewStore,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, DenError> {
+    if role != BearProfile::Curate {
+        return Err(DenError::Authorization(
+            "den.memory.mark_lifecycle is available only to curate".to_string(),
+        ));
+    }
+    let args: MemoryMarkLifecycleArguments = serde_json::from_value(arguments)?;
+    let memory_id = validate_bounded_text("memory_id", &args.memory_id, 1, 200)?;
+    let status = args.status.trim();
+    if !matches!(
+        status,
+        "active" | "stale" | "superseded" | "archived" | "archive-candidate"
+    ) {
+        return Err(DenError::ValidationError(
+            "status must be active, stale, superseded, archived, or archive-candidate".to_string(),
+        ));
+    }
+    let reason = args
+        .reason
+        .as_deref()
+        .map(|value| validate_bounded_text("reason", value, 0, 1_000))
+        .transpose()?;
+    let record = store
+        .mark_memory_lifecycle(MarkMemoryLifecycleRequest {
+            bear_id: context.bear_id,
+            reviewer_profile: role,
+            binding_id: context.binding_id.clone(),
+            memory_id,
+            status: status.to_string(),
+            reason,
+        })
+        .await?;
+    Ok(json!({ "bear_id": context.bear_id, "record": record }))
 }
 
 pub async fn list_memory_proposals(

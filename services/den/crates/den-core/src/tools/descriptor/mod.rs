@@ -31,6 +31,7 @@ use crate::tools::{
         DEN_MEMORY_APPLY_CORE_UPDATE, DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER,
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER,
         DEN_MEMORY_LIST_PROPOSALS, DEN_MEMORY_LIST_PROPOSALS_PROVIDER,
+        DEN_MEMORY_MARK_LIFECYCLE, DEN_MEMORY_MARK_LIFECYCLE_PROVIDER,
         DEN_MEMORY_ORIENT_WORK_SURFACE, DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER, DEN_MEMORY_READ,
         DEN_MEMORY_READ_PROPOSAL, DEN_MEMORY_READ_PROPOSAL_PROVIDER, DEN_MEMORY_READ_PROVIDER,
         DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_REQUEST_REVIEW_PROVIDER, DEN_MEMORY_RESOLVE_PROPOSAL,
@@ -120,6 +121,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_READ_PROPOSAL => return DEN_MEMORY_READ_PROPOSAL_PROVIDER.to_string(),
         DEN_MEMORY_RESOLVE_PROPOSAL => return DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER.to_string(),
         DEN_MEMORY_APPLY_CORE_UPDATE => return DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER.to_string(),
+        DEN_MEMORY_MARK_LIFECYCLE => return DEN_MEMORY_MARK_LIFECYCLE_PROVIDER.to_string(),
         DEN_TASK_LISTS_LIST => return DEN_TASK_LISTS_LIST_PROVIDER.to_string(),
         DEN_TASK_LISTS_GET_STATUS => return DEN_TASK_LISTS_GET_STATUS_PROVIDER.to_string(),
         DEN_TASK_LISTS_UPDATE => return DEN_TASK_LISTS_UPDATE_PROVIDER.to_string(),
@@ -471,6 +473,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["memory.core.write"],
             CURATE_PROFILES,
             json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"target_path":{"type":"string"},"mode":{"enum":["append_section","create_file","replace_text"]},"title":{"type":"string"},"body":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","target_path","mode"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_MEMORY_MARK_LIFECYCLE,
+            "Mark memory lifecycle",
+            "Curate-only lifecycle marker for existing memory records: stale, superseded, archived, archive-candidate, or active. Does not promote or rewrite content.",
+            "bear.memory",
+            &["memory.lifecycle.write"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"memory_id":{"type":"string","minLength":1,"maxLength":200},"status":{"type":"string","enum":["active","stale","superseded","archived","archive-candidate"]},"reason":{"type":"string","maxLength":1000}},"required":["memory_id","status"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_SKILL_PROPOSE,
@@ -1176,6 +1187,15 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &["body", "old_text", "new_text", "review_notes"],
             approval_summary: "Apply a reviewed update to core memory.",
         },
+        DEN_MEMORY_MARK_LIFECYCLE => ToolDisplayDescriptor {
+            label,
+            category: "memory",
+            progress_verb: "Marking memory lifecycle",
+            complete_verb: "Marked memory lifecycle",
+            target_arg_keys: &["memory_id", "status"],
+            sensitive_arg_keys: &["reason"],
+            approval_summary: "Mark an existing memory record's lifecycle status.",
+        },
         DEN_SKILL_PROPOSE => ToolDisplayDescriptor {
             label,
             category: "skills",
@@ -1463,7 +1483,8 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_MEMORY_LIST_PROPOSALS
         | DEN_MEMORY_READ_PROPOSAL
         | DEN_MEMORY_RESOLVE_PROPOSAL
-        | DEN_MEMORY_APPLY_CORE_UPDATE => "memory",
+        | DEN_MEMORY_APPLY_CORE_UPDATE
+        | DEN_MEMORY_MARK_LIFECYCLE => "memory",
         DEN_CONVERSATION_SET_TITLE
         | DEN_WEB_FETCH
         | DEN_WEB_SEARCH
@@ -1483,6 +1504,7 @@ fn tool_content_class(name: &str) -> Option<&'static str> {
         DEN_TASK_LISTS_UPDATE => Some("activity_status"),
         DEN_TASK_LISTS_REQUEST_HANDOFF => Some("task_intent"),
         DEN_MEMORY_APPLY_CORE_UPDATE => Some("core_update"),
+        DEN_MEMORY_MARK_LIFECYCLE => Some("semantic_memory"),
         DEN_OBSERVATION_WRITE => Some("observation"),
         DEN_RUN_WRITE_RESULT => Some("run_result"),
         _ => None,

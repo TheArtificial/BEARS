@@ -34,7 +34,7 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den ru
 
 ### Memory tools (agents)
 
-- Implemented for **`pair`**, **`chat`**, **`curate`**: `memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, `memory_search`, `memory_request_review`.
+- Implemented for **`pair`**, **`chat`**, **`curate`**: `memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, `memory_search`, `memory_request_review`; curate review tools include proposal review/core update plus `memory_mark_lifecycle` for stale/superseded/archive-candidate/archive markers.
 - **`chat`**: keyword-gated web tool surface; proactive key-memory projection + derived recall on every turn.
 - **`memory_search`**: hybrid when Qdrant configured — vector + keyword + bounded-graph + temporal legs; role-scoped throughout.
 - **Not exposed:** `work`, `watch` memory tool descriptors (read/write policy TBD).
