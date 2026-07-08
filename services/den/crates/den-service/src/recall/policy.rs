@@ -32,6 +32,8 @@ pub struct IndexRequest {
     pub visibility: String,
     pub content_text: String,
     pub salience: String,
+    pub lifecycle_status: String,
+    pub freshness_trend: String,
     /// Resolved **descriptive** entity ids linked to this record (ADR-0042 §7 `recall_effect =
     /// boost`); denormalized into the passage payload so recall can filter/boost by entity. The
     /// access-bearing gate is excluded. Empty when the record has no descriptive relations.
@@ -61,6 +63,7 @@ pub fn is_indexable(scope_type: &str, kind: &str, visibility: &str) -> bool {
 impl IndexRequest {
     pub fn is_indexable(&self) -> bool {
         is_indexable(&self.scope_type, &self.kind, &self.visibility)
+            && !matches!(self.lifecycle_status.as_str(), "archived" | "superseded")
     }
 }
 
@@ -105,6 +108,8 @@ pub fn build_payload(req: &IndexRequest, chunk: &Chunk, embedding_standard: &str
         "kind": req.kind,
         "visibility": req.visibility,
         "salience": req.salience,
+        "lifecycle_status": req.lifecycle_status,
+        "freshness_trend": req.freshness_trend,
         // Resolved descriptive entities for entity-scoped recall (filter/boost); derived data,
         // canonical relations remain the source of truth (ADR-0042 Phase 4 recall leg).
         "entity_ids": req.entity_ids,
@@ -152,6 +157,26 @@ mod tests {
     }
 
     #[test]
+    fn archived_lifecycle_records_are_not_indexable() {
+        let req = IndexRequest {
+            bear_id: Uuid::nil(),
+            memory_id: "mem-archived".into(),
+            logical_path: Some("core/old.md".into()),
+            scope_type: "shared".into(),
+            scope_profile: None,
+            work_surface_ref: None,
+            kind: "note".into(),
+            visibility: "normal".into(),
+            content_text: "old body".into(),
+            salience: "normal".into(),
+            lifecycle_status: "archived".into(),
+            freshness_trend: "stale".into(),
+            entity_ids: Vec::new(),
+        };
+        assert!(!req.is_indexable());
+    }
+
+    #[test]
     fn payload_carries_required_fields() {
         let req = IndexRequest {
             bear_id: Uuid::nil(),
@@ -164,6 +189,8 @@ mod tests {
             visibility: "normal".into(),
             content_text: "body".into(),
             salience: "high".into(),
+            lifecycle_status: "active".into(),
+            freshness_trend: "stable".into(),
             entity_ids: vec!["ent-1".into(), "ent-2".into()],
         };
         let chunk = Chunk {
@@ -180,6 +207,8 @@ mod tests {
         assert_eq!(payload["work_surface_ref"], "x");
         assert_eq!(payload["kind"], "overview");
         assert_eq!(payload["salience"], "high");
+        assert_eq!(payload["lifecycle_status"], "active");
+        assert_eq!(payload["freshness_trend"], "stable");
         assert_eq!(payload["text"], "body");
         assert_eq!(payload["entity_ids"], serde_json::json!(["ent-1", "ent-2"]));
     }

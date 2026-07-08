@@ -194,7 +194,20 @@ pub async fn sqlite_memory_search(
     limit: i64,
 ) -> Result<Value, DenError> {
     let pattern = format!("%{query}%");
-    let rows = sqlx::query_as::<_, (String, Option<String>, String, i64, String, String, String, Option<String>, Option<String>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            String,
+            i64,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
         r"
         SELECT memory_id, logical_path, content_text, sequence_no, kind, salience,
                metadata_json, supersedes_memory_id, invalid_at
@@ -202,6 +215,7 @@ pub async fn sqlite_memory_search(
         WHERE bear_id = ?
           AND visibility = 'normal'
           AND invalid_at IS NULL
+          AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') != 'archived'
           AND (scope_type = 'shared' OR scope_profile = ?)
           AND content_text LIKE ?
           AND NOT EXISTS (
@@ -222,28 +236,42 @@ pub async fn sqlite_memory_search(
     .map_err(|e| DenError::System(format!("sqlite memory search failed: {e}")))?;
     let hits: Vec<Value> = rows
         .into_iter()
-        .map(|(memory_id, path, content, sequence_no, kind, salience, metadata_json, supersedes_memory_id, invalid_at)| {
-            let metadata_json: Value = serde_json::from_str(&metadata_json).unwrap_or_else(|_| json!({}));
-            let lifecycle_status = crate::records::lifecycle_status(
-                &metadata_json,
-                supersedes_memory_id.as_deref(),
-                invalid_at.as_deref(),
-            );
-            let freshness_trend = crate::records::freshness_trend(&lifecycle_status, invalid_at.as_deref());
-            json!({
-                "memory_id": memory_id,
-                "path": path,
-                "kind": kind,
-                "salience": salience,
-                "lifecycle_status": lifecycle_status,
-                "freshness_trend": freshness_trend,
-                "supersedes_memory_id": supersedes_memory_id,
-                "invalid_at": invalid_at,
-                "score": Value::Null,
-                "snippet": content.chars().take(240).collect::<String>(),
-                "sequence_no": sequence_no,
-            })
-        })
+        .map(
+            |(
+                memory_id,
+                path,
+                content,
+                sequence_no,
+                kind,
+                salience,
+                metadata_json,
+                supersedes_memory_id,
+                invalid_at,
+            )| {
+                let metadata_json: Value =
+                    serde_json::from_str(&metadata_json).unwrap_or_else(|_| json!({}));
+                let lifecycle_status = crate::records::lifecycle_status(
+                    &metadata_json,
+                    supersedes_memory_id.as_deref(),
+                    invalid_at.as_deref(),
+                );
+                let freshness_trend =
+                    crate::records::freshness_trend(&lifecycle_status, invalid_at.as_deref());
+                json!({
+                    "memory_id": memory_id,
+                    "path": path,
+                    "kind": kind,
+                    "salience": salience,
+                    "lifecycle_status": lifecycle_status,
+                    "freshness_trend": freshness_trend,
+                    "supersedes_memory_id": supersedes_memory_id,
+                    "invalid_at": invalid_at,
+                    "score": Value::Null,
+                    "snippet": content.chars().take(240).collect::<String>(),
+                    "sequence_no": sequence_no,
+                })
+            },
+        )
         .collect();
     Ok(json!({
         "ok": true,

@@ -38,6 +38,9 @@ struct HeadRow {
     kind: String,
     visibility: String,
     salience: String,
+    metadata_json: String,
+    supersedes_memory_id: Option<String>,
+    invalid_at: Option<String>,
     logical_path: Option<String>,
     work_surface_ref: Option<String>,
     content_text: String,
@@ -48,10 +51,12 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
     let rows = sqlx::query_as::<_, HeadRow>(
         r"
         SELECT m.memory_id, m.scope_type, m.scope_profile, m.kind, m.visibility,
-               m.salience, m.logical_path, m.work_surface_ref, m.content_text
+               m.salience, m.metadata_json, m.supersedes_memory_id, m.invalid_at,
+               m.logical_path, m.work_surface_ref, m.content_text
         FROM memory_records m
         WHERE m.bear_id = ?
           AND m.visibility = 'normal'
+          AND m.invalid_at IS NULL
           AND m.logical_path IS NOT NULL
           AND NOT EXISTS (
               SELECT 1 FROM memory_records n
@@ -84,6 +89,15 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
                 .get(&head.memory_id)
                 .cloned()
                 .unwrap_or_default();
+            let metadata_json: serde_json::Value =
+                serde_json::from_str(&head.metadata_json).unwrap_or_else(|_| serde_json::json!({}));
+            let lifecycle_status = den_memory::lifecycle_status(
+                &metadata_json,
+                head.supersedes_memory_id.as_deref(),
+                head.invalid_at.as_deref(),
+            );
+            let freshness_trend =
+                den_memory::freshness_trend(&lifecycle_status, head.invalid_at.as_deref());
             Some(IndexRequest {
                 bear_id,
                 memory_id: head.memory_id,
@@ -95,6 +109,8 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
                 visibility: head.visibility,
                 content_text: head.content_text,
                 salience: head.salience,
+                lifecycle_status,
+                freshness_trend,
                 entity_ids,
             })
         })

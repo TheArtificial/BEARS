@@ -17,7 +17,7 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den ru
 | **Derived recall index** | Qdrant optional stack, indexer worker, turn-start recall, hybrid `memory_search` (vector + keyword + graph + temporal), `den reindex` | Cabinet leg (blocked); embedding-standard migration | [DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) |
 | **Entity layer** | Schema, resolver, relations, access gate, entity-filter recall, graph leg, explicit anchors, read/write/governance tools, `session_info.entities` | Portability/export-import | [BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) |
 | **Reflection / automation** | `memory_curate` + `recall_index` workers; pair-reflection → proposal enqueue (ACP close) | Model-assisted pair reflection; `archive_harvest`; consolidation | [MEMORY_AUTOMATION_ROADMAP.md](MEMORY_AUTOMATION_ROADMAP.md) |
-| **ADR-0041 schema + curation engine** | `valid_from`/`invalid_at` on `memory_records`; temporal + as-of recall | `salience` on records, `memory_harvest_marks`, live supersession writes | [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_CURATION_PLAN.md](MEMORY_CURATION_PLAN.md) |
+| **ADR-0041 schema + curation engine** | `valid_from`/`invalid_at`, `salience`, lifecycle/freshness indicators, harvest marks, archive-harvest lane, reviewed supersession writes | richer model-assisted harvest/consolidation quality | [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_CURATION_PLAN.md](MEMORY_CURATION_PLAN.md) |
 | **Work-surface memory** | Resolver on entity layer; scaffolds in logical-path model | End-to-end scaffolding + resolution UX | [WORK_SURFACE_MEMORY_SCAFFOLDING_PLAN.md](WORK_SURFACE_MEMORY_SCAFFOLDING_PLAN.md), [WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md](WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md) |
 | **Semantic memory schema (ADR-0022)** | Logical-path projection | Resource-scoped write paths, `plan` kind removal | [SEMANTIC_MEMORY_SCHEMA_IMPLEMENTATION_PLAN.md](SEMANTIC_MEMORY_SCHEMA_IMPLEMENTATION_PLAN.md) |
 
@@ -90,11 +90,11 @@ Several ADR-0041 fields are still missing or not wired on the **write path**:
 | `valid_from` / `invalid_at` on `memory_records` | ✅ landed | Recall temporal leg uses them |
 | `salience` on **`memory_records`** | ✅ landed | Append path defaults to `normal`; options path accepts `low|normal|high|critical` |
 | `memory_harvest_marks` table | ✅ landed | Idempotent source provenance helpers in `den-memory` |
-| **`supersedes_memory_id` writes** in curate/consolidation | 🟡 partial | Store append options can write supersession and invalidate predecessor; curate/consolidation policy still open |
-| `invalid_at` on supersession | ✅ landed | Append options set predecessor `invalid_at` when superseding |
-| Freshness trend (derived `stable|strengthening|weakening|stale`) | ◻ | Derived signal for re-harvest triggers; not stored canonically |
+| **`supersedes_memory_id` writes** in curate/consolidation | ✅ landed | Reviewed core updates supersede the prior path head and invalidate predecessors; unsafe/questionable proposals defer or escalate |
+| `invalid_at` on supersession | ✅ landed | Append options and reviewed core supersession set predecessor `invalid_at` |
+| Freshness trend (derived `stable|strengthening|weakening|stale`) | 🟡 partial | Derived from lifecycle/supersession metadata in SQLite reads, admin/search, and recall payload scoring; deeper corroboration-based `strengthening` remains open |
 
-**Exit:** migration applied; consolidation writes supersession; salience readable for recall ranking.
+**Exit:** migration applied; consolidation writes supersession; salience/lifecycle/freshness are readable for recall ranking.
 
 **Plans:** [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_CURATION_PLAN.md](MEMORY_CURATION_PLAN.md).
 
@@ -115,10 +115,10 @@ pair learns → role-local SQLite → pair reflection → proposals
 | P0 | UI: show pair-reflection proposal + queued curate run | ◻ |
 | P1 | Autonomous **curation conductor** (daily curate conversation, bounded context, approved tools only) | 🟡 worker exists; model-assisted review depth open |
 | P2 | **Model-assisted pair reflection** (extract decisions/conventions vs deterministic last-N summary) | ◻ |
-| P2.5 | **`archive_harvest` reflection lane** (extraction-first mining of closed sessions / compaction artifacts) | ◻ blocked on harvest marks + ADR-0041 schema |
+| P2.5 | **`archive_harvest` reflection lane** (extraction-first mining of closed sessions / compaction artifacts) | 🟡 lane + compaction-artifact harvest proposals landed; richer model extraction/quality filters open |
 | P3 | Derived recall indexing | ✅ (`recall_index` + `den reindex`) |
 | P4 | Semantic recall for **`work`** | 🟡 hybrid search exists; **`work` tool exposure** not done |
-| — | **Consolidation** (dedup, supersede-on-contradiction, synthesize `reflection` records, promote to shared) | ◻ |
+| — | **Consolidation** (dedup, supersede-on-contradiction, synthesize `reflection` records, promote to shared) | 🟡 reviewed supersession + unsafe-promotion gates landed; semantic dedup/synthesis open |
 
 **Exit:** pair session → proposal → curate promotion → `work` finds it via `memory_search` without reading `pair/`.
 
@@ -151,8 +151,8 @@ pair learns → role-local SQLite → pair reflection → proposals
 | Richer turn recall query (session focus / work surface, not raw human message) | ◻ | Topical work-surface field in assembler `client_context` |
 | Persist `recall_diagnostic` to turn telemetry | ◻ | No turn-telemetry sink (diagnostic on `AssembledNativeTurn` + admin today) |
 | Live end-to-end with real embedding API key | ◻ | Operator/smoke env |
-| Recall ranking uses **`salience`** once on `memory_records` | 🟡 partial | Vector payload carries salience and applies score multiplier; deeper cross-leg scoring still open |
-| **`supersedes_memory_id` in indexer head selection** (vs sequence-only heads) | 🟡 | Consolidation write path |
+| Recall ranking uses **`salience`** once on `memory_records` | ✅ landed | Vector payload carries salience and applies score multiplier; hits also carry lifecycle/freshness |
+| **`supersedes_memory_id` in indexer head selection** (vs sequence-only heads) | ✅ landed | Reconcile indexes unsuperseded non-invalid heads and removes stale indexed ids |
 
 **Plan:** [DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).
 

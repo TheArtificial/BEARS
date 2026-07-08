@@ -214,9 +214,9 @@ Turn closed session archives into durable memory candidates, not just the active
 
 ### Behavior
 
-- Scan **un-mined** conversations and compaction artifacts; run an **extraction-first** pass that distills durable facts/decisions/preferences/lessons and discards filler.
-- Emit memory proposals (candidate durable entries) with provenance back to source `conversation_messages`; do not write `core/` (that is `memory_curate`).
-- Apply a quality/confidence filter before a candidate becomes a proposal (guards against hallucination propagation).
+- 🟡 Compaction-artifact harvest is implemented: scan **un-mined** compaction artifacts, distill structured summary sections, and create human-review memory proposals. Broader closed-conversation mining and model-assisted extraction remain open.
+- ✅ Emit memory proposals (candidate durable entries) with harvest provenance (`source_hash`, `run_id`, source refs); do not write `core/` (that is `memory_curate`).
+- ◻ Apply a richer quality/confidence filter before a candidate becomes a proposal (guards against hallucination propagation).
 
 ### Triggers
 
@@ -226,7 +226,7 @@ Turn closed session archives into durable memory candidates, not just the active
 
 ### Data model
 
-Add `memory_harvest_marks` (per-Bear SQLite) for idempotency: `source_kind` (`conversation` | `compaction_artifact` | `observation` | `pair_summary`), `source_ref`, `source_hash`, `harvested_at`, `run_id`, `proposal_ids_json`. Never re-harvest an unchanged source. See [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) schema deltas.
+✅ `memory_harvest_marks` (per-Bear SQLite) is implemented for idempotency: `source_kind` (`conversation` | `compaction_artifact` | `observation` | `pair_summary`), `source_ref`, `source_hash`, `harvested_at`, `run_id`, `proposal_ids_json`. Current compaction-artifact harvest records `source_hash` and the reflection `run_id`. See [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) schema deltas.
 
 ### Constraints
 
@@ -244,7 +244,7 @@ Maintain a **derived Qdrant recall index** over canonical SQLite (and Cabinet) s
 
 ### What is indexed
 
-Per [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) §4: `visibility=normal` shared records and role-local `note`/`decision`/`summary` (**latest head only**, respecting `supersedes_memory_id`); approved proposal outcomes; Cabinet material where approved. Excluded by default: `scratch`, raw `log` streams, pending proposals/observations, superseded bodies, and transcripts.
+Per [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) §4 and [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md): `visibility=normal` shared records and role-local `note`/`decision`/`summary` (**latest non-invalid head only**, respecting `supersedes_memory_id`/`invalid_at`); approved proposal outcomes; Cabinet material where approved. Excluded by default: `scratch`, raw `log` streams, pending proposals/observations, superseded/archived bodies, and transcripts.
 
 ### Data model (passage registry, not vectors)
 
@@ -254,7 +254,7 @@ Vectors live in **Qdrant**; Den **Postgres** holds passage-registry metadata onl
 
 - unchanged `content_hash`: no-op;
 - changed `content_hash`: re-embed and replace the passage;
-- superseded/deleted canonical source: delete passages by source id + hash;
+- superseded/deleted/archived canonical source: delete passages by source id + hash or skip on reconcile;
 - bear package import rebuilds vectors from `memory.sqlite`; vectors are never shipped;
 - search results point back to canonical sources.
 
@@ -272,7 +272,7 @@ Allow `work` to benefit from curated pair/curate learning without reading raw `p
 
 ### Tool
 
-Upgrade `memory_search` to **hybrid** (vector recall over Qdrant when configured, else SQL `LIKE`), ranked by `recency × relevance × importance` ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)); degrade gracefully to anchors + `LIKE` when Qdrant is unavailable. An optional `den.memory.recall` / `memory_recall` may be added if a dedicated recall entry point is preferred over overloading `memory_search`.
+Upgrade `memory_search` to **hybrid** (vector recall over Qdrant when configured, else SQL `LIKE`), ranked by `recency × relevance × importance × freshness_trend` ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)); degrade gracefully to anchors + `LIKE` when Qdrant is unavailable. Vector/keyword/graph hits now carry salience plus lifecycle/freshness indicators. An optional `den.memory.recall` / `memory_recall` may be added if a dedicated recall entry point is preferred over overloading `memory_search`.
 
 ### Work policy
 

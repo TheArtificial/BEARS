@@ -287,7 +287,8 @@ pub async fn mark_memory_record_lifecycle(
     .map_err(|e| DenError::System(format!("fetch memory lifecycle metadata failed: {e}")))?
     .ok_or_else(|| DenError::NotFound("memory record not found".to_string()))?;
 
-    let mut metadata: Value = serde_json::from_str(&row.0).unwrap_or_else(|_| Value::Object(Default::default()));
+    let mut metadata: Value =
+        serde_json::from_str(&row.0).unwrap_or_else(|_| Value::Object(Default::default()));
     if !metadata.is_object() {
         metadata = Value::Object(Default::default());
     }
@@ -302,7 +303,9 @@ pub async fn mark_memory_record_lifecycle(
     if !lifecycle.is_object() {
         *lifecycle = Value::Object(Default::default());
     }
-    let lifecycle_obj = lifecycle.as_object_mut().expect("lifecycle object initialized");
+    let lifecycle_obj = lifecycle
+        .as_object_mut()
+        .expect("lifecycle object initialized");
     lifecycle_obj.insert("status".to_string(), Value::String(status.to_string()));
     lifecycle_obj.insert("marked_at".to_string(), Value::String(now.clone()));
     if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
@@ -326,16 +329,20 @@ pub async fn mark_memory_record_lifecycle(
         .await
         .map_err(|e| DenError::System(format!("mark memory lifecycle failed: {e}")))?;
     } else {
-        sqlx::query("UPDATE memory_records SET metadata_json = ? WHERE bear_id = ? AND memory_id = ?")
-            .bind(metadata.to_string())
-            .bind(store.bear_id.to_string())
-            .bind(memory_id)
-            .execute(store.pool())
-            .await
-            .map_err(|e| DenError::System(format!("mark memory lifecycle failed: {e}")))?;
+        sqlx::query(
+            "UPDATE memory_records SET metadata_json = ? WHERE bear_id = ? AND memory_id = ?",
+        )
+        .bind(metadata.to_string())
+        .bind(store.bear_id.to_string())
+        .bind(memory_id)
+        .execute(store.pool())
+        .await
+        .map_err(|e| DenError::System(format!("mark memory lifecycle failed: {e}")))?;
     }
 
-    fetch_record_by_id(store, memory_id).await?.ok_or_else(|| DenError::NotFound("memory record not found".to_string()))
+    fetch_record_by_id(store, memory_id)
+        .await?
+        .ok_or_else(|| DenError::NotFound("memory record not found".to_string()))
 }
 
 pub async fn fetch_record_by_id(
@@ -587,6 +594,8 @@ pub struct RecallRecordMin {
     pub kind: String,
     pub content_text: String,
     pub salience: String,
+    pub lifecycle_status: String,
+    pub freshness_trend: String,
 }
 
 /// Fetch minimal fields for a set of memory ids, **role-scoped** to memory visible to `role`
@@ -602,14 +611,27 @@ pub async fn fetch_records_min(
     }
     let placeholders = vec!["?"; memory_ids.len()].join(",");
     let sql = format!(
-        "SELECT memory_id, logical_path, kind, content_text, salience FROM memory_records \
-         WHERE bear_id = ? AND visibility = 'normal' \
+        "SELECT memory_id, logical_path, kind, content_text, salience, metadata_json, \
+                supersedes_memory_id, invalid_at FROM memory_records \
+         WHERE bear_id = ? AND visibility = 'normal' AND invalid_at IS NULL \
           AND (scope_type = 'shared' OR scope_profile = ?) \
           AND memory_id IN ({placeholders})"
     );
-    let mut query = sqlx::query_as::<_, (String, Option<String>, String, String, String)>(&sql)
-        .bind(store.bear_id().to_string())
-        .bind(role);
+    let mut query = sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        ),
+    >(&sql)
+    .bind(store.bear_id().to_string())
+    .bind(role);
     for id in memory_ids {
         query = query.bind(id);
     }
@@ -620,12 +642,33 @@ pub async fn fetch_records_min(
     Ok(rows
         .into_iter()
         .map(
-            |(memory_id, logical_path, kind, content_text, salience)| RecallRecordMin {
+            |(
                 memory_id,
                 logical_path,
                 kind,
                 content_text,
                 salience,
+                metadata_json,
+                supersedes_memory_id,
+                invalid_at,
+            )| {
+                let metadata_json: Value = serde_json::from_str(&metadata_json)
+                    .unwrap_or_else(|_| Value::Object(Default::default()));
+                let lifecycle_status = lifecycle_status(
+                    &metadata_json,
+                    supersedes_memory_id.as_deref(),
+                    invalid_at.as_deref(),
+                );
+                let freshness_trend = freshness_trend(&lifecycle_status, invalid_at.as_deref());
+                RecallRecordMin {
+                    memory_id,
+                    logical_path,
+                    kind,
+                    content_text,
+                    salience,
+                    lifecycle_status,
+                    freshness_trend,
+                }
             },
         )
         .collect())
@@ -898,9 +941,10 @@ mod as_of_tests {
         .await
         .unwrap();
 
-        let stale = mark_memory_record_lifecycle(&store, &record.memory_id, "stale", Some("old fact"))
-            .await
-            .unwrap();
+        let stale =
+            mark_memory_record_lifecycle(&store, &record.memory_id, "stale", Some("old fact"))
+                .await
+                .unwrap();
         assert_eq!(stale.lifecycle_status, "stale");
         assert_eq!(stale.freshness_trend, "stale");
         assert!(stale.invalid_at.is_none());

@@ -30,6 +30,8 @@ pub struct RecalledPassage {
     pub kind: Option<String>,
     pub score: f32,
     pub salience: String,
+    pub lifecycle_status: String,
+    pub freshness_trend: String,
     pub text: String,
 }
 
@@ -38,6 +40,15 @@ fn salience_multiplier(salience: &str) -> f32 {
         "low" => 0.9,
         "high" => 1.15,
         "critical" => 1.3,
+        _ => 1.0,
+    }
+}
+
+fn freshness_multiplier(freshness_trend: &str) -> f32 {
+    match freshness_trend {
+        "strengthening" => 1.08,
+        "weakening" => 0.92,
+        "stale" => 0.75,
         _ => 1.0,
     }
 }
@@ -153,11 +164,26 @@ async fn search_passages<E: PassageEmbedder + ?Sized>(
         if text.is_empty() {
             continue;
         }
+        let lifecycle_status = hit
+            .payload
+            .get("lifecycle_status")
+            .and_then(Value::as_str)
+            .unwrap_or("active")
+            .to_string();
+        if matches!(lifecycle_status.as_str(), "archived" | "superseded") {
+            continue;
+        }
         let salience = hit
             .payload
             .get("salience")
             .and_then(Value::as_str)
             .unwrap_or("normal")
+            .to_string();
+        let freshness_trend = hit
+            .payload
+            .get("freshness_trend")
+            .and_then(Value::as_str)
+            .unwrap_or("stable")
             .to_string();
         passages.push(RecalledPassage {
             memory_id,
@@ -171,8 +197,12 @@ async fn search_passages<E: PassageEmbedder + ?Sized>(
                 .get("kind")
                 .and_then(Value::as_str)
                 .map(str::to_string),
-            score: hit.score * salience_multiplier(&salience),
+            score: hit.score
+                * salience_multiplier(&salience)
+                * freshness_multiplier(&freshness_trend),
             salience,
+            lifecycle_status,
+            freshness_trend,
             text,
         });
         if passages.len() >= limit {
@@ -413,6 +443,8 @@ pub async fn graph_expand_hits(
                 "score": Value::Null,
                 "snippet": truncate_chars(&rec.content_text, SNIPPET_CHARS),
                 "salience": rec.salience,
+                "lifecycle_status": rec.lifecycle_status,
+                "freshness_trend": rec.freshness_trend,
                 "source": "graph",
                 "hop": reach.hop,
                 "entity_overlap": entity_overlap,
@@ -603,6 +635,8 @@ fn merge_search_results(
             "kind": passage.kind,
             "score": passage.score,
             "salience": passage.salience,
+            "lifecycle_status": passage.lifecycle_status,
+            "freshness_trend": passage.freshness_trend,
             "snippet": truncate_chars(&passage.text, SNIPPET_CHARS),
             "source": "vector",
         }));
@@ -626,6 +660,8 @@ fn merge_search_results(
                 "score": Value::Null,
                 "snippet": hit.get("snippet").cloned().unwrap_or(Value::Null),
                 "salience": hit.get("salience").cloned().unwrap_or_else(|| json!("normal")),
+                "lifecycle_status": hit.get("lifecycle_status").cloned().unwrap_or_else(|| json!("active")),
+                "freshness_trend": hit.get("freshness_trend").cloned().unwrap_or_else(|| json!("stable")),
                 "source": "keyword",
             }));
         }
@@ -731,6 +767,8 @@ mod tests {
             kind: Some("note".into()),
             score,
             salience: "normal".into(),
+            lifecycle_status: "active".into(),
+            freshness_trend: "stable".into(),
             text: "the quick brown fox jumps over the lazy dog".into(),
         }
     }
@@ -831,6 +869,13 @@ mod tests {
         assert_eq!(hits[1]["memory_id"], "m2");
         assert_eq!(hits[1]["source"], "keyword");
         assert!(hits[1]["score"].is_null());
+    }
+
+    #[test]
+    fn freshness_multiplier_downranks_stale_and_boosts_strengthening() {
+        assert!(freshness_multiplier("strengthening") > freshness_multiplier("stable"));
+        assert!(freshness_multiplier("weakening") < freshness_multiplier("stable"));
+        assert!(freshness_multiplier("stale") < freshness_multiplier("weakening"));
     }
 
     #[test]
