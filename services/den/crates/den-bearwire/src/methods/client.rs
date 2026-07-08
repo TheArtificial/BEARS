@@ -334,6 +334,7 @@ fn spawn_continuation_task(
                 let mut first_event_seen = false;
                 let mut runtime_event_count = 0usize;
                 let mut terminal_event_seen = false;
+                let mut wait_event_seen = false;
                 let mut last_event_kind: Option<&'static str> = None;
                 let watchdog_timeout = continuation_watchdog_timeout();
                 loop {
@@ -374,16 +375,24 @@ fn spawn_continuation_task(
                             let event_kind =
                                 crate::methods::run::runtime_event_kind(&runtime_event);
                             last_event_kind = Some(event_kind);
-                            if matches!(
-                                &runtime_event,
+                            match &runtime_event {
                                 den_protocol::RuntimeStreamEvent::Semantic(
                                     den_protocol::RuntimeSemanticEvent::TurnCompleted { .. }
-                                        | den_protocol::RuntimeSemanticEvent::TurnFailed { .. }
-                                        | den_protocol::RuntimeSemanticEvent::TurnCancelled { .. }
-                                        | den_protocol::RuntimeSemanticEvent::Error { .. }
-                                )
-                            ) {
-                                terminal_event_seen = true;
+                                    | den_protocol::RuntimeSemanticEvent::TurnFailed { .. }
+                                    | den_protocol::RuntimeSemanticEvent::TurnCancelled { .. }
+                                    | den_protocol::RuntimeSemanticEvent::Error { .. },
+                                ) => {
+                                    terminal_event_seen = true;
+                                }
+                                den_protocol::RuntimeStreamEvent::Semantic(
+                                    den_protocol::RuntimeSemanticEvent::ToolCallRequested {
+                                        ..
+                                    }
+                                    | den_protocol::RuntimeSemanticEvent::RunPaused { .. },
+                                ) => {
+                                    wait_event_seen = true;
+                                }
+                                _ => {}
                             }
                             if !first_event_seen {
                                 first_event_seen = true;
@@ -431,32 +440,59 @@ fn spawn_continuation_task(
                         }
                     }
                 }
-                persist_run_progress(
-                    &pool,
-                    &run.session_id,
-                    &run.run_id,
-                    run.bear_id,
-                    run.user_id,
-                    continuation_started_at,
-                    if terminal_event_seen {
-                        "continuation_stream_ended_after_terminal"
-                    } else {
-                        "continuation_stream_ended_without_terminal"
-                    },
-                    if terminal_event_seen {
-                        "Continuation stream ended after a terminal runtime event."
-                    } else {
-                        "Continuation stream ended without a terminal runtime event."
-                    },
-                    json!({
-                        "request_id": request_id,
-                        "runtime_event_count": runtime_event_count,
-                        "first_event_seen": first_event_seen,
-                        "terminal_event_seen": terminal_event_seen,
-                        "last_event_kind": last_event_kind,
-                    }),
-                )
-                .await;
+                let terminal_or_wait_seen = terminal_event_seen || wait_event_seen;
+                if !terminal_or_wait_seen {
+                    persist_run_failed(
+                        &pool,
+                        &run.session_id,
+                        &run.run_id,
+                        run.bear_id,
+                        run.user_id,
+                        "continuation_stream_ended_without_runtime_terminal",
+                        if first_event_seen {
+                            "Continuation stream ended after non-terminal runtime events but did not emit a tool request, completion, cancellation, or error.".to_string()
+                        } else {
+                            "Continuation stream ended without emitting any runtime event after the local tool/permission result.".to_string()
+                        },
+                        Some(json!({
+                            "request_id": request_id,
+                            "runtime_event_count": runtime_event_count,
+                            "first_event_seen": first_event_seen,
+                            "terminal_event_seen": terminal_event_seen,
+                            "wait_event_seen": wait_event_seen,
+                            "last_event_kind": last_event_kind,
+                        })),
+                    )
+                    .await;
+                } else {
+                    persist_run_progress(
+                        &pool,
+                        &run.session_id,
+                        &run.run_id,
+                        run.bear_id,
+                        run.user_id,
+                        continuation_started_at,
+                        if terminal_event_seen {
+                            "continuation_stream_ended_after_terminal"
+                        } else {
+                            "continuation_stream_ended_after_wait"
+                        },
+                        if terminal_event_seen {
+                            "Continuation stream ended after a terminal runtime event."
+                        } else {
+                            "Continuation stream ended after emitting another client wait."
+                        },
+                        json!({
+                            "request_id": request_id,
+                            "runtime_event_count": runtime_event_count,
+                            "first_event_seen": first_event_seen,
+                            "terminal_event_seen": terminal_event_seen,
+                            "wait_event_seen": wait_event_seen,
+                            "last_event_kind": last_event_kind,
+                        }),
+                    )
+                    .await;
+                }
             }
             Err(err) => {
                 persist_run_failed(
