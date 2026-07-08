@@ -9876,6 +9876,7 @@ mod tests {
         rpc_methods: Arc<TokioMutex<Vec<String>>>,
         events: Arc<TokioMutex<Vec<Value>>>,
         history_messages: Arc<TokioMutex<Vec<Value>>>,
+        conversation_title: Arc<TokioMutex<Option<String>>>,
     }
 
     // ponytail: this is a narrow BearWire mock for ACP boundary tests, not a fake server.
@@ -9931,6 +9932,7 @@ mod tests {
             state.rpc_methods.lock().await.push(method.to_string());
         }
         let id = value.get("id").cloned().unwrap_or(Value::Null);
+        let conversation_title = state.conversation_title.lock().await.clone();
         let result = match value.get("method").and_then(Value::as_str) {
             Some("initialize") => json!({
                 "jsonrpc": "2.0",
@@ -9966,6 +9968,8 @@ mod tests {
                                 "resolved_conversation_id": "den-conv-test",
                                 "cwd": "/workspace",
                                 "current_mode": "ask",
+                                "conversation_title": conversation_title.clone(),
+                                "conversation_title_updated_at": conversation_title.as_ref().map(|_| "2026-07-07T00:00:00Z"),
                                 "context_budget": {
                                     "model": "openai/test-model",
                                     "context_window": 200000,
@@ -9985,7 +9989,19 @@ mod tests {
                     json!({
                         "jsonrpc": "2.0",
                         "id": id,
-                        "result": { "kind": "session_state", "sessions": [] }
+                        "result": {
+                            "kind": "session_state",
+                            "sessions": [{
+                                "acp_session_id": "session-1",
+                                "conversation_id": "default",
+                                "resolved_conversation_id": "den-conv-test",
+                                "cwd": "/workspace",
+                                "updated_at": "2026-07-07T00:00:00Z",
+                                "current_mode": "ask",
+                                "conversation_title": conversation_title.clone(),
+                                "conversation_title_updated_at": conversation_title.as_ref().map(|_| "2026-07-07T00:00:00Z")
+                            }]
+                        }
                     })
                 }
             }
@@ -10073,6 +10089,7 @@ mod tests {
             rpc_methods: rpc_methods.clone(),
             events: Arc::new(TokioMutex::new(events)),
             history_messages: Arc::new(TokioMutex::new(Vec::new())),
+            conversation_title: Arc::new(TokioMutex::new(None)),
         };
         let app = Router::new()
             .route("/bearwire/v1/rpc", any(bearwire_test_handler))
@@ -10089,13 +10106,34 @@ mod tests {
     async fn start_bearwire_test_server_with_history(
         history_messages: Vec<Value>,
     ) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        start_bearwire_test_server_with_history_and_title(history_messages, None).await
+    }
+
+    async fn start_bearwire_test_server_with_history_and_title(
+        history_messages: Vec<Value>,
+        conversation_title: Option<&str>,
+    ) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        start_bearwire_test_server_with_events_history_and_title(
+            Vec::new(),
+            history_messages,
+            conversation_title,
+        )
+        .await
+    }
+
+    async fn start_bearwire_test_server_with_events_history_and_title(
+        events: Vec<Value>,
+        history_messages: Vec<Value>,
+        conversation_title: Option<&str>,
+    ) -> (String, Arc<TokioMutex<Vec<String>>>) {
         let paths = Arc::new(TokioMutex::new(Vec::new()));
         let state = BearWireTestServerState {
             fail_bearwire: false,
             paths: paths.clone(),
             rpc_methods: Arc::new(TokioMutex::new(Vec::new())),
-            events: Arc::new(TokioMutex::new(Vec::new())),
+            events: Arc::new(TokioMutex::new(events)),
             history_messages: Arc::new(TokioMutex::new(history_messages)),
+            conversation_title: Arc::new(TokioMutex::new(conversation_title.map(str::to_string))),
         };
         let app = Router::new()
             .route("/bearwire/v1/rpc", any(bearwire_test_handler))
@@ -12343,6 +12381,164 @@ mod tests {
                     && frame.get("result").is_some()
             ),
             "{output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn set_conversation_title_lifecycle_surfaces_live_list_and_load() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let title = "Full lifecycle conversation title";
+        let updated_at = "2026-07-07T00:00:00Z";
+        let mut events =
+            set_conversation_title_tool_events("call-title-lifecycle", title, Some(updated_at));
+        events.push(json!({
+            "type": "message.delta",
+            "run_id": "run-test-title",
+            "data": { "delta": "Done." }
+        }));
+        events.push(json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }));
+        let history = vec![
+            json!({
+                "kind": "tool_call",
+                "id": "call-title-lifecycle",
+                "role": "assistant",
+                "tool_call_id": "call-title-lifecycle",
+                "tool_name": "set_conversation_title",
+                "status": "pending",
+                "arguments": { "title": title },
+                "created_at": "2026-07-07T00:00:00Z"
+            }),
+            json!({
+                "kind": "tool_result",
+                "id": "call-title-lifecycle",
+                "role": "tool",
+                "tool_call_id": "call-title-lifecycle",
+                "tool_name": "set_conversation_title",
+                "status": "ok",
+                "text": "Conversation title set.",
+                "raw_output": { "title": title },
+                "created_at": "2026-07-07T00:00:01Z"
+            }),
+            json!({
+                "kind": "session_info_update",
+                "id": "session-info-title",
+                "role": "system",
+                "session_id": "session-1",
+                "title": title,
+                "title_updated_at": updated_at,
+                "current_mode": "ask",
+                "created_at": updated_at
+            }),
+        ];
+        let (api_url, _paths) =
+            start_bearwire_test_server_with_events_history_and_title(events, history, Some(title))
+                .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("title-lifecycle");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        shared_state.session_contexts.lock().await.insert(
+            "session-1".to_string(),
+            state.session_contexts["session-1"].clone(),
+        );
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "prompt-title-lifecycle",
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "session-1",
+                        "prompt": [{ "type": "text", "text": "set the title" }]
+                    }
+                }),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "list-title-lifecycle",
+                    "method": "session/list",
+                    "params": {}
+                }),
+            )
+            .await?;
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "load-title-lifecycle",
+                    "method": "session/load",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        assert!(
+            output.iter().any(|frame| {
+                frame
+                    .pointer("/params/update/sessionUpdate")
+                    .and_then(Value::as_str)
+                    == Some("session_info_update")
+                    && frame
+                        .pointer("/params/update/title")
+                        .and_then(Value::as_str)
+                        == Some(title)
+            }),
+            "live/load session_info_update title missing: {output:#?}"
+        );
+        assert!(
+            output.iter().any(|frame| {
+                frame.get("id").and_then(Value::as_str) == Some("list-title-lifecycle")
+                    && frame
+                        .pointer("/result/sessions/0/title")
+                        .and_then(Value::as_str)
+                        == Some(title)
+            }),
+            "session/list did not expose conversation_title: {output:#?}"
+        );
+        assert!(
+            output.iter().any(|frame| {
+                frame
+                    .pointer("/params/update/sessionUpdate")
+                    .and_then(Value::as_str)
+                    == Some("tool_call")
+                    && frame.to_string().contains("call-title-lifecycle")
+            }),
+            "load/prompt should surface title tool cards: {output:#?}"
+        );
+        assert_eq!(
+            shared_state
+                .session_contexts
+                .lock()
+                .await
+                .get("session-1")
+                .and_then(|context| context.thread_title.as_deref()),
+            Some(title)
         );
         let _ = fs::remove_dir_all(root);
     }

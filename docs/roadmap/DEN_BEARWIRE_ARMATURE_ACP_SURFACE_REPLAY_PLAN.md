@@ -159,7 +159,7 @@ Required fields for reasoning:
 
 - text/delta;
 - source (`provider_reasoning`, etc.);
-- replay policy (`none`, `thought`, `summary_only`, etc.);
+- replay policy (`none` or `thought`; other policies are intentionally unsupported until a product need is proven);
 - explicit statement that it is not assistant answer text.
 
 **Likely files:**
@@ -323,10 +323,9 @@ Completed:
 
 Residual follow-up:
 
-- Replace the current merged `conversation.surface_history` implementation with a dedicated persisted surface-event stream when ordering/pagination across conversation rows and BearWire event rows needs to be exact.
-- Add a small checked-in golden fixture suite for the six target traces in Phase 6; current coverage is focused Rust integration/unit tests rather than file-backed trace fixtures.
+- The dedicated persisted surface-event stream is intentionally deferred. The current merged `conversation.surface_history` projection is sufficient while ordering/pagination needs are bounded and covered by focused tests; revisit only if exact cross-source ordering becomes product-critical.
 - Expand strict mode from focused decode tests to a broader development/test gate that rejects incomplete normal-path surface envelopes across all producers.
-- Decide whether any reasoning replay policy beyond `none` and `thought` should be supported in product UI.
+- No additional reasoning replay policies are planned. `none` and `thought` are sufficient for current product behavior; unsupported policies are omitted rather than replayed.
 
 ## Delivery order
 
@@ -353,12 +352,12 @@ Recommended sequence:
 | Checkpoint empty card | Checkpoint emits full started surface event and finished status with useful summary. |
 | Tool cards load as text | ACP load/resume replays typed tool events as `ToolCall` updates. |
 
-## Open decisions
+## Decisions recorded
 
-1. Should surface replay be backed primarily by persisted BearWire events, canonical conversation structured rows, or a merged projection over both?
-2. Should reasoning ever replay as ACP thought chunks, or should it always be live-only?
-3. How long should text-only `conversation.history` remain available for non-ACP/simple clients?
-4. Which DTOs belong in the initial `bearwire-protocol` crate beyond `SurfaceHistoryEvent`? Keep the first cut narrow enough that armature compile time stays low.
+1. `conversation.surface_history` remains a merged projection over canonical conversation structured rows, selected BearWire events, and session metadata for now. A dedicated persisted surface-event stream is intentionally deferred until exact cross-source ordering/pagination becomes necessary.
+2. Reasoning replay supports only two policies: `none` (omit from replay) and `thought` (replay as ACP thought/reasoning display). These are sufficient for current product behavior.
+3. Text-only `conversation.history` remains available for non-ACP/simple clients, but ACP load/resume must continue using typed surface replay.
+4. The initial `bearwire-protocol` surface contract should stay narrow; add DTOs beyond `SurfaceHistoryEvent` only when active BearWire projection paths need them.
 
 ## Immediate next step
 
