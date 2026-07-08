@@ -216,7 +216,7 @@ Turn closed session archives into durable memory candidates, not just the active
 
 - 🟡 Compaction-artifact harvest is implemented: scan **un-mined** compaction artifacts, distill structured summary sections, and create human-review memory proposals. Broader closed-conversation mining and model-assisted extraction remain open.
 - ✅ Emit memory proposals (candidate durable entries) with harvest provenance (`source_hash`, `run_id`, source refs); do not write `core/` (that is `memory_curate`).
-- ◻ Apply a richer quality/confidence filter before a candidate becomes a proposal (guards against hallucination propagation).
+- 🟡 Apply a deterministic quality/risk filter before a candidate becomes a proposal: transient follow-up-only artifacts are marked harvested without a proposal; durable decisions/constraints/artifacts receive confidence metadata; person/secret/external-risk signals set proposal sensitivity for human review. Richer model-assisted confidence scoring remains open.
 
 ### Triggers
 
