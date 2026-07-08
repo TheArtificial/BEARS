@@ -7029,12 +7029,17 @@ async fn handle_tool_request_event(
     } else {
         false
     };
-    if approval_reused {
+    if approval_reused && bear_debug_verbose() {
+        let target_label = target_path_for_approval
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .or_else(|| target_url_for_approval.clone())
+            .or_else(|| target_command_for_approval.clone())
+            .or_else(|| tool_path(event).map(str::to_string))
+            .unwrap_or_else(|| "<unknown>".to_string());
         eprintln!(
-            "bear-armature: approval_reused session_id={} tool_name={} path={}",
-            session_id,
-            tool_name,
-            tool_path(event).unwrap_or("<unknown>")
+            "bear-armature: approval_reused session_id={} tool_name={} target={}",
+            session_id, tool_name, target_label
         );
     }
     if !approval_reused && approval_required_from_event(event) {
@@ -7318,6 +7323,7 @@ async fn handle_tool_request_event(
         .await
     };
     let status;
+    let mut completion_update: Option<(String, Value, Vec<ToolCallContent>)> = None;
     let mut payload = json!({
         "turn_id": event.get("turn_id").and_then(Value::as_str),
         "request_id": event.get("request_id").and_then(Value::as_str),
@@ -7376,19 +7382,7 @@ async fn handle_tool_request_event(
                 Vec::new()
             };
             payload["structured_content"] = value;
-            send_tool_call_update(
-                session_id,
-                tool_call_id,
-                tool_name,
-                ToolCallUpdatePayload {
-                    status: "completed",
-                    text: &preview,
-                    event: Some(event),
-                    raw_output: Some(raw_output),
-                    extra_content,
-                },
-            )
-            .await?;
+            completion_update = Some((preview, raw_output, extra_content));
         }
         Err(err) => {
             let local_err = LocalToolError::from(err);
@@ -7482,6 +7476,21 @@ async fn handle_tool_request_event(
         tool_name,
         ToolTaskPhase::ResultPosted,
     );
+    if let Some((preview, raw_output, extra_content)) = completion_update {
+        send_tool_call_update(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolCallUpdatePayload {
+                status: "completed",
+                text: &preview,
+                event: Some(event),
+                raw_output: Some(raw_output),
+                extra_content,
+            },
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -9784,7 +9793,9 @@ async fn record_surface_tool_status(
         .await;
     let previous = statuses.get(&key).copied();
     if !should_emit_surface_tool_status(previous, next) {
-        if previous.is_some_and(SurfaceToolStatus::is_terminal) || next.is_terminal() {
+        if bear_debug_verbose()
+            && (previous.is_some_and(SurfaceToolStatus::is_terminal) || next.is_terminal())
+        {
             eprintln!(
                 "bear-armature: suppressing duplicate/non-monotonic tool surface update session_id={} tool_call_id={} previous={} next={}",
                 session_id,
@@ -15529,6 +15540,15 @@ mod tests {
         assert_eq!(
             policy.target_policy.as_ref().unwrap()["kind"],
             "workspace_root_or_path"
+        );
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            policy_target_path(&context, &json!({ "glob": "**/Cargo.toml" }), &policy),
+            Some(PathBuf::from("/workspace"))
         );
     }
 
