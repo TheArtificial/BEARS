@@ -94,18 +94,19 @@ Expected flow:
 
 1. Native loop emits a tool request mapped to adapter event `tool_request`.
 2. Adapter logs `requesting permission` if approval is required.
-3. Adapter calls ACP client `fs/read_text_file` if the client advertises it.
-4. Adapter logs fallback only if client does not advertise `fs.readTextFile`.
-5. Adapter posts result to Den.
-6. Den continues the same in-process turn with the tool result.
-7. Den streams assistant text deltas to the adapter.
+3. Adapter resolves and locally preflights the requested path before delegating to the ACP client.
+4. Adapter calls ACP client `fs/read_text_file` if the client advertises it and the target is an existing file.
+5. Adapter logs fallback only if client does not advertise `fs.readTextFile`.
+6. Adapter posts result to Den and logs the BearWire tool-result response when verbose, or always when Den reports a stalled/ignored continuation.
+7. Den continues the same in-process turn with the tool result.
+8. Den streams assistant text deltas to the adapter.
 
 Useful adapter log snippets:
 
 ```text
 bear-armature: requesting permission session_id=... tool_call_id=... tool_name=... path=...
-bear-armature: client fs/read_text_file path=... bytes=... duration_ms=...
-bear-armature: posted tool result session_id=... tool_call_id=... response=...
+bear-armature: client fs/read_text_file requested_path=... resolved_path=... bytes=... duration_ms=...
+bear-armature: BearWire tool result response debug session_id=... run_id=... tool_call_id=... response={"ok":true,"continuation":"started",...}
 bear-armature: Den stream summary ...
 ```
 
@@ -123,6 +124,7 @@ Expected user-visible tool UX:
 - Permission prompts should include the concrete target and risk, such as the path, URL host, command/cwd, memory scope, or plan id.
 - Raw `args` may be attached as diagnostic/raw input, but visible content should prefer Den `display.title`, `display.subtitle`, `display.approval_summary`, and bounded summaries.
 - If a new tool renders generically, verify that its Den/ACP descriptor includes display metadata and that the adapter is consuming `event.display`.
+- For file reads, a missing path should fail before ACP client delegation. If an ACP client returns `{ "content": "" }` for a missing or non-empty file, treat it as a client bug; the adapter converts that into a failed tool result so the model turn can continue with the error.
 
 ---
 

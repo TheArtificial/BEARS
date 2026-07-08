@@ -69,7 +69,7 @@ Backlog notes:
 - Decide when macOS Developer ID signing and notarization are required for non-developer users.
 
 1. **Source/dev install first**
-   - Keep adapter source under `tools/bears-acp-adapter/`.
+   - Keep armature adapter source under `tools/bear-armature/`.
    - Developers build locally with Cargo and configure Zed as a custom ACP agent.
    - Token is provided via environment variable (`DEN_TOKEN`) or `--token-env`.
 

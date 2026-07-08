@@ -3459,6 +3459,7 @@ async fn handle_client_read_text_file(
         .ok_or_else(|| anyhow!("fs_read_text_file args missing path"))?;
     let context = session_context(adapter_state, session_id)?;
     let resolved_path = client_read_text_file_request_path(context, path)?;
+    preflight_client_read_text_file_target(&resolved_path).await?;
     let mut request = ReadTextFileRequest::new(session_id.to_string(), resolved_path.clone());
     if let Some(line) = args.get("line").and_then(Value::as_u64) {
         request = request.line(Some(line.clamp(1, u32::MAX as u64) as u32));
@@ -3507,20 +3508,45 @@ async fn handle_client_read_text_file(
     }))
 }
 
+async fn preflight_client_read_text_file_target(
+    path: &std::path::Path,
+) -> Result<std::fs::Metadata> {
+    match tokio::fs::metadata(path).await {
+        Ok(metadata) if metadata.is_file() => Ok(metadata),
+        Ok(_) => bail!(
+            "client fs/read_text_file target is not a file before ACP request: {}",
+            path.display()
+        ),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => bail!(
+            "client fs/read_text_file target does not exist before ACP request: {}",
+            path.display()
+        ),
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "client fs/read_text_file local metadata preflight failed for {}",
+                path.display()
+            )
+        }),
+    }
+}
+
 async fn verify_empty_client_read_result(path: &std::path::Path, content: &str) -> Result<()> {
     if !content.is_empty() {
         return Ok(());
     }
-    let metadata = tokio::fs::metadata(path).await.with_context(|| {
-        format!(
-            "client fs/read_text_file returned empty content and local verification failed for {}",
-            path.display()
-        )
-    })?;
-    if !metadata.is_file() {
+    let metadata = preflight_client_read_text_file_target(path)
+        .await
+        .with_context(|| {
+            format!(
+                "client fs/read_text_file returned empty content and local verification failed for {}",
+                path.display()
+            )
+        })?;
+    if metadata.len() > 0 {
         bail!(
-            "client fs/read_text_file target is not a file: {}",
-            path.display()
+            "client fs/read_text_file returned empty content for non-empty file: {} ({} bytes)",
+            path.display(),
+            metadata.len()
         );
     }
     Ok(())
@@ -8009,21 +8035,51 @@ async fn post_tool_result(
         let result =
             bearwire::post_tool_result(config, session_id, run_id, tool_call_id, payload.clone())
                 .await?;
-        if bear_debug_verbose() {
-            eprintln!(
-                "bear-armature: posted BearWire tool result session_id={} run_id={} tool_call_id={} response={}",
-                session_id,
-                run_id,
-                tool_call_id,
-                truncate_for_log(&result.to_string(), 360)
-            );
-        }
+        log_bearwire_tool_result_response(session_id, run_id, tool_call_id, &result);
         return Ok(());
     }
 
     Err(anyhow!(
         "BearWire tool result payload missing run_id for tool_call_id={tool_call_id}; legacy ACP tool-results endpoint is retired"
     ))
+}
+
+fn bearwire_tool_result_response_needs_attention(result: &Value) -> bool {
+    if result.get("ok").and_then(Value::as_bool) == Some(false) {
+        return true;
+    }
+    if result
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status != "ok")
+    {
+        return true;
+    }
+    result
+        .get("continuation")
+        .and_then(Value::as_str)
+        .is_some_and(|continuation| {
+            !matches!(continuation, "started" | "waiting_for_more_client_results")
+        })
+}
+
+fn log_bearwire_tool_result_response(
+    session_id: &str,
+    run_id: &str,
+    tool_call_id: &str,
+    result: &Value,
+) {
+    let needs_attention = bearwire_tool_result_response_needs_attention(result);
+    if bear_debug_verbose() || needs_attention {
+        let level = if needs_attention { "warning" } else { "debug" };
+        eprintln!(
+            "bear-armature: BearWire tool result response {level} session_id={} run_id={} tool_call_id={} response={}",
+            session_id,
+            run_id,
+            tool_call_id,
+            truncate_for_log(&result.to_string(), 720)
+        );
+    }
 }
 
 pub(crate) async fn handle_status_text_for_turn(
@@ -15142,19 +15198,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn client_read_preflight_rejects_missing_and_non_file_targets() {
+        let root =
+            std::env::temp_dir().join(format!("bear-armature-read-preflight-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let existing = root.join("read-text-file-empty-ok.txt");
+        tokio::fs::write(&existing, "").await.unwrap();
+        let metadata = preflight_client_read_text_file_target(&existing)
+            .await
+            .unwrap();
+        assert_eq!(metadata.len(), 0);
+
+        let missing = root.join("read-text-file-missing.txt");
+        let err = preflight_client_read_text_file_target(&missing)
+            .await
+            .expect_err("missing file must fail before ACP client request");
+        assert!(err
+            .to_string()
+            .contains("does not exist before ACP request"));
+
+        let dir = root.join("directory-target");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let err = preflight_client_read_text_file_target(&dir)
+            .await
+            .expect_err("directory target must not be delegated to ACP client read");
+        assert!(err.to_string().contains("not a file before ACP request"));
+
+        tokio::fs::remove_dir_all(&root).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn empty_client_read_result_requires_existing_file() {
-        let existing = std::path::PathBuf::from("/tmp/opencode/read-text-file-empty-ok.txt");
+        let root =
+            std::env::temp_dir().join(format!("bear-armature-empty-read-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let existing = root.join("read-text-file-empty-ok.txt");
         tokio::fs::write(&existing, "").await.unwrap();
         verify_empty_client_read_result(&existing, "")
             .await
             .unwrap();
         tokio::fs::remove_file(&existing).await.unwrap();
 
-        let missing = std::path::PathBuf::from("/tmp/opencode/read-text-file-missing.txt");
+        let non_empty = root.join("read-text-file-non-empty.txt");
+        tokio::fs::write(&non_empty, "not empty").await.unwrap();
+        let err = verify_empty_client_read_result(&non_empty, "")
+            .await
+            .expect_err("empty client content must not pass for a non-empty file");
+        assert!(err.to_string().contains("empty content for non-empty file"));
+
+        let missing = root.join("read-text-file-missing.txt");
         let err = verify_empty_client_read_result(&missing, "")
             .await
             .expect_err("missing file must not look like successful empty read");
-        assert!(err.to_string().contains("local verification failed"));
+        let err_chain = format!("{err:#}");
+        assert!(err_chain.contains("local verification failed"));
+        assert!(err_chain.contains("does not exist before ACP request"));
+
+        tokio::fs::remove_dir_all(&root).await.unwrap();
+    }
+
+    #[test]
+    fn bearwire_tool_result_response_attention_flags_stalled_continuations() {
+        assert!(!bearwire_tool_result_response_needs_attention(&json!({
+            "ok": true,
+            "continuation": "started"
+        })));
+        assert!(!bearwire_tool_result_response_needs_attention(&json!({
+            "ok": true,
+            "continuation": "waiting_for_more_client_results"
+        })));
+        assert!(bearwire_tool_result_response_needs_attention(&json!({
+            "ok": false,
+            "status": "continuation_unavailable",
+            "reason": "native_agent_loop_session_not_found"
+        })));
+        assert!(bearwire_tool_result_response_needs_attention(&json!({
+            "ok": false,
+            "status": "late_result_ignored"
+        })));
     }
 
     #[test]

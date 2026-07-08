@@ -114,7 +114,7 @@ Responsibilities:
 Target structure, either as crates or modules:
 
 ```text
-tools/bears-acp-adapter/
+tools/bear-armature/
   src/
     main.rs
     acp/
