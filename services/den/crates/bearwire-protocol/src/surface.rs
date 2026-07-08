@@ -159,6 +159,7 @@ impl SurfaceHistoryEvent {
             SurfaceHistoryEvent::SessionInfoUpdate {
                 title,
                 title_updated_at,
+                current_mode,
                 ..
             } => {
                 if title.as_deref().unwrap_or_default().trim().is_empty()
@@ -167,8 +168,13 @@ impl SurfaceHistoryEvent {
                         .unwrap_or_default()
                         .trim()
                         .is_empty()
+                    && current_mode
+                        .as_deref()
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty()
                 {
-                    return Err("session info update missing title or title_updated_at");
+                    return Err("session info update missing title, title_updated_at, or current_mode");
                 }
             }
         }
@@ -284,6 +290,15 @@ mod tests {
                 current_mode: Some("write".to_string()),
                 created_at: None,
             },
+            SurfaceHistoryEvent::SessionInfoUpdate {
+                id: Some("s2".to_string()),
+                role: Some("system".to_string()),
+                session_id: Some("session-2".to_string()),
+                title: None,
+                title_updated_at: None,
+                current_mode: Some("ask".to_string()),
+                created_at: None,
+            },
         ];
 
         for record in records {
@@ -365,7 +380,7 @@ mod tests {
                     current_mode: None,
                     created_at: None,
                 },
-                "session info update missing title or title_updated_at",
+                "session info update missing title, title_updated_at, or current_mode",
             ),
         ];
 

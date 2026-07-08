@@ -10739,6 +10739,21 @@ mod tests {
     }
 
     #[test]
+    fn structured_surface_session_info_history_accepts_current_mode_only() {
+        let message = reload_history_message_from_value(json!({
+            "kind": "session_info_update",
+            "session_id": "session-1",
+            "current_mode": "ask"
+        }))
+        .expect("mode-only session info surface event should parse")
+        .expect("session info surface event should not be filtered");
+
+        assert_eq!(message.kind, "session_info_update");
+        assert_eq!(message.title, None);
+        assert_eq!(message.title_updated_at, None);
+    }
+
+    #[test]
     fn structured_surface_reasoning_history_parses_delta_not_as_message() {
         let message = reload_history_message_from_value(json!({
             "kind": "reasoning_delta",
