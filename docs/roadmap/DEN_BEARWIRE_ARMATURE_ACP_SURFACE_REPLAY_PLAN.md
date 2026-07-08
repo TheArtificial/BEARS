@@ -319,7 +319,8 @@ Completed:
   - ACP load/resume replaying tool records as tool cards rather than assistant text;
   - live and replayed reasoning staying in thought UI;
   - Den-owned tool starts rendering without `client.tool.result` local execution posts;
-  - provider Responses reasoning deltas becoming `ReasoningTextDelta`.
+  - provider Responses reasoning deltas becoming `ReasoningTextDelta`;
+  - load replay skipping historical user messages as ACP `UserMessageChunk` so clients do not treat old prompts as fresh input.
 
 Residual follow-up:
 
@@ -357,7 +358,8 @@ Recommended sequence:
 1. `conversation.surface_history` remains a merged projection over canonical conversation structured rows, selected BearWire events, and session metadata for now. A dedicated persisted surface-event stream is intentionally deferred until exact cross-source ordering/pagination becomes necessary.
 2. Reasoning replay supports only two policies: `none` (omit from replay) and `thought` (replay as ACP thought/reasoning display). These are sufficient for current product behavior.
 3. Text-only `conversation.history` remains available for non-ACP/simple clients, but ACP load/resume must continue using typed surface replay.
-4. The initial `bearwire-protocol` surface contract should stay narrow; add DTOs beyond `SurfaceHistoryEvent` only when active BearWire projection paths need them.
+4. Historical user turns are not replayed to ACP clients as `UserMessageChunk` during load/resume. Den already owns model-context replay from canonical conversation storage, and ACP has no passive historical-user-message channel; emitting old user turns as user chunks can cause clients to treat prior prompts as fresh instructions.
+5. The initial `bearwire-protocol` surface contract should stay narrow; add DTOs beyond `SurfaceHistoryEvent` only when active BearWire projection paths need them.
 
 ## Immediate next step
 

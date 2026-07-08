@@ -4591,7 +4591,11 @@ async fn replay_history_for_den_session(
                     }
                 }
                 _ => match message.role.as_str() {
-                    "user" => send_user_message_chunk(session_id, &message.text).await?,
+                    // ACP has no passive historical user-message replay channel in
+                    // LoadSessionResponse. Re-emitting old user turns as UserMessageChunk can make
+                    // some clients treat the prior prompt as fresh input on the next turn; Den
+                    // already owns model replay from canonical conversation storage.
+                    "user" => {}
                     "assistant" => send_agent_message_chunk(session_id, &message.text).await?,
                     _ => {}
                 },
@@ -12728,6 +12732,89 @@ mod tests {
                 .iter()
                 .any(|frame| frame.to_string().contains("private reasoning")),
             "reasoning leaked as agent message: {output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_load_does_not_replay_user_history_as_fresh_user_chunk() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_history(vec![
+            json!({
+                "id": "old-user-prompt",
+                "kind": "message",
+                "role": "user",
+                "text": "old instruction that must not be replayed as fresh input"
+            }),
+            json!({
+                "id": "old-assistant-answer",
+                "kind": "message",
+                "role": "assistant",
+                "text": "old answer can be replayed as agent history"
+            }),
+        ])
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("history-user-not-fresh-input");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "load-1",
+                    "method": "session/load",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let user_chunks = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("user_message_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            user_chunks.is_empty(),
+            "historical user messages must not replay as fresh user chunks: {output:#?}"
+        );
+        let agent_chunks = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_message_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            agent_chunks
+                .iter()
+                .any(|chunk| chunk.contains("old answer can be replayed as agent history")),
+            "assistant history should still be replayed: {output:#?}"
         );
         let _ = fs::remove_dir_all(root);
     }
