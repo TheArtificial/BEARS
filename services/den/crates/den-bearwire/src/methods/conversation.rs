@@ -222,7 +222,7 @@ async fn conversation_history_like_result(
                     .and_then(Value::as_str)
                     .unwrap_or("none")
                     .to_string();
-                if replay_policy == "none" {
+                if replay_policy != "thought" {
                     continue;
                 }
                 let event_id = row
@@ -239,6 +239,20 @@ async fn conversation_history_like_result(
                 }));
             }
         }
+    }
+
+    if records_key == "surface_events" {
+        messages.sort_by(|left, right| {
+            let left_created = left
+                .get("created_at")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let right_created = right
+                .get("created_at")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            left_created.cmp(right_created)
+        });
     }
 
     let mut response = json!({

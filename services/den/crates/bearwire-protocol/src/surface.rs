@@ -115,9 +115,18 @@ impl SurfaceHistoryEvent {
                     return Err("tool record missing required status");
                 }
             }
-            SurfaceHistoryEvent::ReasoningDelta { text, .. } => {
+            SurfaceHistoryEvent::ReasoningDelta {
+                text,
+                replay_policy,
+                ..
+            } => {
                 if text.trim().is_empty() {
                     return Err("reasoning record missing required text");
+                }
+                if let Some(policy) = replay_policy.as_deref() {
+                    if !matches!(policy.trim(), "none" | "thought") {
+                        return Err("reasoning record has unsupported replay_policy");
+                    }
                 }
             }
             SurfaceHistoryEvent::SessionInfoUpdate {
@@ -143,7 +152,59 @@ impl SurfaceHistoryEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Value};
+
+    fn fixture_surface_events(raw: &str) -> Vec<SurfaceHistoryEvent> {
+        let value: Value = serde_json::from_str(raw).expect("fixture JSON parses");
+        value
+            .get("surface_events")
+            .and_then(Value::as_array)
+            .expect("fixture has surface_events array")
+            .iter()
+            .cloned()
+            .map(|event| serde_json::from_value(event).expect("fixture surface event decodes"))
+            .collect()
+    }
+
+    #[test]
+    fn golden_surface_fixtures_decode_and_validate() {
+        const FIXTURES: &[(&str, &str)] = &[
+            (
+                "set_conversation_title_den_hosted",
+                include_str!("../../../tests/fixtures/bearwire_surface/set_conversation_title_den_hosted.json"),
+            ),
+            (
+                "checkpoint_tool",
+                include_str!("../../../tests/fixtures/bearwire_surface/checkpoint_tool.json"),
+            ),
+            (
+                "local_file_read_success",
+                include_str!("../../../tests/fixtures/bearwire_surface/local_file_read_success.json"),
+            ),
+            (
+                "permission_web_fetch",
+                include_str!("../../../tests/fixtures/bearwire_surface/permission_web_fetch.json"),
+            ),
+            (
+                "reasoning_delta",
+                include_str!("../../../tests/fixtures/bearwire_surface/reasoning_delta.json"),
+            ),
+            (
+                "loaded_session_tool_history",
+                include_str!("../../../tests/fixtures/bearwire_surface/loaded_session_tool_history.json"),
+            ),
+        ];
+
+        for (name, raw) in FIXTURES {
+            let events = fixture_surface_events(raw);
+            assert!(!events.is_empty(), "{name} should not be empty");
+            for event in events {
+                event
+                    .validate_replay_record()
+                    .unwrap_or_else(|err| panic!("{name} {} should validate: {err}", event.kind()));
+            }
+        }
+    }
 
     #[test]
     fn valid_surface_records_validate() {
@@ -233,6 +294,17 @@ mod tests {
                     created_at: None,
                 },
                 "reasoning record missing required text",
+            ),
+            (
+                SurfaceHistoryEvent::ReasoningDelta {
+                    id: None,
+                    role: None,
+                    text: "thinking".to_string(),
+                    source: None,
+                    replay_policy: Some("summary_once".to_string()),
+                    created_at: None,
+                },
+                "reasoning record has unsupported replay_policy",
             ),
             (
                 SurfaceHistoryEvent::SessionInfoUpdate {

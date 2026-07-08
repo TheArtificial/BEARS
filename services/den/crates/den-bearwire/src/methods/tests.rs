@@ -1718,6 +1718,22 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     )
     .await
     .expect("persist replayable reasoning surface event");
+    bearwire_events::append_bearwire_event(
+        &pool,
+        &session_id,
+        Some(bear_id),
+        Some(user_id),
+        bearwire_protocol::wire::BearWireEvent::ephemeral(
+            "message.reasoning.delta",
+            json!({
+                "delta": "unsupported replay policy thought",
+                "source": "provider_reasoning",
+                "replay_policy": "summary_once"
+            }),
+        ),
+    )
+    .await
+    .expect("persist unsupported reasoning replay policy event");
 
     let surface_response = rpc_value(
         test_state(pool),
@@ -1790,6 +1806,14 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                 && event.get("replay_policy").and_then(Value::as_str) == Some("thought")
         }),
         "surface history should expose only replayable typed reasoning with replay policy: {surface_response}"
+    );
+    assert!(
+        !surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("reasoning_delta")
+                && event.get("text").and_then(Value::as_str)
+                    == Some("unsupported replay policy thought")
+        }),
+        "surface history should omit unsupported reasoning replay policies: {surface_response}"
     );
     assert!(
         surface_events.iter().any(|event| {

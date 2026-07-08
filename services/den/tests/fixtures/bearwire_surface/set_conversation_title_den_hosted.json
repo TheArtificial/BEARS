@@ -1,0 +1,43 @@
+{
+  "name": "set_conversation_title_den_hosted",
+  "surface_events": [
+    {
+      "kind": "message",
+      "id": "msg-user-title",
+      "role": "user",
+      "text": "Please title this thread",
+      "created_at": "2026-07-07T00:00:00Z"
+    },
+    {
+      "kind": "tool_call",
+      "id": "call-title",
+      "role": "assistant",
+      "tool_call_id": "call-title",
+      "tool_name": "set_conversation_title",
+      "status": "pending",
+      "arguments": { "title": "Surface replay hardening" },
+      "created_at": "2026-07-07T00:00:01Z"
+    },
+    {
+      "kind": "tool_result",
+      "id": "call-title",
+      "role": "tool",
+      "tool_call_id": "call-title",
+      "tool_name": "set_conversation_title",
+      "status": "ok",
+      "text": "Conversation title set to `Surface replay hardening`.",
+      "raw_output": { "title": "Surface replay hardening" },
+      "created_at": "2026-07-07T00:00:02Z"
+    },
+    {
+      "kind": "session_info_update",
+      "id": "session-info-title",
+      "role": "system",
+      "session_id": "session-title",
+      "title": "Surface replay hardening",
+      "title_updated_at": "2026-07-07T00:00:02Z",
+      "current_mode": "ask",
+      "created_at": "2026-07-07T00:00:02Z"
+    }
+  ]
+}

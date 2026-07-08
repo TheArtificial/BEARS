@@ -1,0 +1,26 @@
+{
+  "name": "local_file_read_success",
+  "surface_events": [
+    {
+      "kind": "tool_call",
+      "id": "call-read",
+      "role": "assistant",
+      "tool_call_id": "call-read",
+      "tool_name": "fs_read_text_file",
+      "status": "pending",
+      "arguments": { "path": "README.md", "line": 1, "limit": 20 },
+      "created_at": "2026-07-07T00:02:00Z"
+    },
+    {
+      "kind": "tool_result",
+      "id": "call-read",
+      "role": "tool",
+      "tool_call_id": "call-read",
+      "tool_name": "fs_read_text_file",
+      "status": "ok",
+      "text": "Read README.md",
+      "raw_output": { "content": "# Bear Den" },
+      "created_at": "2026-07-07T00:02:01Z"
+    }
+  ]
+}
