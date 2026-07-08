@@ -7323,7 +7323,7 @@ async fn handle_tool_request_event(
         .await
     };
     let status;
-    let mut completion_update: Option<(String, Value, Vec<ToolCallContent>)> = None;
+    let deferred_ui_update: Option<(String, String, Option<Value>, Vec<ToolCallContent>)>;
     let mut payload = json!({
         "turn_id": event.get("turn_id").and_then(Value::as_str),
         "request_id": event.get("request_id").and_then(Value::as_str),
@@ -7382,7 +7382,12 @@ async fn handle_tool_request_event(
                 Vec::new()
             };
             payload["structured_content"] = value;
-            completion_update = Some((preview, raw_output, extra_content));
+            deferred_ui_update = Some((
+                "completed".to_string(),
+                preview,
+                Some(raw_output),
+                extra_content,
+            ));
         }
         Err(err) => {
             let local_err = LocalToolError::from(err);
@@ -7401,23 +7406,12 @@ async fn handle_tool_request_event(
                 tool_name,
                 ToolTaskPhase::ExecutionFailed,
             );
+            let message = local_err.message.clone();
             payload["status"] = json!(status);
-            payload["content"] = json!(local_err.message);
+            payload["content"] = json!(message.clone());
             payload["diagnostic"]["phase"] = json!("adapter_execution_failed");
             merge_diagnostic(&mut payload["diagnostic"], local_err.diagnostic);
-            send_tool_call_update(
-                session_id,
-                tool_call_id,
-                tool_name,
-                ToolCallUpdatePayload {
-                    status: "failed",
-                    text: payload["content"].as_str().unwrap_or("Local tool failed"),
-                    event: Some(event),
-                    raw_output: None,
-                    extra_content: Vec::new(),
-                },
-            )
-            .await?;
+            deferred_ui_update = Some(("failed".to_string(), message, None, Vec::new()));
         }
     }
     if let Err(err) = post_tool_result(config, session_id, tool_call_id, payload).await {
@@ -7476,20 +7470,29 @@ async fn handle_tool_request_event(
         tool_name,
         ToolTaskPhase::ResultPosted,
     );
-    if let Some((preview, raw_output, extra_content)) = completion_update {
-        send_tool_call_update(
+    if let Some((status, text, raw_output, extra_content)) = deferred_ui_update {
+        if let Err(err) = send_tool_call_update(
             session_id,
             tool_call_id,
             tool_name,
             ToolCallUpdatePayload {
-                status: "completed",
-                text: &preview,
+                status: &status,
+                text: &text,
                 event: Some(event),
-                raw_output: Some(raw_output),
+                raw_output,
                 extra_content,
             },
         )
-        .await?;
+        .await
+        {
+            eprintln!(
+                "bear-armature: ACP tool-card update failed after Den accepted result session_id={} tool_call_id={} tool_name={} error={:#}",
+                session_id,
+                tool_call_id,
+                tool_name,
+                err
+            );
+        }
     }
     Ok(())
 }
@@ -7670,13 +7673,19 @@ fn approval_reason_from_event(event: &Value) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
+const ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS: usize = 4 * 1024;
+const TOOL_RESULT_POST_SLOW_MS: u128 = 2_000;
+const TOOL_RESULT_POST_TIMEOUT_SECS: u64 = 120;
+
 fn compact_tool_raw_output(value: Value) -> Value {
-    if value.to_string().chars().count() <= 24 * 1024 {
+    let serialized = value.to_string();
+    if serialized.chars().count() <= ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS {
         return value;
     }
     json!({
-        "preview": compact_tool_json_detail(&value, 24 * 1024),
+        "preview": serialized.chars().take(ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS).collect::<String>() + "... truncated",
         "truncated": true,
+        "omitted_full_raw_output": true,
     })
 }
 
@@ -8138,10 +8147,41 @@ async fn post_tool_result(
     payload: Value,
 ) -> Result<()> {
     if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
-        let result =
-            bearwire::post_tool_result(config, session_id, run_id, tool_call_id, payload.clone())
-                .await?;
-        log_bearwire_tool_result_response(session_id, run_id, tool_call_id, &result);
+        let started = std::time::Instant::now();
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: posting BearWire tool result session_id={} run_id={} tool_call_id={} payload_bytes={}",
+                session_id,
+                run_id,
+                tool_call_id,
+                payload.to_string().len()
+            );
+        }
+        let result = timeout(
+            Duration::from_secs(TOOL_RESULT_POST_TIMEOUT_SECS),
+            bearwire::post_tool_result(config, session_id, run_id, tool_call_id, payload.clone()),
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "timed out after {}s posting BearWire tool result session_id={} run_id={} tool_call_id={}",
+                TOOL_RESULT_POST_TIMEOUT_SECS,
+                session_id,
+                run_id,
+                tool_call_id
+            )
+        })??;
+        let duration_ms = started.elapsed().as_millis();
+        if duration_ms >= TOOL_RESULT_POST_SLOW_MS {
+            eprintln!(
+                "bear-armature: slow BearWire tool result post session_id={} run_id={} tool_call_id={} duration_ms={}",
+                session_id,
+                run_id,
+                tool_call_id,
+                duration_ms
+            );
+        }
+        log_bearwire_tool_result_response(session_id, run_id, tool_call_id, &result, duration_ms);
         return Ok(());
     }
 
@@ -8211,6 +8251,7 @@ fn log_bearwire_tool_result_response(
     run_id: &str,
     tool_call_id: &str,
     result: &Value,
+    duration_ms: u128,
 ) {
     let class = classify_bearwire_tool_result_response(result);
     if bear_debug_verbose() || class.needs_attention() {
@@ -8220,11 +8261,12 @@ fn log_bearwire_tool_result_response(
             "debug"
         };
         eprintln!(
-            "bear-armature: BearWire tool result response {level} class={} session_id={} run_id={} tool_call_id={} response={}",
+            "bear-armature: BearWire tool result response {level} class={} session_id={} run_id={} tool_call_id={} duration_ms={} response={}",
             class.as_str(),
             session_id,
             run_id,
             tool_call_id,
+            duration_ms,
             truncate_for_log(&result.to_string(), 720)
         );
     }
@@ -8892,7 +8934,17 @@ pub(crate) async fn handle_permission_request_event(
                         }
                     }
                 });
-                send_tool_call_update(
+                let payload = json!({
+                    "tool_call_id": tool_call_id,
+                    "run_id": event.get("run_id").and_then(Value::as_str),
+                    "tool_name": result_tool_name,
+                    "status": "ok",
+                    "content": "",
+                    "structured_content": value.clone(),
+                    "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_completed", "duration_ms": started.elapsed().as_millis() }
+                });
+                post_tool_result(config, session_id, tool_call_id, payload).await?;
+                if let Err(err) = send_tool_call_update(
                     session_id,
                     tool_call_id,
                     tool_name,
@@ -8904,17 +8956,16 @@ pub(crate) async fn handle_permission_request_event(
                         extra_content: Vec::new(),
                     },
                 )
-                .await?;
-                let payload = json!({
-                    "tool_call_id": tool_call_id,
-                    "run_id": event.get("run_id").and_then(Value::as_str),
-                    "tool_name": result_tool_name,
-                    "status": "ok",
-                    "content": "",
-                    "structured_content": value,
-                    "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_completed", "duration_ms": started.elapsed().as_millis() }
-                });
-                post_tool_result(config, session_id, tool_call_id, payload).await?;
+                .await
+                {
+                    eprintln!(
+                        "bear-armature: ACP tool-card update failed after Den accepted permission-local result session_id={} tool_call_id={} tool_name={} error={:#}",
+                        session_id,
+                        tool_call_id,
+                        tool_name,
+                        err
+                    );
+                }
             }
             Err(err) => {
                 let message = format!("{err:#}");
@@ -8928,7 +8979,17 @@ pub(crate) async fn handle_permission_request_event(
                         }
                     }
                 });
-                send_tool_call_update(
+                let payload = json!({
+                    "tool_call_id": tool_call_id,
+                    "run_id": event.get("run_id").and_then(Value::as_str),
+                    "tool_name": result_tool_name,
+                    "status": "error",
+                    "content": message,
+                    "structured_content": {},
+                    "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_failed", "duration_ms": started.elapsed().as_millis() }
+                });
+                post_tool_result(config, session_id, tool_call_id, payload).await?;
+                if let Err(err) = send_tool_call_update(
                     session_id,
                     tool_call_id,
                     tool_name,
@@ -8945,17 +9006,16 @@ pub(crate) async fn handle_permission_request_event(
                         extra_content: Vec::new(),
                     },
                 )
-                .await?;
-                let payload = json!({
-                    "tool_call_id": tool_call_id,
-                    "run_id": event.get("run_id").and_then(Value::as_str),
-                    "tool_name": result_tool_name,
-                    "status": "error",
-                    "content": message,
-                    "structured_content": {},
-                    "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_failed", "duration_ms": started.elapsed().as_millis() }
-                });
-                post_tool_result(config, session_id, tool_call_id, payload).await?;
+                .await
+                {
+                    eprintln!(
+                        "bear-armature: ACP tool-card failure update failed after Den accepted permission-local result session_id={} tool_call_id={} tool_name={} error={:#}",
+                        session_id,
+                        tool_call_id,
+                        tool_name,
+                        err
+                    );
+                }
             }
         }
     }
@@ -12274,6 +12334,23 @@ mod tests {
         let delete_file_event =
             json!({ "args": { "path": "/workspace/README.md", "expected_kind": "file" } });
         assert!(tool_locations_from_event("fs_delete_path", &delete_file_event).is_some());
+    }
+
+    #[test]
+    fn compact_tool_raw_output_keeps_large_payloads_out_of_acp_cards() {
+        let compacted = compact_tool_raw_output(json!({
+            "entries": (0..500).map(|idx| json!({
+                "path": format!("/workspace/file-{idx}.txt"),
+                "kind": "file"
+            })).collect::<Vec<_>>()
+        }));
+        assert_eq!(compacted["truncated"], true);
+        assert_eq!(compacted["omitted_full_raw_output"], true);
+        assert!(
+            compacted["preview"].as_str().unwrap().chars().count()
+                <= ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS + "... truncated".len()
+        );
+        assert!(compacted.get("entries").is_none());
     }
 
     #[test]
