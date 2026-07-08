@@ -2,7 +2,8 @@ use crate::{
     bear_debug_verbose,
     paths::{
         ensure_path_allowed_for_session, is_hidden_path_component, is_sensitive_path,
-        resolve_requested_tool_path, session_workspace_roots,
+        resolve_fs_target, resolve_requested_tool_path, session_workspace_roots, FsTargetKind,
+        ResolvedFsTarget,
     },
     truncate_for_log, SessionContext, ToolPolicy,
 };
@@ -16,10 +17,11 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-fn resolve_session_tool_path(context: &SessionContext, raw_path: &str) -> Result<PathBuf> {
-    let path = resolve_requested_tool_path(context, raw_path)?;
-    ensure_path_allowed_for_session(context, &path)?;
-    Ok(path)
+fn resolve_session_tool_target(
+    context: &SessionContext,
+    raw_path: &str,
+) -> Result<ResolvedFsTarget> {
+    resolve_fs_target(context, raw_path)
 }
 
 fn resolve_optional_session_tool_root(
@@ -27,7 +29,17 @@ fn resolve_optional_session_tool_root(
     raw_root: Option<&str>,
 ) -> Result<PathBuf> {
     match raw_root {
-        Some(root) => resolve_session_tool_path(context, root),
+        Some(root) => {
+            let target = resolve_session_tool_target(context, root)?;
+            if !target.is_directory() {
+                return Err(anyhow!(
+                    "fs_find_paths root is not a directory: {} ({:?})",
+                    target.resolved_path.display(),
+                    target.kind
+                ));
+            }
+            Ok(target.resolved_path)
+        }
         None => Ok(session_workspace_roots(context)[0].clone()),
     }
 }
@@ -112,7 +124,18 @@ pub(crate) async fn handle_read_text_file(
         .limit
         .map(|v| v.clamp(1, policy_max_lines as u64) as usize)
         .unwrap_or(400.min(policy_max_lines));
-    let path = resolve_session_tool_path(context, &args.path)?;
+    let target = resolve_session_tool_target(context, &args.path)?;
+    if !target.is_file() {
+        return Err(anyhow!(
+            "fs_read_text_file target is not a readable file: {} ({:?})",
+            target.resolved_path.display(),
+            target.kind
+        ));
+    }
+    let requested_path = target.requested_path.clone();
+    let workspace_root = target.workspace_root.clone();
+    let target_size_bytes = target.size_bytes();
+    let path = target.resolved_path;
     let started = std::time::Instant::now();
     let raw = tokio::fs::read_to_string(&path)
         .await
@@ -145,12 +168,15 @@ pub(crate) async fn handle_read_text_file(
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
+        "requested_path": requested_path,
+        "workspace_root": workspace_root.to_string_lossy(),
         "content": content,
         "line": line,
         "returned_lines": selected.len(),
         "total_lines": total_lines,
         "truncated": truncated,
         "bytes": raw.len(),
+        "size_bytes": target_size_bytes,
         "policy": {
             "max_lines": policy_max_lines,
             "applied_limit": limit,
@@ -175,7 +201,15 @@ pub(crate) async fn handle_list_directory(
         .limit
         .map(|v| v.clamp(1, policy_max_entries as u64) as usize)
         .unwrap_or(200.min(policy_max_entries));
-    let path = resolve_session_tool_path(context, &args.path)?;
+    let target = resolve_session_tool_target(context, &args.path)?;
+    if !target.is_directory() {
+        return Err(anyhow!(
+            "fs_list_directory target is not a directory: {} ({:?})",
+            target.resolved_path.display(),
+            target.kind
+        ));
+    }
+    let path = target.resolved_path;
     let started = std::time::Instant::now();
     let mut entries = Vec::new();
     let mut total_entries_seen = 0usize;
@@ -361,7 +395,14 @@ pub(crate) async fn handle_search_files(
         .or(policy.include_hidden_default)
         .unwrap_or(false);
     let filters = search_filters_from_typed_args(&args)?;
-    let path = resolve_session_tool_path(context, &args.path)?;
+    let target = resolve_session_tool_target(context, &args.path)?;
+    if matches!(target.kind, FsTargetKind::Missing) {
+        return Err(anyhow!(
+            "fs_search_files target does not exist: {}",
+            target.resolved_path.display()
+        ));
+    }
+    let path = target.resolved_path;
     let started = std::time::Instant::now();
     let mut files = Vec::new();
     let mut file_collection_truncated = false;
@@ -486,7 +527,8 @@ pub(crate) async fn handle_stat(
 ) -> Result<Value> {
     let args: StatArgs = parse_fs_args(args)?;
     let include_symlink_target = args.include_symlink_target.unwrap_or(false);
-    let path = resolve_session_tool_path(context, &args.path)?;
+    let target = resolve_session_tool_target(context, &args.path)?;
+    let path = target.resolved_path;
     let metadata =
         fs::symlink_metadata(&path).with_context(|| format!("stat {}", path.display()))?;
     let file_type = metadata.file_type();
@@ -584,8 +626,8 @@ pub(crate) async fn handle_create_text_file(
             max_bytes
         ));
     }
-    let path = resolve_requested_tool_path(context, raw_path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let target = resolve_session_tool_target(context, raw_path)?;
+    let path = target.resolved_path;
     ensure_replace_text_path_allowed(&path, policy)?;
     if path.exists() {
         return Err(anyhow!("fs_create_text_file path already exists"));
@@ -650,8 +692,8 @@ pub(crate) async fn handle_create_directory(
         .get("allow_existing")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let path = resolve_requested_tool_path(context, raw_path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let target = resolve_session_tool_target(context, raw_path)?;
+    let path = target.resolved_path;
     ensure_replace_text_path_allowed(&path, policy)?;
     if path.exists() {
         if path.is_dir() && allow_existing {
@@ -739,8 +781,8 @@ pub(crate) async fn handle_move_path(
         .get("expected_kind")
         .and_then(Value::as_str)
         .unwrap_or("any");
-    let source = resolve_requested_tool_path(context, raw_source)?;
-    let destination = resolve_requested_tool_path(context, raw_destination)?;
+    let source = resolve_session_tool_target(context, raw_source)?.resolved_path;
+    let destination = resolve_session_tool_target(context, raw_destination)?.resolved_path;
     ensure_path_allowed_for_session(context, &source)?;
     ensure_path_allowed_for_session(context, &destination)?;
     ensure_replace_text_path_allowed(&source, policy)?;
@@ -851,10 +893,8 @@ pub(crate) async fn handle_copy_path(
         .unwrap_or("any");
     let max_entries = policy.max_entries.unwrap_or(1_000).clamp(1, 10_000);
     let max_bytes = policy.max_bytes.unwrap_or(5_242_880).clamp(1, 52_428_800);
-    let source = resolve_requested_tool_path(context, raw_source)?;
-    let destination = resolve_requested_tool_path(context, raw_destination)?;
-    ensure_path_allowed_for_session(context, &source)?;
-    ensure_path_allowed_for_session(context, &destination)?;
+    let source = resolve_session_tool_target(context, raw_source)?.resolved_path;
+    let destination = resolve_session_tool_target(context, raw_destination)?.resolved_path;
     ensure_replace_text_path_allowed(&source, policy)?;
     ensure_replace_text_path_allowed(&destination, policy)?;
     if source == destination {
@@ -1099,8 +1139,7 @@ pub(crate) async fn handle_delete_path(
         .and_then(Value::as_str)
         .unwrap_or("any");
     let max_entries = policy.max_entries.unwrap_or(100).clamp(1, 1_000);
-    let path = resolve_requested_tool_path(context, raw_path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let path = resolve_session_tool_target(context, raw_path)?.resolved_path;
     ensure_delete_path_allowed(context, &path, policy)?;
     let started = std::time::Instant::now();
     let metadata = match fs::metadata(&path) {
@@ -1285,8 +1324,7 @@ impl ReplaceTextPlan {
         let policy_max_replacements = policy.max_replacements.unwrap_or(1).clamp(1, 100);
         let policy_create_files = policy.create_files.unwrap_or(false);
         let policy_allow_multiple = policy.allow_multiple.unwrap_or(false);
-        let path = resolve_requested_tool_path(context, &args.path)?;
-        ensure_path_allowed_for_session(context, &path)?;
+        let path = resolve_session_tool_target(context, &args.path)?.resolved_path;
         ensure_replace_text_path_allowed(&path, policy)?;
         let raw = read_replace_text_input(&path, policy_max_bytes)?;
         let replacements = raw.matches(&args.old_text).count();

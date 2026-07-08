@@ -90,13 +90,13 @@ Prompt with an absolute path under the current workspace:
 Read /absolute/path/to/small-file.txt and summarize it.
 ```
 
-Expected flow:
+Expected file-read flow during a prompt turn:
 
 1. Native loop emits a tool request mapped to adapter event `tool_request`.
 2. Adapter logs `requesting permission` if approval is required.
-3. Adapter resolves and locally preflights the requested path before delegating to the ACP client.
-4. Adapter calls ACP client `fs/read_text_file` if the client advertises it and the target is an existing file.
-5. Adapter logs fallback only if client does not advertise `fs.readTextFile`.
+3. Adapter resolves the requested path through the typed workspace target boundary.
+4. Adapter reads disk-backed workspace files locally in `bear-armature` by default.
+5. Adapter delegates to ACP client `fs/read_text_file` only for explicit editor-buffer/client-surface semantics, then verifies the client response against local file metadata.
 6. Adapter posts result to Den and logs the BearWire tool-result response when verbose, or always when Den reports a stalled/ignored continuation.
 7. Den continues the same in-process turn with the tool result.
 8. Den streams assistant text deltas to the adapter.
@@ -105,8 +105,8 @@ Useful adapter log snippets:
 
 ```text
 bear-armature: requesting permission session_id=... tool_call_id=... tool_name=... path=...
-bear-armature: client fs/read_text_file requested_path=... resolved_path=... bytes=... duration_ms=...
-bear-armature: BearWire tool result response debug session_id=... run_id=... tool_call_id=... response={"ok":true,"continuation":"started",...}
+bear-armature: read_text_file session_id=... path=... line=... limit=... bytes=... returned_lines=... truncated=... duration_ms=...
+bear-armature: BearWire tool result response debug class=continued session_id=... run_id=... tool_call_id=... response={"ok":true,"continuation":"started",...}
 bear-armature: Den stream summary ...
 ```
 
@@ -118,13 +118,21 @@ ACP tool result received ... body_tool_call_id=... body_approval_request_id=...
 ACP Letta stream summary ... native_message_types=... adapter_event_types=...
 ```
 
+Session lifecycle replay expectations:
+
+- `session/load` replays the visible conversation transcript to the ACP client before responding, including historical `user_message_chunk` updates and `agent_message_chunk` updates.
+- `session/resume` restores the session without replaying history, per ACP resume semantics.
+- ACP replay is client-side rendering. Den/model context replay remains owned by canonical conversation storage and next-turn request construction.
+
 Expected user-visible tool UX:
 
 - The ACP client should show a human-readable tool card, such as `Reading /absolute/path/to/small-file.txt`, not a generic `tool_call` title.
 - Permission prompts should include the concrete target and risk, such as the path, URL host, command/cwd, memory scope, or plan id.
 - Raw `args` may be attached as diagnostic/raw input, but visible content should prefer Den `display.title`, `display.subtitle`, `display.approval_summary`, and bounded summaries.
 - If a new tool renders generically, verify that its Den/ACP descriptor includes display metadata and that the adapter is consuming `event.display`.
-- For file reads, a missing path should fail before ACP client delegation. If an ACP client returns `{ "content": "" }` for a missing or non-empty file, treat it as a client bug; the adapter converts that into a failed tool result so the model turn can continue with the error.
+- For file reads, disk-backed workspace paths execute in `bear-armature` by default. ACP client read delegation is reserved for explicit editor-buffer/client-surface semantics.
+- If an ACP client returns `{ "content": "" }` for a missing or non-empty file, treat it as a client bug; the adapter verifies delegated client responses and converts invalid success into a failed tool result so the model turn can continue with the error.
+- Canonical source paths are listed in `docs/architecture/repository-shape.md`; use `tools/bear-armature/` for source references and reserve `bears-acp-adapter` for legacy binary/package compatibility.
 
 ---
 

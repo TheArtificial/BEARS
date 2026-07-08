@@ -3448,6 +3448,18 @@ fn client_read_text_file_request_path(context: &SessionContext, raw_path: &str) 
     Ok(resolved_path)
 }
 
+fn read_text_file_requires_client_surface(args: &Value) -> bool {
+    args.get("source")
+        .or_else(|| args.pointer("/_meta/source"))
+        .and_then(Value::as_str)
+        .is_some_and(|source| matches!(source, "editor_buffer" | "client_surface"))
+        || args
+            .get("prefer_client")
+            .or_else(|| args.pointer("/_meta/prefer_client"))
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
 async fn handle_client_read_text_file(
     adapter_state: &mut AdapterState,
     session_id: &str,
@@ -3488,7 +3500,7 @@ async fn handle_client_read_text_file(
         )
     })?;
     let content = parsed.content;
-    verify_empty_client_read_result(&resolved_path, &content).await?;
+    verify_client_read_text_file_response(&resolved_path, &content).await?;
     if bear_debug_verbose() {
         eprintln!(
             "bear-armature: client fs/read_text_file requested_path={} resolved_path={} bytes={} duration_ms={}",
@@ -3530,19 +3542,19 @@ async fn preflight_client_read_text_file_target(
     }
 }
 
-async fn verify_empty_client_read_result(path: &std::path::Path, content: &str) -> Result<()> {
-    if !content.is_empty() {
-        return Ok(());
-    }
+async fn verify_client_read_text_file_response(
+    path: &std::path::Path,
+    content: &str,
+) -> Result<()> {
     let metadata = preflight_client_read_text_file_target(path)
         .await
         .with_context(|| {
             format!(
-                "client fs/read_text_file returned empty content and local verification failed for {}",
+                "client fs/read_text_file local verification failed for {}",
                 path.display()
             )
         })?;
-    if metadata.len() > 0 {
+    if content.is_empty() && metadata.len() > 0 {
         bail!(
             "client fs/read_text_file returned empty content for non-empty file: {} ({} bytes)",
             path.display(),
@@ -3622,12 +3634,15 @@ async fn execute_local_tool(
 ) -> Result<Value> {
     match tool_name {
         "fs_read_text_file" | "fs.read_text_file" => {
-            if client_supports_read_text_file(adapter_state) {
-                handle_client_read_text_file(adapter_state, session_id, &args).await
+            if read_text_file_requires_client_surface(&args) {
+                if client_supports_read_text_file(adapter_state) {
+                    handle_client_read_text_file(adapter_state, session_id, &args).await
+                } else {
+                    Err(anyhow!(
+                        "fs_read_text_file requested ACP client/editor-buffer semantics, but the client did not advertise fs.readTextFile"
+                    ))
+                }
             } else {
-                eprintln!(
-                    "bear-armature: client did not advertise fs/read_text_file; using adapter-local fallback"
-                );
                 let mut params = args;
                 params["sessionId"] = json!(session_id);
                 handle_direct_read_text_file(adapter_state, params, policy).await
@@ -4628,9 +4643,9 @@ async fn replay_history_for_den_session(
                     }
                 }
                 _ => match history_replay_text_update_kind(&message) {
-                    // These chunks are UI reload projection only. Den owns model replay from
-                    // canonical conversation storage, so replaying user chunks here must not be
-                    // treated as a fresh prompt by the client.
+                    // ACP session/load replays the visible transcript to the client. This is
+                    // client-side rendering only; Den owns model-context replay from canonical
+                    // conversation storage, so these chunks are not sent back to the model.
                     Some("user") => send_user_message_chunk(session_id, &message.text).await?,
                     Some("agent") => send_agent_message_chunk(session_id, &message.text).await?,
                     _ => {}
@@ -4711,9 +4726,11 @@ async fn restore_session_from_den(
         adapter_state.clone(),
         None,
     );
-    if let Some(den) = den.as_ref() {
-        replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
-        surface_submitted_plan_fallback(session_id, den).await?;
+    if bear_debug_verbose() && den.is_some() {
+        eprintln!(
+            "bear-armature: session/resume session_id={} restored without history replay per ACP resume semantics",
+            session_id
+        );
     }
     Ok((
         den.as_ref()
@@ -8054,23 +8071,60 @@ async fn post_tool_result(
     ))
 }
 
-fn bearwire_tool_result_response_needs_attention(result: &Value) -> bool {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BearWireToolResultResponseClass {
+    Continued,
+    WaitingForMore,
+    Duplicate,
+    LateIgnored,
+    ContinuationUnavailable,
+    Error,
+    Unknown,
+}
+
+impl BearWireToolResultResponseClass {
+    fn needs_attention(self) -> bool {
+        matches!(
+            self,
+            Self::LateIgnored | Self::ContinuationUnavailable | Self::Error | Self::Unknown
+        )
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Continued => "continued",
+            Self::WaitingForMore => "waiting_for_more",
+            Self::Duplicate => "duplicate",
+            Self::LateIgnored => "late_ignored",
+            Self::ContinuationUnavailable => "continuation_unavailable",
+            Self::Error => "error",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+fn classify_bearwire_tool_result_response(result: &Value) -> BearWireToolResultResponseClass {
     if result.get("ok").and_then(Value::as_bool) == Some(false) {
-        return true;
+        return match result.get("status").and_then(Value::as_str) {
+            Some("late_result_ignored") => BearWireToolResultResponseClass::LateIgnored,
+            Some("continuation_unavailable") => {
+                BearWireToolResultResponseClass::ContinuationUnavailable
+            }
+            _ => BearWireToolResultResponseClass::Error,
+        };
     }
-    if result
-        .get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| status != "ok")
-    {
-        return true;
+    if result.get("duplicate").and_then(Value::as_bool) == Some(true) {
+        return BearWireToolResultResponseClass::Duplicate;
     }
-    result
-        .get("continuation")
-        .and_then(Value::as_str)
-        .is_some_and(|continuation| {
-            !matches!(continuation, "started" | "waiting_for_more_client_results")
-        })
+    match result.get("continuation").and_then(Value::as_str) {
+        Some("started") => BearWireToolResultResponseClass::Continued,
+        Some("waiting_for_more_client_results") => BearWireToolResultResponseClass::WaitingForMore,
+        Some("continuation_unavailable") => {
+            BearWireToolResultResponseClass::ContinuationUnavailable
+        }
+        Some(_) => BearWireToolResultResponseClass::Unknown,
+        None => BearWireToolResultResponseClass::Unknown,
+    }
 }
 
 fn log_bearwire_tool_result_response(
@@ -8079,11 +8133,16 @@ fn log_bearwire_tool_result_response(
     tool_call_id: &str,
     result: &Value,
 ) {
-    let needs_attention = bearwire_tool_result_response_needs_attention(result);
-    if bear_debug_verbose() || needs_attention {
-        let level = if needs_attention { "warning" } else { "debug" };
+    let class = classify_bearwire_tool_result_response(result);
+    if bear_debug_verbose() || class.needs_attention() {
+        let level = if class.needs_attention() {
+            "warning"
+        } else {
+            "debug"
+        };
         eprintln!(
-            "bear-armature: BearWire tool result response {level} session_id={} run_id={} tool_call_id={} response={}",
+            "bear-armature: BearWire tool result response {level} class={} session_id={} run_id={} tool_call_id={} response={}",
+            class.as_str(),
             session_id,
             run_id,
             tool_call_id,
@@ -9569,6 +9628,89 @@ fn tool_status_from_str(status: &str) -> ToolCallStatus {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SurfaceToolStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+}
+
+impl SurfaceToolStatus {
+    fn from_str(status: &str) -> Self {
+        match status {
+            "running" | "in_progress" | "incomplete" => Self::InProgress,
+            "completed" | "complete" | "ok" | "success" => Self::Completed,
+            "failed" | "error" => Self::Failed,
+            _ => Self::Pending,
+        }
+    }
+
+    fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed)
+    }
+
+    fn rank(self) -> u8 {
+        match self {
+            Self::Pending => 0,
+            Self::InProgress => 1,
+            Self::Completed | Self::Failed => 2,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::InProgress => "in_progress",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+fn should_emit_surface_tool_status(
+    previous: Option<SurfaceToolStatus>,
+    next: SurfaceToolStatus,
+) -> bool {
+    let Some(previous) = previous else {
+        return true;
+    };
+    if previous.is_terminal() && next.is_terminal() {
+        return false;
+    }
+    next.rank() >= previous.rank() || previous.is_terminal()
+}
+
+static SURFACE_TOOL_STATUSES: OnceLock<TokioMutex<HashMap<String, SurfaceToolStatus>>> =
+    OnceLock::new();
+
+async fn record_surface_tool_status(
+    session_id: &str,
+    tool_call_id: &str,
+    next: SurfaceToolStatus,
+) -> bool {
+    let key = format!("{session_id}\n{tool_call_id}");
+    let mut statuses = SURFACE_TOOL_STATUSES
+        .get_or_init(|| TokioMutex::new(HashMap::new()))
+        .lock()
+        .await;
+    let previous = statuses.get(&key).copied();
+    if !should_emit_surface_tool_status(previous, next) {
+        if previous.is_some_and(SurfaceToolStatus::is_terminal) || next.is_terminal() {
+            eprintln!(
+                "bear-armature: suppressing duplicate/non-monotonic tool surface update session_id={} tool_call_id={} previous={} next={}",
+                session_id,
+                tool_call_id,
+                previous.map(SurfaceToolStatus::as_str).unwrap_or("none"),
+                next.as_str()
+            );
+        }
+        return false;
+    }
+    statuses.insert(key, next);
+    true
+}
+
 fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay) -> String {
     if matches!(
         tool_name,
@@ -9638,6 +9780,10 @@ async fn send_tool_call_update(
         raw_output,
         extra_content,
     } = payload;
+    let surface_status = SurfaceToolStatus::from_str(status);
+    if !record_surface_tool_status(session_id, tool_call_id, surface_status).await {
+        return Ok(());
+    }
     let display = event
         .map(|event| ToolDisplay::from_event(tool_name, event))
         .unwrap_or_else(|| tool_display(tool_name));
@@ -12044,6 +12190,21 @@ mod tests {
     }
 
     #[test]
+    fn read_text_file_uses_armature_local_execution_by_default() {
+        assert!(!read_text_file_requires_client_surface(&json!({
+            "path": "/workspace/README.md"
+        })));
+        assert!(read_text_file_requires_client_surface(&json!({
+            "path": "/workspace/README.md",
+            "source": "editor_buffer"
+        })));
+        assert!(read_text_file_requires_client_surface(&json!({
+            "path": "/workspace/README.md",
+            "_meta": { "prefer_client": true }
+        })));
+    }
+
+    #[test]
     fn read_text_file_completion_preview_wraps_content_in_escaping_code_fence() {
         let value = json!({
             "path": "/workspace/README.md",
@@ -12838,7 +12999,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_load_does_not_replay_user_history_as_fresh_user_chunk() {
+    async fn session_load_replays_user_history_as_acp_user_chunks() {
         let _guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -12897,8 +13058,11 @@ mod tests {
             .map(Value::to_string)
             .collect::<Vec<_>>();
         assert!(
-            user_chunks.is_empty(),
-            "historical user messages must not replay as fresh user chunks: {output:#?}"
+            user_chunks
+                .iter()
+                .any(|frame| frame
+                    .contains("old instruction that must not be replayed as fresh input")),
+            "session/load should replay historical user messages to the ACP client: {output:#?}"
         );
         let agent_chunks = output
             .iter()
@@ -13028,7 +13192,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_resume_replays_history_tool_records_as_acp_tool_updates_not_text() {
+    async fn session_resume_does_not_replay_history_updates() {
         let _guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -13058,7 +13222,7 @@ mod tests {
         ])
         .await;
         let http = reqwest::Client::new();
-        let root = unique_test_dir("resume-history-tool-replay");
+        let root = unique_test_dir("resume-history-no-replay");
         let mut runtime = test_runtime_config(api_url);
         let mut state = test_adapter_state("session-1", &root);
         let shared_state = test_shared_state();
@@ -13093,16 +13257,9 @@ mod tests {
             })
             .map(Value::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(tool_frames.len(), 2, "{output:#?}");
         assert!(
-            tool_frames
-                .iter()
-                .all(|frame| frame.contains("call-resume-history")),
-            "{output:#?}"
-        );
-        assert!(
-            tool_frames.iter().any(|frame| frame.contains("completed")),
-            "{output:#?}"
+            tool_frames.is_empty(),
+            "session/resume must not replay historical tool updates: {output:#?}"
         );
 
         let agent_text = output
@@ -15250,26 +15407,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_client_read_result_requires_existing_file() {
+    async fn acp_client_read_response_conformance_rejects_invalid_empty_success() {
         let root =
             std::env::temp_dir().join(format!("bear-armature-empty-read-{}", Uuid::new_v4()));
         tokio::fs::create_dir_all(&root).await.unwrap();
         let existing = root.join("read-text-file-empty-ok.txt");
         tokio::fs::write(&existing, "").await.unwrap();
-        verify_empty_client_read_result(&existing, "")
+        verify_client_read_text_file_response(&existing, "")
             .await
             .unwrap();
         tokio::fs::remove_file(&existing).await.unwrap();
 
         let non_empty = root.join("read-text-file-non-empty.txt");
         tokio::fs::write(&non_empty, "not empty").await.unwrap();
-        let err = verify_empty_client_read_result(&non_empty, "")
+        verify_client_read_text_file_response(&non_empty, "not empty")
+            .await
+            .expect("non-empty client content is valid for a non-empty file");
+        let err = verify_client_read_text_file_response(&non_empty, "")
             .await
             .expect_err("empty client content must not pass for a non-empty file");
         assert!(err.to_string().contains("empty content for non-empty file"));
 
         let missing = root.join("read-text-file-missing.txt");
-        let err = verify_empty_client_read_result(&missing, "")
+        let err = verify_client_read_text_file_response(&missing, "")
             .await
             .expect_err("missing file must not look like successful empty read");
         let err_chain = format!("{err:#}");
@@ -15280,24 +15440,61 @@ mod tests {
     }
 
     #[test]
-    fn bearwire_tool_result_response_attention_flags_stalled_continuations() {
-        assert!(!bearwire_tool_result_response_needs_attention(&json!({
-            "ok": true,
-            "continuation": "started"
-        })));
-        assert!(!bearwire_tool_result_response_needs_attention(&json!({
-            "ok": true,
-            "continuation": "waiting_for_more_client_results"
-        })));
-        assert!(bearwire_tool_result_response_needs_attention(&json!({
+    fn bearwire_tool_result_response_classifier_flags_stalled_continuations() {
+        assert_eq!(
+            classify_bearwire_tool_result_response(&json!({
+                "ok": true,
+                "continuation": "started"
+            })),
+            BearWireToolResultResponseClass::Continued
+        );
+        assert_eq!(
+            classify_bearwire_tool_result_response(&json!({
+                "ok": true,
+                "continuation": "waiting_for_more_client_results"
+            })),
+            BearWireToolResultResponseClass::WaitingForMore
+        );
+        let unavailable = classify_bearwire_tool_result_response(&json!({
             "ok": false,
             "status": "continuation_unavailable",
             "reason": "native_agent_loop_session_not_found"
-        })));
-        assert!(bearwire_tool_result_response_needs_attention(&json!({
+        }));
+        assert_eq!(
+            unavailable,
+            BearWireToolResultResponseClass::ContinuationUnavailable
+        );
+        assert!(unavailable.needs_attention());
+        let late = classify_bearwire_tool_result_response(&json!({
             "ok": false,
             "status": "late_result_ignored"
-        })));
+        }));
+        assert_eq!(late, BearWireToolResultResponseClass::LateIgnored);
+        assert!(late.needs_attention());
+    }
+
+    #[test]
+    fn surface_tool_status_updates_are_monotonic_and_idempotent() {
+        assert!(should_emit_surface_tool_status(
+            None,
+            SurfaceToolStatus::Pending
+        ));
+        assert!(should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Pending),
+            SurfaceToolStatus::InProgress
+        ));
+        assert!(should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::InProgress),
+            SurfaceToolStatus::Failed
+        ));
+        assert!(!should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Failed),
+            SurfaceToolStatus::Failed
+        ));
+        assert!(should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Completed),
+            SurfaceToolStatus::InProgress
+        ));
     }
 
     #[test]

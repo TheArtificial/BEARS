@@ -6,7 +6,7 @@ It is for readers who want to understand where major responsibilities live in th
 
 ## Repository shape
 
-Bear Den is a monorepo with three main kinds of content:
+Bear Den is a monorepo with three main kinds of content. For canonical source-vs-legacy binary naming, see [Repository Shape](repository-shape.md).
 
 | Area | Purpose |
 |------|---------|
