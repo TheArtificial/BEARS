@@ -81,6 +81,8 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
             &entry.title,
             &entry.body,
             &entry.tags,
+            entry.refs,
+            entry.lifecycle,
             entry.source,
             entry.author,
         )

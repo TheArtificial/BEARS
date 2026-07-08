@@ -3,8 +3,8 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    append_memory_record, list_records_for_logical_path, BearMemoryStore, LogicalMemoryPath,
-    MemoryStoreManager,
+    append_memory_record, list_records_for_logical_path, records::normalize_lifecycle_status,
+    BearMemoryStore, LogicalMemoryPath, MemoryStoreManager,
 };
 
 pub async fn sqlite_write_at_path(
@@ -45,6 +45,8 @@ pub async fn sqlite_write_at_path(
         "path": row.logical_path,
         "sequence_no": row.sequence_no,
         "storage": "sqlite",
+        "lifecycle_status": row.lifecycle_status,
+        "freshness_trend": row.freshness_trend,
     }))
 }
 
@@ -56,15 +58,26 @@ pub async fn sqlite_write_profile_entry(
     title: &str,
     body: &str,
     tags: &[String],
+    refs: Option<Value>,
+    lifecycle: Option<Value>,
     source: Option<Value>,
     author: Option<String>,
 ) -> Result<Value, DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     let logical = LogicalMemoryPath::profile_local(profile, kind);
     let content = format!("# {title}\n\n{body}");
+    let mut lifecycle = lifecycle.unwrap_or_else(|| json!({}));
+    if let Some(status) = lifecycle.get("status").and_then(Value::as_str) {
+        let normalized = normalize_lifecycle_status(status)?;
+        if let Some(obj) = lifecycle.as_object_mut() {
+            obj.insert("status".to_string(), json!(normalized));
+        }
+    }
     let metadata = json!({
         "title": title,
         "tags": tags,
+        "refs": refs,
+        "lifecycle": lifecycle,
         "source": source,
         "author": author,
         "storage": "sqlite",
@@ -80,6 +93,8 @@ pub async fn sqlite_write_profile_entry(
         "path": row.logical_path,
         "sequence_no": row.sequence_no,
         "storage": "sqlite",
+        "lifecycle_status": row.lifecycle_status,
+        "freshness_trend": row.freshness_trend,
     }))
 }
 
@@ -137,6 +152,22 @@ pub async fn sqlite_memory_read(
         .map(|r| r.content_text.as_str())
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
+    let records: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "memory_id": row.memory_id,
+                "sequence_no": row.sequence_no,
+                "kind": row.kind,
+                "salience": row.salience,
+                "supersedes_memory_id": row.supersedes_memory_id,
+                "invalid_at": row.invalid_at,
+                "lifecycle_status": row.lifecycle_status,
+                "freshness_trend": row.freshness_trend,
+                "created_at": row.created_at,
+            })
+        })
+        .collect();
     Ok(json!({
         "ok": true,
         "configured": true,
@@ -145,6 +176,9 @@ pub async fn sqlite_memory_read(
         "content": body,
         "record_count": rows.len(),
         "latest_sequence_no": rows.first().map(|r| r.sequence_no),
+        "latest_lifecycle_status": rows.first().map(|r| r.lifecycle_status.as_str()),
+        "latest_freshness_trend": rows.first().map(|r| r.freshness_trend.as_str()),
+        "records": records,
     }))
 }
 
@@ -160,13 +194,21 @@ pub async fn sqlite_memory_search(
     limit: i64,
 ) -> Result<Value, DenError> {
     let pattern = format!("%{query}%");
-    let rows = sqlx::query_as::<_, (String, Option<String>, String, i64, String, String)>(
+    let rows = sqlx::query_as::<_, (String, Option<String>, String, i64, String, String, String, Option<String>, Option<String>)>(
         r"
-        SELECT memory_id, logical_path, content_text, sequence_no, kind, salience
+        SELECT memory_id, logical_path, content_text, sequence_no, kind, salience,
+               metadata_json, supersedes_memory_id, invalid_at
         FROM memory_records
         WHERE bear_id = ?
+          AND visibility = 'normal'
+          AND invalid_at IS NULL
           AND (scope_type = 'shared' OR scope_profile = ?)
           AND content_text LIKE ?
+          AND NOT EXISTS (
+            SELECT 1 FROM memory_records newer
+            WHERE newer.bear_id = memory_records.bear_id
+              AND newer.supersedes_memory_id = memory_records.memory_id
+          )
         ORDER BY sequence_no DESC
         LIMIT ?
         ",
@@ -180,12 +222,23 @@ pub async fn sqlite_memory_search(
     .map_err(|e| DenError::System(format!("sqlite memory search failed: {e}")))?;
     let hits: Vec<Value> = rows
         .into_iter()
-        .map(|(memory_id, path, content, sequence_no, kind, salience)| {
+        .map(|(memory_id, path, content, sequence_no, kind, salience, metadata_json, supersedes_memory_id, invalid_at)| {
+            let metadata_json: Value = serde_json::from_str(&metadata_json).unwrap_or_else(|_| json!({}));
+            let lifecycle_status = crate::records::lifecycle_status(
+                &metadata_json,
+                supersedes_memory_id.as_deref(),
+                invalid_at.as_deref(),
+            );
+            let freshness_trend = crate::records::freshness_trend(&lifecycle_status, invalid_at.as_deref());
             json!({
                 "memory_id": memory_id,
                 "path": path,
                 "kind": kind,
                 "salience": salience,
+                "lifecycle_status": lifecycle_status,
+                "freshness_trend": freshness_trend,
+                "supersedes_memory_id": supersedes_memory_id,
+                "invalid_at": invalid_at,
                 "score": Value::Null,
                 "snippet": content.chars().take(240).collect::<String>(),
                 "sequence_no": sequence_no,

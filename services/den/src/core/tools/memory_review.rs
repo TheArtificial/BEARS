@@ -23,7 +23,7 @@ use den_runtime::{
     memory::{
         create_observation, create_proposal, get_observation, get_proposal as db_get_proposal,
         list_proposals as db_list_proposals, mark_observation_review_queued_for_bear,
-        promote_core_content, resolve_proposal as db_resolve_proposal,
+        promote_core_content_at_path, resolve_proposal as db_resolve_proposal,
     },
     reflection_conductor::{self, ProposalEnqueueParams},
 };
@@ -51,6 +51,13 @@ fn observation_record(row: &BearObservationRow) -> ObservationRecord {
 
 fn observation_requires_human(salience: &str) -> bool {
     matches!(salience, "high" | "critical")
+}
+
+fn sensitivity_requires_human(sensitivity: &str) -> bool {
+    matches!(
+        sensitivity,
+        "person" | "secret_risk" | "external_untrusted" | "unknown"
+    )
 }
 
 /// Concrete [`MemoryReviewStore`] over the runtime pool/config/stores.
@@ -322,6 +329,22 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         .await?
         .ok_or_else(|| DenError::NotFound("memory proposal not found".to_string()))?;
 
+        if proposal.requires_human || sensitivity_requires_human(&proposal.sensitivity) {
+            return Err(DenError::ValidationError(
+                "proposal requires human review; resolve as needs_human_review instead of applying a core update autonomously".to_string(),
+            ));
+        }
+        if !request.target_path.trim().starts_with("core/") {
+            return Err(DenError::ValidationError(
+                "target_path must be under core/".to_string(),
+            ));
+        }
+        if request.mode != "append_section" && request.mode != "create_file" {
+            return Err(DenError::ValidationError(
+                "native SQLite core updates currently support append_section or create_file; replace_text must be proposed for human review".to_string(),
+            ));
+        }
+
         let content = request.body.clone().unwrap_or_else(|| {
             format!(
                 "Applied from proposal `{}` via native SQLite promotion.",
@@ -334,10 +357,11 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             .next_back()
             .unwrap_or("note")
             .trim_end_matches(".md");
-        let (memory_id, promotion_id) = promote_core_content(
+        let (memory_id, promotion_id) = promote_core_content_at_path(
             self.stores,
             request.bear_id,
             &proposal.id.to_string(),
+            request.target_path.as_str(),
             kind,
             &content,
             request.reviewer_profile.as_str(),

@@ -6,7 +6,7 @@ use uuid::Uuid;
 use den_memory::MemoryStoreManager;
 use den_service::memory_proposals::{MemoryProposalRow, ProposalResolutionParams};
 
-use crate::memory::{get_proposal, promote_core_content, resolve_proposal};
+use crate::memory::{get_proposal, promote_core_content_at_path, resolve_proposal};
 use den_service::bears::BearProfile;
 
 pub const MEMORY_CURATE_RUNNER_AGENT_ID: &str = "memory_curate_runner";
@@ -159,7 +159,7 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
                 }
             } else {
                 CurateTriage::Defer {
-                    review_notes: "Core promotion requires curate-agent review or additional proposal content.",
+                    review_notes: "Core promotion requires curate-agent review or additional proposal content; no silent core write was applied.",
                     decision_summary: "Deferred core promotion until curate can review with richer context.",
                 }
             }
@@ -207,7 +207,18 @@ fn sensitivity_requires_human(sensitivity: &str) -> bool {
 }
 
 fn can_auto_promote_to_core(proposal: &MemoryProposalRow) -> bool {
-    if proposal.sensitivity != "normal" {
+    if proposal.requires_human || sensitivity_requires_human(&proposal.sensitivity) {
+        return false;
+    }
+    if proposal.proposed_patch.as_deref().is_some_and(|value| !value.trim().is_empty()) {
+        return false;
+    }
+    if proposal
+        .refs
+        .get("archive_harvest")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
         return false;
     }
     let has_body = proposal
@@ -422,10 +433,11 @@ async fn apply_core_promotion(
         .next_back()
         .unwrap_or("note")
         .trim_end_matches(".md");
-    let (memory_id, _promotion_id) = promote_core_content(
+    let (memory_id, _promotion_id) = promote_core_content_at_path(
         stores,
         bear_id,
         &proposal.id.to_string(),
+        &target_path,
         kind,
         &promotion_body(proposal),
         BearProfile::Curate.as_str(),
@@ -543,10 +555,39 @@ mod tests {
     }
 
     #[test]
+    fn risky_sensitivity_escalates_to_human_review() {
+        for sensitivity in ["person", "secret_risk", "external_untrusted", "unknown"] {
+            let proposal = sample_proposal("promote_to_core", sensitivity, false);
+            let triage = decide_curate_triage(&proposal, None);
+            assert_eq!(
+                triage.resolution_status(),
+                "needs_human_review",
+                "sensitivity={sensitivity}"
+            );
+        }
+    }
+
+    #[test]
     fn promote_to_core_with_summary_is_promotable() {
         let proposal = sample_proposal("promote_to_core", "normal", false);
         let triage = decide_curate_triage(&proposal, None);
         assert_eq!(triage.triage_label(), "promote_to_core");
+    }
+
+    #[test]
+    fn archive_harvest_candidates_are_not_auto_promoted() {
+        let mut proposal = sample_proposal("promote_to_core", "normal", false);
+        proposal.refs = serde_json::json!({ "archive_harvest": true });
+        let triage = decide_curate_triage(&proposal, None);
+        assert_eq!(triage.resolution_status(), "deferred");
+    }
+
+    #[test]
+    fn proposed_patches_are_not_auto_promoted() {
+        let mut proposal = sample_proposal("promote_to_core", "normal", false);
+        proposal.proposed_patch = Some("@@ questionable patch @@".to_string());
+        let triage = decide_curate_triage(&proposal, None);
+        assert_eq!(triage.resolution_status(), "deferred");
     }
 
     #[test]

@@ -1664,7 +1664,7 @@ fn memory_write_entry_schema() -> Value {
                     "scope": { "type": "string", "enum": ["role-local", "core-candidate", "cabinet-candidate"] },
                     "retention": { "type": "string", "enum": ["session", "short", "durable", "archive"] },
                     "promotion": { "type": "string", "enum": ["none", "maybe", "proposed"] },
-                    "status": { "type": "string", "enum": ["active", "superseded", "stale", "archived"] }
+                    "status": { "type": "string", "enum": ["active", "superseded", "stale", "archived", "archive-candidate"] }
                 },
                 "additionalProperties": false
             },

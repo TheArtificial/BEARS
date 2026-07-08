@@ -9,8 +9,9 @@ use uuid::Uuid;
 use den_core::{config::Config, DenError};
 
 use crate::{
-    list_memory_proposals, memory_sequence_high_water, MemoryRecordRow, MemoryScopeType,
-    MemoryStoreManager,
+    list_memory_proposals, memory_sequence_high_water,
+    records::{freshness_trend, lifecycle_status},
+    MemoryRecordRow, MemoryScopeType, MemoryStoreManager,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -161,7 +162,8 @@ pub async fn get_memory_record_by_id(
     let row = sqlx::query(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at, salience
+               logical_path, work_surface_ref, metadata_json, created_at, salience,
+               supersedes_memory_id, invalid_at
         FROM memory_records
         WHERE bear_id = ? AND memory_id = ?
         ",
@@ -181,6 +183,15 @@ pub async fn get_memory_record_by_id(
         .map_err(|e| DenError::System(format!("decode metadata_json: {e}")))?;
     let metadata_json =
         serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
+
+    let supersedes_memory_id: Option<String> = row.try_get("supersedes_memory_id").ok();
+    let invalid_at: Option<String> = row.try_get("invalid_at").ok();
+    let lifecycle_status = lifecycle_status(
+        &metadata_json,
+        supersedes_memory_id.as_deref(),
+        invalid_at.as_deref(),
+    );
+    let freshness_trend = freshness_trend(&lifecycle_status, invalid_at.as_deref());
 
     Ok(Some(MemoryRecordRow {
         memory_id: row
@@ -210,6 +221,10 @@ pub async fn get_memory_record_by_id(
         salience: row
             .try_get("salience")
             .unwrap_or_else(|_| "normal".to_string()),
+        supersedes_memory_id,
+        invalid_at,
+        lifecycle_status,
+        freshness_trend,
     }))
 }
 
@@ -422,7 +437,8 @@ pub async fn list_recent_memory_records(
     let rows = sqlx::query(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at, salience
+               logical_path, work_surface_ref, metadata_json, created_at, salience,
+               supersedes_memory_id, invalid_at
         FROM memory_records
         WHERE bear_id = ?
         ORDER BY sequence_no DESC
@@ -456,7 +472,8 @@ pub async fn search_memory_records(
     let rows = sqlx::query(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at, salience
+               logical_path, work_surface_ref, metadata_json, created_at, salience,
+               supersedes_memory_id, invalid_at
         FROM memory_records
         WHERE bear_id = ? AND content_text LIKE ? ESCAPE '\'
         ORDER BY sequence_no DESC
@@ -488,6 +505,14 @@ fn decode_memory_record_row(row: sqlx::sqlite::SqliteRow) -> Result<MemoryRecord
     let metadata_raw: String = row.try_get("metadata_json")?;
     let metadata_json =
         serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
+    let supersedes_memory_id: Option<String> = row.try_get("supersedes_memory_id").ok();
+    let invalid_at: Option<String> = row.try_get("invalid_at").ok();
+    let lifecycle_status = lifecycle_status(
+        &metadata_json,
+        supersedes_memory_id.as_deref(),
+        invalid_at.as_deref(),
+    );
+    let freshness_trend = freshness_trend(&lifecycle_status, invalid_at.as_deref());
     Ok(MemoryRecordRow {
         memory_id: row.try_get("memory_id")?,
         sequence_no: row.try_get("sequence_no")?,
@@ -503,6 +528,10 @@ fn decode_memory_record_row(row: sqlx::sqlite::SqliteRow) -> Result<MemoryRecord
         salience: row
             .try_get("salience")
             .unwrap_or_else(|_| "normal".to_string()),
+        supersedes_memory_id,
+        invalid_at,
+        lifecycle_status,
+        freshness_trend,
     })
 }
 

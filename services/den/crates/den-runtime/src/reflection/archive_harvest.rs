@@ -1,6 +1,7 @@
 use den_core::{config::Config, DenError};
 use den_memory::{harvest_source_marked, record_harvest_mark, MemoryStoreManager};
 use den_service::memory_proposals::CreateMemoryProposal;
+use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -34,6 +35,7 @@ pub async fn harvest_compaction_artifacts_once(
     stores: &MemoryStoreManager,
     bear_id: Uuid,
     limit: i64,
+    run_id: Option<&str>,
 ) -> Result<ArchiveHarvestOutput, DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     let artifacts = list_unmined_compaction_artifacts(pool, bear_id, limit).await?;
@@ -47,11 +49,19 @@ pub async fn harvest_compaction_artifacts_once(
         if harvest_source_marked(&store, "compaction_artifact", &source_ref).await? {
             continue;
         }
+        let source_hash = source_hash(&artifact.artifact_json);
         let summary = decode_summary(&artifact.artifact_json)?;
         let proposed_content = proposal_content_from_summary(&summary);
         if proposed_content.trim().is_empty() {
-            record_harvest_mark(&store, "compaction_artifact", &source_ref, None, None, &[])
-                .await?;
+            record_harvest_mark(
+                &store,
+                "compaction_artifact",
+                &source_ref,
+                Some(&source_hash),
+                run_id,
+                &[],
+            )
+            .await?;
             continue;
         }
 
@@ -86,7 +96,7 @@ pub async fn harvest_compaction_artifacts_once(
                 source_agent_id: Some("archive_harvest".to_string()),
                 source_paths: Vec::new(),
                 source_refs,
-                suggested_action: "review",
+                suggested_action: "human_review",
                 target_ref: None,
                 title: &title,
                 summary: "Review compaction-derived session knowledge for possible durable memory promotion.",
@@ -96,6 +106,8 @@ pub async fn harvest_compaction_artifacts_once(
                 refs: serde_json::json!({
                     "conversation_id": artifact.external_conversation_id,
                     "artifact_id": artifact.id,
+                    "archive_harvest": true,
+                    "source_hash": source_hash,
                 }),
                 sensitivity: "normal",
                 requires_human: true,
@@ -108,8 +120,8 @@ pub async fn harvest_compaction_artifacts_once(
             &store,
             "compaction_artifact",
             &source_ref,
-            None,
-            None,
+            Some(&source_hash),
+            run_id,
             &[proposal.id.to_string()],
         )
         .await?;
@@ -180,6 +192,12 @@ async fn list_unmined_compaction_artifacts(
 fn decode_summary(value: &serde_json::Value) -> Result<RuntimeIterativeSummary, DenError> {
     serde_json::from_value(value.clone())
         .map_err(|err| DenError::Database(format!("decode compaction summary for harvest: {err}")))
+}
+
+fn source_hash(value: &serde_json::Value) -> String {
+    let encoded = serde_json::to_vec(value).unwrap_or_else(|_| value.to_string().into_bytes());
+    let digest = Sha256::digest(encoded);
+    format!("sha256:{digest:x}")
 }
 
 fn proposal_title(

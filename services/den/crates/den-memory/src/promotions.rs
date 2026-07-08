@@ -3,7 +3,10 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use super::{logical_path::LogicalMemoryPath, records::BearMemoryStore};
+use super::{
+    logical_path::LogicalMemoryPath,
+    records::{head_record_for_logical_path, BearMemoryStore},
+};
 
 pub async fn append_memory_promotion(
     store: &BearMemoryStore,
@@ -46,27 +49,121 @@ pub async fn promote_to_shared_core(
     content_text: &str,
     author_profile: &str,
 ) -> Result<(String, String), DenError> {
-    use super::records::append_memory_record;
     let logical = LogicalMemoryPath::shared_core(kind);
-    let row = append_memory_record(
+    promote_to_shared_core_at_path(
         store,
-        &logical,
+        source_memory_id,
+        &logical.to_logical_path(),
         kind,
+        content_text,
         author_profile,
         None,
-        content_text,
-        &serde_json::json!({ "promoted_from": source_memory_id }),
     )
-    .await?;
+    .await
+}
+
+pub async fn promote_to_shared_core_at_path(
+    store: &BearMemoryStore,
+    source_memory_id: &str,
+    target_path: &str,
+    kind: &str,
+    content_text: &str,
+    author_profile: &str,
+    salience: Option<&str>,
+) -> Result<(String, String), DenError> {
+    let logical = LogicalMemoryPath::from_logical_path(target_path);
+    if logical.scope_type.as_str() != "shared" {
+        return Err(DenError::ValidationError(
+            "core promotion target_path must be under core/".to_string(),
+        ));
+    }
+    let supersedes_memory_id = head_record_for_logical_path(store, target_path)
+        .await?
+        .map(|row| row.memory_id);
+    let row = store
+        .append_record_with_options(
+            &logical,
+            kind,
+            author_profile,
+            None,
+            content_text,
+            &serde_json::json!({
+                "promoted_from": source_memory_id,
+                "target_path": target_path,
+                "promotion_policy": "reviewed_core_update",
+            }),
+            "normal",
+            salience.unwrap_or("normal"),
+            supersedes_memory_id.as_deref(),
+        )
+        .await?;
     // Provenance lives in `memory_promotions` (source → target); the legacy record→record
     // `memory_links` row was redundant and is retired with the entity relation layer (ADR-0042 §7).
+    let notes = supersedes_memory_id
+        .as_deref()
+        .map(|id| format!("Supersedes prior core memory record {id}"));
     let promotion_id = append_memory_promotion(
         store,
         source_memory_id,
         Some(&row.memory_id),
-        "promote_to_core",
-        None,
+        if supersedes_memory_id.is_some() {
+            "supersede_core"
+        } else {
+            "promote_to_core"
+        },
+        notes.as_deref(),
     )
     .await?;
     Ok((row.memory_id, promotion_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::new_test_store;
+
+    #[tokio::test]
+    async fn promotion_at_path_supersedes_previous_core_head() {
+        let store = new_test_store().await;
+        let (first_id, _) = promote_to_shared_core_at_path(
+            &store,
+            "proposal-1",
+            "core/decisions/runtime.md",
+            "runtime",
+            "First decision.",
+            "curate",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let (second_id, _) = promote_to_shared_core_at_path(
+            &store,
+            "proposal-2",
+            "core/decisions/runtime.md",
+            "runtime",
+            "Updated decision.",
+            "curate",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let first_invalid_at: Option<String> = sqlx::query_scalar(
+            "SELECT invalid_at FROM memory_records WHERE bear_id = ? AND memory_id = ?",
+        )
+        .bind(store.bear_id().to_string())
+        .bind(&first_id)
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert!(first_invalid_at.is_some());
+
+        let head = head_record_for_logical_path(&store, "core/decisions/runtime.md")
+            .await
+            .unwrap()
+            .expect("head record");
+        assert_eq!(head.memory_id, second_id);
+        assert_eq!(head.supersedes_memory_id.as_deref(), Some(first_id.as_str()));
+    }
 }

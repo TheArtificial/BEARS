@@ -21,6 +21,10 @@ pub struct MemoryRecordRow {
     pub metadata_json: Value,
     pub created_at: String,
     pub salience: String,
+    pub supersedes_memory_id: Option<String>,
+    pub invalid_at: Option<String>,
+    pub lifecycle_status: String,
+    pub freshness_trend: String,
 }
 
 pub struct BearMemoryStore {
@@ -93,6 +97,10 @@ impl BearMemoryStore {
         supersedes_memory_id: Option<&str>,
     ) -> Result<MemoryRecordRow, DenError> {
         let salience = normalize_salience(salience)?;
+        if let Some(superseded) = supersedes_memory_id {
+            ensure_record_exists(self, superseded).await?;
+        }
+
         let memory_id = Uuid::new_v4().to_string();
         let sequence_no = self.next_sequence().await?;
         let created_at = OffsetDateTime::now_utc()
@@ -128,6 +136,21 @@ impl BearMemoryStore {
         .execute(&self.pool)
         .await
         .map_err(|e| DenError::System(format!("append memory_record failed: {e}")))?;
+
+        if let Some(superseded) = supersedes_memory_id {
+            sqlx::query(
+                "UPDATE memory_records SET invalid_at = COALESCE(invalid_at, ?) WHERE bear_id = ? AND memory_id = ?",
+            )
+            .bind(&created_at)
+            .bind(self.bear_id.to_string())
+            .bind(superseded)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DenError::System(format!("invalidate superseded memory_record failed: {e}")))?;
+        }
+
+        let lifecycle_status = lifecycle_status(metadata_json, supersedes_memory_id, None);
+        let freshness_trend = freshness_trend(&lifecycle_status, None);
         Ok(MemoryRecordRow {
             memory_id,
             sequence_no,
@@ -140,6 +163,10 @@ impl BearMemoryStore {
             metadata_json: metadata_json.clone(),
             created_at,
             salience: salience.to_string(),
+            supersedes_memory_id: supersedes_memory_id.map(str::to_string),
+            invalid_at: None,
+            lifecycle_status,
+            freshness_trend,
         })
     }
 }
@@ -178,6 +205,160 @@ pub async fn append_memory_record(
         .await
 }
 
+async fn ensure_record_exists(store: &BearMemoryStore, memory_id: &str) -> Result<(), DenError> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND memory_id = ?",
+    )
+    .bind(store.bear_id.to_string())
+    .bind(memory_id)
+    .fetch_one(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("superseded memory_record lookup failed: {e}")))?;
+    if count == 0 {
+        return Err(DenError::ValidationError(format!(
+            "supersedes_memory_id does not exist for this bear: {memory_id}"
+        )));
+    }
+    Ok(())
+}
+
+pub fn normalize_lifecycle_status(value: &str) -> Result<&'static str, DenError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "active" => Ok("active"),
+        "superseded" => Ok("superseded"),
+        "stale" => Ok("stale"),
+        "archived" => Ok("archived"),
+        "archive-candidate" | "archive_candidate" => Ok("archive-candidate"),
+        other => Err(DenError::ValidationError(format!(
+            "lifecycle.status must be active, superseded, stale, archived, or archive-candidate; got {other}"
+        ))),
+    }
+}
+
+pub fn lifecycle_status(
+    metadata_json: &Value,
+    supersedes_memory_id: Option<&str>,
+    invalid_at: Option<&str>,
+) -> String {
+    if invalid_at.is_some() {
+        return "superseded".to_string();
+    }
+    if supersedes_memory_id.is_some() {
+        return metadata_json
+            .pointer("/lifecycle/status")
+            .and_then(Value::as_str)
+            .and_then(|value| normalize_lifecycle_status(value).ok())
+            .unwrap_or("active")
+            .to_string();
+    }
+    metadata_json
+        .pointer("/lifecycle/status")
+        .and_then(Value::as_str)
+        .and_then(|value| normalize_lifecycle_status(value).ok())
+        .unwrap_or("active")
+        .to_string()
+}
+
+pub fn freshness_trend(lifecycle_status: &str, invalid_at: Option<&str>) -> String {
+    if invalid_at.is_some() {
+        return "stale".to_string();
+    }
+    match lifecycle_status {
+        "superseded" | "stale" | "archived" => "stale".to_string(),
+        "archive-candidate" => "weakening".to_string(),
+        _ => "stable".to_string(),
+    }
+}
+
+pub async fn mark_memory_record_lifecycle(
+    store: &BearMemoryStore,
+    memory_id: &str,
+    status: &str,
+    reason: Option<&str>,
+) -> Result<MemoryRecordRow, DenError> {
+    let status = normalize_lifecycle_status(status)?;
+    let row: (String, Option<String>) = sqlx::query_as(
+        "SELECT metadata_json, invalid_at FROM memory_records WHERE bear_id = ? AND memory_id = ?",
+    )
+    .bind(store.bear_id.to_string())
+    .bind(memory_id)
+    .fetch_optional(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("fetch memory lifecycle metadata failed: {e}")))?
+    .ok_or_else(|| DenError::NotFound("memory record not found".to_string()))?;
+
+    let mut metadata: Value = serde_json::from_str(&row.0).unwrap_or_else(|_| Value::Object(Default::default()));
+    if !metadata.is_object() {
+        metadata = Value::Object(Default::default());
+    }
+    let now = OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let lifecycle = metadata
+        .as_object_mut()
+        .expect("metadata object initialized")
+        .entry("lifecycle".to_string())
+        .or_insert_with(|| Value::Object(Default::default()));
+    if !lifecycle.is_object() {
+        *lifecycle = Value::Object(Default::default());
+    }
+    let lifecycle_obj = lifecycle.as_object_mut().expect("lifecycle object initialized");
+    lifecycle_obj.insert("status".to_string(), Value::String(status.to_string()));
+    lifecycle_obj.insert("marked_at".to_string(), Value::String(now.clone()));
+    if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
+        lifecycle_obj.insert("reason".to_string(), Value::String(reason.to_string()));
+    }
+
+    let invalid_at = if status == "superseded" && row.1.is_none() {
+        Some(now.as_str())
+    } else {
+        None
+    };
+    if let Some(invalid_at) = invalid_at {
+        sqlx::query(
+            "UPDATE memory_records SET metadata_json = ?, invalid_at = ? WHERE bear_id = ? AND memory_id = ?",
+        )
+        .bind(metadata.to_string())
+        .bind(invalid_at)
+        .bind(store.bear_id.to_string())
+        .bind(memory_id)
+        .execute(store.pool())
+        .await
+        .map_err(|e| DenError::System(format!("mark memory lifecycle failed: {e}")))?;
+    } else {
+        sqlx::query("UPDATE memory_records SET metadata_json = ? WHERE bear_id = ? AND memory_id = ?")
+            .bind(metadata.to_string())
+            .bind(store.bear_id.to_string())
+            .bind(memory_id)
+            .execute(store.pool())
+            .await
+            .map_err(|e| DenError::System(format!("mark memory lifecycle failed: {e}")))?;
+    }
+
+    fetch_record_by_id(store, memory_id).await?.ok_or_else(|| DenError::NotFound("memory record not found".to_string()))
+}
+
+pub async fn fetch_record_by_id(
+    store: &BearMemoryStore,
+    memory_id: &str,
+) -> Result<Option<MemoryRecordRow>, DenError> {
+    let row = sqlx::query_as::<_, MemoryRecordSqlRow>(
+        r"
+        SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
+               logical_path, work_surface_ref, metadata_json, created_at, salience,
+               supersedes_memory_id, invalid_at
+        FROM memory_records
+        WHERE bear_id = ? AND memory_id = ?
+        ",
+    )
+    .bind(store.bear_id.to_string())
+    .bind(memory_id)
+    .fetch_optional(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("fetch memory_record by id failed: {e}")))?;
+    Ok(row.map(MemoryRecordSqlRow::into_row))
+}
+
 pub async fn memory_sequence_high_water(store: &BearMemoryStore) -> Result<i64, DenError> {
     let row = sqlx::query_scalar::<_, Option<i64>>(
         "SELECT MAX(sequence_no) FROM memory_records WHERE bear_id = ?",
@@ -196,7 +377,8 @@ pub async fn head_record_for_logical_path(
     let row = sqlx::query_as::<_, MemoryRecordSqlRow>(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at, salience
+               logical_path, work_surface_ref, metadata_json, created_at, salience,
+               supersedes_memory_id, invalid_at
         FROM memory_records
         WHERE bear_id = ? AND logical_path = ? AND visibility = 'normal'
           AND NOT EXISTS (
@@ -241,7 +423,8 @@ pub async fn list_profile_local_head_records(
         sqlx::query_as::<_, MemoryRecordSqlRow>(
             r"
             SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-                   logical_path, work_surface_ref, metadata_json, created_at, salience
+                   logical_path, work_surface_ref, metadata_json, created_at, salience,
+                   supersedes_memory_id, invalid_at
             FROM memory_records
             WHERE bear_id = ? AND scope_type = 'profile_local' AND scope_profile = ?
               AND visibility = 'normal' AND work_surface_ref = ?
@@ -264,7 +447,8 @@ pub async fn list_profile_local_head_records(
         sqlx::query_as::<_, MemoryRecordSqlRow>(
             r"
             SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-                   logical_path, work_surface_ref, metadata_json, created_at, salience
+                   logical_path, work_surface_ref, metadata_json, created_at, salience,
+                   supersedes_memory_id, invalid_at
             FROM memory_records
             WHERE bear_id = ? AND scope_type = 'profile_local' AND scope_profile = ?
               AND visibility = 'normal' AND work_surface_ref IS NULL
@@ -295,7 +479,8 @@ pub async fn list_records_for_logical_path(
     let rows = sqlx::query_as::<_, MemoryRecordSqlRow>(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
-               logical_path, work_surface_ref, metadata_json, created_at, salience
+               logical_path, work_surface_ref, metadata_json, created_at, salience,
+               supersedes_memory_id, invalid_at
         FROM memory_records
         WHERE bear_id = ? AND logical_path = ?
         ORDER BY sequence_no DESC
@@ -525,7 +710,7 @@ pub async fn head_record_as_of(
         r"
         SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
                logical_path, work_surface_ref, metadata_json, created_at, salience,
-               supersedes_memory_id, COALESCE(valid_from, created_at) AS effective_at
+               supersedes_memory_id, invalid_at, COALESCE(valid_from, created_at) AS effective_at
         FROM memory_records
         WHERE bear_id = ? AND logical_path = ? AND visibility = 'normal'
         ",
@@ -571,6 +756,7 @@ struct AsOfSqlRow {
     metadata_json: String,
     created_at: String,
     supersedes_memory_id: Option<String>,
+    invalid_at: Option<String>,
     effective_at: String,
     salience: String,
 }
@@ -697,6 +883,53 @@ mod as_of_tests {
     }
 
     #[tokio::test]
+    async fn lifecycle_markers_track_stale_archive_candidate_and_superseded() {
+        let store = new_test_store().await;
+        let path = LogicalMemoryPath::profile_local("pair", "note");
+        let record = append_memory_record(
+            &store,
+            &path,
+            "note",
+            "pair",
+            None,
+            "Durable role-local note.",
+            &json!({}),
+        )
+        .await
+        .unwrap();
+
+        let stale = mark_memory_record_lifecycle(&store, &record.memory_id, "stale", Some("old fact"))
+            .await
+            .unwrap();
+        assert_eq!(stale.lifecycle_status, "stale");
+        assert_eq!(stale.freshness_trend, "stale");
+        assert!(stale.invalid_at.is_none());
+
+        let archive_candidate = mark_memory_record_lifecycle(
+            &store,
+            &record.memory_id,
+            "archive-candidate",
+            Some("low value outside hot recall"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(archive_candidate.lifecycle_status, "archive-candidate");
+        assert_eq!(archive_candidate.freshness_trend, "weakening");
+
+        let superseded = mark_memory_record_lifecycle(
+            &store,
+            &record.memory_id,
+            "superseded",
+            Some("replaced by curated core entry"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(superseded.lifecycle_status, "superseded");
+        assert_eq!(superseded.freshness_trend, "stale");
+        assert!(superseded.invalid_at.is_some());
+    }
+
+    #[tokio::test]
     async fn entity_anchor_heads_require_resolved_salient_subject_and_explicit_anchor() {
         let store = new_test_store().await;
         let entity = match resolve(
@@ -767,6 +1000,14 @@ mod as_of_tests {
 
 impl AsOfSqlRow {
     fn into_row(self) -> MemoryRecordRow {
+        let metadata_json: Value = serde_json::from_str(&self.metadata_json)
+            .unwrap_or_else(|_| Value::Object(Default::default()));
+        let lifecycle_status = lifecycle_status(
+            &metadata_json,
+            self.supersedes_memory_id.as_deref(),
+            self.invalid_at.as_deref(),
+        );
+        let freshness_trend = freshness_trend(&lifecycle_status, self.invalid_at.as_deref());
         MemoryRecordRow {
             memory_id: self.memory_id,
             sequence_no: self.sequence_no,
@@ -777,10 +1018,13 @@ impl AsOfSqlRow {
             content_text: self.content_text,
             logical_path: self.logical_path,
             work_surface_ref: self.work_surface_ref,
-            metadata_json: serde_json::from_str(&self.metadata_json)
-                .unwrap_or_else(|_| Value::Object(Default::default())),
+            metadata_json,
             created_at: self.created_at,
             salience: self.salience,
+            supersedes_memory_id: self.supersedes_memory_id,
+            invalid_at: self.invalid_at,
+            lifecycle_status,
+            freshness_trend,
         }
     }
 }
@@ -798,10 +1042,20 @@ struct MemoryRecordSqlRow {
     metadata_json: String,
     created_at: String,
     salience: String,
+    supersedes_memory_id: Option<String>,
+    invalid_at: Option<String>,
 }
 
 impl MemoryRecordSqlRow {
     fn into_row(self) -> MemoryRecordRow {
+        let metadata_json: Value = serde_json::from_str(&self.metadata_json)
+            .unwrap_or_else(|_| Value::Object(Default::default()));
+        let lifecycle_status = lifecycle_status(
+            &metadata_json,
+            self.supersedes_memory_id.as_deref(),
+            self.invalid_at.as_deref(),
+        );
+        let freshness_trend = freshness_trend(&lifecycle_status, self.invalid_at.as_deref());
         MemoryRecordRow {
             memory_id: self.memory_id,
             sequence_no: self.sequence_no,
@@ -812,10 +1066,13 @@ impl MemoryRecordSqlRow {
             content_text: self.content_text,
             logical_path: self.logical_path,
             work_surface_ref: self.work_surface_ref,
-            metadata_json: serde_json::from_str(&self.metadata_json)
-                .unwrap_or_else(|_| Value::Object(Default::default())),
+            metadata_json,
             created_at: self.created_at,
             salience: self.salience,
+            supersedes_memory_id: self.supersedes_memory_id,
+            invalid_at: self.invalid_at,
+            lifecycle_status,
+            freshness_trend,
         }
     }
 }

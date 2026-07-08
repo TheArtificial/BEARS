@@ -50,16 +50,16 @@ pub use observations::{
     create_memory_observation, get_memory_observation, mark_observation_review_queued,
     SqliteMemoryObservation,
 };
-pub use promotions::{append_memory_promotion, promote_to_shared_core};
+pub use promotions::{append_memory_promotion, promote_to_shared_core, promote_to_shared_core_at_path};
 pub use proposals::{
     create_memory_proposal, list_memory_proposals, resolve_memory_proposal, SqliteMemoryProposal,
 };
 pub use records::{
-    append_memory_record, effective_time_by_ids, fetch_records_min,
+    append_memory_record, effective_time_by_ids, fetch_record_by_id, fetch_records_min,
     has_work_surface_canonical_anchor, head_record_as_of, head_record_for_logical_path,
     list_entity_anchor_head_records, list_profile_local_head_records,
-    list_records_for_logical_path, memory_sequence_high_water, superseder_times_by_superseded,
-    BearMemoryStore, MemoryRecordRow, RecallRecordMin,
+    list_records_for_logical_path, mark_memory_record_lifecycle, memory_sequence_high_water,
+    superseder_times_by_superseded, BearMemoryStore, MemoryRecordRow, RecallRecordMin,
 };
 pub use reflection_outcomes::{
     complete_reflection_run_outcome, create_reflection_run_outcome, reflection_outcome_exists,
