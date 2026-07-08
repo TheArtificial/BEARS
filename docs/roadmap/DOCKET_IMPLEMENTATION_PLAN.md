@@ -21,23 +21,23 @@ Two invariants the source tree must make hard to violate:
 
 ## Module boundary (now)
 
-Land Docket as a self-contained module within the existing `den` crate, with a trait seam designed so a later crate split is a mechanical move rather than a redesign. The crate split itself is a separate effort tracked in [`DEN_CRATE_SPLIT_PLAN.md`](DEN_CRATE_SPLIT_PLAN.md); this plan only needs to land the module and its `DocketService`/`TaskDispatcher` trait seams.
+Docket is now a self-contained `den-docket` crate with a service seam consumed by Den tools/runtime. The original module-split work has landed; this section remains as the status record for the Docket boundary and the remaining runtime-dispatch/operator UX work.
 
 > **Status (2026-07): relational Docket vertical slice landed and legacy compatibility paths retired.** `den-docket` is the `den-core`-only Docket crate with a `DocketService` (`PgDocketService`) public face and crate-internal `db.rs`. New Docket jobs/tasks are stored in ADR-0034 relational Postgres tables: `bear_jobs`, `bear_tasks`, `bear_job_runs`, task run state, job/task criteria, criteria state, and job/task events. Service APIs cover job/task CRUD, hierarchy reads, criteria evaluation, execution/run state, Docket-backed task-list checkout/sync projection, and the minimal `TaskDispatcher` seam for future `work` stance execution. Legacy `bear_work_plans` service/DB/model shims have been retired from active runtime crates, and legacy task-list provider aliases (`list_plans`, `get_plan_status`, `update_plan`, `request_work_handoff`) no longer resolve. Historical `bear_work_plans` references are limited to migrations/archive/docs; old data is handled by the destructive retirement migration or retained only as archived historical data in already-migrated deployments.
 
-- Create `core/docket/`, absorbing and evolving the current `core/work_plans.rs`:
-  - `db.rs` — Postgres access, **internal** (`pub(crate)` at most; not exported past the module).
-  - `model.rs` — `bear_jobs`, `bear_tasks`, `bear_job_runs`, `bear_task_run_state`, `bear_job_criteria`, `bear_job_criteria_state`, events.
-  - `runs.rs`, `events.rs`, `criteria.rs` — domain logic.
-  - `service.rs` — a `DocketService` trait that is the **only** public face of the module.
-- Bear-facing tools in `core/tools/` call `docket::DocketService`, never `docket::db`. Enforce with module privacy now; a lint/import-restriction check can be added later.
-- Migrate `bear_work_plans` + JSONB `items` → the ADR-0034 relational schema; rename `bear_work_plan_events` → `bear_job_events`; retire `den.work_plan.*` tools in favor of `den.job.*` / `den.task.*`.
+- Current crate layout:
+  - `services/den/crates/den-docket/src/db.rs` — crate-internal Postgres access.
+  - `services/den/crates/den-docket/src/model.rs` — Docket jobs/tasks/runs/criteria/events plus task-list projection types.
+  - `services/den/crates/den-docket/src/service.rs` — `DocketService` / `PgDocketService`, the public persistence/orchestration face.
+  - `services/den/crates/den-docket/src/dispatcher.rs` — `TaskDispatcher` seam for future `work` runtime dispatch.
+- Bear-facing tools call `DocketService`, not Docket DB modules.
+- Legacy `bear_work_plans`/`bear_work_plan_events` compatibility code and old provider aliases have been retired from active runtime paths; remaining table references are migrations/archive/docs only.
 
 ## Implementation ordering
 
-The implementation should not jump directly from the current legacy activity board to the full relational Docket schema. Do the task-list compatibility/projection slice first so models and UI stop learning overloaded “plan” terminology while storage still remains honest about the legacy shape.
+Phases 0–4 are complete/retired in the current runtime. They remain below as the implementation record and as a guardrail for terminology. Phase 5 is the remaining Docket-related work: runtime dispatch through `work` plus operator UX.
 
-### Phase 0 — Task-list language over current activity-board storage
+### Phase 0 — Task-list language over current activity-board storage — done
 
 **Goal:** Make the current visible session work surface model-facing as a **task list**, without yet claiming it is the relational Docket jobs/tasks model.
 
@@ -50,20 +50,20 @@ The implementation should not jump directly from the current legacy activity boa
 
 **Exit gate:** Pair/ACP can list Docket-backed/session task-list context using task-list provider names; old provider aliases no longer work; relational Docket is canonical.
 
-### Phase 1 — Task-list projection and source metadata
+### Phase 1 — Task-list projection and source metadata — done
 
 **Goal:** Maintain explicit task-list projection shapes over canonical Docket jobs/tasks. Historical `bear_work_plans.items` projection support is retired from active runtime paths.
 
 | Task | Done when |
 | --- | --- |
 | Add task-list projection types | Code has `TaskListProjection`, `TaskListItem`, `TaskListSourceRef`, and `TaskListSyncState` wrapping Docket-backed or local projection payloads without legacy row models. |
-| Represent local-only vs backed items | Items can say `source_ref.kind = "local"` or `"docket_task"` even if only local/legacy sources are supported initially. |
+| Represent local-only vs backed items | Items can say `source_ref.kind = "local"` or `"docket_task"`; local-only items remain projections until explicit sync/promotion semantics apply. |
 | Preserve sync metadata | Projection includes `sync.state` such as `local_only`, `checked_out`, `dirty`, `synced`, `conflict`, or `review_required`. |
-| Update Den tool payloads | `list_task_lists` / `get_task_list_status` / `update_task_list` return task-list-shaped payloads while compatibility fields remain available. Passive prompt payloads are scoped to the current session/conversation and stance; explicit reads can still list visible task lists. |
+| Update Den tool payloads | `list_task_lists` / `get_task_list_status` expose task-list-shaped context without legacy row models; `update_task_list` no longer writes session-local legacy state and points callers to Docket checkout/sync/task tools. Passive prompt payloads are scoped to the current session/conversation and stance. |
 
 **Exit gate:** Model-facing tools and ACP/BearWire plan UI consume task-list projection payloads, not raw `bear_work_plans.items` semantics.
 
-### Phase 2 — Checkout/sync service seams
+### Phase 2 — Checkout/sync service seams — done
 
 **Goal:** Define the operations that make session task lists effective working projections, before backing them with the full Docket relational schema.
 
@@ -71,12 +71,12 @@ The implementation should not jump directly from the current legacy activity boa
 | --- | --- |
 | Add checkout seam | `checkout_task_list` service/API shape can create or refresh a session task-list projection from a Docket job/task subtree. |
 | Add sync seam | `sync_task_list` service/API shape can apply authorized item changes to backing records or surface conflicts/review requirements. |
-| Add handoff/review seam | `request_task_list_handoff` can request review/promotion of local-only items or unsynced edits into durable Docket work. |
+| Add handoff/review seam | `request_task_list_handoff` remains the reviewed-promotion/reconciliation boundary; durable work is still created or updated through canonical Docket job/task APIs. |
 | Define conflict behavior | Stale backed items surface `sync.state = "conflict"` rather than silently overwriting Docket or session state. |
 
 **Exit gate:** Interfaces exist and are testable against Docket-backed task-list state.
 
-### Phase 3 — Relational Docket schema
+### Phase 3 — Relational Docket schema — done
 
 **Goal:** Land ADR-0034’s durable Docket model.
 
@@ -89,7 +89,7 @@ The implementation should not jump directly from the current legacy activity boa
 
 **Exit gate:** Docket jobs/tasks can be created/read/updated through the service API with tests; no runtime dispatch requirement yet.
 
-### Phase 4 — Legacy activity-board migration
+### Phase 4 — Legacy activity-board migration — done
 
 **Goal:** Retire `bear_work_plans` activity-board data and tools in favor of canonical task-list/Docket concepts without false naming.
 
@@ -102,7 +102,7 @@ The implementation should not jump directly from the current legacy activity boa
 
 **Exit gate:** New turns do not create, read, or update raw legacy work-plan rows; compatibility code is removed from active runtime paths.
 
-### Phase 5 — Runtime dispatch and operator UX
+### Phase 5 — Runtime dispatch and operator UX — remaining
 
 **Goal:** Use Docket jobs/tasks for durable execution while keeping session task lists as the working view.
 

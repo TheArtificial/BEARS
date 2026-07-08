@@ -85,9 +85,9 @@ See [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md):
 5. Memory write policy for `work`/`watch`; read exposure is already partially landed.
 6. Cabinet recall and embedding-standard migration remain deferred until their producer/standard prerequisites exist.
 
-### 3. Land Docket and task handoff
+### 3. Finish Docket-driven execution UX
 
-[`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) relational realization plus task-list/workflow-state UX from [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) — gated on `work` sandbox.
+[`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) is landed through relational Docket, task-list projection/sync, and legacy compatibility retirement. Remaining Docket-related work is Phase 5 runtime/operator UX: dispatching Docket work through the `work` sandbox, surfacing current Docket job/task state clearly, and keeping session task lists as explicit working projections. Product/UX details live in [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md).
 
 ### 4. Harden BearWire `pair` and web chat
 
@@ -139,7 +139,7 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 - [Letta dependency matrix](../architecture/letta-dependency-matrix.md) — historical inventory
 - [Phase 1 bootstrap](PHASE1_BOOTSTRAP.md) / [decisions](PHASE1_DECISIONS.md) — superseded; product intent salvaged into [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)
 - [Multi-role runtime](MULTI_ROLE_RUNTIME_IMPLEMENTATION_PLAN.md) — superseded implementation path; useful concepts salvaged into native runtime, Skills, and Phase 1 product plans
-- [Task system](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) — partially superseded by Docket/ADR-0045; remaining product/workflow-state intent salvaged into [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)
+- [Task system](TASK_SYSTEM_IMPLEMENTATION_PLAN.md) — historical legacy activity-board plan; schema/CRUD/tool phases are superseded by Docket/ADR-0045 and retired from active runtime paths. Remaining product/workflow-state intent is salvaged into [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)
 - [Bear channel plans](archives/BEAR_CHANNEL_PLANS.md) — superseded `bear_channel`/Codepool planning; current channel plan is [`DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](DEN_CHANNELS_IMPLEMENTATION_PLAN.md)
 - [ACP direct local-tool runtime](archives/ACP_DIRECT_LOCAL_TOOL_RUNTIME_PLAN.md) — superseded by Den-native runtime + BearWire; retain for historical diagnostics and local-tool design context
 - [ACP discovery prompt](archives/ACP_DISCOVERY_PROMPT.md) — historical ACP discovery checklist
@@ -175,7 +175,7 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 - **Users ↔ bears** — many-to-many membership; Den enforces on every chat/ACP call.
 - **Den** — control plane + gateway: auth, bear lifecycle, native runtime, reflection workers, operator UI, `/v1` chat, ACP surface. **Inference:** Den-native loop → **Bifrost** (`LLM_API_URL`).
 - **Canonical memory** — per-Bear SQLite (`memory_records`, proposals, promotions). **Derived recall** — Qdrant index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)), not source of truth.
-- **Docket** — jobs/tasks in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)); `work` execution still needs Phase 7 sandbox.
+- **Docket** — canonical jobs/tasks in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)); session task lists are explicit projections/checkouts ([ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md)); legacy `bear_work_plans` compatibility is retired from active runtime paths; `work` execution still needs Phase 7 sandbox.
 - **`bear_id`** — public API identifier. Legacy `letta_agent_id` columns are deprecated/transitional.
 
 ---

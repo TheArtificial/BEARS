@@ -4,7 +4,7 @@
 >
 > **Salvaged native product/workflow concepts:** Ask/Plan/Write mode UX, workplan-vs-task-list-vs-memory boundaries, canonical turn-state needs, and operator approval queues have been consolidated into [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md). Durable task/job realization remains in [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md).
 
-> **Partially superseded by [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md) and amended by [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md).** ADR-0034 evolves `bear_work_plans` + JSONB `items` into a relational jobs/tasks model (`bear_jobs`, `bear_tasks`, `bear_job_runs`, run-scoped state and events). ADR-0045 clarifies that session task lists are working projections/checkouts: items may be local-only or Docket-backed, and authorized changes may sync to Docket. **Phases 1–4 below are superseded** (schema, workboard CRUD, prompt integration, and `request_handoff`-style handoff are replaced by task-list checkout/sync plus Docket job/task creation). **Phases 5–6 remain valid** (runtime dispatch to `work`, operator/chat UX), but read their schema references through ADR-0034 and ADR-0045. The legacy `den.work_plan.*` tool names and `bear_work_plan_events` are retired/migrated in favor of task-list-facing provider names and the ADR-0034 Docket surface.
+> **Superseded by [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md) and amended by [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md).** ADR-0034 replaced `bear_work_plans` + JSONB `items` with the relational Docket jobs/tasks model (`bear_jobs`, `bear_tasks`, `bear_job_runs`, run-scoped state and events). ADR-0045 clarifies that session task lists are working projections/checkouts: items may be local-only or Docket-backed, and authorized changes may sync to Docket. **Phases 1–4 below are historical** (schema, workboard CRUD, prompt integration, and `request_handoff`-style handoff are replaced by Docket-backed task-list checkout/sync plus Docket job/task APIs). **Phases 5–6 remain useful product/runtime reference** (runtime dispatch to `work`, operator/chat UX), but read their schema references through ADR-0034, ADR-0045, and [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md). Legacy `den.work_plan.*` provider names and active `bear_work_plans` runtime compatibility are retired; old table references remain only in migrations/archive docs.
 
 For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 This plan turns the multi-agent task architecture into implementable Den work. It complements [`tasks-schema.md`](../architecture/tasks-schema.md), which remains the canonical file format for MemFS task intents, approved tasks, and work results.
@@ -24,11 +24,11 @@ This document now also tracks the task/activity portion of the single ontology-a
 
 ## Data Model Foundation
 
-> Historical implementation note: `bear_work_plans` is the legacy activity-board/task-list projection. Future work should read it through ADR-0045 and migrate toward session task-list checkout/sync plus Docket jobs/tasks.
+> Historical implementation note: `bear_work_plans` was the legacy activity-board/task-list projection. Active runtime paths no longer read or write it; current work should use Docket jobs/tasks plus explicit session task-list checkout/sync per ADR-0034 and ADR-0045.
 
-The initial migration adds `bear_work_plans` and `bear_work_plan_events`.
+The initial legacy migration added `bear_work_plans` and `bear_work_plan_events`.
 
-`bear_work_plans` is the live, queryable activity board:
+At the time, `bear_work_plans` was the live, queryable activity board:
 
 - `bear_id`: the logical Bear that owns the plan.
 - `owner_role`: the role that owns the plan, usually `pair`, `chat`, or `work`.
