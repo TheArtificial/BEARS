@@ -14,11 +14,14 @@ use bearwire_protocol::{
     },
     wire::{BearWireEvent, ToolCallFinishWire},
 };
-use den_core::tools::{
-    constants::DEN_WEB_FETCH,
-    result_compaction::{
-        compact_client_tool_result, compact_client_tool_result_with_artifact,
-        ClientToolResultInput, ToolResultStatus,
+use den_core::{
+    client_tools::{client_tool_policy_json_for_provider, ClientToolName},
+    tools::{
+        constants::DEN_WEB_FETCH,
+        result_compaction::{
+            compact_client_tool_result, compact_client_tool_result_with_artifact,
+            ClientToolResultInput, ToolResultStatus,
+        },
     },
 };
 use den_http::{errors::CustomError, web_policy};
@@ -925,13 +928,15 @@ pub(crate) async fn client_permission_result_result(
                 "continuation": "waiting_for_tool_result",
                 "obligation_state": tool_obligation.state,
                 "local_tool_request": {
-                    "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
-                    "result_tool_name": tool_name,
-                    "args": args,
-                    "permission_id": permission_id,
-                    "obligation_id": obligation.id.to_string()
-                }
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "result_tool_name": tool_name,
+                "args": args,
+                "permission_id": permission_id,
+                "obligation_id": obligation.id.to_string(),
+                "policy": ClientToolName::from_provider_alias(&tool_name)
+                    .map(|_| client_tool_policy_json_for_provider(&tool_name))
+            }
             }))
         }
         PermissionResultCoordinatorOutcome::ContinueModel { run: transitioned, result } => {

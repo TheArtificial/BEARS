@@ -6,7 +6,7 @@ use bearwire_protocol::wire::{
     ToolCallWaitingWire, ToolCallWire, ToolPermissionWire,
 };
 use den_core::{
-    client_tools::client_tool_display_for_provider,
+    client_tools::{client_tool_display_for_provider, client_tool_policy_json_for_provider, ClientToolName},
     tools::descriptor::{builtin_den_tool_descriptor_for_provider_name, den_tool_display_json_for_provider},
 };
 use den_protocol::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent};
@@ -30,11 +30,15 @@ pub fn tool_call_wire(
     }
 }
 
-fn tool_call_requested_policy(tool_name: &str) -> Option<Value> {
+fn tool_call_policy(tool_name: &str) -> Option<Value> {
     let den_owned = tool_name == crate::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME
         || builtin_den_tool_descriptor_for_provider_name(tool_name)
             .is_some_and(|descriptor| descriptor.approval_policy == "never");
-    den_owned.then(|| json!({ "execution_target": "den" }))
+    if den_owned {
+        return Some(json!({ "execution_target": "den" }));
+    }
+    ClientToolName::from_provider_alias(tool_name)
+        .map(|_| client_tool_policy_json_for_provider(tool_name))
 }
 
 pub fn tool_call_finish_wire(
@@ -195,11 +199,12 @@ pub fn runtime_semantic_event_to_bearwire_events(
                         target: None,
                     },
                     approval_required: true,
+                    policy: tool_call_policy(&tool_name),
                     turn_step_id: None,
                 })
             } else {
                 BearWireEvent::tool_call_requested(ToolCallRequestedWire {
-                    policy: tool_call_requested_policy(&tool_name),
+                    policy: tool_call_policy(&tool_name),
                     tool_call,
                     approval_required: false,
                     approval_request_id: approval_request_id.clone(),

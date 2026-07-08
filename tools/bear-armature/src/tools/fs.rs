@@ -132,6 +132,7 @@ pub(crate) async fn handle_read_text_file(
             target.kind
         ));
     }
+    ensure_read_path_allowed("fs_read_text_file", &target.resolved_path, policy)?;
     let requested_path = target.requested_path.clone();
     let workspace_root = target.workspace_root.clone();
     let target_size_bytes = target.size_bytes();
@@ -209,6 +210,7 @@ pub(crate) async fn handle_list_directory(
             target.kind
         ));
     }
+    ensure_read_path_allowed("fs_list_directory", &target.resolved_path, policy)?;
     let path = target.resolved_path;
     let started = std::time::Instant::now();
     let mut entries = Vec::new();
@@ -224,6 +226,9 @@ pub(crate) async fn handle_list_directory(
         for entry in dir_entries {
             let entry_path = entry.path();
             if !include_hidden && is_hidden_path_component(&entry_path, &path) {
+                continue;
+            }
+            if should_skip_read_path(&entry_path, policy) {
                 continue;
             }
             ensure_path_allowed_for_session(context, &entry_path)?;
@@ -305,6 +310,7 @@ pub(crate) async fn handle_find_paths(
         return Err(anyhow!("fs_find_paths args missing glob"));
     }
     let root = resolve_optional_session_tool_root(context, args.root.as_deref())?;
+    ensure_read_path_allowed("fs_find_paths", &root, policy)?;
     let include_hidden = args
         .include_hidden
         .or(policy.include_hidden_default)
@@ -324,6 +330,7 @@ pub(crate) async fn handle_find_paths(
         skipped_by_filter: &mut skipped_by_filter,
         truncated: &mut truncated,
         out: &mut matches,
+        policy,
     };
     collect_find_paths(
         context,
@@ -402,6 +409,7 @@ pub(crate) async fn handle_search_files(
             target.resolved_path.display()
         ));
     }
+    ensure_read_path_allowed("fs_search_files", &target.resolved_path, policy)?;
     let path = target.resolved_path;
     let started = std::time::Instant::now();
     let mut files = Vec::new();
@@ -411,6 +419,7 @@ pub(crate) async fn handle_search_files(
         truncated: &mut file_collection_truncated,
         skipped_by_filter: &mut skipped_by_filter,
         out: &mut files,
+        policy,
     };
     collect_search_files(
         context,
@@ -528,6 +537,7 @@ pub(crate) async fn handle_stat(
     let args: StatArgs = parse_fs_args(args)?;
     let include_symlink_target = args.include_symlink_target.unwrap_or(false);
     let target = resolve_session_tool_target(context, &args.path)?;
+    ensure_read_path_allowed("fs_stat", &target.resolved_path, _policy)?;
     let path = target.resolved_path;
     let metadata =
         fs::symlink_metadata(&path).with_context(|| format!("stat {}", path.display()))?;
@@ -1481,6 +1491,27 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     }
 }
 
+fn read_path_is_sensitive_controlled(path: &Path, policy: &ToolPolicy) -> bool {
+    matches!(
+        policy.sensitive_path_policy.as_deref(),
+        Some("deny_sensitive_paths" | "filter_results")
+    ) && is_sensitive_path(path)
+}
+
+fn should_skip_read_path(path: &Path, policy: &ToolPolicy) -> bool {
+    read_path_is_sensitive_controlled(path, policy)
+}
+
+fn ensure_read_path_allowed(tool_name: &str, path: &Path, policy: &ToolPolicy) -> Result<()> {
+    if read_path_is_sensitive_controlled(path, policy) {
+        return Err(anyhow!(
+            "{tool_name} denied sensitive path {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn ensure_delete_path_allowed(
     context: &SessionContext,
     path: &Path,
@@ -1704,6 +1735,7 @@ struct FindPathsState<'a> {
     skipped_by_filter: &'a mut usize,
     truncated: &'a mut bool,
     out: &'a mut Vec<PathBuf>,
+    policy: &'a ToolPolicy,
 }
 
 fn collect_find_paths(
@@ -1719,6 +1751,9 @@ fn collect_find_paths(
         return Ok(());
     }
     if !include_hidden && is_hidden_path_component(path, root) {
+        return Ok(());
+    }
+    if path != root && should_skip_read_path(path, state.policy) {
         return Ok(());
     }
     ensure_path_allowed_for_session(context, path)?;
@@ -1768,6 +1803,7 @@ struct SearchFilesState<'a> {
     truncated: &'a mut bool,
     skipped_by_filter: &'a mut usize,
     out: &'a mut Vec<PathBuf>,
+    policy: &'a ToolPolicy,
 }
 
 fn collect_search_files(
@@ -1783,6 +1819,9 @@ fn collect_search_files(
         return Ok(());
     }
     if !include_hidden && is_hidden_path_component(path, root) {
+        return Ok(());
+    }
+    if path != root && should_skip_read_path(path, state.policy) {
         return Ok(());
     }
     ensure_path_allowed_for_session(context, path)?;

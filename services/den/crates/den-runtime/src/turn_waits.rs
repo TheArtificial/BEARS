@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
 
-use den_core::DenError;
+use den_core::{client_tools::{client_tool_policy_json_for_provider, ClientToolName}, DenError};
 
 use bearwire_protocol::wire::{
     BearWireEvent, ResourceRef, ToolCallRequestedWire, ToolCallWaitingWire, ToolPermissionWire,
@@ -12,11 +12,15 @@ use crate::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME;
 use crate::runtime::bearwire_projection::wire::tool_call_wire;
 use crate::{bearwire_events, turn_obligations, turn_runs};
 
-fn tool_call_requested_policy(tool_name: &str) -> Option<Value> {
+fn tool_call_policy(tool_name: &str) -> Option<Value> {
     let den_owned = tool_name == RUNTIME_CHECKPOINT_TOOL_NAME
         || den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
             .is_some_and(|descriptor| descriptor.approval_policy == "never");
-    den_owned.then(|| json!({ "execution_target": "den" }))
+    if den_owned {
+        return Some(json!({ "execution_target": "den" }));
+    }
+    ClientToolName::from_provider_alias(tool_name)
+        .map(|_| client_tool_policy_json_for_provider(tool_name))
 }
 
 #[derive(Debug, Clone)]
@@ -388,11 +392,12 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
                 target: None,
             },
             approval_required: true,
+            policy: tool_call_policy(input.tool_name),
             turn_step_id: obligation.turn_step_id.map(|id| id.to_string()),
         })
     } else {
         BearWireEvent::tool_call_requested(ToolCallRequestedWire {
-            policy: tool_call_requested_policy(input.tool_name),
+            policy: tool_call_policy(input.tool_name),
             tool_call,
             approval_required: false,
             approval_request_id: input.approval_request_id.clone(),

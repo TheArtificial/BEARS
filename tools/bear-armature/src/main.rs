@@ -278,7 +278,10 @@ struct ToolPolicy {
     max_bytes: Option<u64>,
     recursive_default: Option<bool>,
     include_hidden_default: Option<bool>,
+    execution_target: Option<String>,
+    approval_policy: Option<String>,
     sensitive_path_policy: Option<String>,
+    target_policy: Option<Value>,
     max_replacements: Option<usize>,
     create_files: Option<bool>,
     allow_multiple: Option<bool>,
@@ -300,10 +303,11 @@ pub(crate) fn adapter_version() -> &'static str {
 
 impl ToolPolicy {
     fn risk(&self) -> &str {
+        let _execution_target = self.execution_target.as_deref().unwrap_or("armature_local");
+        let _approval_policy = self.approval_policy.as_deref().unwrap_or("required");
         if self.create_files.is_some()
             || self.allow_multiple.is_some()
             || self.max_replacements.is_some()
-            || self.sensitive_path_policy.as_deref() == Some("deny_sensitive_paths")
         {
             "writes_workspace"
         } else {
@@ -3575,7 +3579,11 @@ async fn handle_direct_read_text_file(
         .ok_or_else(|| anyhow!("bears/read_text_file params missing sessionId"))?
         .to_string();
     let context = session_context(adapter_state, &session_id)?;
-    handle_read_text_file(context, &session_id, params, policy).await
+    let mut args = params;
+    if let Some(object) = args.as_object_mut() {
+        object.remove("sessionId");
+    }
+    handle_read_text_file(context, &session_id, args, policy).await
 }
 
 fn policy_from_event(event: &Value) -> ToolPolicy {
@@ -3605,10 +3613,19 @@ fn policy_from_event(event: &Value) -> ToolPolicy {
         include_hidden_default: policy
             .get("include_hidden_default")
             .and_then(Value::as_bool),
+        execution_target: policy
+            .get("execution_target")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        approval_policy: policy
+            .get("approval_policy")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         sensitive_path_policy: policy
             .get("sensitive_path_policy")
             .and_then(Value::as_str)
             .map(str::to_string),
+        target_policy: policy.get("target_policy").cloned(),
         max_replacements: policy
             .get("max_replacements")
             .and_then(Value::as_u64)
@@ -6986,12 +7003,17 @@ async fn handle_tool_request_event(
         None
     };
     let context_for_approval = session_context(adapter_state, session_id).ok().cloned();
-    let target_path_for_approval = tool_path(event).and_then(|path| {
-        context_for_approval
-            .as_ref()
-            .and_then(|context| resolve_requested_tool_path(context, path).ok())
-            .or_else(|| normalize_requested_tool_path(path).ok())
-    });
+    let target_path_for_approval = context_for_approval
+        .as_ref()
+        .and_then(|context| policy_target_path(context, &args, &policy))
+        .or_else(|| {
+            tool_path(event).and_then(|path| {
+                context_for_approval
+                    .as_ref()
+                    .and_then(|context| resolve_requested_tool_path(context, path).ok())
+                    .or_else(|| normalize_requested_tool_path(path).ok())
+            })
+        });
     let target_url_for_approval = tool_url(event).map(str::to_string);
     let target_command_for_approval = tool_command(event).map(str::to_string);
     let approval_reused = if let Some(context) = context_for_approval.as_ref() {
@@ -7577,6 +7599,54 @@ fn approval_required_from_event(event: &Value) -> bool {
         .or_else(|| event.pointer("/data/approval_required"))
         .and_then(Value::as_bool)
         .unwrap_or(false)
+}
+
+fn policy_target_path(
+    context: &SessionContext,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Option<PathBuf> {
+    let target_policy = policy.target_policy.as_ref()?;
+    let kind = target_policy.get("kind").and_then(Value::as_str)?;
+    let raw_path = match kind {
+        "workspace_path" => target_policy
+            .get("arg")
+            .and_then(Value::as_str)
+            .and_then(|arg| args.get(arg))
+            .and_then(Value::as_str),
+        "workspace_root_or_path" => target_policy
+            .get("arg")
+            .and_then(Value::as_str)
+            .and_then(|arg| args.get(arg))
+            .and_then(Value::as_str)
+            .or_else(|| {
+                target_policy
+                    .get("default_to_workspace_root")
+                    .and_then(Value::as_bool)
+                    .filter(|default| *default)
+                    .and_then(|_| {
+                        context
+                            .roots
+                            .first()
+                            .map(String::as_str)
+                            .or(Some(context.cwd.as_str()))
+                    })
+            }),
+        "source_destination" => target_policy
+            .get("source_arg")
+            .and_then(Value::as_str)
+            .and_then(|arg| args.get(arg))
+            .and_then(Value::as_str),
+        "command" => target_policy
+            .get("cwd_arg")
+            .and_then(Value::as_str)
+            .and_then(|arg| args.get(arg))
+            .and_then(Value::as_str),
+        _ => None,
+    }?;
+    resolve_requested_tool_path(context, raw_path)
+        .ok()
+        .filter(|path| ensure_path_allowed_for_session(context, path).is_ok())
 }
 
 fn approval_reason_from_event(event: &Value) -> Option<&str> {
@@ -8387,6 +8457,30 @@ pub(crate) async fn handle_permission_request_event(
         .get("path")
         .or_else(|| target.get("file_path"))
         .and_then(Value::as_str);
+    let policy = policy_from_event(event);
+    let context_for_approval = adapter_state
+        .session_contexts
+        .get(session_id)
+        .cloned()
+        .or_else(|| {
+            shared_state
+                .session_contexts
+                .try_lock()
+                .ok()?
+                .get(session_id)
+                .cloned()
+        });
+    let target_path_for_approval = context_for_approval
+        .as_ref()
+        .and_then(|context| policy_target_path(context, &canonical.tool_call.arguments, &policy))
+        .or_else(|| {
+            path.and_then(|path| {
+                context_for_approval
+                    .as_ref()
+                    .and_then(|context| resolve_requested_tool_path(context, path).ok())
+                    .or_else(|| normalize_requested_tool_path(path).ok())
+            })
+        });
     let target_label = if is_plan_mode {
         artifact_path
             .or(plan_mode_id)
@@ -8574,30 +8668,24 @@ pub(crate) async fn handle_permission_request_event(
         )
     } else {
         permission_options_for_context(
-            adapter_state.session_contexts.get(session_id),
-            None,
+            context_for_approval.as_ref(),
+            target_path_for_approval.as_deref(),
             url,
             None,
             permission_family_label(tool_name),
         )
     };
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
-    let context_for_approval = adapter_state
-        .session_contexts
-        .get(session_id)
-        .cloned()
-        .or_else(|| {
-            shared_state
-                .session_contexts
-                .try_lock()
-                .ok()?
-                .get(session_id)
-                .cloned()
-        });
     let auto_allowed = if let Some(context) = context_for_approval.as_ref() {
         shared_state
             .approval_cache
-            .is_allowed_for_target(context, tool_name, None, url, command_line.as_deref())
+            .is_allowed_for_target(
+                context,
+                tool_name,
+                target_path_for_approval.as_deref(),
+                url,
+                command_line.as_deref(),
+            )
             .await
     } else {
         false
@@ -8665,10 +8753,10 @@ pub(crate) async fn handle_permission_request_event(
                 .remember_for_target(
                     context,
                     tool_name,
-                    "command_run",
+                    policy.risk(),
                     decision.scope,
                     ApprovalTarget {
-                        path: None,
+                        path: target_path_for_approval.as_deref(),
                         url,
                         command: command_line.as_deref(),
                     },
@@ -13448,6 +13536,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_text_file_denies_sensitive_paths_when_policy_requires() {
+        let root = unique_test_dir("read-sensitive");
+        let secret = root.join("api-token.txt");
+        fs::write(&secret, "secret").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let denied = handle_direct_read_text_file(
+            &state,
+            json!({ "sessionId": "session-1", "path": secret.to_string_lossy() }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("denied sensitive path"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn list_directory_enforces_root_containment() {
         let root = unique_test_dir("list-root");
         let outside = unique_test_dir("list-outside");
@@ -13512,6 +13619,20 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(hidden["returned_matches"], 0);
+        fs::write(root.join("secret-token.txt"), "secret").unwrap();
+        let sensitive = handle_direct_find_paths(
+            &state,
+            "session-1",
+            &json!({ "root": root.to_string_lossy(), "glob": "*secret*", "include_hidden": true }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                include_hidden_default: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(sensitive["returned_matches"], 0);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -13584,6 +13705,19 @@ mod tests {
         .await;
         assert!(format!("{:#}", denied.unwrap_err())
             .contains("outside the ACP session workspace roots"));
+        let secret = root.join("token-secret.txt");
+        fs::write(&secret, "secret").unwrap();
+        let sensitive = handle_direct_stat(
+            &state,
+            "session-1",
+            &json!({ "path": secret.to_string_lossy() }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", sensitive.unwrap_err()).contains("denied sensitive path"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -13671,6 +13805,20 @@ mod tests {
         assert_eq!(result["include_hidden"], true);
         assert_eq!(result["policy"]["max_results"], 1);
         assert_eq!(result["policy"]["applied_limit"], 1);
+        fs::write(root.join("secret-token.txt"), "needle secret").unwrap();
+        let sensitive = handle_direct_search_files(
+            &state,
+            "session-1",
+            &json!({ "path": root.to_string_lossy(), "query": "secret", "limit": 99 }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                include_hidden_default: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(sensitive["returned_matches"], 0);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -15355,7 +15503,10 @@ mod tests {
                 "allow_multiple": false,
                 "deny_hidden_paths": true,
                 "total_timeout_ms": 1234,
-                "sensitive_path_policy": "deny_sensitive_paths"
+                "execution_target": "armature_local",
+                "approval_policy": "never",
+                "sensitive_path_policy": "deny_sensitive_paths",
+                "target_policy": { "kind": "workspace_root_or_path", "arg": "root", "default_to_workspace_root": true, "required_kind": "directory" }
             }
         }));
         assert_eq!(policy.max_lines, Some(5));
@@ -15369,9 +15520,15 @@ mod tests {
         assert_eq!(policy.allow_multiple, Some(false));
         assert_eq!(policy.deny_hidden_paths, Some(true));
         assert_eq!(policy.total_timeout_ms, Some(1234));
+        assert_eq!(policy.execution_target.as_deref(), Some("armature_local"));
+        assert_eq!(policy.approval_policy.as_deref(), Some("never"));
         assert_eq!(
             policy.sensitive_path_policy.as_deref(),
             Some("deny_sensitive_paths")
+        );
+        assert_eq!(
+            policy.target_policy.as_ref().unwrap()["kind"],
+            "workspace_root_or_path"
         );
     }
 

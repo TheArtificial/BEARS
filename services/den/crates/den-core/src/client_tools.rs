@@ -449,14 +449,148 @@ pub struct ClientToolDescriptor {
 // paths keep resolving. See docs/roadmap/DEN_CRATE_SPLIT_PLAN.md (Phase A).
 pub use crate::tools::ToolDisplayDescriptor;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionTargetPolicy {
+    ArmatureLocal,
+    DenHosted,
+}
+
+impl ExecutionTargetPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ArmatureLocal => "armature_local",
+            Self::DenHosted => "den_hosted",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalPolicy {
+    Never,
+    Required,
+    RequiredForSensitiveTargets,
+}
+
+impl ApprovalPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Required => "required",
+            Self::RequiredForSensitiveTargets => "required_for_sensitive_targets",
+        }
+    }
+
+    pub const fn requires_unconditional_approval(self) -> bool {
+        matches!(self, Self::Required)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FsTargetKindPolicy {
+    File,
+    Directory,
+}
+
+impl FsTargetKindPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Directory => "directory",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SensitivePathPolicy {
+    Deny,
+    FilterResults,
+    RequireApproval,
+    Allow,
+}
+
+impl SensitivePathPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Deny => "deny_sensitive_paths",
+            Self::FilterResults => "filter_results",
+            Self::RequireApproval => "client_permission_required",
+            Self::Allow => "allow",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetPolicy {
+    WorkspacePath {
+        arg: &'static str,
+        required_kind: Option<FsTargetKindPolicy>,
+    },
+    WorkspaceRootOrPath {
+        arg: Option<&'static str>,
+        default_to_workspace_root: bool,
+        required_kind: Option<FsTargetKindPolicy>,
+    },
+    SourceDestination {
+        source_arg: &'static str,
+        destination_arg: &'static str,
+    },
+    Command {
+        command_arg: &'static str,
+        cwd_arg: &'static str,
+    },
+    Url {
+        arg: &'static str,
+    },
+    None,
+}
+
+impl TargetPolicy {
+    pub fn to_json(self) -> serde_json::Value {
+        match self {
+            Self::WorkspacePath { arg, required_kind } => json!({
+                "kind": "workspace_path",
+                "arg": arg,
+                "required_kind": required_kind.map(FsTargetKindPolicy::as_str),
+            }),
+            Self::WorkspaceRootOrPath {
+                arg,
+                default_to_workspace_root,
+                required_kind,
+            } => json!({
+                "kind": "workspace_root_or_path",
+                "arg": arg,
+                "default_to_workspace_root": default_to_workspace_root,
+                "required_kind": required_kind.map(FsTargetKindPolicy::as_str),
+            }),
+            Self::SourceDestination { source_arg, destination_arg } => json!({
+                "kind": "source_destination",
+                "source_arg": source_arg,
+                "destination_arg": destination_arg,
+            }),
+            Self::Command { command_arg, cwd_arg } => json!({
+                "kind": "command",
+                "command_arg": command_arg,
+                "cwd_arg": cwd_arg,
+            }),
+            Self::Url { arg } => json!({
+                "kind": "url",
+                "arg": arg,
+            }),
+            Self::None => json!({ "kind": "none" }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ToolPolicy {
     pub scope_basis: &'static str,
     pub role_basis: &'static str,
     pub allowed_roots_basis: &'static str,
     pub path_containment: &'static str,
-    pub approval_required: bool,
-    pub sensitive_path_policy: &'static str,
+    pub execution_target: ExecutionTargetPolicy,
+    pub approval_policy: ApprovalPolicy,
+    pub sensitive_path_policy: SensitivePathPolicy,
+    pub target_policy: TargetPolicy,
     pub max_lines: Option<u32>,
     pub max_entries: Option<u32>,
     pub max_results: Option<u32>,
@@ -478,9 +612,12 @@ impl ToolPolicy {
             "role_basis": self.role_basis,
             "allowed_roots_basis": self.allowed_roots_basis,
             "path_containment": self.path_containment,
+            "execution_target": self.execution_target.as_str(),
             "risk": descriptor.risk,
-            "approval_required": self.approval_required,
-            "sensitive_path_policy": self.sensitive_path_policy,
+            "approval_policy": self.approval_policy.as_str(),
+            "approval_required": self.approval_policy.requires_unconditional_approval(),
+            "sensitive_path_policy": self.sensitive_path_policy.as_str(),
+            "target_policy": self.target_policy.to_json(),
             "canonical_tool": descriptor.canonical_name,
             "provider_tool": descriptor.provider_name,
             "tool_timeout_ms": self.total_timeout_ms,
@@ -1031,8 +1168,13 @@ const ARMATURE_READ_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::WorkspacePath {
+        arg: "path",
+        required_kind: Some(FsTargetKindPolicy::File),
+    },
     max_lines: Some(2_000),
     max_entries: None,
     max_results: None,
@@ -1052,8 +1194,13 @@ const ARMATURE_LIST_DIRECTORY_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::FilterResults,
+    target_policy: TargetPolicy::WorkspacePath {
+        arg: "path",
+        required_kind: Some(FsTargetKindPolicy::Directory),
+    },
     max_lines: None,
     max_entries: Some(1_000),
     max_results: None,
@@ -1073,8 +1220,14 @@ const ARMATURE_FIND_PATHS_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::FilterResults,
+    target_policy: TargetPolicy::WorkspaceRootOrPath {
+        arg: Some("root"),
+        default_to_workspace_root: true,
+        required_kind: Some(FsTargetKindPolicy::Directory),
+    },
     max_lines: None,
     max_entries: None,
     max_results: Some(500),
@@ -1094,8 +1247,13 @@ const ARMATURE_SEARCH_FILES_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::FilterResults,
+    target_policy: TargetPolicy::WorkspacePath {
+        arg: "path",
+        required_kind: None,
+    },
     max_lines: None,
     max_entries: None,
     max_results: Some(200),
@@ -1115,8 +1273,13 @@ const ARMATURE_STAT_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::WorkspacePath {
+        arg: "path",
+        required_kind: None,
+    },
     max_lines: None,
     max_entries: None,
     max_results: None,
@@ -1136,8 +1299,13 @@ const ARMATURE_EDIT_FILE_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "deny_sensitive_paths",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::WorkspacePath {
+        arg: "path",
+        required_kind: Some(FsTargetKindPolicy::File),
+    },
     max_lines: None,
     max_entries: None,
     max_results: None,
@@ -1157,8 +1325,13 @@ const ARMATURE_CREATE_TEXT_FILE_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "deny_sensitive_paths",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::WorkspacePath {
+        arg: "path",
+        required_kind: None,
+    },
     max_lines: None,
     max_entries: None,
     max_results: None,
@@ -1178,8 +1351,13 @@ const ARMATURE_CREATE_DIRECTORY_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "deny_sensitive_paths",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::WorkspacePath {
+        arg: "path",
+        required_kind: None,
+    },
     max_lines: None,
     max_entries: None,
     max_results: None,
@@ -1199,8 +1377,13 @@ const ARMATURE_MOVE_PATH_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "deny_sensitive_paths",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::SourceDestination {
+        source_arg: "source_path",
+        destination_arg: "destination_path",
+    },
     max_lines: None,
     max_entries: None,
     max_results: None,
@@ -1220,8 +1403,13 @@ const ARMATURE_COPY_PATH_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "deny_sensitive_paths",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::SourceDestination {
+        source_arg: "source_path",
+        destination_arg: "destination_path",
+    },
     max_lines: None,
     max_entries: Some(1_000),
     max_results: None,
@@ -1241,8 +1429,14 @@ const ARMATURE_APPLY_PATCH_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "deny_sensitive_paths",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::WorkspaceRootOrPath {
+        arg: Some("base_path"),
+        default_to_workspace_root: true,
+        required_kind: Some(FsTargetKindPolicy::Directory),
+    },
     max_lines: None,
     max_entries: Some(100),
     max_results: None,
@@ -1262,8 +1456,13 @@ const ARMATURE_DELETE_PATH_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "deny_sensitive_paths",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::WorkspacePath {
+        arg: "path",
+        required_kind: None,
+    },
     max_lines: None,
     max_entries: Some(100),
     max_results: None,
@@ -1283,8 +1482,10 @@ const ARMATURE_GIT_STATUS_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    target_policy: TargetPolicy::None,
     max_lines: None,
     max_entries: None,
     max_results: Some(500),
@@ -1304,8 +1505,10 @@ const ARMATURE_GIT_DIFF_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    target_policy: TargetPolicy::None,
     max_lines: None,
     max_entries: None,
     max_results: None,
@@ -1325,8 +1528,10 @@ const ARMATURE_GIT_LOG_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    target_policy: TargetPolicy::None,
     max_lines: None,
     max_entries: None,
     max_results: Some(100),
@@ -1346,8 +1551,10 @@ const ARMATURE_GIT_SHOW_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    target_policy: TargetPolicy::None,
     max_lines: None,
     max_entries: None,
     max_results: None,
@@ -1367,8 +1574,10 @@ const ARMATURE_GIT_WRITE_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    target_policy: TargetPolicy::None,
     max_lines: None,
     max_entries: Some(100),
     max_results: None,
@@ -1388,8 +1597,13 @@ const ARMATURE_PROCESS_RUN_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "client_session.workspace_roots",
     path_containment: "adapter_enforced_absolute_cwd_under_allowed_roots",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    target_policy: TargetPolicy::Command {
+        command_arg: "command",
+        cwd_arg: "cwd",
+    },
     max_lines: None,
     max_entries: None,
     max_results: None,
@@ -1409,8 +1623,10 @@ const ARMATURE_CHROME_POLICY: ToolPolicy = ToolPolicy {
     role_basis: "pair_agent",
     allowed_roots_basis: "chrome_cdp_endpoint",
     path_containment: "adapter_enforced_chrome_cdp_endpoint",
-    approval_required: true,
-    sensitive_path_policy: "client_permission_required",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Required,
+    sensitive_path_policy: SensitivePathPolicy::RequireApproval,
+    target_policy: TargetPolicy::None,
     max_lines: None,
     max_entries: Some(500),
     max_results: None,
@@ -1503,9 +1719,12 @@ pub fn client_tool_policy_json_for_provider(tool_name: &str) -> serde_json::Valu
     let Some(tool) = ClientToolName::from_provider_alias(tool_name) else {
         return json!({
             "scope_basis": "armature:tools",
+            "execution_target": ExecutionTargetPolicy::ArmatureLocal.as_str(),
             "risk": "read_only",
-            "approval_required": true,
-            "sensitive_path_policy": "client_permission_required",
+            "approval_policy": ApprovalPolicy::Never.as_str(),
+            "approval_required": false,
+            "sensitive_path_policy": SensitivePathPolicy::Deny.as_str(),
+            "target_policy": TargetPolicy::None.to_json(),
         });
     };
     client_tool_policy(tool).to_json(tool.descriptor())

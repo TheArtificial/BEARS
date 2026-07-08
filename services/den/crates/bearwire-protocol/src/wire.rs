@@ -238,6 +238,8 @@ pub struct ToolCallWaitingWire {
     pub tool_call: ToolCallWire,
     pub permission: ToolPermissionWire,
     pub approval_required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_step_id: Option<String>,
 }
