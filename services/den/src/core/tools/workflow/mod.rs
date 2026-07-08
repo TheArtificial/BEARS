@@ -10,7 +10,7 @@ use den_core::tools::constants::{
     DEN_TASK_UPDATE_CURRENT_STATUS,
 };
 use den_docket::{
-    self as work_plans, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
+    self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
     DocketCriterionStatus, DocketEffortHint, DocketExecutionLookup, DocketJobCreate,
     DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter, DocketJobStatus,
     DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
@@ -248,7 +248,7 @@ pub(crate) async fn list_task_lists(
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
-    _activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
+    _activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
     plan_mode_workplan_payload: fn(&plan_mode::PlanModeSessionRow) -> Value,
 ) -> Result<Value, CustomError> {
     let args: TaskListListArguments = serde_json::from_value(arguments)?;
@@ -276,7 +276,7 @@ pub(crate) async fn list_task_lists(
         .filter_map(|gate| gate.plan_artifact_path.as_deref())
         .collect::<Vec<_>>();
     let activity_plans: Vec<Value> = Vec::new();
-    let task_lists: Vec<work_plans::TaskListProjection> = Vec::new();
+    let task_lists: Vec<docket::TaskListProjection> = Vec::new();
     let workplans = plan_mode_gates
         .iter()
         .map(plan_mode_workplan_payload)
@@ -306,7 +306,7 @@ pub(crate) async fn list_task_lists(
         "plan_artifacts": plan_artifacts,
         "linked_plan_artifact_paths": linked_artifact_paths,
         "notes": [
-            "list_task_lists is a Bear-level task-list/planning view. It includes checked-out task lists, submitted/active plan-mode gates, and saved pair plan artifacts when available.",
+            "list_task_lists is a Bear-level task-list/planning view. It includes checked-out Docket task-list projections, submitted/active plan-mode gates, and saved pair plan artifacts when available.",
             "A plan artifact in pair/plans/ may exist even when there is no active task list; this is planning state, not semantic memory.",
             "Role fields are provenance and policy hints, not product ownership. Cross-role visibility is not cross-role execution authority."
         ],
@@ -318,7 +318,7 @@ pub(crate) async fn get_task_list_status(
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
-    activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
+    activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
     let _ignored_arguments: Value = serde_json::from_value(arguments)?;
     Ok(json!({
@@ -340,7 +340,7 @@ pub(crate) async fn update_task_list(
     _context: &DenToolInvocationContext,
     _role: BearProfile,
     arguments: Value,
-    _activity_payload: fn(Option<&work_plans::TaskListLocalProjection>) -> Value,
+    _activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
     let _ignored_arguments: Value = serde_json::from_value(arguments)?;
     Err(DenError::ValidationError(
@@ -378,7 +378,7 @@ pub(crate) async fn create_job(
             tasks: args.tasks,
         })
         .await?;
-    let task_list = work_plans::task_list_projection_from_docket_job(&job, None);
+    let task_list = docket::task_list_projection_from_docket_job(&job, None);
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
@@ -386,7 +386,7 @@ pub(crate) async fn create_job(
         "task_list": task_list,
         "notes": [
             "Created durable Docket job state; execution is not started by this tool.",
-            "Use get_job for canonical job/task state and update_task_list for session focus."
+            "Use get_job for canonical job/task state; checkout_task_list exposes a Docket job as a session task-list projection."
         ]
     }))
 }
@@ -425,7 +425,7 @@ pub(crate) async fn get_job(
         .await?;
     let task_list = job
         .as_ref()
-        .map(|job| work_plans::task_list_projection_from_docket_job(job, None));
+        .map(|job| docket::task_list_projection_from_docket_job(job, None));
     let status_report = job.as_ref().map(docket_job_status_report);
     Ok(json!({
         "domain": "docket",

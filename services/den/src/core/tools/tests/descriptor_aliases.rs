@@ -158,18 +158,23 @@ fn canonical_dotted_names_map_to_provider_safe_aliases() {
     let update_task_list = descriptors
         .iter()
         .find(|descriptor| descriptor.name == DEN_TASK_LISTS_UPDATE)
-        .expect("work plan update descriptor exists");
+        .expect("task-list update descriptor exists");
     assert_eq!(
         update_task_list.provider_name,
         DEN_TASK_LISTS_UPDATE_PROVIDER
     );
     assert_eq!(update_task_list.provider_name, "update_task_list");
-    assert_eq!(
-        builtin_den_tool_descriptor_for_provider_name("update_plan")
-            .expect("legacy update_plan alias resolves")
-            .name,
-        DEN_TASK_LISTS_UPDATE
-    );
+    for retired_alias in [
+        "list_plans",
+        "get_plan_status",
+        "update_plan",
+        "request_work_handoff",
+    ] {
+        assert!(
+            builtin_den_tool_descriptor_for_provider_name(retired_alias).is_none(),
+            "retired task-list alias should not resolve: {retired_alias}"
+        );
+    }
 
     let enter_plan_mode = descriptors
         .iter()
@@ -201,6 +206,10 @@ fn den_server_tools_advertise_semantic_aliases_not_legacy_den_prefixes() {
     assert!(provider_names.contains("cancel_plan_mode"));
     assert!(!provider_names.contains("situation_get"));
     assert!(!provider_names.contains("memory_tree"));
+    assert!(!provider_names.contains("list_plans"));
+    assert!(!provider_names.contains("get_plan_status"));
+    assert!(!provider_names.contains("update_plan"));
+    assert!(!provider_names.contains("request_work_handoff"));
     assert!(!provider_names.contains("den_situation_get"));
     assert!(!provider_names.contains("den_web_search"));
     assert!(!provider_names.contains("den_memory_read"));

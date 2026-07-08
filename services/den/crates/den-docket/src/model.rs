@@ -247,59 +247,6 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct HistoricalTaskListRow {
-    pub id: Uuid,
-    pub bear_id: Uuid,
-    pub title: String,
-    pub summary: String,
-    pub owner_profile: String,
-    pub owner_agent_id: Option<String>,
-    pub created_by_user_id: Option<i32>,
-    pub source_conversation_id: Option<String>,
-    pub source_client_session_id: Option<String>,
-    pub source_channel: Json<serde_json::Value>,
-    pub workspace_context: Json<serde_json::Value>,
-    pub visibility: String,
-    pub status: String,
-    pub items: Json<Vec<TaskListUpdateItem>>,
-    pub version: i32,
-    pub handoff_intent_path: Option<String>,
-    pub handoff_task_id: Option<String>,
-    pub archived_at: Option<OffsetDateTime>,
-    pub created_at: OffsetDateTime,
-    pub updated_at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskListUpsert {
-    pub bear_id: Uuid,
-    pub owner_profile: BearProfile,
-    pub owner_agent_id: Option<String>,
-    pub created_by_user_id: Option<i32>,
-    pub source_conversation_id: Option<String>,
-    pub source_acp_session_id: Option<String>,
-    pub source_client_session_id: Option<String>,
-    pub source_channel: serde_json::Value,
-    pub plan_id: Option<Uuid>,
-    pub expected_version: Option<i32>,
-    pub update: TaskListUpdate,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct TaskListListFilter {
-    pub statuses: Option<Vec<TaskListStatus>>,
-    pub owner_profile: Option<BearProfile>,
-    pub include_archived: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct TaskListLookup {
-    pub plan_id: Option<Uuid>,
-    pub source_conversation_id: Option<String>,
-    pub source_client_session_id: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskListLocalProjection {
     pub id: Uuid,
@@ -1570,62 +1517,7 @@ fn validate_docket_task_inputs(tasks: &[DocketTaskInput]) -> Result<(), DocketVa
     Ok(())
 }
 
-impl HistoricalTaskListRow {
-    pub fn parsed_owner_profile(&self) -> Result<BearProfile, DenError> {
-        self.owner_profile.parse().map_err(DenError::Parsing)
-    }
-
-    pub fn parsed_visibility(&self) -> Result<TaskListVisibility, DenError> {
-        TaskListVisibility::parse(&self.visibility)
-    }
-
-    pub fn parsed_status(&self) -> Result<TaskListStatus, DenError> {
-        TaskListStatus::parse(&self.status)
-    }
-
-    pub fn is_visible_to(&self, viewer_role: BearProfile, user_id: i32) -> Result<bool, DenError> {
-        let owner_profile = self.parsed_owner_profile()?;
-        let visibility = self.parsed_visibility()?;
-        let same_user = self.created_by_user_id == Some(user_id);
-        Ok(role_can_read_task_list(
-            viewer_role,
-            owner_profile,
-            visibility,
-            same_user,
-        ))
-    }
-
-    pub fn project_for_profile(
-        &self,
-        viewer_role: BearProfile,
-        user_id: i32,
-    ) -> Result<Option<TaskListLocalProjection>, DenError> {
-        if !self.is_visible_to(viewer_role, user_id)? {
-            return Ok(None);
-        }
-        let items = self.items.0.clone();
-        let current_item = current_item(&items).cloned();
-        Ok(Some(TaskListLocalProjection {
-            id: self.id,
-            bear_id: self.bear_id,
-            title: self.title.clone(),
-            summary: self.summary.clone(),
-            owner_profile: self.owner_profile.clone(),
-            visibility: self.visibility.clone(),
-            status: self.status.clone(),
-            version: self.version,
-            items,
-            current_item,
-            source_conversation_id: self.source_conversation_id.clone(),
-            source_client_session_id: self.source_client_session_id.clone(),
-            handoff_intent_path: self.handoff_intent_path.clone(),
-            handoff_task_id: self.handoff_task_id.clone(),
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-        }))
-    }
-}
-
+#[cfg(test)]
 fn current_item(items: &[TaskListUpdateItem]) -> Option<&TaskListUpdateItem> {
     items
         .iter()
@@ -1692,7 +1584,7 @@ pub fn role_can_update_task_list(role: BearProfile) -> bool {
     )
 }
 
-pub fn role_can_request_work_handoff(role: BearProfile) -> bool {
+pub fn role_can_request_task_list_handoff(role: BearProfile) -> bool {
     matches!(role, BearProfile::Chat | BearProfile::Pair)
 }
 
@@ -1712,25 +1604,29 @@ pub fn role_can_read_task_list(
     }
 }
 
-pub fn render_task_list_prompt_context(plans: &[TaskListLocalProjection]) -> String {
-    if plans.is_empty() {
+pub fn render_task_list_prompt_context(task_lists: &[TaskListLocalProjection]) -> String {
+    if task_lists.is_empty() {
         return String::new();
     }
 
     let mut out = String::from(
-        "\n\n<system-reminder>\nDen activity context for this Bear. Use `den.task_list.update` to keep live activity/status current. Use `den.task_list.request_handoff` when channel work should become a durable task intent.\n",
+        "\n\n<system-reminder>\nDen activity context for this Bear. Session task lists are working projections; durable jobs/tasks live in Docket. Use Docket job/task tools for canonical state and `den.task_list.request_handoff` for reviewed promotion or reconciliation.\n",
     );
-    for plan in plans.iter().take(5) {
+    for task_list in task_lists.iter().take(5) {
         let _ = write!(
             out,
-            "- plan_id={} owner={} status={} visibility={} title={}",
-            plan.id, plan.owner_profile, plan.status, plan.visibility, plan.title
+            "- task_list_id={} owner={} status={} visibility={} title={}",
+            task_list.id,
+            task_list.owner_profile,
+            task_list.status,
+            task_list.visibility,
+            task_list.title
         );
-        if let Some(current) = plan.current_item.as_ref() {
+        if let Some(current) = task_list.current_item.as_ref() {
             let _ = write!(out, " current_item={} ({})", current.title, current.status);
         }
-        if !plan.summary.trim().is_empty() {
-            let _ = write!(out, " summary={}", plan.summary.trim());
+        if !task_list.summary.trim().is_empty() {
+            let _ = write!(out, " summary={}", task_list.summary.trim());
         }
         out.push('\n');
     }
@@ -1871,11 +1767,11 @@ mod tests {
     }
 
     #[test]
-    fn only_channel_roles_request_handoff() {
-        assert!(role_can_request_work_handoff(BearProfile::Chat));
-        assert!(role_can_request_work_handoff(BearProfile::Pair));
-        assert!(!role_can_request_work_handoff(BearProfile::Work));
-        assert!(!role_can_request_work_handoff(BearProfile::Curate));
+    fn only_channel_roles_request_task_list_handoff() {
+        assert!(role_can_request_task_list_handoff(BearProfile::Chat));
+        assert!(role_can_request_task_list_handoff(BearProfile::Pair));
+        assert!(!role_can_request_task_list_handoff(BearProfile::Work));
+        assert!(!role_can_request_task_list_handoff(BearProfile::Curate));
     }
 
     fn projection_fixture(items: Vec<TaskListUpdateItem>) -> TaskListLocalProjection {
@@ -2269,7 +2165,8 @@ mod tests {
 
         let rendered = render_task_list_prompt_context(&[plan]);
         assert!(rendered.contains("Den activity context"));
-        assert!(rendered.contains("den.task_list.update"));
+        assert!(rendered.contains("task_list_id="));
+        assert!(rendered.contains("durable jobs/tasks live in Docket"));
         assert!(rendered.contains("Build task system"));
         assert!(rendered.contains("Item one"));
         assert!(!rendered.contains("workspace_context"));

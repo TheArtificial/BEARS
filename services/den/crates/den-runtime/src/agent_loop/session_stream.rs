@@ -35,8 +35,7 @@ use crate::{
 use den_core::tools::{
     arguments::DenToolChannelContext,
     constants::{
-        DEN_TASK_LISTS_REQUEST_HANDOFF_LEGACY_PROVIDER, DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER,
-        DEN_TASK_LISTS_UPDATE_LEGACY_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
+        DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
         DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TOOL_OUTPUT_READ,
         DEN_WEB_FETCH,
     },
@@ -715,18 +714,14 @@ impl SessionTrackingStream {
         match action {
             crate::agent_loop::CheckpointNextAction::UpdateTaskList => matches!(
                 tool_name,
-                DEN_TASK_LISTS_UPDATE_PROVIDER
-                    | DEN_TASK_LISTS_UPDATE_LEGACY_PROVIDER
-                    | DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER
+                DEN_TASK_LISTS_UPDATE_PROVIDER | DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER
             ),
             crate::agent_loop::CheckpointNextAction::SyncTaskList => {
                 tool_name == DEN_TASK_LIST_SYNC_PROVIDER
             }
-            crate::agent_loop::CheckpointNextAction::RequestHandoff => matches!(
-                tool_name,
-                DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER
-                    | DEN_TASK_LISTS_REQUEST_HANDOFF_LEGACY_PROVIDER
-            ),
+            crate::agent_loop::CheckpointNextAction::RequestHandoff => {
+                tool_name == DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER
+            }
             _ => false,
         }
     }
@@ -2232,7 +2227,7 @@ mod tests {
         );
 
         assert!(stream.should_execute_den_tool_server_side("list_task_lists"));
-        assert!(stream.should_execute_den_tool_server_side("list_plans"));
+        assert!(!stream.should_execute_den_tool_server_side("list_plans"));
         assert!(stream.should_execute_den_tool_server_side("session_info"));
         assert!(stream.should_request_den_tool_permission("web_fetch"));
         assert!(!stream.should_execute_den_tool_server_side("web_fetch"));

@@ -68,7 +68,7 @@ pub fn user_visible_tool_summary(
 fn task_list_tool_summary(tool_name: &str, content: Option<&str>) -> Option<String> {
     if !matches!(
         tool_name,
-        "list_task_lists" | "get_task_list_status" | "update_task_list" | "update_plan"
+        "list_task_lists" | "get_task_list_status" | "update_task_list"
     ) {
         return None;
     }
@@ -79,7 +79,7 @@ fn task_list_tool_summary(tool_name: &str, content: Option<&str>) -> Option<Stri
             .get("task_list")
             .filter(|task_list| !task_list.is_null())
             .map(|task_list| format!("Read task list status: {}", task_list_summary(task_list))),
-        "update_task_list" | "update_plan" => value
+        "update_task_list" => value
             .get("task_list")
             .filter(|task_list| !task_list.is_null())
             .map(|task_list| format!("Updated task list: {}", task_list_summary(task_list))),
