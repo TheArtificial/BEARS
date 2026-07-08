@@ -18,9 +18,10 @@ use crate::auth::authenticate_for_bear_slug;
 pub(crate) fn events_sse_body(
     session_id: &str,
     events: Vec<bearwire_events::BearWireEventRow>,
+    emit_initial_state: bool,
 ) -> Result<String, CustomError> {
     let mut frame = String::new();
-    if events.is_empty() {
+    if events.is_empty() && emit_initial_state {
         let event = BearWireEvent::ephemeral(
             "session.state",
             json!({
@@ -34,7 +35,7 @@ pub(crate) fn events_sse_body(
             CustomError::System(format!("serialize BearWire event failed: {err}"))
         })?;
         frame.push_str(&format!("data: {payload}\n\n"));
-    } else {
+    } else if !events.is_empty() {
         for row in events {
             let notification = bearwire_event_to_json_rpc_notification(row.event);
             let payload = serde_json::to_string(&notification).map_err(|err| {
@@ -78,7 +79,7 @@ pub(crate) async fn events(
         100,
     )
     .await?;
-    let frame = events_sse_body(&session.client_session_id, events)?;
+    let frame = events_sse_body(&session.client_session_id, events, after.is_none())?;
 
     Response::builder()
         .status(StatusCode::OK)
@@ -130,9 +131,15 @@ mod tests {
 
     #[tokio::test]
     async fn events_endpoint_emits_json_rpc_event_notification() {
-        let text = events_sse_body("session-test", Vec::new()).unwrap();
+        let text = events_sse_body("session-test", Vec::new(), true).unwrap();
         assert!(text.starts_with("data: "));
         assert!(text.contains("\"method\":\"event\""));
         assert!(text.contains("\"type\":\"session.state\""));
+    }
+
+    #[tokio::test]
+    async fn events_endpoint_does_not_emit_synthetic_state_for_empty_incremental_poll() {
+        let text = events_sse_body("session-test", Vec::new(), false).unwrap();
+        assert_eq!(text, "");
     }
 }

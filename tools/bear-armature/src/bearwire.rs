@@ -533,10 +533,12 @@ pub(crate) async fn handle_prompt(
         saw_done,
         saw_tool_activity,
     ) {
-        return Err(anyhow!(
-            "BEARS BearWire stream completed without visible output, tool activity, or an error. Diagnostics: {}",
-            diagnostics.summary()
-        ));
+        let reason = if saw_tool_activity {
+            "BEARS BearWire stream ended after tool activity but before a terminal run event or assistant output"
+        } else {
+            "BEARS BearWire stream ended without visible output, tool activity, or an error"
+        };
+        return Err(anyhow!("{reason}. Diagnostics: {}", diagnostics.summary()));
     }
 
     crate::write_prompt_end_turn_response(response_id).await
