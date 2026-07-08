@@ -447,6 +447,21 @@ fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent
     )
 }
 
+fn runtime_event_is_terminal_or_wait(event: &den_protocol::RuntimeStreamEvent) -> bool {
+    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    matches!(
+        event,
+        RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::ToolCallRequested { .. }
+                | RuntimeSemanticEvent::RunPaused { .. }
+                | RuntimeSemanticEvent::TurnCompleted { .. }
+                | RuntimeSemanticEvent::TurnFailed { .. }
+                | RuntimeSemanticEvent::TurnCancelled { .. }
+                | RuntimeSemanticEvent::Error { .. }
+        )
+    )
+}
+
 pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'static str {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
     match event {
@@ -1421,9 +1436,13 @@ pub(crate) async fn run_start_result(
                 )
                 .await;
                 let mut first_event_seen = false;
+                let mut terminal_or_wait_seen = false;
                 while let Some(item) = stream.next().await {
                     match item {
                         Ok(runtime_event) => {
+                            if runtime_event_is_terminal_or_wait(&runtime_event) {
+                                terminal_or_wait_seen = true;
+                            }
                             if !first_event_seen
                                 && runtime_event_satisfies_eager_prefix(&runtime_event)
                             {
@@ -1479,6 +1498,29 @@ pub(crate) async fn run_start_result(
                             break;
                         }
                     }
+                }
+                if !terminal_or_wait_seen {
+                    if let Some(tx) = eager_prefix_tx.take() {
+                        let _ = tx.send(());
+                    }
+                    persist_run_failed(
+                        &pool,
+                        &session_for_task,
+                        &run_id_for_task,
+                        bear_id,
+                        user_id,
+                        "stream_ended_without_runtime_terminal",
+                        if first_event_seen {
+                            "The model stream ended after non-terminal runtime events but did not emit a tool request, completion, cancellation, or error.".to_string()
+                        } else {
+                            "The model stream ended without emitting any runtime event for BearWire to deliver.".to_string()
+                        },
+                        Some(json!({
+                            "request_id": request_id,
+                            "first_event_seen": first_event_seen,
+                        })),
+                    )
+                    .await;
                 }
             }
             Err(err) => {

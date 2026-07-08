@@ -154,3 +154,67 @@ fn responses_function_call_done_emits_tool_call_requested() {
         other => panic!("unexpected event: {other:?}"),
     }
 }
+
+#[test]
+fn responses_function_call_arguments_done_emits_tool_call_requested() {
+    let mut acc = ResponsesStreamAccumulator::default();
+    let added = br#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"memory_read","arguments":""}}
+
+"#;
+    let args_done = br#"data: {"type":"response.function_call_arguments.done","item_id":"fc_1","output_index":0,"arguments":"{\"path\":\"pair/note.md\"}"}
+
+"#;
+    assert!(responses_sse_frame_to_runtime_events(&mut acc, added)
+        .expect("parse added")
+        .is_empty());
+    let events = responses_sse_frame_to_runtime_events(&mut acc, args_done).expect("parse done");
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+            tool_call_id,
+            tool_name,
+            arguments,
+            ..
+        }) => {
+            assert_eq!(tool_call_id, "call_1");
+            assert_eq!(tool_name, "memory_read");
+            assert_eq!(arguments["path"], "pair/note.md");
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[test]
+fn responses_completed_flushes_pending_function_call_without_output_item_done() {
+    let mut acc = ResponsesStreamAccumulator::default();
+    let added = br#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"memory_read","arguments":""}}
+
+"#;
+    let args_delta = br#"data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"path\":"}
+
+"#;
+    let completed = br#"data: {"type":"response.completed","response":{"id":"resp_1"}}
+
+"#;
+    assert!(responses_sse_frame_to_runtime_events(&mut acc, added)
+        .expect("parse added")
+        .is_empty());
+    assert!(responses_sse_frame_to_runtime_events(&mut acc, args_delta)
+        .expect("parse delta")
+        .is_empty());
+    let events = responses_sse_frame_to_runtime_events(&mut acc, completed).expect("parse completed");
+    assert_eq!(events.len(), 1);
+    match &events[0] {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+            tool_call_id,
+            tool_name,
+            arguments,
+            ..
+        }) => {
+            assert_eq!(tool_call_id, "call_1");
+            assert_eq!(tool_name, "memory_read");
+            assert_eq!(arguments, &serde_json::Value::String("{\"path\":".to_string()));
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}

@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use den_llm::LlmRequestTelemetry;
 use serde_json::Value;
@@ -424,6 +427,7 @@ pub struct ResponsesStreamAccumulator {
     tool_names: HashMap<String, String>,
     tool_call_ids: HashMap<String, String>,
     tool_args: HashMap<String, String>,
+    emitted_tool_call_keys: HashSet<String>,
     completed: bool,
     saw_tool_call: bool,
 }
@@ -492,6 +496,15 @@ impl ResponsesStreamAccumulator {
                     self.tool_args.entry(key).or_default().push_str(delta);
                 }
             }
+            "response.function_call_arguments.done" => {
+                let key = response_item_key(json);
+                if let Some(arguments) = json.get("arguments").and_then(Value::as_str) {
+                    self.tool_args.insert(key.clone(), arguments.to_string());
+                }
+                if let Some(event) = self.emit_tool_call_for_key(key) {
+                    out.events.push(event);
+                }
+            }
             "response.output_item.added" | "response.output_item.done" => {
                 if let Some(item) = json.get("item") {
                     if item.get("type").and_then(Value::as_str) == Some("function_call") {
@@ -516,30 +529,9 @@ impl ResponsesStreamAccumulator {
                             self.tool_args.insert(key.clone(), arguments.to_string());
                         }
                         if event_type == "response.output_item.done" {
-                            let tool_call_id = self
-                                .tool_call_ids
-                                .get(&key)
-                                .cloned()
-                                .unwrap_or_else(|| key.clone());
-                            let tool_name = self.tool_names.get(&key).cloned().unwrap_or_default();
-                            let arguments = self
-                                .tool_args
-                                .get(&key)
-                                .map(|raw| parse_tool_arguments(raw))
-                                .unwrap_or_else(|| Value::Object(Default::default()));
-                            out.events.push(RuntimeStreamEvent::Semantic(
-                                RuntimeSemanticEvent::ToolCallRequested {
-                                    tool_call_id,
-                                    tool_name,
-                                    title: None,
-                                    kind: Some("function".to_string()),
-                                    arguments,
-                                    approval_request_id: None,
-                                    approval_required: false,
-                                    approval_reason: None,
-                                    run_id: None,
-                                },
-                            ));
+                            if let Some(event) = self.emit_tool_call_for_key(key) {
+                                out.events.push(event);
+                            }
                         }
                     }
                 }
@@ -551,6 +543,8 @@ impl ResponsesStreamAccumulator {
                     out.events.push(RuntimeStreamEvent::Semantic(
                         RuntimeSemanticEvent::TurnCompleted { turn: None },
                     ));
+                } else if let Some(event) = self.pending_tool_call_event_or_failure() {
+                    out.events.push(event);
                 }
             }
             "response.failed" | "response.incomplete" => {
@@ -573,13 +567,74 @@ impl ResponsesStreamAccumulator {
         out
     }
 
+    fn emit_tool_call_for_key(&mut self, key: String) -> Option<RuntimeStreamEvent> {
+        if self.emitted_tool_call_keys.contains(&key) {
+            return None;
+        }
+        let tool_name = self.tool_names.get(&key).cloned().unwrap_or_default();
+        if tool_name.trim().is_empty() {
+            return None;
+        }
+        self.emitted_tool_call_keys.insert(key.clone());
+        let tool_call_id = self
+            .tool_call_ids
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| key.clone());
+        let arguments = self
+            .tool_args
+            .get(&key)
+            .map(|raw| parse_tool_arguments(raw))
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        Some(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id,
+                tool_name,
+                title: None,
+                kind: Some("function".to_string()),
+                arguments,
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            },
+        ))
+    }
+
+    fn pending_tool_call_event_or_failure(&mut self) -> Option<RuntimeStreamEvent> {
+        let keys = self
+            .tool_call_ids
+            .keys()
+            .chain(self.tool_names.keys())
+            .chain(self.tool_args.keys())
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in keys {
+            if let Some(event) = self.emit_tool_call_for_key(key) {
+                return Some(event);
+            }
+        }
+        if self.emitted_tool_call_keys.is_empty() {
+            return Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
+                turn: None,
+                category: RuntimeErrorCategory::BackendProtocol,
+                message: "Responses stream completed after a function-call start without enough tool-call metadata to continue".to_string(),
+            }));
+        }
+        None
+    }
+
     pub fn should_detach_upstream(&self) -> bool {
         self.completed
     }
 
     pub fn flush_end_of_stream(&mut self) -> Vec<RuntimeStreamEvent> {
-        if self.completed || self.saw_tool_call {
+        if self.completed {
             Vec::new()
+        } else if self.saw_tool_call {
+            self.pending_tool_call_event_or_failure()
+                .into_iter()
+                .collect()
         } else {
             vec![RuntimeStreamEvent::Semantic(
                 RuntimeSemanticEvent::TurnCompleted { turn: None },
