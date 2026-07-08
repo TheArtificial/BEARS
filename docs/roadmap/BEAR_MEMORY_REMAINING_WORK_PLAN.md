@@ -112,7 +112,7 @@ pair learns → role-local SQLite → pair reflection → proposals
 
 | Priority | Item | Status |
 |---|---|---|
-| P0 | UI: show pair-reflection proposal + queued curate run | ◻ |
+| P0 | UI: show pair-reflection proposal + queued curate run | 🟡 memory dashboard surfaces Postgres + native SQLite memory proposals; dedicated run queue surfacing still open |
 | P1 | Autonomous **curation conductor** (daily curate conversation, bounded context, approved tools only) | 🟡 worker exists; model-assisted review depth open |
 | P2 | **Model-assisted pair reflection** (extract decisions/conventions vs deterministic last-N summary) | ◻ |
 | P2.5 | **`archive_harvest` reflection lane** (extraction-first mining of closed sessions / compaction artifacts) | 🟡 lane + compaction-artifact harvest proposals + deterministic quality/risk filter landed; broader conversation mining/model extraction open |

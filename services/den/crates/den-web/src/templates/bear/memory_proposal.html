@@ -11,7 +11,8 @@
         <h3>{{ proposal.title | e }}</h3>
         <dl class="fields-grid">
             <dt>Status</dt><dd><code>{{ proposal.status | e }}</code></dd>
-            <dt>Suggested action</dt><dd><code>{{ proposal.suggested_action | e }}</code></dd>
+            <dt>Store</dt><dd><code>{{ proposal.store | e }}</code></dd>
+            <dt>Suggested action</dt></dt><dd><code>{{ proposal.suggested_action | e }}</code></dd>
             <dt>Source role</dt><dd><code>{{ proposal.source_profile | e }}</code>{% if proposal.source_agent_id %} <span class="form-hint">({{ proposal.source_agent_id | e }})</span>{% endif %}</dd>
             <dt>Sensitivity</dt><dd><code>{{ proposal.sensitivity | e }}</code>{% if proposal.requires_human %} · requires human review{% endif %}</dd>
             <dt>Created</dt><dd>{{ proposal.created_at }}</dd>

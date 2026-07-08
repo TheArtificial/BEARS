@@ -55,6 +55,34 @@ pub async fn create_memory_proposal(
     })
 }
 
+pub async fn get_memory_proposal(
+    store: &BearMemoryStore,
+    proposal_id: &str,
+) -> Result<Option<SqliteMemoryProposal>, DenError> {
+    let row = sqlx::query_as::<_, (String, i64, String, String, String)>(
+        r"
+        SELECT proposal_id, sequence_no, status, payload_json, created_at
+        FROM memory_proposals
+        WHERE bear_id = ? AND proposal_id = ?
+        ",
+    )
+    .bind(store.bear_id().to_string())
+    .bind(proposal_id)
+    .fetch_optional(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("sqlite get proposal failed: {e}")))?;
+    Ok(row.map(
+        |(proposal_id, sequence_no, status, payload_json, created_at)| SqliteMemoryProposal {
+            proposal_id,
+            sequence_no,
+            status,
+            payload_json: serde_json::from_str(&payload_json)
+                .unwrap_or_else(|_| json!({ "raw": payload_json })),
+            created_at,
+        },
+    ))
+}
+
 pub async fn list_memory_proposals(
     store: &BearMemoryStore,
     status: Option<&str>,

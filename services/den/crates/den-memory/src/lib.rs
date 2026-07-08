@@ -54,7 +54,8 @@ pub use promotions::{
     append_memory_promotion, promote_to_shared_core, promote_to_shared_core_at_path,
 };
 pub use proposals::{
-    create_memory_proposal, list_memory_proposals, resolve_memory_proposal, SqliteMemoryProposal,
+    create_memory_proposal, get_memory_proposal, list_memory_proposals, resolve_memory_proposal,
+    SqliteMemoryProposal,
 };
 pub use records::{
     append_memory_record, effective_time_by_ids, fetch_record_by_id, fetch_records_min,

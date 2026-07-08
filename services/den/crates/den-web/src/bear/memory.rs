@@ -28,10 +28,12 @@ use crate::{
 use super::settings::{bear_nav_context, load_session_bear, session_user};
 use den_memory::{
     self as store, bear_memory_admin_stats, count_records_by_kind, count_records_by_profile,
-    get_memory_record_detail, head_entry_count, import_legacy_memory_bundle, list_path_summaries,
-    list_recent_memory_records, list_relations_for_entity, list_relations_for_source,
+    get_memory_proposal as get_sqlite_memory_proposal, get_memory_record_detail, head_entry_count,
+    import_legacy_memory_bundle, list_memory_proposals as list_sqlite_memory_proposals,
+    list_path_summaries, list_recent_memory_records, list_relations_for_entity,
+    list_relations_for_source, resolve_memory_proposal as resolve_sqlite_memory_proposal,
     search_memory_records, LegacyMemoryImportOptions, MemoryRecordRow, MemoryStoreManager,
-    PathSummary,
+    PathSummary, SqliteMemoryProposal,
 };
 use den_service::bears::{db as bears_db, BearProfile};
 use den_service::recall::{registry as recall_registry, semantic_search_for_bear};
@@ -191,6 +193,33 @@ struct LinkedRecord {
     created_at: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+struct MemoryProposalView {
+    id: String,
+    store: String,
+    source_profile: String,
+    source_agent_id: Option<String>,
+    source_paths: Vec<String>,
+    source_refs: Value,
+    suggested_action: String,
+    target_ref: Option<String>,
+    title: String,
+    summary: String,
+    rationale: String,
+    proposed_content: Option<String>,
+    proposed_patch: Option<String>,
+    refs: Value,
+    sensitivity: String,
+    requires_human: bool,
+    status: String,
+    reviewer_profile: Option<String>,
+    reviewer_agent_id: Option<String>,
+    review_notes: Option<String>,
+    decision_summary: Option<String>,
+    created_at: String,
+    reviewed_at: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct EntityDetail {
     entity_id: String,
@@ -255,6 +284,140 @@ fn class_label(class: &store::RelationClass) -> &'static str {
         store::RelationClass::AccessBearing => "access-bearing",
         store::RelationClass::Descriptive => "descriptive",
     }
+}
+
+fn proposal_view_from_postgres(row: memory_proposals::MemoryProposalRow) -> MemoryProposalView {
+    MemoryProposalView {
+        id: row.id.to_string(),
+        store: "postgres".to_string(),
+        source_profile: row.source_profile,
+        source_agent_id: row.source_agent_id,
+        source_paths: row.source_paths,
+        source_refs: row.source_refs,
+        suggested_action: row.suggested_action,
+        target_ref: row.target_ref,
+        title: row.title,
+        summary: row.summary,
+        rationale: row.rationale,
+        proposed_content: row.proposed_content,
+        proposed_patch: row.proposed_patch,
+        refs: row.refs,
+        sensitivity: row.sensitivity,
+        requires_human: row.requires_human,
+        status: row.status,
+        reviewer_profile: row.reviewer_profile,
+        reviewer_agent_id: row.reviewer_agent_id,
+        review_notes: row.review_notes,
+        decision_summary: row.decision_summary,
+        created_at: row.created_at.to_string(),
+        reviewed_at: row.reviewed_at.map(|value| value.to_string()),
+    }
+}
+
+fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
+    let payload = row.payload_json;
+    let string_field = |key: &str, default: &str| {
+        payload
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or(default)
+            .to_string()
+    };
+    let source_paths = payload
+        .get("source_paths")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    MemoryProposalView {
+        id: row.proposal_id,
+        store: "sqlite".to_string(),
+        source_profile: string_field("source_profile", "curate"),
+        source_agent_id: payload
+            .get("source_agent_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        source_paths,
+        source_refs: payload.get("source_refs").cloned().unwrap_or_else(|| json!({})),
+        suggested_action: string_field("suggested_action", "unspecified"),
+        target_ref: payload
+            .get("target_ref")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        title: string_field("title", "Memory proposal"),
+        summary: string_field("summary", ""),
+        rationale: string_field("rationale", ""),
+        proposed_content: payload
+            .get("proposed_content")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        proposed_patch: payload
+            .get("proposed_patch")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        refs: payload.get("refs").cloned().unwrap_or_else(|| json!({})),
+        sensitivity: string_field("sensitivity", "normal"),
+        requires_human: payload
+            .get("requires_human")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        status: row.status,
+        reviewer_profile: payload
+            .get("reviewer_profile")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        reviewer_agent_id: payload
+            .get("reviewer_agent_id")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        review_notes: payload
+            .get("review_notes")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        decision_summary: payload
+            .get("decision_summary")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        created_at: row.created_at,
+        reviewed_at: None,
+    }
+}
+
+async fn list_dashboard_proposals(
+    state: &AppState,
+    manager: &MemoryStoreManager,
+    bear_id: Uuid,
+    status: Option<&str>,
+    limit: i64,
+) -> Vec<MemoryProposalView> {
+    let mut proposals: Vec<MemoryProposalView> = memory_proposals::list_for_bear(
+        state.sqlx_pool(),
+        bear_id,
+        status,
+        limit,
+    )
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(proposal_view_from_postgres)
+    .collect();
+
+    if let Ok(store) = manager.store_for_bear(bear_id).await {
+        proposals.extend(
+            list_sqlite_memory_proposals(&store, status, limit)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(proposal_view_from_sqlite),
+        );
+    }
+    proposals.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    proposals.truncate(limit.clamp(1, 200) as usize);
+    proposals
 }
 
 fn record_list_item(row: MemoryRecordRow, score: Option<f32>) -> RecordListItem {
@@ -395,12 +558,8 @@ async fn dashboard_view(
         .map(|r| record_list_item(r, None))
         .collect();
 
-    let proposals = memory_proposals::list_for_bear(state.sqlx_pool(), id, None, 10)
-        .await
-        .unwrap_or_default();
-    let pending_proposals = memory_proposals::list_for_bear(state.sqlx_pool(), id, Some("pending"), 10)
-        .await
-        .unwrap_or_default();
+    let proposals = list_dashboard_proposals(&state, &manager, id, None, 10).await;
+    let pending_proposals = list_dashboard_proposals(&state, &manager, id, Some("pending"), 10).await;
     let pair_reflection_runs = pair_reflection::list_recent_for_bear(state.sqlx_pool(), id, 8)
         .await
         .unwrap_or_default();
@@ -1147,9 +1306,18 @@ async fn proposal_get(
     }
     let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
     let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
-    let proposal = memory_proposals::get_for_bear(state.sqlx_pool(), bear.id, proposal_id)
-        .await?
-        .ok_or_else(|| CustomError::NotFound("memory proposal not found".to_string()))?;
+    let proposal = if let Some(proposal) =
+        memory_proposals::get_for_bear(state.sqlx_pool(), bear.id, proposal_id).await?
+    {
+        proposal_view_from_postgres(proposal)
+    } else {
+        let manager = MemoryStoreManager::new(state.config.as_ref());
+        let store = manager.store_for_bear(bear.id).await?;
+        get_sqlite_memory_proposal(&store, &proposal_id.to_string())
+            .await?
+            .map(proposal_view_from_sqlite)
+            .ok_or_else(|| CustomError::NotFound("memory proposal not found".to_string()))?
+    };
     web::render_template(
         &state,
         "bear/memory_proposal.html",
@@ -1190,22 +1358,40 @@ async fn proposal_post(
             "invalid memory proposal status".to_string(),
         ));
     }
-    memory_proposals::resolve_for_bear(
-        state.sqlx_pool(),
-        memory_proposals::ProposalResolutionParams {
-            bear_id: bear.id,
-            proposal_id,
-            reviewer_profile: BearProfile::Curate,
-            reviewer_agent_id: None,
-            status,
-            review_notes: form.review_notes.as_deref(),
-            decision_summary: form.decision_summary.as_deref(),
-            result_path: None,
-            result_commit: None,
-            project_to_conversation: true,
-        },
-    )
-    .await?;
+    if memory_proposals::get_for_bear(state.sqlx_pool(), bear.id, proposal_id)
+        .await?
+        .is_some()
+    {
+        memory_proposals::resolve_for_bear(
+            state.sqlx_pool(),
+            memory_proposals::ProposalResolutionParams {
+                bear_id: bear.id,
+                proposal_id,
+                reviewer_profile: BearProfile::Curate,
+                reviewer_agent_id: None,
+                status,
+                review_notes: form.review_notes.as_deref(),
+                decision_summary: form.decision_summary.as_deref(),
+                result_path: None,
+                result_commit: None,
+                project_to_conversation: true,
+            },
+        )
+        .await?;
+    } else {
+        let manager = MemoryStoreManager::new(state.config.as_ref());
+        let store = manager.store_for_bear(bear.id).await?;
+        let review_payload = json!({
+            "reviewer_profile": BearProfile::Curate.as_str(),
+            "reviewer_agent_id": Value::Null,
+            "review_notes": form.review_notes,
+            "decision_summary": form.decision_summary,
+            "result_path": Value::Null,
+            "result_commit": Value::Null,
+        });
+        resolve_sqlite_memory_proposal(&store, &proposal_id.to_string(), status, &review_payload)
+            .await?;
+    }
     Ok(Redirect::to(&format!(
         "/bear/{}/memory/proposals/{proposal_id}",
         bear.slug
