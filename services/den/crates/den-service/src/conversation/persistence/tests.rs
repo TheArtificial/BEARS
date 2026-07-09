@@ -1,6 +1,10 @@
 use super::*;
 use time::OffsetDateTime;
 
+/// Serializes tests that read tool payloads against the one test that toggles
+/// the process-wide `BEARS_STRICT_TYPED_PAYLOADS` env var.
+static STRICT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn row(message_type: &str, role: Option<&str>, visibility: &str) -> PersistedConversationMessage {
     PersistedConversationMessage {
         sequence_no: 7,
@@ -47,6 +51,7 @@ fn transcript_projection_rejects_non_transcript_roles() {
 
 #[test]
 fn transcript_projection_includes_tool_records_for_model_replay_only() {
+    let _guard = STRICT_ENV_LOCK.lock().unwrap();
     let tool_call = PersistedConversationMessage {
         sequence_no: 8,
         message_type: "tool_call".to_string(),
@@ -96,6 +101,7 @@ fn transcript_projection_includes_tool_records_for_model_replay_only() {
 
 #[test]
 fn typed_tool_payloads_decode_from_persisted_content_json() {
+    let _guard = STRICT_ENV_LOCK.lock().unwrap();
     let tool_call_json = serde_json::json!({
         "event": "tool_request",
         "tool_call_id": "call-1",
@@ -129,6 +135,7 @@ fn typed_tool_payloads_decode_from_persisted_content_json() {
 
 #[test]
 fn strict_typed_payloads_require_output_summary_for_complete_tool_results() {
+    let _guard = STRICT_ENV_LOCK.lock().unwrap();
     std::env::set_var("BEARS_STRICT_TYPED_PAYLOADS", "1");
     let tool_result_json = serde_json::json!({
         "event": "tool_result",
@@ -146,7 +153,8 @@ fn strict_typed_payloads_require_output_summary_for_complete_tool_results() {
 }
 
 #[test]
-fn user_history_projection_includes_tool_result_summary_but_not_tool_request() {
+fn user_history_projection_includes_tool_records() {
+    let _guard = STRICT_ENV_LOCK.lock().unwrap();
     let user = row("user", Some("user"), "default");
     assert!(matches!(
         user.to_user_history_record(),
@@ -170,7 +178,17 @@ fn user_history_projection_includes_tool_result_summary_but_not_tool_request() {
         created_at: OffsetDateTime::UNIX_EPOCH,
     };
     assert!(tool_call.to_model_transcript_record().is_some());
-    assert!(tool_call.to_user_history_record().is_none());
+    // Tool requests replay into user history as pending tool_call records so
+    // ACP clients can rebuild tool cards (see "Replay history tool calls as
+    // ACP tool updates").
+    assert!(matches!(
+        tool_call.to_user_history_record(),
+        Some(PersistedUserHistoryMessage { kind, tool_call_id, tool_name, status, .. })
+        if kind == "tool_call"
+            && tool_call_id.as_deref() == Some("call-1")
+            && tool_name.as_deref() == Some("memory_read")
+            && status.as_deref() == Some("pending")
+    ));
 
     let tool_result = PersistedConversationMessage {
         sequence_no: 9,

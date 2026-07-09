@@ -28,7 +28,7 @@ fn profile_tags_include_bear_profile_and_git_memory() {
     let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
     let tags = BearProfile::Work.tags_for_bear(den_core::BearId::from(bear_id));
     assert!(tags.contains(&format!("bear:{bear_id}")));
-    assert!(tags.contains(&"profile:work".to_string()));
-    assert!(tags.contains(&format!("bear:{bear_id}:profile:work")));
+    assert!(tags.contains(&"stance:work".to_string()));
+    assert!(tags.contains(&format!("bear:{bear_id}:stance:work")));
     assert!(tags.contains(&"git-memory-enabled".to_string()));
 }

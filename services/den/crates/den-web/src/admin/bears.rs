@@ -416,9 +416,9 @@ pub(crate) async fn bear_plan_mode_rows(
         ),
     >(
         r"
-        SELECT p.id, p.user_id, u.username, p.acp_session_id, p.state, p.reason,
+        SELECT p.id, p.user_id, u.username, p.client_session_id, p.state, p.reason,
                p.plan_artifact_path, p.plan_title, p.created_at, p.updated_at
-        FROM acp_plan_mode_sessions p
+        FROM client_plan_mode_sessions p
         LEFT JOIN users u ON u.id = p.user_id
         WHERE p.bear_id = $1
         ORDER BY p.updated_at DESC
@@ -1151,5 +1151,3 @@ async fn provision_missing_profiles_action(
     .into_response())
 }
 
-#[cfg(test)]
-mod tests;

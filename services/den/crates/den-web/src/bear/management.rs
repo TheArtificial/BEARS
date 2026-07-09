@@ -685,14 +685,14 @@ async fn bear_plan_mode_rows(
         SELECT s.id,
                s.user_id,
                u.username,
-               s.acp_session_id,
+               s.client_session_id,
                s.state,
                s.reason,
                s.plan_artifact_path,
                s.plan_title,
                s.created_at,
                s.updated_at
-        FROM acp_plan_mode_sessions s
+        FROM client_plan_mode_sessions s
         LEFT JOIN users u ON u.id = s.user_id
         WHERE s.bear_id = $1
         ORDER BY s.updated_at DESC

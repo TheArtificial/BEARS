@@ -37,7 +37,7 @@ fn pair_tool_heavy_fixture() -> Vec<TranscriptGroupingRow> {
                 "event": "tool_result",
                 "tool_call_id": "call-1",
                 "tool_name": "fs_read_text_file",
-                "status": "completed",
+                "status": "ok",
                 "content": "mod.rs",
             }),
         )

@@ -1,23 +1,33 @@
+//! Route tests for the bear web-policy settings actions (web sources /
+//! approvals) and the resources (policy) view. Ported from the retired
+//! `/bears/{id}` admin UI tests when those routes became redirects; the
+//! handlers now live on `/bear/{slug}/…` and require a logged-in bear admin,
+//! so each test seeds a user + membership and logs in through a test-only
+//! route before exercising the real router.
+
 use super::*;
 use axum::{
     body::Body,
     http::{header, Request, StatusCode},
+    response::IntoResponse,
+    routing::get,
 };
+use axum_login::AuthnBackend;
 use http_body_util::BodyExt;
 use minijinja::Environment;
-use sqlx::{postgres::PgPoolOptions, types::Json};
+use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
 use tower_sessions_sqlx_store::PostgresStore;
 
-use crate::{config::Config, web::AppState};
+use crate::{auth_backend::Backend, config::Config};
 
 static TEST_DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn test_pool() -> Option<sqlx::PgPool> {
     dotenvy::dotenv().ok();
     let Ok(url) = std::env::var("DATABASE_URL") else {
-        eprintln!("skipping DB-backed admin route test: DATABASE_URL is not set");
+        eprintln!("skipping DB-backed settings route test: DATABASE_URL is not set");
         return None;
     };
     let pool = match PgPoolOptions::new()
@@ -29,7 +39,7 @@ async fn test_pool() -> Option<sqlx::PgPool> {
         Ok(pool) => pool,
         Err(err) => {
             eprintln!(
-                "skipping DB-backed admin route test: could not connect to DATABASE_URL: {err}"
+                "skipping DB-backed settings route test: could not connect to DATABASE_URL: {err}"
             );
             return None;
         }
@@ -39,7 +49,7 @@ async fn test_pool() -> Option<sqlx::PgPool> {
         .run(&pool)
         .await
     {
-        eprintln!("skipping DB-backed admin route test: migrations failed: {err}");
+        eprintln!("skipping DB-backed settings route test: migrations failed: {err}");
         return None;
     }
     Some(pool)
@@ -49,9 +59,26 @@ fn test_state(pool: sqlx::PgPool) -> AppState {
     let config = Arc::new(Config::test_stub());
     let mut template_env = Environment::new();
     template_env
-            .add_template("admin/bears/detail.html", "{{ web_message }} {{ web_sources | length }} {{ web_approvals | length }} {{ web_fetches | length }}{% for approval in web_approvals %} {{ approval.approved_by_user_label }}{% endfor %}")
+            .add_template("bear/settings/policy.html", "{{ message }} {{ web_sources | length }} {{ web_approvals | length }} {{ web_fetches | length }}{% for approval in web_approvals %} {{ approval.approved_by_user_label }}{% endfor %}")
             .expect("add test template");
     AppState::test_with_template_env(pool, template_env, config)
+}
+
+/// Test-only login endpoint: establishes an axum-login session for the given
+/// user id so requests carrying the returned cookie hit the real handlers as
+/// that user.
+async fn test_login(
+    axum::extract::Path(user_id): axum::extract::Path<i32>,
+    mut auth_session: AuthSession,
+) -> impl IntoResponse {
+    let user = auth_session
+        .backend
+        .get_user(&user_id)
+        .await
+        .expect("load login user")
+        .expect("login user exists");
+    auth_session.login(&user).await.expect("login");
+    StatusCode::OK
 }
 
 async fn test_app(pool: sqlx::PgPool) -> axum::Router {
@@ -59,26 +86,51 @@ async fn test_app(pool: sqlx::PgPool) -> axum::Router {
     store.migrate().await.expect("session store migration");
     Router::new()
         .merge(router())
+        .route("/test-login/{user_id}", get(test_login))
         .with_state(test_state(pool.clone()))
         .layer(
             axum_login::AuthManagerLayerBuilder::new(
-                crate::auth_backend::Backend::new(pool),
+                Backend::new(pool),
                 axum_login::tower_sessions::SessionManagerLayer::new(store),
             )
             .build(),
         )
 }
 
-async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
+async fn login_cookie(app: &axum::Router, user_id: i32) -> String {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/test-login/{user_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("login response");
+    assert_eq!(response.status(), StatusCode::OK);
+    response
+        .headers()
+        .get(header::SET_COOKIE)
+        .expect("session cookie set on login")
+        .to_str()
+        .expect("cookie is valid string")
+        .split(';')
+        .next()
+        .expect("cookie pair")
+        .to_string()
+}
+
+async fn create_test_bear(pool: &sqlx::PgPool, slug: &str) -> Uuid {
     bears_db::create_bear(
         pool,
-        BearParams {
-            slug: &format!("web-admin-{}", Uuid::new_v4()),
-            name: "Web Admin Test Bear",
+        bears_db::BearParams {
+            slug,
+            name: "Web Settings Test Bear",
             description: "",
             system_prompt: "System prompt",
             default_model: None,
-            tools_enabled: None::<Json<serde_json::Value>>,
+            tools_enabled: None::<sqlx::types::Json<serde_json::Value>>,
             context_profile: None,
         },
     )
@@ -86,21 +138,43 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
     .expect("create bear")
 }
 
-async fn create_test_user(pool: &sqlx::PgPool) -> i32 {
-    sqlx::query_scalar::<_, i32>(
+/// User with a verified email (the settings pages redirect unverified users)
+/// and an admin membership on the given bear.
+async fn create_bear_admin_user(pool: &sqlx::PgPool, bear_id: Uuid) -> i32 {
+    let unique = Uuid::new_v4().simple().to_string();
+    let user_id = sqlx::query_scalar::<_, i32>(
         r"
-            INSERT INTO users (email, username, display_name, passhash, is_admin)
-            VALUES ($1, $2, $3, $4, true)
+            INSERT INTO users (email, username, display_name, passhash)
+            VALUES ($1, $2, $3, $4)
             RETURNING id
             ",
     )
-    .bind(format!("web-admin-{}@example.test", Uuid::new_v4()))
-    .bind(format!("wa{}", &Uuid::new_v4().simple().to_string()[..28]))
+    .bind(format!("web-settings-{unique}@example.test"))
+    .bind(format!("ws{}", &unique[..28]))
     .bind("Admin Display")
     .bind("test-passhash")
     .fetch_one(pool)
     .await
-    .expect("create user")
+    .expect("create user");
+    sqlx::query(
+        r"
+            INSERT INTO email_configs (user_id, email_address, active, verified_at)
+            VALUES ($1, $2, true, now())
+            ",
+    )
+    .bind(user_id)
+    .bind(format!("web-settings-{unique}@example.test"))
+    .execute(pool)
+    .await
+    .expect("verify email");
+    bears_db::grant_membership(pool, user_id, bear_id, Some(BEAR_ROLE_ADMIN))
+        .await
+        .expect("grant admin membership");
+    user_id
+}
+
+fn fresh_slug() -> String {
+    format!("web-settings-{}", Uuid::new_v4())
 }
 
 #[tokio::test]
@@ -109,15 +183,18 @@ async fn add_web_source_route_normalizes_host_and_flashes() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let bear_id = create_test_bear(&pool).await;
-    let _user_id = create_test_user(&pool).await;
+    let slug = fresh_slug();
+    let bear_id = create_test_bear(&pool, &slug).await;
+    let user_id = create_bear_admin_user(&pool, bear_id).await;
     let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, user_id).await;
 
     let response = app
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(format!("/bears/{bear_id}/web-sources"))
+                    .uri(format!("/bear/{slug}/web-sources"))
+                    .header(header::COOKIE, &cookie)
                     .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                     .body(Body::from("scope_kind=host&scope_value=Example.COM%3A8443.&policy=preferred&label=Docs&priority=10"))
                     .unwrap(),
@@ -148,15 +225,18 @@ async fn add_web_source_route_rejects_url_in_host_scope() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let bear_id = create_test_bear(&pool).await;
-    let _user_id = create_test_user(&pool).await;
+    let slug = fresh_slug();
+    let bear_id = create_test_bear(&pool, &slug).await;
+    let user_id = create_bear_admin_user(&pool, bear_id).await;
     let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, user_id).await;
 
     let response = app
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(format!("/bears/{bear_id}/web-sources"))
+                    .uri(format!("/bear/{slug}/web-sources"))
+                    .header(header::COOKIE, &cookie)
                     .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                     .body(Body::from("scope_kind=host&scope_value=https%3A%2F%2Fexample.com%2Fdocs&policy=preferred&label=&priority=0"))
                     .unwrap(),
@@ -164,10 +244,26 @@ async fn add_web_source_route_rejects_url_in_host_scope() {
             .await
             .expect("validation response");
 
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let body = String::from_utf8_lossy(&body);
-    assert!(body.contains("host must be a bare hostname"));
+    // Invalid input flashes the normalization error back to the resources page.
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let location = urlencoding::decode(&location).expect("decode location");
+    assert!(
+        location.contains("host must be a bare hostname"),
+        "unexpected redirect: {location}"
+    );
+    let stored: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM bear_web_sources WHERE bear_id = $1")
+            .bind(bear_id)
+            .fetch_one(&pool)
+            .await
+            .expect("source count");
+    assert_eq!(stored, 0);
 }
 
 #[tokio::test]
@@ -176,23 +272,33 @@ async fn add_and_revoke_web_approval_routes_update_active_approvals() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let bear_id = create_test_bear(&pool).await;
-    let _user_id = create_test_user(&pool).await;
+    let slug = fresh_slug();
+    let bear_id = create_test_bear(&pool, &slug).await;
+    let user_id = create_bear_admin_user(&pool, bear_id).await;
     let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, user_id).await;
 
     let response = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/bears/{bear_id}/web-approvals"))
+                .uri(format!("/bear/{slug}/web-approvals"))
+                .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from("scope_kind=host&scope_value=Docs.RS"))
                 .unwrap(),
         )
         .await
         .expect("add approval response");
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let status = response.status();
+    if status != StatusCode::SEE_OTHER {
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        panic!(
+            "add approval: expected 303, got {status}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
 
     let approval_id: Uuid = sqlx::query_scalar(
             "SELECT id FROM bear_web_approvals WHERE bear_id = $1 AND scope_value = 'docs.rs' AND revoked_at IS NULL",
@@ -206,9 +312,8 @@ async fn add_and_revoke_web_approval_routes_update_active_approvals() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!(
-                    "/bears/{bear_id}/web-approvals/{approval_id}/revoke"
-                ))
+                .uri(format!("/bear/{slug}/web-approvals/{approval_id}/revoke"))
+                .header(header::COOKIE, &cookie)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -227,13 +332,14 @@ async fn add_and_revoke_web_approval_routes_update_active_approvals() {
 }
 
 #[tokio::test]
-async fn detail_route_displays_approval_user_label_and_recent_fetches() {
+async fn resources_view_displays_approval_user_label_and_recent_fetches() {
     let _guard = TEST_DB_LOCK.lock().await;
     let Some(pool) = test_pool().await else {
         return;
     };
-    let bear_id = create_test_bear(&pool).await;
-    let user_id = create_test_user(&pool).await;
+    let slug = fresh_slug();
+    let bear_id = create_test_bear(&pool, &slug).await;
+    let user_id = create_bear_admin_user(&pool, bear_id).await;
     web_policy::record_web_approval(
         &pool,
         bear_id,
@@ -265,20 +371,28 @@ async fn detail_route_displays_approval_user_label_and_recent_fetches() {
     .expect("record fetch");
 
     let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, user_id).await;
 
     let response = app
         .oneshot(
             Request::builder()
-                .uri(format!("/bears/{bear_id}?message=Saved"))
+                .uri(format!("/bear/{slug}/resources?message=Saved"))
+                .header(header::COOKIE, &cookie)
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
-        .expect("detail response");
-    assert_eq!(response.status(), StatusCode::OK);
+        .expect("resources response");
+    let status = response.status();
     let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "resources view: {}",
+        String::from_utf8_lossy(&body)
+    );
     let body = String::from_utf8_lossy(&body);
     assert!(body.contains("Saved"));
     assert!(body.contains("Admin Display"));
-    assert!(body.contains("1 1") || body.contains("1 1 1"));
+    assert!(body.contains("0 1 1"));
 }

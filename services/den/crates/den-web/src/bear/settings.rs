@@ -2686,13 +2686,15 @@ async fn add_web_approval_action(
             .into_response());
         }
     };
+    // "admin" is the human-via-web-UI source; the bear_web_approvals source
+    // CHECK constraint only admits ('acp', 'web', 'admin').
     web_policy::record_web_approval(
         state.sqlx_pool(),
         bear.id,
         scope_kind,
         &scope_value,
         auth_session.user.as_ref().map(|u| u.id),
-        "bear_admin",
+        "admin",
         None,
     )
     .await?;
@@ -2753,3 +2755,6 @@ async fn provision_missing_stances_action(
     ))
     .into_response())
 }
+
+#[cfg(test)]
+mod tests;

@@ -548,6 +548,7 @@ mod tests {
                     "event": "tool_result",
                     "tool_call_id": "call_1",
                     "tool_name": "fs.read",
+                    "status": "ok",
                     "content": "hello",
                 }),
             },

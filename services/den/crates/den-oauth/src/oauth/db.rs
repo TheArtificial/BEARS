@@ -1116,7 +1116,7 @@ mod tests {
     // Note: These tests would require a test database setup
     // They are provided as examples of how the functions should be tested
 
-    #[sqlx::test]
+    #[sqlx::test(migrations = "../../migrations")]
     async fn test_create_and_get_oauth_client(
         pool: PgPool,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1150,7 +1150,7 @@ mod tests {
         Ok(())
     }
 
-    #[sqlx::test]
+    #[sqlx::test(migrations = "../../migrations")]
     async fn test_authorization_code_flow(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
         // Create test user first
         let user = sqlx::query_as::<_, (i32,)>(
@@ -1220,7 +1220,7 @@ mod tests {
         Ok(())
     }
 
-    #[sqlx::test]
+    #[sqlx::test(migrations = "../../migrations")]
     async fn test_access_token_operations(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
         // Create test user first
         let user = sqlx::query_as::<_, (i32,)>(

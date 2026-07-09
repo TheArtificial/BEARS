@@ -7,7 +7,7 @@ use crate::bears::{
     provision::{provision_bear_if_configured, reconcile_bear_native},
 };
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn provision_bear_native_creates_den_native_bindings(
     pool: sqlx::PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {

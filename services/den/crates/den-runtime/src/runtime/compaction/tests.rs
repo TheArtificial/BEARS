@@ -279,7 +279,7 @@ fn transcript_grouping_bundles_tool_call_and_result_rows() {
                 "event": "tool_result",
                 "tool_call_id": "call-1",
                 "tool_name": "memory_search",
-                "status": "completed",
+                "status": "ok",
                 "content": "found notes",
             }),
         )
@@ -400,7 +400,7 @@ fn transcript_grouping_resolves_approval_tool_pair_after_result() {
                 "tool_call_id": "call-resolved",
                 "tool_name": "fs_edit_file",
                 "approval_request_id": "approval-2",
-                "status": "completed",
+                "status": "ok",
                 "content": "edited",
             }),
         )
@@ -467,7 +467,7 @@ fn transcript_grouping_handles_multiple_consecutive_tool_bundles() {
                 "event": "tool_result",
                 "tool_call_id": "call-a",
                 "tool_name": "memory_browse",
-                "status": "completed",
+                "status": "ok",
                 "content": "tree",
             }),
         )
