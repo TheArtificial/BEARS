@@ -30,6 +30,9 @@ Human-oriented documentation, operational notes, contributor guides, troubleshoo
 - [bear memory](bear-memory.md)
 - [bear package format](bear-package.md)
 - [work surfaces and conversations](work-surfaces-and-conversations.md)
+- [running background work](running-background-work.md) — user guide to `work`-stance jobs
+- [work sandbox internals](work-sandbox-internals.md) — developer map of the work execution path
+- [sandbox server ops](sandbox-server-ops.md) — running the RUN_SANDBOX provider
 - [context compaction guide](context-compaction-guide.md)
 - [rename from starter](rename-from-starter.md)
 - [context compaction comparative report](../research/context-compaction-comparative-report.md)
