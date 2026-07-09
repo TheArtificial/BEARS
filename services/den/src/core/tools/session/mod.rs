@@ -11,6 +11,7 @@ use den_core::tools::constants::{
     DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
     DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
     DEN_TASK_UPDATE_CURRENT_STATUS,
+    DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
 };
 use den_memory::MemoryStoreManager;
 use den_service::bears::BearProfile;
@@ -101,6 +102,10 @@ async fn invoke_workflow_tool(
         DEN_TASK_LIST_CHECKOUT => {
             workflow::checkout_task_list(pool, context, role, arguments).await?
         }
+        DEN_WORK_DISPATCH => workflow::dispatch_work(pool, context, role, arguments).await?,
+        DEN_WORK_RUN_LIST => workflow::list_work_runs(pool, context, arguments).await?,
+        DEN_WORK_RUN_GET => workflow::get_work_run(pool, context, arguments).await?,
+        DEN_WORK_RUN_CANCEL => workflow::cancel_work_run(pool, context, role, arguments).await?,
         _ => {
             return Err(CustomError::NotFound(format!(
                 "unknown workflow tool: {tool_name}"

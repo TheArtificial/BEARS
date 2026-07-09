@@ -94,8 +94,17 @@ pub struct Config {
     /// queued `memory_curate` reflection runs.
     pub run_workers: bool,
 
+    /// Enable the sandbox provider service (`RUN_SANDBOX`, default false).
+    ///
+    /// The sandbox server can run standalone on a separate host from the Den
+    /// instance using it; when it is the only enabled service the process does
+    /// not require `DATABASE_URL`.
+    pub run_sandbox: bool,
+
     pub web_port: u16,
     pub api_port: u16,
+    /// Port for the sandbox provider API (`SANDBOX_PORT`, default 3002).
+    pub sandbox_port: u16,
 
     /// Public base URL for the **web** service (no trailing slash). Links, redirects, CORS.
     pub web_server_url: String,
@@ -179,6 +188,40 @@ pub struct Config {
     pub embedding_model: String,
     /// Embedding vector dimensions for the active standard (`EMBEDDING_DIMENSIONS`, default 1536).
     pub embedding_dimensions: u32,
+
+    /// Static bearer token protecting the sandbox provider API (`SANDBOX_SERVICE_TOKEN`).
+    /// Empty = auth disabled, same convention as `DEN_INTERNAL_TOKEN`.
+    pub sandbox_service_token: String,
+    /// Path to the sandbox roots JSON config file (`SANDBOX_ROOTS_CONFIG`).
+    /// `None` = no roots configured; provisioning requests will be rejected.
+    pub sandbox_roots_config: Option<String>,
+    /// Directory holding pristine clones and ephemeral sandbox workspaces
+    /// (`SANDBOX_WORKSPACES_DIR`, default `./data/sandbox-workspaces`).
+    pub sandbox_workspaces_dir: String,
+    /// Default container image for sandboxes (`SANDBOX_IMAGE`).
+    pub sandbox_default_image: String,
+    /// Maximum concurrently running sandboxes (`SANDBOX_MAX_CONCURRENT`, default 2).
+    pub sandbox_max_concurrent: usize,
+    /// Per-sandbox wall-clock timeout in seconds (`SANDBOX_DEFAULT_TIMEOUT_SECS`, default 900).
+    pub sandbox_default_timeout_secs: u64,
+    /// Cap on retained sandbox log bytes (`SANDBOX_MAX_LOG_BYTES`, default 2 MiB).
+    pub sandbox_max_log_bytes: u64,
+
+    /// Base URL of the sandbox provider this Den instance dispatches work to
+    /// (`SANDBOX_SERVER_URL`, no trailing slash). `None` disables work dispatch.
+    pub sandbox_server_url: Option<String>,
+    /// Bearer token for calls to `sandbox_server_url` (`SANDBOX_SERVER_TOKEN`).
+    pub sandbox_server_token: String,
+    /// Den API base URL as reachable from inside sandbox containers
+    /// (`SANDBOX_CALLBACK_API_URL`, e.g. `http://host.docker.internal:3001`).
+    /// Defaults to `api_server_url`.
+    pub sandbox_callback_api_url: String,
+    /// Auto-enqueue pending work-stance tasks for dispatch (`WORK_DISPATCH_AUTO`, default false).
+    pub work_dispatch_auto: bool,
+    /// Preserve sandbox workspaces of failed runs for debugging (`SANDBOX_PRESERVE_FAILED`).
+    pub sandbox_preserve_failed: bool,
+    /// Maximum run attempts per task before it stays blocked (`WORK_MAX_ATTEMPTS`, default 2).
+    pub work_max_attempts: u32,
 
     /// Compaction rollout mode (`COMPACTION_MODE`: `observe` default, `active`, `off`).
     pub compaction_mode: String,
@@ -272,6 +315,9 @@ impl Config {
                 parse_bool_env("RUN_WORKERS", false),
             )
         };
+        // Deliberately outside the SERVER_MODE shorthand: the sandbox provider is
+        // opted into explicitly, never via legacy mode aliases.
+        let run_sandbox = parse_bool_env("RUN_SANDBOX", false);
 
         let ui_fixture_profile = match std::env::var("UI_FIXTURE_PROFILE") {
             Ok(raw) => {
@@ -308,6 +354,14 @@ impl Config {
             .unwrap_or_else(|_| {
                 tracing::warn!("Invalid API_PORT environment variable. Defaulting to 3001");
                 3001
+            });
+
+        let sandbox_port = std::env::var("SANDBOX_PORT")
+            .unwrap_or_else(|_| "3002".to_string())
+            .parse::<u16>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid SANDBOX_PORT environment variable. Defaulting to 3002");
+                3002
             });
 
         let web_server_url = std::env::var("WEB_SERVER_URL").unwrap_or_else(|_| {
@@ -500,6 +554,58 @@ impl Config {
                 1536
             });
 
+        let sandbox_service_token = std::env::var("SANDBOX_SERVICE_TOKEN").unwrap_or_default();
+        let sandbox_roots_config = std::env::var("SANDBOX_ROOTS_CONFIG")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let sandbox_workspaces_dir = std::env::var("SANDBOX_WORKSPACES_DIR")
+            .unwrap_or_else(|_| "./data/sandbox-workspaces".to_string());
+        let sandbox_default_image = std::env::var("SANDBOX_IMAGE").unwrap_or_default();
+        let sandbox_max_concurrent = std::env::var("SANDBOX_MAX_CONCURRENT")
+            .unwrap_or_else(|_| "2".to_string())
+            .parse::<usize>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid SANDBOX_MAX_CONCURRENT, defaulting to 2");
+                2
+            })
+            .max(1);
+        let sandbox_default_timeout_secs = std::env::var("SANDBOX_DEFAULT_TIMEOUT_SECS")
+            .unwrap_or_else(|_| "900".to_string())
+            .parse::<u64>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid SANDBOX_DEFAULT_TIMEOUT_SECS, defaulting to 900");
+                900
+            });
+        let sandbox_max_log_bytes = std::env::var("SANDBOX_MAX_LOG_BYTES")
+            .unwrap_or_else(|_| (2 * 1024 * 1024).to_string())
+            .parse::<u64>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid SANDBOX_MAX_LOG_BYTES, defaulting to 2 MiB");
+                2 * 1024 * 1024
+            });
+
+        let sandbox_server_url = std::env::var("SANDBOX_SERVER_URL")
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty());
+        let sandbox_server_token = std::env::var("SANDBOX_SERVER_TOKEN").unwrap_or_default();
+        let sandbox_callback_api_url = std::env::var("SANDBOX_CALLBACK_API_URL")
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| api_server_url.clone());
+        let work_dispatch_auto = parse_bool_env("WORK_DISPATCH_AUTO", false);
+        let sandbox_preserve_failed = parse_bool_env("SANDBOX_PRESERVE_FAILED", false);
+        let work_max_attempts = std::env::var("WORK_MAX_ATTEMPTS")
+            .unwrap_or_else(|_| "2".to_string())
+            .parse::<u32>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid WORK_MAX_ATTEMPTS, defaulting to 2");
+                2
+            })
+            .max(1);
+
         let compaction_mode =
             std::env::var("COMPACTION_MODE").unwrap_or_else(|_| "observe".to_string());
 
@@ -516,7 +622,10 @@ impl Config {
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or_else(|_| "crates/den-web/src/templates".to_string()),
-            database_url: std::env::var("DATABASE_URL").expect("DATABASE_URL"),
+            // Required only when a DB-backed service runs; enforced by the
+            // binary's `validate_runtime_config`, not here, so a standalone
+            // sandbox server (RUN_SANDBOX only) can boot without Postgres.
+            database_url: std::env::var("DATABASE_URL").unwrap_or_default(),
 
             mailgun_api_key: std::env::var("MAILGUN_API_KEY").unwrap_or_default(),
             mailgun_domain: std::env::var("MAILGUN_DOMAIN").unwrap_or_default(),
@@ -534,8 +643,10 @@ impl Config {
             run_web,
             run_api,
             run_workers,
+            run_sandbox,
             web_port,
             api_port,
+            sandbox_port,
             web_server_url,
             api_server_url,
             den_internal_token,
@@ -569,6 +680,19 @@ impl Config {
             embedding_standard,
             embedding_model,
             embedding_dimensions,
+            sandbox_service_token,
+            sandbox_roots_config,
+            sandbox_workspaces_dir,
+            sandbox_default_image,
+            sandbox_max_concurrent,
+            sandbox_default_timeout_secs,
+            sandbox_max_log_bytes,
+            sandbox_server_url,
+            sandbox_server_token,
+            sandbox_callback_api_url,
+            work_dispatch_auto,
+            sandbox_preserve_failed,
+            work_max_attempts,
             compaction_mode,
             compaction_timing,
             agent_loop_control_mode,
@@ -632,8 +756,10 @@ impl Config {
             run_web: false,
             run_api: false,
             run_workers: false,
+            run_sandbox: false,
             web_port: 3000,
             api_port: 3001,
+            sandbox_port: 3002,
             web_server_url: "http://localhost:3000".into(),
             api_server_url: "http://localhost:3001".into(),
             den_internal_token: String::new(),
@@ -667,6 +793,19 @@ impl Config {
             embedding_standard: "bears-embed-v1".into(),
             embedding_model: "text-embedding-3-small".into(),
             embedding_dimensions: 1536,
+            sandbox_service_token: String::new(),
+            sandbox_roots_config: None,
+            sandbox_workspaces_dir: "./data/sandbox-workspaces".into(),
+            sandbox_default_image: String::new(),
+            sandbox_max_concurrent: 2,
+            sandbox_default_timeout_secs: 900,
+            sandbox_max_log_bytes: 2 * 1024 * 1024,
+            sandbox_server_url: None,
+            sandbox_server_token: String::new(),
+            sandbox_callback_api_url: "http://localhost:3001".into(),
+            work_dispatch_auto: false,
+            sandbox_preserve_failed: false,
+            work_max_attempts: 2,
             compaction_mode: "observe".into(),
             compaction_timing: "async".into(),
             agent_loop_control_mode: "enforce".into(),

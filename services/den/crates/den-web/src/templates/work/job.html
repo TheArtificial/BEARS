@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Work job{% endblock %}
+{% block content %}
+<p><a href="/work">← Work</a></p>
+<h1>{{ goal }}</h1>
+<p>
+    Bear <strong>{{ bear_slug }}</strong> · status <strong>{{ status }}</strong>
+    {% if work_surface_ref %} · work surface <code>{{ work_surface_ref }}</code>{% endif %}
+</p>
+
+<section>
+    <h2>Tasks</h2>
+    <table>
+        <thead>
+            <tr><th>Task</th><th>Kind</th><th>Stance</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for task in tasks %}
+            <tr>
+                <td>
+                    {{ task.title }}
+                    <details>
+                        <summary>criteria</summary>
+                        <ul>
+                            {% for criterion in task.completion_criteria %}
+                            <li>{{ criterion }}</li>
+                            {% endfor %}
+                        </ul>
+                    </details>
+                </td>
+                <td>{{ task.kind }}</td>
+                <td>{{ task.assigned_to_role or "—" }}</td>
+                <td>{{ task.status }}</td>
+                <td>
+                    {% if task.is_work and task.status in ["pending", "blocked"] %}
+                    <form method="post" action="/work/tasks/{{ task.id }}/dispatch">
+                        <button type="submit">Dispatch</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section>
+    <h2>Work runs</h2>
+    {% if runs %}
+    <table>
+        <thead>
+            <tr><th>Run</th><th>State</th><th>Attempt</th><th>Result</th><th>Finished</th></tr>
+        </thead>
+        <tbody>
+            {% for run in runs %}
+            <tr>
+                <td><a href="/work/runs/{{ run.id }}">{{ run.id[:8] }}…</a></td>
+                <td>{{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}</td>
+                <td>{{ run.attempt }}</td>
+                <td>{{ run.result_summary or run.error or "—" }}</td>
+                <td>{{ run.finished_at or "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No work runs for this job yet.</p>
+    {% endif %}
+</section>
+{% endblock %}

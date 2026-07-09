@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Work{% endblock %}
+{% block head %}
+{% if active_runs %}<meta http-equiv="refresh" content="10" />{% endif %}
+{% endblock %}
+{% block content %}
+<h1>Work</h1>
+
+{% if active_runs %}
+<section>
+    <h2>Active runs ({{ active_runs | length }})</h2>
+    <p>Sandboxes are running and consuming server resources. This page refreshes every 10 seconds.</p>
+    <table>
+        <thead>
+            <tr><th>Run</th><th>Bear</th><th>State</th><th>Sandbox</th><th>Queued</th></tr>
+        </thead>
+        <tbody>
+            {% for run in active_runs %}
+            <tr>
+                <td><a href="/work/runs/{{ run.id }}">{{ run.id[:8] }}…</a></td>
+                <td>{{ run.bear_slug }}</td>
+                <td>{{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}</td>
+                <td>{{ run.sandbox_type or "—" }}</td>
+                <td>{{ run.queued_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% else %}
+<p>No work is currently running.</p>
+{% endif %}
+
+<section>
+    <h2>Jobs</h2>
+    {% if jobs %}
+    <table>
+        <thead>
+            <tr><th>Goal</th><th>Bear</th><th>Status</th><th>Work surface</th></tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr>
+                <td><a href="/work/jobs/{{ job.id }}">{{ job.goal }}</a></td>
+                <td>{{ job.bear_slug }}</td>
+                <td>{{ job.status }}</td>
+                <td>{{ job.work_surface_ref or "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No Docket jobs yet.</p>
+    {% endif %}
+</section>
+
+<section>
+    <h2>Run history</h2>
+    {% if runs %}
+    <table>
+        <thead>
+            <tr><th>Run</th><th>Bear</th><th>State</th><th>Attempt</th><th>Result</th><th>Finished</th></tr>
+        </thead>
+        <tbody>
+            {% for run in runs %}
+            <tr>
+                <td><a href="/work/runs/{{ run.id }}">{{ run.id[:8] }}…</a></td>
+                <td>{{ run.bear_slug }}</td>
+                <td>{{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}</td>
+                <td>{{ run.attempt }}</td>
+                <td>{{ run.result_summary or run.error or "—" }}</td>
+                <td>{{ run.finished_at or "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No work runs yet. Assign a Docket task to the work stance and dispatch it.</p>
+    {% endif %}
+</section>
+{% endblock %}

@@ -8,6 +8,7 @@ pub(crate) mod conversation;
 pub(crate) mod resource;
 pub(crate) mod run;
 pub(crate) mod session;
+pub(crate) mod work;
 
 #[cfg(test)]
 mod tests;

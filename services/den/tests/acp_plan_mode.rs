@@ -143,7 +143,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     assert!(active.is_none());
 
     let event_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM acp_plan_mode_events WHERE plan_mode_id = $1",
+        "SELECT COUNT(*)::bigint FROM client_plan_mode_events WHERE plan_mode_id = $1",
     )
     .bind(entered.id)
     .fetch_one(&pool)

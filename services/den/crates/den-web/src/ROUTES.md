@@ -103,6 +103,17 @@ Member-facing bear management at `/bear/{slug}/…` (read for members, write for
 
 All `/admin/*` routes use `permission_required!(…, "admin")`.
 
+## Work (`src/work/mod.rs`)
+
+- `GET /work` — jobs + active/past work runs overview (auto-refreshes while runs are active)
+- `GET /work/jobs/{job_id}` — job detail: task tree with statuses, per-task dispatch, run history
+- `GET /work/runs/{run_id}` — run detail: state, sandbox type/strength, work surface, changed files + diff, log tail, usage, cleanup status
+- `POST /work/tasks/{task_id}/dispatch` — enqueue a work-assigned task for sandbox execution
+- `POST /work/runs/{run_id}/cancel` — request cancellation (dispatch worker performs teardown)
+- `POST /work/runs/{run_id}/retry` — re-enqueue a terminal run as a new attempt
+
+All `/work/*` routes use `login_required!(…)`; runs/jobs are scoped to bears the user is a member of.
+
 ## API service (separate router)
 
 The standalone API (`RUN_API=true`) is built in `src/api/service.rs` — see `src/api/` and `src/api/oauth/README.md`, not this file.

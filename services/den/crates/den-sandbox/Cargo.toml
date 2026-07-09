@@ -1,0 +1,33 @@
+[package]
+name = "den-sandbox"
+version.workspace = true
+edition = "2021"
+
+# den-sandbox: standalone sandbox provider service (RUN_SANDBOX) plus the
+# Den-side client for it. Provisions isolated workspaces where headless
+# armatures execute Docket work. Deliberately has no sqlx/den-service
+# dependency — the provider must run without the Den database (ADR: the
+# sandbox server may live on a different host and talks to Den over HTTP only).
+
+[lints]
+workspace = true
+
+[features]
+production = ["den-core/production"]
+
+[dependencies]
+den-core = { path = "../den-core" }
+axum = { workspace = true, features = ["json", "query", "http1", "tokio"] }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time = { workspace = true, features = ["serde", "serde-well-known", "formatting"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "process", "fs"] }
+tokio-util.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+http-body-util = "0.1"

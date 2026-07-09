@@ -26,6 +26,8 @@ den-service = { path = "../den-service" }
 den-llm = { path = "../den-llm" }
 den-memory = { path = "../den-memory" }
 den-docket = { path = "../den-docket" }
+den-http = { path = "../den-http" }
+den-sandbox = { path = "../den-sandbox" }
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true

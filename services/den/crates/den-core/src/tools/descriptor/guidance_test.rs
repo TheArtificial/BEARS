@@ -54,8 +54,10 @@ fn task_list_update_descriptor_includes_active_work_state_guidance() {
         .description
         .contains("Side effect: updates active work state"));
     assert!(descriptor.description.contains("session_info"));
-    assert!(descriptor.description.contains("3 or more things"));
-    assert!(descriptor.description.contains("auto-generates stable"));
+    assert!(descriptor
+        .description
+        .contains("Deprecated compatibility tool"));
+    assert!(descriptor.description.contains("checkout_task_list"));
 }
 
 #[test]

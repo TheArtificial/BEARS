@@ -75,6 +75,8 @@ async fn recall_indexer_round_trip_against_live_qdrant() {
         visibility: "normal".into(),
         content_text: body.clone(),
         salience: "normal".into(),
+        lifecycle_status: "active".into(),
+        freshness_trend: "stable".into(),
         entity_ids: Vec::new(),
     };
 
@@ -177,6 +179,8 @@ async fn recall_query_retrieves_indexed_passage_against_live_qdrant() {
         visibility: "normal".into(),
         content_text: body.clone(),
         salience: "normal".into(),
+        lifecycle_status: "active".into(),
+        freshness_trend: "stable".into(),
         entity_ids: Vec::new(),
     };
 
@@ -285,6 +289,8 @@ async fn entity_scoped_recall_filters_by_payload_entity_ids() {
         visibility: "normal".into(),
         content_text: body.clone(),
         salience: "normal".into(),
+        lifecycle_status: "active".into(),
+        freshness_trend: "stable".into(),
         entity_ids: vec![entity_id.clone()],
     };
 

@@ -66,6 +66,7 @@ pub mod native_runtime;
 
 /// Reflection/curation worker subsystem: the memory-curate conductor + conversation lanes.
 pub mod reflection;
+pub mod work_dispatch;
 
 /// Compatibility re-export: concrete recall implementation lives in `den-service`.
 pub use den_service::recall;

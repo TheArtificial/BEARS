@@ -150,8 +150,11 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
 
     let config = Arc::new(Config::load());
     validate_runtime_config(config.as_ref())?;
-    validate_upstream_connections(config.as_ref()).await?;
-    email::init_mailgun(config.as_ref());
+    let needs_db = crate::startup::needs_database(config.as_ref());
+    if needs_db {
+        validate_upstream_connections(config.as_ref()).await?;
+        email::init_mailgun(config.as_ref());
+    }
     tracing::info!(
         app = %config.app_display_name,
         slug = %config.app_slug,
@@ -173,8 +176,17 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
         services.push("workers");
         tracing::info!("Background workers slot enabled (no domain workers in this slim starter)");
     }
+    if config.run_sandbox {
+        services.push("sandbox");
+        tracing::info!(
+            "Sandbox provider will start on port {}",
+            config.sandbox_port
+        );
+    }
     if services.is_empty() {
-        tracing::warn!("No services enabled! Set RUN_WEB, RUN_API, or RUN_WORKERS to true.");
+        tracing::warn!(
+            "No services enabled! Set RUN_WEB, RUN_API, RUN_WORKERS, or RUN_SANDBOX to true."
+        );
     } else {
         tracing::info!(
             "Starting application (`den`) with services: {}",
@@ -182,148 +194,134 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
         );
     }
 
-    let sqlx_pool = connect_database(config.as_ref()).await?;
-    ensure_database_schema_supported(&sqlx_pool).await?;
-    if skip_migrations {
-        tracing::info!(
-            schema_version = crate::startup::embedded_schema_version(),
-            "Skipping startup SQLx migrations; assuming deploy-time migration job already succeeded"
-        );
-    } else {
-        run_sqlx_migrations(&sqlx_pool).await?;
-    }
-    ensure_database_schema_supported(&sqlx_pool).await?;
+    // Everything Postgres-backed (web, API, session store, workers) lives in
+    // this branch. A standalone sandbox server (RUN_SANDBOX only) skips it all
+    // — it must be able to run on a host with no database.
+    let mut worker_token_opt: Option<CancellationToken> = None;
+    let mut deletion_task_abort_handle = None;
+    if needs_db {
+        let sqlx_pool = connect_database(config.as_ref()).await?;
+        ensure_database_schema_supported(&sqlx_pool).await?;
+        if skip_migrations {
+            tracing::info!(
+                schema_version = crate::startup::embedded_schema_version(),
+                "Skipping startup SQLx migrations; assuming deploy-time migration job already succeeded"
+            );
+        } else {
+            run_sqlx_migrations(&sqlx_pool).await?;
+        }
+        ensure_database_schema_supported(&sqlx_pool).await?;
 
-    let session_store = PostgresStore::new(sqlx_pool.clone());
-    session_store
-        .migrate()
-        .await
-        .map_err(|e| StartupError::SessionStore(format!("{e:?}")))?;
-
-    let deletion_task = tokio::task::spawn(
+        let session_store = PostgresStore::new(sqlx_pool.clone());
         session_store
-            .clone()
-            .continuously_delete_expired(tokio::time::Duration::from_mins(1)),
-    );
-    let deletion_task_abort_handle = deletion_task.abort_handle();
-
-    if config.run_web {
-        let web_addr = SocketAddr::from(([0, 0, 0, 0], config.web_port));
-        tracing::info!("Starting web server on http://{}", web_addr);
-
-        let web_listener = tokio::net::TcpListener::bind(web_addr).await.map_err(|e| {
-            tracing::error!(
-                "Failed to bind web server to port {}: {}",
-                config.web_port,
-                e
-            );
-            e
-        })?;
-
-        let config_web = config.clone();
-        let web_app = web::server_with_state_and_runtime(
-            sqlx_pool.clone(),
-            session_store.clone(),
-            config_web,
-            native_web_chat_runtime(),
-        )
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to create web application: {}", e);
-            std::io::Error::other(e.to_string())
-        })?;
-
-        task_set.spawn(async move {
-            tracing::info!("Web service started successfully");
-            axum::serve(web_listener, web_app.into_make_service())
-                .with_graceful_shutdown(shutdown_signal())
-                .await
-                .map_err(std::io::Error::other)
-        });
-    }
-
-    if config.run_api {
-        let api_addr = SocketAddr::from(([0, 0, 0, 0], config.api_port));
-        tracing::info!("Starting API server on http://{}", api_addr);
-
-        let api_listener = tokio::net::TcpListener::bind(api_addr).await.map_err(|e| {
-            tracing::error!(
-                "Failed to bind API server to port {}: {}",
-                config.api_port,
-                e
-            );
-            e
-        })?;
-
-        let config_api = config.clone();
-        // Composition root: wire peer HTTP edges together. den-api owns the
-        // JSON/REST + OAuth app; BearWire is injected here as a peer router so
-        // neither edge depends on the other (ADR-0043).
-        let peer_routers: Vec<(&'static str, axum::Router<den_service::DenState>)> = vec![
-            ("/internal", crate::internal_tools::router()),
-            ("/bearwire", den_bearwire::router()),
-        ];
-        let api_app = api::create_api_app(
-            sqlx_pool.clone(),
-            session_store.clone(),
-            config_api,
-            peer_routers,
-        )
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to create API application: {}", e);
-            std::io::Error::other(e.to_string())
-        })?;
-
-        task_set.spawn(async move {
-            tracing::info!("API service started successfully");
-            axum::serve(api_listener, api_app.into_make_service())
-                .with_graceful_shutdown(shutdown_signal())
-                .await
-                .map_err(std::io::Error::other)
-        });
-    }
-
-    task_set.spawn(async move {
-        deletion_task
+            .migrate()
             .await
-            .map_err(std::io::Error::other)?
-            .map_err(std::io::Error::other)
-    });
+            .map_err(|e| StartupError::SessionStore(format!("{e:?}")))?;
 
-    let worker_token_opt = if config.run_workers {
-        Some(CancellationToken::new())
-    } else {
-        None
-    };
+        let deletion_task = tokio::task::spawn(
+            session_store
+                .clone()
+                .continuously_delete_expired(tokio::time::Duration::from_mins(1)),
+        );
+        deletion_task_abort_handle = Some(deletion_task.abort_handle());
 
-    if let Some(token) = worker_token_opt.clone() {
-        let t = token;
-        let worker_pool = sqlx_pool.clone();
-        let worker_config = config.clone();
-        task_set.spawn(async move {
-            tracing::info!("Workers: memory_curate runner loop enabled");
-            den_runtime::reflection_conductor::run_memory_curate_worker_loop(
-                worker_pool,
-                worker_config,
-                t,
-                std::time::Duration::from_secs(5),
+        if config.run_web {
+            let web_addr = SocketAddr::from(([0, 0, 0, 0], config.web_port));
+            tracing::info!("Starting web server on http://{}", web_addr);
+
+            let web_listener = tokio::net::TcpListener::bind(web_addr).await.map_err(|e| {
+                tracing::error!(
+                    "Failed to bind web server to port {}: {}",
+                    config.web_port,
+                    e
+                );
+                e
+            })?;
+
+            let config_web = config.clone();
+            let web_app = web::server_with_state_and_runtime(
+                sqlx_pool.clone(),
+                session_store.clone(),
+                config_web,
+                native_web_chat_runtime(),
             )
             .await
-            .map_err(std::io::Error::other)
-        });
-    } else {
-        tracing::info!("Workers disabled (RUN_WORKERS=false or not set)");
-    }
+            .map_err(|e| {
+                tracing::error!("Failed to create web application: {}", e);
+                std::io::Error::other(e.to_string())
+            })?;
 
-    if let Some(token) = worker_token_opt.clone() {
-        if config.qdrant_url.is_some() {
+            task_set.spawn(async move {
+                tracing::info!("Web service started successfully");
+                axum::serve(web_listener, web_app.into_make_service())
+                    .with_graceful_shutdown(shutdown_signal())
+                    .await
+                    .map_err(std::io::Error::other)
+            });
+        }
+
+        if config.run_api {
+            let api_addr = SocketAddr::from(([0, 0, 0, 0], config.api_port));
+            tracing::info!("Starting API server on http://{}", api_addr);
+
+            let api_listener = tokio::net::TcpListener::bind(api_addr).await.map_err(|e| {
+                tracing::error!(
+                    "Failed to bind API server to port {}: {}",
+                    config.api_port,
+                    e
+                );
+                e
+            })?;
+
+            let config_api = config.clone();
+            // Composition root: wire peer HTTP edges together. den-api owns the
+            // JSON/REST + OAuth app; BearWire is injected here as a peer router so
+            // neither edge depends on the other (ADR-0043).
+            let peer_routers: Vec<(&'static str, axum::Router<den_service::DenState>)> = vec![
+                ("/internal", crate::internal_tools::router()),
+                ("/bearwire", den_bearwire::router()),
+            ];
+            let api_app = api::create_api_app(
+                sqlx_pool.clone(),
+                session_store.clone(),
+                config_api,
+                peer_routers,
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create API application: {}", e);
+                std::io::Error::other(e.to_string())
+            })?;
+
+            task_set.spawn(async move {
+                tracing::info!("API service started successfully");
+                axum::serve(api_listener, api_app.into_make_service())
+                    .with_graceful_shutdown(shutdown_signal())
+                    .await
+                    .map_err(std::io::Error::other)
+            });
+        }
+
+        task_set.spawn(async move {
+            deletion_task
+                .await
+                .map_err(std::io::Error::other)?
+                .map_err(std::io::Error::other)
+        });
+
+        worker_token_opt = if config.run_workers {
+            Some(CancellationToken::new())
+        } else {
+            None
+        };
+
+        if let Some(token) = worker_token_opt.clone() {
             let t = token;
             let worker_pool = sqlx_pool.clone();
             let worker_config = config.clone();
             task_set.spawn(async move {
-                tracing::info!("Workers: recall_index runner loop enabled");
-                den_runtime::reflection_conductor::run_recall_index_worker_loop(
+                tracing::info!("Workers: memory_curate runner loop enabled");
+                den_runtime::reflection_conductor::run_memory_curate_worker_loop(
                     worker_pool,
                     worker_config,
                     t,
@@ -333,41 +331,115 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
                 .map_err(std::io::Error::other)
             });
         } else {
-            tracing::info!("Workers: recall_index loop disabled (QDRANT_URL unset)");
+            tracing::info!("Workers disabled (RUN_WORKERS=false or not set)");
+        }
+
+        if let Some(token) = worker_token_opt.clone() {
+            if config.qdrant_url.is_some() {
+                let t = token;
+                let worker_pool = sqlx_pool.clone();
+                let worker_config = config.clone();
+                task_set.spawn(async move {
+                    tracing::info!("Workers: recall_index runner loop enabled");
+                    den_runtime::reflection_conductor::run_recall_index_worker_loop(
+                        worker_pool,
+                        worker_config,
+                        t,
+                        std::time::Duration::from_secs(5),
+                    )
+                    .await
+                    .map_err(std::io::Error::other)
+                });
+            } else {
+                tracing::info!("Workers: recall_index loop disabled (QDRANT_URL unset)");
+            }
+        }
+
+        if let Some(token) = worker_token_opt.clone() {
+            let t = token;
+            let worker_pool = sqlx_pool.clone();
+            let worker_config = config.clone();
+            task_set.spawn(async move {
+                tracing::info!("Workers: context_compact runner loop enabled");
+                den_runtime::reflection_conductor::run_context_compact_worker_loop(
+                    worker_pool,
+                    worker_config,
+                    t,
+                    std::time::Duration::from_secs(5),
+                )
+                .await
+                .map_err(std::io::Error::other)
+            });
+        }
+
+        if let Some(token) = worker_token_opt.clone() {
+            let t = token;
+            let worker_pool = sqlx_pool.clone();
+            let worker_config = config.clone();
+            task_set.spawn(async move {
+                tracing::info!("Workers: archive_harvest runner loop enabled");
+                den_runtime::reflection_conductor::run_archive_harvest_worker_loop(
+                    worker_pool,
+                    worker_config,
+                    t,
+                    std::time::Duration::from_secs(30),
+                )
+                .await
+                .map_err(std::io::Error::other)
+            });
+        }
+
+        if let Some(token) = worker_token_opt.clone() {
+            if config.sandbox_server_url.is_some() {
+                let t = token;
+                let worker_pool = sqlx_pool.clone();
+                let worker_config = config.clone();
+                task_set.spawn(async move {
+                    tracing::info!("Workers: work_dispatch runner loop enabled");
+                    den_runtime::work_dispatch::run_work_dispatch_worker_loop(
+                        worker_pool,
+                        worker_config,
+                        t,
+                        std::time::Duration::from_secs(2),
+                    )
+                    .await
+                    .map_err(std::io::Error::other)
+                });
+            } else {
+                tracing::info!("Workers: work_dispatch loop disabled (SANDBOX_SERVER_URL unset)");
+            }
         }
     }
 
-    if let Some(token) = worker_token_opt.clone() {
-        let t = token;
-        let worker_pool = sqlx_pool.clone();
-        let worker_config = config.clone();
-        task_set.spawn(async move {
-            tracing::info!("Workers: context_compact runner loop enabled");
-            den_runtime::reflection_conductor::run_context_compact_worker_loop(
-                worker_pool,
-                worker_config,
-                t,
-                std::time::Duration::from_secs(5),
-            )
-            .await
-            .map_err(std::io::Error::other)
-        });
-    }
+    if config.run_sandbox {
+        let sandbox_addr = SocketAddr::from(([0, 0, 0, 0], config.sandbox_port));
+        tracing::info!("Starting sandbox provider on http://{}", sandbox_addr);
 
-    if let Some(token) = worker_token_opt.clone() {
-        let t = token;
-        let worker_pool = sqlx_pool.clone();
-        let worker_config = config.clone();
-        task_set.spawn(async move {
-            tracing::info!("Workers: archive_harvest runner loop enabled");
-            den_runtime::reflection_conductor::run_archive_harvest_worker_loop(
-                worker_pool,
-                worker_config,
-                t,
-                std::time::Duration::from_secs(30),
-            )
+        let sandbox_listener = tokio::net::TcpListener::bind(sandbox_addr)
             .await
-            .map_err(std::io::Error::other)
+            .map_err(|e| {
+                tracing::error!(
+                    "Failed to bind sandbox provider to port {}: {}",
+                    config.sandbox_port,
+                    e
+                );
+                e
+            })?;
+
+        let sandbox_app = den_sandbox::create_sandbox_app(
+            den_sandbox::SandboxServerConfig::from_config(config.as_ref()),
+        )
+        .map_err(|e| {
+            tracing::error!("Failed to create sandbox provider: {}", e);
+            StartupError::Message(format!("sandbox provider startup: {e}"))
+        })?;
+
+        task_set.spawn(async move {
+            tracing::info!("Sandbox provider started successfully");
+            axum::serve(sandbox_listener, sandbox_app.into_make_service())
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+                .map_err(std::io::Error::other)
         });
     }
 
@@ -377,7 +449,9 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
 
     tracing::info!("Shutdown signal received. Stopping services...");
 
-    deletion_task_abort_handle.abort();
+    if let Some(handle) = deletion_task_abort_handle {
+        handle.abort();
+    }
 
     if let Some(token) = worker_token_opt {
         token.cancel();

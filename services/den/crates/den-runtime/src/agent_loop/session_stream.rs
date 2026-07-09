@@ -1148,7 +1148,7 @@ impl Stream for SessionTrackingStream {
                     let started =
                         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
                             tool_call_id: tool_call_id.clone(),
-                            tool_name: tool_name.clone(),
+                            tool_name,
                             title: Some("Runtime checkpoint".to_string()),
                             kind: Some("function".to_string()),
                             arguments: arguments.clone(),
@@ -2243,11 +2243,11 @@ mod tests {
         store.insert(session.clone());
         let inner = futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
             RuntimeSemanticEvent::ToolCallRequested {
-                tool_call_id: "call-read".to_string(),
-                tool_name: "fs_read_text_file".to_string(),
+                tool_call_id: "call-edit".to_string(),
+                tool_name: "fs_edit_file".to_string(),
                 title: None,
                 kind: Some("function".to_string()),
-                arguments: serde_json::json!({"path":"README.md"}),
+                arguments: serde_json::json!({"path":"README.md","old_text":"a","new_text":"b"}),
                 approval_request_id: None,
                 approval_required: false,
                 approval_reason: None,

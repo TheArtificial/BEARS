@@ -50,6 +50,48 @@ Use the devcontainer or local `.env` (see [`.env.example`](.env.example)) with `
 
 ---
 
+## Sandbox provider (RUN_SANDBOX)
+
+The `RUN_SANDBOX` service hosts isolated workspaces where headless
+bear-armatures execute Docket work autonomously (`work` stance). It stands
+alone — no Postgres — and may run on a different host from the Den instance
+using it; Den talks to it over `/sandbox/v1` (static bearer token,
+`SANDBOX_SERVICE_TOKEN`), and in-sandbox armatures dial back to Den over
+BearWire.
+
+Recommended dev setup (bare-metal provider, host docker):
+
+1. Build the sandbox image: `scripts/build-sandbox-image.sh` (tags
+   `bears/sandbox:latest`, override with `SANDBOX_IMAGE`).
+2. Declare workspace roots in a JSON file, e.g. `./data/sandbox-roots.json`:
+
+   ```json
+   {
+     "roots": [
+       { "name": "scratch", "path": "/srv/scratch" },
+       { "name": "site", "upstream": { "url": "git@github.com:you/site.git",
+           "default_ref": "main",
+           "credential": { "ssh_key_path": "/etc/bears/keys/site" } } }
+     ]
+   }
+   ```
+
+   Git-backed roots are pristine server-managed bare clones, synced
+   fetch/fast-forward-only before each provisioning; sandboxes get an
+   ephemeral local clone at the requested ref.
+3. Run the provider:
+   `RUN_SANDBOX=true SANDBOX_ROOTS_CONFIG=./data/sandbox-roots.json SANDBOX_SERVICE_TOKEN=devtoken cargo run -- serve`
+4. Point the Den workers at it (in the Den process env):
+   `SANDBOX_SERVER_URL=http://localhost:3002 SANDBOX_SERVER_TOKEN=devtoken`
+   plus `SANDBOX_CALLBACK_API_URL` set to the Den API URL as reachable from
+   inside containers (e.g. `http://host.docker.internal:3001`).
+5. Create a Docket job with a task assigned to `work` and dispatch it with the
+   `dispatch_work` tool (or the `/work` web UI). Watch progress at `/work`.
+
+A `sandbox` compose profile exists for containerized single-host setups; it
+mounts `docker.sock` (host-root-equivalent — dev only) and requires the Den
+image to carry a docker CLI, so bare-metal is the simpler dev path.
+
 ## License
 
 This project is licensed under the [MIT license](LICENSE.md).

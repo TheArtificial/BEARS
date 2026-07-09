@@ -6,7 +6,6 @@
 // `den-http` (v1.5 split); re-exported here so `crate::core::*` call sites are
 // unchanged until the edges are extracted.
 pub use den_http::{api_utils, email, user};
-pub mod sandbox;
 pub mod tools;
 pub use tools::tool_descriptor_guidance;
 pub use tools::web_policy;

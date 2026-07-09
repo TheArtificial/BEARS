@@ -210,6 +210,14 @@ services:
             RUN_WEB: ${RUN_WEB:-true}
             RUN_API: ${RUN_API:-true}
             RUN_WORKERS: ${RUN_WORKERS:-false}
+            RUN_SANDBOX: ${RUN_SANDBOX:-false}
+            # Work-dispatch client settings (used when RUN_WORKERS=true and a
+            # sandbox provider is deployed; empty SANDBOX_SERVER_URL disables dispatch).
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-}
+            SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-}
+            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-}
+            WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
+            WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
             RUST_LOG: ${RUST_LOG:-info}
             PORT: ${DEN_PORT:-3000}
             API_PORT: ${DEN_API_PORT:-3001}
@@ -295,6 +303,14 @@ services:
             RUN_WEB: ${RUN_WEB:-true}
             RUN_API: ${RUN_API:-true}
             RUN_WORKERS: ${RUN_WORKERS:-false}
+            RUN_SANDBOX: ${RUN_SANDBOX:-false}
+            # Work-dispatch client settings (used when RUN_WORKERS=true and a
+            # sandbox provider is deployed; empty SANDBOX_SERVER_URL disables dispatch).
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-}
+            SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-}
+            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-}
+            WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
+            WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
             RUST_LOG: ${RUST_LOG:-info}
             PORT: ${DEN_PORT:-3000}
             API_PORT: ${DEN_API_PORT:-3001}
@@ -332,6 +348,59 @@ services:
             GITHUB_PACKAGES_TOKEN: ${GITHUB_PACKAGES_TOKEN:-}
             GHCR_PACKAGES_OWNER: ${GHCR_PACKAGES_OWNER:-}
             GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-}
+
+    # Sandbox provider (RUN_SANDBOX only, no database). Enable with
+    # COMPOSE_PROFILES=sandbox and point the Den workers at it via
+    # SANDBOX_SERVER_URL=http://bears-sandbox:3002 plus
+    # SANDBOX_CALLBACK_API_URL=http://bears-den:3001 (the Den API as reachable
+    # from sandbox containers on the compose network).
+    bears-sandbox:
+        image: ${DEN_IMAGE:-bears-den:${SOURCE_COMMIT:-local}}
+        restart: unless-stopped
+        profiles: ["sandbox"]
+        depends_on:
+            bears-preflight-config:
+                condition: service_completed_successfully
+        command: ["serve"]
+        environment:
+            RUN_WEB: "false"
+            RUN_API: "false"
+            RUN_WORKERS: "false"
+            RUN_SANDBOX: "true"
+            RUST_LOG: ${RUST_LOG:-info}
+            SANDBOX_PORT: ${SANDBOX_PORT:-3002}
+            SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-}
+            SANDBOX_ROOTS_CONFIG: /etc/bears/sandbox-roots.json
+            # Must be the SAME absolute path on the host and in this container:
+            # sandbox workspaces are bind-mounted into sibling containers via
+            # the host docker daemon, which resolves paths host-side.
+            SANDBOX_WORKSPACES_DIR: ${SANDBOX_WORKSPACES_DIR:-/var/lib/bears/sandbox-workspaces}
+            SANDBOX_IMAGE: ${SANDBOX_IMAGE:-bears/sandbox:latest}
+            SANDBOX_MAX_CONCURRENT: ${SANDBOX_MAX_CONCURRENT:-2}
+            SANDBOX_DEFAULT_TIMEOUT_SECS: ${SANDBOX_DEFAULT_TIMEOUT_SECS:-900}
+            SANDBOX_MAX_LOG_BYTES: ${SANDBOX_MAX_LOG_BYTES:-2097152}
+        volumes:
+            # ponytail: mounting docker.sock grants host-root-equivalent access
+            # to this container — acceptable for single-host dev; run the
+            # sandbox provider on a separate host for production. The Den image
+            # must include a docker CLI for this profile (or run the provider
+            # bare-metal on the host, which is the recommended dev setup — see
+            # services/den/README.md).
+            - /var/run/docker.sock:/var/run/docker.sock
+            - ${SANDBOX_WORKSPACES_DIR:-/var/lib/bears/sandbox-workspaces}:${SANDBOX_WORKSPACES_DIR:-/var/lib/bears/sandbox-workspaces}
+            - ${SANDBOX_ROOTS_FILE:-./data/sandbox-roots.json}:/etc/bears/sandbox-roots.json:ro
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "wget --no-verbose --tries=1 -O /dev/null http://127.0.0.1:$${SANDBOX_PORT:-3002}/sandbox/v1/health || exit 1",
+                ]
+            interval: 30s
+            timeout: 15s
+            retries: 5
+            start_period: 30s
+        expose:
+            - "3002"
 
 volumes:
     bears-postgres-data:

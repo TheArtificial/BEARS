@@ -743,7 +743,7 @@ const SELECT_EXECUTION_BY_CONVERSATION: &str = r"
     LIMIT 1
 ";
 
-async fn upsert_execution_session(
+pub(super) async fn upsert_execution_session(
     pool: &PgPool,
     upsert: DocketExecutionSessionUpsert,
 ) -> Result<DocketExecutionSessionRow, DenError> {

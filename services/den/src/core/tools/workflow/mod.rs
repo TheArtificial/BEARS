@@ -7,7 +7,8 @@ use den_core::tools::constants::{
     DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
     DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
     DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
-    DEN_TASK_UPDATE_CURRENT_STATUS,
+    DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_GET,
+    DEN_WORK_RUN_LIST,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
@@ -47,6 +48,10 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_TASK_UPDATE_CURRENT_STATUS
             | DEN_TASK_LIST_SYNC
             | DEN_TASK_LIST_CHECKOUT
+            | DEN_WORK_DISPATCH
+            | DEN_WORK_RUN_LIST
+            | DEN_WORK_RUN_GET
+            | DEN_WORK_RUN_CANCEL
     )
 }
 
@@ -766,3 +771,164 @@ pub(crate) async fn checkout_task_list(
 
 #[cfg(test)]
 mod test;
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkDispatchArguments {
+    task_id: Uuid,
+    #[serde(default)]
+    root: Option<String>,
+    #[serde(default)]
+    git_ref: Option<String>,
+}
+
+pub(crate) async fn dispatch_work(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
+        return Err(CustomError::ValidationError(format!(
+            "dispatch_work is available to chat and pair stances, not {}",
+            role.as_str()
+        )));
+    }
+    let args: WorkDispatchArguments = serde_json::from_value(arguments)?;
+    let run = den_docket::work_runs::enqueue_work_run(
+        pool,
+        den_docket::work_runs::WorkRunEnqueue {
+            bear_id: context.bear_id,
+            task_id: args.task_id,
+            root_name: args.root.as_deref().and_then(clean_optional),
+            git_ref: args.git_ref.as_deref().and_then(clean_optional),
+            requested_by_user_id: Some(context.user_id),
+        },
+    )
+    .await?;
+    Ok(json!({
+        "ok": true,
+        "work_run_id": run.id,
+        "state": run.state,
+        "attempt": run.attempt,
+        "task_id": run.task_id,
+        "job_id": run.job_id,
+        "note": "queued for the dispatch worker; inspect progress with get_work_run",
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkRunListArguments {
+    #[serde(default)]
+    job_id: Option<Uuid>,
+    #[serde(default)]
+    task_id: Option<Uuid>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+pub(crate) async fn list_work_runs(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: WorkRunListArguments = serde_json::from_value(arguments)?;
+    let runs = den_docket::work_runs::list_work_runs(
+        pool,
+        den_docket::work_runs::WorkRunListFilter {
+            bear_id: Some(context.bear_id),
+            job_id: args.job_id,
+            task_id: args.task_id,
+            state: args.state.as_deref().and_then(clean_optional),
+            limit: args.limit.unwrap_or(50),
+        },
+    )
+    .await?;
+    let items: Vec<Value> = runs.iter().map(work_run_summary_json).collect();
+    Ok(json!({ "ok": true, "work_runs": items }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkRunGetArguments {
+    work_run_id: Uuid,
+}
+
+pub(crate) async fn get_work_run(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: WorkRunGetArguments = serde_json::from_value(arguments)?;
+    let run = den_docket::work_runs::get_work_run(pool, args.work_run_id)
+        .await?
+        .filter(|run| run.bear_id == context.bear_id)
+        .ok_or_else(|| {
+            CustomError::NotFound(format!("work run not found: {}", args.work_run_id))
+        })?;
+    let mut value = work_run_summary_json(&run);
+    value["work_surface"] = run.work_surface.clone().unwrap_or(Value::Null);
+    // Result refs already carry the bounded log tail / diff captured at
+    // harvest time; live logs for active runs are on the /work web UI.
+    value["result_refs"] = run.result_refs.clone().unwrap_or(Value::Null);
+    value["usage"] = run.usage.unwrap_or(Value::Null);
+    Ok(json!({ "ok": true, "work_run": value }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkRunCancelArguments {
+    work_run_id: Uuid,
+}
+
+pub(crate) async fn cancel_work_run(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if !matches!(role, BearProfile::Chat | BearProfile::Pair) {
+        return Err(CustomError::ValidationError(format!(
+            "cancel_work_run is available to chat and pair stances, not {}",
+            role.as_str()
+        )));
+    }
+    let args: WorkRunCancelArguments = serde_json::from_value(arguments)?;
+    let requested =
+        den_docket::work_runs::request_work_run_cancel(pool, args.work_run_id, context.bear_id)
+            .await?;
+    Ok(json!({
+        "ok": true,
+        "cancel_requested": requested,
+        "note": if requested {
+            "the dispatch worker will tear the sandbox down and record the task as blocked"
+        } else {
+            "run is already terminal or unknown; nothing to cancel"
+        },
+    }))
+}
+
+fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
+    fn ts(value: Option<time::OffsetDateTime>) -> Value {
+        value
+            .and_then(|t| t.format(&time::format_description::well_known::Rfc3339).ok())
+            .map_or(Value::Null, Value::String)
+    }
+    json!({
+        "work_run_id": run.id,
+        "state": run.state,
+        "attempt": run.attempt,
+        "job_id": run.job_id,
+        "task_id": run.task_id,
+        "cancel_requested": run.cancel_requested,
+        "root": run.root_name,
+        "git_ref": run.git_ref,
+        "sandbox_id": run.sandbox_id,
+        "sandbox_type": run.sandbox_type,
+        "sandbox_strength": run.sandbox_strength,
+        "result_summary": run.result_summary,
+        "error": run.error,
+        "queued_at": ts(Some(run.queued_at)),
+        "started_at": ts(run.started_at),
+        "finished_at": ts(run.finished_at),
+    })
+}

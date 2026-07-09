@@ -1,5 +1,6 @@
 mod approvals;
 mod bearwire;
+mod headless;
 mod json_rpc;
 mod paths;
 mod tool_tasks;
@@ -121,6 +122,7 @@ struct RuntimeConfig {
     diagnostics: Vec<String>,
     check_server: bool,
     doctor: bool,
+    headless: bool,
     update_command: Option<UpdateCommand>,
     browser_bridge: Option<BrowserBridgeConfig>,
     api_url: String,
@@ -1571,6 +1573,10 @@ async fn run() -> Result<()> {
         return Ok(());
     }
 
+    if runtime.headless {
+        return headless::run_headless(&http, &runtime).await;
+    }
+
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<InboundMessage>(128);
     let mut adapter_state = AdapterState::default();
     let approval_cache = ApprovalCache::load_for_runtime(&runtime).await;
@@ -1835,6 +1841,7 @@ impl RuntimeConfig {
         }
 
         let first = args.first().cloned();
+        let mut headless = false;
         let acp_args = match first.as_deref() {
             Some("browser-bridge") => {
                 browser_bridge = Some(BrowserBridgeConfig::from_args(args.into_iter().skip(1))?);
@@ -1854,6 +1861,10 @@ impl RuntimeConfig {
             }
             Some("doctor") | Some("--doctor") => Vec::new(),
             Some("acp") => args.into_iter().skip(1).collect(),
+            Some("headless") => {
+                headless = true;
+                args.into_iter().skip(1).collect()
+            }
             Some(_) if args_look_like_legacy_acp(&args) => args,
             Some(unknown) => {
                 return Err(anyhow!(
@@ -1945,6 +1956,7 @@ impl RuntimeConfig {
             diagnostics,
             check_server,
             doctor,
+            headless,
             update_command: update_command.clone(),
             browser_bridge: browser_bridge.clone(),
             api_url,
@@ -2090,10 +2102,23 @@ DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint.
     );
 }
 
+static HEADLESS_MODE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Marks this process as a headless sandbox run (no ACP client on stdin).
+/// Permission requests are then auto-decided by the headless policy instead
+/// of an editor round-trip.
+pub(crate) fn set_headless_mode() {
+    let _ = HEADLESS_MODE.set(true);
+}
+
+pub(crate) fn headless_mode() -> bool {
+    *HEADLESS_MODE.get().unwrap_or(&false)
+}
+
 fn print_help_to_stderr() {
     eprintln!(
         "bear-armature {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
-Subcommands:\n  acp                    Run ACP stdio mode (explicit)\n  doctor                 Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n\n\
+Subcommands:\n  acp                    Run ACP stdio mode (explicit)\n  headless               Execute one Den work order in a sandbox (no editor; env-driven)\n  doctor                 Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n\n\
 Usage: bear-armature acp --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n       bear-armature doctor\n       bear-armature update-check [--channel stable]\n       bear-armature update [--open|--install|--download-only] [--yes]\n       bear-armature browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
 Legacy usage (still supported):\n  bear-armature --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n\n\
 Global options:\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
@@ -8059,6 +8084,9 @@ async fn send_permission_request(
     request: RequestPermissionRequest,
     timeout: std::time::Duration,
 ) -> Result<PermissionDecision> {
+    if headless_mode() {
+        return headless::decide_permission_headless(&request);
+    }
     let response = adapter_state
         .transport
         .request(
@@ -10566,6 +10594,7 @@ mod tests {
             diagnostics: Vec::new(),
             check_server: false,
             doctor: false,
+            headless: false,
             update_command: None,
             browser_bridge: None,
             api_url,
@@ -11232,6 +11261,7 @@ mod tests {
             diagnostics: Vec::new(),
             check_server: false,
             doctor: false,
+            headless: false,
             update_command: None,
             browser_bridge: None,
             api_url: String::new(),
@@ -11329,6 +11359,7 @@ mod tests {
             diagnostics: Vec::new(),
             check_server: false,
             doctor: false,
+            headless: false,
             update_command: None,
             browser_bridge: None,
             api_url: String::new(),

@@ -601,6 +601,7 @@ dependencies = [
  "den-memory",
  "den-protocol",
  "den-runtime",
+ "den-sandbox",
  "den-service",
  "den-web",
  "dotenvy",
@@ -660,6 +661,7 @@ dependencies = [
  "bearwire-protocol",
  "bytes",
  "den-core",
+ "den-docket",
  "den-http",
  "den-llm",
  "den-memory",
@@ -813,9 +815,11 @@ dependencies = [
  "bytes",
  "den-core",
  "den-docket",
+ "den-http",
  "den-llm",
  "den-memory",
  "den-protocol",
+ "den-sandbox",
  "den-service",
  "futures",
  "indexmap",
@@ -832,6 +836,25 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "den-sandbox"
+version = "0.1.2"
+dependencies = [
+ "axum",
+ "den-core",
+ "http-body-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
  "uuid",
 ]
 

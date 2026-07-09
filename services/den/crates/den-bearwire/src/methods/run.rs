@@ -13,7 +13,7 @@ use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
 use den_runtime::{
     bearwire_events,
-    native_runtime::start_native_client_turn_event_stream,
+    native_runtime::start_native_profile_turn_event_stream,
     runtime::bearwire_projection::wire::runtime_stream_event_to_bearwire_events,
     runtime_error_ux::{log_sample, run_failure_projection, runtime_event_history_marker},
     surface_projection::bearwire_client_method_for_action,
@@ -203,6 +203,7 @@ async fn resolve_pair_run_model(
     state: &DenState,
     bear: &den_service::bears::Bear,
     conversation_id: &str,
+    stance: BearProfile,
 ) -> Result<ResolvedRunModel, CustomError> {
     if let Some(conversation) =
         den_service::conversation::persistence::get_conversation_for_external_id(
@@ -253,7 +254,7 @@ async fn resolve_pair_run_model(
     }
 
     if let Some(model) =
-        bears_db::profile_model_setting(&state.sqlx_pool, bear.id, BearProfile::Pair).await?
+        bears_db::profile_model_setting(&state.sqlx_pool, bear.id, stance).await?
     {
         let handle = den_llm::normalize_llm_model_handle(&model);
         let provider_model_id = provider_model_id_for_den_handle(&handle);
@@ -296,8 +297,9 @@ async fn preflight_pair_run_model(
     bear: &den_service::bears::Bear,
     session_id: &str,
     conversation_id: &str,
+    stance: BearProfile,
 ) -> Result<ResolvedRunModel, CustomError> {
-    let resolved = resolve_pair_run_model(state, bear, conversation_id).await?;
+    let resolved = resolve_pair_run_model(state, bear, conversation_id, stance).await?;
     let snapshot = match state
         .bifrost
         .bear_catalog_snapshot(
@@ -865,6 +867,14 @@ pub(crate) async fn persist_run_failed(
     );
     let _ = turn_runs::transition_run(pool, run_id, turn_runs::TurnRunState::Failed, Some(reason))
         .await;
+    record_work_run_outcome_if_bound(
+        pool,
+        session_id,
+        run_id,
+        "failed",
+        Some(json!({ "category": reason, "message": message.clone() })),
+    )
+    .await;
     let _ = turn_obligations::settle_outstanding_for_run(
         pool,
         run_id,
@@ -941,6 +951,43 @@ pub(crate) async fn persist_run_failed(
                 }),
             )
             .await;
+        }
+    }
+}
+
+/// Work-run hook: when this session was bound by `work.checkout`, record the
+/// terminal turn outcome and move the work run to `reporting` so the dispatch
+/// worker harvests it. A no-op (one indexed lookup) for ordinary Pair sessions.
+async fn record_work_run_outcome_if_bound(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    kind: &str,
+    detail: Option<Value>,
+) {
+    let outcome = json!({
+        "kind": kind,
+        "run_id": run_id,
+        "detail": detail,
+    });
+    match den_docket::work_runs::record_work_run_turn_outcome(pool, session_id, &outcome).await {
+        Ok(Some(work_run)) => {
+            tracing::info!(
+                session_id,
+                run_id,
+                work_run_id = %work_run.id,
+                outcome_kind = kind,
+                "work run moved to reporting after terminal turn event"
+            );
+        }
+        Ok(None) => {}
+        Err(err) => {
+            tracing::warn!(
+                session_id,
+                run_id,
+                error = %err,
+                "failed to record work run turn outcome"
+            );
         }
     }
 }
@@ -1097,6 +1144,7 @@ async fn update_run_state_for_runtime_event(
                 Some("completed"),
             )
             .await;
+            record_work_run_outcome_if_bound(pool, session_id, run_id, "completed", None).await;
             let _ = turn_obligations::settle_outstanding_for_run(
                 pool,
                 run_id,
@@ -1130,6 +1178,14 @@ async fn update_run_state_for_runtime_event(
                 Some(&reason),
             )
             .await;
+            record_work_run_outcome_if_bound(
+                pool,
+                session_id,
+                run_id,
+                "failed",
+                Some(json!({ "category": reason, "message": message })),
+            )
+            .await;
             let _ = turn_obligations::settle_outstanding_for_run(
                 pool,
                 run_id,
@@ -1147,6 +1203,7 @@ async fn update_run_state_for_runtime_event(
                 Some("cancelled"),
             )
             .await;
+            record_work_run_outcome_if_bound(pool, session_id, run_id, "cancelled", None).await;
             let _ = turn_obligations::settle_outstanding_for_run(
                 pool,
                 run_id,
@@ -1182,6 +1239,14 @@ async fn update_run_state_for_runtime_event(
                 run_id,
                 turn_runs::TurnRunState::Failed,
                 error_type.as_deref().or(Some("error")),
+            )
+            .await;
+            record_work_run_outcome_if_bound(
+                pool,
+                session_id,
+                run_id,
+                "error",
+                Some(json!({ "error_type": error_type, "message": message })),
             )
             .await;
             let _ = turn_obligations::settle_outstanding_for_run(
@@ -1234,15 +1299,30 @@ pub(crate) async fn run_start_result(
     let requested_mode = request.requested_mode;
     let client_tools =
         client_tool_descriptors_from_context(client_context.as_ref(), requested_mode.as_deref());
-    let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
+    // Stance signal: a session bound to a live work run via `work.checkout`
+    // runs in the Work stance; every other BearWire session stays Pair.
+    let stance = if den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
+        .is_some()
+    {
+        BearProfile::Work
+    } else {
+        BearProfile::Pair
+    };
+    let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, stance)
+        .await?
+        .ok_or_else(|| {
+            CustomError::NotFound(format!(
+                "Bear {} profile binding not found",
+                stance.as_str()
+            ))
+        })?;
     let binding = RoleRuntimeBinding {
         binding_id,
         compatibility_backend: Some("native".to_string()),
     };
     let resolved_model =
-        preflight_pair_run_model(state, &bear, &session_id, &upstream_target).await?;
+        preflight_pair_run_model(state, &bear, &session_id, &upstream_target, stance).await?;
     client_sessions::upsert_session(
         &state.sqlx_pool,
         client_sessions::UpsertClientSession {
@@ -1392,7 +1472,7 @@ pub(crate) async fn run_start_result(
         )
         .await;
         let native_start = Instant::now();
-        let stream_result = start_native_client_turn_event_stream(TurnStartRequest {
+        let stream_result = start_native_profile_turn_event_stream(TurnStartRequest {
             sqlx_pool: &pool,
             config: config.as_ref(),
             memory_stores: &memory_stores,
@@ -1415,7 +1495,7 @@ pub(crate) async fn run_start_result(
             runtime_context_len: 0,
             stream_tokens: true,
             api_style: Some(api_style_for_task),
-        })
+        }, stance)
         .await;
 
         match stream_result {

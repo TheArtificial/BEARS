@@ -13,7 +13,7 @@ pub struct SurfaceResourceRef {
     pub mime_type: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SurfaceHistoryEvent {
     Message {
@@ -314,7 +314,7 @@ mod tests {
             (
                 SurfaceHistoryEvent::Message {
                     id: None,
-                    role: "".to_string(),
+                    role: String::new(),
                     text: "hello".to_string(),
                     resources: Vec::new(),
                     created_at: None,
@@ -340,7 +340,7 @@ mod tests {
                 SurfaceHistoryEvent::ToolCall {
                     id: None,
                     role: None,
-                    tool_call_id: "".to_string(),
+                    tool_call_id: String::new(),
                     tool_name: "tool".to_string(),
                     status: "pending".to_string(),
                     arguments: Value::Null,
@@ -352,7 +352,7 @@ mod tests {
                 SurfaceHistoryEvent::ReasoningDelta {
                     id: None,
                     role: None,
-                    text: "".to_string(),
+                    text: String::new(),
                     source: None,
                     replay_policy: Some("thought".to_string()),
                     created_at: None,

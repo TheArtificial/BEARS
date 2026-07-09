@@ -1,0 +1,726 @@
+//! Work dispatch worker: drains queued `bear_work_runs` into sandboxes on the
+//! configured sandbox provider and reconciles their outcomes back into Docket.
+//!
+//! Loop shape follows the reflection conductor convention:
+//! `select!(cancelled, sleep)` per tick, lease-based claims, cooperative
+//! cancellation. One worker owns a run at a time (lease + runner id); a
+//! crashed worker's runs are reclaimed after lease expiry.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde_json::{json, Value};
+use sqlx::PgPool;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+
+use den_core::config::Config;
+use den_core::DenError;
+use den_docket::work_runs::{
+    self, WorkRunFinalize, WorkRunProvisioned, WorkRunRow, WorkRunState,
+};
+use den_docket::{PgDocketService, TaskDispatcher};
+use den_sandbox::protocol::{CreateSandboxRequest, SandboxLimits, SandboxType};
+use den_sandbox::SandboxClient;
+
+const LEASE: Duration = Duration::from_secs(120);
+const ORPHAN_SWEEP_INTERVAL: Duration = Duration::from_secs(3600);
+const LOG_TAIL_BYTES: u64 = 64 * 1024;
+const DIFF_PATCH_BYTES: u64 = 256 * 1024;
+/// Margin under the container timeout so the armature self-kills (and reports)
+/// before the provider's reaper hard-destroys the sandbox.
+const DEADLINE_MARGIN_SECS: u64 = 60;
+
+pub async fn run_work_dispatch_worker_loop(
+    pool: PgPool,
+    config: Arc<Config>,
+    worker_token: CancellationToken,
+    poll_interval: Duration,
+) -> Result<(), DenError> {
+    let Some(sandbox_url) = config
+        .sandbox_server_url
+        .clone()
+        .filter(|url| !url.trim().is_empty())
+    else {
+        tracing::info!("Workers: work_dispatch loop disabled (SANDBOX_SERVER_URL unset)");
+        return Ok(());
+    };
+    let client = SandboxClient::new(&sandbox_url, &config.sandbox_server_token);
+    let runner_id = format!("work-dispatch-{}", Uuid::new_v4().simple());
+    tracing::info!(runner_id, sandbox_url, "Workers: work_dispatch loop starting");
+
+    let mut last_orphan_sweep: Option<std::time::Instant> = None;
+    loop {
+        tokio::select! {
+            () = worker_token.cancelled() => break,
+            () = tokio::time::sleep(poll_interval) => {}
+        }
+
+        if config.work_dispatch_auto {
+            auto_enqueue(&pool).await;
+        }
+        monitor_owned_runs(&pool, &config, &client, &runner_id).await;
+        claim_and_provision(&pool, &config, &client, &runner_id).await;
+
+        let sweep_due = last_orphan_sweep.is_none_or(|at| at.elapsed() >= ORPHAN_SWEEP_INTERVAL);
+        if sweep_due {
+            last_orphan_sweep = Some(std::time::Instant::now());
+            orphan_sweep(&pool, &config, &client).await;
+        }
+
+        if worker_token.is_cancelled() {
+            break;
+        }
+    }
+    tracing::info!(runner_id, "Workers: work_dispatch loop stopped");
+    Ok(())
+}
+
+/// Optional sweep: queue every runnable work task. Off by default — the
+/// primary v1 path is explicit dispatch via the den.work.dispatch tool or UI.
+async fn auto_enqueue(pool: &PgPool) {
+    let bears = match work_runs::list_bears_with_work_tasks(pool).await {
+        Ok(bears) => bears,
+        Err(err) => {
+            tracing::warn!(error = %err, "work_dispatch: auto-enqueue bear listing failed");
+            return;
+        }
+    };
+    let service = PgDocketService::from_pool(pool);
+    for bear_id in bears {
+        let tasks = match service.runnable_work_tasks(bear_id, 20).await {
+            Ok(tasks) => tasks,
+            Err(err) => {
+                tracing::warn!(error = %err, %bear_id, "work_dispatch: runnable task scan failed");
+                continue;
+            }
+        };
+        for projection in tasks {
+            let task = projection.task;
+            let enqueued = work_runs::enqueue_work_run(
+                pool,
+                work_runs::WorkRunEnqueue {
+                    bear_id,
+                    task_id: task.id,
+                    root_name: None,
+                    git_ref: None,
+                    requested_by_user_id: task.created_by_user_id,
+                },
+            )
+            .await;
+            match enqueued {
+                Ok(run) => {
+                    tracing::info!(work_run_id = %run.id, task_id = %task.id, "work_dispatch: auto-enqueued task");
+                }
+                // Duplicate-active and validation rejections are expected here
+                // (already dispatched, no job, ...).
+                Err(DenError::ValidationError(_)) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, task_id = %task.id, "work_dispatch: auto-enqueue failed");
+                }
+            }
+        }
+    }
+}
+
+async fn claim_and_provision(
+    pool: &PgPool,
+    config: &Arc<Config>,
+    client: &SandboxClient,
+    runner_id: &str,
+) {
+    loop {
+        let owned = match work_runs::list_owned_work_runs(pool, runner_id).await {
+            Ok(owned) => owned,
+            Err(err) => {
+                tracing::warn!(error = %err, "work_dispatch: owned-run listing failed");
+                return;
+            }
+        };
+        if owned.len() >= config.sandbox_max_concurrent {
+            return;
+        }
+        let run = match work_runs::claim_next_work_run(pool, runner_id, LEASE).await {
+            Ok(Some(run)) => run,
+            Ok(None) => return,
+            Err(err) => {
+                tracing::warn!(error = %err, "work_dispatch: claim failed");
+                return;
+            }
+        };
+        match run.state_enum() {
+            Some(WorkRunState::Claimed) => {
+                provision_run(pool, config, client, &run).await;
+            }
+            // Taken over from a crashed worker mid-flight; the monitor step
+            // reconciles it on the next tick.
+            _ => {
+                tracing::info!(
+                    work_run_id = %run.id,
+                    state = %run.state,
+                    "work_dispatch: adopted in-flight run from expired lease"
+                );
+            }
+        }
+    }
+}
+
+async fn provision_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient, run: &WorkRunRow) {
+    let context = match work_runs::get_work_run_dispatch_context(pool, run.id).await {
+        Ok(context) => context,
+        Err(err) => {
+            fail_run(pool, run, "dispatch_context", &err.to_string(), None).await;
+            return;
+        }
+    };
+
+    let Some(root) = run
+        .root_name
+        .clone()
+        .or_else(|| context.work_surface_ref.clone())
+        .filter(|root| !root.trim().is_empty())
+    else {
+        fail_run(
+            pool,
+            run,
+            "no_root",
+            "no sandbox root configured: set `root` on dispatch or work_surface_ref on the job",
+            None,
+        )
+        .await;
+        return;
+    };
+
+    // Ephemeral armature token, minted as the job creator (v1: only
+    // user-created jobs dispatch to work). The id is persisted immediately so
+    // even a crashed worker's successor can revoke it.
+    let token = match den_http::armature_tokens::create_for_bear(
+        pool,
+        context.created_by_user_id,
+        run.bear_id,
+        &format!("work-run-{}", run.id),
+    )
+    .await
+    {
+        Ok(token) => token,
+        Err(err) => {
+            fail_run(pool, run, "token_mint", &err.to_string(), None).await;
+            return;
+        }
+    };
+    let token_refs = json!({
+        "armature_token_id": token.id,
+        "armature_token_user_id": context.created_by_user_id,
+    });
+    if let Err(err) = work_runs::merge_work_run_result_refs(pool, run.id, &token_refs).await {
+        tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: failed to persist token id");
+    }
+
+    let timeout_secs = config.sandbox_default_timeout_secs;
+    let deadline_secs = timeout_secs.saturating_sub(DEADLINE_MARGIN_SECS).max(30);
+    let mut env = std::collections::BTreeMap::new();
+    env.insert("DEN_API_URL".to_string(), config.sandbox_callback_api_url.clone());
+    env.insert("BEAR_SLUG".to_string(), context.bear_slug.clone());
+    env.insert("DEN_TOKEN".to_string(), token.raw_token.clone());
+    env.insert("DEN_WORK_ORDER_ID".to_string(), run.id.to_string());
+    env.insert("DEN_WORKSPACE".to_string(), "/workspace".to_string());
+    env.insert("DEN_HEADLESS_DEADLINE_SECS".to_string(), deadline_secs.to_string());
+
+    let request = CreateSandboxRequest {
+        root,
+        git_ref: run.git_ref.clone(),
+        sandbox_type: SandboxType::Container,
+        requires_write: true,
+        image: None,
+        env,
+        limits: SandboxLimits {
+            timeout_secs,
+            max_log_bytes: Some(config.sandbox_max_log_bytes),
+            ..SandboxLimits::default()
+        },
+        labels: std::collections::BTreeMap::from([(
+            "work_run_id".to_string(),
+            run.id.to_string(),
+        )]),
+    };
+
+    let descriptor = match client.create_sandbox(&request).await {
+        Ok(descriptor) => descriptor,
+        Err(err) => {
+            revoke_token_for_run(pool, run.id).await;
+            fail_run(pool, run, "provision", &err.to_string(), None).await;
+            return;
+        }
+    };
+
+    let provisioned = WorkRunProvisioned {
+        sandbox_server_url: client.base_url().to_string(),
+        sandbox_id: descriptor.id.clone(),
+        sandbox_type: descriptor.sandbox_type.as_str().to_string(),
+        sandbox_strength: descriptor.strength_label.clone(),
+        work_surface: serde_json::to_value(&descriptor.work_surface).unwrap_or(Value::Null),
+    };
+    if let Err(err) = work_runs::record_work_run_provisioned(pool, run.id, &provisioned).await {
+        tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: record_provisioned failed");
+        let _ = client.destroy(&descriptor.id, false).await;
+        revoke_token_for_run(pool, run.id).await;
+        fail_run(pool, run, "record_provisioned", &err.to_string(), None).await;
+        return;
+    }
+    let service = PgDocketService::from_pool(pool);
+    if let Err(err) = service
+        .mark_task_started(run.bear_id, run.task_id, run.job_run_id, Some("work-dispatch".to_string()))
+        .await
+    {
+        tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: mark_task_started failed");
+    }
+    tracing::info!(
+        work_run_id = %run.id,
+        sandbox_id = %descriptor.id,
+        task_id = %run.task_id,
+        "work_dispatch: sandbox provisioned, armature launching"
+    );
+}
+
+async fn monitor_owned_runs(
+    pool: &PgPool,
+    config: &Arc<Config>,
+    client: &SandboxClient,
+    runner_id: &str,
+) {
+    let owned = match work_runs::list_owned_work_runs(pool, runner_id).await {
+        Ok(owned) => owned,
+        Err(err) => {
+            tracing::warn!(error = %err, "work_dispatch: owned-run listing failed");
+            return;
+        }
+    };
+    for run in owned {
+        match work_runs::heartbeat_work_run(pool, run.id, runner_id, LEASE).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(work_run_id = %run.id, "work_dispatch: lease lost; dropping run");
+                continue;
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: heartbeat failed");
+                continue;
+            }
+        }
+
+        if run.cancel_requested {
+            cancel_run(pool, config, client, &run).await;
+            continue;
+        }
+
+        match run.state_enum() {
+            Some(WorkRunState::Running) => reconcile_running(pool, config, client, &run).await,
+            Some(WorkRunState::Reporting) => harvest_run(pool, config, client, &run).await,
+            // Claimed/provisioning runs adopted from a dead worker: nothing
+            // was provisioned under our runner id — restart provisioning.
+            Some(WorkRunState::Claimed) if run.sandbox_id.is_none() => {
+                provision_run(pool, config, client, &run).await;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A running run whose sandbox has exited without a recorded turn outcome is
+/// a lost turn (Den restart, armature crash, provider timeout).
+async fn reconcile_running(
+    pool: &PgPool,
+    config: &Arc<Config>,
+    client: &SandboxClient,
+    run: &WorkRunRow,
+) {
+    let Some(sandbox_id) = run.sandbox_id.as_deref() else {
+        fail_run(pool, run, "missing_sandbox", "running work run has no sandbox id", None).await;
+        return;
+    };
+    let descriptor = match client.get_sandbox(sandbox_id).await {
+        Ok(descriptor) => descriptor,
+        Err(err) if err.kind() == Some("unknown_sandbox") => {
+            revoke_token_for_run(pool, run.id).await;
+            fail_run(
+                pool,
+                run,
+                "sandbox_lost",
+                "sandbox disappeared from the provider (provider restart or manual removal)",
+                None,
+            )
+            .await;
+            maybe_requeue(pool, config, run).await;
+            return;
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: sandbox status poll failed");
+            return;
+        }
+    };
+
+    let sandbox_done = matches!(
+        descriptor.state,
+        den_sandbox::protocol::SandboxLifecycleState::Exited
+            | den_sandbox::protocol::SandboxLifecycleState::Failed
+            | den_sandbox::protocol::SandboxLifecycleState::Destroyed
+    );
+    if !sandbox_done {
+        return;
+    }
+
+    // Re-check: the run hook may have flipped the run to reporting between
+    // our listing and the sandbox poll.
+    match work_runs::get_work_run(pool, run.id).await {
+        Ok(Some(current)) if current.state == "running" => {
+            let log_tail = client
+                .logs(sandbox_id, Some(LOG_TAIL_BYTES))
+                .await
+                .map(|logs| logs.content)
+                .unwrap_or_default();
+            revoke_token_for_run(pool, run.id).await;
+            let refs = json!({
+                "log_tail": log_tail,
+                "sandbox_exit_code": descriptor.exit_code,
+            });
+            fail_run(
+                pool,
+                &current,
+                "turn_lost",
+                "sandbox exited without a terminal turn outcome (armature crash, deadline, or Den restart)",
+                Some(refs),
+            )
+            .await;
+            teardown_sandbox(pool, config, client, &current, false).await;
+            maybe_requeue(pool, config, &current).await;
+        }
+        _ => {}
+    }
+}
+
+/// Harvest a run whose turn reached a terminal event: collect diff/logs/usage,
+/// decide the Docket outcome (done ⟺ the model marked the task done
+/// in-turn), finalize, and tear down.
+async fn harvest_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient, run: &WorkRunRow) {
+    let sandbox_id = run.sandbox_id.as_deref();
+    let diff = match sandbox_id {
+        Some(id) => client.diff(id, Some(DIFF_PATCH_BYTES)).await.ok(),
+        None => None,
+    };
+    let log_tail = match sandbox_id {
+        Some(id) => client
+            .logs(id, Some(LOG_TAIL_BYTES))
+            .await
+            .map(|logs| logs.content)
+            .ok(),
+        None => None,
+    };
+    let usage = match sandbox_id {
+        Some(id) => client
+            .get_sandbox(id)
+            .await
+            .ok()
+            .map(|descriptor| serde_json::to_value(descriptor.usage).unwrap_or(Value::Null)),
+        None => None,
+    };
+
+    let task_status = work_runs::get_task_run_status(pool, run.job_run_id, run.task_id)
+        .await
+        .ok()
+        .flatten();
+    let succeeded = task_status.as_deref() == Some("done");
+
+    let turn_summary = run
+        .result_refs
+        .as_ref()
+        .and_then(|refs| refs.pointer("/armature_report/summary"))
+        .and_then(Value::as_str)
+        .filter(|summary| !summary.trim().is_empty())
+        .map(str::to_string);
+    let changed_files = diff
+        .as_ref()
+        .map(|diff| diff.changed_files.len())
+        .unwrap_or(0);
+
+    let (final_state, summary) = if succeeded {
+        (
+            WorkRunState::Succeeded,
+            turn_summary.unwrap_or_else(|| {
+                format!("task marked done in-turn; {changed_files} file(s) changed")
+            }),
+        )
+    } else {
+        (
+            WorkRunState::Blocked,
+            turn_summary.unwrap_or_else(|| {
+                format!(
+                    "turn ended without the model marking the task done (task run status: {})",
+                    task_status.as_deref().unwrap_or("pending")
+                )
+            }),
+        )
+    };
+
+    let refs = json!({
+        "sandbox_id": run.sandbox_id,
+        "changed_files": diff.as_ref().map(|diff| serde_json::to_value(&diff.changed_files).unwrap_or(Value::Null)),
+        "diff_patch": diff.as_ref().map(|diff| diff.patch.clone()),
+        "diff_patch_truncated": diff.as_ref().map(|diff| diff.patch_truncated),
+        "log_tail": log_tail,
+    });
+
+    let service = PgDocketService::from_pool(pool);
+    let docket_result = if succeeded {
+        service
+            .record_task_success(
+                run.bear_id,
+                run.task_id,
+                run.job_run_id,
+                summary.clone(),
+                Some(refs.clone()),
+                Some("work-dispatch".to_string()),
+            )
+            .await
+    } else {
+        service
+            .record_task_blocked(
+                run.bear_id,
+                run.task_id,
+                run.job_run_id,
+                summary.clone(),
+                Some(refs.clone()),
+                Some("work-dispatch".to_string()),
+            )
+            .await
+    };
+    if let Err(err) = docket_result {
+        tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: docket outcome record failed");
+    }
+
+    if let Some(session_id) = run.bearwire_session_id.as_deref() {
+        let _ = work_runs::close_work_execution_session(pool, run.bear_id, session_id).await;
+    }
+    revoke_token_for_run(pool, run.id).await;
+
+    let finalize = WorkRunFinalize {
+        result_summary: Some(summary),
+        result_refs: Some(refs),
+        usage,
+        error: None,
+    };
+    match work_runs::finalize_work_run(pool, run.id, final_state, finalize).await {
+        Ok(finalized) => {
+            tracing::info!(
+                work_run_id = %finalized.id,
+                final_state = %finalized.state,
+                changed_files,
+                "work_dispatch: run finalized"
+            );
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: finalize failed");
+        }
+    }
+
+    teardown_sandbox(pool, config, client, run, !succeeded).await;
+}
+
+async fn cancel_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient, run: &WorkRunRow) {
+    tracing::info!(work_run_id = %run.id, "work_dispatch: cancelling run");
+    // ponytail: no in-flight turn interruption — destroying the sandbox
+    // starves the turn's obligations and the continuation watchdog fails it.
+    // Upgrade path: a durable cancel signal delivered through the BearWire
+    // event log / an internal cancel endpoint on the API process.
+    revoke_token_for_run(pool, run.id).await;
+    teardown_sandbox(pool, config, client, run, false).await;
+    if let Some(session_id) = run.bearwire_session_id.as_deref() {
+        let _ = work_runs::close_work_execution_session(pool, run.bear_id, session_id).await;
+    }
+    let service = PgDocketService::from_pool(pool);
+    let _ = service
+        .record_task_blocked(
+            run.bear_id,
+            run.task_id,
+            run.job_run_id,
+            "work run cancelled by operator".to_string(),
+            None,
+            Some("work-dispatch".to_string()),
+        )
+        .await;
+    let _ = work_runs::finalize_work_run(
+        pool,
+        run.id,
+        WorkRunState::Cancelled,
+        WorkRunFinalize {
+            result_summary: Some("cancelled by operator".to_string()),
+            ..WorkRunFinalize::default()
+        },
+    )
+    .await;
+}
+
+async fn teardown_sandbox(
+    pool: &PgPool,
+    config: &Arc<Config>,
+    client: &SandboxClient,
+    run: &WorkRunRow,
+    failed: bool,
+) {
+    let Some(sandbox_id) = run.sandbox_id.as_deref() else {
+        return;
+    };
+    let preserve = failed && config.sandbox_preserve_failed;
+    match client.destroy(sandbox_id, preserve).await {
+        Ok(descriptor) => {
+            if let den_sandbox::protocol::CleanupState::Failed { reason } = &descriptor.cleanup {
+                let _ = work_runs::merge_work_run_result_refs(
+                    pool,
+                    run.id,
+                    &json!({ "cleanup": "failed", "cleanup_reason": reason }),
+                )
+                .await;
+            }
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, work_run_id = %run.id, sandbox_id, "work_dispatch: sandbox destroy failed");
+            let _ = work_runs::merge_work_run_result_refs(
+                pool,
+                run.id,
+                &json!({ "cleanup": "failed", "cleanup_reason": err.to_string() }),
+            )
+            .await;
+        }
+    }
+}
+
+async fn fail_run(pool: &PgPool, run: &WorkRunRow, reason: &str, message: &str, refs: Option<Value>) {
+    tracing::warn!(work_run_id = %run.id, reason, message, "work_dispatch: run failed");
+    let service = PgDocketService::from_pool(pool);
+    let _ = service
+        .record_task_blocked(
+            run.bear_id,
+            run.task_id,
+            run.job_run_id,
+            format!("work run failed ({reason}): {message}"),
+            None,
+            Some("work-dispatch".to_string()),
+        )
+        .await;
+    let _ = work_runs::finalize_work_run(
+        pool,
+        run.id,
+        WorkRunState::Failed,
+        WorkRunFinalize {
+            result_summary: Some(format!("{reason}: {message}")),
+            result_refs: refs,
+            usage: None,
+            error: Some(format!("{reason}: {message}")),
+        },
+    )
+    .await;
+}
+
+/// Best-effort retry after infrastructure failures (never after a judged
+/// blocked/succeeded outcome): re-enqueue while attempts remain.
+async fn maybe_requeue(pool: &PgPool, config: &Arc<Config>, run: &WorkRunRow) {
+    if run.attempt >= i32::try_from(config.work_max_attempts).unwrap_or(i32::MAX) {
+        return;
+    }
+    let context = match work_runs::get_work_run_dispatch_context(pool, run.id).await {
+        Ok(context) => context,
+        Err(_) => return,
+    };
+    match work_runs::enqueue_work_run(
+        pool,
+        work_runs::WorkRunEnqueue {
+            bear_id: run.bear_id,
+            task_id: run.task_id,
+            root_name: run.root_name.clone(),
+            git_ref: run.git_ref.clone(),
+            requested_by_user_id: Some(context.created_by_user_id),
+        },
+    )
+    .await
+    {
+        Ok(retry) => {
+            tracing::info!(
+                work_run_id = %retry.id,
+                previous = %run.id,
+                attempt = retry.attempt,
+                "work_dispatch: requeued after infrastructure failure"
+            );
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, previous = %run.id, "work_dispatch: requeue failed");
+        }
+    }
+}
+
+/// Revoke the ephemeral armature token minted for this run, using the id
+/// persisted in result_refs (survives worker restarts).
+async fn revoke_token_for_run(pool: &PgPool, run_id: Uuid) {
+    let Ok(Some(run)) = work_runs::get_work_run(pool, run_id).await else {
+        return;
+    };
+    let Some(refs) = run.result_refs.as_ref() else {
+        return;
+    };
+    let (Some(token_id), Some(user_id)) = (
+        refs.get("armature_token_id")
+            .and_then(Value::as_str)
+            .and_then(|id| Uuid::parse_str(id).ok()),
+        refs.get("armature_token_user_id")
+            .and_then(Value::as_i64)
+            .and_then(|id| i32::try_from(id).ok()),
+    ) else {
+        return;
+    };
+    if let Err(err) = den_http::armature_tokens::revoke_for_user(pool, user_id, token_id).await {
+        tracing::warn!(error = %err, work_run_id = %run_id, "work_dispatch: token revoke failed");
+    }
+}
+
+/// Reconcile provider-side sandboxes with durable run state: destroy
+/// sandboxes whose runs are already terminal (leaked by a crashed worker).
+async fn orphan_sweep(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient) {
+    let sandboxes = match client.list_sandboxes(None).await {
+        Ok(sandboxes) => sandboxes,
+        Err(err) => {
+            tracing::warn!(error = %err, "work_dispatch: orphan sweep listing failed");
+            return;
+        }
+    };
+    for descriptor in sandboxes {
+        if matches!(
+            descriptor.state,
+            den_sandbox::protocol::SandboxLifecycleState::Destroyed
+        ) {
+            continue;
+        }
+        let Some(work_run_id) = descriptor
+            .labels
+            .get("work_run_id")
+            .and_then(|id| Uuid::parse_str(id).ok())
+        else {
+            continue;
+        };
+        let run = match work_runs::get_work_run(pool, work_run_id).await {
+            Ok(run) => run,
+            Err(_) => continue,
+        };
+        let terminal = run
+            .as_ref()
+            .and_then(WorkRunRow::state_enum)
+            .is_none_or(WorkRunState::is_terminal);
+        if terminal {
+            tracing::warn!(
+                sandbox_id = %descriptor.id,
+                %work_run_id,
+                "work_dispatch: destroying orphaned sandbox for terminal run"
+            );
+            let preserve = config.sandbox_preserve_failed
+                && run.as_ref().is_some_and(|r| r.state == "failed");
+            let _ = client.destroy(&descriptor.id, preserve).await;
+        }
+    }
+}

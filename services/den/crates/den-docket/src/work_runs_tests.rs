@@ -1,0 +1,410 @@
+//! Postgres-backed tests for the work-run dispatch/claim/lease state machine.
+//! Same convention as `integration_tests.rs`: skip when no database is
+//! reachable.
+
+use den_core::{BearProfile, DenError};
+use sqlx::PgPool;
+use uuid::Uuid;
+
+use crate::work_runs::{
+    checkout_work_run_for_session, claim_next_work_run, enqueue_work_run, finalize_work_run,
+    get_live_work_run_by_session, get_work_run, heartbeat_work_run, record_work_run_provisioned,
+    record_work_run_turn_outcome, request_work_run_cancel, WorkRunEnqueue, WorkRunFinalize,
+    WorkRunProvisioned, WorkRunState,
+};
+use crate::{
+    DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobStatus, DocketService, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
+    DocketTaskScope, PgDocketService, TaskListVisibility,
+};
+
+/// `claim_next_work_run` is deliberately global (any runner takes the oldest
+/// claimable run), so tests in this module serialize on one lock: a parallel
+/// test's queued run would otherwise satisfy another test's claim.
+static DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Cancel claimable leftovers (queued, or non-terminal with an expired lease)
+/// from earlier test runs so claim-order assertions see only this test's runs.
+async fn purge_claimable_runs(pool: &PgPool) {
+    sqlx::query(
+        "UPDATE bear_work_runs
+         SET state = 'cancelled', runner_id = NULL, lease_expires_at = NULL,
+             finished_at = now(), updated_at = now()
+         WHERE state = 'queued'
+            OR (state IN ('claimed', 'provisioning', 'running', 'reporting')
+                AND lease_expires_at IS NOT NULL AND lease_expires_at < now())",
+    )
+    .execute(pool)
+    .await
+    .expect("purge claimable work runs");
+}
+
+async fn test_pool() -> Option<PgPool> {
+    let database_url = std::env::var("TEST_DATABASE_URL")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .unwrap_or_else(|_| "postgres://postgres:postgres@127.0.0.1/postgres".to_string());
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&database_url)
+        .await
+        .ok()?;
+    sqlx::migrate!("../../migrations").run(&pool).await.ok()?;
+    Some(pool)
+}
+
+async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
+    let suffix = Uuid::new_v4().simple().to_string();
+    let (user_id,): (i32,) = sqlx::query_as(
+        "INSERT INTO users (email, username, display_name) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(format!("{label}-{suffix}@example.test"))
+    .bind(format!("w{}", &suffix[..20]))
+    .bind("Work Run Test")
+    .fetch_one(pool)
+    .await
+    .expect("seed user");
+    let (bear_id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO bears (slug, name, description) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(format!("workrun-{label}-{}", &suffix[..12]))
+    .bind("Work Run Test Bear")
+    .bind("work run test bear")
+    .fetch_one(pool)
+    .await
+    .expect("seed bear");
+    (user_id, bear_id)
+}
+
+fn work_task(title: &str, order: i32, stance: BearProfile) -> DocketTaskInput {
+    DocketTaskInput {
+        client_key: Some(format!("k{order}")),
+        parent_client_key: None,
+        parent_task_id: None,
+        sibling_order: order,
+        kind: DocketTaskKind::Execution,
+        scope: DocketTaskScope::Template,
+        title: title.to_string(),
+        body: format!("Body of {title}"),
+        completion_criteria: vec![format!("{title} is verifiably complete")],
+        difficulty: Some(DocketTaskDifficulty::Trivial),
+        effort_hint: None,
+        assigned_to_role: Some(stance),
+    }
+}
+
+/// Job with two work-assigned tasks and one pair task; returns
+/// (job_id, [task ids in sibling order]).
+async fn seed_work_job(pool: &PgPool, user_id: i32, bear_id: Uuid) -> (Uuid, Vec<Uuid>) {
+    let service = PgDocketService::from_pool(pool);
+    let created = service
+        .create_job(DocketJobCreate {
+            bear_id,
+            created_by_user_id: user_id,
+            created_by_role: "chat".to_string(),
+            goal: "Ship the work-run slice".to_string(),
+            work_surface_ref: None,
+            commit_policy: Some(DocketCommitPolicy::ProposeOnly),
+            status: DocketJobStatus::Ready,
+            visibility: TaskListVisibility::SameUser,
+            criteria: vec![DocketJobCriterionInput {
+                kind: DocketCriterionKind::Narrative,
+                description: "Everything is done".to_string(),
+                spec: None,
+                sibling_order: 0,
+            }],
+            tasks: vec![
+                work_task("Alpha work task", 0, BearProfile::Work),
+                work_task("Beta work task", 1, BearProfile::Work),
+                work_task("Gamma pair task", 2, BearProfile::Pair),
+            ],
+        })
+        .await
+        .expect("create work job");
+    let task_ids = created.tasks.iter().map(|task| task.id).collect();
+    (created.job.id, task_ids)
+}
+
+fn enqueue_for(bear_id: Uuid, task_id: Uuid, user_id: i32) -> WorkRunEnqueue {
+    WorkRunEnqueue {
+        bear_id,
+        task_id,
+        root_name: Some("demo".to_string()),
+        git_ref: None,
+        requested_by_user_id: Some(user_id),
+    }
+}
+
+#[tokio::test]
+async fn enqueue_validates_stance_and_uniqueness() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "enqueue").await;
+    let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+
+    // Pair-assigned task is rejected.
+    let err = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[2], user_id))
+        .await
+        .expect_err("pair task must not enqueue");
+    assert!(matches!(err, DenError::ValidationError(_)), "{err:?}");
+
+    // Unknown task is NotFound.
+    let err = enqueue_work_run(&pool, enqueue_for(bear_id, Uuid::new_v4(), user_id))
+        .await
+        .expect_err("unknown task");
+    assert!(matches!(err, DenError::NotFound(_)), "{err:?}");
+
+    // Happy path: queued, attempt 1, audit event appended.
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .expect("enqueue work task");
+    assert_eq!(run.state, "queued");
+    assert_eq!(run.attempt, 1);
+    let (events,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM bear_task_events WHERE task_id = $1 AND event_type = 'claimed'",
+    )
+    .bind(task_ids[0])
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(events, 1);
+
+    // Second enqueue for the same task hits the partial unique index.
+    let err = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .expect_err("duplicate active run");
+    assert!(matches!(err, DenError::ValidationError(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn concurrent_claims_take_distinct_runs() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "claim").await;
+    let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    let run_a = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+    let run_b = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[1], user_id))
+        .await
+        .unwrap();
+
+    let lease = std::time::Duration::from_secs(60);
+    let (first, second) = tokio::join!(
+        claim_next_work_run(&pool, "runner-1", lease),
+        claim_next_work_run(&pool, "runner-2", lease),
+    );
+    let first = first.unwrap().expect("first claim");
+    let second = second.unwrap().expect("second claim");
+    assert_ne!(first.id, second.id, "two claimants must get distinct runs");
+    let mut claimed: Vec<Uuid> = vec![first.id, second.id];
+    claimed.sort();
+    let mut enqueued = vec![run_a.id, run_b.id];
+    enqueued.sort();
+    assert_eq!(claimed, enqueued);
+    assert_eq!(first.state, "claimed");
+
+    // Nothing left to claim.
+    let third = claim_next_work_run(&pool, "runner-3", lease).await.unwrap();
+    assert!(third.is_none());
+}
+
+#[tokio::test]
+async fn expired_lease_is_reclaimed_and_heartbeat_fences_old_owner() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "lease").await;
+    let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+
+    let claimed = claim_next_work_run(&pool, "runner-old", std::time::Duration::from_secs(0))
+        .await
+        .unwrap()
+        .expect("claim with instant-expiry lease");
+
+    // Lease already expired: another runner takes the run over, state preserved.
+    let reclaimed = claim_next_work_run(&pool, "runner-new", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .expect("reclaim expired lease");
+    assert_eq!(reclaimed.id, claimed.id);
+    assert_eq!(reclaimed.runner_id.as_deref(), Some("runner-new"));
+    assert_eq!(reclaimed.state, "claimed");
+
+    // The old owner's heartbeat is fenced out.
+    let ok = heartbeat_work_run(
+        &pool,
+        claimed.id,
+        "runner-old",
+        std::time::Duration::from_secs(60),
+    )
+    .await
+    .unwrap();
+    assert!(!ok, "old runner must not extend a reclaimed lease");
+    let ok = heartbeat_work_run(
+        &pool,
+        claimed.id,
+        "runner-new",
+        std::time::Duration::from_secs(60),
+    )
+    .await
+    .unwrap();
+    assert!(ok);
+}
+
+#[tokio::test]
+async fn lifecycle_provision_outcome_finalize_and_cancel() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "lifecycle").await;
+    let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+    let claimed = claim_next_work_run(&pool, "runner-1", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .expect("claim");
+    assert_eq!(claimed.id, run.id);
+
+    let provisioned = record_work_run_provisioned(
+        &pool,
+        run.id,
+        &WorkRunProvisioned {
+            sandbox_server_url: "http://sandbox:3002".into(),
+            sandbox_id: "abc123".into(),
+            sandbox_type: "container".into(),
+            sandbox_strength: "container: test".into(),
+            work_surface: serde_json::json!({ "is_git": true }),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(provisioned.state, "running");
+    assert!(provisioned.started_at.is_some());
+
+    // Armature checks out: session binds, execution session opens.
+    let session_id = format!("headless-{}", Uuid::new_v4().simple());
+    let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
+        .await
+        .unwrap();
+    assert!(checkout.prompt.contains("Alpha work task"));
+    assert!(checkout
+        .prompt
+        .contains("Alpha work task is verifiably complete"));
+    assert!(checkout.prompt.contains("never wait for user input"));
+    let (execution_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM docket_execution_sessions
+         WHERE bear_id = $1 AND owner_profile = 'work' AND session_id = $2 AND state = 'active'",
+    )
+    .bind(bear_id)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(execution_count, 1);
+    assert!(get_live_work_run_by_session(&pool, &session_id)
+        .await
+        .unwrap()
+        .is_some());
+
+    // Terminal turn event moves the run to reporting.
+    let reporting = record_work_run_turn_outcome(
+        &pool,
+        &session_id,
+        &serde_json::json!({ "kind": "completed" }),
+    )
+    .await
+    .unwrap()
+    .expect("session is bound");
+    assert_eq!(reporting.state, "reporting");
+
+    // Cancel is still possible pre-finalize, then finalize wins.
+    assert!(request_work_run_cancel(&pool, run.id, bear_id).await.unwrap());
+
+    let finalized = finalize_work_run(
+        &pool,
+        run.id,
+        WorkRunState::Succeeded,
+        WorkRunFinalize {
+            result_summary: Some("done".into()),
+            result_refs: Some(serde_json::json!({ "changed_files": 1 })),
+            usage: Some(serde_json::json!({ "duration_ms": 1234 })),
+            error: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(finalized.state, "succeeded");
+    assert!(finalized.runner_id.is_none());
+    assert!(finalized.lease_expires_at.is_none());
+    assert!(finalized.finished_at.is_some());
+    // Merged refs keep the turn outcome recorded earlier.
+    let refs = finalized.result_refs.expect("result refs");
+    assert!(refs.get("turn_outcome").is_some());
+    assert_eq!(refs.get("changed_files"), Some(&serde_json::json!(1)));
+
+    // Terminal runs cannot be finalized twice or cancelled.
+    assert!(finalize_work_run(&pool, run.id, WorkRunState::Failed, WorkRunFinalize::default())
+        .await
+        .is_err());
+    assert!(!request_work_run_cancel(&pool, run.id, bear_id).await.unwrap());
+
+    // Completed audit event exists.
+    let (events,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM bear_task_events WHERE task_id = $1 AND event_type = 'completed'",
+    )
+    .bind(task_ids[0])
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(events, 1);
+
+    // A finished task can be re-enqueued (attempt 2).
+    let retry = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .expect("retry enqueue");
+    assert_eq!(retry.attempt, 2);
+
+    // get_work_run round-trips.
+    assert_eq!(
+        get_work_run(&pool, run.id).await.unwrap().unwrap().id,
+        run.id
+    );
+}
+
+#[tokio::test]
+async fn checkout_rejects_wrong_bear() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "wrongbear").await;
+    let (_, other_bear) = seed_user_and_bear(&pool, "otherbear").await;
+    let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+
+    let err = checkout_work_run_for_session(&pool, run.id, other_bear, "headless-x")
+        .await
+        .expect_err("wrong bear must not check out");
+    assert!(matches!(err, DenError::NotFound(_)), "{err:?}");
+}

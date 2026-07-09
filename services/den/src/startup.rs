@@ -95,8 +95,24 @@ pub async fn ensure_database_schema_supported(pool: &PgPool) -> Result<(), Start
 /// the binary's startup validation share one definition.
 pub use den_core::config::requires_jwt_secret;
 
+/// Whether any enabled service needs the Den Postgres database.
+///
+/// The sandbox provider (`RUN_SANDBOX`) is deliberately excluded: it must be able
+/// to run standalone on a host with no database, communicating with Den only
+/// over HTTP (and via in-sandbox armatures over BearWire).
+pub fn needs_database(config: &Config) -> bool {
+    config.run_web || config.run_api || config.run_workers
+}
+
 /// Validate secrets and other invariants before connecting to the database.
 pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
+    if needs_database(config) && config.database_url.trim().is_empty() {
+        return Err(StartupError::Message(
+            "DATABASE_URL must be set when RUN_WEB, RUN_API, or RUN_WORKERS is enabled. \
+             Only a standalone sandbox server (RUN_SANDBOX only) can run without it."
+                .into(),
+        ));
+    }
     if requires_jwt_secret(config) {
         let secret = std::env::var("JWT_SECRET").unwrap_or_default();
         if secret.trim().is_empty() {
@@ -175,6 +191,8 @@ mod tests {
 
         let mut api_on = base;
         api_on.run_api = true;
+        // Satisfy the separate RUN_API LLM requirement so this test only exercises JWT rules.
+        api_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
         assert!(
             validate_runtime_config(&api_on).is_err(),
             "RUN_API=true requires JWT_SECRET"
@@ -219,5 +237,22 @@ mod tests {
         let mut web_on = Config::test_stub();
         web_on.run_web = true;
         validate_runtime_config(&web_on).expect("RUN_WEB has no legacy runtime requirement");
+    }
+
+    #[test]
+    fn validate_database_url_rules() {
+        let mut sandbox_only = Config::test_stub();
+        sandbox_only.database_url = String::new();
+        sandbox_only.run_sandbox = true;
+        assert!(!needs_database(&sandbox_only));
+        validate_runtime_config(&sandbox_only)
+            .expect("RUN_SANDBOX alone must not require DATABASE_URL");
+
+        let mut web_no_db = sandbox_only;
+        web_no_db.run_web = true;
+        assert!(
+            validate_runtime_config(&web_no_db).is_err(),
+            "RUN_WEB requires DATABASE_URL"
+        );
     }
 }

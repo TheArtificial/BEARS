@@ -13,8 +13,11 @@ mod db;
 mod dispatcher;
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod work_runs_tests;
 pub mod model;
 pub mod service;
+pub mod work_runs;
 
 pub use dispatcher::TaskDispatcher;
 pub use model::{
