@@ -262,6 +262,39 @@ async fn index(
     runs.sort_by(|a, b| b.queued_at.cmp(&a.queued_at));
     let active: Vec<&RunView> = runs.iter().filter(|run| run.is_active).collect();
 
+    // Dispatch-path status so "why is my queued run not starting?" is
+    // answerable from this page: is a provider configured, and is it
+    // reachable? (The dispatch worker itself runs in the workers process;
+    // its liveness is visible in that process's logs.)
+    let sandbox_server_url = state
+        .config
+        .sandbox_server_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(str::to_string);
+    let provider_status = match &sandbox_server_url {
+        None => serde_json::json!({ "configured": false }),
+        Some(url) => {
+            let client = SandboxClient::new(url, &state.config.sandbox_server_token);
+            match client.health().await {
+                Ok(health) => serde_json::json!({
+                    "configured": true,
+                    "url": url,
+                    "reachable": true,
+                    "backend_available": health.backend_available,
+                    "active_sandboxes": health.active_sandboxes,
+                }),
+                Err(err) => serde_json::json!({
+                    "configured": true,
+                    "url": url,
+                    "reachable": false,
+                    "error": err.to_string(),
+                }),
+            }
+        }
+    };
+
     web::render_template(
         &state,
         "work/index.html",
@@ -273,6 +306,7 @@ async fn index(
             jobs => jobs_with_work,
             attention => attention,
             awaiting_completion => awaiting_completion,
+            provider_status => provider_status,
         },
     )
     .await

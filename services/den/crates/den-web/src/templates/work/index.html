@@ -6,6 +6,31 @@
 {% block content %}
 <h1>Work</h1>
 
+<section>
+    {% if not provider_status.configured %}
+    <p>
+        ⚠ <strong>Work dispatch is not configured</strong> — no sandbox
+        provider is set (<code>SANDBOX_SERVER_URL</code>), so queued runs
+        will never start. See the sandbox server ops guide.
+    </p>
+    {% elif not provider_status.reachable %}
+    <p>
+        ⚠ <strong>Sandbox provider unreachable</strong> at
+        <code>{{ provider_status.url }}</code>: {{ provider_status.error }}.
+        Queued runs will not start until it is back.
+    </p>
+    {% else %}
+    <p>
+        Sandbox provider <code>{{ provider_status.url }}</code> is reachable
+        ({{ provider_status.active_sandboxes }} active sandbox{{ "es" if provider_status.active_sandboxes != 1 }}{% if not provider_status.backend_available %};
+        ⚠ its container backend reports <strong>unavailable</strong>{% endif %}).
+        The dispatch worker runs in the workers process
+        (<code>RUN_WORKERS=true</code>) — its startup logs
+        <code>work_dispatch loop starting</code>.
+    </p>
+    {% endif %}
+</section>
+
 {% if active_runs %}
 <section>
     <h2>Active runs ({{ active_runs | length }})</h2>
