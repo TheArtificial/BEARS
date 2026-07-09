@@ -77,3 +77,15 @@ EXPOSE 3000
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["/bin/server"]
+
+# Sandbox provider variant (compose service `bears-sandbox-provider`): the
+# same server binary plus a docker CLI for driving the `bears-sandbox-engine`
+# dind daemon over DOCKER_HOST (TLS TCP). No docker daemon or socket in this
+# image, so the appuser drop needs no socket-group handling.
+# Build with `--target sandbox-provider`.
+FROM final AS sandbox-provider
+RUN apk add --no-cache docker-cli
+
+# Keep the plain server image as the default build target (the stage above
+# would otherwise become it, being last).
+FROM final

@@ -23,7 +23,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 time = { workspace = true, features = ["serde", "serde-well-known", "formatting"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "process", "fs"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "process", "fs", "net"] }
 tokio-util.workspace = true
 tracing.workspace = true
 uuid.workspace = true

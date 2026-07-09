@@ -1,5 +1,10 @@
 # Plan: distinct sandbox services in docker-compose (with docker included)
 
+**Status: implemented** (branch `test`). Steps 1–5 are landed; the remaining
+open item is the runtime verification pass on a docker host (step 6 — the
+static checks are done, the `compose up` walk is not). Notes on what shipped
+are inline below.
+
 Goal: make the work-sandbox system deployable as part of the compose stack —
 dedicated sandbox services **bundling their own docker**, so a Coolify
 deploy of this repository yields a working end-to-end `work` flow with no
@@ -50,16 +55,19 @@ the engine (step 4).
 
 ## Steps
 
-### 1. Provider image (`packaging/sandbox-provider/Dockerfile`)
+### 1. Provider image — DONE (as a Dockerfile stage, not a separate file)
 
-- `FROM` the built Den image (build arg `DEN_IMAGE`, so compose reuses the
-  image it already built) + the docker CLI (distro package or static
-  tarball). No daemon, no socket handling — `DOCKER_HOST` is TCP, so the
-  `appuser` drop in `docker-entrypoint.sh` keeps working unchanged.
-- Health: the existing wget check against `/sandbox/v1/health`; its
-  `backend_available` field now reflects engine reachability.
+Implemented as a `sandbox-provider` **target stage** in
+`services/den/Dockerfile` (`FROM final` + `apk add docker-cli`) rather than a
+separate `packaging/sandbox-provider/Dockerfile`: same build context, BuildKit
+shares the compiled binary, and there is no cross-service image-ordering
+problem during `docker compose build`. A trailing bare `FROM final` stage
+keeps the plain server image as the default build target, so existing
+consumers (bears-den, bears-den-migrate, den-image.yml) need no `target:`.
+No daemon, no socket handling — `DOCKER_HOST` is TCP, so the `appuser` drop
+in `docker-entrypoint.sh` keeps working unchanged.
 
-### 2. Compose services (profile `sandbox`)
+### 2. Compose services (profile `sandbox`) — DONE
 
 ```yaml
 bears-sandbox-engine:
@@ -75,7 +83,7 @@ bears-sandbox-engine:
     healthcheck: docker version against the daemon
 
 bears-sandbox-provider:
-    build: packaging/sandbox-provider (DEN_IMAGE build arg)
+    build: services/den/Dockerfile, target: sandbox-provider
     profiles: ["sandbox"]
     depends_on: bears-sandbox-engine (healthy), preflight
     environment:
@@ -103,45 +111,47 @@ Backend code change: none — `DockerCliBackend` shells to the CLI, which
 honors `DOCKER_HOST`/TLS env as-is; only `probe()`'s failure message should
 mention `DOCKER_HOST` alongside the socket.
 
-### 3. Callback DNS for nested containers (small code change)
+### 3. Callback DNS for nested containers — DONE
 
 Containers nested inside the engine do not resolve compose service names
 (their DNS chain ends at the engine, not the compose resolver), so
 `SANDBOX_CALLBACK_API_URL=http://bears-den:3001` works for the provider but
 not for relays/sandboxes. Fix provider-side, once, for all nested setups:
 
-- At provision time, resolve the callback host to an IP
-  (`tokio::net::lookup_host` — the provider *can* resolve compose names) and
-  pass `--add-host <host>:<ip>` to the relay (restricted mode) or the
-  sandbox container (open mode). Skip for IP literals.
-- This also removes the current `host.docker.internal` caveat for
-  single-host dev.
+- Implemented as `callback_add_host` in
+  `den-sandbox/src/backend/container.rs`: at provision time the provider
+  resolves the callback host (`tokio::net::lookup_host`) and passes
+  `--add-host <host>:<ip>` to the relay (restricted mode) or the sandbox
+  container (open mode). IP literals and `host.docker.internal` are skipped;
+  resolution failure falls back to no mapping rather than failing the
+  provision. Unit-tested alongside the arg builders.
 
-### 4. Sandbox images inside the engine
+### 4. Sandbox images inside the engine — DONE
 
 The catalog images must exist in the **engine's** store. Two mechanisms:
 
-- **Registry pull (production default)**: CI publishes
-  `ghcr.io/<owner>/bears-sandbox{,-rust,-node,-godot}` (new workflow step
-  reusing the existing GHCR credentials); the roots-file catalog references
-  those; the engine pulls on first use. Mount a registry `config.json` into
-  the engine when the packages are private.
-- **One-shot builder (dev / air-gapped)**: `bears-sandbox-images` compose
-  service (profile `sandbox-build`): docker CLI image, repo mounted,
-  `DOCKER_HOST` pointed at the engine, running
-  `scripts/build-sandbox-image.sh all`. `restart: "no"`, run manually or as
-  a deploy hook.
+- **Registry pull (production default)**: `.github/workflows/sandbox-images.yml`
+  publishes `ghcr.io/<owner>/bears-sandbox{,-rust,-node,-godot}` (`latest` +
+  `sha-*` tags) on pushes touching the armature or the image definitions;
+  the roots-file catalog references those and the engine pulls on first use.
+  Mount a registry `config.json` into the engine when the packages are
+  private.
+- **One-shot builder (dev / air-gapped)**: the `bears-sandbox-images`
+  compose service (profile `sandbox-build`): docker CLI image, repo mounted
+  read-only, `DOCKER_HOST` pointed at the engine, running
+  `scripts/build-sandbox-image.sh all`. Run manually:
+  `docker compose --profile sandbox-build run --rm bears-sandbox-images`.
 
-### 5. Wire Den to it
+### 5. Wire Den to it — DONE
 
-Compose defaults (den/worker env):
-`SANDBOX_SERVER_URL=http://bears-sandbox-provider:3002`,
-`SANDBOX_CALLBACK_API_URL=http://bears-den:3001` (http — satisfies
-restricted mode), tokens shared via one env var. Update
-`services/den/README.md` and `docs/guides/sandbox-server-ops.md` to describe
-the profile and drop the "needs a docker CLI" ponytail.
+`SANDBOX_CALLBACK_API_URL` now defaults to `http://bears-den:3001` in the
+worker env (http — satisfies restricted mode); `SANDBOX_SERVER_URL` stays
+opt-in (set it to `http://bears-sandbox-provider:3002` alongside the
+profile) so the always-on services do not imply a sandbox deployment.
+`services/den/README.md` and `docs/guides/sandbox-server-ops.md` describe
+the profile; the "needs a docker CLI" ponytail is gone.
 
-### 6. Verification
+### 6. Verification — static checks done; runtime walk OPEN
 
 - `docker compose --profile sandbox up -d` on a clean host: health green,
   `/sandbox/v1/catalog` lists the images, `docker -H tcp://…engine ps`

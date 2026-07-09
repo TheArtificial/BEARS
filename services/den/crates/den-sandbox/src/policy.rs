@@ -47,7 +47,8 @@ pub fn validate_selection(
     }
     if !ctx.backend_available {
         return Err(PolicyError::RuntimeUnavailable {
-            reason: "docker probe failed (is the daemon running and the socket mounted?)"
+            reason: "docker probe failed (is the daemon running and reachable via \
+                     DOCKER_HOST or the local socket?)"
                 .to_string(),
         });
     }

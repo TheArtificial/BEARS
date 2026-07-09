@@ -116,14 +116,17 @@ network whose only way out is a socat relay to the Den callback endpoint, so
 task code cannot reach anything but Den (`WORK_SANDBOX_NETWORK=open` opts
 out; the run's `sandbox_strength` states the actual mode).
 
-A `sandbox` compose profile exists for containerized single-host setups; it
-mounts `docker.sock` (host-root-equivalent — dev only). When the provider
-itself runs in a container, set `SANDBOX_WORKSPACES_HOST_DIR` to the host
-path backing the workspaces mount (sibling-sandbox bind sources are resolved
-by the host docker daemon). ponytail: the stock Den image ships no docker
-CLI and `docker-entrypoint.sh` drops to `appuser` without socket-group
-handling, so the containerized profile needs a derived image; bare-metal is
-the recommended provider setup.
+Compose alternative (`COMPOSE_PROFILES=sandbox`): two services —
+`bears-sandbox-provider` (this binary plus a docker CLI, built from the
+`sandbox-provider` Dockerfile target) and `bears-sandbox-engine` (a
+dedicated dind Docker Engine that hosts the sandbox containers, relays, and
+networks). Nothing touches the host docker daemon, and `docker compose down
+-v` removes every trace. Point the workers at
+`SANDBOX_SERVER_URL=http://bears-sandbox-provider:3002`. Catalog images must
+exist in the **engine's** store: reference the GHCR-published
+`ghcr.io/<owner>/bears-sandbox*` images (built by the sandbox-images
+workflow), or build them into the engine with
+`docker compose --profile sandbox-build run --rm bears-sandbox-images`.
 
 ## License
 

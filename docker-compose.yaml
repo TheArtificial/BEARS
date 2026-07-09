@@ -212,10 +212,12 @@ services:
             RUN_WORKERS: ${RUN_WORKERS:-false}
             RUN_SANDBOX: ${RUN_SANDBOX:-false}
             # Work-dispatch client settings (used when RUN_WORKERS=true and a
-            # sandbox provider is deployed; empty SANDBOX_SERVER_URL disables dispatch).
+            # sandbox provider is deployed; empty SANDBOX_SERVER_URL disables
+            # dispatch). With COMPOSE_PROFILES=sandbox set
+            # SANDBOX_SERVER_URL=http://bears-sandbox-provider:3002.
             SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-}
             SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-}
-            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-}
+            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
             WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
             WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
@@ -306,10 +308,12 @@ services:
             RUN_WORKERS: ${RUN_WORKERS:-false}
             RUN_SANDBOX: ${RUN_SANDBOX:-false}
             # Work-dispatch client settings (used when RUN_WORKERS=true and a
-            # sandbox provider is deployed; empty SANDBOX_SERVER_URL disables dispatch).
+            # sandbox provider is deployed; empty SANDBOX_SERVER_URL disables
+            # dispatch). With COMPOSE_PROFILES=sandbox set
+            # SANDBOX_SERVER_URL=http://bears-sandbox-provider:3002.
             SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-}
             SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-}
-            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-}
+            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
             WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
             WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
@@ -351,18 +355,66 @@ services:
             GHCR_PACKAGES_OWNER: ${GHCR_PACKAGES_OWNER:-}
             GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-}
 
-    # Sandbox provider (RUN_SANDBOX only, no database). Enable with
-    # COMPOSE_PROFILES=sandbox and point the Den workers at it via
-    # SANDBOX_SERVER_URL=http://bears-sandbox:3002 plus
-    # SANDBOX_CALLBACK_API_URL=http://bears-den:3001 (the Den API as reachable
-    # from sandbox containers on the compose network).
-    bears-sandbox:
-        image: ${DEN_IMAGE:-bears-den:${SOURCE_COMMIT:-local}}
+    # Work sandboxes (COMPOSE_PROFILES=sandbox): two services — the provider
+    # manages, the engine executes. Sandboxes never touch the host docker
+    # daemon; everything sandbox-shaped (containers, relays, internal
+    # networks, images, disk) lives inside bears-sandbox-engine and is
+    # removed with the project. Point the Den workers at the provider via
+    # SANDBOX_SERVER_URL=http://bears-sandbox-provider:3002 with
+    # SANDBOX_CALLBACK_API_URL=http://bears-den:3001 (http: required by the
+    # default restricted network mode).
+    #
+    # Sandbox images must exist inside the ENGINE's store: reference
+    # registry-published images in the roots-file catalog (pulled on first
+    # use), or build them into the engine with
+    # `docker compose --profile sandbox-build run --rm bears-sandbox-images`.
+
+    # The Docker Engine that hosts sandbox containers. `privileged` is what
+    # dind requires; it is root over its own world only — the host daemon and
+    # host filesystem stay out of reach (this replaces the previous
+    # host-root-equivalent docker.sock mount).
+    bears-sandbox-engine:
+        image: ${SANDBOX_ENGINE_IMAGE:-docker:27-dind}
+        restart: unless-stopped
+        # Also in sandbox-build so the one-shot image builder can depend on it.
+        profiles: ["sandbox", "sandbox-build"]
+        privileged: true
+        environment:
+            DOCKER_TLS_CERTDIR: /certs
+        volumes:
+            - bears-sandbox-engine-data:/var/lib/docker
+            - bears-sandbox-certs:/certs
+            # Same path as in the provider: the engine resolves sandbox
+            # bind-mount sources, so the shared workspaces volume must appear
+            # at an identical path in both services.
+            - bears-sandbox-workspaces:/var/lib/bears/sandbox-workspaces
+        healthcheck:
+            test: ["CMD-SHELL", "docker info >/dev/null 2>&1"]
+            interval: 15s
+            timeout: 10s
+            retries: 10
+            start_period: 30s
+        expose:
+            - "2376"
+
+    # Sandbox provider (RUN_SANDBOX only, no database): the Den binary plus a
+    # docker CLI, talking to the engine over TLS TCP.
+    bears-sandbox-provider:
+        build:
+            context: ./services/den
+            dockerfile: Dockerfile
+            target: sandbox-provider
+            args:
+                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
+                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        image: ${SANDBOX_PROVIDER_IMAGE:-bears-sandbox-provider:${SOURCE_COMMIT:-local}}
         restart: unless-stopped
         profiles: ["sandbox"]
         depends_on:
             bears-preflight-config:
                 condition: service_completed_successfully
+            bears-sandbox-engine:
+                condition: service_healthy
         command: ["serve"]
         environment:
             RUN_WEB: "false"
@@ -370,33 +422,22 @@ services:
             RUN_WORKERS: "false"
             RUN_SANDBOX: "true"
             RUST_LOG: ${RUST_LOG:-info}
+            DOCKER_HOST: tcp://bears-sandbox-engine:2376
+            DOCKER_TLS_VERIFY: "1"
+            DOCKER_CERT_PATH: /certs/client
             SANDBOX_PORT: ${SANDBOX_PORT:-3002}
             SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-}
             SANDBOX_ROOTS_CONFIG: /etc/bears/sandbox-roots.json
-            # Container-local workspaces path (fixed) plus the host-side path
-            # of the same directory: sandbox workspaces are bind-mounted into
-            # sibling containers via the host docker daemon, which resolves
-            # bind sources host-side. The provider rewrites bind sources from
-            # the container path to the host path.
+            # Shared volume mounted at the same path in provider and engine,
+            # so bind sources resolve without host-path mapping.
             SANDBOX_WORKSPACES_DIR: /var/lib/bears/sandbox-workspaces
-            SANDBOX_WORKSPACES_HOST_DIR: ${SANDBOX_WORKSPACES_HOST_DIR:-/var/lib/bears/sandbox-workspaces}
             SANDBOX_IMAGE: ${SANDBOX_IMAGE:-bears/sandbox:latest}
             SANDBOX_MAX_CONCURRENT: ${SANDBOX_MAX_CONCURRENT:-2}
             SANDBOX_DEFAULT_TIMEOUT_SECS: ${SANDBOX_DEFAULT_TIMEOUT_SECS:-900}
             SANDBOX_MAX_LOG_BYTES: ${SANDBOX_MAX_LOG_BYTES:-2097152}
         volumes:
-            # ponytail: mounting docker.sock grants host-root-equivalent access
-            # to this container — acceptable for single-host dev; run the
-            # sandbox provider on a separate host for production. The Den image
-            # must include a docker CLI for this profile (or run the provider
-            # bare-metal on the host, which is the recommended dev setup — see
-            # services/den/README.md).
-            - /var/run/docker.sock:/var/run/docker.sock
-            # Literal container target (Coolify's compose validator rejects
-            # `${…}` in volume targets); the host side stays configurable.
-            - type: bind
-              source: ${SANDBOX_WORKSPACES_HOST_DIR:-/var/lib/bears/sandbox-workspaces}
-              target: /var/lib/bears/sandbox-workspaces
+            - bears-sandbox-certs:/certs:ro
+            - bears-sandbox-workspaces:/var/lib/bears/sandbox-workspaces
             - ${SANDBOX_ROOTS_FILE:-./data/sandbox-roots.json}:/etc/bears/sandbox-roots.json:ro
         healthcheck:
             test:
@@ -411,9 +452,37 @@ services:
         expose:
             - "3002"
 
+    # One-shot builder: compiles the sandbox images INTO the engine's store
+    # (dev / air-gapped alternative to registry-published catalog images).
+    # Run manually: `docker compose --profile sandbox-build run --rm bears-sandbox-images`
+    bears-sandbox-images:
+        image: ${SANDBOX_CLI_IMAGE:-docker:27-cli}
+        restart: "no"
+        profiles: ["sandbox-build"]
+        depends_on:
+            bears-sandbox-engine:
+                condition: service_healthy
+        environment:
+            DOCKER_HOST: tcp://bears-sandbox-engine:2376
+            DOCKER_TLS_VERIFY: "1"
+            DOCKER_CERT_PATH: /certs/client
+        working_dir: /src
+        entrypoint:
+            [
+                "/bin/sh",
+                "-c",
+                "apk add --no-cache bash git >/dev/null && bash scripts/build-sandbox-image.sh all",
+            ]
+        volumes:
+            - bears-sandbox-certs:/certs:ro
+            - .:/src:ro
+
 volumes:
     bears-postgres-data:
     bears-den-sqlite-data:
     bears-qdrant-data:
     bears-valkey-data:
     bears-bifrost-data:
+    bears-sandbox-engine-data:
+    bears-sandbox-certs:
+    bears-sandbox-workspaces:

@@ -58,11 +58,16 @@ impl DockerCliBackend {
     pub async fn provision(&self, spec: &ProvisionSpec) -> Result<(), BackendError> {
         let container = container_name(&spec.id);
         let mut env = spec.env.clone();
+        // Resolved from the original callback URL, before any relay rewrite.
+        let add_host = callback_add_host(&env).await;
 
         let network = match spec.network {
             NetworkMode::Open => None,
             NetworkMode::Restricted => {
-                match self.provision_restricted_network(spec, &mut env).await {
+                match self
+                    .provision_restricted_network(spec, &mut env, add_host.as_deref())
+                    .await
+                {
                     Ok(network) => Some(network),
                     Err(err) => {
                         self.cleanup_network_resources(&spec.id).await;
@@ -72,8 +77,21 @@ impl DockerCliBackend {
             }
         };
 
+        // In restricted mode the sandbox talks to the relay by container
+        // name (internal-network DNS); only open-mode sandboxes dial the
+        // callback host directly and need the resolved mapping.
+        let sandbox_add_host = match spec.network {
+            NetworkMode::Open => add_host.as_deref(),
+            NetworkMode::Restricted => None,
+        };
         let env_file = self.write_env_file(&spec.id, &env)?;
-        let args = sandbox_run_args(spec, &container, &env_file.to_string_lossy(), network.as_deref());
+        let args = sandbox_run_args(
+            spec,
+            &container,
+            &env_file.to_string_lossy(),
+            network.as_deref(),
+            sandbox_add_host,
+        );
         let result = self.docker_owned(&args, None).await;
         // The env file exists only for the window between write and start;
         // remove it regardless of outcome. (ponytail: the env is still visible
@@ -103,6 +121,7 @@ impl DockerCliBackend {
         &self,
         spec: &ProvisionSpec,
         env: &mut BTreeMap<String, String>,
+        add_host: Option<&str>,
     ) -> Result<String, BackendError> {
         let network = network_name(&spec.id);
         let out = self
@@ -122,7 +141,10 @@ impl DockerCliBackend {
         if let Some(target) = target {
             let relay = relay_container_name(&spec.id);
             let out = self
-                .docker_owned(&relay_run_args(&relay, &spec.id, &spec.image, &target), None)
+                .docker_owned(
+                    &relay_run_args(&relay, &spec.id, &spec.image, &target, add_host),
+                    None,
+                )
                 .await?;
             if !out.success() {
                 return Err(BackendError::Operation {
@@ -403,6 +425,31 @@ fn relay_target_from_env(env: &BTreeMap<String, String>) -> Result<Option<RelayT
     Ok(Some(RelayTarget { host, port, path }))
 }
 
+/// `--add-host` mapping for the Den callback host, resolved at provision
+/// time. Containers nested inside a dedicated sandbox engine (dind) cannot
+/// resolve compose service names — their DNS chain ends at the engine, not
+/// the compose resolver — but this provider process can. IP literals need no
+/// mapping; `host.docker.internal` is handled by the existing host-gateway
+/// alias; resolution failure falls back to no mapping (docker may still
+/// resolve publicly-known names itself).
+async fn callback_add_host(env: &BTreeMap<String, String>) -> Option<String> {
+    let raw = env
+        .get("DEN_API_URL")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())?;
+    let url = reqwest::Url::parse(raw).ok()?;
+    let host = url.host_str()?.to_string();
+    if host.parse::<std::net::IpAddr>().is_ok() || host == "host.docker.internal" {
+        return None;
+    }
+    let port = url.port_or_known_default().unwrap_or(80);
+    let addr = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .ok()?
+        .next()?;
+    Some(format!("{host}:{}", addr.ip()))
+}
+
 fn network_create_args(network: &str, id: &str) -> Vec<String> {
     vec![
         "network".into(),
@@ -414,8 +461,14 @@ fn network_create_args(network: &str, id: &str) -> Vec<String> {
     ]
 }
 
-fn relay_run_args(relay: &str, id: &str, image: &str, target: &RelayTarget) -> Vec<String> {
-    vec![
+fn relay_run_args(
+    relay: &str,
+    id: &str,
+    image: &str,
+    target: &RelayTarget,
+    add_host: Option<&str>,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
         "run".into(),
         "-d".into(),
         "--name".into(),
@@ -426,12 +479,19 @@ fn relay_run_args(relay: &str, id: &str, image: &str, target: &RelayTarget) -> V
         // the callback names a remote host).
         "--add-host".into(),
         "host.docker.internal:host-gateway".into(),
+    ];
+    if let Some(mapping) = add_host {
+        args.push("--add-host".into());
+        args.push(mapping.into());
+    }
+    args.extend([
         "--entrypoint".into(),
         "socat".into(),
         image.into(),
         format!("TCP-LISTEN:{},fork,reuseaddr", target.port),
         format!("TCP:{}:{}", target.host, target.port),
-    ]
+    ]);
+    args
 }
 
 fn sandbox_run_args(
@@ -439,6 +499,7 @@ fn sandbox_run_args(
     container: &str,
     env_file: &str,
     network: Option<&str>,
+    add_host: Option<&str>,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "run".into(),
@@ -463,6 +524,10 @@ fn sandbox_run_args(
     if let Some(network) = network {
         args.push("--network".into());
         args.push(network.into());
+    }
+    if let Some(mapping) = add_host {
+        args.push("--add-host".into());
+        args.push(mapping.into());
     }
     for (key, value) in &spec.labels {
         args.push("--label".into());
@@ -522,8 +587,13 @@ mod tests {
     #[test]
     fn restricted_run_args_attach_only_the_internal_network() {
         let restricted = spec(NetworkMode::Restricted);
-        let args =
-            sandbox_run_args(&restricted, "den-sbx-abc123", "/tmp/e.env", Some("den-sbx-net-abc123"));
+        let args = sandbox_run_args(
+            &restricted,
+            "den-sbx-abc123",
+            "/tmp/e.env",
+            Some("den-sbx-net-abc123"),
+            None,
+        );
         let joined = args.join(" ");
         assert!(joined.contains("--network den-sbx-net-abc123"), "{joined}");
         assert!(joined.contains("den.sandbox.network=restricted"), "{joined}");
@@ -531,10 +601,19 @@ mod tests {
         assert!(joined.contains("-v /host/ws/abc123:/workspace"), "{joined}");
         assert!(!joined.contains("/srv/ws/abc123"), "{joined}");
 
+        // Open mode dials the callback directly, so it carries the resolved
+        // extra-host mapping.
         let open = spec(NetworkMode::Open);
-        let args = sandbox_run_args(&open, "den-sbx-abc123", "/tmp/e.env", None);
+        let args = sandbox_run_args(
+            &open,
+            "den-sbx-abc123",
+            "/tmp/e.env",
+            None,
+            Some("bears-den:172.20.0.5"),
+        );
         let joined = args.join(" ");
-        assert!(!joined.contains("--network"), "{joined}");
+        assert!(!joined.contains("--network "), "{joined}");
+        assert!(joined.contains("--add-host bears-den:172.20.0.5"), "{joined}");
         assert!(joined.contains("den.sandbox.network=open"), "{joined}");
     }
 
@@ -571,14 +650,47 @@ mod tests {
             port: 3001,
             path: String::new(),
         };
-        let args = relay_run_args("den-sbx-gw-abc123", "abc123", "bears/sandbox:latest", &target);
+        let args = relay_run_args(
+            "den-sbx-gw-abc123",
+            "abc123",
+            "bears/sandbox:latest",
+            &target,
+            Some("den.internal:172.20.0.5"),
+        );
         let joined = args.join(" ");
         assert!(joined.contains("--entrypoint socat"), "{joined}");
         assert!(joined.contains("TCP-LISTEN:3001,fork,reuseaddr"), "{joined}");
         assert!(joined.contains("TCP:den.internal:3001"), "{joined}");
         assert!(joined.contains("den.sandbox.relay=abc123"), "{joined}");
+        // The relay resolves the callback host via the provision-time mapping
+        // (nested engines cannot resolve compose service names).
+        assert!(joined.contains("--add-host den.internal:172.20.0.5"), "{joined}");
         // Relays are not labeled as sandboxes: adoption must never pick them up.
         assert!(!joined.contains("den.sandbox=1"), "{joined}");
+    }
+
+    #[tokio::test]
+    async fn callback_add_host_skips_ip_literals_and_resolves_names() {
+        let env_with = |url: &str| {
+            let mut env = BTreeMap::new();
+            env.insert("DEN_API_URL".to_string(), url.to_string());
+            env
+        };
+        // IP literals and host.docker.internal need no mapping.
+        assert!(callback_add_host(&env_with("http://192.168.1.10:3001")).await.is_none());
+        assert!(
+            callback_add_host(&env_with("http://host.docker.internal:3001"))
+                .await
+                .is_none()
+        );
+        // No callback at all: nothing to map.
+        assert!(callback_add_host(&BTreeMap::new()).await.is_none());
+        // A resolvable name maps to host:ip (localhost is the one name every
+        // test host resolves).
+        let mapping = callback_add_host(&env_with("http://localhost:3001"))
+            .await
+            .expect("localhost resolves");
+        assert!(mapping.starts_with("localhost:"), "{mapping}");
     }
 
     #[test]

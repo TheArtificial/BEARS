@@ -30,10 +30,19 @@ and cleanup. Companion docs: [user guide](running-background-work.md),
   API with **per-run ephemeral tokens** minted at provision time and revoked
   at harvest. Root credentials (deploy keys, tokens) live only on the
   sandbox host and never enter sandboxes or transit Den.
-- **Recommended deployment: bare-metal provider on the sandbox host.** The
-  containerized `sandbox` compose profile exists but the stock Den image
-  ships no docker CLI (see the plan in
-  `docs/roadmap/SANDBOX_COMPOSE_SERVICE_PLAN.md`).
+- Two supported deployments:
+  - **Compose (`COMPOSE_PROFILES=sandbox`)** — `bears-sandbox-provider`
+    (the API service with a docker CLI) plus `bears-sandbox-engine` (a
+    dedicated dind Docker Engine hosting all sandbox containers, relays,
+    and networks). Nothing touches the host daemon; the shared workspaces
+    volume mounts at the same path in both, and `docker compose down -v
+    --profile sandbox` removes every trace. Catalog images must exist in
+    the *engine's* store — use the GHCR-published `bears-sandbox*` images
+    or the `bears-sandbox-images` one-shot builder
+    (`docker compose --profile sandbox-build run --rm bears-sandbox-images`).
+  - **Bare-metal provider on a dedicated sandbox host** — the setup
+    described in the bring-up checklist below; sandboxes run on that
+    host's own docker daemon.
 
 ## Bring-up checklist
 
@@ -106,7 +115,7 @@ and cleanup. Companion docs: [user guide](running-background-work.md),
 | `SANDBOX_SERVICE_TOKEN` | *(empty = auth off, dev only)* | Static bearer for `/sandbox/v1` |
 | `SANDBOX_ROOTS_CONFIG` | *(unset = no roots)* | Roots + image catalog JSON |
 | `SANDBOX_WORKSPACES_DIR` | `./data/sandbox-workspaces` | Pristine clones + per-run workspaces |
-| `SANDBOX_WORKSPACES_HOST_DIR` | *(unset)* | Host path of the workspaces dir when the provider itself is containerized (bind sources are resolved by the **host** daemon) |
+| `SANDBOX_WORKSPACES_HOST_DIR` | *(unset)* | Daemon-side path of the workspaces dir when the provider's filesystem view differs from its docker daemon's (bind sources are resolved by the daemon). Not needed in the compose profile — the shared volume mounts at identical paths in provider and engine |
 | `SANDBOX_IMAGE` | *(empty)* | Fallback image when the catalog is empty |
 | `SANDBOX_MAX_CONCURRENT` | 2 | Sandbox slots; excess dispatches queue Den-side |
 | `SANDBOX_DEFAULT_TIMEOUT_SECS` | 900 | Hard wall clock; the reaper destroys overdue sandboxes |
