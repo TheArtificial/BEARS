@@ -556,6 +556,92 @@ async fn publish_wiring_image_branch_and_prompt() {
 }
 
 #[tokio::test]
+async fn attention_and_completion_visibility() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "attention").await;
+    let (job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+
+    // A latest-attempt blocked run needs attention, with task/job context.
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+    claim_next_work_run(&pool, "runner-att", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .expect("claim");
+    finalize_work_run(
+        &pool,
+        run.id,
+        WorkRunState::Blocked,
+        WorkRunFinalize {
+            result_summary: Some("missing credentials for the deploy step".into()),
+            ..WorkRunFinalize::default()
+        },
+    )
+    .await
+    .unwrap();
+    let attention = crate::work_runs::attention_work_runs(&pool, bear_id, Some(job_id), 10)
+        .await
+        .unwrap();
+    assert_eq!(attention.len(), 1, "{attention:?}");
+    assert_eq!(attention[0].run_id, run.id);
+    assert_eq!(attention[0].task_title, "Alpha work task");
+    assert_eq!(
+        attention[0].result_summary.as_deref(),
+        Some("missing credentials for the deploy step")
+    );
+
+    // A queued retry supersedes the failure: no longer needs attention.
+    let retry = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+    let attention = crate::work_runs::attention_work_runs(&pool, bear_id, Some(job_id), 10)
+        .await
+        .unwrap();
+    assert!(attention.is_empty(), "{attention:?}");
+
+    // Not awaiting completion while tasks are open…
+    let awaiting = crate::work_runs::jobs_awaiting_completion(&pool, bear_id)
+        .await
+        .unwrap();
+    assert!(awaiting.iter().all(|job| job.id != job_id), "{awaiting:?}");
+
+    // …but once every task is done in the current run, it is.
+    let (current_run_id,): (Uuid,) =
+        sqlx::query_as("SELECT current_run_id FROM bear_jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    for task_id in &task_ids {
+        sqlx::query(
+            "INSERT INTO bear_task_run_state (run_id, task_id, status)
+             VALUES ($1, $2, 'done')
+             ON CONFLICT (run_id, task_id) DO UPDATE SET status = 'done'",
+        )
+        .bind(current_run_id)
+        .bind(task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let awaiting = crate::work_runs::jobs_awaiting_completion(&pool, bear_id)
+        .await
+        .unwrap();
+    assert!(awaiting.iter().any(|job| job.id == job_id), "{awaiting:?}");
+
+    // Cleanup the queued retry so later tests' claims see no leftovers.
+    finalize_work_run(&pool, retry.id, WorkRunState::Cancelled, WorkRunFinalize::default())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn checkout_rejects_wrong_bear() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed work_runs test; database unavailable");

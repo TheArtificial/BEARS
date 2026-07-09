@@ -408,6 +408,86 @@ pub async fn queued_run_positions(
     Ok(rows)
 }
 
+/// A work run that needs someone's attention: the newest attempt for its
+/// task ended blocked/failed/timed_out and no newer attempt has been queued.
+/// Joined with task/job context so surfaces can render it standalone.
+#[derive(Clone, Debug, serde::Serialize, sqlx::FromRow)]
+pub struct AttentionWorkRun {
+    pub run_id: Uuid,
+    pub job_id: Uuid,
+    pub task_id: Uuid,
+    pub task_title: String,
+    pub job_goal: String,
+    pub state: String,
+    pub result_summary: Option<String>,
+    pub error: Option<String>,
+    pub finished_at: Option<OffsetDateTime>,
+}
+
+/// Latest-attempt runs in attention states for a bear (optionally one job).
+/// A newer queued/active attempt supersedes an older failure — the task is
+/// being retried, so it no longer needs attention.
+pub async fn attention_work_runs(
+    pool: &PgPool,
+    bear_id: Uuid,
+    job_id: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<AttentionWorkRun>, DenError> {
+    let rows = sqlx::query_as::<_, AttentionWorkRun>(
+        "SELECT latest.id AS run_id, latest.job_id, latest.task_id,
+                t.title AS task_title, j.goal AS job_goal,
+                latest.state, latest.result_summary, latest.error, latest.finished_at
+         FROM (
+             SELECT DISTINCT ON (task_id)
+                    id, job_id, task_id, state, result_summary, error, finished_at
+             FROM bear_work_runs
+             WHERE bear_id = $1 AND ($2::uuid IS NULL OR job_id = $2)
+             ORDER BY task_id, queued_at DESC, id DESC
+         ) latest
+         JOIN bear_tasks t ON t.id = latest.task_id
+         JOIN bear_jobs j ON j.id = latest.job_id
+         WHERE latest.state IN ('blocked', 'failed', 'timed_out')
+         ORDER BY latest.finished_at DESC NULLS LAST
+         LIMIT $3",
+    )
+    .bind(bear_id)
+    .bind(job_id)
+    .bind(limit.clamp(1, 100))
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Jobs whose tasks are all done (or cancelled) in the current run but whose
+/// job status has not been closed out — "done but unjudged", awaiting
+/// criteria review / completion.
+pub async fn jobs_awaiting_completion(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<crate::model::DocketJobRow>, DenError> {
+    let rows = sqlx::query_as::<_, crate::model::DocketJobRow>(
+        "SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+                commit_policy, work_branch, status, visibility, current_run_id,
+                created_at, updated_at
+         FROM bear_jobs j
+         WHERE j.bear_id = $1
+           AND j.status IN ('ready', 'running')
+           AND EXISTS (SELECT 1 FROM bear_tasks t WHERE t.job_id = j.id)
+           AND NOT EXISTS (
+               SELECT 1 FROM bear_tasks t
+               LEFT JOIN bear_task_run_state s
+                 ON s.task_id = t.id AND s.run_id = j.current_run_id
+               WHERE t.job_id = j.id
+                 AND COALESCE(s.status, 'pending') NOT IN ('done', 'cancelled')
+           )
+         ORDER BY j.updated_at DESC",
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 /// Extend the lease on a run this worker owns. Returns false when the run is
 /// no longer owned by `runner_id` (lease was reclaimed) — the worker must
 /// drop it.

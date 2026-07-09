@@ -9,6 +9,13 @@
     {% if commit_policy %} · commit policy <code>{{ commit_policy }}</code>{% endif %}
     {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
 </p>
+{% if tasks_complete and status not in ["completed", "cancelled"] %}
+<p>
+    ✅ <strong>All tasks are done.</strong>
+    {% if criteria_complete %}Criteria are met — this job can be marked completed.
+    {% else %}Next: {{ next_action }}{% endif %}
+</p>
+{% endif %}
 
 <section>
     <h2>Tasks</h2>

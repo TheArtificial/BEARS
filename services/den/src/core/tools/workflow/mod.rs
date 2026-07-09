@@ -436,12 +436,52 @@ pub(crate) async fn get_job(
         .as_ref()
         .map(|job| docket::task_list_projection_from_docket_job(job, None));
     let status_report = job.as_ref().map(docket_job_status_report);
+
+    // Work-run visibility: recent runs (with queue placement) and
+    // latest-attempt failures that need triage, so a bear checking on its
+    // job sees blocked reasons without a second tool call.
+    let (work_runs, work_attention) = if job.is_some() {
+        let runs = den_docket::work_runs::list_work_runs(
+            pool,
+            den_docket::work_runs::WorkRunListFilter {
+                bear_id: Some(context.bear_id),
+                job_id: Some(args.job_id),
+                limit: 20,
+                ..den_docket::work_runs::WorkRunListFilter::default()
+            },
+        )
+        .await?;
+        let queue_by_run = work_run_queue_map(pool, &runs).await?;
+        let items: Vec<Value> = runs
+            .iter()
+            .map(|run| {
+                let mut item = work_run_summary_json(run);
+                if let Some(queue) = queue_by_run.get(&run.id) {
+                    item["queue"] = queue.clone();
+                }
+                item
+            })
+            .collect();
+        let attention = den_docket::work_runs::attention_work_runs(
+            pool,
+            context.bear_id,
+            Some(args.job_id),
+            10,
+        )
+        .await?;
+        (Some(items), Some(attention))
+    } else {
+        (None, None)
+    };
+
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "job": job,
         "task_list": task_list,
         "status_report": status_report,
+        "work_runs": work_runs,
+        "work_attention": work_attention,
     }))
 }
 

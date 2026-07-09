@@ -210,7 +210,28 @@ async fn index(
     let mut runs: Vec<RunView> = Vec::new();
     let mut run_rows: Vec<WorkRunRow> = Vec::new();
     let mut jobs_with_work: Vec<serde_json::Value> = Vec::new();
+    let mut attention: Vec<serde_json::Value> = Vec::new();
+    let mut awaiting_completion: Vec<serde_json::Value> = Vec::new();
     for (bear_id, bear_slug) in &bears {
+        for run in work_runs::attention_work_runs(state.sqlx_pool(), *bear_id, None, 20).await? {
+            attention.push(serde_json::json!({
+                "run_id": run.run_id.to_string(),
+                "job_id": run.job_id.to_string(),
+                "bear_slug": bear_slug,
+                "task_title": run.task_title,
+                "job_goal": run.job_goal,
+                "state": run.state,
+                "reason": run.result_summary.or(run.error),
+            }));
+        }
+        for job in work_runs::jobs_awaiting_completion(state.sqlx_pool(), *bear_id).await? {
+            awaiting_completion.push(serde_json::json!({
+                "id": job.id.to_string(),
+                "bear_slug": bear_slug,
+                "goal": job.goal,
+                "status": job.status,
+            }));
+        }
         let bear_runs = work_runs::list_work_runs(
             state.sqlx_pool(),
             WorkRunListFilter {
@@ -250,6 +271,8 @@ async fn index(
             active_runs => active,
             runs => runs,
             jobs => jobs_with_work,
+            attention => attention,
+            awaiting_completion => awaiting_completion,
         },
     )
     .await
@@ -449,6 +472,7 @@ async fn job_detail(
         })
         .collect();
 
+    let status_report = den_docket::docket_job_status_report(&projection);
     let catalog = provider_catalog(&state).await;
     web::render_template(
         &state,
@@ -466,6 +490,9 @@ async fn job_detail(
             tasks => tasks,
             runs => run_views,
             catalog => catalog,
+            tasks_complete => status_report.tasks_complete,
+            criteria_complete => status_report.criteria_complete,
+            next_action => status_report.next_action,
         },
     )
     .await

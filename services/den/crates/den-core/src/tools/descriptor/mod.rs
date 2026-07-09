@@ -576,7 +576,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_GET,
             "Get Docket job",
-            "Read one durable Docket job with criteria, task tree, current run, and run-scoped task state.",
+            "Read one durable Docket job with criteria, task tree, current run, and run-scoped task state. Includes recent work runs (with queue placement) and work_attention: latest-attempt runs that ended blocked/failed and need triage, with their reasons.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
