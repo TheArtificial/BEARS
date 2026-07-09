@@ -4,7 +4,10 @@ use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use den_core::DenError;
+use den_core::{
+    client_tools::{client_tool_policy_json_for_provider, ClientToolName},
+    DenError,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -133,6 +136,38 @@ pub struct TurnObligationRow {
 }
 
 impl TurnObligationRow {
+    pub fn timeout_ms(&self) -> i64 {
+        let tool_name = self
+            .request_payload
+            .get("tool_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let policy = ClientToolName::from_provider_alias(tool_name)
+            .map(|_| client_tool_policy_json_for_provider(tool_name))
+            .unwrap_or(Value::Null);
+        let raw = match self.expected_responder_action.as_str() {
+            "permission_decision" => policy
+                .get("permission_timeout_ms")
+                .and_then(Value::as_i64)
+                .unwrap_or(120_000),
+            "tool_result" => policy
+                .get("total_timeout_ms")
+                .or_else(|| policy.get("tool_timeout_ms"))
+                .and_then(Value::as_i64)
+                .unwrap_or(180_000),
+            _ => 120_000,
+        };
+        raw.clamp(1_000, 600_000)
+    }
+
+    pub fn expires_at(&self) -> OffsetDateTime {
+        self.created_at + time::Duration::milliseconds(self.timeout_ms())
+    }
+
+    pub fn timed_out(&self, now: OffsetDateTime) -> bool {
+        obligation_is_open(self) && self.expires_at() <= now
+    }
+
     pub fn kind_value(&self) -> Result<TurnObligationKind, DenError> {
         TurnObligationKind::try_from_storage(&self.kind)
     }
@@ -478,6 +513,29 @@ pub async fn mark_continued(
     Ok(row.map(row_to_obligation))
 }
 
+pub async fn mark_failed(
+    pool: &PgPool,
+    obligation_id: Uuid,
+) -> Result<Option<TurnObligationRow>, DenError> {
+    let row = sqlx::query(
+        r#"
+        UPDATE turn_obligations
+        SET state = 'failed',
+            completed_at = COALESCE(completed_at, NOW()),
+            updated_at = NOW()
+        WHERE id = $1
+          AND state IN ('requested','waiting_for_client','result_received')
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
+                  tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+                  created_at, updated_at, completed_at
+        "#,
+    )
+    .bind(obligation_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_obligation))
+}
+
 pub async fn open_client_obligations_for_step(
     pool: &PgPool,
     turn_step_id: Uuid,
@@ -518,6 +576,59 @@ pub async fn open_client_obligations_for_run(
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(row_to_obligation).collect())
+}
+
+pub async fn open_client_obligations_for_session(
+    pool: &PgPool,
+    session_id: &str,
+) -> Result<Vec<TurnObligationRow>, DenError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, run_id, session_id, kind, expected_responder_action,
+               tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+               created_at, updated_at, completed_at
+        FROM turn_obligations
+        WHERE session_id = $1
+          AND state IN ('requested','waiting_for_client')
+        ORDER BY created_at ASC, id ASC
+        "#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(row_to_obligation).collect())
+}
+
+pub async fn expire_open_client_obligations_for_session(
+    pool: &PgPool,
+    session_id: &str,
+) -> Result<Vec<TurnObligationRow>, DenError> {
+    let now = OffsetDateTime::now_utc();
+    let open = open_client_obligations_for_session(pool, session_id).await?;
+    let mut expired = Vec::new();
+    for obligation in open
+        .into_iter()
+        .filter(|obligation| obligation.timed_out(now))
+    {
+        let timeout_payload = serde_json::json!({
+            "status": "timeout",
+            "reason": "client_obligation_timeout",
+            "timeout_ms": obligation.timeout_ms(),
+            "expires_at": obligation.expires_at(),
+            "tool_call_id": obligation.tool_call_id,
+            "permission_id": obligation.permission_id,
+            "expected_responder_action": obligation.expected_responder_action,
+        });
+        if mark_result_received(pool, obligation.id, timeout_payload)
+            .await?
+            .is_some()
+        {
+            if let Some(row) = mark_failed(pool, obligation.id).await? {
+                expired.push(row);
+            }
+        }
+    }
+    Ok(expired)
 }
 
 pub async fn settle_outstanding_for_run(

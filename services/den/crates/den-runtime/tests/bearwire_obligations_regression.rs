@@ -159,6 +159,49 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn expired_client_obligation_is_marked_failed(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    let obligation = turn_obligations::upsert_tool_result_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-timeout",
+        None,
+        serde_json::json!({ "tool_name": "fs_list_directory" }),
+    )
+    .await
+    .expect("create tool result obligation");
+
+    sqlx::query(
+        "UPDATE turn_obligations SET created_at = NOW() - INTERVAL '10 minutes' WHERE id = $1",
+    )
+    .bind(obligation.id)
+    .execute(&pool)
+    .await
+    .expect("age obligation");
+
+    let expired = turn_obligations::expire_open_client_obligations_for_session(&pool, &session_id)
+        .await
+        .expect("expire obligations");
+    assert_eq!(expired.len(), 1);
+    assert_eq!(expired[0].id, obligation.id);
+    assert_eq!(expired[0].state, "failed");
+    assert_eq!(expired[0].result_payload.as_ref().unwrap()["status"], "timeout");
+
+    let open = turn_obligations::open_client_obligations_for_session(&pool, &session_id)
+        .await
+        .expect("list open obligations");
+    assert!(open.is_empty(), "expired obligation should not remain open");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) {
     let (user_id, bear_id) = create_user_and_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());

@@ -9,6 +9,7 @@ use den_http::errors::CustomError;
 use den_runtime::{
     bearwire_events,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
+    turn_obligations,
 };
 use den_service::{bears::BearProfile, client_sessions, DenState};
 
@@ -43,6 +44,29 @@ async fn session_state_payload(
         &conversation_runtime_id,
         &session.client_session_id,
     );
+    let open_obligations = turn_obligations::open_client_obligations_for_session(
+        &state.sqlx_pool,
+        &session.client_session_id,
+    )
+    .await?
+    .into_iter()
+    .map(|obligation| {
+        json!({
+            "id": obligation.id,
+            "run_id": obligation.run_id,
+            "kind": obligation.kind,
+            "expected_responder_action": obligation.expected_responder_action,
+            "tool_call_id": obligation.tool_call_id,
+            "permission_id": obligation.permission_id,
+            "state": obligation.state,
+            "turn_step_id": obligation.turn_step_id,
+            "created_at": obligation.created_at,
+            "updated_at": obligation.updated_at,
+            "timeout_ms": obligation.timeout_ms(),
+            "expires_at": obligation.expires_at(),
+        })
+    })
+    .collect::<Vec<_>>();
 
     Ok(json!({
         "id": session.id,
@@ -69,6 +93,7 @@ async fn session_state_payload(
             "trusted_workspace": trusted_workspace,
             "runtime_conversation_id": conversation_runtime_id,
             "runtime_session_live": runtime_session_live,
+            "open_obligations": open_obligations,
         }
     }))
 }
