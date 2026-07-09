@@ -196,17 +196,24 @@ Plan outline: `SANDBOX_DEFAULT_MEMORY_MB` / `SANDBOX_DEFAULT_CPUS` /
 worker; per-root ceilings later fold into item 3 (per-task policy).
 **Effort**: ~½ day.
 
-## 11. Blocked-run attention loop
+## 11. Blocked-run attention loop — visibility half DONE
 
-**Why**: a blocked run just sits in `/work`; nobody is told. Autonomy needs
+**Why**: a blocked run just sat in `/work`; nobody was told. Autonomy needs
 a return path to a human (or a triaging bear).
 
-Plan outline: on blocked/failed finalize, post a message into the job
-creator's conversation with the bear (reason + run link + suggested next
-step), reusing the existing conversation-persistence path; the chat/pair
-bear can refine the task (`update_task`) and re-dispatch. Optional digest
-for `succeeded` with publish results. Later: a `watch`-stance policy that
-auto-triages retryable blockages. **Effort**: ~1–2 days.
+Done: pull-based visibility. `attention_work_runs` (latest-attempt runs
+that ended blocked/failed/timed_out with no retry queued) surfaces as a
+"Needs attention" section on `/work` and as `work_attention` (with blocked
+reasons) in `get_job`, so any bear or human checking a job sees what needs
+triage without extra calls.
+
+Remaining (push half): on blocked/failed finalize, post a message into the
+job creator's conversation with the bear (reason + run link + suggested
+next step), reusing the existing conversation-persistence path; the
+chat/pair bear can refine the task (`update_task`) and re-dispatch.
+Optional digest for `succeeded` with publish results. Later: a
+`watch`-stance policy that auto-triages retryable blockages.
+**Effort remaining**: ~1 day.
 
 ## 12. Job lifecycle completion
 
