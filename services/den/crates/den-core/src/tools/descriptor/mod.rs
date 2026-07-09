@@ -657,7 +657,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_DISPATCH,
             "Dispatch work task",
-            "Queue a work-assigned Docket task for autonomous sandbox execution. A dispatch worker provisions an isolated sandbox on the configured sandbox server, a headless armature executes the task there, and results flow back into Docket. When the job's commit_policy is per_task or per_job, successful runs are published (pushed) to the job's upstream work branch. Requires the task's assigned_to_role to be work, and a sandbox root: pass root or set work_surface_ref on the job. Returns the work_run_id to inspect with get_work_run.",
+            "Queue a work-assigned Docket task for autonomous sandbox execution. A dispatch worker provisions an isolated sandbox on the configured sandbox server, a headless armature executes the task there, and results flow back into Docket. When the job's commit_policy is per_task or per_job, successful runs are published (pushed) to the job's upstream work branch. Runs within one job execute one at a time in dispatch order (each building on the previous task's published work); the response reports the run's queue position. Requires the task's assigned_to_role to be work, and a sandbox root: pass root or set work_surface_ref on the job. Returns the work_run_id to inspect with get_work_run.",
             "bear.docket",
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
@@ -666,7 +666,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_RUN_LIST,
             "List work runs",
-            "List autonomous work runs (sandbox executions of work-assigned Docket tasks) for this Bear, optionally filtered by job, task, or state.",
+            "List autonomous work runs (sandbox executions of work-assigned Docket tasks) for this Bear, optionally filtered by job, task, or state. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind) — runs serialize per job.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -675,7 +675,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_RUN_GET,
             "Get work run",
-            "Read one autonomous work run: state, attempt, sandbox type and strength, recognized work surface, result summary, changed files, bounded log tail, and error/blockage reason.",
+            "Read one autonomous work run: state, attempt, sandbox type and strength, recognized work surface, result summary (including published branch/commit in result_refs), changed files, bounded log tail, and error/blockage reason. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind).",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,

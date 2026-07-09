@@ -52,7 +52,11 @@ queued → claimed → provisioning → running → reporting → succeeded
   (older-run-wins) resolves the cross-worker race the committed-state gate
   cannot see; expired-lease takeovers are exempt because the taken-over run
   *is* the job's active run. Runs of different jobs still execute
-  concurrently up to `SANDBOX_MAX_CONCURRENT`.
+  concurrently up to `SANDBOX_MAX_CONCURRENT`. Queue placement is derived
+  at read time (`queued_run_positions`: 1-based position + the in-flight
+  run being waited on) and surfaces in the `/work` pages, in
+  `dispatch_work`'s response, and as a `queue` object on queued runs in
+  `list_work_runs` / `get_work_run` — never stored.
 - Terminal transitions go through `finalize_work_run` exactly once; audit
   events ride `bear_task_events`.
 

@@ -73,7 +73,10 @@
             {% for run in runs %}
             <tr>
                 <td><a href="/work/runs/{{ run.id }}">{{ run.id[:8] }}…</a></td>
-                <td>{{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}</td>
+                <td>
+                    {{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}
+                    {%- if run.queue_position %} (#{{ run.queue_position }} in queue{% if run.waiting_on_run_id %}, behind <a href="/work/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}){% endif %}
+                </td>
                 <td>{{ run.attempt }}</td>
                 <td>{{ run.result_summary or run.error or "—" }}</td>
                 <td>

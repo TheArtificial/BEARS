@@ -90,6 +90,10 @@ struct RunView {
     published_branch: Option<String>,
     published_commit: Option<String>,
     publish_failed: Option<String>,
+    /// For queued runs: 1-based position in the job's queue (runs serialize
+    /// per job) and the in-flight run this one waits behind.
+    queue_position: Option<i64>,
+    waiting_on_run_id: Option<String>,
 }
 
 fn ts(value: time::OffsetDateTime) -> String {
@@ -143,7 +147,37 @@ fn run_view(run: &WorkRunRow, bear_slug: &str) -> RunView {
         published_branch: ref_str("/published/branch"),
         published_commit: ref_str("/published/commit"),
         publish_failed: ref_str("/publish_failed"),
+        queue_position: None,
+        waiting_on_run_id: None,
     }
+}
+
+/// Annotate queued runs with their queue placement (one batch query).
+async fn attach_queue_info(
+    state: &AppState,
+    runs: &[WorkRunRow],
+    views: &mut [RunView],
+) -> Result<(), CustomError> {
+    let queued_ids: Vec<Uuid> = runs
+        .iter()
+        .filter(|run| run.state == "queued")
+        .map(|run| run.id)
+        .collect();
+    if queued_ids.is_empty() {
+        return Ok(());
+    }
+    let infos = work_runs::queued_run_positions(state.sqlx_pool(), &queued_ids).await?;
+    let by_id: std::collections::HashMap<String, &work_runs::WorkRunQueueInfo> = infos
+        .iter()
+        .map(|info| (info.run_id.to_string(), info))
+        .collect();
+    for view in views.iter_mut() {
+        if let Some(info) = by_id.get(&view.id) {
+            view.queue_position = Some(info.position);
+            view.waiting_on_run_id = info.waiting_on_run_id.map(|id| id.to_string());
+        }
+    }
+    Ok(())
 }
 
 fn require_user(auth_session: &AuthSession) -> Result<i32, CustomError> {
@@ -174,6 +208,7 @@ async fn index(
     let bears = member_bears(&state, user_id).await?;
 
     let mut runs: Vec<RunView> = Vec::new();
+    let mut run_rows: Vec<WorkRunRow> = Vec::new();
     let mut jobs_with_work: Vec<serde_json::Value> = Vec::new();
     for (bear_id, bear_slug) in &bears {
         let bear_runs = work_runs::list_work_runs(
@@ -186,6 +221,7 @@ async fn index(
         )
         .await?;
         runs.extend(bear_runs.iter().map(|run| run_view(run, bear_slug)));
+        run_rows.extend(bear_runs);
 
         let service = PgDocketService::from_pool(state.sqlx_pool());
         let jobs = service
@@ -201,6 +237,7 @@ async fn index(
             }));
         }
     }
+    attach_queue_info(&state, &run_rows, &mut runs).await?;
     runs.sort_by(|a, b| b.queued_at.cmp(&a.queued_at));
     let active: Vec<&RunView> = runs.iter().filter(|run| run.is_active).collect();
 
@@ -387,7 +424,8 @@ async fn job_detail(
         },
     )
     .await?;
-    let run_views: Vec<RunView> = runs.iter().map(|run| run_view(run, &bear_slug)).collect();
+    let mut run_views: Vec<RunView> = runs.iter().map(|run| run_view(run, &bear_slug)).collect();
+    attach_queue_info(&state, &runs, &mut run_views).await?;
 
     let task_states: std::collections::HashMap<Uuid, &str> = projection
         .task_states
@@ -471,7 +509,9 @@ async fn run_detail(
     let turn_outcome = refs.get("turn_outcome").cloned();
     let work_surface = run.work_surface.clone();
     let usage = run.usage.clone();
-    let view = run_view(&run, &bear_slug);
+    let mut views = vec![run_view(&run, &bear_slug)];
+    attach_queue_info(&state, std::slice::from_ref(&run), &mut views).await?;
+    let view = views.remove(0);
     let can_retry = !view.is_active;
 
     web::render_template(

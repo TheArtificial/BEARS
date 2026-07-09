@@ -813,6 +813,26 @@ pub(crate) async fn dispatch_work(
         },
     )
     .await?;
+    // Runs serialize per job: tell the model where this run sits in the
+    // job's queue and what it is waiting behind.
+    let queue = den_docket::work_runs::queued_run_positions(pool, &[run.id])
+        .await?
+        .into_iter()
+        .next();
+    let note = match &queue {
+        Some(info) if info.waiting_on_run_id.is_some() => format!(
+            "queued at position {} in the job's queue, behind active run {}; \
+             runs within a job execute one at a time in dispatch order",
+            info.position,
+            info.waiting_on_run_id.unwrap_or_default()
+        ),
+        Some(info) if info.position > 1 => format!(
+            "queued at position {} in the job's queue; runs within a job execute \
+             one at a time in dispatch order",
+            info.position
+        ),
+        _ => "queued for the dispatch worker; inspect progress with get_work_run".to_string(),
+    };
     Ok(json!({
         "ok": true,
         "work_run_id": run.id,
@@ -820,7 +840,11 @@ pub(crate) async fn dispatch_work(
         "attempt": run.attempt,
         "task_id": run.task_id,
         "job_id": run.job_id,
-        "note": "queued for the dispatch worker; inspect progress with get_work_run",
+        "queue": queue.map(|info| json!({
+            "position": info.position,
+            "waiting_on_run_id": info.waiting_on_run_id,
+        })),
+        "note": note,
     }))
 }
 
@@ -853,8 +877,44 @@ pub(crate) async fn list_work_runs(
         },
     )
     .await?;
-    let items: Vec<Value> = runs.iter().map(work_run_summary_json).collect();
+    let queue_by_run = work_run_queue_map(pool, &runs).await?;
+    let items: Vec<Value> = runs
+        .iter()
+        .map(|run| {
+            let mut item = work_run_summary_json(run);
+            if let Some(queue) = queue_by_run.get(&run.id) {
+                item["queue"] = queue.clone();
+            }
+            item
+        })
+        .collect();
     Ok(json!({ "ok": true, "work_runs": items }))
+}
+
+/// Queue placement for the queued runs in `runs`, keyed by run id (runs
+/// serialize per job; see den-docket's `queued_run_positions`).
+async fn work_run_queue_map(
+    pool: &PgPool,
+    runs: &[den_docket::work_runs::WorkRunRow],
+) -> Result<std::collections::HashMap<Uuid, Value>, CustomError> {
+    let queued_ids: Vec<Uuid> = runs
+        .iter()
+        .filter(|run| run.state == "queued")
+        .map(|run| run.id)
+        .collect();
+    let infos = den_docket::work_runs::queued_run_positions(pool, &queued_ids).await?;
+    Ok(infos
+        .into_iter()
+        .map(|info| {
+            (
+                info.run_id,
+                json!({
+                    "position": info.position,
+                    "waiting_on_run_id": info.waiting_on_run_id,
+                }),
+            )
+        })
+        .collect())
 }
 
 #[derive(Debug, Deserialize)]
@@ -879,6 +939,12 @@ pub(crate) async fn get_work_run(
     // Result refs already carry the bounded log tail / diff captured at
     // harvest time; live logs for active runs are on the /work web UI.
     value["result_refs"] = run.result_refs.clone().unwrap_or(Value::Null);
+    if let Some(queue) = work_run_queue_map(pool, std::slice::from_ref(&run))
+        .await?
+        .remove(&run.id)
+    {
+        value["queue"] = queue;
+    }
     value["usage"] = run.usage.unwrap_or(Value::Null);
     Ok(json!({ "ok": true, "work_run": value }))
 }

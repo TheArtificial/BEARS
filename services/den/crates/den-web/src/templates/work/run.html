@@ -13,7 +13,14 @@
     <table>
         <tbody>
             <tr><th>Bear</th><td>{{ run.bear_slug }}</td></tr>
-            <tr><th>State</th><td>{{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}</td></tr>
+            <tr><th>State</th><td>
+                {{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}
+                {% if run.queue_position %}
+                — position {{ run.queue_position }} in the job's queue{% if run.waiting_on_run_id %},
+                waiting on run <a href="/work/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}
+                (runs within a job execute one at a time)
+                {% endif %}
+            </td></tr>
             <tr><th>Attempt</th><td>{{ run.attempt }}</td></tr>
             <tr><th>Root / ref</th><td>{{ run.root or "—" }} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
             <tr><th>Image</th><td>{{ run.image or "root default" }}</td></tr>

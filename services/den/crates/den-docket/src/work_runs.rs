@@ -368,6 +368,46 @@ async fn release_work_run_claim(
     Ok(())
 }
 
+/// Queue placement of a `queued` run within its job (runs serialize per
+/// job): 1-based position in the job's queue and the in-flight run it is
+/// waiting behind, when there is one. Derived at read time — never stored.
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub struct WorkRunQueueInfo {
+    pub run_id: Uuid,
+    pub position: i64,
+    pub waiting_on_run_id: Option<Uuid>,
+}
+
+/// Queue info for the `queued` runs among `run_ids` (non-queued ids are
+/// simply absent from the result). One query for the whole batch, so list
+/// views can annotate cheaply.
+pub async fn queued_run_positions(
+    pool: &PgPool,
+    run_ids: &[Uuid],
+) -> Result<Vec<WorkRunQueueInfo>, DenError> {
+    if run_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query_as::<_, WorkRunQueueInfo>(
+        "SELECT r.id AS run_id,
+                (SELECT count(*) FROM bear_work_runs q
+                 WHERE q.job_id = r.job_id AND q.state = 'queued'
+                   AND (q.queued_at < r.queued_at
+                        OR (q.queued_at = r.queued_at AND q.id <= r.id))) AS position,
+                (SELECT s.id FROM bear_work_runs s
+                 WHERE s.job_id = r.job_id
+                   AND s.state IN ('claimed', 'provisioning', 'running', 'reporting')
+                 ORDER BY s.queued_at ASC, s.id ASC
+                 LIMIT 1) AS waiting_on_run_id
+         FROM bear_work_runs r
+         WHERE r.id = ANY($1) AND r.state = 'queued'",
+    )
+    .bind(run_ids)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 /// Extend the lease on a run this worker owns. Returns false when the run is
 /// no longer owned by `runner_id` (lease was reclaimed) — the worker must
 /// drop it.

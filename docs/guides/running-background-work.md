@@ -66,7 +66,10 @@ until the task is done, blocked, or the run times out.
 
 You can dispatch several of a job's tasks up front: runs within one job
 execute **one at a time, in dispatch order**, each building on the previous
-task's published work. Runs of different jobs execute concurrently.
+task's published work. Runs of different jobs execute concurrently. Queued
+runs show their place in the job's queue — and which run they are waiting
+behind — on the `/work` pages, in the dispatch confirmation, and in
+`get_work_run` / `list_work_runs`.
 
 ## Follow progress and read results
 

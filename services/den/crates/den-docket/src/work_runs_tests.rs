@@ -248,6 +248,16 @@ async fn runs_within_one_job_serialize() {
         .await
         .unwrap();
 
+    // Queue placement before anything is claimed: positions in queue order,
+    // nothing to wait on yet.
+    let infos = crate::work_runs::queued_run_positions(&pool, &[run_a.id, run_b.id])
+        .await
+        .unwrap();
+    let info = |id: Uuid| infos.iter().find(|i| i.run_id == id).expect("queue info");
+    assert_eq!(info(run_a.id).position, 1);
+    assert_eq!(info(run_b.id).position, 2);
+    assert!(info(run_b.id).waiting_on_run_id.is_none());
+
     let lease = std::time::Duration::from_secs(60);
     let first = claim_next_work_run(&pool, "runner-1", lease)
         .await
@@ -261,6 +271,16 @@ async fn runs_within_one_job_serialize() {
         blocked.is_none(),
         "second run of the same job must not claim while the first is in flight"
     );
+
+    // Placement now names the in-flight run it waits behind; claimed runs
+    // drop out of the queue view entirely.
+    let infos = crate::work_runs::queued_run_positions(&pool, &[run_a.id, run_b.id])
+        .await
+        .unwrap();
+    assert_eq!(infos.len(), 1, "only queued runs have queue info: {infos:?}");
+    assert_eq!(infos[0].run_id, run_b.id);
+    assert_eq!(infos[0].position, 1);
+    assert_eq!(infos[0].waiting_on_run_id, Some(run_a.id));
 
     // Terminal first run unblocks the sibling.
     finalize_work_run(&pool, run_a.id, WorkRunState::Failed, WorkRunFinalize::default())
