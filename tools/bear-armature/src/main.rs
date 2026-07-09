@@ -7702,16 +7702,11 @@ const ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS: usize = 4 * 1024;
 const TOOL_RESULT_POST_SLOW_MS: u128 = 2_000;
 const TOOL_RESULT_POST_TIMEOUT_SECS: u64 = 120;
 
-fn compact_tool_raw_output(value: Value) -> Value {
-    let serialized = value.to_string();
-    if serialized.chars().count() <= ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS {
-        return value;
-    }
-    json!({
-        "preview": serialized.chars().take(ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS).collect::<String>() + "... truncated",
-        "truncated": true,
-        "omitted_full_raw_output": true,
-    })
+fn compact_tool_card_json_value(value: Value) -> Value {
+    Value::String(compact_tool_json_detail(
+        &value,
+        ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS,
+    ))
 }
 
 pub(crate) fn compact_tool_json_detail(value: &Value, max_chars: usize) -> String {
@@ -9990,11 +9985,11 @@ async fn send_tool_call_update(
             tool_call = tool_call.locations(locations);
         }
         if let Some(args) = tool_args_from_event(event) {
-            tool_call = tool_call.raw_input(Some(args.clone()));
+            tool_call = tool_call.raw_input(Some(compact_tool_card_json_value(args.clone())));
         }
     }
     if let Some(raw_output) = raw_output {
-        tool_call = tool_call.raw_output(Some(compact_tool_raw_output(raw_output)));
+        tool_call = tool_call.raw_output(Some(compact_tool_card_json_value(raw_output)));
     }
     write_notification(
         "session/update",
@@ -12368,17 +12363,18 @@ mod tests {
     }
 
     #[test]
-    fn compact_tool_raw_output_keeps_large_payloads_out_of_acp_cards() {
-        let compacted = compact_tool_raw_output(json!({
+    fn compact_tool_card_json_value_keeps_nested_payloads_out_of_acp_cards() {
+        let compacted = compact_tool_card_json_value(json!({
             "entries": (0..500).map(|idx| json!({
                 "path": format!("/workspace/file-{idx}.txt"),
                 "kind": "file"
             })).collect::<Vec<_>>()
         }));
-        assert_eq!(compacted["truncated"], true);
-        assert_eq!(compacted["omitted_full_raw_output"], true);
+        let preview = compacted.as_str().expect("ACP raw values are JSON strings");
+        assert!(preview.contains("entries"));
+        assert!(preview.contains("... truncated"));
         assert!(
-            compacted["preview"].as_str().unwrap().chars().count()
+            preview.chars().count()
                 <= ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS + "... truncated".len()
         );
         assert!(compacted.get("entries").is_none());
