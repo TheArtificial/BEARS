@@ -249,7 +249,41 @@ pub async fn enqueue_work_run(
 /// Picks up fresh `queued` runs and takes over non-terminal runs whose lease
 /// expired (worker crash); the state of a taken-over run is preserved so the
 /// new owner can reconcile rather than restart blindly.
+///
+/// **Runs serialize per job**: a queued run is only claimable when its job
+/// has no other in-flight run, so a multi-task job drains one run at a time
+/// in queue order — sequential tasks build on the job's work branch instead
+/// of racing it (concurrent publishes to one branch are guaranteed
+/// non-fast-forward failures). Expired-lease takeovers are exempt: the
+/// in-flight run being taken over *is* the job's active run.
 pub async fn claim_next_work_run(
+    pool: &PgPool,
+    runner_id: &str,
+    lease: std::time::Duration,
+) -> Result<Option<WorkRunRow>, DenError> {
+    // The in-flight-sibling gate reads committed state, so two workers
+    // claiming simultaneously can each see the other's queued sibling as
+    // claimable. The post-claim recheck resolves that race with a
+    // deterministic older-run-wins rule; one bounce is enough because the
+    // retry's fresh snapshot sees the winner in flight.
+    for _ in 0..3 {
+        let Some(run) = claim_next_work_run_once(pool, runner_id, lease).await? else {
+            return Ok(None);
+        };
+        // Only freshly claimed queued runs (no sandbox yet) are subject to
+        // the recheck; releasing a provisioned takeover would orphan its
+        // sandbox.
+        let fresh_claim = run.state == "claimed" && run.sandbox_id.is_none();
+        if fresh_claim && has_older_inflight_sibling(pool, &run).await? {
+            release_work_run_claim(pool, run.id, runner_id).await?;
+            continue;
+        }
+        return Ok(Some(run));
+    }
+    Ok(None)
+}
+
+async fn claim_next_work_run_once(
     pool: &PgPool,
     runner_id: &str,
     lease: std::time::Duration,
@@ -257,11 +291,19 @@ pub async fn claim_next_work_run(
     let lease_secs = i64::try_from(lease.as_secs()).unwrap_or(i64::MAX);
     let row = sqlx::query_as::<_, WorkRunRow>(&format!(
         "WITH candidate AS (
-             SELECT id FROM bear_work_runs
-             WHERE state = 'queued'
-                OR (state IN ('claimed', 'provisioning', 'running', 'reporting')
-                    AND lease_expires_at IS NOT NULL AND lease_expires_at < now())
-             ORDER BY queued_at ASC
+             SELECT id FROM bear_work_runs r
+             WHERE (
+                     r.state = 'queued'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM bear_work_runs sibling
+                         WHERE sibling.job_id = r.job_id
+                           AND sibling.id <> r.id
+                           AND sibling.state IN ('claimed', 'provisioning', 'running', 'reporting')
+                     )
+                   )
+                OR (r.state IN ('claimed', 'provisioning', 'running', 'reporting')
+                    AND r.lease_expires_at IS NOT NULL AND r.lease_expires_at < now())
+             ORDER BY r.queued_at ASC
              LIMIT 1
              FOR UPDATE SKIP LOCKED
          )
@@ -284,6 +326,46 @@ pub async fn claim_next_work_run(
     .fetch_optional(pool)
     .await?;
     Ok(row)
+}
+
+/// Whether the run's job has another in-flight run that was queued earlier
+/// (ties broken by id). Used by the claim recheck: when two workers race two
+/// queued runs of one job into flight, the younger one yields.
+async fn has_older_inflight_sibling(pool: &PgPool, run: &WorkRunRow) -> Result<bool, DenError> {
+    let (exists,): (bool,) = sqlx::query_as(
+        "SELECT EXISTS (
+             SELECT 1 FROM bear_work_runs sibling
+             WHERE sibling.job_id = $1
+               AND sibling.id <> $2
+               AND sibling.state IN ('claimed', 'provisioning', 'running', 'reporting')
+               AND (sibling.queued_at < $3
+                    OR (sibling.queued_at = $3 AND sibling.id < $2))
+         )",
+    )
+    .bind(run.job_id)
+    .bind(run.id)
+    .bind(run.queued_at)
+    .fetch_one(pool)
+    .await?;
+    Ok(exists)
+}
+
+/// Return a freshly claimed (never provisioned) run to the queue.
+async fn release_work_run_claim(
+    pool: &PgPool,
+    run_id: Uuid,
+    runner_id: &str,
+) -> Result<(), DenError> {
+    sqlx::query(
+        "UPDATE bear_work_runs
+         SET state = 'queued', runner_id = NULL, lease_expires_at = NULL, updated_at = now()
+         WHERE id = $1 AND runner_id = $2 AND state = 'claimed' AND sandbox_id IS NULL",
+    )
+    .bind(run_id)
+    .bind(runner_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Extend the lease on a run this worker owns. Returns false when the run is

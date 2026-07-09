@@ -45,6 +45,14 @@ queued → claimed → provisioning → running → reporting → succeeded
   fences stale owners. Consequence for tests: DB-backed claim tests must
   serialize and purge leftovers (`DB_LOCK` / `purge_claimable_runs` in
   `work_runs_tests.rs`).
+- **Runs serialize per job**: a queued run is claimable only when its job
+  has no other in-flight run, so a multi-task job drains one run at a time
+  in queue order — sequential tasks build on the job's work branch instead
+  of racing it into non-fast-forward publish failures. A post-claim recheck
+  (older-run-wins) resolves the cross-worker race the committed-state gate
+  cannot see; expired-lease takeovers are exempt because the taken-over run
+  *is* the job's active run. Runs of different jobs still execute
+  concurrently up to `SANDBOX_MAX_CONCURRENT`.
 - Terminal transitions go through `finalize_work_run` exactly once; audit
   events ride `bear_task_events`.
 

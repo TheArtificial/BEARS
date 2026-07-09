@@ -191,7 +191,7 @@ async fn enqueue_validates_stance_and_uniqueness() {
 }
 
 #[tokio::test]
-async fn concurrent_claims_take_distinct_runs() {
+async fn concurrent_claims_take_distinct_runs_across_jobs() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed work_runs test; database unavailable");
         return;
@@ -199,11 +199,13 @@ async fn concurrent_claims_take_distinct_runs() {
     let _guard = DB_LOCK.lock().await;
     purge_claimable_runs(&pool).await;
     let (user_id, bear_id) = seed_user_and_bear(&pool, "claim").await;
-    let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
-    let run_a = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+    // Two separate jobs: runs of different jobs may execute concurrently.
+    let (_job_a, tasks_a) = seed_work_job(&pool, user_id, bear_id).await;
+    let (_job_b, tasks_b) = seed_work_job(&pool, user_id, bear_id).await;
+    let run_a = enqueue_work_run(&pool, enqueue_for(bear_id, tasks_a[0], user_id))
         .await
         .unwrap();
-    let run_b = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[1], user_id))
+    let run_b = enqueue_work_run(&pool, enqueue_for(bear_id, tasks_b[0], user_id))
         .await
         .unwrap();
 
@@ -225,6 +227,55 @@ async fn concurrent_claims_take_distinct_runs() {
     // Nothing left to claim.
     let third = claim_next_work_run(&pool, "runner-3", lease).await.unwrap();
     assert!(third.is_none());
+}
+
+#[tokio::test]
+async fn runs_within_one_job_serialize() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "serial").await;
+    let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    // Both work tasks queued up front — the job should drain them one at a
+    // time in queue order (sequential tasks build on the work branch).
+    let run_a = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+    let run_b = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[1], user_id))
+        .await
+        .unwrap();
+
+    let lease = std::time::Duration::from_secs(60);
+    let first = claim_next_work_run(&pool, "runner-1", lease)
+        .await
+        .unwrap()
+        .expect("oldest queued run claims");
+    assert_eq!(first.id, run_a.id);
+
+    // The sibling stays queued while the job has a run in flight.
+    let blocked = claim_next_work_run(&pool, "runner-2", lease).await.unwrap();
+    assert!(
+        blocked.is_none(),
+        "second run of the same job must not claim while the first is in flight"
+    );
+
+    // Terminal first run unblocks the sibling.
+    finalize_work_run(&pool, run_a.id, WorkRunState::Failed, WorkRunFinalize::default())
+        .await
+        .unwrap();
+    let second = claim_next_work_run(&pool, "runner-2", lease)
+        .await
+        .unwrap()
+        .expect("sibling claims once the job is idle");
+    assert_eq!(second.id, run_b.id);
+
+    // Cleanup so later tests' claims see no leftovers.
+    finalize_work_run(&pool, run_b.id, WorkRunState::Failed, WorkRunFinalize::default())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

@@ -1,8 +1,14 @@
 # Work sandbox: recommended future improvements
 
-Post-v1 roadmap for the `work` sandbox system, ordered roughly by
-value-to-effort. Each item has a rough plan outline; none are started.
-Current state and known ponytails: `docs/guides/work-sandbox-internals.md`.
+Post-v1 roadmap for the `work` sandbox system. Each item has a rough plan
+outline. Current state and known ponytails:
+`docs/guides/work-sandbox-internals.md`.
+
+Priority note: items 7–9 (per-root build caches, command-criteria
+verification, per-job run serialization) jumped the queue after review —
+they bite on the first real jobs (rust surfaces recompile cold every run,
+success is self-graded, and multi-task jobs race their work branch). Item 9
+is **implemented**; 7 and 8 are the recommended next two.
 
 ## 1. Docker within sandboxes
 
@@ -128,7 +134,105 @@ that was the point of the standalone design.
 
 **Effort**: ~2–3 days Den-side.
 
-## 7. Smaller items
+## 7. Per-root build caches
+
+**Why**: every run starts from a cold clone and cold toolchain state. For
+an 11ty site that is tolerable; for a Rust workspace (this repository is an
+intended work surface) each run pays a full `cargo build` before the first
+test — most of the timeout budget gone before any work happens.
+
+Plan outline: per-root persistent cache directories under
+`SANDBOX_WORKSPACES_DIR/caches/<root>/` (or a dedicated volume), declared
+per root in the roots file (`"caches": ["cargo", "npm"]`) and bind-mounted
+into sandboxes at conventional paths (`/home/bear/.cargo/registry`,
+`CARGO_TARGET_DIR=/cache/target`, `~/.npm`, …) via a small cache→mount table
+in the backend. Trade-off to document: runs within one root share cache
+state (poisoning is possible, isolation weakens run-to-run) — acceptable for
+trusted surfaces, per-root opt-in. Add cache size to the health payload and
+a `DELETE /roots/{name}/cache` operator endpoint. **Effort**: ~1–2 days.
+
+## 8. Command-criteria verification at harvest
+
+**Why**: a run succeeds iff the model marks the task done — it grades its
+own homework. Docket already has the vocabulary for better:
+`DocketCriterionKind::Command` criteria exist but are never executed for
+work runs.
+
+Plan outline: add the one lifecycle verb the provider lacks — `POST
+/sandbox/v1/sandboxes/{id}/exec` (`docker exec` into the workspace,
+timeout- and output-bounded, workspace cwd). At harvest, when the model
+marked the task done, run the task's/job's command-kind criteria in the
+sandbox before teardown; any nonzero exit downgrades the outcome to blocked
+with the command output as the reason, recorded per criterion in
+`bear_criterion_state`. Narrative criteria stay model-assessed. Prompt
+addendum so the model knows verification runs afterward. Headless-testing
+surfaces (Godot) are the motivating case. **Effort**: ~2 days.
+
+## 9. Per-job run serialization — IMPLEMENTED
+
+**Why**: the duplicate-run guard was per-*task*, so a job with two work
+tasks could run both concurrently — and with `per_task` publishing they
+race the same work branch: both provision from the same base, the second
+push is a guaranteed non-fast-forward `publish_failed`, and the branch no
+longer accumulates tasks sequentially as designed.
+
+Implemented in `den-docket/src/work_runs.rs`: `claim_next_work_run` only
+claims a queued run when its job has no other in-flight run (claimed/
+provisioning/running/reporting), so queued runs drain one at a time per job
+in queue order; expired-lease takeovers are unaffected. A post-claim
+recheck releases a freshly claimed run back to queued if a concurrent
+worker raced an older sibling into flight (deterministic older-run-wins
+tie-break). Dispatching several tasks up front now queues them all and
+executes them sequentially against the accumulating work branch.
+
+## 10. Resource-limit defaults actually applied
+
+**Why**: the backend supports `--memory/--cpus/--pids-limit`, but the
+dispatch worker sends none of them — sandboxes are unbounded except wall
+clock; one runaway build can OOM the engine.
+
+Plan outline: `SANDBOX_DEFAULT_MEMORY_MB` / `SANDBOX_DEFAULT_CPUS` /
+`SANDBOX_DEFAULT_PIDS` in Den config, threaded into `SandboxLimits` by the
+worker; per-root ceilings later fold into item 3 (per-task policy).
+**Effort**: ~½ day.
+
+## 11. Blocked-run attention loop
+
+**Why**: a blocked run just sits in `/work`; nobody is told. Autonomy needs
+a return path to a human (or a triaging bear).
+
+Plan outline: on blocked/failed finalize, post a message into the job
+creator's conversation with the bear (reason + run link + suggested next
+step), reusing the existing conversation-persistence path; the chat/pair
+bear can refine the task (`update_task`) and re-dispatch. Optional digest
+for `succeeded` with publish results. Later: a `watch`-stance policy that
+auto-triages retryable blockages. **Effort**: ~1–2 days.
+
+## 12. Job lifecycle completion
+
+**Why**: nothing marks a job `completed` when its last task succeeds and
+criteria hold; jobs accumulate in `running` and the UI cannot distinguish
+"in progress" from "done but unjudged".
+
+Plan outline: after a successful final work task (no remaining
+pending/blocked tasks), evaluate job criteria — command-kind via item 9's
+exec, narrative via the existing `evaluate_criterion` flow — and set the
+job `completed`, or surface "all tasks done, awaiting criteria review" in
+`/work` and the job tools. **Effort**: ~1 day after item 8.
+
+## 13. Scheduled jobs
+
+**Why**: `bear_job_runs` already carries `trigger`/`schedule_ref` columns
+that only ever hold `manual`/`event`. Recurring maintenance ("rebuild and
+publish nightly") is a natural work-stance fit.
+
+Plan outline: `bear_jobs.schedule` (cron expr) + a small scheduler sweep in
+the existing workers loop that opens a scheduled `bear_job_runs` row and
+enqueues the job's work tasks (serialization from item 9 keeps them
+ordered); guard against overlapping runs of the same job; surface next-run
+time in `/work` and `get_job`. **Effort**: ~1–2 days.
+
+## 14. Smaller items
 
 - **Catalog-declared image digests** (`image: "…@sha256:…"` encouraged in
   docs; optionally verify at provision) — supply-chain hygiene, ~½ day.

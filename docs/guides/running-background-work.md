@@ -64,6 +64,10 @@ fresh clone of the root (at the job's work branch when it already exists, so
 sequential tasks build on each other), starts the sandbox, and the bear works
 until the task is done, blocked, or the run times out.
 
+You can dispatch several of a job's tasks up front: runs within one job
+execute **one at a time, in dispatch order**, each building on the previous
+task's published work. Runs of different jobs execute concurrently.
+
 ## Follow progress and read results
 
 - **`/work`** lists active runs (auto-refreshing) and history. The run page
