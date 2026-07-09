@@ -198,6 +198,11 @@ pub struct Config {
     /// Directory holding pristine clones and ephemeral sandbox workspaces
     /// (`SANDBOX_WORKSPACES_DIR`, default `./data/sandbox-workspaces`).
     pub sandbox_workspaces_dir: String,
+    /// Host-side path of `sandbox_workspaces_dir` when the provider itself
+    /// runs in a container (`SANDBOX_WORKSPACES_HOST_DIR`). Sibling-sandbox
+    /// bind sources are rewritten to this path because the host docker daemon
+    /// resolves them host-side. `None` = provider runs directly on the host.
+    pub sandbox_workspaces_host_dir: Option<String>,
     /// Default container image for sandboxes (`SANDBOX_IMAGE`).
     pub sandbox_default_image: String,
     /// Maximum concurrently running sandboxes (`SANDBOX_MAX_CONCURRENT`, default 2).
@@ -222,6 +227,9 @@ pub struct Config {
     pub sandbox_preserve_failed: bool,
     /// Maximum run attempts per task before it stays blocked (`WORK_MAX_ATTEMPTS`, default 2).
     pub work_max_attempts: u32,
+    /// Network posture requested for work sandboxes (`WORK_SANDBOX_NETWORK`:
+    /// `restricted` default — egress limited to a Den-only relay — or `open`).
+    pub work_sandbox_network: String,
 
     /// Compaction rollout mode (`COMPACTION_MODE`: `observe` default, `active`, `off`).
     pub compaction_mode: String,
@@ -561,6 +569,10 @@ impl Config {
             .filter(|s| !s.is_empty());
         let sandbox_workspaces_dir = std::env::var("SANDBOX_WORKSPACES_DIR")
             .unwrap_or_else(|_| "./data/sandbox-workspaces".to_string());
+        let sandbox_workspaces_host_dir = std::env::var("SANDBOX_WORKSPACES_HOST_DIR")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         let sandbox_default_image = std::env::var("SANDBOX_IMAGE").unwrap_or_default();
         let sandbox_max_concurrent = std::env::var("SANDBOX_MAX_CONCURRENT")
             .unwrap_or_else(|_| "2".to_string())
@@ -596,6 +608,11 @@ impl Config {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| api_server_url.clone());
         let work_dispatch_auto = parse_bool_env("WORK_DISPATCH_AUTO", false);
+        let work_sandbox_network = std::env::var("WORK_SANDBOX_NETWORK")
+            .map(|value| value.trim().to_lowercase())
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "restricted".to_string());
         let sandbox_preserve_failed = parse_bool_env("SANDBOX_PRESERVE_FAILED", false);
         let work_max_attempts = std::env::var("WORK_MAX_ATTEMPTS")
             .unwrap_or_else(|_| "2".to_string())
@@ -683,6 +700,7 @@ impl Config {
             sandbox_service_token,
             sandbox_roots_config,
             sandbox_workspaces_dir,
+            sandbox_workspaces_host_dir,
             sandbox_default_image,
             sandbox_max_concurrent,
             sandbox_default_timeout_secs,
@@ -693,6 +711,7 @@ impl Config {
             work_dispatch_auto,
             sandbox_preserve_failed,
             work_max_attempts,
+            work_sandbox_network,
             compaction_mode,
             compaction_timing,
             agent_loop_control_mode,
@@ -796,6 +815,7 @@ impl Config {
             sandbox_service_token: String::new(),
             sandbox_roots_config: None,
             sandbox_workspaces_dir: "./data/sandbox-workspaces".into(),
+            sandbox_workspaces_host_dir: None,
             sandbox_default_image: String::new(),
             sandbox_max_concurrent: 2,
             sandbox_default_timeout_secs: 900,
@@ -806,6 +826,7 @@ impl Config {
             work_dispatch_auto: false,
             sandbox_preserve_failed: false,
             work_max_attempts: 2,
+            work_sandbox_network: "restricted".into(),
             compaction_mode: "observe".into(),
             compaction_timing: "async".into(),
             agent_loop_control_mode: "enforce".into(),

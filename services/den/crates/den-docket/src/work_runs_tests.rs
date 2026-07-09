@@ -7,8 +7,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::work_runs::{
-    checkout_work_run_for_session, claim_next_work_run, enqueue_work_run, finalize_work_run,
-    get_live_work_run_by_session, get_work_run, heartbeat_work_run, record_work_run_provisioned,
+    checkout_work_run_for_session, claim_next_work_run, enqueue_work_run, ensure_job_work_branch,
+    finalize_work_run, get_live_work_run_by_session, get_work_run,
+    get_work_run_dispatch_context, heartbeat_work_run, record_work_run_provisioned,
     record_work_run_turn_outcome, request_work_run_cancel, WorkRunEnqueue, WorkRunFinalize,
     WorkRunProvisioned, WorkRunState,
 };
@@ -95,6 +96,15 @@ fn work_task(title: &str, order: i32, stance: BearProfile) -> DocketTaskInput {
 /// Job with two work-assigned tasks and one pair task; returns
 /// (job_id, [task ids in sibling order]).
 async fn seed_work_job(pool: &PgPool, user_id: i32, bear_id: Uuid) -> (Uuid, Vec<Uuid>) {
+    seed_work_job_with_policy(pool, user_id, bear_id, DocketCommitPolicy::ProposeOnly).await
+}
+
+async fn seed_work_job_with_policy(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    commit_policy: DocketCommitPolicy,
+) -> (Uuid, Vec<Uuid>) {
     let service = PgDocketService::from_pool(pool);
     let created = service
         .create_job(DocketJobCreate {
@@ -103,7 +113,8 @@ async fn seed_work_job(pool: &PgPool, user_id: i32, bear_id: Uuid) -> (Uuid, Vec
             created_by_role: "chat".to_string(),
             goal: "Ship the work-run slice".to_string(),
             work_surface_ref: None,
-            commit_policy: Some(DocketCommitPolicy::ProposeOnly),
+            commit_policy: Some(commit_policy),
+            work_branch: None,
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::SameUser,
             criteria: vec![DocketJobCriterionInput {
@@ -130,6 +141,7 @@ fn enqueue_for(bear_id: Uuid, task_id: Uuid, user_id: i32) -> WorkRunEnqueue {
         task_id,
         root_name: Some("demo".to_string()),
         git_ref: None,
+        image_name: None,
         requested_by_user_id: Some(user_id),
     }
 }
@@ -387,6 +399,89 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
         get_work_run(&pool, run.id).await.unwrap().unwrap().id,
         run.id
     );
+}
+
+#[tokio::test]
+async fn publish_wiring_image_branch_and_prompt() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "publish").await;
+    let (job_id, task_ids) =
+        seed_work_job_with_policy(&pool, user_id, bear_id, DocketCommitPolicy::PerTask).await;
+
+    // Enqueue with a catalog image name; it persists on the run.
+    let run = enqueue_work_run(
+        &pool,
+        WorkRunEnqueue {
+            bear_id,
+            task_id: task_ids[0],
+            root_name: Some("demo".to_string()),
+            git_ref: None,
+            image_name: Some("rust".to_string()),
+            requested_by_user_id: Some(user_id),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(run.image_name.as_deref(), Some("rust"));
+
+    // The dispatch context sees the pushable policy; the work branch is
+    // generated on first use and stable afterwards.
+    let context = get_work_run_dispatch_context(&pool, run.id).await.unwrap();
+    assert!(context.publishes());
+    assert!(context.work_branch.is_none());
+    let branch = ensure_job_work_branch(&pool, job_id).await.unwrap();
+    assert!(branch.starts_with("den/job-"), "{branch}");
+    assert_eq!(ensure_job_work_branch(&pool, job_id).await.unwrap(), branch);
+    let context = get_work_run_dispatch_context(&pool, run.id).await.unwrap();
+    assert_eq!(context.work_branch.as_deref(), Some(branch.as_str()));
+
+    // Pushable jobs instruct the armature to commit (and still not push).
+    let claimed = claim_next_work_run(&pool, "runner-pub", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .expect("claim queued run");
+    assert_eq!(claimed.id, run.id);
+    let session_id = format!("headless-{}", Uuid::new_v4().simple());
+    record_work_run_provisioned(
+        &pool,
+        run.id,
+        &WorkRunProvisioned {
+            sandbox_server_url: "http://sandbox:3002".into(),
+            sandbox_id: "pub123".into(),
+            sandbox_type: "container".into(),
+            sandbox_strength: "container: test".into(),
+            work_surface: serde_json::json!({ "is_git": true }),
+        },
+    )
+    .await
+    .unwrap();
+    let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
+        .await
+        .unwrap();
+    assert!(checkout.prompt.contains("Commit your work"), "{}", checkout.prompt);
+    assert!(checkout.prompt.contains("Do not push"), "{}", checkout.prompt);
+
+    // An explicit branch set at creation is never overwritten.
+    let (job2_id, _) =
+        seed_work_job_with_policy(&pool, user_id, bear_id, DocketCommitPolicy::PerJob).await;
+    sqlx::query("UPDATE bear_jobs SET work_branch = 'feature/custom' WHERE id = $1")
+        .bind(job2_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ensure_job_work_branch(&pool, job2_id).await.unwrap(),
+        "feature/custom"
+    );
+
+    // Cleanup: cancel the queued run so it cannot satisfy later claims.
+    assert!(request_work_run_cancel(&pool, run.id, bear_id).await.unwrap());
+    purge_claimable_runs(&pool).await;
 }
 
 #[tokio::test]

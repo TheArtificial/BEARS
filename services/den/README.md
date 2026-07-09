@@ -61,15 +61,27 @@ BearWire.
 
 Recommended dev setup (bare-metal provider, host docker):
 
-1. Build the sandbox image: `scripts/build-sandbox-image.sh` (tags
-   `bears/sandbox:latest`, override with `SANDBOX_IMAGE`).
-2. Declare workspace roots in a JSON file, e.g. `./data/sandbox-roots.json`:
+1. Build the sandbox images: `scripts/build-sandbox-image.sh all` (base
+   `bears/sandbox:latest` plus `bears/sandbox-{rust,node,godot}:latest`
+   toolchain variants; see `packaging/sandbox-image/Dockerfile*`).
+2. Declare workspace roots **and the image catalog** in a JSON file, e.g.
+   `./data/sandbox-roots.json`:
 
    ```json
    {
+     "images": [
+       { "name": "base", "image": "bears/sandbox:latest", "default": true },
+       { "name": "rust", "image": "bears/sandbox-rust:latest",
+           "description": "rust stable + build deps" },
+       { "name": "node", "image": "bears/sandbox-node:latest",
+           "description": "node 22 (11ty sites)" },
+       { "name": "godot", "image": "bears/sandbox-godot:latest",
+           "description": "godot 4 headless + export templates" }
+     ],
      "roots": [
        { "name": "scratch", "path": "/srv/scratch" },
-       { "name": "site", "upstream": { "url": "git@github.com:you/site.git",
+       { "name": "site", "default_image": "node",
+         "upstream": { "url": "git@github.com:you/site.git",
            "default_ref": "main",
            "credential": { "ssh_key_path": "/etc/bears/keys/site" } } }
      ]
@@ -78,19 +90,40 @@ Recommended dev setup (bare-metal provider, host docker):
 
    Git-backed roots are pristine server-managed bare clones, synced
    fetch/fast-forward-only before each provisioning; sandboxes get an
-   ephemeral local clone at the requested ref.
+   ephemeral local clone at the requested ref. Dispatch selects images by
+   **catalog name** only — raw image references never travel from Den.
 3. Run the provider:
    `RUN_SANDBOX=true SANDBOX_ROOTS_CONFIG=./data/sandbox-roots.json SANDBOX_SERVICE_TOKEN=devtoken cargo run -- serve`
 4. Point the Den workers at it (in the Den process env):
    `SANDBOX_SERVER_URL=http://localhost:3002 SANDBOX_SERVER_TOKEN=devtoken`
    plus `SANDBOX_CALLBACK_API_URL` set to the Den API URL as reachable from
-   inside containers (e.g. `http://host.docker.internal:3001`).
-5. Create a Docket job with a task assigned to `work` and dispatch it with the
-   `dispatch_work` tool (or the `/work` web UI). Watch progress at `/work`.
+   inside containers (e.g. `http://host.docker.internal:3001`; must be
+   plain http in the default restricted network mode).
+5. Create a Docket job with tasks assigned to `work` — conversationally via
+   `create_job`, or at `/work/new` — and dispatch with the `dispatch_work`
+   tool or the job page's dispatch form (root + image selects). Watch
+   progress and results at `/work`.
+
+Publishing: with job `commit_policy` `per_task` or `per_job`, each successful
+run's commits are pushed **host-side with the root's credentials** to the
+job's upstream work branch (caller-specified; generated `den/job-<short-id>`
+by default; the default ref is refused). Later runs of the same job provision
+from that branch, so tasks build on each other. `propose_only` (the default)
+keeps runs diff-only.
+
+Network: sandboxes default to `restricted` egress — a per-sandbox internal
+network whose only way out is a socat relay to the Den callback endpoint, so
+task code cannot reach anything but Den (`WORK_SANDBOX_NETWORK=open` opts
+out; the run's `sandbox_strength` states the actual mode).
 
 A `sandbox` compose profile exists for containerized single-host setups; it
-mounts `docker.sock` (host-root-equivalent — dev only) and requires the Den
-image to carry a docker CLI, so bare-metal is the simpler dev path.
+mounts `docker.sock` (host-root-equivalent — dev only). When the provider
+itself runs in a container, set `SANDBOX_WORKSPACES_HOST_DIR` to the host
+path backing the workspaces mount (sibling-sandbox bind sources are resolved
+by the host docker daemon). ponytail: the stock Den image ships no docker
+CLI and `docker-entrypoint.sh` drops to `appuser` without socket-group
+handling, so the containerized profile needs a derived image; bare-metal is
+the recommended provider setup.
 
 ## License
 

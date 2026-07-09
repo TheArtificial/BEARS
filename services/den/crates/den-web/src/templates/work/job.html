@@ -6,6 +6,8 @@
 <p>
     Bear <strong>{{ bear_slug }}</strong> · status <strong>{{ status }}</strong>
     {% if work_surface_ref %} · work surface <code>{{ work_surface_ref }}</code>{% endif %}
+    {% if commit_policy %} · commit policy <code>{{ commit_policy }}</code>{% endif %}
+    {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
 </p>
 
 <section>
@@ -34,6 +36,22 @@
                 <td>
                     {% if task.is_work and task.status in ["pending", "blocked"] %}
                     <form method="post" action="/work/tasks/{{ task.id }}/dispatch">
+                        {% if catalog and catalog.roots %}
+                        <select name="root" title="sandbox root">
+                            <option value="">root: job default</option>
+                            {% for root in catalog.roots %}
+                            <option value="{{ root.name }}" {% if root.name == work_surface_ref %}selected{% endif %}>{{ root.name }}</option>
+                            {% endfor %}
+                        </select>
+                        {% endif %}
+                        {% if catalog and catalog.images %}
+                        <select name="image" title="toolchain image">
+                            <option value="">image: root default</option>
+                            {% for image in catalog.images %}
+                            <option value="{{ image.name }}">{{ image.name }}{% if image.description %} — {{ image.description }}{% endif %}</option>
+                            {% endfor %}
+                        </select>
+                        {% endif %}
                         <button type="submit">Dispatch</button>
                     </form>
                     {% endif %}
@@ -49,7 +67,7 @@
     {% if runs %}
     <table>
         <thead>
-            <tr><th>Run</th><th>State</th><th>Attempt</th><th>Result</th><th>Finished</th></tr>
+            <tr><th>Run</th><th>State</th><th>Attempt</th><th>Result</th><th>Published</th><th>Finished</th></tr>
         </thead>
         <tbody>
             {% for run in runs %}
@@ -58,6 +76,11 @@
                 <td>{{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}</td>
                 <td>{{ run.attempt }}</td>
                 <td>{{ run.result_summary or run.error or "—" }}</td>
+                <td>
+                    {% if run.published_branch %}<code>{{ run.published_branch }}</code> @ {{ run.published_commit[:8] }}
+                    {% elif run.publish_failed %}⚠ publish failed
+                    {% else %}—{% endif %}
+                </td>
                 <td>{{ run.finished_at or "—" }}</td>
             </tr>
             {% endfor %}

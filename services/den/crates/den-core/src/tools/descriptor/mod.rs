@@ -52,7 +52,8 @@ use crate::tools::{
         DEN_TASK_LISTS_LIST_PROVIDER, DEN_TASK_LISTS_REQUEST_HANDOFF,
         DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE,
         DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_CHECKOUT_PROVIDER,
-        DEN_WORK_DISPATCH, DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_RUN_CANCEL,
+        DEN_WORK_CATALOG, DEN_WORK_CATALOG_PROVIDER, DEN_WORK_DISPATCH,
+        DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_RUN_CANCEL,
         DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_GET, DEN_WORK_RUN_GET_PROVIDER,
         DEN_WORK_RUN_LIST, DEN_WORK_RUN_LIST_PROVIDER,
         DEN_TASK_LIST_PROVIDER, DEN_TASK_LIST_SYNC, DEN_TASK_LIST_SYNC_PROVIDER,
@@ -149,6 +150,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_WORK_RUN_LIST => return DEN_WORK_RUN_LIST_PROVIDER.to_string(),
         DEN_WORK_RUN_GET => return DEN_WORK_RUN_GET_PROVIDER.to_string(),
         DEN_WORK_RUN_CANCEL => return DEN_WORK_RUN_CANCEL_PROVIDER.to_string(),
+        DEN_WORK_CATALOG => return DEN_WORK_CATALOG_PROVIDER.to_string(),
         DEN_PLAN_MODE_ENTER => return DEN_PLAN_MODE_ENTER_PROVIDER.to_string(),
         DEN_PLAN_MODE_STATUS => return DEN_PLAN_MODE_STATUS_PROVIDER.to_string(),
         DEN_PLAN_MODE_RECORD_APPROVAL => return DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER.to_string(),
@@ -560,7 +562,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             "bear.docket",
             &["docket.job.write"],
             CHAT_AND_PAIR_PROFILES,
-            json!({"type":"object","properties":{"goal":{"type":"string","description":"Human-facing durable goal for the job."},"work_surface_ref":{"type":"string"},"commit_policy":{"enum":["none","per_task","per_job","propose_only"]},"status":{"enum":["draft","ready","running","blocked","completed","cancelled"]},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"criteria":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["narrative","command","check_ref"]},"description":{"type":"string"},"spec":{"type":"object"},"sibling_order":{"type":"integer"}},"required":["description"],"additionalProperties":false}},"tasks":{"type":"array","items":{"type":"object","properties":{"client_key":{"type":"string"},"parent_client_key":{"type":"string"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"assigned_to_role":{"enum":ALL_PROFILES}},"required":["title","body","completion_criteria"],"additionalProperties":false}}},"required":["goal"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"goal":{"type":"string","description":"Human-facing durable goal for the job."},"work_surface_ref":{"type":"string"},"commit_policy":{"enum":["none","per_task","per_job","propose_only"]},"work_branch":{"type":"string","description":"Upstream branch work runs publish to when commit_policy allows; defaults to a generated den/job-<short-id> name."},"status":{"enum":["draft","ready","running","blocked","completed","cancelled"]},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"criteria":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["narrative","command","check_ref"]},"description":{"type":"string"},"spec":{"type":"object"},"sibling_order":{"type":"integer"}},"required":["description"],"additionalProperties":false}},"tasks":{"type":"array","items":{"type":"object","properties":{"client_key":{"type":"string"},"parent_client_key":{"type":"string"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"assigned_to_role":{"enum":ALL_PROFILES}},"required":["title","body","completion_criteria"],"additionalProperties":false}}},"required":["goal"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_JOB_LIST,
@@ -655,11 +657,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_DISPATCH,
             "Dispatch work task",
-            "Queue a work-assigned Docket task for autonomous sandbox execution. A dispatch worker provisions an isolated sandbox on the configured sandbox server, a headless armature executes the task there, and results flow back into Docket. Requires the task's assigned_to_role to be work, and a sandbox root: pass root or set work_surface_ref on the job. Returns the work_run_id to inspect with get_work_run.",
+            "Queue a work-assigned Docket task for autonomous sandbox execution. A dispatch worker provisions an isolated sandbox on the configured sandbox server, a headless armature executes the task there, and results flow back into Docket. When the job's commit_policy is per_task or per_job, successful runs are published (pushed) to the job's upstream work branch. Requires the task's assigned_to_role to be work, and a sandbox root: pass root or set work_surface_ref on the job. Returns the work_run_id to inspect with get_work_run.",
             "bear.docket",
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
-            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Name of a configured root on the sandbox server; defaults to the job's work_surface_ref."},"git_ref":{"type":"string","description":"Git ref to provision the workspace at; defaults to the root's default ref."}},"required":["task_id"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Name of a configured root on the sandbox server; defaults to the job's work_surface_ref."},"git_ref":{"type":"string","description":"Git ref to provision the workspace at; defaults to the job's work branch when it exists, else the root's default ref."},"image":{"type":"string","description":"Catalog image name on the sandbox provider (see get_work_catalog); defaults to the root's default image."}},"required":["task_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_WORK_RUN_LIST,
@@ -687,6 +689,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
             json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"}},"required":["work_run_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_WORK_CATALOG,
+            "Get work catalog",
+            "Read the sandbox provider's catalog: configured workspace roots (with upstream/default-ref info) and the container images selectable for dispatch_work. Use this before dispatching when the root or toolchain image is not obvious.",
+            "bear.docket",
+            &["docket.job.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{},"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LIST_SYNC,
@@ -864,6 +875,7 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_WORK_RUN_LIST,
         DEN_WORK_RUN_GET,
         DEN_WORK_RUN_CANCEL,
+        DEN_WORK_CATALOG,
     ]
 }
 
@@ -1368,6 +1380,15 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             target_arg_keys: &["work_run_id"],
             sensitive_arg_keys: &[],
             approval_summary: "Request cancellation of this work run.",
+        },
+        DEN_WORK_CATALOG => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Reading work catalog",
+            complete_verb: "Read work catalog",
+            target_arg_keys: &[],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read the sandbox provider's roots and image catalog.",
         },
         DEN_TASK_CREATE => ToolDisplayDescriptor {
             label,

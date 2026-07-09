@@ -22,6 +22,7 @@ production = [
         "den-service/production",
         "den-http/production",
     "den-oauth/production",
+    "den-sandbox/production",
 ]
 web-ui-fixtures = []
 
@@ -34,6 +35,9 @@ den-memory = { path = "../den-memory" }
 den-http = { path = "../den-http" }
 den-docket = { path = "../den-docket" }
 den-oauth = { path = "../den-oauth" }
+# Client + protocol only: the work UI fetches the sandbox provider's
+# root/image catalog for its dispatch and job-creation forms.
+den-sandbox = { path = "../den-sandbox" }
 ammonia = "4.1.1"
 axum = { workspace = true, features = ["json", "http1", "matched-path", "tokio", "macros", "query", "form", "multipart"] }
 axum-extra.workspace = true

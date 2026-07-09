@@ -12,9 +12,10 @@ use crate::metrics;
 use crate::policy::{validate_selection, PolicyContext, PolicyError};
 use crate::proc::{run_command, CommandSpec};
 use crate::protocol::{
-    CleanupState, CreateSandboxRequest, DiffResponse, ErrorBody, HealthResponse, RootStatus,
-    SandboxDescriptor, SandboxLifecycleState, SandboxLimits, SandboxType, SandboxUsage,
-    SyncRootResponse, WorkSurface,
+    CatalogImage, CatalogResponse, CatalogRoot, CleanupState, CreateSandboxRequest, DiffResponse,
+    ErrorBody, HealthResponse, NetworkMode, PublishRequest, RootStatus, SandboxDescriptor,
+    SandboxLifecycleState, SandboxLimits, SandboxType, SandboxUsage, SyncRootResponse,
+    WorkSurface,
 };
 use crate::recognize::recognize_work_surface;
 use crate::roots::{RootsError, RootsManager};
@@ -46,6 +47,11 @@ pub struct SandboxServerConfig {
     pub roots_config_path: Option<String>,
     /// Directory holding pristine clones and ephemeral workspaces.
     pub workspaces_dir: String,
+    /// Host-side path of `workspaces_dir` when this provider runs inside a
+    /// container. Sibling-sandbox bind sources are rewritten under it (the
+    /// host docker daemon resolves bind sources on the host). `None` = the
+    /// provider runs directly on the sandbox host.
+    pub workspaces_host_dir: Option<String>,
     /// Default container image for sandboxes.
     pub default_image: String,
     /// Maximum concurrently running sandboxes.
@@ -62,6 +68,7 @@ impl SandboxServerConfig {
             service_token: config.sandbox_service_token.clone(),
             roots_config_path: config.sandbox_roots_config.clone(),
             workspaces_dir: config.sandbox_workspaces_dir.clone(),
+            workspaces_host_dir: config.sandbox_workspaces_host_dir.clone(),
             default_image: config.sandbox_default_image.clone(),
             max_concurrent: config.sandbox_max_concurrent,
             default_timeout_secs: config.sandbox_default_timeout_secs,
@@ -80,6 +87,7 @@ struct SandboxRecord {
     exit_code: Option<i64>,
     usage: SandboxUsage,
     cleanup: CleanupState,
+    network: NetworkMode,
     labels: BTreeMap<String, String>,
     workspace: Option<PathBuf>,
     created_at: OffsetDateTime,
@@ -90,18 +98,25 @@ struct SandboxRecord {
 }
 
 impl SandboxRecord {
-    fn descriptor(&self, strength_label: &str) -> SandboxDescriptor {
+    fn descriptor(&self, strength_base: &str) -> SandboxDescriptor {
+        let strength_label = match self.network {
+            NetworkMode::Restricted => {
+                format!("{strength_base}; egress restricted to a Den-only relay")
+            }
+            NetworkMode::Open => format!("{strength_base}; unrestricted network egress"),
+        };
         SandboxDescriptor {
             id: self.id.clone(),
             state: self.state,
             sandbox_type: self.sandbox_type,
-            strength_label: strength_label.to_string(),
+            strength_label,
             root: self.root.clone(),
             git_ref: self.git_ref.clone(),
             work_surface: self.work_surface.clone(),
             exit_code: self.exit_code,
             usage: self.usage.clone(),
             cleanup: self.cleanup.clone(),
+            network: self.network,
             labels: self.labels.clone(),
             created_at: rfc3339(self.created_at),
             finished_at: self.finished_at.map(rfc3339),
@@ -164,6 +179,8 @@ pub fn create_sandbox_app(config: SandboxServerConfig) -> Result<Router, RootsEr
         .route("/sandbox/v1/sandboxes/{id}", delete(destroy_sandbox))
         .route("/sandbox/v1/sandboxes/{id}/logs", get(sandbox_logs))
         .route("/sandbox/v1/sandboxes/{id}/diff", get(sandbox_diff))
+        .route("/sandbox/v1/sandboxes/{id}/publish", post(publish_sandbox))
+        .route("/sandbox/v1/catalog", get(catalog))
         .route("/sandbox/v1/roots/{name}/sync", post(sync_root))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -225,6 +242,15 @@ fn policy_error_response(err: &PolicyError) -> Response {
 fn roots_error_response(err: &RootsError) -> Response {
     match err {
         RootsError::UnknownRoot(_) => error_response(StatusCode::NOT_FOUND, "unknown_root", err.to_string()),
+        RootsError::UnknownImage { .. } => {
+            error_response(StatusCode::UNPROCESSABLE_ENTITY, "unknown_image", err.to_string())
+        }
+        RootsError::PublishUnsupported { .. } => {
+            error_response(StatusCode::UNPROCESSABLE_ENTITY, "publish_unsupported", err.to_string())
+        }
+        RootsError::DefaultRefRefused { .. } => {
+            error_response(StatusCode::UNPROCESSABLE_ENTITY, "default_ref_refused", err.to_string())
+        }
         RootsError::Git { .. } => error_response(StatusCode::CONFLICT, "root_sync_failed", err.to_string()),
         _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, "roots_error", err.to_string()),
     }
@@ -278,6 +304,27 @@ async fn create_sandbox(
     State(state): State<Arc<ProviderState>>,
     Json(request): Json<CreateSandboxRequest>,
 ) -> Response {
+    // Root and image resolve before anything is reserved: bad names are
+    // deterministic rejections regardless of backend availability.
+    let root = match state.roots.get(&request.root) {
+        Ok(root) => root.clone(),
+        Err(err) => return roots_error_response(&err),
+    };
+    let image = match state
+        .roots
+        .resolve_image(request.image.as_deref(), &root, &state.config.default_image)
+    {
+        Ok(image) => image,
+        Err(err) => return roots_error_response(&err),
+    };
+    if image.trim().is_empty() {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "no_image",
+            "no image in request, no catalog default, and no SANDBOX_IMAGE configured",
+        );
+    }
+
     let backend_available = state.backend.probe().await;
     let sandbox_id = uuid::Uuid::new_v4().simple().to_string();
 
@@ -308,6 +355,7 @@ async fn create_sandbox(
                 exit_code: None,
                 usage: SandboxUsage::default(),
                 cleanup: CleanupState::Pending,
+                network: request.network,
                 labels: request.labels.clone(),
                 workspace: None,
                 created_at: OffsetDateTime::now_utc(),
@@ -319,7 +367,7 @@ async fn create_sandbox(
         );
     }
 
-    match provision(&state, &sandbox_id, &request).await {
+    match provision(&state, &sandbox_id, &request, &root, image).await {
         Ok(()) => {
             metrics::sandbox_provisioned();
             let registry = state.registry.lock().await;
@@ -377,21 +425,18 @@ async fn provision(
     state: &Arc<ProviderState>,
     sandbox_id: &str,
     request: &CreateSandboxRequest,
+    root: &crate::roots::SyncableRoot,
+    image: String,
 ) -> Result<(), Response> {
-    let root = match state.roots.get(&request.root) {
-        Ok(root) => root.clone(),
-        Err(err) => return Err(roots_error_response(&err)),
-    };
-
     if root.upstream.is_some() {
-        if let Err(err) = state.roots.sync_root(&root).await {
+        if let Err(err) = state.roots.sync_root(root).await {
             return Err(roots_error_response(&err));
         }
     }
 
     let workspace = state
         .roots
-        .provision_workspace(&root, request.git_ref.as_deref(), sandbox_id)
+        .provision_workspace(root, request.git_ref.as_deref(), sandbox_id)
         .await
         .map_err(|err| roots_error_response(&err))?;
     {
@@ -403,24 +448,16 @@ async fn provision(
 
     let work_surface = recognize_work_surface(&workspace).await;
 
-    let image = request
-        .image
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| state.config.default_image.clone());
-    if image.trim().is_empty() {
-        return Err(error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "no_image",
-            "no image in request and no SANDBOX_IMAGE default configured",
-        ));
-    }
-
+    let workspace_bind_source =
+        host_bind_source(&workspace, &state.config.workspaces_dir, state.config.workspaces_host_dir.as_deref())
+            .map_err(|detail| error_response(StatusCode::INTERNAL_SERVER_ERROR, "bind_source", detail))?;
     let spec = ProvisionSpec {
         id: sandbox_id.to_string(),
         workspace,
+        workspace_bind_source,
         image,
         env: request.env.clone(),
+        network: request.network,
         memory_mb: request.limits.memory_mb,
         cpus: request.limits.cpus,
         pids: request.limits.pids,
@@ -444,6 +481,28 @@ async fn provision(
         "sandbox provisioned"
     );
     Ok(())
+}
+
+/// The workspace path as the **host** docker daemon must see it. When the
+/// provider runs in a container, its `workspaces_dir` is a bind mount of
+/// `workspaces_host_dir`; sibling-sandbox bind sources are the same relative
+/// path under the host directory.
+fn host_bind_source(
+    workspace: &std::path::Path,
+    workspaces_dir: &str,
+    workspaces_host_dir: Option<&str>,
+) -> Result<PathBuf, String> {
+    let Some(host_dir) = workspaces_host_dir.map(str::trim).filter(|dir| !dir.is_empty()) else {
+        return Ok(workspace.to_path_buf());
+    };
+    let relative = workspace.strip_prefix(workspaces_dir).map_err(|_| {
+        format!(
+            "workspace {} is not under SANDBOX_WORKSPACES_DIR {workspaces_dir}; \
+             cannot map it to SANDBOX_WORKSPACES_HOST_DIR",
+            workspace.display()
+        )
+    })?;
+    Ok(PathBuf::from(host_dir).join(relative))
 }
 
 async fn mark_cleanup(state: &Arc<ProviderState>, sandbox_id: &str, cleanup: CleanupState) {
@@ -666,6 +725,92 @@ async fn teardown(state: &Arc<ProviderState>, id: &str, preserve_workspace: bool
     cleanup
 }
 
+/// Push the workspace's commits to the root's upstream. Host-side git with
+/// the root's credentials; usable while the sandbox is Running or after it
+/// Exited, as long as the workspace still exists.
+async fn publish_sandbox(
+    State(state): State<Arc<ProviderState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<PublishRequest>,
+) -> Response {
+    let (workspace, root_name, base_commit) = {
+        let registry = state.registry.lock().await;
+        match registry.get(&id) {
+            None => {
+                return error_response(
+                    StatusCode::NOT_FOUND,
+                    "unknown_sandbox",
+                    format!("no sandbox {id}"),
+                )
+            }
+            Some(record) => (
+                record.workspace.clone(),
+                record.root.clone(),
+                record.work_surface.commit.clone(),
+            ),
+        }
+    };
+    let Some(workspace) = workspace else {
+        return error_response(
+            StatusCode::CONFLICT,
+            "no_workspace",
+            "sandbox has no workspace (adopted orphan or cleanup already ran)",
+        );
+    };
+    let root = match state.roots.get(&root_name) {
+        Ok(root) => root.clone(),
+        Err(err) => return roots_error_response(&err),
+    };
+    match state
+        .roots
+        .publish_workspace(&root, &workspace, &request, base_commit.as_deref())
+        .await
+    {
+        Ok(outcome) => {
+            tracing::info!(
+                sandbox_id = %id,
+                branch = %outcome.branch,
+                commits = outcome.commits_pushed,
+                pushed = outcome.pushed,
+                "sandbox workspace published"
+            );
+            Json(outcome).into_response()
+        }
+        // A push rejection is a conflict with upstream state, not a sync issue.
+        Err(err @ RootsError::Git { .. }) => {
+            error_response(StatusCode::CONFLICT, "publish_failed", err.to_string())
+        }
+        Err(err) => roots_error_response(&err),
+    }
+}
+
+/// Selectable roots and images for dispatch UIs and model tools.
+async fn catalog(State(state): State<Arc<ProviderState>>) -> Json<CatalogResponse> {
+    let images = state
+        .roots
+        .images()
+        .iter()
+        .map(|image| CatalogImage {
+            name: image.name.clone(),
+            description: image.description.clone(),
+            default: image.default,
+        })
+        .collect();
+    let roots = state
+        .roots
+        .names()
+        .into_iter()
+        .filter_map(|name| state.roots.get(&name).ok().cloned())
+        .map(|root| CatalogRoot {
+            name: root.name.clone(),
+            has_upstream: root.upstream.is_some(),
+            default_ref: root.upstream.as_ref().map(|u| u.default_ref.clone()),
+            default_image: root.default_image,
+        })
+        .collect();
+    Json(CatalogResponse { images, roots })
+}
+
 async fn sync_root(
     State(state): State<Arc<ProviderState>>,
     AxumPath(name): AxumPath<String>,
@@ -722,6 +867,10 @@ async fn adopt_orphans(state: &Arc<ProviderState>) {
             "adopting orphaned sandbox from a previous provider run"
         );
         let workspace = state.roots.workspace_dir(&orphan.id);
+        let network = match orphan.labels.get("sandbox.network").map(String::as_str) {
+            Some("restricted") => NetworkMode::Restricted,
+            _ => NetworkMode::Open,
+        };
         registry.insert(
             orphan.id.clone(),
             SandboxRecord {
@@ -738,6 +887,7 @@ async fn adopt_orphans(state: &Arc<ProviderState>) {
                 exit_code: None,
                 usage: SandboxUsage::default(),
                 cleanup: CleanupState::Pending,
+                network,
                 labels: orphan.labels,
                 workspace: workspace.exists().then_some(workspace),
                 created_at: OffsetDateTime::now_utc(),
@@ -847,6 +997,7 @@ mod tests {
         SandboxServerConfig {
             service_token: token.into(),
             roots_config_path: None,
+            workspaces_host_dir: None,
             workspaces_dir: std::env::temp_dir()
                 .join(format!("den-sbx-srv-test-{}", uuid::Uuid::new_v4().simple()))
                 .to_string_lossy()
@@ -935,5 +1086,112 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
         }
+        let publish = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sandbox/v1/sandboxes/nope/publish")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"branch": "den/job-x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(publish.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Config whose roots file declares an image catalog and one plain root.
+    fn test_config_with_catalog() -> SandboxServerConfig {
+        let mut config = test_config("");
+        let dir = PathBuf::from(&config.workspaces_dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("src-root");
+        std::fs::create_dir_all(&source).unwrap();
+        let roots_path = dir.join("roots.json");
+        std::fs::write(
+            &roots_path,
+            serde_json::json!({
+                "images": [
+                    {"name": "base", "image": "bears/sandbox:latest", "default": true,
+                     "description": "armature base"},
+                    {"name": "rust", "image": "bears/sandbox-rust:latest"}
+                ],
+                "roots": [
+                    {"name": "scratch", "path": source.to_string_lossy(), "default_image": "rust"}
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        config.roots_config_path = Some(roots_path.to_string_lossy().into_owned());
+        config
+    }
+
+    #[test]
+    fn bind_source_maps_container_path_to_host_path() {
+        let workspace = std::path::Path::new("/var/lib/bears/sandbox-workspaces/workspaces/s1");
+        // Provider on the host: unchanged.
+        assert_eq!(
+            host_bind_source(workspace, "/var/lib/bears/sandbox-workspaces", None).unwrap(),
+            workspace
+        );
+        // Containerized provider: same relative path under the host dir.
+        assert_eq!(
+            host_bind_source(
+                workspace,
+                "/var/lib/bears/sandbox-workspaces",
+                Some("/srv/coolify/bears-ws"),
+            )
+            .unwrap(),
+            std::path::Path::new("/srv/coolify/bears-ws/workspaces/s1")
+        );
+        // A workspace outside the configured dir cannot be mapped.
+        assert!(host_bind_source(workspace, "/somewhere/else", Some("/host")).is_err());
+    }
+
+    #[tokio::test]
+    async fn catalog_lists_images_and_roots() {
+        let app = create_sandbox_app(test_config_with_catalog()).unwrap();
+        let response = app
+            .oneshot(Request::builder().uri("/sandbox/v1/catalog").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let catalog: CatalogResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(catalog.images.len(), 2);
+        assert!(catalog.images.iter().any(|image| image.name == "base" && image.default));
+        assert_eq!(catalog.roots.len(), 1);
+        assert_eq!(catalog.roots[0].default_image.as_deref(), Some("rust"));
+        assert!(!catalog.roots[0].has_upstream);
+    }
+
+    #[tokio::test]
+    async fn create_rejects_unknown_catalog_image() {
+        let app = create_sandbox_app(test_config_with_catalog()).unwrap();
+        let request_body = serde_json::json!({
+            "root": "scratch",
+            "sandbox_type": "container",
+            "image": "not-in-catalog",
+        });
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sandbox/v1/sandboxes")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Image names resolve before any backend/probe work, so this is a
+        // deterministic rejection even on hosts without a docker daemon.
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(error.kind, "unknown_image");
+        assert!(error.error.contains("base"), "lists catalog: {}", error.error);
     }
 }

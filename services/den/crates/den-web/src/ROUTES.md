@@ -106,9 +106,11 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 ## Work (`src/work/mod.rs`)
 
 - `GET /work` — jobs + active/past work runs overview (auto-refreshes while runs are active)
-- `GET /work/jobs/{job_id}` — job detail: task tree with statuses, per-task dispatch, run history
-- `GET /work/runs/{run_id}` — run detail: state, sandbox type/strength, work surface, changed files + diff, log tail, usage, cleanup status
-- `POST /work/tasks/{task_id}/dispatch` — enqueue a work-assigned task for sandbox execution
+- `GET /work/new` — job creation form (goal, sandbox root, commit policy, work branch, work tasks)
+- `POST /work/new` — create the Docket job (tasks assigned to the work stance; created_by_role `ui`)
+- `GET /work/jobs/{job_id}` — job detail: task tree with statuses, per-task dispatch (root/image selects from the provider catalog), run history with publish outcomes
+- `GET /work/runs/{run_id}` — run detail: state, sandbox type/strength, image, work surface, published branch/commit, changed files + diff, log tail, usage, cleanup status
+- `POST /work/tasks/{task_id}/dispatch` — enqueue a work-assigned task for sandbox execution (optional form fields: root, image, git_ref)
 - `POST /work/runs/{run_id}/cancel` — request cancellation (dispatch worker performs teardown)
 - `POST /work/runs/{run_id}/retry` — re-enqueue a terminal run as a new attempt
 

@@ -17,10 +17,12 @@ use uuid::Uuid;
 use den_core::config::Config;
 use den_core::DenError;
 use den_docket::work_runs::{
-    self, WorkRunFinalize, WorkRunProvisioned, WorkRunRow, WorkRunState,
+    self, WorkRunDispatchContext, WorkRunFinalize, WorkRunProvisioned, WorkRunRow, WorkRunState,
 };
 use den_docket::{PgDocketService, TaskDispatcher};
-use den_sandbox::protocol::{CreateSandboxRequest, SandboxLimits, SandboxType};
+use den_sandbox::protocol::{
+    CreateSandboxRequest, NetworkMode, PublishRequest, SandboxLimits, SandboxType,
+};
 use den_sandbox::SandboxClient;
 
 const LEASE: Duration = Duration::from_secs(120);
@@ -104,6 +106,7 @@ async fn auto_enqueue(pool: &PgPool) {
                     task_id: task.id,
                     root_name: None,
                     git_ref: None,
+                    image_name: None,
                     requested_by_user_id: task.created_by_user_id,
                 },
             )
@@ -216,6 +219,23 @@ async fn provision_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClie
         tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: failed to persist token id");
     }
 
+    // Pushable jobs get their work branch pinned before the first sandbox
+    // exists, and later runs provision from it (the provider falls back to
+    // the default ref while the branch has no commits yet) so tasks in one
+    // job build on each other.
+    let work_branch = if context.publishes() {
+        match work_runs::ensure_job_work_branch(pool, run.job_id).await {
+            Ok(branch) => Some(branch),
+            Err(err) => {
+                revoke_token_for_run(pool, run.id).await;
+                fail_run(pool, run, "work_branch", &err.to_string(), None).await;
+                return;
+            }
+        }
+    } else {
+        None
+    };
+
     let timeout_secs = config.sandbox_default_timeout_secs;
     let deadline_secs = timeout_secs.saturating_sub(DEADLINE_MARGIN_SECS).max(30);
     let mut env = std::collections::BTreeMap::new();
@@ -225,13 +245,28 @@ async fn provision_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClie
     env.insert("DEN_WORK_ORDER_ID".to_string(), run.id.to_string());
     env.insert("DEN_WORKSPACE".to_string(), "/workspace".to_string());
     env.insert("DEN_HEADLESS_DEADLINE_SECS".to_string(), deadline_secs.to_string());
+    // In-run commits carry the bear's identity (the provider's auto-commit of
+    // leftovers uses its own).
+    let git_identity = format!("{} (Den work)", context.bear_slug);
+    let git_email = format!("{}@work.den.invalid", context.bear_slug);
+    env.insert("GIT_AUTHOR_NAME".to_string(), git_identity.clone());
+    env.insert("GIT_AUTHOR_EMAIL".to_string(), git_email.clone());
+    env.insert("GIT_COMMITTER_NAME".to_string(), git_identity);
+    env.insert("GIT_COMMITTER_EMAIL".to_string(), git_email);
+
+    let network = if config.work_sandbox_network.eq_ignore_ascii_case("open") {
+        NetworkMode::Open
+    } else {
+        NetworkMode::Restricted
+    };
 
     let request = CreateSandboxRequest {
         root,
-        git_ref: run.git_ref.clone(),
+        git_ref: run.git_ref.clone().or(work_branch),
         sandbox_type: SandboxType::Container,
         requires_write: true,
-        image: None,
+        image: run.image_name.clone(),
+        network,
         env,
         limits: SandboxLimits {
             timeout_secs,
@@ -442,6 +477,45 @@ async fn harvest_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient
         .map(|diff| diff.changed_files.len())
         .unwrap_or(0);
 
+    // Publish before teardown: push the run's commits to the job's upstream
+    // work branch when the commit policy allows. A publish failure never
+    // un-dones the task (the work happened) — it is recorded loudly instead.
+    let mut published: Option<Value> = None;
+    let mut publish_failed: Option<String> = None;
+    if succeeded {
+        let context = work_runs::get_work_run_dispatch_context(pool, run.id).await.ok();
+        if let Some(context) = context.filter(WorkRunDispatchContext::publishes) {
+            match (sandbox_id, context.work_branch.as_deref()) {
+                (Some(id), Some(branch)) => {
+                    let request = PublishRequest {
+                        branch: branch.to_string(),
+                        auto_commit_leftovers: true,
+                        allow_default_ref: false,
+                        run_label: Some(run.id.to_string()),
+                    };
+                    match client.publish(id, &request).await {
+                        Ok(outcome) => {
+                            tracing::info!(
+                                work_run_id = %run.id,
+                                branch = %outcome.branch,
+                                commits = outcome.commits_pushed,
+                                pushed = outcome.pushed,
+                                "work_dispatch: run published to upstream"
+                            );
+                            published =
+                                Some(serde_json::to_value(&outcome).unwrap_or(Value::Null));
+                        }
+                        Err(err) => publish_failed = Some(err.to_string()),
+                    }
+                }
+                (None, _) => publish_failed = Some("run has no sandbox to publish from".into()),
+                (_, None) => {
+                    publish_failed = Some("job has no work branch recorded".into());
+                }
+            }
+        }
+    }
+
     let (final_state, summary) = if succeeded {
         (
             WorkRunState::Succeeded,
@@ -461,12 +535,18 @@ async fn harvest_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient
         )
     };
 
+    let summary = match &publish_failed {
+        Some(reason) => format!("{summary}; PUBLISH FAILED: {reason}"),
+        None => summary,
+    };
     let refs = json!({
         "sandbox_id": run.sandbox_id,
         "changed_files": diff.as_ref().map(|diff| serde_json::to_value(&diff.changed_files).unwrap_or(Value::Null)),
         "diff_patch": diff.as_ref().map(|diff| diff.patch.clone()),
         "diff_patch_truncated": diff.as_ref().map(|diff| diff.patch_truncated),
         "log_tail": log_tail,
+        "published": published,
+        "publish_failed": publish_failed,
     });
 
     let service = PgDocketService::from_pool(pool);
@@ -637,6 +717,7 @@ async fn maybe_requeue(pool: &PgPool, config: &Arc<Config>, run: &WorkRunRow) {
             task_id: run.task_id,
             root_name: run.root_name.clone(),
             git_ref: run.git_ref.clone(),
+            image_name: run.image_name.clone(),
             requested_by_user_id: Some(context.created_by_user_id),
         },
     )

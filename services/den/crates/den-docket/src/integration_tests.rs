@@ -68,6 +68,7 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
         goal: "Docket integration lifecycle".to_string(),
         work_surface_ref: None,
         commit_policy: Some(DocketCommitPolicy::ProposeOnly),
+        work_branch: None,
         status: DocketJobStatus::Ready,
         visibility: TaskListVisibility::SameUser,
         criteria: vec![DocketJobCriterionInput {

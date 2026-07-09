@@ -71,7 +71,7 @@ impl WorkRunState {
 }
 
 const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, task_id, job_run_id, attempt, state, \
-     runner_id, lease_expires_at, cancel_requested, root_name, git_ref, \
+     runner_id, lease_expires_at, cancel_requested, root_name, git_ref, image_name, \
      sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, \
      bearwire_session_id, result_summary, result_refs, usage, error, \
      queued_at, started_at, finished_at, updated_at";
@@ -90,6 +90,8 @@ pub struct WorkRunRow {
     pub cancel_requested: bool,
     pub root_name: Option<String>,
     pub git_ref: Option<String>,
+    /// Catalog image name the run was dispatched with (None = provider default).
+    pub image_name: Option<String>,
     pub sandbox_server_url: Option<String>,
     pub sandbox_id: Option<String>,
     pub sandbox_type: Option<String>,
@@ -118,6 +120,8 @@ pub struct WorkRunEnqueue {
     pub task_id: Uuid,
     pub root_name: Option<String>,
     pub git_ref: Option<String>,
+    /// Catalog image name on the sandbox provider (None = root/provider default).
+    pub image_name: Option<String>,
     /// Recorded on the audit event; also the identity work-run tokens are
     /// minted under (v1: only user-created jobs dispatch to work).
     pub requested_by_user_id: Option<i32>,
@@ -201,8 +205,8 @@ pub async fn enqueue_work_run(
     .await?;
 
     let inserted = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "INSERT INTO bear_work_runs (bear_id, job_id, task_id, job_run_id, attempt, root_name, git_ref)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "INSERT INTO bear_work_runs (bear_id, job_id, task_id, job_run_id, attempt, root_name, git_ref, image_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING {WORK_RUN_COLUMNS}"
     ))
     .bind(enqueue.bear_id)
@@ -212,6 +216,7 @@ pub async fn enqueue_work_run(
     .bind(attempt)
     .bind(enqueue.root_name.as_deref())
     .bind(enqueue.git_ref.as_deref())
+    .bind(enqueue.image_name.as_deref())
     .fetch_one(&mut *tx)
     .await;
 
@@ -555,10 +560,12 @@ pub async fn checkout_work_run_for_session(
     .bind(run.task_id)
     .fetch_one(pool)
     .await?;
-    let (goal,): (String,) = sqlx::query_as("SELECT goal FROM bear_jobs WHERE id = $1")
-        .bind(run.job_id)
-        .fetch_one(pool)
-        .await?;
+    let (goal, commit_policy): (String, Option<String>) =
+        sqlx::query_as("SELECT goal, commit_policy FROM bear_jobs WHERE id = $1")
+            .bind(run.job_id)
+            .fetch_one(pool)
+            .await?;
+    let publishes = matches!(commit_policy.as_deref(), Some("per_task" | "per_job"));
 
     crate::db::upsert_execution_session(
         pool,
@@ -577,7 +584,7 @@ pub async fn checkout_work_run_for_session(
     .await?;
 
     let (task_title, task_body, criteria) = (task.0, task.1, task.2 .0);
-    let prompt = build_work_prompt(&goal, &task_title, &task_body, &criteria);
+    let prompt = build_work_prompt(&goal, &task_title, &task_body, &criteria, publishes);
     Ok(WorkRunCheckout {
         run,
         prompt,
@@ -585,7 +592,13 @@ pub async fn checkout_work_run_for_session(
     })
 }
 
-fn build_work_prompt(goal: &str, title: &str, body: &str, criteria: &[String]) -> String {
+fn build_work_prompt(
+    goal: &str,
+    title: &str,
+    body: &str,
+    criteria: &[String],
+    publishes: bool,
+) -> String {
     let mut prompt = String::new();
     prompt.push_str(
         "You are executing a Docket task autonomously in the work stance, inside a sandbox. \
@@ -607,9 +620,18 @@ fn build_work_prompt(goal: &str, title: &str, body: &str, criteria: &[String]) -
          - When every criterion is satisfied, mark the task done using the \
            update_current_task_status tool — this is how success is recorded.\n\
          - If you cannot make progress, mark the task blocked with a specific reason \
-           using update_current_task_status instead of guessing or stopping silently.\n\
-         - Do not push, publish, deploy, or call external services.\n",
+           using update_current_task_status instead of guessing or stopping silently.\n",
     );
+    if publishes {
+        prompt.push_str(
+            "- Commit your work as you go with clear, specific git commit messages; \
+               your commits are published to the job's work branch after the run.\n\
+             - Do not push, deploy, or call external services; publishing happens \
+               outside the sandbox after the run completes.\n",
+        );
+    } else {
+        prompt.push_str("- Do not push, publish, deploy, or call external services.\n");
+    }
     prompt
 }
 
@@ -752,6 +774,17 @@ pub struct WorkRunDispatchContext {
     pub created_by_user_id: i32,
     pub job_goal: String,
     pub work_surface_ref: Option<String>,
+    pub commit_policy: Option<String>,
+    pub work_branch: Option<String>,
+}
+
+impl WorkRunDispatchContext {
+    /// Whether the job's commit policy publishes successful runs to the
+    /// upstream work branch (`per_task` / `per_job`; `propose_only`/`none`
+    /// stay diff-only).
+    pub fn publishes(&self) -> bool {
+        matches!(self.commit_policy.as_deref(), Some("per_task" | "per_job"))
+    }
 }
 
 pub async fn get_work_run_dispatch_context(
@@ -759,7 +792,8 @@ pub async fn get_work_run_dispatch_context(
     run_id: Uuid,
 ) -> Result<WorkRunDispatchContext, DenError> {
     sqlx::query_as::<_, WorkRunDispatchContext>(
-        "SELECT b.slug AS bear_slug, j.created_by_user_id, j.goal AS job_goal, j.work_surface_ref
+        "SELECT b.slug AS bear_slug, j.created_by_user_id, j.goal AS job_goal, j.work_surface_ref,
+                j.commit_policy, j.work_branch
          FROM bear_work_runs r
          JOIN bears b ON b.id = r.bear_id
          JOIN bear_jobs j ON j.id = r.job_id
@@ -769,6 +803,24 @@ pub async fn get_work_run_dispatch_context(
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| DenError::NotFound(format!("work run not found: {run_id}")))
+}
+
+/// The branch a job's work runs publish to, setting the generated default
+/// (`den/job-<short-id>`) on first use. Callers may have set an explicit
+/// branch at job creation; this never overwrites one.
+pub async fn ensure_job_work_branch(pool: &PgPool, job_id: Uuid) -> Result<String, DenError> {
+    let generated = format!("den/job-{}", &job_id.simple().to_string()[..8]);
+    let (branch,): (String,) = sqlx::query_as(
+        "UPDATE bear_jobs
+         SET work_branch = COALESCE(work_branch, $2), updated_at = now()
+         WHERE id = $1
+         RETURNING work_branch",
+    )
+    .bind(job_id)
+    .bind(&generated)
+    .fetch_one(pool)
+    .await?;
+    Ok(branch)
 }
 
 async fn append_task_event(

@@ -16,6 +16,7 @@
             <tr><th>State</th><td>{{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}</td></tr>
             <tr><th>Attempt</th><td>{{ run.attempt }}</td></tr>
             <tr><th>Root / ref</th><td>{{ run.root or "—" }} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
+            <tr><th>Image</th><td>{{ run.image or "root default" }}</td></tr>
             <tr><th>Sandbox</th><td>{{ run.sandbox_type or "—" }}</td></tr>
             <tr><th>Sandbox strength</th><td>{{ run.sandbox_strength or "—" }}</td></tr>
             <tr><th>Queued</th><td>{{ run.queued_at }}</td></tr>
@@ -37,11 +38,17 @@
     {% endif %}
 </section>
 
-{% if run.result_summary or run.error %}
+{% if run.result_summary or run.error or run.published_branch or run.publish_failed %}
 <section>
     <h2>Outcome</h2>
     {% if run.result_summary %}<p>{{ run.result_summary }}</p>{% endif %}
     {% if run.error %}<p><strong>Error:</strong> {{ run.error }}</p>{% endif %}
+    {% if run.published_branch %}
+    <p><strong>Published:</strong> <code>{{ run.published_branch }}</code> @ <code>{{ run.published_commit }}</code></p>
+    {% endif %}
+    {% if run.publish_failed %}
+    <p><strong>⚠ Publish failed:</strong> {{ run.publish_failed }} — the task's commits remain in the run diff below.</p>
+    {% endif %}
     {% if armature_report %}<p><small>Armature report: <code>{{ armature_report }}</code></small></p>{% endif %}
     {% if turn_outcome %}<p><small>Turn outcome: <code>{{ turn_outcome }}</code></small></p>{% endif %}
 </section>

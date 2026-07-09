@@ -806,6 +806,9 @@ pub struct DocketJobRow {
     pub goal: String,
     pub work_surface_ref: Option<String>,
     pub commit_policy: Option<String>,
+    /// Upstream branch this job's work runs publish to (set on first
+    /// pushable dispatch when absent; default `den/job-<short-id>`).
+    pub work_branch: Option<String>,
     pub status: String,
     pub visibility: String,
     pub current_run_id: Option<Uuid>,
@@ -983,6 +986,9 @@ pub struct DocketJobCreate {
     pub goal: String,
     pub work_surface_ref: Option<String>,
     pub commit_policy: Option<DocketCommitPolicy>,
+    /// Explicit upstream branch for work-run publishing; generated
+    /// (`den/job-<short-id>`) on first pushable dispatch when absent.
+    pub work_branch: Option<String>,
     pub status: DocketJobStatus,
     pub visibility: TaskListVisibility,
     pub criteria: Vec<DocketJobCriterionInput>,
@@ -1842,6 +1848,7 @@ mod tests {
             goal: "Ship Docket".to_string(),
             work_surface_ref: None,
             commit_policy: Some(DocketCommitPolicy::ProposeOnly),
+            work_branch: None,
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::BearVisible,
             criteria: Vec::new(),
@@ -1865,6 +1872,7 @@ mod tests {
             goal: "Ship Docket".to_string(),
             work_surface_ref: None,
             commit_policy: None,
+            work_branch: None,
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::BearVisible,
             criteria: Vec::new(),
@@ -1961,6 +1969,7 @@ mod tests {
                 goal: "Ship Docket".to_string(),
                 work_surface_ref: Some("zed".to_string()),
                 commit_policy: Some("propose_only".to_string()),
+                work_branch: None,
                 status: "running".to_string(),
                 visibility: "bear_visible".to_string(),
                 current_run_id: Some(run_id),
@@ -2056,6 +2065,7 @@ mod tests {
                 goal: "Ship Docket".to_string(),
                 work_surface_ref: Some("zed".to_string()),
                 commit_policy: Some("propose_only".to_string()),
+                work_branch: None,
                 status: "running".to_string(),
                 visibility: "bear_visible".to_string(),
                 current_run_id: Some(run_id),

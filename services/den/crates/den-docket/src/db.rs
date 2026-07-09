@@ -36,11 +36,11 @@ pub(super) async fn create_job(
         r"
         INSERT INTO bear_jobs (
             bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-            commit_policy, status, visibility
+            commit_policy, work_branch, status, visibility
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-                  commit_policy, status, visibility, current_run_id, created_at, updated_at
+                  commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         ",
     )
     .bind(create.bear_id)
@@ -49,6 +49,13 @@ pub(super) async fn create_job(
     .bind(create.goal.trim())
     .bind(create.work_surface_ref.as_deref())
     .bind(create.commit_policy.map(|policy| policy.as_str()))
+    .bind(
+        create
+            .work_branch
+            .as_deref()
+            .map(str::trim)
+            .filter(|branch| !branch.is_empty()),
+    )
     .bind(create.status.as_str())
     .bind(create.visibility.as_str())
     .fetch_one(&mut *tx)
@@ -72,7 +79,7 @@ pub(super) async fn create_job(
         SET current_run_id = $2, updated_at = NOW()
         WHERE id = $1
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-                  commit_policy, status, visibility, current_run_id, created_at, updated_at
+                  commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         ",
     )
     .bind(job.id)
@@ -350,7 +357,7 @@ pub(super) async fn list_jobs(
     let rows = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-               commit_policy, status, visibility, current_run_id, created_at, updated_at
+               commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1
         ORDER BY updated_at DESC
@@ -383,7 +390,7 @@ pub(super) async fn get_job(
     let Some(job) = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-               commit_policy, status, visibility, current_run_id, created_at, updated_at
+               commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
         ",
@@ -478,7 +485,7 @@ pub(super) async fn update_job(
     let Some(current) = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-               commit_policy, status, visibility, current_run_id, created_at, updated_at
+               commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
         ",
@@ -504,7 +511,7 @@ pub(super) async fn update_job(
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-                  commit_policy, status, visibility, current_run_id, created_at, updated_at
+                  commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         ",
     )
     .bind(update.bear_id)

@@ -7,8 +7,8 @@ use den_core::tools::constants::{
     DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
     DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
     DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
-    DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_GET,
-    DEN_WORK_RUN_LIST,
+    DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL,
+    DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
@@ -52,6 +52,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_WORK_RUN_LIST
             | DEN_WORK_RUN_GET
             | DEN_WORK_RUN_CANCEL
+            | DEN_WORK_CATALOG
     )
 }
 
@@ -72,6 +73,8 @@ pub(crate) struct DocketJobCreateArguments {
     pub(crate) work_surface_ref: Option<String>,
     #[serde(default)]
     pub(crate) commit_policy: Option<DocketCommitPolicy>,
+    #[serde(default)]
+    pub(crate) work_branch: Option<String>,
     #[serde(default = "default_job_status")]
     pub(crate) status: DocketJobStatus,
     #[serde(default = "default_job_visibility")]
@@ -377,6 +380,7 @@ pub(crate) async fn create_job(
             goal: args.goal,
             work_surface_ref: args.work_surface_ref,
             commit_policy: args.commit_policy,
+            work_branch: args.work_branch,
             status: args.status,
             visibility: args.visibility,
             criteria: args.criteria,
@@ -779,6 +783,9 @@ pub(crate) struct WorkDispatchArguments {
     root: Option<String>,
     #[serde(default)]
     git_ref: Option<String>,
+    /// Catalog image name on the sandbox provider (see get_work_catalog).
+    #[serde(default)]
+    image: Option<String>,
 }
 
 pub(crate) async fn dispatch_work(
@@ -801,6 +808,7 @@ pub(crate) async fn dispatch_work(
             task_id: args.task_id,
             root_name: args.root.as_deref().and_then(clean_optional),
             git_ref: args.git_ref.as_deref().and_then(clean_optional),
+            image_name: args.image.as_deref().and_then(clean_optional),
             requested_by_user_id: Some(context.user_id),
         },
     )
@@ -904,6 +912,39 @@ pub(crate) async fn cancel_work_run(
         } else {
             "run is already terminal or unknown; nothing to cancel"
         },
+    }))
+}
+
+/// Read the sandbox provider's roots + image catalog so the model can choose
+/// a root and toolchain image before dispatching.
+pub(crate) async fn get_work_catalog(
+    config: &crate::config::Config,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let _ignored_arguments: Value = serde_json::from_value(arguments)?;
+    let Some(url) = config
+        .sandbox_server_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+    else {
+        return Err(CustomError::ValidationError(
+            "no sandbox provider configured (SANDBOX_SERVER_URL unset); work dispatch is unavailable"
+                .to_string(),
+        ));
+    };
+    let client = den_sandbox::SandboxClient::new(url, &config.sandbox_server_token);
+    let catalog = client.catalog().await.map_err(|err| {
+        CustomError::System(format!("sandbox provider catalog fetch failed: {err}"))
+    })?;
+    Ok(json!({
+        "ok": true,
+        "images": catalog.images,
+        "roots": catalog.roots,
+        "notes": [
+            "Pass an image name from `images` as dispatch_work's `image` to select a toolchain; omit it to use the root's default.",
+            "Roots with has_upstream=true are git-backed; pushable jobs publish to their upstream work branch."
+        ],
     }))
 }
 

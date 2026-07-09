@@ -2,8 +2,8 @@
 //! `reqwest::Client` (the `BifrostClient` pattern); cheap to clone.
 
 use crate::protocol::{
-    CreateSandboxRequest, DiffResponse, ErrorBody, HealthResponse, LogsResponse,
-    SandboxDescriptor, SyncRootResponse,
+    CatalogResponse, CreateSandboxRequest, DiffResponse, ErrorBody, HealthResponse, LogsResponse,
+    PublishRequest, PublishResponse, SandboxDescriptor, SyncRootResponse,
 };
 use std::time::Duration;
 
@@ -126,6 +126,28 @@ impl SandboxClient {
             )
             .query(&[("preserve_workspace", preserve_workspace)]);
         Self::json_or_error(request.send().await?).await
+    }
+
+    /// Push the sandbox workspace's commits to its root's upstream branch.
+    pub async fn publish(
+        &self,
+        id: &str,
+        request: &PublishRequest,
+    ) -> Result<PublishResponse, SandboxClientError> {
+        let response = self
+            .authorized(
+                self.http
+                    .post(self.url(&format!("/sandbox/v1/sandboxes/{id}/publish"))),
+            )
+            .json(request)
+            .send()
+            .await?;
+        Self::json_or_error(response).await
+    }
+
+    /// Selectable roots and images on this provider.
+    pub async fn catalog(&self) -> Result<CatalogResponse, SandboxClientError> {
+        self.get_json("/sandbox/v1/catalog").await
     }
 
     pub async fn sync_root(&self, name: &str) -> Result<SyncRootResponse, SandboxClientError> {

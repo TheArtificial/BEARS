@@ -21,9 +21,16 @@ pub enum BackendError {
 
 pub struct ProvisionSpec {
     pub id: String,
+    /// Workspace path as seen by the provider process (local filesystem
+    /// operations: git, diff, cleanup).
     pub workspace: PathBuf,
+    /// Workspace path as the **host** docker daemon sees it — the bind-mount
+    /// source for the sandbox container. Differs from `workspace` only when
+    /// the provider itself runs in a container.
+    pub workspace_bind_source: PathBuf,
     pub image: String,
     pub env: BTreeMap<String, String>,
+    pub network: crate::protocol::NetworkMode,
     pub memory_mb: Option<u64>,
     pub cpus: Option<f64>,
     pub pids: Option<u64>,

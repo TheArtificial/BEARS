@@ -32,6 +32,14 @@ pub enum RootsError {
     },
     #[error("unknown root '{0}'")]
     UnknownRoot(String),
+    #[error("unknown image '{name}'; catalog: {available}")]
+    UnknownImage { name: String, available: String },
+    #[error("root '{name}' has no upstream; publish is only supported for git-backed roots")]
+    PublishUnsupported { name: String },
+    #[error(
+        "branch '{branch}' is the root's default ref; pushing to it requires allow_default_ref"
+    )]
+    DefaultRefRefused { branch: String },
     #[error("root '{name}': {detail}")]
     Git { name: String, detail: String },
     #[error("root '{name}': {detail}")]
@@ -43,6 +51,22 @@ pub enum RootsError {
 #[derive(Clone, Debug, Deserialize)]
 pub struct RootsFile {
     pub roots: Vec<SyncableRoot>,
+    /// Image catalog: the only container images sandboxes may run. Den sends
+    /// catalog *names*; the references live here, on the sandbox host.
+    #[serde(default)]
+    pub images: Vec<CatalogImageSpec>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CatalogImageSpec {
+    pub name: String,
+    /// Container image reference (local tag or registry reference).
+    pub image: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Catalog-wide default when neither the request nor the root names one.
+    #[serde(default)]
+    pub default: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -54,6 +78,9 @@ pub struct SyncableRoot {
     pub path: Option<String>,
     #[serde(default)]
     pub upstream: Option<GitUpstream>,
+    /// Catalog image name this root's sandboxes default to.
+    #[serde(default)]
+    pub default_image: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -85,13 +112,14 @@ pub enum RootCredential {
 
 pub struct RootsManager {
     roots: BTreeMap<String, SyncableRoot>,
+    images: Vec<CatalogImageSpec>,
     workspaces_dir: PathBuf,
 }
 
 impl RootsManager {
     pub fn load(config_path: Option<&str>, workspaces_dir: &str) -> Result<Self, RootsError> {
-        let roots = match config_path {
-            None => BTreeMap::new(),
+        let (roots, images) = match config_path {
+            None => (BTreeMap::new(), Vec::new()),
             Some(path) => {
                 let raw = std::fs::read_to_string(path).map_err(|source| {
                     RootsError::ConfigRead {
@@ -104,20 +132,65 @@ impl RootsManager {
                         path: path.to_string(),
                         source,
                     })?;
-                file.roots
-                    .into_iter()
-                    .map(|root| (root.name.clone(), root))
-                    .collect()
+                (
+                    file.roots
+                        .into_iter()
+                        .map(|root| (root.name.clone(), root))
+                        .collect(),
+                    file.images,
+                )
             }
         };
         Ok(Self {
             roots,
+            images,
             workspaces_dir: PathBuf::from(workspaces_dir),
         })
     }
 
     pub fn names(&self) -> Vec<String> {
         self.roots.keys().cloned().collect()
+    }
+
+    pub fn images(&self) -> &[CatalogImageSpec] {
+        &self.images
+    }
+
+    /// Resolve a requested catalog image **name** to a container image
+    /// reference: request → root default → catalog default → `fallback`
+    /// (`SANDBOX_IMAGE`). Unknown names are rejected, never passed through —
+    /// the catalog is the trust boundary for what can run on this host.
+    pub fn resolve_image(
+        &self,
+        requested: Option<&str>,
+        root: &SyncableRoot,
+        fallback: &str,
+    ) -> Result<String, RootsError> {
+        let by_name = |name: &str| -> Result<String, RootsError> {
+            self.images
+                .iter()
+                .find(|image| image.name == name)
+                .map(|image| image.image.clone())
+                .ok_or_else(|| RootsError::UnknownImage {
+                    name: name.to_string(),
+                    available: self
+                        .images
+                        .iter()
+                        .map(|image| image.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                })
+        };
+        if let Some(name) = requested.map(str::trim).filter(|name| !name.is_empty()) {
+            return by_name(name);
+        }
+        if let Some(name) = root.default_image.as_deref() {
+            return by_name(name);
+        }
+        if let Some(image) = self.images.iter().find(|image| image.default) {
+            return Ok(image.image.clone());
+        }
+        Ok(fallback.to_string())
     }
 
     pub fn get(&self, name: &str) -> Result<&SyncableRoot, RootsError> {
@@ -246,16 +319,42 @@ impl RootsManager {
             )
             .await?;
             let reference = git_ref.unwrap_or(&upstream.default_ref);
-            self.git(
-                root,
-                Some(&workspace),
-                &[],
-                &["checkout", "--detach", reference],
-            )
-            .await
-            .inspect_err(|_| {
-                let _ = std::fs::remove_dir_all(&workspace);
-            })?;
+            let checkout = self
+                .git(
+                    root,
+                    Some(&workspace),
+                    &[],
+                    &["checkout", "--detach", reference],
+                )
+                .await;
+            match checkout {
+                Ok(_) => {}
+                // A requested ref that does not exist yet (e.g. a job work
+                // branch before its first publish) falls back to the default
+                // ref instead of failing the provision.
+                Err(_) if reference != upstream.default_ref => {
+                    tracing::info!(
+                        root = %root.name,
+                        requested = reference,
+                        fallback = %upstream.default_ref,
+                        "requested ref missing; provisioning at the default ref"
+                    );
+                    self.git(
+                        root,
+                        Some(&workspace),
+                        &[],
+                        &["checkout", "--detach", &upstream.default_ref],
+                    )
+                    .await
+                    .inspect_err(|_| {
+                        let _ = std::fs::remove_dir_all(&workspace);
+                    })?;
+                }
+                Err(err) => {
+                    let _ = std::fs::remove_dir_all(&workspace);
+                    return Err(err);
+                }
+            }
         } else {
             let source = root.path.as_deref().ok_or_else(|| RootsError::Workspace {
                 name: root.name.clone(),
@@ -270,6 +369,127 @@ impl RootsManager {
             })?;
         }
         Ok(workspace)
+    }
+
+    /// Push a sandbox workspace's commits to the root's upstream branch.
+    ///
+    /// The push runs host-side with the root's credentials — they never enter
+    /// the sandbox. When `auto_commit_leftovers` is set, uncommitted workspace
+    /// changes are committed first (as the Den work identity) so nothing the
+    /// run produced is silently dropped. `base_commit` is the commit the
+    /// workspace was provisioned at (recorded on the work surface); it bounds
+    /// the pushed-commit count and the nothing-to-push check.
+    pub async fn publish_workspace(
+        &self,
+        root: &SyncableRoot,
+        workspace: &Path,
+        request: &crate::protocol::PublishRequest,
+        base_commit: Option<&str>,
+    ) -> Result<crate::protocol::PublishResponse, RootsError> {
+        let Some(upstream) = &root.upstream else {
+            return Err(RootsError::PublishUnsupported {
+                name: root.name.clone(),
+            });
+        };
+        let branch = request.branch.trim();
+        if branch.is_empty() || branch.contains(|c: char| c.is_whitespace()) {
+            return Err(RootsError::Workspace {
+                name: root.name.clone(),
+                detail: format!("invalid publish branch '{branch}'"),
+            });
+        }
+        if branch == upstream.default_ref && !request.allow_default_ref {
+            return Err(RootsError::DefaultRefRefused {
+                branch: branch.to_string(),
+            });
+        }
+
+        let mut auto_committed = false;
+        if request.auto_commit_leftovers {
+            let status = self
+                .git(root, Some(workspace), &[], &["status", "--porcelain"])
+                .await?;
+            if !status.trim().is_empty() {
+                self.git(root, Some(workspace), &[], &["add", "-A"]).await?;
+                let label = request.run_label.as_deref().unwrap_or("unknown");
+                self.git(
+                    root,
+                    Some(workspace),
+                    &[],
+                    &[
+                        "-c",
+                        "user.name=Den Work",
+                        "-c",
+                        "user.email=work@den.invalid",
+                        "commit",
+                        "-m",
+                        &format!("work run {label}: uncommitted changes"),
+                    ],
+                )
+                .await?;
+                auto_committed = true;
+            }
+        }
+
+        let commit = self
+            .git(root, Some(workspace), &[], &["rev-parse", "HEAD"])
+            .await?
+            .trim()
+            .to_string();
+
+        // Commits ahead of the provisioned base. Without a recorded base
+        // (adopted sandbox), fall back to "did HEAD move at all" = 0 ahead
+        // means nothing to push only when base is known.
+        let commits_pushed = match base_commit.map(str::trim).filter(|c| !c.is_empty()) {
+            Some(base) => self
+                .git(
+                    root,
+                    Some(workspace),
+                    &[],
+                    &["rev-list", "--count", &format!("{base}..HEAD")],
+                )
+                .await?
+                .trim()
+                .parse::<u64>()
+                .unwrap_or(0),
+            None => 1,
+        };
+        if commits_pushed == 0 {
+            return Ok(crate::protocol::PublishResponse {
+                branch: branch.to_string(),
+                commit,
+                commits_pushed: 0,
+                auto_committed,
+                pushed: false,
+            });
+        }
+
+        let env = credential_env(root, upstream)?;
+        self.git(
+            root,
+            Some(workspace),
+            &env,
+            &[
+                "push",
+                &upstream.url,
+                &format!("HEAD:refs/heads/{branch}"),
+            ],
+        )
+        .await?;
+
+        // Refresh the pristine mirror so the pushed branch is visible to the
+        // next provisioning without waiting for its pre-provision sync.
+        if let Err(err) = self.sync_root(root).await {
+            tracing::warn!(root = %root.name, error = %err, "post-publish pristine sync failed");
+        }
+
+        Ok(crate::protocol::PublishResponse {
+            branch: branch.to_string(),
+            commit,
+            commits_pushed,
+            auto_committed,
+            pushed: true,
+        })
     }
 
     pub async fn remove_workspace(&self, sandbox_id: &str) -> Result<(), std::io::Error> {
@@ -375,15 +595,22 @@ fn copy_dir_recursive(source: &Path, dest: &Path) -> Result<(), std::io::Error> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::PublishRequest;
 
     #[test]
     fn parses_roots_file() {
         let raw = r#"{
+            "images": [
+                {"name": "base", "image": "bears/sandbox:latest", "default": true},
+                {"name": "rust", "image": "bears/sandbox-rust:latest",
+                    "description": "rust toolchain"}
+            ],
             "roots": [
                 {"name": "scratch", "path": "/srv/scratch"},
                 {"name": "den", "upstream": {"url": "git@example.com:den.git",
                     "default_ref": "main",
-                    "credential": {"ssh_key_path": "/etc/bears/keys/den"}}},
+                    "credential": {"ssh_key_path": "/etc/bears/keys/den"}},
+                    "default_image": "rust"},
                 {"name": "site", "upstream": {"url": "https://example.com/site.git",
                     "credential": {"token_env": "SITE_GIT_TOKEN"}}}
             ]
@@ -396,8 +623,11 @@ mod tests {
             den.upstream.as_ref().unwrap().credential,
             Some(RootCredential::SshKeyPath { .. })
         ));
+        assert_eq!(den.default_image.as_deref(), Some("rust"));
         // default_ref defaults to "main" when omitted.
         assert_eq!(file.roots[2].upstream.as_ref().unwrap().default_ref, "main");
+        assert_eq!(file.images.len(), 2);
+        assert!(file.images[0].default);
     }
 
     #[test]
@@ -407,5 +637,241 @@ mod tests {
             manager.get("missing"),
             Err(RootsError::UnknownRoot(_))
         ));
+    }
+
+    fn manager_with_images(images: Vec<CatalogImageSpec>) -> RootsManager {
+        RootsManager {
+            roots: BTreeMap::new(),
+            images,
+            workspaces_dir: PathBuf::from("/tmp/nowhere"),
+        }
+    }
+
+    fn plain_root(name: &str) -> SyncableRoot {
+        SyncableRoot {
+            name: name.to_string(),
+            path: Some("/srv/x".to_string()),
+            upstream: None,
+            default_image: None,
+        }
+    }
+
+    #[test]
+    fn image_resolution_order_and_unknown_rejection() {
+        let manager = manager_with_images(vec![
+            CatalogImageSpec {
+                name: "base".into(),
+                image: "bears/sandbox:latest".into(),
+                description: None,
+                default: true,
+            },
+            CatalogImageSpec {
+                name: "rust".into(),
+                image: "bears/sandbox-rust:latest".into(),
+                description: None,
+                default: false,
+            },
+        ]);
+        let mut root = plain_root("r");
+
+        // Request wins.
+        assert_eq!(
+            manager.resolve_image(Some("rust"), &root, "fallback").unwrap(),
+            "bears/sandbox-rust:latest"
+        );
+        // Root default next.
+        root.default_image = Some("rust".to_string());
+        assert_eq!(
+            manager.resolve_image(None, &root, "fallback").unwrap(),
+            "bears/sandbox-rust:latest"
+        );
+        // Catalog default next.
+        root.default_image = None;
+        assert_eq!(
+            manager.resolve_image(None, &root, "fallback").unwrap(),
+            "bears/sandbox:latest"
+        );
+        // Unknown names are rejected, never passed through as references.
+        assert!(matches!(
+            manager.resolve_image(Some("bears/sandbox:latest"), &root, ""),
+            Err(RootsError::UnknownImage { .. })
+        ));
+
+        // Empty catalog falls back to the configured default reference.
+        let empty = manager_with_images(Vec::new());
+        assert_eq!(empty.resolve_image(None, &root, "fallback").unwrap(), "fallback");
+        assert!(matches!(
+            empty.resolve_image(Some("rust"), &root, "fallback"),
+            Err(RootsError::UnknownImage { .. })
+        ));
+    }
+
+    // --- publish tests: real host git against a tempdir bare upstream ---
+
+    fn sh_git(cwd: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.invalid")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.invalid")
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    struct PublishFixture {
+        tmp: PathBuf,
+        manager: RootsManager,
+        root: SyncableRoot,
+        base_commit: String,
+    }
+
+    impl Drop for PublishFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.tmp);
+        }
+    }
+
+    fn publish_fixture() -> PublishFixture {
+        let tmp = std::env::temp_dir().join(format!("den-sbx-publish-{}", uuid::Uuid::new_v4().simple()));
+        let upstream = tmp.join("upstream.git");
+        std::fs::create_dir_all(&upstream).unwrap();
+        sh_git(&upstream, &["init", "--bare", "-b", "main", "."]);
+        let seed = tmp.join("seed");
+        std::fs::create_dir_all(&seed).unwrap();
+        sh_git(&seed, &["init", "-b", "main", "."]);
+        std::fs::write(seed.join("README.md"), "seed\n").unwrap();
+        sh_git(&seed, &["add", "-A"]);
+        sh_git(&seed, &["commit", "-m", "initial"]);
+        sh_git(&seed, &["push", &upstream.to_string_lossy(), "main"]);
+        let base_commit = sh_git(&seed, &["rev-parse", "HEAD"]).trim().to_string();
+
+        let root = SyncableRoot {
+            name: "fixture".to_string(),
+            path: None,
+            upstream: Some(GitUpstream {
+                url: upstream.to_string_lossy().into_owned(),
+                default_ref: "main".to_string(),
+                credential: None,
+            }),
+            default_image: None,
+        };
+        let manager = RootsManager {
+            roots: std::iter::once(("fixture".to_string(), root.clone())).collect(),
+            images: Vec::new(),
+            workspaces_dir: tmp.join("workspaces"),
+        };
+        PublishFixture {
+            tmp,
+            manager,
+            root,
+            base_commit,
+        }
+    }
+
+    fn publish_request(branch: &str) -> PublishRequest {
+        PublishRequest {
+            branch: branch.to_string(),
+            auto_commit_leftovers: true,
+            allow_default_ref: false,
+            run_label: Some("test-run".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_pushes_workspace_commits_and_auto_commits_leftovers() {
+        let fx = publish_fixture();
+        fx.manager.sync_root(&fx.root).await.unwrap();
+        let workspace = fx
+            .manager
+            .provision_workspace(&fx.root, None, "sbx-pub")
+            .await
+            .unwrap();
+
+        // An in-run commit (what the armature does) plus a leftover change.
+        std::fs::write(workspace.join("work.txt"), "done\n").unwrap();
+        sh_git(&workspace, &["add", "-A"]);
+        sh_git(&workspace, &["commit", "-m", "do the task"]);
+        std::fs::write(workspace.join("leftover.txt"), "oops\n").unwrap();
+
+        let outcome = fx
+            .manager
+            .publish_workspace(
+                &fx.root,
+                &workspace,
+                &publish_request("den/job-test"),
+                Some(&fx.base_commit),
+            )
+            .await
+            .unwrap();
+        assert!(outcome.pushed);
+        assert!(outcome.auto_committed);
+        assert_eq!(outcome.commits_pushed, 2);
+
+        // The upstream branch exists and matches the workspace head.
+        let upstream = fx.tmp.join("upstream.git");
+        let upstream_head = sh_git(&upstream, &["rev-parse", "den/job-test"]);
+        assert_eq!(upstream_head.trim(), outcome.commit);
+        // main is untouched.
+        assert_eq!(sh_git(&upstream, &["rev-parse", "main"]).trim(), fx.base_commit);
+    }
+
+    #[tokio::test]
+    async fn publish_refuses_default_ref_and_skips_empty_pushes() {
+        let fx = publish_fixture();
+        fx.manager.sync_root(&fx.root).await.unwrap();
+        let workspace = fx
+            .manager
+            .provision_workspace(&fx.root, None, "sbx-empty")
+            .await
+            .unwrap();
+
+        let err = fx
+            .manager
+            .publish_workspace(
+                &fx.root,
+                &workspace,
+                &publish_request("main"),
+                Some(&fx.base_commit),
+            )
+            .await
+            .expect_err("default ref must be refused");
+        assert!(matches!(err, RootsError::DefaultRefRefused { .. }), "{err:?}");
+
+        // Nothing beyond the base: no push, no branch created.
+        let outcome = fx
+            .manager
+            .publish_workspace(
+                &fx.root,
+                &workspace,
+                &publish_request("den/job-empty"),
+                Some(&fx.base_commit),
+            )
+            .await
+            .unwrap();
+        assert!(!outcome.pushed);
+        assert_eq!(outcome.commits_pushed, 0);
+        let upstream = fx.tmp.join("upstream.git");
+        let branches = sh_git(&upstream, &["branch", "--list"]);
+        assert!(!branches.contains("den/job-empty"), "{branches}");
+    }
+
+    #[tokio::test]
+    async fn publish_unsupported_for_upstreamless_roots() {
+        let fx = publish_fixture();
+        let plain = plain_root("plain");
+        let err = fx
+            .manager
+            .publish_workspace(&plain, &fx.tmp, &publish_request("den/job-x"), None)
+            .await
+            .expect_err("path roots cannot publish");
+        assert!(matches!(err, RootsError::PublishUnsupported { .. }), "{err:?}");
     }
 }

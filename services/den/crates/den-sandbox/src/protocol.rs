@@ -31,6 +31,27 @@ impl SandboxType {
     }
 }
 
+/// Network posture of a sandbox. `Restricted` (the default) attaches the
+/// container to an internal network whose only way out is a TCP relay to the
+/// Den callback endpoint — task code cannot reach anything else. `Open` is
+/// the pre-v1 behavior: default bridge, unrestricted egress.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkMode {
+    #[default]
+    Restricted,
+    Open,
+}
+
+impl NetworkMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Restricted => "restricted",
+            Self::Open => "open",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxLifecycleState {
@@ -89,9 +110,14 @@ pub struct CreateSandboxRequest {
     /// Whether the work needs a writable workspace.
     #[serde(default = "default_true")]
     pub requires_write: bool,
-    /// Container image override; falls back to the provider's default image.
+    /// Catalog image **name** (not a raw reference) — resolved against the
+    /// provider's image catalog. Falls back to the root's default image, the
+    /// catalog default, then the provider's `SANDBOX_IMAGE`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    /// Network posture; defaults to [`NetworkMode::Restricted`].
+    #[serde(default)]
+    pub network: NetworkMode,
     /// Environment injected into the sandbox (armature credentials, work
     /// order id, ...). Values are never logged by the provider.
     #[serde(default)]
@@ -155,6 +181,9 @@ pub struct SandboxDescriptor {
     pub exit_code: Option<i64>,
     pub usage: SandboxUsage,
     pub cleanup: CleanupState,
+    /// Network posture the sandbox actually runs with.
+    #[serde(default)]
+    pub network: NetworkMode,
     pub labels: BTreeMap<String, String>,
     /// RFC 3339 timestamps.
     pub created_at: String,
@@ -184,6 +213,67 @@ pub struct DiffResponse {
     /// untracked files are not included (they are listed in `changed_files`).
     pub patch: String,
     pub patch_truncated: bool,
+}
+
+/// Publish (push) a sandbox workspace's commits to the root's upstream.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PublishRequest {
+    /// Target branch on the upstream (`refs/heads/<branch>`).
+    pub branch: String,
+    /// Commit any uncommitted workspace changes before pushing so nothing is
+    /// silently dropped.
+    #[serde(default = "default_true")]
+    pub auto_commit_leftovers: bool,
+    /// The root's default ref is refused as a target unless this is set —
+    /// pushing to `main` must always be an explicit choice.
+    #[serde(default)]
+    pub allow_default_ref: bool,
+    /// Caller label used in the auto-commit message (e.g. the work run id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_label: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PublishResponse {
+    pub branch: String,
+    /// Workspace HEAD after any auto-commit.
+    pub commit: String,
+    /// Commits ahead of the provisioned base that the push carried.
+    pub commits_pushed: u64,
+    /// Whether leftover changes were auto-committed before the push.
+    pub auto_committed: bool,
+    /// False when there was nothing beyond the provisioned base to push (the
+    /// push is skipped rather than creating an empty branch move).
+    pub pushed: bool,
+}
+
+/// One selectable image in the provider's catalog (from the roots file).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CatalogImage {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub default: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CatalogRoot {
+    pub name: String,
+    pub has_upstream: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_ref: Option<String>,
+    /// Catalog image name this root defaults to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_image: Option<String>,
+}
+
+/// Selectable roots and images, for dispatch UIs and model tools. Image
+/// references themselves stay on the sandbox host; only names travel.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CatalogResponse {
+    pub images: Vec<CatalogImage>,
+    pub roots: Vec<CatalogRoot>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

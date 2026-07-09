@@ -898,6 +898,7 @@ dependencies = [
  "den-oauth",
  "den-protocol",
  "den-runtime",
+ "den-sandbox",
  "den-service",
  "dotenvy",
  "futures",

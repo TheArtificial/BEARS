@@ -1,0 +1,23 @@
+# Node toolchain sandbox image: the base headless-armature image plus
+# Node.js (with npm/npx) for JavaScript work surfaces such as 11ty sites.
+#
+#   docker build -f packaging/sandbox-image/Dockerfile.node \
+#       --build-arg BASE_IMAGE=bears/sandbox:latest \
+#       --build-arg NODE_MAJOR=22 \
+#       -t bears/sandbox-node:latest packaging/sandbox-image
+
+ARG BASE_IMAGE=bears/sandbox:latest
+FROM ${BASE_IMAGE}
+
+ARG NODE_MAJOR=22
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gnupg \
+    && curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version && npm --version
+
+USER bear
+WORKDIR /workspace
+ENTRYPOINT ["bear-armature", "headless"]

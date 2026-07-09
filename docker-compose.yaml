@@ -218,6 +218,7 @@ services:
             SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
             WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
+            WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
             RUST_LOG: ${RUST_LOG:-info}
             PORT: ${DEN_PORT:-3000}
             API_PORT: ${DEN_API_PORT:-3001}
@@ -311,6 +312,7 @@ services:
             SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
             WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
+            WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
             RUST_LOG: ${RUST_LOG:-info}
             PORT: ${DEN_PORT:-3000}
             API_PORT: ${DEN_API_PORT:-3001}
@@ -371,10 +373,13 @@ services:
             SANDBOX_PORT: ${SANDBOX_PORT:-3002}
             SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-}
             SANDBOX_ROOTS_CONFIG: /etc/bears/sandbox-roots.json
-            # Must be the SAME absolute path on the host and in this container:
-            # sandbox workspaces are bind-mounted into sibling containers via
-            # the host docker daemon, which resolves paths host-side.
-            SANDBOX_WORKSPACES_DIR: ${SANDBOX_WORKSPACES_DIR:-/var/lib/bears/sandbox-workspaces}
+            # Container-local workspaces path (fixed) plus the host-side path
+            # of the same directory: sandbox workspaces are bind-mounted into
+            # sibling containers via the host docker daemon, which resolves
+            # bind sources host-side. The provider rewrites bind sources from
+            # the container path to the host path.
+            SANDBOX_WORKSPACES_DIR: /var/lib/bears/sandbox-workspaces
+            SANDBOX_WORKSPACES_HOST_DIR: ${SANDBOX_WORKSPACES_HOST_DIR:-/var/lib/bears/sandbox-workspaces}
             SANDBOX_IMAGE: ${SANDBOX_IMAGE:-bears/sandbox:latest}
             SANDBOX_MAX_CONCURRENT: ${SANDBOX_MAX_CONCURRENT:-2}
             SANDBOX_DEFAULT_TIMEOUT_SECS: ${SANDBOX_DEFAULT_TIMEOUT_SECS:-900}
@@ -387,7 +392,11 @@ services:
             # bare-metal on the host, which is the recommended dev setup — see
             # services/den/README.md).
             - /var/run/docker.sock:/var/run/docker.sock
-            - ${SANDBOX_WORKSPACES_DIR:-/var/lib/bears/sandbox-workspaces}:${SANDBOX_WORKSPACES_DIR:-/var/lib/bears/sandbox-workspaces}
+            # Literal container target (Coolify's compose validator rejects
+            # `${…}` in volume targets); the host side stays configurable.
+            - type: bind
+              source: ${SANDBOX_WORKSPACES_HOST_DIR:-/var/lib/bears/sandbox-workspaces}
+              target: /var/lib/bears/sandbox-workspaces
             - ${SANDBOX_ROOTS_FILE:-./data/sandbox-roots.json}:/etc/bears/sandbox-roots.json:ro
         healthcheck:
             test:

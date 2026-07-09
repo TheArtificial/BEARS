@@ -11,8 +11,9 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use axum_extra::extract::Form;
 use minijinja::context;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -21,17 +22,46 @@ use crate::{
     web::{self, AppState},
 };
 use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow};
-use den_docket::{DocketJobListFilter, DocketService, PgDocketService};
+use den_docket::{
+    DocketCommitPolicy, DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter,
+    DocketJobStatus, DocketService, DocketTaskInput, DocketTaskKind, DocketTaskScope,
+    PgDocketService, TaskListVisibility,
+};
+use den_sandbox::protocol::CatalogResponse;
+use den_sandbox::SandboxClient;
 use den_service::bears::db as bears_db;
+use den_service::bears::BearProfile;
+
+#[cfg(test)]
+mod tests;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/work", get(index))
+        .route("/work/new", get(new_job_form).post(create_job))
         .route("/work/jobs/{job_id}", get(job_detail))
         .route("/work/runs/{run_id}", get(run_detail))
         .route("/work/tasks/{task_id}/dispatch", post(dispatch_task))
         .route("/work/runs/{run_id}/cancel", post(cancel_run))
         .route("/work/runs/{run_id}/retry", post(retry_run))
+}
+
+/// Best-effort fetch of the sandbox provider's root/image catalog for form
+/// selects. `None` (provider unconfigured or down) degrades the forms to free
+/// text inputs rather than failing the page.
+async fn provider_catalog(state: &AppState) -> Option<CatalogResponse> {
+    let url = state.config.sandbox_server_url.as_deref()?.trim();
+    if url.is_empty() {
+        return None;
+    }
+    let client = SandboxClient::new(url, &state.config.sandbox_server_token);
+    match client.catalog().await {
+        Ok(catalog) => Some(catalog),
+        Err(err) => {
+            tracing::warn!(error = %err, "work UI: sandbox catalog fetch failed");
+            None
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -44,6 +74,8 @@ struct RunView {
     job_id: String,
     task_id: String,
     root: Option<String>,
+    git_ref: Option<String>,
+    image: Option<String>,
     sandbox_type: Option<String>,
     sandbox_strength: Option<String>,
     result_summary: Option<String>,
@@ -54,6 +86,10 @@ struct RunView {
     finished_at: Option<String>,
     duration_secs: Option<i64>,
     cleanup_failed: bool,
+    /// Publish outcome from result_refs: branch/commit pushed upstream.
+    published_branch: Option<String>,
+    published_commit: Option<String>,
+    publish_failed: Option<String>,
 }
 
 fn ts(value: time::OffsetDateTime) -> String {
@@ -76,6 +112,13 @@ fn run_view(run: &WorkRunRow, bear_slug: &str) -> RunView {
         .and_then(|refs| refs.get("cleanup"))
         .and_then(serde_json::Value::as_str)
         == Some("failed");
+    let ref_str = |pointer: &str| {
+        run.result_refs
+            .as_ref()
+            .and_then(|refs| refs.pointer(pointer))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
     RunView {
         id: run.id.to_string(),
         state: run.state.clone(),
@@ -85,6 +128,8 @@ fn run_view(run: &WorkRunRow, bear_slug: &str) -> RunView {
         job_id: run.job_id.to_string(),
         task_id: run.task_id.to_string(),
         root: run.root_name.clone(),
+        git_ref: run.git_ref.clone(),
+        image: run.image_name.clone(),
         sandbox_type: run.sandbox_type.clone(),
         sandbox_strength: run.sandbox_strength.clone(),
         result_summary: run.result_summary.clone(),
@@ -95,6 +140,9 @@ fn run_view(run: &WorkRunRow, bear_slug: &str) -> RunView {
         finished_at: run.finished_at.map(ts),
         duration_secs,
         cleanup_failed,
+        published_branch: ref_str("/published/branch"),
+        published_commit: ref_str("/published/commit"),
+        publish_failed: ref_str("/publish_failed"),
     }
 }
 
@@ -170,6 +218,138 @@ async fn index(
     .await
 }
 
+async fn new_job_form(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let mut bear_slugs: Vec<(String, String)> = bears
+        .iter()
+        .map(|(id, slug)| (id.to_string(), slug.clone()))
+        .collect();
+    bear_slugs.sort_by(|a, b| a.1.cmp(&b.1));
+    let catalog = provider_catalog(&state).await;
+    web::render_template(
+        &state,
+        "work/new.html",
+        auth_session,
+        context! {
+            title => "New work job",
+            bears => bear_slugs,
+            catalog => catalog,
+        },
+    )
+    .await
+}
+
+/// One task row per repeated `task_title[]` input; criteria are
+/// semicolon-separated within the row. Blank rows are skipped.
+#[derive(Debug, Deserialize)]
+struct NewJobForm {
+    bear_id: Uuid,
+    goal: String,
+    #[serde(default)]
+    root: String,
+    #[serde(default)]
+    commit_policy: String,
+    #[serde(default)]
+    work_branch: String,
+    #[serde(default)]
+    task_title: Vec<String>,
+    #[serde(default)]
+    task_criteria: Vec<String>,
+}
+
+async fn create_job(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<NewJobForm>,
+) -> Result<Response, CustomError> {
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    if !bears.contains_key(&form.bear_id) {
+        return Err(CustomError::NotFound("bear not found".to_string()));
+    }
+
+    let commit_policy = match form.commit_policy.trim() {
+        "" => None,
+        raw => Some(
+            serde_json::from_value::<DocketCommitPolicy>(serde_json::json!(raw)).map_err(
+                |_| CustomError::ValidationError(format!("invalid commit policy '{raw}'")),
+            )?,
+        ),
+    };
+
+    let mut tasks = Vec::new();
+    for (index, title) in form.task_title.iter().enumerate() {
+        let title = title.trim();
+        if title.is_empty() {
+            continue;
+        }
+        let criteria: Vec<String> = form
+            .task_criteria
+            .get(index)
+            .map(|raw| {
+                raw.split(';')
+                    .map(str::trim)
+                    .filter(|criterion| !criterion.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if criteria.is_empty() {
+            return Err(CustomError::ValidationError(format!(
+                "task '{title}' needs at least one completion criterion (semicolon-separated)"
+            )));
+        }
+        tasks.push(DocketTaskInput {
+            client_key: Some(format!("ui-task-{index}")),
+            parent_client_key: None,
+            parent_task_id: None,
+            sibling_order: i32::try_from(index).unwrap_or(0),
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Template,
+            title: title.to_string(),
+            // Docket requires a non-empty body; the quick-create form only
+            // collects titles, so the title doubles as the body.
+            body: title.to_string(),
+            completion_criteria: criteria,
+            difficulty: None,
+            effort_hint: None,
+            assigned_to_role: Some(BearProfile::Work),
+        });
+    }
+    if tasks.is_empty() {
+        return Err(CustomError::ValidationError(
+            "a work job needs at least one task".to_string(),
+        ));
+    }
+
+    let job = PgDocketService::from_pool(state.sqlx_pool())
+        .create_job(DocketJobCreate {
+            bear_id: form.bear_id,
+            created_by_user_id: user_id,
+            created_by_role: "ui".to_string(),
+            goal: form.goal,
+            work_surface_ref: Some(form.root.trim().to_string()).filter(|root| !root.is_empty()),
+            commit_policy,
+            work_branch: Some(form.work_branch.trim().to_string())
+                .filter(|branch| !branch.is_empty()),
+            status: DocketJobStatus::Ready,
+            visibility: TaskListVisibility::SameUser,
+            criteria: vec![DocketJobCriterionInput {
+                kind: den_docket::DocketCriterionKind::Narrative,
+                description: "All tasks completed to their criteria".to_string(),
+                spec: None,
+                sibling_order: 0,
+            }],
+            tasks,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{}", job.job.id)).into_response())
+}
+
 async fn job_detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -231,6 +411,7 @@ async fn job_detail(
         })
         .collect();
 
+    let catalog = provider_catalog(&state).await;
     web::render_template(
         &state,
         "work/job.html",
@@ -242,8 +423,11 @@ async fn job_detail(
             goal => projection.job.goal,
             status => projection.job.status,
             work_surface_ref => projection.job.work_surface_ref,
+            commit_policy => projection.job.commit_policy,
+            work_branch => projection.job.work_branch,
             tasks => tasks,
             runs => run_views,
+            catalog => catalog,
         },
     )
     .await
@@ -311,10 +495,25 @@ async fn run_detail(
     .await
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct DispatchForm {
+    #[serde(default)]
+    root: String,
+    #[serde(default)]
+    image: String,
+    #[serde(default)]
+    git_ref: String,
+}
+
+fn clean_form_field(raw: &str) -> Option<String> {
+    Some(raw.trim().to_string()).filter(|value| !value.is_empty())
+}
+
 async fn dispatch_task(
     State(state): State<AppState>,
     auth_session: AuthSession,
     Path(task_id): Path<Uuid>,
+    Form(form): Form<DispatchForm>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
@@ -332,8 +531,9 @@ async fn dispatch_task(
         work_runs::WorkRunEnqueue {
             bear_id,
             task_id,
-            root_name: None,
-            git_ref: None,
+            root_name: clean_form_field(&form.root),
+            git_ref: clean_form_field(&form.git_ref),
+            image_name: clean_form_field(&form.image),
             requested_by_user_id: Some(user_id),
         },
     )
@@ -378,6 +578,7 @@ async fn retry_run(
             task_id: run.task_id,
             root_name: run.root_name.clone(),
             git_ref: run.git_ref.clone(),
+            image_name: run.image_name.clone(),
             requested_by_user_id: Some(user_id),
         },
     )

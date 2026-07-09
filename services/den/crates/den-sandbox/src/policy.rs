@@ -71,6 +71,7 @@ mod tests {
             sandbox_type,
             requires_write,
             image: None,
+            network: Default::default(),
             env: Default::default(),
             limits: Default::default(),
             labels: Default::default(),

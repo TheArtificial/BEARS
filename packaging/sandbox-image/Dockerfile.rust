@@ -1,0 +1,30 @@
+# Rust toolchain sandbox image: the base headless-armature image plus a
+# stable rustup toolchain (clippy + rustfmt) and the native build deps most
+# Rust projects need. Layer for work surfaces like this repository itself.
+#
+#   docker build -f packaging/sandbox-image/Dockerfile.rust \
+#       --build-arg BASE_IMAGE=bears/sandbox:latest \
+#       -t bears/sandbox-rust:latest packaging/sandbox-image
+#
+# Note: no docker CLI/daemon inside sandboxes — tasks needing containers
+# (e.g. docker-backed integration tests) are not supported in v1 sandboxes.
+
+ARG BASE_IMAGE=bears/sandbox:latest
+FROM ${BASE_IMAGE}
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential pkg-config libssl-dev cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+USER bear
+ENV RUSTUP_HOME=/home/bear/.rustup \
+    CARGO_HOME=/home/bear/.cargo \
+    PATH=/home/bear/.cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --component clippy rustfmt \
+    && rustc --version
+
+WORKDIR /workspace
+ENTRYPOINT ["bear-armature", "headless"]
