@@ -46,7 +46,7 @@ use crate::{
     methods::run::persist_run_failed,
     rpc::rpc,
 };
-use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent};
+use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
 
 fn test_state(pool: sqlx::PgPool) -> DenState {
     test_state_with_config(pool, den_core::config::Config::test_stub())
@@ -1474,6 +1474,66 @@ async fn tool_result_without_live_native_session_is_not_accepted_for_continuatio
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn run_state_reports_run_obligations_results_and_events(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    let obligation = turn_obligations::upsert_tool_result_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-state",
+        None,
+        json!({ "tool_name": "fs_list_directory" }),
+    )
+    .await
+    .expect("create obligation");
+    turn_runs::record_client_result(
+        &pool,
+        &run_id,
+        "tool",
+        "call-state",
+        json!({ "status": "ok", "content": "listed" }),
+    )
+    .await
+    .expect("record result");
+    let mut event = BearWireEvent::ephemeral(
+        "tool_call.completed",
+        json!({ "tool_call": { "id": "call-state", "name": "fs_list_directory" } }),
+    );
+    event.run_id = Some(run_id.clone());
+    bearwire_events::append_bearwire_event(&pool, &session_id, Some(bear_id), Some(user_id), event)
+        .await
+        .expect("append event");
+
+    let response = rpc_value(
+        test_state(pool),
+        &token,
+        "run.state",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "run_id": run_id,
+            "limit": 10,
+        }),
+    )
+    .await;
+
+    let result = &response["result"];
+    assert_eq!(result["kind"], "run_state", "{response}");
+    assert_eq!(result["run"]["run_id"], run_id);
+    assert_eq!(result["obligations"][0]["id"], obligation.id.to_string());
+    assert_eq!(result["results"][0]["obligation_id"], "call-state");
+    assert_eq!(result["recent_events"][0]["event_type"], "tool_call.completed");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn client_tool_result_persists_output_summary_and_preview(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
@@ -2159,6 +2219,8 @@ async fn planned_v1_methods_are_recognized() {
         "session.close",
         "session.state",
         "run.start",
+        "run.state",
+        "run.timeline",
         "run.cancel",
         "client.tool.result",
         "client.permission.result",

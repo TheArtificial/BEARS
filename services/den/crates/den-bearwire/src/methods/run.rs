@@ -2,7 +2,9 @@ use std::time::{Duration, Instant};
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
+use serde::Deserialize;
 use serde_json::{json, Value};
+use sqlx::{types::time::OffsetDateTime, Row};
 use uuid::Uuid;
 
 use bearwire_protocol::{
@@ -36,6 +38,16 @@ use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(3);
+
+#[derive(Debug, Deserialize)]
+struct RunStateRequest {
+    bear_slug: String,
+    run_id: String,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
 
 fn den_owned_tool_call(tool_name: &str) -> bool {
     den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
@@ -1678,6 +1690,170 @@ pub(crate) async fn run_start_result(
         "session_id": session_id,
         "event_sequence": accepted.sequence_no,
         "state": run.state,
+    }))
+}
+
+async fn run_obligations_payload(pool: &sqlx::PgPool, run_id: &str) -> Result<Vec<Value>, CustomError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, run_id, session_id, kind, expected_responder_action,
+               tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
+               created_at, updated_at, completed_at
+        FROM turn_obligations
+        WHERE run_id = $1
+        ORDER BY created_at ASC, id ASC
+        "#,
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let created_at: OffsetDateTime = row.get("created_at");
+            let updated_at: OffsetDateTime = row.get("updated_at");
+            let completed_at: Option<OffsetDateTime> = row.get("completed_at");
+            json!({
+                "id": row.get::<uuid::Uuid, _>("id"),
+                "run_id": row.get::<String, _>("run_id"),
+                "session_id": row.get::<String, _>("session_id"),
+                "kind": row.get::<String, _>("kind"),
+                "expected_responder_action": row.get::<String, _>("expected_responder_action"),
+                "tool_call_id": row.get::<Option<String>, _>("tool_call_id"),
+                "permission_id": row.get::<Option<String>, _>("permission_id"),
+                "state": row.get::<String, _>("state"),
+                "turn_step_id": row.get::<Option<uuid::Uuid>, _>("turn_step_id"),
+                "request_payload": row.get::<Value, _>("request_payload"),
+                "result_payload": row.get::<Option<Value>, _>("result_payload"),
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "completed_at": completed_at,
+            })
+        })
+        .collect())
+}
+
+async fn run_results_payload(pool: &sqlx::PgPool, run_id: &str) -> Result<Vec<Value>, CustomError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
+        FROM turn_obligation_results
+        WHERE run_id = $1
+        ORDER BY created_at ASC, id ASC
+        "#,
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let created_at: OffsetDateTime = row.get("created_at");
+            json!({
+                "id": row.get::<uuid::Uuid, _>("id"),
+                "run_id": row.get::<String, _>("run_id"),
+                "obligation_kind": row.get::<String, _>("obligation_kind"),
+                "obligation_id": row.get::<String, _>("obligation_id"),
+                "result_hash": row.get::<String, _>("result_hash"),
+                "payload_json": row.get::<Value, _>("payload_json"),
+                "turn_step_id": row.get::<Option<uuid::Uuid>, _>("turn_step_id"),
+                "created_at": created_at,
+            })
+        })
+        .collect())
+}
+
+async fn run_recent_events_payload(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    limit: i64,
+) -> Result<Vec<Value>, CustomError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, sequence_no, event_type, event_json, created_at
+        FROM bearwire_events
+        WHERE session_id = $1
+          AND event_json->>'run_id' = $2
+        ORDER BY sequence_no DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(session_id)
+    .bind(run_id)
+    .bind(limit.clamp(1, 200))
+    .fetch_all(pool)
+    .await?;
+    let mut events = rows
+        .into_iter()
+        .map(|row| {
+            let created_at: OffsetDateTime = row.get("created_at");
+            json!({
+                "id": row.get::<uuid::Uuid, _>("id"),
+                "sequence_no": row.get::<i64, _>("sequence_no"),
+                "event_type": row.get::<String, _>("event_type"),
+                "event": row.get::<Value, _>("event_json"),
+                "created_at": created_at,
+            })
+        })
+        .collect::<Vec<_>>();
+    events.reverse();
+    Ok(events)
+}
+
+pub(crate) async fn run_state_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: RunStateRequest = parse_params(params)?;
+    if request.bear_slug != bear.slug {
+        return Err(CustomError::Authorization(
+            "bear_slug does not match authenticated Bear".to_string(),
+        ));
+    }
+    let run = turn_runs::get_run(&state.sqlx_pool, &request.run_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("BearWire run not found".to_string()))?;
+    if run.bear_id != bear.id || run.user_id != user_id {
+        return Err(CustomError::Authorization(
+            "run does not belong to authenticated Bear".to_string(),
+        ));
+    }
+    if let Some(session_id) = request.session_id.as_deref() {
+        if run.session_id != session_id {
+            return Err(CustomError::Authorization(
+                "run does not belong to requested session".to_string(),
+            ));
+        }
+    }
+    let obligations = run_obligations_payload(&state.sqlx_pool, &run.run_id).await?;
+    let open_obligations = obligations
+        .iter()
+        .filter(|obligation| {
+            obligation
+                .get("state")
+                .and_then(Value::as_str)
+                .is_some_and(|state| matches!(state, "requested" | "waiting_for_client"))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let results = run_results_payload(&state.sqlx_pool, &run.run_id).await?;
+    let events = run_recent_events_payload(
+        &state.sqlx_pool,
+        &run.session_id,
+        &run.run_id,
+        request.limit.unwrap_or(50),
+    )
+    .await?;
+    Ok(json!({
+        "kind": "run_state",
+        "run": run,
+        "open_obligations": open_obligations,
+        "obligations": obligations,
+        "results": results,
+        "recent_events": events,
     }))
 }
 

@@ -69,6 +69,11 @@ pub(crate) async fn rpc(
             .await,
             "BearWire conversation.surface_history failed",
         ),
+        "run.state" | "run.timeline" => method_response(
+            request.id,
+            methods::run::run_state_result(&state, &headers, &request.params).await,
+            format!("BearWire {} failed", request.method),
+        ),
         "run.cancel" => method_response(
             request.id,
             methods::run::run_cancel_result(&state, &headers, &request.params).await,
