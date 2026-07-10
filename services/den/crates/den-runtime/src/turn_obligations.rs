@@ -518,7 +518,7 @@ pub async fn mark_failed(
     obligation_id: Uuid,
 ) -> Result<Option<TurnObligationRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         UPDATE turn_obligations
         SET state = 'failed',
             completed_at = COALESCE(completed_at, NOW()),
@@ -528,7 +528,7 @@ pub async fn mark_failed(
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                   created_at, updated_at, completed_at
-        "#,
+        ",
     )
     .bind(obligation_id)
     .fetch_optional(pool)
@@ -583,7 +583,7 @@ pub async fn open_client_obligations_for_session(
     session_id: &str,
 ) -> Result<Vec<TurnObligationRow>, DenError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
@@ -591,7 +591,7 @@ pub async fn open_client_obligations_for_session(
         WHERE session_id = $1
           AND state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
-        "#,
+        ",
     )
     .bind(session_id)
     .fetch_all(pool)
