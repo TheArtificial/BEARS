@@ -117,21 +117,6 @@ pub(crate) fn terminal_command_allowed(command: &str, args: &[String]) -> bool {
     command_policy_for(&full).is_some_and(|policy| policy.terminal_allowed)
 }
 
-pub(crate) fn process_command_preferred(command: &str, args: &[String]) -> bool {
-    let full = if args.is_empty() {
-        command.to_string()
-    } else {
-        format!("{} {}", command, args.join(" "))
-    };
-    if command_policy_for(&full).is_some() {
-        return false;
-    }
-    matches!(
-        command,
-        "printf" | "true" | "false" | "pwd" | "uname" | "whoami" | "date" | "env"
-    )
-}
-
 pub(crate) fn rtk_wrap_allowed(command: &str, args: &[String]) -> bool {
     let full = if args.is_empty() {
         command.to_string()
@@ -194,12 +179,5 @@ mod tests {
         assert!(terminal_command_allowed("cargo", &["check".to_string()]));
         assert!(!terminal_command_allowed("cargo", &["publish".to_string()]));
         assert!(!terminal_command_allowed("git", &["status".to_string()]));
-    }
-
-    #[test]
-    fn process_preferred_is_limited_to_quiet_non_terminal_commands() {
-        assert!(process_command_preferred("printf", &["hello".to_string()]));
-        assert!(!process_command_preferred("cargo", &["test".to_string()]));
-        assert!(!process_command_preferred("git", &["diff".to_string()]));
     }
 }
