@@ -756,6 +756,32 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
         .await
         {
             Ok(()) => return,
+            Err(err) if den_runtime::turn_waits::descriptor_resolution_failed(&err) => {
+                tracing::warn!(
+                    error = %err,
+                    session_id = %session_id,
+                    run_id = %run_id,
+                    tool_call_id = %tool_call_id,
+                    tool_name = %tool_name,
+                    "BearWire tool-call descriptor resolution failed; failing run instead of creating an ambiguous client wait"
+                );
+                persist_run_failed(
+                    pool,
+                    session_id,
+                    run_id,
+                    bear_id,
+                    user_id,
+                    "descriptor_resolution_failed",
+                    err.to_string(),
+                    Some(json!({
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "request_id": request_id,
+                    })),
+                )
+                .await;
+                return;
+            }
             Err(err) => {
                 tracing::warn!(
                     error = %err,

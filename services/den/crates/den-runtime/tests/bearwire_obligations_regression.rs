@@ -159,6 +159,91 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn armature_owned_tool_call_creates_client_obligation(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
+        &pool,
+        turn_waits::PersistToolCallWaitInput {
+            session_id: &session_id,
+            run_id: &run_id,
+            bear_id,
+            user_id,
+            request_id: Uuid::new_v4(),
+            tool_call_id: "call-list",
+            tool_name: "fs_list_directory",
+            title: &Some("List directory".to_string()),
+            kind: &Some("read".to_string()),
+            arguments: &serde_json::json!({ "path": "." }),
+            approval_request_id: &None,
+            approval_required: false,
+            approval_reason: &None,
+            event_run_id: &Some(run_id.clone()),
+        },
+    )
+    .await
+    .expect("persist armature-owned tool event");
+
+    let obligation = persisted
+        .obligation
+        .expect("armature-owned tool should create a client tool-result obligation");
+    assert_eq!(obligation.kind, "tool_result");
+    assert_eq!(obligation.expected_responder_action, "tool_result");
+    assert_eq!(obligation.tool_call_id.as_deref(), Some("call-list"));
+
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run exists");
+    assert_eq!(run.state, "waiting_for_tool_result");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn unknown_tool_execution_owner_fails_closed(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    let err = turn_waits::persist_bearwire_tool_call_wait_transactionally(
+        &pool,
+        turn_waits::PersistToolCallWaitInput {
+            session_id: &session_id,
+            run_id: &run_id,
+            bear_id,
+            user_id,
+            request_id: Uuid::new_v4(),
+            tool_call_id: "call-unknown",
+            tool_name: "mystery_unowned_tool",
+            title: &Some("Mystery".to_string()),
+            kind: &Some("function".to_string()),
+            arguments: &serde_json::json!({}),
+            approval_request_id: &None,
+            approval_required: false,
+            approval_reason: &None,
+            event_run_id: &Some(run_id.clone()),
+        },
+    )
+    .await
+    .expect_err("unknown tool owner must fail closed");
+
+    assert!(turn_waits::descriptor_resolution_failed(&err));
+    let open = turn_obligations::open_client_obligations_for_session(&pool, &session_id)
+        .await
+        .expect("list open obligations");
+    assert!(open.is_empty(), "unknown tool must not create client waits");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn den_owned_tool_call_does_not_create_client_obligation(pool: sqlx::PgPool) {
     let (user_id, bear_id) = create_user_and_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());

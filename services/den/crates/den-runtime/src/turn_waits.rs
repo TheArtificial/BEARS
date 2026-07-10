@@ -15,18 +15,45 @@ use crate::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME;
 use crate::runtime::bearwire_projection::wire::tool_call_wire;
 use crate::{bearwire_events, turn_obligations, turn_runs};
 
-fn den_owned_tool_call(tool_name: &str) -> bool {
-    tool_name == RUNTIME_CHECKPOINT_TOOL_NAME
-        || den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
-            .is_some_and(|descriptor| descriptor.execution_target == "den")
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolExecutionOwner {
+    Den,
+    Armature,
 }
 
-fn tool_call_policy(tool_name: &str) -> Option<Value> {
-    if den_owned_tool_call(tool_name) {
-        return Some(json!({ "execution_target": "den" }));
+pub fn descriptor_resolution_failed(error: &DenError) -> bool {
+    matches!(
+        error,
+        DenError::ValidationError(message)
+            if message.starts_with("descriptor_resolution_failed:")
+    )
+}
+
+fn resolve_tool_execution_owner(tool_name: &str) -> Result<ToolExecutionOwner, DenError> {
+    if tool_name == RUNTIME_CHECKPOINT_TOOL_NAME {
+        return Ok(ToolExecutionOwner::Den);
     }
-    ClientToolName::from_provider_alias(tool_name)
-        .map(|_| client_tool_policy_json_for_provider(tool_name))
+    if let Some(descriptor) = den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name) {
+        return match descriptor.execution_target {
+            "den" => Ok(ToolExecutionOwner::Den),
+            other => Err(DenError::ValidationError(format!(
+                "descriptor_resolution_failed: Den tool `{tool_name}` has unsupported execution_target `{other}`"
+            ))),
+        };
+    }
+    if ClientToolName::from_provider_alias(tool_name).is_some() {
+        return Ok(ToolExecutionOwner::Armature);
+    }
+    Err(DenError::ValidationError(format!(
+        "descriptor_resolution_failed: no execution owner descriptor for tool `{tool_name}`"
+    )))
+}
+
+fn tool_call_policy(tool_name: &str, owner: ToolExecutionOwner) -> Value {
+    match owner {
+        ToolExecutionOwner::Den => json!({ "execution_target": "den" }),
+        ToolExecutionOwner::Armature => client_tool_policy_json_for_provider(tool_name),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -202,7 +229,8 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         );
     }
     let effective_approval_required = input.approval_required && has_permission_id;
-    let den_owned = den_owned_tool_call(input.tool_name);
+    let execution_owner = resolve_tool_execution_owner(input.tool_name)?;
+    let den_owned = execution_owner == ToolExecutionOwner::Den;
     let run_state = if effective_approval_required {
         turn_runs::TurnRunState::WaitingForPermission
     } else {
@@ -408,12 +436,12 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
                 target: None,
             },
             approval_required: true,
-            policy: tool_call_policy(input.tool_name),
+            policy: Some(tool_call_policy(input.tool_name, execution_owner)),
             turn_step_id: obligation_ref.turn_step_id.map(|id| id.to_string()),
         })
     } else {
         BearWireEvent::tool_call_requested(ToolCallRequestedWire {
-            policy: tool_call_policy(input.tool_name),
+            policy: Some(tool_call_policy(input.tool_name, execution_owner)),
             tool_call,
             approval_required: false,
             approval_request_id: input.approval_request_id.clone(),

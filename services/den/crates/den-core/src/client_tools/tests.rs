@@ -1,4 +1,34 @@
 use super::*;
+use crate::tools::descriptor::builtin_den_tool_descriptors;
+
+#[test]
+fn all_client_tool_policies_have_descriptor_owned_execution_contract() {
+    for tool in ClientToolName::all() {
+        let descriptor = tool.descriptor();
+        let policy = client_tool_policy(*tool);
+        assert_eq!(
+            policy.execution_target,
+            ExecutionTargetPolicy::ArmatureLocal,
+            "client tool {tool:?} must be armature-owned"
+        );
+        let json = policy.to_json(descriptor);
+        assert_eq!(json["execution_target"], "armature_local");
+        assert!(json.get("approval_policy").is_some(), "{tool:?} missing approval_policy");
+        assert!(json.get("target_policy").is_some(), "{tool:?} missing target_policy");
+        assert_eq!(json["provider_tool"], descriptor.provider_name);
+    }
+}
+
+#[test]
+fn all_den_tool_descriptors_have_supported_execution_target() {
+    for descriptor in builtin_den_tool_descriptors() {
+        assert_eq!(
+            descriptor.execution_target, "den",
+            "Den tool {} must be owned by Den or explicitly moved to a typed non-Den descriptor",
+            descriptor.provider_name
+        );
+    }
+}
 
 #[test]
 fn provider_tool_descriptor_read_file_requires_path() {
