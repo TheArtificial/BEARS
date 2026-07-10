@@ -400,8 +400,9 @@ Examples:
 | --- | --- | --- |
 | assistant text delta | `message.delta` | Direct projection. |
 | status text update | `run.progress` | Use `RunProgressKind::StatusText`. |
-| tool call requested | `tool_call.requested` | Direct projection. |
-| waiting for continuation | `run.paused` | Use `RunPauseReason::AwaitingContinuation`. |
+| tool call requested | `tool_call.requested` | Direct projection with nested `data.tool_call` and descriptor-owned `execution_target`. |
+| permission/client obligation wait | `client.waiting` | Actionable armature waits; must reference a persisted obligation and expected client method. |
+| waiting for continuation | `run.paused` | Status-only run state; use `RunPauseReason::AwaitingContinuation`. |
 | turn completed | `run.completed` | Direct projection. |
 | turn failed | `run.failed` | Direct projection. |
 | turn cancelled | `run.cancelled` | Direct projection. |

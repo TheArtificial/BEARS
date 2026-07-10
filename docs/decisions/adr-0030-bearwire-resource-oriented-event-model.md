@@ -338,10 +338,9 @@ A run-oriented naming model is preferred where practical:
 
 ```text
 run.start
-run.resume
 run.cancel
-run.result
-run.ack
+run.state
+run.timeline
 ```
 
 If transitional compatibility requires a more generic operation-oriented method family, the semantic model should still treat those methods as run lifecycle controls.
@@ -357,9 +356,7 @@ event
 ### Tool and permission methods
 
 ```text
-client.tool.call
-client.tool.cancel
-client.permission.request
+client.tool.result
 client.permission.result
 ```
 

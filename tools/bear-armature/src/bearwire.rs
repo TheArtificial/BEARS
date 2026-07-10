@@ -19,6 +19,7 @@ use crate::{
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BEARWIRE_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
 const BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS: usize = 24 * 1024;
+const BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(5);
 
 fn generic_tool_summary(summary: &str) -> bool {
     matches!(summary.trim(), "Tool failed." | "Tool completed.")
@@ -451,6 +452,8 @@ pub(crate) async fn handle_prompt(
     let mut saw_error = false;
     let started = Instant::now();
     let mut last_poll_log = Instant::now();
+    let mut last_run_state_check = Instant::now();
+    let mut last_run_state_summary: Option<String> = None;
     let mut logged_initial_wait = false;
 
     while started.elapsed() < BEARWIRE_PROMPT_TIMEOUT {
@@ -523,6 +526,42 @@ pub(crate) async fn handle_prompt(
                 diagnostics.summary()
             );
             last_poll_log = Instant::now();
+        }
+        if last_run_state_check.elapsed() >= BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL
+            && run_id != "<unknown>"
+        {
+            last_run_state_check = Instant::now();
+            match fetch_run_state(http, config, session_id, run_id).await {
+                Ok(state) => {
+                    if let Some(summary) = run_state_recovery_summary(&state) {
+                        if last_run_state_summary.as_deref() != Some(summary.as_str()) {
+                            tracing::warn!(
+                                target: "bear_armature::lifecycle",
+                                session_id,
+                                run_id,
+                                summary = %summary,
+                                "BearWire run.state diagnostic found active client obligations"
+                            );
+                            if crate::bear_debug_verbose() {
+                                eprintln!(
+                                    "bear-armature: BearWire run.state diagnostic session_id={} run_id={} {}",
+                                    session_id, run_id, summary
+                                );
+                            }
+                            last_run_state_summary = Some(summary);
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::debug!(
+                        target: "bear_armature::lifecycle",
+                        session_id,
+                        run_id,
+                        error = %err,
+                        "BearWire run.state diagnostic failed"
+                    );
+                }
+            }
         }
         sleep(BEARWIRE_POLL_INTERVAL).await;
     }
@@ -653,6 +692,85 @@ pub(crate) async fn post_tool_result(
         tool_result_rpc_params(config, session_id, run_id, tool_call_id, &payload),
     )
     .await
+}
+
+async fn fetch_run_state(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    run_id: &str,
+) -> Result<Value> {
+    rpc_call(
+        http,
+        config,
+        "run.state",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "run_id": run_id,
+            "limit": 20,
+        }),
+    )
+    .await
+}
+
+fn run_state_recovery_summary(state: &Value) -> Option<String> {
+    let run_state = state
+        .pointer("/run/state")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let open = state
+        .get("open_obligations")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if open.is_empty() {
+        return None;
+    }
+    let obligations = open
+        .iter()
+        .take(5)
+        .map(|obligation| {
+            let id = obligation
+                .get("id")
+                .or_else(|| obligation.get("obligation_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let state = obligation
+                .get("state")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let kind = obligation
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let expected = obligation
+                .get("expected_responder_action")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            let tool_call = obligation
+                .get("tool_call_id")
+                .and_then(Value::as_str)
+                .unwrap_or("<none>");
+            let permission = obligation
+                .get("permission_id")
+                .and_then(Value::as_str)
+                .unwrap_or("<none>");
+            let updated = obligation
+                .get("updated_at")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown>");
+            format!(
+                "id={id} state={state} kind={kind} expected={expected} tool_call={tool_call} permission={permission} updated_at={updated}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Some(format!(
+        "run_state={run_state} open_obligation_count={} open_obligations=[{}]",
+        open.len(),
+        obligations
+    ))
 }
 
 pub(crate) async fn post_permission_result(
@@ -1483,6 +1601,55 @@ mod tests {
         assert!(message.contains("stream_error"));
         assert!(message.contains("max_steps_exceeded"));
         assert!(message.contains("run-123"));
+    }
+
+    #[test]
+    fn run_state_recovery_summary_reports_open_obligations() {
+        let state = json!({
+            "run": { "state": "waiting_for_tool_result" },
+            "open_obligations": [{
+                "id": "obl-1",
+                "kind": "tool_result",
+                "expected_responder_action": "tool_result",
+                "state": "waiting_for_client",
+                "tool_call_id": "call-1",
+                "permission_id": null,
+                "updated_at": "2026-07-10T00:00:00Z"
+            }]
+        });
+
+        let summary = run_state_recovery_summary(&state).unwrap();
+
+        assert!(summary.contains("waiting_for_tool_result"), "{summary}");
+        assert!(summary.contains("obl-1"), "{summary}");
+        assert!(summary.contains("call-1"), "{summary}");
+        assert!(summary.contains("waiting_for_client"), "{summary}");
+    }
+
+    #[test]
+    fn run_state_recovery_summary_accepts_continuation_obligation_shape() {
+        let state = json!({
+            "run": { "state": "waiting_for_tool_result" },
+            "open_obligations": [{
+                "obligation_id": "obl-2",
+                "kind": "tool_result",
+                "expected_responder_action": "tool_result",
+                "state": "waiting_for_client",
+                "tool_call_id": "call-2",
+                "permission_id": null
+            }]
+        });
+
+        let summary = run_state_recovery_summary(&state).unwrap();
+
+        assert!(summary.contains("obl-2"), "{summary}");
+        assert!(summary.contains("call-2"), "{summary}");
+    }
+
+    #[test]
+    fn run_state_recovery_summary_ignores_clean_state() {
+        let state = json!({ "run": { "state": "running" }, "open_obligations": [] });
+        assert!(run_state_recovery_summary(&state).is_none());
     }
 
     #[test]

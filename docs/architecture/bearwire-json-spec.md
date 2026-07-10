@@ -86,6 +86,8 @@ For permission-mediated tool calls this means:
 3. The armature renders permission UI only from that answerable event and returns the user's decision against the referenced obligation.
 4. Den validates that returned results match the persisted obligation's run, session, tool call, permission id, expected client method, and open state before continuing the run.
 
+For armature-local tools that do not require permission, Den creates a `client.tool.result` obligation but does not emit `client.waiting`; the armature answers the obligation after handling `tool_call.requested`. Den-owned/display-only tools must not create armature client obligations.
+
 This invariant prevents unanswerable permission prompts and avoids reconstructing continuation state from loosely matched permission IDs, transcript text, or rendered error strings.
 
 ### Replayable tool activity invariant
@@ -189,6 +191,8 @@ All streamed BearWire events are sent as JSON-RPC notifications using method `ev
   }
 }
 ```
+
+The current HTTP/SSE event-polling profile may emit a synthetic `session.state` for an initial empty poll when no cursor is provided. Incremental empty polls with a cursor should return no events rather than repeatedly emitting synthetic `session.state`; otherwise liveness diagnostics are obscured by heartbeat-like state spam.
 
 ## Common schemas
 
@@ -326,9 +330,22 @@ Use when the session is bound to a backing runtime context.
 {
   "session_id": "ses_123",
   "active_run_ids": ["run_123"],
-  "state": "active"
+  "state": "active",
+  "open_obligations": [
+    {
+      "id": "obl_123",
+      "run_id": "run_123",
+      "kind": "tool_result",
+      "expected_responder_action": "tool_result",
+      "tool_call_id": "tc_123",
+      "permission_id": null,
+      "state": "waiting_for_client"
+    }
+  ]
 }
 ```
+
+`open_obligations` is optional and diagnostic. When present, it exposes Den-owned liveness state so armatures can report or recover from missed local-tool/permission obligations without inferring state from rendered transcript text.
 
 #### `model.selection.changed`
 
@@ -573,22 +590,29 @@ Rules:
 
 ```json
 {
-  "tool_call_id": "tc_123",
-  "run_id": "run_123",
-  "turn_step_id": "step_001",
-  "tool_name": "fs_read_text_file",
-  "title": "Read file",
-  "arguments": {
-    "path": "/workspace/README.md",
-    "limit": 2000
+  "tool_call": {
+    "id": "tc_123",
+    "name": "fs_read_text_file",
+    "title": "Read file",
+    "kind": "function",
+    "arguments": {
+      "path": "/workspace/README.md",
+      "limit": 2000
+    },
+    "display": {
+      "input_summary": "Read /workspace/README.md"
+    }
   },
-  "display": {
-    "input_summary": "Read /workspace/README.md"
+  "approval_required": false,
+  "execution_target": "armature_local",
+  "policy": {
+    "risk": "read_only",
+    "permission_class": "read_files"
   }
 }
 ```
 
-`arguments` are typed JSON arguments intended for replay, not a rendered string. `display.input_summary` is optional but recommended so edge adapters can render meaningful UI without guessing from tool-specific argument names.
+`tool_call.arguments` are typed JSON arguments intended for replay, not a rendered string. `tool_call.display.input_summary` is optional but recommended so edge adapters can render meaningful UI without guessing from tool-specific argument names. `execution_target` is descriptor-owned; currently expected values are `armature_local` and `den`. Armatures execute only `armature_local` requests and treat `den` requests as display/replay state.
 
 #### `tool_call.dispatched`
 
@@ -609,7 +633,9 @@ Canonical BearWire v1 event for an armature-actionable wait. Permission waits us
 ```json
 {
   "obligation_id": "obl_123",
+  "expected_responder_action": "permission_decision",
   "expected_client_method": "client.permission.result",
+  "turn_step_id": "step_001",
   "tool_call": {
     "id": "tc_123",
     "name": "fs_edit_file",
@@ -617,16 +643,25 @@ Canonical BearWire v1 event for an armature-actionable wait. Permission waits us
     "kind": "function",
     "arguments": {
       "path": "/workspace/README.md"
+    },
+    "display": {
+      "input_summary": "Edit /workspace/README.md"
     }
   },
   "permission": {
     "id": "perm_123",
     "reason": "permission_required"
+  },
+  "approval_required": true,
+  "execution_target": "armature_local",
+  "policy": {
+    "risk": "write",
+    "permission_class": "edit_files"
   }
 }
 ```
 
-The event must include a `client_obligation` resource ref and the `obligation_id` must identify a persisted open obligation.
+The event must include a `client_obligation` resource ref and the `obligation_id` must identify a persisted open obligation. `expected_client_method` is the method the armature must call to answer the wait; current permission waits use `client.permission.result`.
 
 #### `tool_call.blocked` legacy projection
 
@@ -666,55 +701,60 @@ New Den ↔ armature code should prefer `client.waiting`. Armatures may accept `
 
 ```json
 {
-  "tool_call_id": "tc_123",
-  "run_id": "run_123",
-  "turn_step_id": "step_001",
-  "tool_name": "fs_read_text_file",
-  "status": "ok",
-  "result": {
-    "content": "# README\n...",
-    "bytes": 62357,
-    "truncated": true,
-    "artifact_ref": "tool-output://cdb618e0-4a0a-4271-99e8-68cafd7f45ea"
+  "tool_call": {
+    "id": "tc_123",
+    "name": "fs_read_text_file"
   },
-  "display": {
+  "status": "ok",
+  "summary": "Read /workspace/README.md (62,357 bytes; truncated)",
+  "content": "# README\n...",
+  "structured_content": {
+    "bytes": 62357,
+    "truncated": true
+  },
+  "compacted": {
     "output_summary": "Read /workspace/README.md (62,357 bytes; truncated)",
     "output_preview": "# README\n..."
   }
 }
 ```
 
-The completion event must either repeat `tool_name` and replay-relevant result fields or reference an already-persisted tool-call record by `tool_call_id`. `display.output_summary`/`output_preview` are bounded presentation helpers; the durable replay shape is the typed `result` plus status.
+The completion event must either repeat `tool_call.name` and replay-relevant result fields or reference an already-persisted tool-call record by `tool_call.id`. `summary`, `content`, `structured_content`, and `compacted.output_summary`/`output_preview` are bounded presentation/model-continuity helpers; Den's durable tool-result record remains keyed by the same tool-call id and status.
 
 #### `tool_call.failed`
 
 ```json
 {
-  "tool_call_id": "tc_123",
-  "run_id": "run_123",
-  "turn_step_id": "step_001",
-  "tool_name": "fs_read_text_file",
+  "tool_call": {
+    "id": "tc_123",
+    "name": "fs_read_text_file"
+  },
   "status": "error",
+  "summary": "Could not read /workspace/PLAN.md: file not found",
+  "error_message": "File not found: /workspace/PLAN.md",
   "error": {
     "category": "resource_not_found",
     "message": "File not found: /workspace/PLAN.md",
     "retryable": false
   },
-  "display": {
+  "compacted": {
     "output_summary": "Could not read /workspace/PLAN.md: file not found"
   }
 }
 ```
 
-Tool execution errors are normal tool results for model replay unless the BearWire transport or coordinator itself failed. They must be tied to the same `tool_call_id` so the next model turn can see what the agent tried and what happened.
+Tool execution errors are normal tool results for model replay unless the BearWire transport or coordinator itself failed. They must be tied to the same `tool_call.id` so the next model turn can see what the agent tried and what happened.
 
 #### `tool_call.cancelled`
 
 ```json
 {
-  "tool_call_id": "tc_123",
-  "run_id": "run_123",
-  "reason": "run_cancelled"
+  "tool_call": {
+    "id": "tc_123",
+    "name": "fs_read_text_file"
+  },
+  "status": "cancelled",
+  "summary": "Tool call cancelled"
 }
 ```
 
@@ -927,11 +967,12 @@ Den validates explicit models against Bifrost availability. The selected model i
 
 ```text
 run.start
-run.resume
 run.cancel
-run.result
-run.ack
+run.state
+run.timeline
 ```
+
+`run.state` returns Den's current run row plus obligations, results, and recent BearWire events. It is the recovery/diagnostic source of truth when an armature suspects an event stream missed a terminal event or local-client obligation.
 
 If compatibility requires an operation-oriented transport family, implementations may retain transitional method names, but the BearWire semantic model remains run-oriented.
 
@@ -946,11 +987,11 @@ event.replay
 ### Tool and permission methods
 
 ```text
-client.tool.call
-client.tool.cancel
-client.permission.request
+client.tool.result
 client.permission.result
 ```
+
+`client.tool.result` answers an open `tool_result` obligation for an armature-local tool. `client.permission.result` answers an open `permission_decision` obligation emitted via `client.waiting`.
 
 ### Resource methods
 
@@ -1008,6 +1049,8 @@ BearWire uses:
 - JSON-RPC errors for request/response boundary failures;
 - lifecycle events for terminal run and tool failures; and
 - warning/diagnostic events for recoverable issues.
+
+Client obligations that remain unanswered past their deadline fail the run with `reason`/`error_type` such as `client_obligation_timeout`. The failure event should include enough context for the armature and user to identify the open obligation without inspecting Den internals; `run.state` remains the structured recovery endpoint for full obligation/result/event details.
 
 It should avoid using a single generic streamed `error` event as the primary model for all failure types.
 

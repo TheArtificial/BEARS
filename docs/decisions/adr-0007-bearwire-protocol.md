@@ -4,6 +4,8 @@
 **Date:** 2026-05-21  
 **Deciders:** Hans
 
+> Current implementation note: this early ADR uses draft `operation.*`, `client.tool.call`, and `client.permission.request` names. The current BearWire v1 method inventory is maintained in [BearWire JSON specification](../architecture/bearwire-json-spec.md) and ADR-0034; current armature callbacks use `client.tool.result` and `client.permission.result`.
+
 ## Context
 
 BEARS currently has several protocol boundaries:
