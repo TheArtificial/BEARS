@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Surface {{ name }}{% endblock %}
+{% block content %}
+<p><a href="/work/surfaces">← Work surfaces</a></p>
+<h1>Surface <code>{{ name }}</code></h1>
+
+{% if message %}
+<p><strong>{{ message }}</strong></p>
+{% endif %}
+
+<section>
+    <h2>Settings</h2>
+    <form method="post" action="/work/surfaces/{{ surface_id }}/update">
+        <p>
+            <label>Name <small>(immutable — it is the provider root identity)</small><br>
+                <input type="text" value="{{ name }}" disabled>
+            </label>
+        </p>
+        <p>
+            <label>Description<br>
+                <input type="text" name="description" size="60" value="{{ description or '' }}">
+            </label>
+        </p>
+        <p>
+            <label>Git upstream URL<br>
+                <input type="text" name="upstream_url" size="60" required value="{{ upstream_url }}">
+            </label>
+        </p>
+        <p>
+            <label>Default ref<br>
+                <input type="text" name="default_ref" required value="{{ default_ref }}">
+            </label>
+        </p>
+        <p>
+            <label>Default image<br>
+                <select name="default_image">
+                    <option value="">— catalog default —</option>
+                    {% for image in images %}
+                    <option value="{{ image.name }}" {% if image.name == default_image %}selected{% endif %}>{{ image.name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </p>
+        <p><button type="submit">Save</button></p>
+    </form>
+</section>
+
+<section>
+    <h2>Credential</h2>
+    {% if credential_kind %}
+    <p>A <code>{{ credential_kind }}</code> credential is set (values are never shown). Submitting a new one replaces it.</p>
+    {% else %}
+    <p>No credential set — the upstream must be readable and pushable without one.</p>
+    {% endif %}
+    <form method="post" action="/work/surfaces/{{ surface_id }}/credential">
+        <p>
+            <label>Kind<br>
+                <select name="credential_kind" required>
+                    <option value="ssh_key">SSH private key (deploy key)</option>
+                    <option value="https_token">HTTPS token</option>
+                </select>
+            </label>
+        </p>
+        <p>
+            <label>Value<br>
+                <textarea name="credential_value" rows="6" cols="70" required></textarea>
+            </label>
+        </p>
+        <p><button type="submit">{% if credential_kind %}Replace credential{% else %}Set credential{% endif %}</button></p>
+    </form>
+    {% if credential_kind %}
+    <form method="post" action="/work/surfaces/{{ surface_id }}/credential/clear">
+        <p><button type="submit">Clear credential</button></p>
+    </form>
+    {% endif %}
+</section>
+
+<section>
+    <h2>Managers</h2>
+    <table>
+        <thead><tr><th>User</th><th>Role</th><th></th></tr></thead>
+        <tbody>
+            {% for manager in managers %}
+            <tr>
+                <td>{{ manager.username }} ({{ manager.display_name }})</td>
+                <td>{{ manager.role }}</td>
+                <td>
+                    <form method="post" action="/work/surfaces/{{ surface_id }}/managers/revoke">
+                        <input type="hidden" name="user_id" value="{{ manager.user_id }}">
+                        <button type="submit">Revoke</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <form method="post" action="/work/surfaces/{{ surface_id }}/managers/grant">
+        <p>
+            <input type="text" name="username" placeholder="username" required>
+            <select name="role">
+                <option value="manager">manager</option>
+                <option value="owner">owner</option>
+            </select>
+            <button type="submit">Grant</button>
+        </p>
+    </form>
+</section>
+
+<section>
+    <h2>Assigned bears</h2>
+    <p>Any member of an assigned bear can create and dispatch jobs on this surface.</p>
+    {% if assigned_bears %}
+    <table>
+        <thead><tr><th>Bear</th><th></th></tr></thead>
+        <tbody>
+            {% for bear in assigned_bears %}
+            <tr>
+                <td>{{ bear.slug }} ({{ bear.display_name }})</td>
+                <td>
+                    <form method="post" action="/work/surfaces/{{ surface_id }}/bears/unassign">
+                        <input type="hidden" name="bear_id" value="{{ bear.bear_id }}">
+                        <button type="submit">Unassign</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No bears assigned yet — jobs cannot dispatch onto this surface until one is.</p>
+    {% endif %}
+    {% if assignable_bears %}
+    <form method="post" action="/work/surfaces/{{ surface_id }}/bears/assign">
+        <p>
+            <select name="bear_id" required>
+                {% for bear in assignable_bears %}
+                <option value="{{ bear[0] }}">{{ bear[1] }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit">Assign bear</button>
+        </p>
+    </form>
+    {% endif %}
+</section>
+
+<section>
+    <h2>Provider sync</h2>
+    <p>
+        Changes push to the sandbox provider automatically; the dispatch worker
+        also reconciles every 5 minutes.
+    </p>
+    <form method="post" action="/work/surfaces/{{ surface_id }}/sync">
+        <p><button type="submit">Sync now</button></p>
+    </form>
+</section>
+
+<section>
+    <h2>Danger</h2>
+    <form method="post" action="/work/surfaces/{{ surface_id }}/delete"
+          onsubmit="return confirm('Delete this surface? Jobs referencing it keep their history but can no longer dispatch.')">
+        <p><button type="submit">Delete surface</button></p>
+    </form>
+</section>
+{% endblock %}

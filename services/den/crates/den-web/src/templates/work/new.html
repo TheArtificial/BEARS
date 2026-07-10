@@ -26,18 +26,23 @@
         </label>
     </p>
     <p>
-        <label>Work surface (sandbox root)<br>
-            {% if catalog and catalog.roots %}
-            <select name="root">
+        <label>Work surface<br>
+            {% if surfaces %}
+            <select name="surface_id">
                 <option value="">— none —</option>
-                {% for root in catalog.roots %}
-                <option value="{{ root.name }}">{{ root.name }}{% if root.has_upstream %} (git: {{ root.default_ref }}){% endif %}</option>
+                {% for surface in surfaces %}
+                <option value="{{ surface.id }}">{{ surface.name }} (git: {{ surface.default_ref }})</option>
                 {% endfor %}
             </select>
+            <small><a href="/work/surfaces">manage surfaces</a></small>
             {% else %}
-            <input type="text" name="root" placeholder="root name on the sandbox provider">
-            <small>(provider catalog unavailable)</small>
+            <small>No surfaces are assigned to your bears yet — <a href="/work/surfaces/new">create one</a>, or use the legacy root below.</small>
             {% endif %}
+        </label>
+    </p>
+    <p>
+        <label>Legacy provider root <small>(advanced; ignored when a surface is selected)</small><br>
+            <input type="text" name="root" placeholder="root name on the sandbox provider">
         </label>
     </p>
     <p>

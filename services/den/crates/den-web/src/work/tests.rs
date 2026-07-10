@@ -281,3 +281,175 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     assert_eq!(image.as_deref(), Some("rust"));
     assert!(git_ref.is_none(), "blank git_ref stays unset");
 }
+
+/// Helper: POST a form to the app with the session cookie; returns the
+/// response.
+async fn post_form(
+    app: &axum::Router,
+    cookie: &str,
+    uri: &str,
+    body: String,
+) -> axum::response::Response {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::COOKIE, cookie)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .expect("form response")
+}
+
+#[tokio::test]
+async fn surface_management_is_owner_scoped_and_grantable() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let (owner_id, _bear_id) = seed_member(&pool).await;
+    let (other_id, _other_bear) = seed_member(&pool).await;
+    let app = test_app(pool.clone()).await;
+    let owner_cookie = login_cookie(&app, owner_id).await;
+    let other_cookie = login_cookie(&app, other_id).await;
+
+    let unique = Uuid::new_v4().simple().to_string();
+    let name = format!("ui-surface-{}", &unique[..12]);
+    let response = post_form(
+        &app,
+        &owner_cookie,
+        "/work/surfaces/new",
+        format!(
+            "name={name}&description=&upstream_url=https%3A%2F%2Fexample.invalid%2Frepo.git\
+             &default_ref=main&default_image=&credential_kind=&credential_value="
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let (surface_id, created_by): (Uuid, i32) = sqlx::query_as(
+        "SELECT id, created_by_user_id FROM work_surfaces WHERE name = $1",
+    )
+    .bind(&name)
+    .fetch_one(&pool)
+    .await
+    .expect("surface row");
+    assert_eq!(created_by, owner_id);
+
+    // Non-manager: manage page and mutations deny as 404.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/work/surfaces/{surface_id}"))
+                .header(header::COOKIE, &other_cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("detail response");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let response = post_form(
+        &app,
+        &other_cookie,
+        &format!("/work/surfaces/{surface_id}/update"),
+        "description=x&upstream_url=https%3A%2F%2Fevil.invalid%2Fr.git&default_ref=main&default_image=".to_string(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Owner grants the other user; the grantee can now update.
+    let other_username: String =
+        sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+            .bind(other_id)
+            .fetch_one(&pool)
+            .await
+            .expect("username");
+    let response = post_form(
+        &app,
+        &owner_cookie,
+        &format!("/work/surfaces/{surface_id}/managers/grant"),
+        format!("username={other_username}&role=manager"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let response = post_form(
+        &app,
+        &other_cookie,
+        &format!("/work/surfaces/{surface_id}/update"),
+        "description=updated+by+manager&upstream_url=https%3A%2F%2Fexample.invalid%2Frepo.git&default_ref=trunk&default_image=".to_string(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let (default_ref,): (String,) =
+        sqlx::query_as("SELECT default_ref FROM work_surfaces WHERE id = $1")
+            .bind(surface_id)
+            .fetch_one(&pool)
+            .await
+            .expect("updated row");
+    assert_eq!(default_ref, "trunk");
+}
+
+#[tokio::test]
+async fn create_job_enforces_surface_assignment() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let (user_id, bear_id) = seed_member(&pool).await;
+    let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, user_id).await;
+
+    let unique = Uuid::new_v4().simple().to_string();
+    let name = format!("job-surface-{}", &unique[..12]);
+    let response = post_form(
+        &app,
+        &cookie,
+        "/work/surfaces/new",
+        format!(
+            "name={name}&description=&upstream_url=https%3A%2F%2Fexample.invalid%2Frepo.git\
+             &default_ref=main&default_image=&credential_kind=&credential_value="
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let (surface_id,): (Uuid,) =
+        sqlx::query_as("SELECT id FROM work_surfaces WHERE name = $1")
+            .bind(&name)
+            .fetch_one(&pool)
+            .await
+            .expect("surface row");
+
+    // The bear is not assigned: job creation with the surface is rejected.
+    let job_body = format!(
+        "bear_id={bear_id}&goal=Surface+gated&surface_id={surface_id}&root=&commit_policy=per_task\
+         &task_title=Do+it&task_criteria=done"
+    );
+    let response = post_form(&app, &cookie, "/work/new", job_body.clone()).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Assign the bear from the surface page, then the same form succeeds and
+    // binds both name and id.
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/surfaces/{surface_id}/bears/assign"),
+        format!("bear_id={bear_id}"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let response = post_form(&app, &cookie, "/work/new", job_body).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let (surface_ref, bound_id): (Option<String>, Option<Uuid>) = sqlx::query_as(
+        "SELECT work_surface_ref, work_surface_id FROM bear_jobs
+         WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("job row");
+    assert_eq!(surface_ref.as_deref(), Some(name.as_str()));
+    assert_eq!(bound_id, Some(surface_id));
+}

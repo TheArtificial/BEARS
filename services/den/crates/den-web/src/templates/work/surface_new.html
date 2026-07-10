@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}New work surface{% endblock %}
+{% block content %}
+<p><a href="/work/surfaces">← Work surfaces</a></p>
+<h1>New work surface</h1>
+<p>You become the surface's owner and can grant other managers afterwards.</p>
+
+<form method="post" action="/work/surfaces/new">
+    <p>
+        <label>Name <small>(immutable; lowercase letters, digits, <code>.</code> <code>_</code> <code>-</code>)</small><br>
+            <input type="text" name="name" required pattern="[a-z0-9][a-z0-9._-]{0,63}"
+                   placeholder="my-site">
+        </label>
+    </p>
+    <p>
+        <label>Description<br>
+            <input type="text" name="description" size="60">
+        </label>
+    </p>
+    <p>
+        <label>Git upstream URL<br>
+            <input type="text" name="upstream_url" size="60" required
+                   placeholder="git@github.com:org/repo.git or https://…">
+        </label>
+    </p>
+    <p>
+        <label>Default ref<br>
+            <input type="text" name="default_ref" value="main">
+        </label>
+    </p>
+    <p>
+        <label>Default image<br>
+            <select name="default_image">
+                <option value="">— catalog default —</option>
+                {% for image in images %}
+                <option value="{{ image.name }}">{{ image.name }}{% if image.description %} — {{ image.description }}{% endif %}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </p>
+
+    <h2>Credential <small>(optional; stored encrypted, write-only)</small></h2>
+    <p>
+        <label>Kind<br>
+            <select name="credential_kind">
+                <option value="">— none (public repo) —</option>
+                <option value="ssh_key">SSH private key (deploy key)</option>
+                <option value="https_token">HTTPS token</option>
+            </select>
+        </label>
+    </p>
+    <p>
+        <label>Value<br>
+            <textarea name="credential_value" rows="6" cols="70"
+                      placeholder="-----BEGIN OPENSSH PRIVATE KEY----- … or ghp_…"></textarea>
+        </label>
+    </p>
+
+    <p><button type="submit">Create surface</button></p>
+</form>
+{% endblock %}

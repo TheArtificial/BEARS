@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Work surfaces{% endblock %}
+{% block content %}
+<p><a href="/work">← Work</a></p>
+<h1>Work surfaces</h1>
+<p>
+    A work surface is a git upstream that background work runs on. Surfaces are
+    assigned to bears; any member of an assigned bear can create and dispatch
+    jobs on it. Credentials are stored encrypted and pushed to the sandbox
+    provider — they never enter sandboxes.
+</p>
+
+{% if message %}
+<p><strong>{{ message }}</strong></p>
+{% endif %}
+
+<section>
+    <h2>Surfaces you manage</h2>
+    <p><a href="/work/surfaces/new">New work surface</a></p>
+    {% if managed %}
+    <table>
+        <thead>
+            <tr><th>Name</th><th>Upstream</th><th>Default ref</th><th>Credential</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+            {% for surface in managed %}
+            <tr>
+                <td><a href="/work/surfaces/{{ surface.id }}">{{ surface.name }}</a></td>
+                <td><code>{{ surface.upstream_url }}</code></td>
+                <td>{{ surface.default_ref }}</td>
+                <td>{{ surface.credential_kind or "none" }}</td>
+                <td>{{ surface.description or "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>You don't manage any surfaces yet.</p>
+    {% endif %}
+</section>
+
+<section>
+    <h2>Available to your bears</h2>
+    {% if available %}
+    <table>
+        <thead>
+            <tr><th>Surface</th><th>Bear</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+            {% for surface in available %}
+            <tr>
+                <td>{{ surface.name }}</td>
+                <td>{{ surface.bear_slug }}</td>
+                <td>{{ surface.description or "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No surfaces are assigned to your bears. Assign one from a surface's manage page.</p>
+    {% endif %}
+</section>
+{% endblock %}

@@ -32,6 +32,8 @@ use den_sandbox::SandboxClient;
 use den_service::bears::db as bears_db;
 use den_service::bears::BearProfile;
 
+pub mod surfaces;
+
 #[cfg(test)]
 mod tests;
 
@@ -44,6 +46,7 @@ pub fn router() -> Router<AppState> {
         .route("/work/tasks/{task_id}/dispatch", post(dispatch_task))
         .route("/work/runs/{run_id}/cancel", post(cancel_run))
         .route("/work/runs/{run_id}/retry", post(retry_run))
+        .merge(surfaces::router())
 }
 
 /// Best-effort fetch of the sandbox provider's root/image catalog for form
@@ -324,6 +327,24 @@ async fn new_job_form(
         .collect();
     bear_slugs.sort_by(|a, b| a.1.cmp(&b.1));
     let catalog = provider_catalog(&state).await;
+
+    // Managed surfaces available to any of the user's bears; the create
+    // handler re-checks the selected bear's assignment server-side.
+    let bear_ids: Vec<Uuid> = bears.keys().copied().collect();
+    let mut surfaces: Vec<serde_json::Value> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for surface in
+        den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &bear_ids).await?
+    {
+        if seen.insert(surface.id) {
+            surfaces.push(serde_json::json!({
+                "id": surface.id.to_string(),
+                "name": surface.name,
+                "default_ref": surface.default_ref,
+            }));
+        }
+    }
+
     web::render_template(
         &state,
         "work/new.html",
@@ -332,6 +353,7 @@ async fn new_job_form(
             title => "New work job",
             bears => bear_slugs,
             catalog => catalog,
+            surfaces => surfaces,
         },
     )
     .await
@@ -343,6 +365,10 @@ async fn new_job_form(
 struct NewJobForm {
     bear_id: Uuid,
     goal: String,
+    /// Managed work surface id (preferred; from the surface select).
+    #[serde(default)]
+    surface_id: String,
+    /// Legacy free-text provider root name.
     #[serde(default)]
     root: String,
     #[serde(default)]
@@ -420,14 +446,59 @@ async fn create_job(
         ));
     }
 
+    // Managed surface select wins over the legacy free-text root. Either
+    // way, a name matching a managed surface requires the bear's assignment.
+    let (work_surface_ref, work_surface_id) = if let Ok(surface_id) =
+        form.surface_id.trim().parse::<Uuid>()
+    {
+        let surface = den_service::work_surfaces::surface_by_id(state.sqlx_pool(), surface_id)
+            .await?
+            .ok_or_else(|| CustomError::NotFound("work surface not found".to_string()))?;
+        if !den_service::work_surfaces::bear_may_use_surface(
+            state.sqlx_pool(),
+            form.bear_id,
+            surface.id,
+        )
+        .await?
+        {
+            return Err(CustomError::ValidationError(format!(
+                "bear is not assigned to work surface '{}'",
+                surface.name
+            )));
+        }
+        (Some(surface.name), Some(surface.id))
+    } else if let Some(root) = Some(form.root.trim().to_string()).filter(|root| !root.is_empty())
+    {
+        match den_service::work_surfaces::surface_by_name(state.sqlx_pool(), &root).await? {
+            Some(surface) => {
+                if !den_service::work_surfaces::bear_may_use_surface(
+                    state.sqlx_pool(),
+                    form.bear_id,
+                    surface.id,
+                )
+                .await?
+                {
+                    return Err(CustomError::ValidationError(format!(
+                        "bear is not assigned to work surface '{}'",
+                        surface.name
+                    )));
+                }
+                (Some(surface.name), Some(surface.id))
+            }
+            None => (Some(root), None),
+        }
+    } else {
+        (None, None)
+    };
+
     let job = PgDocketService::from_pool(state.sqlx_pool())
         .create_job(DocketJobCreate {
             bear_id: form.bear_id,
             created_by_user_id: user_id,
             created_by_role: "ui".to_string(),
             goal: form.goal,
-            work_surface_ref: Some(form.root.trim().to_string()).filter(|root| !root.is_empty()),
-            work_surface_id: None,
+            work_surface_ref,
+            work_surface_id,
             commit_policy,
             work_branch: Some(form.work_branch.trim().to_string())
                 .filter(|branch| !branch.is_empty()),

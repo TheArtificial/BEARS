@@ -114,7 +114,16 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 - `POST /work/runs/{run_id}/cancel` — request cancellation (dispatch worker performs teardown)
 - `POST /work/runs/{run_id}/retry` — re-enqueue a terminal run as a new attempt
 
-All `/work/*` routes use `login_required!(…)`; runs/jobs are scoped to bears the user is a member of.
+### Work surfaces (`src/work/surfaces.rs`)
+
+- `GET /work/surfaces` — surfaces the user manages (admins: all) + surfaces available to their bears
+- `GET /work/surfaces/new` / `POST /work/surfaces/new` — create a managed surface (creator becomes owner; optional encrypted credential)
+- `GET /work/surfaces/{surface_id}` — manage page (managers/owners/site admins only; deny-as-404): settings, write-only credential, managers, assigned bears, sync, delete
+- `POST /work/surfaces/{surface_id}/update` · `/credential` · `/credential/clear` · `/managers/grant` · `/managers/revoke` · `/bears/assign` · `/bears/unassign` · `/delete` · `/sync`
+
+Mutations push the managed config (surfaces + image catalog) to the sandbox provider best-effort; the dispatch worker reconciles every 5 minutes.
+
+All `/work/*` routes use `login_required!(…)`; runs/jobs are scoped to bears the user is a member of, and surface management to the surface's managers (or site admins).
 
 ## API service (separate router)
 
