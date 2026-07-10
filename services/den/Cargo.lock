@@ -868,6 +868,7 @@ dependencies = [
  "den-llm",
  "den-memory",
  "den-protocol",
+ "den-sandbox",
  "minijinja",
  "reqwest",
  "serde",

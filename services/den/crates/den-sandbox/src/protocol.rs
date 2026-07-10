@@ -310,3 +310,162 @@ pub struct ErrorBody {
     pub kind: String,
     pub error: String,
 }
+
+/// Den-managed provider configuration, pushed declaratively (full set) to
+/// `PUT /sandbox/v1/managed-config`. Den's database is the source of truth;
+/// the provider persists a copy on its volume so provisioning works between
+/// pushes and across restarts.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManagedConfig {
+    pub surfaces: Vec<ManagedSurface>,
+    pub images: Vec<ManagedImage>,
+    /// Opaque Den-computed version (content hash) echoed back by
+    /// [`ManagedConfigStatus`] so reconciles can short-circuit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+/// One managed work surface: a git upstream the provider serves as a root.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManagedSurface {
+    /// Root name (path-safe slug; the provider re-validates).
+    pub name: String,
+    pub upstream_url: String,
+    pub default_ref: String,
+    /// Catalog image name this surface's sandboxes default to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_image: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<ManagedCredential>,
+}
+
+/// Credential material for a managed surface's upstream. Values are written
+/// to 0600 files on the provider and never logged — `Debug` is redacted.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ManagedCredential {
+    SshKey { private_key: String },
+    HttpsToken { token: String },
+}
+
+impl std::fmt::Debug for ManagedCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SshKey { .. } => f.write_str("ManagedCredential::SshKey(<redacted>)"),
+            Self::HttpsToken { .. } => f.write_str("ManagedCredential::HttpsToken(<redacted>)"),
+        }
+    }
+}
+
+/// One managed catalog image: name -> container image reference.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManagedImage {
+    pub name: String,
+    pub image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub default: bool,
+}
+
+/// Non-secret summary of the provider's applied managed config.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManagedConfigStatus {
+    pub surfaces: usize,
+    pub images: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+/// One image present in the engine's local store.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EngineImage {
+    pub repository: String,
+    pub tag: String,
+    pub id: String,
+    pub size: String,
+    pub created: String,
+    /// Whether any catalog entry references this image.
+    pub in_catalog: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImageStoreResponse {
+    pub images: Vec<EngineImage>,
+    /// Raw `docker system df` summary, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_usage: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PullImageRequest {
+    /// Registry image reference, e.g. `ghcr.io/owner/bears-sandbox:latest`.
+    pub reference: String,
+}
+
+/// The only things the provider will build: the Dockerfile variants shipped
+/// in this repository. There is deliberately no free-form build input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildVariant {
+    Base,
+    Rust,
+    Node,
+    Godot,
+}
+
+impl BuildVariant {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Base => "base",
+            Self::Rust => "rust",
+            Self::Node => "node",
+            Self::Godot => "godot",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BuildImageRequest {
+    pub variant: BuildVariant,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RemoveImageRequest {
+    pub reference: String,
+}
+
+/// Returned by long-running image operations (pull, build); poll
+/// `GET /sandbox/v1/operations/{id}` for progress.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OperationAccepted {
+    pub operation_id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationState {
+    Running,
+    Succeeded,
+    Failed,
+}
+
+/// A background provider operation. Operations live in provider memory only
+/// and do not survive restarts.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OperationDescriptor {
+    pub id: String,
+    /// `pull` or `build`.
+    pub kind: String,
+    /// Image reference or build tag the operation targets.
+    pub target: String,
+    pub state: OperationState,
+    /// UTF-8 (lossy) tail of the operation's combined output.
+    pub log_tail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// RFC 3339 timestamps.
+    pub started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+}

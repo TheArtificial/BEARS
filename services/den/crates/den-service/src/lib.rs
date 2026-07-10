@@ -19,6 +19,7 @@ pub mod secrets;
 pub mod state;
 pub mod tool_turns;
 pub mod turn_controller;
+pub mod work_surfaces;
 
 pub use archived_conversations as archived;
 pub use conversation::events as conversation_events;
