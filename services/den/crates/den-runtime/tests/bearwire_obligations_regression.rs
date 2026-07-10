@@ -292,6 +292,72 @@ async fn den_owned_tool_call_does_not_create_client_obligation(pool: sqlx::PgPoo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn den_owned_approval_required_tool_creates_permission_obligation(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
+        &pool,
+        turn_waits::PersistToolCallWaitInput {
+            session_id: &session_id,
+            run_id: &run_id,
+            bear_id,
+            user_id,
+            request_id: Uuid::new_v4(),
+            tool_call_id: "call-web-fetch",
+            tool_name: "web_fetch",
+            title: &Some("Fetch web page".to_string()),
+            kind: &Some("function".to_string()),
+            arguments: &serde_json::json!({ "url": "https://example.com" }),
+            approval_request_id: &Some("perm-web-fetch".to_string()),
+            approval_required: true,
+            approval_reason: &Some("web_fetch requires approval for this URL".to_string()),
+            event_run_id: &Some(run_id.clone()),
+        },
+    )
+    .await
+    .expect("persist den-owned approval wait without panic");
+
+    assert!(persisted.effective_approval_required);
+    let obligation = persisted
+        .obligation
+        .expect("Den-owned approval-required tool should create permission obligation");
+    assert_eq!(obligation.kind, "permission_decision");
+    assert_eq!(obligation.expected_responder_action, "permission_decision");
+    assert_eq!(obligation.tool_call_id.as_deref(), Some("call-web-fetch"));
+    assert_eq!(obligation.permission_id.as_deref(), Some("perm-web-fetch"));
+    assert_eq!(obligation.request_payload["execution_target"], "den");
+
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run exists");
+    assert_eq!(run.state, "waiting_for_permission");
+
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list events");
+    let event = events
+        .iter()
+        .find(|event| event.event_type == "client.waiting")
+        .expect("client.waiting event");
+    assert_eq!(event.event.data["execution_target"], "den");
+    assert_eq!(
+        event.event.data["expected_client_method"],
+        "client.permission.result"
+    );
+    assert_eq!(
+        event.event.data["obligation_id"],
+        obligation.id.to_string()
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn expired_client_obligation_is_marked_failed(pool: sqlx::PgPool) {
     let (user_id, bear_id) = create_user_and_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
