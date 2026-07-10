@@ -2,8 +2,10 @@
 //! `reqwest::Client` (the `BifrostClient` pattern); cheap to clone.
 
 use crate::protocol::{
-    CatalogResponse, CreateSandboxRequest, DiffResponse, ErrorBody, HealthResponse, LogsResponse,
-    PublishRequest, PublishResponse, SandboxDescriptor, SyncRootResponse,
+    BuildImageRequest, CatalogResponse, CreateSandboxRequest, DiffResponse, ErrorBody,
+    HealthResponse, ImageStoreResponse, LogsResponse, ManagedConfig, ManagedConfigStatus,
+    OperationAccepted, OperationDescriptor, PublishRequest, PublishResponse, PullImageRequest,
+    RemoveImageRequest, SandboxDescriptor, SyncRootResponse,
 };
 use std::time::Duration;
 
@@ -156,6 +158,95 @@ impl SandboxClient {
                 .post(self.url(&format!("/sandbox/v1/roots/{name}/sync"))),
         );
         Self::json_or_error(request.send().await?).await
+    }
+
+    /// Declaratively replace the provider's Den-managed surfaces + catalog.
+    pub async fn put_managed_config(
+        &self,
+        config: &ManagedConfig,
+    ) -> Result<ManagedConfigStatus, SandboxClientError> {
+        let response = self
+            .authorized(self.http.put(self.url("/sandbox/v1/managed-config")))
+            .json(config)
+            .send()
+            .await?;
+        Self::json_or_error(response).await
+    }
+
+    /// Non-secret summary (counts + version) of the applied managed config.
+    pub async fn managed_config_status(
+        &self,
+    ) -> Result<ManagedConfigStatus, SandboxClientError> {
+        self.get_json("/sandbox/v1/managed-config").await
+    }
+
+    /// Images present in the provider engine's local store.
+    pub async fn list_images(&self) -> Result<ImageStoreResponse, SandboxClientError> {
+        self.get_json("/sandbox/v1/images").await
+    }
+
+    /// Start a background pull of a registry reference into the engine store.
+    pub async fn pull_image(
+        &self,
+        reference: &str,
+    ) -> Result<OperationAccepted, SandboxClientError> {
+        let response = self
+            .authorized(self.http.post(self.url("/sandbox/v1/images/pull")))
+            .json(&PullImageRequest {
+                reference: reference.to_string(),
+            })
+            .send()
+            .await?;
+        Self::json_or_error(response).await
+    }
+
+    /// Start a background build of one of the shipped image variants.
+    pub async fn build_image(
+        &self,
+        request: &BuildImageRequest,
+    ) -> Result<OperationAccepted, SandboxClientError> {
+        let response = self
+            .authorized(self.http.post(self.url("/sandbox/v1/images/build")))
+            .json(request)
+            .send()
+            .await?;
+        Self::json_or_error(response).await
+    }
+
+    /// Remove an image from the engine store (synchronous).
+    pub async fn remove_image(&self, reference: &str) -> Result<(), SandboxClientError> {
+        let response = self
+            .authorized(self.http.post(self.url("/sandbox/v1/images/remove")))
+            .json(&RemoveImageRequest {
+                reference: reference.to_string(),
+            })
+            .send()
+            .await?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body: Result<ErrorBody, _> = response.json().await;
+        let (kind, message) = match body {
+            Ok(body) => (body.kind, body.error),
+            Err(_) => ("unknown".to_string(), "unparseable error body".to_string()),
+        };
+        Err(SandboxClientError::Api {
+            status: status.as_u16(),
+            kind,
+            message,
+        })
+    }
+
+    pub async fn list_operations(&self) -> Result<Vec<OperationDescriptor>, SandboxClientError> {
+        self.get_json("/sandbox/v1/operations").await
+    }
+
+    pub async fn get_operation(
+        &self,
+        id: &str,
+    ) -> Result<OperationDescriptor, SandboxClientError> {
+        self.get_json(&format!("/sandbox/v1/operations/{id}")).await
     }
 
     fn url(&self, path: &str) -> String {

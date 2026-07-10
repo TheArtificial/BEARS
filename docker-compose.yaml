@@ -370,8 +370,8 @@ services:
     # default restricted network mode).
     #
     # Sandbox images must exist inside the ENGINE's store: reference
-    # registry-published images in the roots-file catalog (pulled on first
-    # use), or build them into the engine with
+    # registry-published images in the Den-managed catalog (pulled on first
+    # use), build them from the /admin/sandbox web UI, or build them with
     # `docker compose --profile sandbox-build run --rm bears-sandbox-images`.
 
     # The Docker Engine that hosts sandbox containers. `privileged` is what
@@ -431,7 +431,6 @@ services:
             # Must match SANDBOX_SERVER_TOKEN on bears-den; setting either
             # env var updates both sides. Override the default in production.
             SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-${SANDBOX_SERVER_TOKEN:-den-sandbox-default-token}}
-            SANDBOX_ROOTS_CONFIG: /etc/bears/sandbox-roots.json
             # Shared volume mounted at the same path in provider and engine,
             # so bind sources resolve without host-path mapping.
             SANDBOX_WORKSPACES_DIR: /var/lib/bears/sandbox-workspaces
@@ -441,8 +440,9 @@ services:
             SANDBOX_MAX_LOG_BYTES: ${SANDBOX_MAX_LOG_BYTES:-2097152}
         volumes:
             - bears-sandbox-certs:/certs:ro
+            # Also holds the persisted Den-managed config (surfaces + image
+            # catalog, synced from Den; manage them in the web UI).
             - bears-sandbox-workspaces:/var/lib/bears/sandbox-workspaces
-            - ${SANDBOX_ROOTS_FILE:-./data/sandbox-roots.json}:/etc/bears/sandbox-roots.json:ro
         healthcheck:
             test:
                 [

@@ -192,12 +192,14 @@ pub struct Config {
     /// Static bearer token protecting the sandbox provider API (`SANDBOX_SERVICE_TOKEN`).
     /// Empty = auth disabled, same convention as `DEN_INTERNAL_TOKEN`.
     pub sandbox_service_token: String,
-    /// Path to the sandbox roots JSON config file (`SANDBOX_ROOTS_CONFIG`).
-    /// `None` = no roots configured; provisioning requests will be rejected.
-    pub sandbox_roots_config: Option<String>,
-    /// Directory holding pristine clones and ephemeral sandbox workspaces
+    /// Directory holding pristine clones, ephemeral sandbox workspaces, and
+    /// the persisted Den-managed config
     /// (`SANDBOX_WORKSPACES_DIR`, default `./data/sandbox-workspaces`).
     pub sandbox_workspaces_dir: String,
+    /// Directory holding the shipped sandbox-image build context
+    /// (`SANDBOX_BUILD_CONTEXT_DIR`). `None` disables the image-build
+    /// endpoints; pulls still work.
+    pub sandbox_build_context_dir: Option<String>,
     /// Host-side path of `sandbox_workspaces_dir` when the provider itself
     /// runs in a container (`SANDBOX_WORKSPACES_HOST_DIR`). Sibling-sandbox
     /// bind sources are rewritten to this path because the host docker daemon
@@ -563,12 +565,19 @@ impl Config {
             });
 
         let sandbox_service_token = std::env::var("SANDBOX_SERVICE_TOKEN").unwrap_or_default();
-        let sandbox_roots_config = std::env::var("SANDBOX_ROOTS_CONFIG")
+        if std::env::var("SANDBOX_ROOTS_CONFIG").is_ok_and(|s| !s.trim().is_empty()) {
+            tracing::warn!(
+                "SANDBOX_ROOTS_CONFIG is deprecated and ignored: sandbox roots and the \
+                 image catalog are Den-managed (work surfaces + sandbox catalog, synced \
+                 to the provider); the file is no longer read"
+            );
+        }
+        let sandbox_workspaces_dir = std::env::var("SANDBOX_WORKSPACES_DIR")
+            .unwrap_or_else(|_| "./data/sandbox-workspaces".to_string());
+        let sandbox_build_context_dir = std::env::var("SANDBOX_BUILD_CONTEXT_DIR")
             .ok()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        let sandbox_workspaces_dir = std::env::var("SANDBOX_WORKSPACES_DIR")
-            .unwrap_or_else(|_| "./data/sandbox-workspaces".to_string());
         let sandbox_workspaces_host_dir = std::env::var("SANDBOX_WORKSPACES_HOST_DIR")
             .ok()
             .map(|s| s.trim().to_string())
@@ -698,7 +707,7 @@ impl Config {
             embedding_model,
             embedding_dimensions,
             sandbox_service_token,
-            sandbox_roots_config,
+            sandbox_build_context_dir,
             sandbox_workspaces_dir,
             sandbox_workspaces_host_dir,
             sandbox_default_image,
@@ -813,7 +822,7 @@ impl Config {
             embedding_model: "text-embedding-3-small".into(),
             embedding_dimensions: 1536,
             sandbox_service_token: String::new(),
-            sandbox_roots_config: None,
+            sandbox_build_context_dir: None,
             sandbox_workspaces_dir: "./data/sandbox-workspaces".into(),
             sandbox_workspaces_host_dir: None,
             sandbox_default_image: String::new(),

@@ -13,9 +13,9 @@ use crate::policy::{validate_selection, PolicyContext, PolicyError};
 use crate::proc::{run_command, CommandSpec};
 use crate::protocol::{
     CatalogImage, CatalogResponse, CatalogRoot, CleanupState, CreateSandboxRequest, DiffResponse,
-    ErrorBody, HealthResponse, NetworkMode, PublishRequest, RootStatus, SandboxDescriptor,
-    SandboxLifecycleState, SandboxLimits, SandboxType, SandboxUsage, SyncRootResponse,
-    WorkSurface,
+    ErrorBody, HealthResponse, ManagedConfig, ManagedConfigStatus, NetworkMode, PublishRequest,
+    RootStatus, SandboxDescriptor, SandboxLifecycleState, SandboxLimits, SandboxType,
+    SandboxUsage, SyncRootResponse, WorkSurface,
 };
 use crate::recognize::recognize_work_surface;
 use crate::roots::{RootsError, RootsManager};
@@ -43,10 +43,12 @@ pub struct SandboxServerConfig {
     /// Static bearer token protecting the API. Empty = auth disabled
     /// (same convention as `DEN_INTERNAL_TOKEN`).
     pub service_token: String,
-    /// Path to the roots JSON config file, when configured.
-    pub roots_config_path: Option<String>,
-    /// Directory holding pristine clones and ephemeral workspaces.
+    /// Directory holding pristine clones, ephemeral workspaces, and the
+    /// persisted Den-managed config.
     pub workspaces_dir: String,
+    /// Directory holding the shipped sandbox-image build context; `None`
+    /// disables the image-build endpoints.
+    pub build_context_dir: Option<String>,
     /// Host-side path of `workspaces_dir` when this provider runs inside a
     /// container. Sibling-sandbox bind sources are rewritten under it (the
     /// host docker daemon resolves bind sources on the host). `None` = the
@@ -66,8 +68,8 @@ impl SandboxServerConfig {
     pub fn from_config(config: &den_core::config::Config) -> Self {
         Self {
             service_token: config.sandbox_service_token.clone(),
-            roots_config_path: config.sandbox_roots_config.clone(),
             workspaces_dir: config.sandbox_workspaces_dir.clone(),
+            build_context_dir: config.sandbox_build_context_dir.clone(),
             workspaces_host_dir: config.sandbox_workspaces_host_dir.clone(),
             default_image: config.sandbox_default_image.clone(),
             max_concurrent: config.sandbox_max_concurrent,
@@ -138,7 +140,10 @@ fn rfc3339(t: OffsetDateTime) -> String {
 
 pub struct ProviderState {
     config: SandboxServerConfig,
-    roots: RootsManager,
+    /// Den-managed roots + catalog. Handlers take a cheap snapshot
+    /// (`roots_snapshot`) so no lock is held across git operations and each
+    /// request sees a consistent view.
+    roots: tokio::sync::RwLock<RootsManager>,
     backend: Backend,
     registry: tokio::sync::Mutex<BTreeMap<String, SandboxRecord>>,
 }
@@ -152,19 +157,23 @@ impl ProviderState {
             .filter(|record| record.is_active())
             .count()
     }
+
+    async fn roots_snapshot(&self) -> RootsManager {
+        self.roots.read().await.clone()
+    }
 }
 
 /// Build the provider router and spawn its background reaper. Holds no
 /// database pool by construction. Must be called within a tokio runtime.
 pub fn create_sandbox_app(config: SandboxServerConfig) -> Result<Router, RootsError> {
-    let roots = RootsManager::load(config.roots_config_path.as_deref(), &config.workspaces_dir)?;
+    let roots = RootsManager::load(&config.workspaces_dir)?;
     let backend = Backend::DockerCli(DockerCliBackend::new(
         PathBuf::from(&config.workspaces_dir).join("env"),
         config.max_log_bytes,
     ));
     let state = Arc::new(ProviderState {
         config,
-        roots,
+        roots: tokio::sync::RwLock::new(roots),
         backend,
         registry: tokio::sync::Mutex::new(BTreeMap::new()),
     });
@@ -182,6 +191,10 @@ pub fn create_sandbox_app(config: SandboxServerConfig) -> Result<Router, RootsEr
         .route("/sandbox/v1/sandboxes/{id}/publish", post(publish_sandbox))
         .route("/sandbox/v1/catalog", get(catalog))
         .route("/sandbox/v1/roots/{name}/sync", post(sync_root))
+        .route(
+            "/sandbox/v1/managed-config",
+            axum::routing::put(put_managed_config).get(managed_config_status),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             require_service_token,
@@ -252,8 +265,53 @@ fn roots_error_response(err: &RootsError) -> Response {
             error_response(StatusCode::UNPROCESSABLE_ENTITY, "default_ref_refused", err.to_string())
         }
         RootsError::Git { .. } => error_response(StatusCode::CONFLICT, "root_sync_failed", err.to_string()),
+        RootsError::InvalidManagedConfig(_) => {
+            error_response(StatusCode::UNPROCESSABLE_ENTITY, "invalid_managed_config", err.to_string())
+        }
+        RootsError::ManagedPersist(_) => {
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, "managed_persist_failed", err.to_string())
+        }
         _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, "roots_error", err.to_string()),
     }
+}
+
+/// Apply a Den-pushed managed config: persist to the workspaces volume
+/// (filesystem work happens off-lock), then swap the in-memory set.
+async fn put_managed_config(
+    State(state): State<Arc<ProviderState>>,
+    Json(config): Json<ManagedConfig>,
+) -> Response {
+    let workspaces_dir = PathBuf::from(&state.config.workspaces_dir);
+    let persisted = match crate::managed::apply(&workspaces_dir, &config) {
+        Ok(persisted) => persisted,
+        Err(err) => return roots_error_response(&err),
+    };
+    let status = ManagedConfigStatus {
+        surfaces: persisted.roots.len(),
+        images: persisted.images.len(),
+        version: persisted.version.clone(),
+    };
+    state.roots.write().await.apply_managed(
+        persisted.roots,
+        persisted.images,
+        persisted.version,
+    );
+    tracing::info!(
+        surfaces = status.surfaces,
+        images = status.images,
+        version = status.version.as_deref().unwrap_or("-"),
+        "managed config applied"
+    );
+    Json(status).into_response()
+}
+
+async fn managed_config_status(State(state): State<Arc<ProviderState>>) -> Json<ManagedConfigStatus> {
+    let manager = state.roots_snapshot().await;
+    Json(ManagedConfigStatus {
+        surfaces: manager.names().len(),
+        images: manager.images().len(),
+        version: manager.managed_version().map(str::to_string),
+    })
 }
 
 fn backend_error_response(err: &BackendError) -> Response {
@@ -267,13 +325,13 @@ fn backend_error_response(err: &BackendError) -> Response {
 
 async fn health(State(state): State<Arc<ProviderState>>) -> Json<HealthResponse> {
     let backend_available = state.backend.probe().await;
-    let roots = state
-        .roots
+    let manager = state.roots_snapshot().await;
+    let roots = manager
         .names()
         .into_iter()
-        .filter_map(|name| state.roots.get(&name).ok().map(|root| (name, root)))
+        .filter_map(|name| manager.get(&name).ok().map(|root| (name, root)))
         .map(|(name, root)| {
-            let (ok, detail) = state.roots.status(root);
+            let (ok, detail) = manager.status(root);
             RootStatus {
                 name,
                 has_upstream: root.upstream.is_some(),
@@ -305,15 +363,18 @@ async fn create_sandbox(
     Json(request): Json<CreateSandboxRequest>,
 ) -> Response {
     // Root and image resolve before anything is reserved: bad names are
-    // deterministic rejections regardless of backend availability.
-    let root = match state.roots.get(&request.root) {
+    // deterministic rejections regardless of backend availability. The
+    // snapshot pins this request to one consistent managed-config view.
+    let roots = state.roots_snapshot().await;
+    let root = match roots.get(&request.root) {
         Ok(root) => root.clone(),
         Err(err) => return roots_error_response(&err),
     };
-    let image = match state
-        .roots
-        .resolve_image(request.image.as_deref(), &root, &state.config.default_image)
-    {
+    let image = match roots.resolve_image(
+        request.image.as_deref(),
+        &root,
+        &state.config.default_image,
+    ) {
         Ok(image) => image,
         Err(err) => return roots_error_response(&err),
     };
@@ -337,7 +398,7 @@ async fn create_sandbox(
             backend_available,
             active_sandboxes: active,
             max_concurrent: state.config.max_concurrent,
-            root_known: state.roots.get(&request.root).is_ok(),
+            root_known: roots.get(&request.root).is_ok(),
         };
         if let Err(err) = validate_selection(&request, &ctx) {
             return policy_error_response(&err);
@@ -367,7 +428,7 @@ async fn create_sandbox(
         );
     }
 
-    match provision(&state, &sandbox_id, &request, &root, image).await {
+    match provision(&state, &roots, &sandbox_id, &request, &root, image).await {
         Ok(()) => {
             metrics::sandbox_provisioned();
             let registry = state.registry.lock().await;
@@ -391,7 +452,7 @@ async fn create_sandbox(
                 }
             };
             if workspace.is_some() {
-                match state.roots.remove_workspace(&sandbox_id).await {
+                match roots.remove_workspace(&sandbox_id).await {
                     Ok(()) => mark_cleanup(&state, &sandbox_id, CleanupState::Done).await,
                     Err(e) => {
                         metrics::cleanup_failure();
@@ -423,19 +484,19 @@ fn effective_timeout_secs(limits: &SandboxLimits, default_secs: u64) -> u64 {
 /// record marked Failed by the caller.
 async fn provision(
     state: &Arc<ProviderState>,
+    roots: &RootsManager,
     sandbox_id: &str,
     request: &CreateSandboxRequest,
     root: &crate::roots::SyncableRoot,
     image: String,
 ) -> Result<(), Response> {
     if root.upstream.is_some() {
-        if let Err(err) = state.roots.sync_root(root).await {
+        if let Err(err) = roots.sync_root(root).await {
             return Err(roots_error_response(&err));
         }
     }
 
-    let workspace = state
-        .roots
+    let workspace = roots
         .provision_workspace(root, request.git_ref.as_deref(), sandbox_id)
         .await
         .map_err(|err| roots_error_response(&err))?;
@@ -695,7 +756,7 @@ async fn teardown(state: &Arc<ProviderState>, id: &str, preserve_workspace: bool
     let workspace_result = if preserve_workspace {
         Ok(())
     } else {
-        state.roots.remove_workspace(id).await
+        state.roots_snapshot().await.remove_workspace(id).await
     };
 
     let cleanup = match (&container_result, &workspace_result) {
@@ -757,12 +818,12 @@ async fn publish_sandbox(
             "sandbox has no workspace (adopted orphan or cleanup already ran)",
         );
     };
-    let root = match state.roots.get(&root_name) {
+    let roots = state.roots_snapshot().await;
+    let root = match roots.get(&root_name) {
         Ok(root) => root.clone(),
         Err(err) => return roots_error_response(&err),
     };
-    match state
-        .roots
+    match roots
         .publish_workspace(&root, &workspace, &request, base_commit.as_deref())
         .await
     {
@@ -786,8 +847,8 @@ async fn publish_sandbox(
 
 /// Selectable roots and images for dispatch UIs and model tools.
 async fn catalog(State(state): State<Arc<ProviderState>>) -> Json<CatalogResponse> {
-    let images = state
-        .roots
+    let manager = state.roots_snapshot().await;
+    let images = manager
         .images()
         .iter()
         .map(|image| CatalogImage {
@@ -796,11 +857,10 @@ async fn catalog(State(state): State<Arc<ProviderState>>) -> Json<CatalogRespons
             default: image.default,
         })
         .collect();
-    let roots = state
-        .roots
+    let roots = manager
         .names()
         .into_iter()
-        .filter_map(|name| state.roots.get(&name).ok().cloned())
+        .filter_map(|name| manager.get(&name).ok().cloned())
         .map(|root| CatalogRoot {
             name: root.name.clone(),
             has_upstream: root.upstream.is_some(),
@@ -815,11 +875,12 @@ async fn sync_root(
     State(state): State<Arc<ProviderState>>,
     AxumPath(name): AxumPath<String>,
 ) -> Response {
-    let root = match state.roots.get(&name) {
+    let roots = state.roots_snapshot().await;
+    let root = match roots.get(&name) {
         Ok(root) => root.clone(),
         Err(err) => return roots_error_response(&err),
     };
-    match state.roots.sync_root(&root).await {
+    match roots.sync_root(&root).await {
         Ok(head) => Json(SyncRootResponse {
             synced: true,
             head,
@@ -856,6 +917,7 @@ async fn adopt_orphans(state: &Arc<ProviderState>) {
             return;
         }
     };
+    let roots = state.roots_snapshot().await;
     let mut registry = state.registry.lock().await;
     for orphan in adopted {
         if registry.contains_key(&orphan.id) {
@@ -866,7 +928,7 @@ async fn adopt_orphans(state: &Arc<ProviderState>) {
             running = orphan.running,
             "adopting orphaned sandbox from a previous provider run"
         );
-        let workspace = state.roots.workspace_dir(&orphan.id);
+        let workspace = roots.workspace_dir(&orphan.id);
         let network = match orphan.labels.get("sandbox.network").map(String::as_str) {
             Some("restricted") => NetworkMode::Restricted,
             _ => NetworkMode::Open,
@@ -996,12 +1058,12 @@ mod tests {
     fn test_config(token: &str) -> SandboxServerConfig {
         SandboxServerConfig {
             service_token: token.into(),
-            roots_config_path: None,
             workspaces_host_dir: None,
             workspaces_dir: std::env::temp_dir()
                 .join(format!("den-sbx-srv-test-{}", uuid::Uuid::new_v4().simple()))
                 .to_string_lossy()
                 .into_owned(),
+            build_context_dir: None,
             default_image: String::new(),
             max_concurrent: 2,
             default_timeout_secs: 900,
@@ -1101,17 +1163,19 @@ mod tests {
         assert_eq!(publish.status(), StatusCode::NOT_FOUND);
     }
 
-    /// Config whose roots file declares an image catalog and one plain root.
+    /// Config whose persisted managed cache declares an image catalog and one
+    /// plain root — exercising the same load path a provider restart uses.
     fn test_config_with_catalog() -> SandboxServerConfig {
-        let mut config = test_config("");
+        let config = test_config("");
         let dir = PathBuf::from(&config.workspaces_dir);
-        std::fs::create_dir_all(&dir).unwrap();
         let source = dir.join("src-root");
         std::fs::create_dir_all(&source).unwrap();
-        let roots_path = dir.join("roots.json");
+        let managed = dir.join("managed");
+        std::fs::create_dir_all(&managed).unwrap();
         std::fs::write(
-            &roots_path,
+            managed.join("config.json"),
             serde_json::json!({
+                "version": "seed-v1",
                 "images": [
                     {"name": "base", "image": "bears/sandbox:latest", "default": true,
                      "description": "armature base"},
@@ -1124,7 +1188,6 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        config.roots_config_path = Some(roots_path.to_string_lossy().into_owned());
         config
     }
 
@@ -1193,5 +1256,141 @@ mod tests {
         let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(error.kind, "unknown_image");
         assert!(error.error.contains("base"), "lists catalog: {}", error.error);
+    }
+
+    async fn put_config(app: &Router, body: serde_json::Value) -> (StatusCode, axum::body::Bytes) {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/sandbox/v1/managed-config")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, bytes)
+    }
+
+    #[tokio::test]
+    async fn managed_config_push_updates_catalog_and_status() {
+        let config = test_config("");
+        let workspaces_dir = config.workspaces_dir.clone();
+        let app = create_sandbox_app(config).unwrap();
+
+        // Nothing pushed yet.
+        let status_response = app
+            .clone()
+            .oneshot(Request::builder().uri("/sandbox/v1/managed-config").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(status_response.status(), StatusCode::OK);
+        let bytes = status_response.into_body().collect().await.unwrap().to_bytes();
+        let status: ManagedConfigStatus = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!((status.surfaces, status.images), (0, 0));
+        assert!(status.version.is_none());
+
+        let (put_status, bytes) = put_config(
+            &app,
+            serde_json::json!({
+                "version": "v-abc",
+                "surfaces": [
+                    {"name": "site", "upstream_url": "https://example.invalid/site.git",
+                     "default_ref": "main", "default_image": "rust",
+                     "credential": {"kind": "https_token", "token": "sekrit"}}
+                ],
+                "images": [
+                    {"name": "rust", "image": "bears/sandbox-rust:latest", "default": true}
+                ]
+            }),
+        )
+        .await;
+        assert_eq!(put_status, StatusCode::OK, "{}", String::from_utf8_lossy(&bytes));
+        let applied: ManagedConfigStatus = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!((applied.surfaces, applied.images), (1, 1));
+        assert_eq!(applied.version.as_deref(), Some("v-abc"));
+
+        // The catalog now reflects the pushed set; the secret is on disk 0600
+        // and absent from the persisted config.
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri("/sandbox/v1/catalog").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let catalog: CatalogResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(catalog.roots.len(), 1);
+        assert_eq!(catalog.roots[0].name, "site");
+        assert!(catalog.roots[0].has_upstream);
+        assert_eq!(catalog.images.len(), 1);
+        let persisted_raw =
+            std::fs::read_to_string(PathBuf::from(&workspaces_dir).join("managed/config.json"))
+                .unwrap();
+        assert!(!persisted_raw.contains("sekrit"));
+
+        // Full-set replace: an empty push clears everything.
+        let (put_status, _) = put_config(
+            &app,
+            serde_json::json!({"version": "v-empty", "surfaces": [], "images": []}),
+        )
+        .await;
+        assert_eq!(put_status, StatusCode::OK);
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri("/sandbox/v1/catalog").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let catalog: CatalogResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(catalog.roots.is_empty());
+        let _ = std::fs::remove_dir_all(&workspaces_dir);
+    }
+
+    #[tokio::test]
+    async fn managed_config_rejects_invalid_names() {
+        let config = test_config("");
+        let workspaces_dir = config.workspaces_dir.clone();
+        let app = create_sandbox_app(config).unwrap();
+        let (status, bytes) = put_config(
+            &app,
+            serde_json::json!({
+                "surfaces": [
+                    {"name": "../evil", "upstream_url": "https://x.invalid/r.git", "default_ref": "main"}
+                ],
+                "images": []
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(error.kind, "invalid_managed_config");
+        let _ = std::fs::remove_dir_all(&workspaces_dir);
+    }
+
+    #[tokio::test]
+    async fn managed_config_requires_token() {
+        let app = create_sandbox_app(test_config("secret")).unwrap();
+        for (method, uri) in [
+            ("PUT", "/sandbox/v1/managed-config"),
+            ("GET", "/sandbox/v1/managed-config"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .body(Body::from("{\"surfaces\":[],\"images\":[]}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method} {uri}");
+        }
     }
 }

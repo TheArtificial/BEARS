@@ -1695,14 +1695,14 @@ pub(crate) async fn run_start_result(
 
 async fn run_obligations_payload(pool: &sqlx::PgPool, run_id: &str) -> Result<Vec<Value>, CustomError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
                created_at, updated_at, completed_at
         FROM turn_obligations
         WHERE run_id = $1
         ORDER BY created_at ASC, id ASC
-        "#,
+        ",
     )
     .bind(run_id)
     .fetch_all(pool)
@@ -1735,12 +1735,12 @@ async fn run_obligations_payload(pool: &sqlx::PgPool, run_id: &str) -> Result<Ve
 
 async fn run_results_payload(pool: &sqlx::PgPool, run_id: &str) -> Result<Vec<Value>, CustomError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
         FROM turn_obligation_results
         WHERE run_id = $1
         ORDER BY created_at ASC, id ASC
-        "#,
+        ",
     )
     .bind(run_id)
     .fetch_all(pool)
@@ -1770,14 +1770,14 @@ async fn run_recent_events_payload(
     limit: i64,
 ) -> Result<Vec<Value>, CustomError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, sequence_no, event_type, event_json, created_at
         FROM bearwire_events
         WHERE session_id = $1
           AND event_json->>'run_id' = $2
         ORDER BY sequence_no DESC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(session_id)
     .bind(run_id)

@@ -4,11 +4,17 @@
 //! sandbox) or a git upstream the provider mirrors as a **pristine,
 //! server-managed bare clone** — never a human-edited working tree. Sync is
 //! fetch/fast-forward only; a non-fast-forward upstream is reported, never
-//! forced. Per-root credentials live on the sandbox host (env var name or ssh
-//! key path in the roots file), so no repo credentials transit Den or jobs.
+//! forced.
+//!
+//! Roots and the image catalog are Den-managed: Den pushes the full set to
+//! `PUT /sandbox/v1/managed-config` and the provider persists it under the
+//! workspaces volume (see [`crate::managed`]) so provisioning works between
+//! pushes and across restarts. Credential material lives in 0600 files on
+//! this host, referenced by path — never in the persisted config, in logs,
+//! or on command lines.
 
 use crate::proc::{run_command, CommandSpec};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -18,18 +24,22 @@ const GIT_OUTPUT_CAP: usize = 64 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RootsError {
-    #[error("roots config {path}: {source}")]
+    #[error("managed config {path}: {source}")]
     ConfigRead {
         path: String,
         #[source]
         source: std::io::Error,
     },
-    #[error("roots config {path}: {source}")]
+    #[error("managed config {path}: {source}")]
     ConfigParse {
         path: String,
         #[source]
         source: serde_json::Error,
     },
+    #[error("invalid managed config: {0}")]
+    InvalidManagedConfig(String),
+    #[error("managed config persistence: {0}")]
+    ManagedPersist(String),
     #[error("unknown root '{0}'")]
     UnknownRoot(String),
     #[error("unknown image '{name}'; catalog: {available}")]
@@ -48,16 +58,7 @@ pub enum RootsError {
     Proc(#[from] crate::proc::ProcError),
 }
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct RootsFile {
-    pub roots: Vec<SyncableRoot>,
-    /// Image catalog: the only container images sandboxes may run. Den sends
-    /// catalog *names*; the references live here, on the sandbox host.
-    #[serde(default)]
-    pub images: Vec<CatalogImageSpec>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CatalogImageSpec {
     pub name: String,
     /// Container image reference (local tag or registry reference).
@@ -69,7 +70,7 @@ pub struct CatalogImageSpec {
     pub default: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncableRoot {
     pub name: String,
     /// For upstream-less roots: source directory on this host, copied per
@@ -83,7 +84,7 @@ pub struct SyncableRoot {
     pub default_image: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GitUpstream {
     pub url: String,
     #[serde(default = "default_ref")]
@@ -96,56 +97,65 @@ fn default_ref() -> String {
     "main".to_string()
 }
 
-/// Where a root's upstream credential comes from. Declared per-root in the
-/// roots file; the secret itself never appears in the file, in logs, or on
-/// command lines.
-/// JSON shape: `{"token_env": "SITE_GIT_TOKEN"}` or
-/// `{"ssh_key_path": "/etc/bears/keys/den"}`.
-#[derive(Clone, Debug, Deserialize)]
+/// Where a root's upstream credential comes from. The secret itself never
+/// appears in the persisted config, in logs, or on command lines.
+/// JSON shapes: `{"token_env": "SITE_GIT_TOKEN"}`,
+/// `{"ssh_key_path": "/etc/bears/keys/den"}`, or
+/// `{"token_path": "/var/lib/bears/.../credentials/site.token"}`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RootCredential {
     /// Name of an env var (on the sandbox host) holding an HTTPS token.
     TokenEnv { token_env: String },
     /// Path to an SSH private key on the sandbox host.
     SshKeyPath { ssh_key_path: String },
+    /// Path to a 0600 file on the sandbox host holding an HTTPS token
+    /// (written by the managed-config sync).
+    TokenPath { token_path: String },
 }
 
+#[derive(Clone)]
 pub struct RootsManager {
     roots: BTreeMap<String, SyncableRoot>,
     images: Vec<CatalogImageSpec>,
     workspaces_dir: PathBuf,
+    /// Version of the applied managed config (Den's content hash).
+    managed_version: Option<String>,
 }
 
 impl RootsManager {
-    pub fn load(config_path: Option<&str>, workspaces_dir: &str) -> Result<Self, RootsError> {
-        let (roots, images) = match config_path {
-            None => (BTreeMap::new(), Vec::new()),
-            Some(path) => {
-                let raw = std::fs::read_to_string(path).map_err(|source| {
-                    RootsError::ConfigRead {
-                        path: path.to_string(),
-                        source,
-                    }
-                })?;
-                let file: RootsFile =
-                    serde_json::from_str(&raw).map_err(|source| RootsError::ConfigParse {
-                        path: path.to_string(),
-                        source,
-                    })?;
-                (
-                    file.roots
-                        .into_iter()
-                        .map(|root| (root.name.clone(), root))
-                        .collect(),
-                    file.images,
-                )
-            }
-        };
-        Ok(Self {
-            roots,
-            images,
+    /// Load the manager from the persisted managed config under
+    /// `workspaces_dir`, starting empty when none has been pushed yet.
+    pub fn load(workspaces_dir: &str) -> Result<Self, RootsError> {
+        let mut manager = Self {
+            roots: BTreeMap::new(),
+            images: Vec::new(),
             workspaces_dir: PathBuf::from(workspaces_dir),
-        })
+            managed_version: None,
+        };
+        if let Some(persisted) = crate::managed::load(&manager.workspaces_dir)? {
+            manager.apply_managed(persisted.roots, persisted.images, persisted.version);
+        }
+        Ok(manager)
+    }
+
+    /// Replace the managed root/catalog set (declarative full-set semantics).
+    pub fn apply_managed(
+        &mut self,
+        roots: Vec<SyncableRoot>,
+        images: Vec<CatalogImageSpec>,
+        version: Option<String>,
+    ) {
+        self.roots = roots
+            .into_iter()
+            .map(|root| (root.name.clone(), root))
+            .collect();
+        self.images = images;
+        self.managed_version = version;
+    }
+
+    pub fn managed_version(&self) -> Option<&str> {
+        self.managed_version.as_deref()
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -568,6 +578,23 @@ fn credential_env(
                 format!("ssh -i {ssh_key_path} -o IdentitiesOnly=yes -o BatchMode=yes"),
             ));
         }
+        Some(RootCredential::TokenPath { token_path }) => {
+            let token = std::fs::read_to_string(token_path).map_err(|err| RootsError::Git {
+                name: root.name.clone(),
+                detail: format!("read credential file {token_path}: {err}"),
+            })?;
+            let token = token.trim().to_string();
+            env.push(("GIT_ASKPASS".to_string(), "echo".to_string()));
+            env.push(("GIT_CONFIG_COUNT".to_string(), "1".to_string()));
+            env.push((
+                "GIT_CONFIG_KEY_0".to_string(),
+                "credential.helper".to_string(),
+            ));
+            env.push((
+                "GIT_CONFIG_VALUE_0".to_string(),
+                format!("!f() {{ echo username=x-access-token; echo password={token}; }}; f"),
+            ));
+        }
     }
     Ok(env)
 }
@@ -598,60 +625,95 @@ mod tests {
     use crate::protocol::PublishRequest;
 
     #[test]
-    fn parses_roots_file() {
-        let raw = r#"{
-            "images": [
-                {"name": "base", "image": "bears/sandbox:latest", "default": true},
-                {"name": "rust", "image": "bears/sandbox-rust:latest",
-                    "description": "rust toolchain"}
-            ],
-            "roots": [
-                {"name": "scratch", "path": "/srv/scratch"},
-                {"name": "den", "upstream": {"url": "git@example.com:den.git",
-                    "default_ref": "main",
-                    "credential": {"ssh_key_path": "/etc/bears/keys/den"}},
-                    "default_image": "rust"},
-                {"name": "site", "upstream": {"url": "https://example.com/site.git",
-                    "credential": {"token_env": "SITE_GIT_TOKEN"}}}
-            ]
-        }"#;
-        let file: RootsFile = serde_json::from_str(raw).unwrap();
-        assert_eq!(file.roots.len(), 3);
-        assert!(file.roots[0].upstream.is_none());
-        let den = &file.roots[1];
-        assert!(matches!(
-            den.upstream.as_ref().unwrap().credential,
-            Some(RootCredential::SshKeyPath { .. })
-        ));
-        assert_eq!(den.default_image.as_deref(), Some("rust"));
-        // default_ref defaults to "main" when omitted.
-        assert_eq!(file.roots[2].upstream.as_ref().unwrap().default_ref, "main");
-        assert_eq!(file.images.len(), 2);
-        assert!(file.images[0].default);
+    fn credential_shapes_deserialize() {
+        // The persisted managed config uses these untagged shapes; changing
+        // them breaks configs already on provider volumes.
+        let ssh: RootCredential =
+            serde_json::from_str(r#"{"ssh_key_path": "/etc/bears/keys/den"}"#).unwrap();
+        assert!(matches!(ssh, RootCredential::SshKeyPath { .. }));
+        let env: RootCredential =
+            serde_json::from_str(r#"{"token_env": "SITE_GIT_TOKEN"}"#).unwrap();
+        assert!(matches!(env, RootCredential::TokenEnv { .. }));
+        let path: RootCredential =
+            serde_json::from_str(r#"{"token_path": "/var/lib/x/site.token"}"#).unwrap();
+        assert!(matches!(path, RootCredential::TokenPath { .. }));
     }
 
     #[test]
-    fn default_compose_roots_file_parses() {
-        // The default stack bind-mounts this file into bears-sandbox-provider
-        // (SANDBOX_ROOTS_FILE in docker-compose.yaml), so it must stay valid.
-        let raw = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../../data/sandbox-roots.json"
+    fn token_path_credential_reads_file() {
+        let tmp = std::env::temp_dir().join(format!(
+            "den-sbx-tokenpath-{}",
+            uuid::Uuid::new_v4().simple()
         ));
-        let file: RootsFile = serde_json::from_str(raw).unwrap();
-        assert!(file.roots.is_empty());
-        assert_eq!(file.images.iter().filter(|image| image.default).count(), 1);
-        let names: Vec<&str> = file.images.iter().map(|i| i.name.as_str()).collect();
-        assert_eq!(names, ["base", "rust", "node", "godot"]);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let token_file = tmp.join("site.token");
+        std::fs::write(&token_file, "sekrit-token\n").unwrap();
+        let root = SyncableRoot {
+            name: "site".to_string(),
+            path: None,
+            upstream: Some(GitUpstream {
+                url: "https://example.invalid/site.git".to_string(),
+                default_ref: "main".to_string(),
+                credential: Some(RootCredential::TokenPath {
+                    token_path: token_file.to_string_lossy().into_owned(),
+                }),
+            }),
+            default_image: None,
+        };
+        let upstream = root.upstream.as_ref().unwrap();
+        let env = credential_env(&root, upstream).unwrap();
+        let helper = env
+            .iter()
+            .find(|(k, _)| k == "GIT_CONFIG_VALUE_0")
+            .map(|(_, v)| v.as_str())
+            .expect("credential helper env");
+        assert!(helper.contains("password=sekrit-token"), "trimmed token");
+
+        // Missing file fails fast with the path, not a prompt.
+        let missing = SyncableRoot {
+            upstream: Some(GitUpstream {
+                credential: Some(RootCredential::TokenPath {
+                    token_path: tmp.join("gone.token").to_string_lossy().into_owned(),
+                }),
+                ..root.upstream.clone().unwrap()
+            }),
+            ..root.clone()
+        };
+        let err = credential_env(&missing, missing.upstream.as_ref().unwrap()).unwrap_err();
+        assert!(err.to_string().contains("gone.token"), "{err}");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn unknown_root_is_reported() {
-        let manager = RootsManager::load(None, "/tmp/nowhere").unwrap();
+        let manager = RootsManager::load("/tmp/nowhere").unwrap();
         assert!(matches!(
             manager.get("missing"),
             Err(RootsError::UnknownRoot(_))
         ));
+    }
+
+    #[test]
+    fn apply_managed_replaces_the_full_set() {
+        let mut manager = RootsManager::load("/tmp/nowhere").unwrap();
+        manager.apply_managed(
+            vec![plain_root("a"), plain_root("b")],
+            vec![CatalogImageSpec {
+                name: "base".into(),
+                image: "bears/sandbox:latest".into(),
+                description: None,
+                default: true,
+            }],
+            Some("v1".to_string()),
+        );
+        assert_eq!(manager.names(), ["a", "b"]);
+        assert_eq!(manager.images().len(), 1);
+        assert_eq!(manager.managed_version(), Some("v1"));
+        manager.apply_managed(vec![plain_root("c")], Vec::new(), Some("v2".to_string()));
+        assert_eq!(manager.names(), ["c"]);
+        assert!(manager.get("a").is_err());
+        assert!(manager.images().is_empty());
+        assert_eq!(manager.managed_version(), Some("v2"));
     }
 
     fn manager_with_images(images: Vec<CatalogImageSpec>) -> RootsManager {
@@ -659,6 +721,7 @@ mod tests {
             roots: BTreeMap::new(),
             images,
             workspaces_dir: PathBuf::from("/tmp/nowhere"),
+            managed_version: None,
         }
     }
 
@@ -782,6 +845,7 @@ mod tests {
             roots: std::iter::once(("fixture".to_string(), root.clone())).collect(),
             images: Vec::new(),
             workspaces_dir: tmp.join("workspaces"),
+            managed_version: None,
         };
         PublishFixture {
             tmp,
