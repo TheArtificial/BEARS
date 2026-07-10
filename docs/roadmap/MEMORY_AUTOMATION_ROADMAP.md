@@ -48,7 +48,7 @@ Pair reflection should immediately feed curation without waiting for manual huma
 2. ✅ Pair reflection creates a `bear_memory_proposals` row referencing that summary.
 3. ✅ Pair reflection enqueues a queued `bear_reflection_runs` row with `lane = memory_curate` and `trigger = pair_reflection`.
 4. ✅ ACP close remains responsive; curation does not run inline during ACP close.
-5. 🟡 UI shows generated memory proposals on the Bear memory dashboard, including native SQLite proposal rows; queued curate-run surfacing remains pending.
+5. 🟡 UI shows generated memory proposals on the Bear memory dashboard, including native SQLite proposal rows, and recent reflection-run performance (queue wait/runtime/outcomes); dedicated run detail/retry UI remains pending.
 
 ### Notes
 

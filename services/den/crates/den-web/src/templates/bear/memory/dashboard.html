@@ -72,8 +72,8 @@
                 <th>Title</th>
                 <th>From</th>
                 <th>Risk</th>
-                <th>Store</th</th>>
-                <th></th>Created</th>
+                <th>Store</th>
+                <th>Created</th>
             </tr>
         </thead>
         <tbody>
@@ -102,6 +102,64 @@
     {% endif %}
     {% else %}
     <p class="form-hint">Nothing awaiting review.</p>
+    {% endif %}
+</div>
+
+<div class="box">
+    <h3>R</h3>eflection performance</h3>
+    <p class="form-hint">
+        Recent sleep-time memory work across curation, archive harvest, recall indexing,
+        and context compaction. Queue wait is time from enqueue to start; runtime is time
+        from start to completion (or age while running).
+    </p>
+    <div
+        style="
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+            gap: 0.75rem;
+            margin: 1rem 0;
+        "
+    >
+        <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.queued }}</strong><br />queued</div>
+        <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.running }}</strong><br />running</div>
+        <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.completed }}</strong><br />completed</div>
+        <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.failed }}</strong><br />failed</div>
+        <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.avg_completed_duration_label | e }}</strong><br />avg runtime</div>
+    </div>
+    {% if reflection_runs %}
+    <table>
+        <thead>
+</thead>            <tr></tr>
+                <th>Lane</th>
+                <th>Status</th>
+                <th>Trigger</th>
+                <th>Queue wait</th>
+                <th>Runtime</th>
+                <th>Outcome</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for run in reflection_runs %}
+            <tr>
+                <td><code>{{ run.lane | e }}</code></td>
+                <td>{{ run.status_label | e }}</td>
+                <td>{{ run.trigger | e }}</td>
+                <td>{{ run.queue_wait_label | e }}</td>
+                <td>{{ run.duration_label | e }}</td>
+                <td>
+                    {% if run.proposal_count is not none %}{{ run.proposal_count }} proposal{{ run.proposal_count == 1 and "" or "s" }}{% endif %}
+                    {% if run.scanned_artifacts is not none %}{% if run.proposal_count is not none %} · {% endif %}{{ run.scanned_artifacts }} scanned{% endif %}
+                    {% if run.error %}<span class="form-errors">{{ run.error | e }}</span>{% endif %}
+                    {% if run.proposal_count is none and run.scanned_artifacts is none and not run.error %}<span class="form-hint">—</span>{% endif %}
+                </td>
+                <td class="form-hint">{{ run.created_at | e }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="form-hint">No reflection runs recorded yet.</p>
     {% endif %}
 </div>
 

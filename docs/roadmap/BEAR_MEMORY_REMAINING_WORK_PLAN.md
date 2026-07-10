@@ -96,7 +96,7 @@ Several ADR-0041 fields are still missing or not wired on the **write path**:
 
 **Exit:** migration applied; consolidation writes supersession; salience/lifecycle/freshness are readable for recall ranking.
 
-**Plans:** [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_CURATION_PLAN.md](MEMORY_CURATION_PLAN.md).
+**Plans:** [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_CURATION_PLAN.md](MEMORY_CURATION_PLAN.md), [ADR_0041_REMAINING_FOLLOWUPS_PLAN.md](ADR_0041_REMAINING_FOLLOWUPS_PLAN.md).
 
 ---
 
@@ -112,7 +112,7 @@ pair learns → role-local SQLite → pair reflection → proposals
 
 | Priority | Item | Status |
 |---|---|---|
-| P0 | UI: show pair-reflection proposal + queued curate run | 🟡 memory dashboard surfaces Postgres + native SQLite memory proposals; dedicated run queue surfacing still open |
+| P0 | UI: show pair-reflection proposal + queued curate run | 🟡 memory dashboard surfaces Postgres + native SQLite proposals plus recent reflection-run performance; dedicated run detail/retry UI still open |
 | P1 | Autonomous **curation conductor** (daily curate conversation, bounded context, approved tools only) | 🟡 worker exists; model-assisted review depth open |
 | P2 | **Model-assisted pair reflection** (extract decisions/conventions vs deterministic last-N summary) | ◻ |
 | P2.5 | **`archive_harvest` reflection lane** (extraction-first mining of closed sessions / compaction artifacts) | 🟡 lane + compaction-artifact harvest proposals + deterministic quality/risk filter landed; broader conversation mining/model extraction open |

@@ -106,7 +106,7 @@ async fn claim_next_archive_harvest_run(
             FOR UPDATE SKIP LOCKED
         )
         UPDATE bear_reflection_runs runs
-        SET status = 'started', started_at = COALESCE(started_at, NOW())
+        SET status = 'running', started_at = COALESCE(started_at, NOW())
         FROM next_run
         WHERE runs.id = next_run.id
         RETURNING runs.id, runs.bear_id, runs.lane, runs.trigger, runs.status,
@@ -465,7 +465,7 @@ pub async fn claim_next_memory_curate_run(
             FOR UPDATE SKIP LOCKED
         )
         UPDATE bear_reflection_runs runs
-        SET status = 'started',
+        SET status = 'running',
             started_at = COALESCE(started_at, NOW())
         FROM next_run
         WHERE runs.id = next_run.id
@@ -508,7 +508,7 @@ pub async fn mark_memory_curate_started(
     let row = sqlx::query_as::<_, ReflectionRunRow>(
         r"
         UPDATE bear_reflection_runs
-        SET status = 'started',
+        SET status = 'running',
             started_at = COALESCE(started_at, NOW())
         WHERE bear_id = $1 AND id = $2 AND lane = 'memory_curate'
         RETURNING id, bear_id, lane, trigger, status, role_agent_id,
@@ -951,7 +951,7 @@ async fn claim_next_recall_index_run(
             FOR UPDATE SKIP LOCKED
         )
         UPDATE bear_reflection_runs runs
-        SET status = 'started', started_at = COALESCE(started_at, NOW())
+        SET status = 'running', started_at = COALESCE(started_at, NOW())
         FROM next_run
         WHERE runs.id = next_run.id
         RETURNING runs.id, runs.bear_id, runs.lane, runs.trigger, runs.status,
@@ -1140,7 +1140,7 @@ async fn claim_next_context_compact_run(
             FOR UPDATE SKIP LOCKED
         )
         UPDATE bear_reflection_runs runs
-        SET status = 'started', started_at = COALESCE(started_at, NOW())
+        SET status = 'running', started_at = COALESCE(started_at, NOW())
         FROM next_run
         WHERE runs.id = next_run.id
         RETURNING runs.id, runs.bear_id, runs.lane, runs.trigger, runs.status,
