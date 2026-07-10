@@ -34,6 +34,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **Context compaction** | Designed; end-to-end runtime **not finished** | [`DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md`](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md), [ADR-0032](../decisions/adr-0032-den-context-compaction-architecture.md) |
 | **Context budget tracking** | Planned: final-request token estimation against resolved model limits, with component attribution and runtime diagnostics | [`CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md`](CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md), [ADR-0047](../decisions/adr-0047-context-window-budget-and-token-estimation.md) |
 | **BearWire armature wire** | **Phases 0–3.2 complete**; BearWire HTTP edge + `bear-armature` client implemented; Phase 4 deprecates adapter-SSE/legacy `/acp/**` after smoke/parity | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md`](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md) |
+| **Model experience** | Planned audit/refresh: descriptor-owned action semantics, naming consistency, non-blocking structured updates, progressive disclosure, and model-facing action formats | [`MODEL_EXPERIENCE_AUDIT_REFRESH_PLAN.md`](MODEL_EXPERIENCE_AUDIT_REFRESH_PLAN.md), [`MODEL_EXPERIENCE.md`](../../MODEL_EXPERIENCE.md), [`non-blocking-structured-updates.md`](../architecture/non-blocking-structured-updates.md) |
 | **Channels** | Draft first-party channel layer; web chat exists as Den surface, Slack/WhatsApp/macOS channel adapters planned; channels must not inherit armature/local-tool assumptions | [`DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](DEN_CHANNELS_IMPLEMENTATION_PLAN.md), [`MACOS_BEARS_CLIENT_APP_PLAN.md`](MACOS_BEARS_CLIENT_APP_PLAN.md) |
 | **Prompt registry** | Proposed ADR-0046 extraction of long-lived prompt prose into file-backed fragments while preserving `bear_compiled_configs` as runtime hot-path contract | [`PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md`](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md), [`PROMPT_TEXT_HARDCODE_AUDIT.md`](PROMPT_TEXT_HARDCODE_AUDIT.md) |
 | **Phase 1 product** | Native product debt consolidated: operator console, onboarding, Garage artifacts, routines, MCP, task-list UX, and Skills | [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md), [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) |
@@ -54,10 +55,11 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 2. **ADR-0041 harvest + consolidation** — consolidation policy/supersession usage, freshness trend, and `archive_harvest` lane ([`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md) P2.5); core schema pieces are mostly landed.
 3. **Context compaction** — Den-owned transcript compaction per ADR-0032.
 4. **BearWire Phase 4** — finish Zed/ACP smoke and parity, then deprecate adapter-SSE and legacy `/acp/**` hot path.
-5. **Schema/UI naming cleanup** — retire residual transitional Letta/MemFS names as ordinary cleanup, not migration/backfill work.
-6. **Prompt fragment registry** — extract durable prompt prose per ADR-0046 without changing the runtime compiled-prompt contract.
-7. **Channel layer** — keep first-party channels separate from armatures; web chat, Slack/WhatsApp/Twilio, and macOS app chat share Den run services, not ACP assumptions.
-8. **Phase 1 product debt** — operator console, onboarding, routines, MCP catalog, Garage artifacts, task-list UX, plus native Skills ([`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)).
+5. **Model experience audit/refresh** — descriptor-owned action semantics, naming consistency, non-blocking structured updates, progressive disclosure, and model-facing action formats.
+6. **Schema/UI naming cleanup** — retire residual transitional Letta/MemFS names as ordinary cleanup, not migration/backfill work.
+7. **Prompt fragment registry** — extract durable prompt prose per ADR-0046 without changing the runtime compiled-prompt contract.
+8. **Channel layer** — keep first-party channels separate from armatures; web chat, Slack/WhatsApp/Twilio, and macOS app chat share Den run services, not ACP assumptions.
+9. **Phase 1 product debt** — operator console, onboarding, routines, MCP catalog, Garage artifacts, task-list UX, plus native Skills ([`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)).
 
 ### Important contradictions resolved here
 
@@ -121,6 +123,7 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 - [BearWire armature wire](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
 - [BearWire v1 protocol refinement](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md)
 - [Den-BearWire-armature-ACP hardening](DEN_BEARWIRE_ARMATURE_ACP_HARDENING_PLAN.md)
+- [Model experience audit and refresh](MODEL_EXPERIENCE_AUDIT_REFRESH_PLAN.md)
 - [ACP adapter improvements](ACP_ADAPTER_IMPROVEMENT_PLAN.md)
 - [ACP lifecycle reset](ACP_LIFECYCLE_RESET_PLAN.md)
 - [Den channels](DEN_CHANNELS_IMPLEMENTATION_PLAN.md)
