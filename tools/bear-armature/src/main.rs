@@ -211,6 +211,8 @@ fn init_armature_tracing() {
         return;
     };
     let _ = tracing_subscriber::fmt()
+        .compact()
+        .with_ansi(false)
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .with_target(true)
