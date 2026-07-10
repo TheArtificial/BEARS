@@ -1057,7 +1057,10 @@ pub(crate) async fn get_work_catalog(
 fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
     fn ts(value: Option<time::OffsetDateTime>) -> Value {
         value
-            .and_then(|t| t.format(&time::format_description::well_known::Rfc3339).ok())
+            .and_then(|t| {
+                t.format(&time::format_description::well_known::Rfc3339)
+                    .ok()
+            })
             .map_or(Value::Null, Value::String)
     }
     json!({
