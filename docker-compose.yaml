@@ -111,11 +111,11 @@ services:
             - "6333"
             - "6334"
 
-    bears-valkey:
+    bears-bifrost-valkey:
         image: ${VALKEY_IMAGE:-valkey/valkey-bundle:9.0.0}
         restart: unless-stopped
         volumes:
-            - bears-valkey-data:/data
+            - bears-bifrost-valkey-data:/data
         expose:
             - "6379"
         healthcheck:
@@ -128,7 +128,7 @@ services:
     bears-bifrost:
         depends_on:
             <<: *preflight-depends
-            bears-valkey:
+            bears-bifrost-valkey:
                 condition: service_healthy
         build:
             context: ./services/bifrost
@@ -485,7 +485,7 @@ volumes:
     bears-postgres-data:
     bears-den-sqlite-data:
     bears-qdrant-data:
-    bears-valkey-data:
+    bears-bifrost-valkey-data:
     bears-bifrost-data:
     bears-sandbox-engine-data:
     bears-sandbox-certs:

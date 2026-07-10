@@ -38,7 +38,7 @@
         "enabled": true,
         "type": "redis",
         "config": {
-            "addr": "bears-valkey:6379",
+            "addr": "bears-bifrost-valkey:6379",
             "db": 0,
             "use_tls": false,
             "pool_size": 10,
