@@ -64,6 +64,14 @@ Healthy expectation:
 - no unexpected empty-turn errors
 - no repeated untranslated fallback class growth during normal continuation flows
 
+If `client.tool.result` or `client.permission.result` returns `"continuation":"started"` and the run later fails with `continuation_watchdog_timeout`, inspect Den LLM/runtime logs rather than armature local-tool logs. The result already reached Den; the failure is in resumed model/runtime streaming.
+
+Important timeout diagnostics:
+
+- `watchdog_phase = "first_runtime_event"`: no resumed runtime event arrived. This window includes `BEARS_LLM_HANDSHAKE_TIMEOUT_SECS` plus `BEARS_BEARWIRE_CONTINUATION_WATCHDOG_MS`.
+- `watchdog_phase = "between_runtime_events"`: at least one resumed runtime event arrived, then the stream went idle for `BEARS_BEARWIRE_CONTINUATION_WATCHDOG_MS`.
+- Useful armature tracing for a test instance: `BEARS_ARMATURE_TRACE=1` and `BEARS_ARMATURE_TRACE_FILTER='bear_armature::lifecycle=trace'`.
+
 ## Most likely fallback classes to watch
 
 These are the most likely categories to require follow-up semantic promotion if they appear frequently:

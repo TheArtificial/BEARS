@@ -4,8 +4,8 @@ mod approvals;
 mod assembler;
 mod budget;
 mod checkpoints;
-mod control;
 mod context;
+mod control;
 mod key_memory_projection;
 #[cfg(test)]
 mod key_memory_projection_tests;
@@ -48,23 +48,23 @@ pub use budget::{
 };
 pub use checkpoints::{
     list_checkpoints_for_run, list_checkpoints_for_session, record_checkpoint_request,
-    record_checkpoint_response,
-    CheckpointArtifactInput, CheckpointArtifactRow, CheckpointReplayPolicy,
-    CheckpointResponseInput, CheckpointValidationStatus, CheckpointVisibility,
+    record_checkpoint_response, CheckpointArtifactInput, CheckpointArtifactRow,
+    CheckpointReplayPolicy, CheckpointResponseInput, CheckpointValidationStatus,
+    CheckpointVisibility,
 };
 pub use context::{
     assemble_agent_messages, load_transcript_grouping_rows, load_transcript_messages,
     prune_messages_for_native_chat, repair_tool_call_message_chain,
 };
 pub use control::{
-    resolve_agent_loop_control, AgentLoopControlProfile, AgentLoopControlResolutionInput,
-    evaluate_checkpoint_trigger, pre_risk_checkpoint_trigger, task_gate_checkpoint_trigger,
-    validate_checkpoint_response, AgentLoopControlSource, CheckpointConfidence,
+    evaluate_checkpoint_trigger, pre_risk_checkpoint_trigger, resolve_agent_loop_control,
+    task_gate_checkpoint_trigger, validate_checkpoint_response, AgentLoopControlProfile,
+    AgentLoopControlResolutionInput, AgentLoopControlSource, CheckpointConfidence,
     CheckpointEvaluation, CheckpointEvidenceRef, CheckpointField, CheckpointNextAction,
     CheckpointPolicy, CheckpointReason, CheckpointResponseValidationError, CheckpointState,
     CheckpointTaskContext, CheckpointThinkingPolicy, CheckpointTrigger, KoPolicy,
-    ResolvedAgentLoopControl, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
-    TaskGatePolicy, TaskStateChangeIntent,
+    ResolvedAgentLoopControl, RuntimeCheckpointRequest, RuntimeCheckpointResponse, TaskGatePolicy,
+    TaskStateChangeIntent,
 };
 pub use key_memory_projection::{
     project_key_memory, KeyMemoryProjectionCacheKey, KeyMemoryProjectionResult,
@@ -74,7 +74,7 @@ pub use pending_tools::pending_tool_calls;
 pub use policy::{select_strategy_profile, StrategyPolicyInput};
 pub use session_store::{agent_loop_session_key, AgentLoopSession, AgentLoopSessionStore};
 pub use session_stream::{NativeToolDispatchMode, SessionTrackingStream};
-pub use step::{run_agent_step_stream, AgentStepOverflowContext};
+pub use step::{native_llm_handshake_timeout, run_agent_step_stream, AgentStepOverflowContext};
 pub use strategy::StrategyProfile;
 pub use tool_policy::{
     maybe_pause_for_tool_approval, provider_tool_requires_approval,

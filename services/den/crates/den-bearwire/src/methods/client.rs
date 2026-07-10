@@ -30,6 +30,7 @@ use den_protocol::{
     RuntimeToolResultStatus,
 };
 use den_runtime::{
+    agent_loop::native_llm_handshake_timeout,
     bearwire_events,
     client_obligation_coordinator::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
@@ -121,12 +122,28 @@ impl ClientToolResultRequest {
 }
 
 fn continuation_watchdog_timeout() -> Duration {
-    let millis = std::env::var("BEARS_BEARWIRE_CONTINUATION_WATCHDOG_MS")
-        .ok()
+    continuation_watchdog_timeout_from_raw(
+        std::env::var("BEARS_BEARWIRE_CONTINUATION_WATCHDOG_MS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn continuation_watchdog_timeout_from_raw(raw: Option<&str>) -> Duration {
+    let millis = raw
         .and_then(|value| value.trim().parse::<u64>().ok())
         .map(|value| value.clamp(1_000, 600_000))
         .unwrap_or(30_000);
     Duration::from_millis(millis)
+}
+
+fn continuation_first_event_watchdog_timeout(
+    handshake_timeout: Duration,
+    idle_timeout: Duration,
+) -> Duration {
+    handshake_timeout
+        .checked_add(idle_timeout)
+        .unwrap_or(Duration::from_millis(u64::MAX))
 }
 
 fn continuation_conversation_id(session: &client_sessions::ClientSessionRow) -> String {
@@ -339,19 +356,51 @@ fn spawn_continuation_task(
                 let mut terminal_event_seen = false;
                 let mut wait_event_seen = false;
                 let mut last_event_kind: Option<&'static str> = None;
-                let watchdog_timeout = continuation_watchdog_timeout();
+                let idle_watchdog_timeout = continuation_watchdog_timeout();
+                let handshake_timeout = native_llm_handshake_timeout();
+                let first_event_watchdog_timeout = continuation_first_event_watchdog_timeout(
+                    handshake_timeout,
+                    idle_watchdog_timeout,
+                );
                 loop {
+                    let watchdog_phase = if first_event_seen {
+                        "between_runtime_events"
+                    } else {
+                        "first_runtime_event"
+                    };
+                    let watchdog_timeout = if first_event_seen {
+                        idle_watchdog_timeout
+                    } else {
+                        first_event_watchdog_timeout
+                    };
                     let item = match tokio::time::timeout(watchdog_timeout, stream.next()).await {
                         Ok(item) => item,
                         Err(_) => {
                             let context = json!({
                                 "continuation_request_id": request_id,
+                                "watchdog_phase": watchdog_phase,
                                 "watchdog_timeout_ms": watchdog_timeout.as_millis(),
+                                "first_event_watchdog_timeout_ms": first_event_watchdog_timeout.as_millis(),
+                                "handshake_timeout_ms": handshake_timeout.as_millis(),
+                                "idle_watchdog_timeout_ms": idle_watchdog_timeout.as_millis(),
                                 "runtime_event_count": runtime_event_count,
                                 "first_event_seen": first_event_seen,
                                 "terminal_event_seen": terminal_event_seen,
                                 "last_event_kind": last_event_kind,
                             });
+                            let message = if first_event_seen {
+                                format!(
+                                    "Den received the client result and continuation request {request_id} emitted runtime events, but no further runtime event arrived within {}ms. This usually means the resumed model/runtime stream stalled after it started.",
+                                    watchdog_timeout.as_millis()
+                                )
+                            } else {
+                                format!(
+                                    "Den received the client result and started continuation request {request_id}, but no runtime event arrived within {}ms. This includes the configured LLM handshake allowance ({}ms) plus the continuation idle watchdog ({}ms). This usually means the resumed model/runtime stream stalled before emitting its first event.",
+                                    watchdog_timeout.as_millis(),
+                                    handshake_timeout.as_millis(),
+                                    idle_watchdog_timeout.as_millis()
+                                )
+                            };
                             persist_run_failed(
                                 &pool,
                                 &run.session_id,
@@ -359,10 +408,7 @@ fn spawn_continuation_task(
                                 run.bear_id,
                                 run.user_id,
                                 "continuation_watchdog_timeout",
-                                format!(
-                                    "Den received the client result and started continuation request {request_id}, but no runtime event arrived within {}ms. This usually means the resumed model/runtime stream stalled before emitting its first event.",
-                                    watchdog_timeout.as_millis()
-                                ),
+                                message,
                                 Some(context),
                             )
                             .await;
@@ -1000,5 +1046,37 @@ pub(crate) async fn client_permission_result_result(
                 "continuation": "started",
             }))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn continuation_watchdog_timeout_defaults_and_clamps() {
+        assert_eq!(
+            continuation_watchdog_timeout_from_raw(None),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            continuation_watchdog_timeout_from_raw(Some("1")),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            continuation_watchdog_timeout_from_raw(Some("999999999")),
+            Duration::from_secs(600)
+        );
+    }
+
+    #[test]
+    fn first_event_watchdog_includes_handshake_allowance() {
+        assert_eq!(
+            continuation_first_event_watchdog_timeout(
+                Duration::from_secs(120),
+                Duration::from_secs(30),
+            ),
+            Duration::from_secs(150)
+        );
     }
 }

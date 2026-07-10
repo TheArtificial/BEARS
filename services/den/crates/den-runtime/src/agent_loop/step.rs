@@ -37,13 +37,22 @@ const MAX_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS: u64 = 900;
 /// Max silence between upstream SSE byte chunks after the handshake.
 const NATIVE_LLM_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn native_llm_handshake_timeout() -> Duration {
-    native_llm_handshake_timeout_from_raw(std::env::var("BEARS_LLM_HANDSHAKE_TIMEOUT_SECS").ok().as_deref())
+pub fn native_llm_handshake_timeout() -> Duration {
+    native_llm_handshake_timeout_from_raw(
+        std::env::var("BEARS_LLM_HANDSHAKE_TIMEOUT_SECS")
+            .ok()
+            .as_deref(),
+    )
 }
 
 fn native_llm_handshake_timeout_from_raw(raw: Option<&str>) -> Duration {
     raw.and_then(|value| value.trim().parse::<u64>().ok())
-        .map(|secs| secs.clamp(MIN_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS, MAX_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS))
+        .map(|secs| {
+            secs.clamp(
+                MIN_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS,
+                MAX_NATIVE_LLM_HANDSHAKE_TIMEOUT_SECS,
+            )
+        })
         .map(Duration::from_secs)
         .unwrap_or(DEFAULT_NATIVE_LLM_HANDSHAKE_TIMEOUT)
 }
@@ -507,7 +516,10 @@ pub const RUNTIME_CHECKPOINT_TOOL_NAME: &str = "checkpoint";
 fn checkpoint_thinking_effort_for_session(session: &AgentLoopSession) -> Option<ThinkingEffort> {
     session.checkpoint_state.last_checkpoint_reason?;
     let policy = session.agent_loop_control.profile.thinking;
-    policy.enabled.then_some(policy.checkpoint_turn_effort).flatten()
+    policy
+        .enabled
+        .then_some(policy.checkpoint_turn_effort)
+        .flatten()
 }
 
 fn checkpoint_tool_definition() -> crate::llm::LlmToolDefinition {
@@ -581,7 +593,9 @@ fn checkpoint_tool_definition() -> crate::llm::LlmToolDefinition {
 fn tools_with_checkpoint_tool(session: &AgentLoopSession) -> Vec<crate::llm::LlmToolDefinition> {
     let mut tools = session.tools.clone();
     if session.pending_checkpoint_request.is_some()
-        && !tools.iter().any(|tool| tool.name == RUNTIME_CHECKPOINT_TOOL_NAME)
+        && !tools
+            .iter()
+            .any(|tool| tool.name == RUNTIME_CHECKPOINT_TOOL_NAME)
     {
         tools.push(checkpoint_tool_definition());
     }

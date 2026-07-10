@@ -76,7 +76,7 @@ flowchart TB
 - **Cancellation = `CancellationToken` / `watch`.** Letta `run_ids` and `POST /messages/cancel` are dropped.
 - **Tool calls:** server tools run in-process; client/adapter tools become obligations awaited on a `oneshot`; shell/fs tools for `work` run in a Den-managed sandbox.
 - **Approvals:** a turn pauses awaiting a Den-stored decision and resumes the same in-process task. This replaces Letta's `requires_approval` stop_reason plus deny/cleanup recovery.
-- **Streaming:** the loop yields semantic events directly into the existing SSE mapper; the Letta-SSE byte reparse is deleted.
+- **Streaming:** the loop yields semantic events directly into the existing SSE mapper; the Letta-SSE byte reparse is deleted. Post-tool/approval continuation liveness is Den-owned: before the first resumed runtime event, watchdogs must include the LLM handshake allowance; after events begin, shorter inter-event idle watchdogs apply.
 
 ## Storage boundary: Bear cognition vs Den control plane
 

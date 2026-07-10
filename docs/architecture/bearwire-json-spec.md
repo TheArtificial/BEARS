@@ -1052,6 +1052,8 @@ BearWire uses:
 
 Client obligations that remain unanswered past their deadline fail the run with `reason`/`error_type` such as `client_obligation_timeout`. The failure event should include enough context for the armature and user to identify the open obligation without inspecting Den internals; `run.state` remains the structured recovery endpoint for full obligation/result/event details.
 
+After Den accepts `client.tool.result` or `client.permission.result` and starts model continuation, continuation liveness is phase-aware. Before the first resumed runtime event, the watchdog must allow the native LLM handshake window plus the continuation idle window; after the first runtime event, the shorter continuation idle window applies between events. `continuation_watchdog_timeout` context may include `watchdog_phase`, `handshake_timeout_ms`, `idle_watchdog_timeout_ms`, `first_event_watchdog_timeout_ms`, `runtime_event_count`, and `last_event_kind`.
+
 It should avoid using a single generic streamed `error` event as the primary model for all failure types.
 
 ## Compatibility guidance
