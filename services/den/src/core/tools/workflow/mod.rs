@@ -375,9 +375,7 @@ async fn resolve_surface_ref(
     };
     match den_service::work_surfaces::surface_by_name(pool, ref_name).await? {
         Some(surface) => {
-            if !den_service::work_surfaces::bear_may_use_surface(pool, bear_id, surface.id)
-                .await?
-            {
+            if !den_service::work_surfaces::bear_may_use_surface(pool, bear_id, surface.id).await? {
                 return Err(DenError::ValidationError(format!(
                     "bear is not assigned to work surface '{}'; pick a surface listed by get_work_catalog or ask a surface manager to assign this bear",
                     surface.name
