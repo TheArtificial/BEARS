@@ -93,7 +93,7 @@ Optional:
 | `CARGO_BUILD_JOBS` | Den Docker build parallelism; keep low on small deploy hosts |
 | `BIFROST_APP_PORT` | Bifrost listen port. Use distinct values per environment on shared networks, for example prod `8080`, test `8081` |
 | `BIFROST_ORIGIN` | Canonical internal Bifrost origin; compose derives `BIFROST_BASE_URL`, `BIFROST_MANAGEMENT_URL`, and `LLM_API_URL` from this. Defaults to `http://bears-bifrost:${BIFROST_APP_PORT}` |
-| `RUN_WEB` / `RUN_API` / `RUN_WORKERS` | Service toggles inside the Den container (compose defaults web+API on) |
+| `RUN_WEB` / `RUN_API` / `RUN_WORKERS` | Service toggles inside the Den container (compose defaults all three on) |
 
 You usually do not need to set internal service URLs. The compose file already defaults to:
 

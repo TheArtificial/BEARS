@@ -145,15 +145,19 @@ The catalog images must exist in the **engine's** store. Two mechanisms:
 ### 5. Wire Den to it — DONE
 
 `SANDBOX_CALLBACK_API_URL` now defaults to `http://bears-den:3001` in the
-worker env (http — satisfies restricted mode); `SANDBOX_SERVER_URL` stays
-opt-in (set it to `http://bears-sandbox-provider:3002` alongside the
-profile) so the always-on services do not imply a sandbox deployment.
-`services/den/README.md` and `docs/guides/sandbox-server-ops.md` describe
-the profile; the "needs a docker CLI" ponytail is gone.
+worker env (http — satisfies restricted mode). The sandbox services are now
+part of the **default stack** (no profile): `RUN_WORKERS` defaults to true,
+`SANDBOX_SERVER_URL` defaults to `http://bears-sandbox-provider:3002`, and
+`SANDBOX_SERVER_TOKEN`/`SANDBOX_SERVICE_TOKEN` share a matched default
+(override in production). The provider mounts the committed
+`data/sandbox-roots.json` (image catalog, no roots) unless
+`SANDBOX_ROOTS_FILE` points elsewhere. `services/den/README.md` and
+`docs/guides/sandbox-server-ops.md` describe the setup; the "needs a docker
+CLI" ponytail is gone.
 
 ### 6. Verification — static checks done; runtime walk OPEN
 
-- `docker compose --profile sandbox up -d` on a clean host: health green,
+- `docker compose up -d` on a clean host: health green,
   `/sandbox/v1/catalog` lists the images, `docker -H tcp://…engine ps`
   empty until a dispatch.
 - `scripts/work-e2e.sh` variant pointed at the compose provider (root added
@@ -161,8 +165,8 @@ the profile; the "needs a docker CLI" ponytail is gone.
 - Egress check inside a nested sandbox: external `curl` fails, Den callback
   succeeds. Redeploy check: `compose down && up` re-adopts running
   sandboxes (engine volume persists) and leaks nothing project-external.
-- Coolify: deploy with `COMPOSE_PROFILES=sandbox`; validator accepts the
-  file (no `${…}` volume targets anywhere).
+- Coolify: plain deploy — the sandbox services are in the default stack;
+  validator accepts the file (no `${…}` volume targets anywhere).
 
 ## Effort and sequencing
 

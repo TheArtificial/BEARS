@@ -3,7 +3,8 @@
 # Recommended for Coolify: Add Resource → Docker Compose → this repository,
 # Base Directory: `.` (repo root), Compose file: `docker-compose.yaml`.
 #
-# Default stack: `bears-bifrost`, `bears-den`, optional `bears-postgres` (profile `bundled`).
+# Default stack: `bears-bifrost`, `bears-den`, `bears-sandbox-provider` +
+# `bears-sandbox-engine` (work sandboxes), optional `bears-postgres` (profile `bundled`).
 # The Den-native in-process agent loop and per-Bear SQLite (`BEAR_SQLITE_DATA_DIR` /
 # `bears-den-sqlite-data`) are the only runtime; Letta/Codepool/MemFS have been removed.
 #
@@ -209,14 +210,16 @@ services:
             DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-}
             RUN_WEB: ${RUN_WEB:-true}
             RUN_API: ${RUN_API:-true}
-            RUN_WORKERS: ${RUN_WORKERS:-false}
+            RUN_WORKERS: ${RUN_WORKERS:-true}
             RUN_SANDBOX: ${RUN_SANDBOX:-false}
-            # Work-dispatch client settings (used when RUN_WORKERS=true and a
-            # sandbox provider is deployed; empty SANDBOX_SERVER_URL disables
-            # dispatch). With COMPOSE_PROFILES=sandbox set
-            # SANDBOX_SERVER_URL=http://bears-sandbox-provider:3002.
-            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-}
-            SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-}
+            # Work-dispatch client settings. The default stack runs the
+            # sandbox provider, so dispatch is wired up out of the box; set
+            # SANDBOX_SERVER_URL= (empty) to disable dispatch. The token
+            # defaults must match SANDBOX_SERVICE_TOKEN on the provider —
+            # setting either env var updates both sides; override it in
+            # production.
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-http://bears-sandbox-provider:3002}
+            SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
             SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
             WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
@@ -305,14 +308,16 @@ services:
             DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-}
             RUN_WEB: ${RUN_WEB:-true}
             RUN_API: ${RUN_API:-true}
-            RUN_WORKERS: ${RUN_WORKERS:-false}
+            RUN_WORKERS: ${RUN_WORKERS:-true}
             RUN_SANDBOX: ${RUN_SANDBOX:-false}
-            # Work-dispatch client settings (used when RUN_WORKERS=true and a
-            # sandbox provider is deployed; empty SANDBOX_SERVER_URL disables
-            # dispatch). With COMPOSE_PROFILES=sandbox set
-            # SANDBOX_SERVER_URL=http://bears-sandbox-provider:3002.
-            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-}
-            SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-}
+            # Work-dispatch client settings. The default stack runs the
+            # sandbox provider, so dispatch is wired up out of the box; set
+            # SANDBOX_SERVER_URL= (empty) to disable dispatch. The token
+            # defaults must match SANDBOX_SERVICE_TOKEN on the provider —
+            # setting either env var updates both sides; override it in
+            # production.
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-http://bears-sandbox-provider:3002}
+            SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
             SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
             WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
@@ -355,12 +360,12 @@ services:
             GHCR_PACKAGES_OWNER: ${GHCR_PACKAGES_OWNER:-}
             GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-}
 
-    # Work sandboxes (COMPOSE_PROFILES=sandbox): two services — the provider
+    # Work sandboxes (part of the default stack): two services — the provider
     # manages, the engine executes. Sandboxes never touch the host docker
     # daemon; everything sandbox-shaped (containers, relays, internal
     # networks, images, disk) lives inside bears-sandbox-engine and is
-    # removed with the project. Point the Den workers at the provider via
-    # SANDBOX_SERVER_URL=http://bears-sandbox-provider:3002 with
+    # removed with the project. The Den workers reach the provider via
+    # SANDBOX_SERVER_URL (default http://bears-sandbox-provider:3002) with
     # SANDBOX_CALLBACK_API_URL=http://bears-den:3001 (http: required by the
     # default restricted network mode).
     #
@@ -376,8 +381,6 @@ services:
     bears-sandbox-engine:
         image: ${SANDBOX_ENGINE_IMAGE:-docker:27-dind}
         restart: unless-stopped
-        # Also in sandbox-build so the one-shot image builder can depend on it.
-        profiles: ["sandbox", "sandbox-build"]
         privileged: true
         environment:
             DOCKER_TLS_CERTDIR: /certs
@@ -409,7 +412,6 @@ services:
                 CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
         image: ${SANDBOX_PROVIDER_IMAGE:-bears-sandbox-provider:${SOURCE_COMMIT:-local}}
         restart: unless-stopped
-        profiles: ["sandbox"]
         depends_on:
             bears-preflight-config:
                 condition: service_completed_successfully
@@ -426,7 +428,9 @@ services:
             DOCKER_TLS_VERIFY: "1"
             DOCKER_CERT_PATH: /certs/client
             SANDBOX_PORT: ${SANDBOX_PORT:-3002}
-            SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-}
+            # Must match SANDBOX_SERVER_TOKEN on bears-den; setting either
+            # env var updates both sides. Override the default in production.
+            SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-${SANDBOX_SERVER_TOKEN:-den-sandbox-default-token}}
             SANDBOX_ROOTS_CONFIG: /etc/bears/sandbox-roots.json
             # Shared volume mounted at the same path in provider and engine,
             # so bind sources resolve without host-path mapping.

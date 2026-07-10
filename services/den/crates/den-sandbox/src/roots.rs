@@ -631,6 +631,21 @@ mod tests {
     }
 
     #[test]
+    fn default_compose_roots_file_parses() {
+        // The default stack bind-mounts this file into bears-sandbox-provider
+        // (SANDBOX_ROOTS_FILE in docker-compose.yaml), so it must stay valid.
+        let raw = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../data/sandbox-roots.json"
+        ));
+        let file: RootsFile = serde_json::from_str(raw).unwrap();
+        assert!(file.roots.is_empty());
+        assert_eq!(file.images.iter().filter(|image| image.default).count(), 1);
+        let names: Vec<&str> = file.images.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["base", "rust", "node", "godot"]);
+    }
+
+    #[test]
     fn unknown_root_is_reported() {
         let manager = RootsManager::load(None, "/tmp/nowhere").unwrap();
         assert!(matches!(

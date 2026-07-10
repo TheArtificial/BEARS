@@ -31,14 +31,19 @@ and cleanup. Companion docs: [user guide](running-background-work.md),
   at harvest. Root credentials (deploy keys, tokens) live only on the
   sandbox host and never enter sandboxes or transit Den.
 - Two supported deployments:
-  - **Compose (`COMPOSE_PROFILES=sandbox`)** — `bears-sandbox-provider`
-    (the API service with a docker CLI) plus `bears-sandbox-engine` (a
-    dedicated dind Docker Engine hosting all sandbox containers, relays,
-    and networks). Nothing touches the host daemon; the shared workspaces
-    volume mounts at the same path in both, and `docker compose down -v
-    --profile sandbox` removes every trace. Catalog images must exist in
-    the *engine's* store — use the GHCR-published `bears-sandbox*` images
-    or the `bears-sandbox-images` one-shot builder
+  - **Compose (default stack)** — `bears-sandbox-provider` (the API
+    service with a docker CLI) plus `bears-sandbox-engine` (a dedicated
+    dind Docker Engine hosting all sandbox containers, relays, and
+    networks) run by default, wired to the Den workers out of the box
+    (`RUN_WORKERS=true`, `SANDBOX_SERVER_URL`, and a matched
+    token default — override `SANDBOX_SERVER_TOKEN` in production). The
+    provider mounts the committed `data/sandbox-roots.json` (catalog only,
+    no roots) unless `SANDBOX_ROOTS_FILE` points at a deployment-specific
+    file. Nothing touches the host daemon; the shared workspaces volume
+    mounts at the same path in both, and `docker compose down -v` removes
+    every trace. Catalog images must exist in the *engine's* store — use
+    the GHCR-published `bears-sandbox*` images or the
+    `bears-sandbox-images` one-shot builder
     (`docker compose --profile sandbox-build run --rm bears-sandbox-images`).
   - **Bare-metal provider on a dedicated sandbox host** — the setup
     described in the bring-up checklist below; sandboxes run on that

@@ -116,13 +116,14 @@ network whose only way out is a socat relay to the Den callback endpoint, so
 task code cannot reach anything but Den (`WORK_SANDBOX_NETWORK=open` opts
 out; the run's `sandbox_strength` states the actual mode).
 
-Compose alternative (`COMPOSE_PROFILES=sandbox`): two services —
+Compose alternative (part of the default stack): two services —
 `bears-sandbox-provider` (this binary plus a docker CLI, built from the
 `sandbox-provider` Dockerfile target) and `bears-sandbox-engine` (a
 dedicated dind Docker Engine that hosts the sandbox containers, relays, and
 networks). Nothing touches the host docker daemon, and `docker compose down
--v` removes every trace. Point the workers at
-`SANDBOX_SERVER_URL=http://bears-sandbox-provider:3002`. Catalog images must
+-v` removes every trace. The workers are wired to it by default
+(`SANDBOX_SERVER_URL=http://bears-sandbox-provider:3002` and a matched
+token default — override `SANDBOX_SERVER_TOKEN` in production). Catalog images must
 exist in the **engine's** store: reference the GHCR-published
 `ghcr.io/<owner>/bears-sandbox*` images (built by the sandbox-images
 workflow), or build them into the engine with
