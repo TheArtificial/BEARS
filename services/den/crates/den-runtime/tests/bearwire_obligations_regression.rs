@@ -159,6 +159,54 @@ async fn open_obligation_barrier_counts_only_unsettled_client_waits(pool: sqlx::
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn den_owned_tool_call_does_not_create_client_obligation(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    turn_waits::persist_bearwire_tool_call_wait_transactionally(
+        &pool,
+        turn_waits::PersistToolCallWaitInput {
+            session_id: &session_id,
+            run_id: &run_id,
+            bear_id,
+            user_id,
+            request_id: Uuid::new_v4(),
+            tool_call_id: "call-title",
+            tool_name: "set_conversation_title",
+            title: &Some("Set conversation title".to_string()),
+            kind: &Some("function".to_string()),
+            arguments: &serde_json::json!({ "title": "Debug run" }),
+            approval_request_id: &None,
+            approval_required: false,
+            approval_reason: &None,
+            event_run_id: &Some(run_id.clone()),
+        },
+    )
+    .await
+    .expect("persist den-owned tool event");
+
+    let open = turn_obligations::open_client_obligations_for_session(&pool, &session_id)
+        .await
+        .expect("list open obligations");
+    assert!(
+        open.is_empty(),
+        "Den-owned display tools must not create armature client waits: {open:#?}"
+    );
+
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list events");
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == "tool_call.requested"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn expired_client_obligation_is_marked_failed(pool: sqlx::PgPool) {
     let (user_id, bear_id) = create_user_and_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
@@ -193,7 +241,10 @@ async fn expired_client_obligation_is_marked_failed(pool: sqlx::PgPool) {
     assert_eq!(expired.len(), 1);
     assert_eq!(expired[0].id, obligation.id);
     assert_eq!(expired[0].state, "failed");
-    assert_eq!(expired[0].result_payload.as_ref().unwrap()["status"], "timeout");
+    assert_eq!(
+        expired[0].result_payload.as_ref().unwrap()["status"],
+        "timeout"
+    );
 
     let open = turn_obligations::open_client_obligations_for_session(&pool, &session_id)
         .await
@@ -355,23 +406,15 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
     .expect("persist wait transactionally");
 
     assert!(persisted.effective_approval_required);
-    assert_eq!(persisted.obligation.kind, "permission_decision");
-    assert_eq!(
-        persisted.obligation.expected_responder_action,
-        "permission_decision"
-    );
-    assert_eq!(
-        persisted.obligation.permission_id.as_deref(),
-        permission_id.as_deref()
-    );
-    assert_eq!(
-        persisted.obligation.tool_call_id.as_deref(),
-        Some("call-transactional-wait")
-    );
-    assert_eq!(
-        persisted.obligation.turn_step_id,
-        Some(persisted.turn_step_id)
-    );
+    let obligation = persisted
+        .obligation
+        .as_ref()
+        .expect("client permission wait should create obligation");
+    assert_eq!(obligation.kind, "permission_decision");
+    assert_eq!(obligation.expected_responder_action, "permission_decision");
+    assert_eq!(obligation.permission_id.as_deref(), permission_id.as_deref());
+    assert_eq!(obligation.tool_call_id.as_deref(), Some("call-transactional-wait"));
+    assert_eq!(obligation.turn_step_id, Some(persisted.turn_step_id));
 
     let run = turn_runs::get_run(&pool, &run_id)
         .await
@@ -401,10 +444,7 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
         .find(|row| row.event_type == "client.waiting")
         .expect("client.waiting event exists");
     assert_eq!(waiting.sequence_no, persisted.event_sequence);
-    assert_eq!(
-        waiting.event.data["obligation_id"],
-        persisted.obligation.id.to_string()
-    );
+    assert_eq!(waiting.event.data["obligation_id"], obligation.id.to_string());
     assert_eq!(
         waiting.event.data["expected_client_method"],
         "client.permission.result"

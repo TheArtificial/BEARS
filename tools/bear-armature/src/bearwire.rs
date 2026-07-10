@@ -1204,9 +1204,22 @@ async fn handle_bearwire_event(
             }
         }
         "run.completed" => {
+            tracing::info!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                "BearWire run.completed received"
+            );
             outcome.saw_done = true;
         }
         "run.failed" => {
+            tracing::warn!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                reason = event.pointer("/data/reason").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                "BearWire run.failed received"
+            );
             let message = bearwire_run_failed_user_message(event);
             eprintln!(
                 "bear-armature: BearWire run failed session_id={} message={}",
@@ -1240,6 +1253,14 @@ async fn handle_bearwire_event(
                 .await?;
         }
         "tool_call.requested" => {
+            tracing::info!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                tool_call_id = event.pointer("/data/tool_call/id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                tool_name = event.pointer("/data/tool_call/name").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                "BearWire tool_call.requested received"
+            );
             outcome.saw_tool_activity = true;
             diagnostics.saw_tool_activity = true;
             spawn_tool_request_task(
@@ -1251,12 +1272,27 @@ async fn handle_bearwire_event(
             );
         }
         "tool_call.completed" | "tool_call.warning" | "tool_call.cancelled" => {
+            tracing::info!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                tool_call_id = event.pointer("/data/tool_call/id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                status = ty,
+                "BearWire tool_call terminal update received"
+            );
             outcome.saw_tool_activity = true;
             diagnostics.saw_tool_activity = true;
             handle_bearwire_tool_call_finished_event(shared_state, session_id, event, false)
                 .await?;
         }
         "tool_call.failed" => {
+            tracing::warn!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                tool_call_id = event.pointer("/data/tool_call/id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                "BearWire tool_call.failed received"
+            );
             outcome.saw_tool_activity = true;
             outcome.saw_error = true;
             diagnostics.saw_tool_activity = true;
@@ -1264,6 +1300,15 @@ async fn handle_bearwire_event(
             handle_bearwire_tool_call_finished_event(shared_state, session_id, event, true).await?;
         }
         "client.waiting" => {
+            tracing::info!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                tool_call_id = event.pointer("/data/tool_call/id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                tool_name = event.pointer("/data/tool_call/name").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                permission_id = event.pointer("/data/permission/id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                "BearWire client.waiting received"
+            );
             outcome.saw_tool_activity = true;
             outcome.saw_visible_output = true;
             diagnostics.saw_tool_activity = true;

@@ -36,6 +36,12 @@ use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(3);
+
+fn den_owned_tool_call(tool_name: &str) -> bool {
+    den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
+        .is_some_and(|descriptor| descriptor.execution_target == "den")
+}
+
 // Runtime status/error UX policy is surface-agnostic. Keep product copy,
 // model-continuity summaries, and marker wording in den-runtime::runtime_error_ux.
 // BearWire should only transport/persist those projections for this wire method.
@@ -253,9 +259,7 @@ async fn resolve_pair_run_model(
         }
     }
 
-    if let Some(model) =
-        bears_db::profile_model_setting(&state.sqlx_pool, bear.id, stance).await?
-    {
+    if let Some(model) = bears_db::profile_model_setting(&state.sqlx_pool, bear.id, stance).await? {
         let handle = den_llm::normalize_llm_model_handle(&model);
         let provider_model_id = provider_model_id_for_den_handle(&handle);
         return Ok(ResolvedRunModel {
@@ -667,7 +671,7 @@ async fn persist_tool_call_requested_transactionally(
     )
     .await?;
 
-    if let Some(started_at) = started_at {
+    if let (Some(started_at), Some(obligation)) = (started_at, persisted.obligation.as_ref()) {
         let (kind, text) = if persisted.effective_approval_required {
             (
                 "tool_waiting_for_permission",
@@ -696,7 +700,7 @@ async fn persist_tool_call_requested_transactionally(
                 "approval_request_id": approval_request_id,
                 "request_id": request_id,
                 "turn_step_id": persisted.turn_step_id,
-                "obligation_id": persisted.obligation.id,
+                "obligation_id": obligation.id,
                 "event_sequence": persisted.event_sequence,
             }),
         )
@@ -1026,6 +1030,9 @@ async fn update_run_state_for_runtime_event(
                 );
             }
             let effective_approval_required = *approval_required && has_permission_id;
+            if den_owned_tool_call(tool_name) {
+                return None;
+            }
             let state = if effective_approval_required {
                 turn_runs::TurnRunState::WaitingForPermission
             } else {
@@ -1301,14 +1308,15 @@ pub(crate) async fn run_start_result(
         client_tool_descriptors_from_context(client_context.as_ref(), requested_mode.as_deref());
     // Stance signal: a session bound to a live work run via `work.checkout`
     // runs in the Work stance; every other BearWire session stays Pair.
-    let stance = if den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id)
-        .await?
-        .is_some()
-    {
-        BearProfile::Work
-    } else {
-        BearProfile::Pair
-    };
+    let stance =
+        if den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, &session_id)
+            .await?
+            .is_some()
+        {
+            BearProfile::Work
+        } else {
+            BearProfile::Pair
+        };
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, stance)
         .await?
         .ok_or_else(|| {
@@ -1472,30 +1480,33 @@ pub(crate) async fn run_start_result(
         )
         .await;
         let native_start = Instant::now();
-        let stream_result = start_native_profile_turn_event_stream(TurnStartRequest {
-            sqlx_pool: &pool,
-            config: config.as_ref(),
-            memory_stores: &memory_stores,
-            request_id,
-            run_id: Some(&run_id_for_task),
-            user_id,
-            session_id: &session_for_task,
-            bear_id,
-            bear_slug: &bear_slug,
-            client: &client,
-            cwd: cwd.as_deref(),
-            workspace_roots: Some(&workspace_roots),
-            binding: &binding,
-            conversation_selection: &conversation_for_task,
-            upstream_target: &upstream_target_for_task,
-            prompt: &prompt_for_task,
-            prompt_context: prompt_context.clone(),
-            client_tools: Some(client_tools_for_task),
-            runtime_context: None,
-            runtime_context_len: 0,
-            stream_tokens: true,
-            api_style: Some(api_style_for_task),
-        }, stance)
+        let stream_result = start_native_profile_turn_event_stream(
+            TurnStartRequest {
+                sqlx_pool: &pool,
+                config: config.as_ref(),
+                memory_stores: &memory_stores,
+                request_id,
+                run_id: Some(&run_id_for_task),
+                user_id,
+                session_id: &session_for_task,
+                bear_id,
+                bear_slug: &bear_slug,
+                client: &client,
+                cwd: cwd.as_deref(),
+                workspace_roots: Some(&workspace_roots),
+                binding: &binding,
+                conversation_selection: &conversation_for_task,
+                upstream_target: &upstream_target_for_task,
+                prompt: &prompt_for_task,
+                prompt_context: prompt_context.clone(),
+                client_tools: Some(client_tools_for_task),
+                runtime_context: None,
+                runtime_context_len: 0,
+                stream_tokens: true,
+                api_style: Some(api_style_for_task),
+            },
+            stance,
+        )
         .await;
 
         match stream_result {

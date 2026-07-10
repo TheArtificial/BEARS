@@ -196,6 +196,32 @@ fn env_bool(name: &str) -> bool {
     })
 }
 
+fn init_armature_tracing() {
+    if !env_bool("BEARS_ARMATURE_TRACE") {
+        return;
+    }
+    let filter = env::var("BEARS_ARMATURE_TRACE_FILTER")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "bear_armature::lifecycle=debug".to_string());
+    let Ok(filter) = tracing_subscriber::EnvFilter::try_new(filter.clone()) else {
+        eprintln!(
+            "bear-armature: invalid BEARS_ARMATURE_TRACE_FILTER={filter:?}; tracing disabled"
+        );
+        return;
+    };
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_target(true)
+        .without_time()
+        .try_init();
+    tracing::info!(
+        target: "bear_armature::lifecycle",
+        "armature lifecycle tracing enabled"
+    );
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BearDebugMode {
     Off,
@@ -1520,6 +1546,7 @@ async fn main() {
 }
 
 async fn run() -> Result<()> {
+    init_armature_tracing();
     let mut runtime = RuntimeConfig::from_env_and_args()?;
     eprintln!(
         "bear-armature: starting version={} build_git_sha={} built_at_utc={} local_head_sha={} ACP sessions=list/resume/load supported direct_tools={}",
@@ -6843,6 +6870,14 @@ pub(crate) fn spawn_tool_request_task(
         };
         let tool_call_id = canonical.tool_call.id.clone();
         let tool_name = canonical.tool_call.name.clone();
+        tracing::info!(
+            target: "bear_armature::lifecycle",
+            session_id = session_id.as_str(),
+            tool_call_id = tool_call_id.as_str(),
+            tool_name = tool_name.as_str(),
+            run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+            "local tool task spawned"
+        );
         shared_state
             .tool_tasks
             .register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
@@ -6901,6 +6936,13 @@ pub(crate) fn spawn_tool_request_task(
                     std::time::Instant::now(),
                 )
                 .await;
+                tracing::info!(
+                    target: "bear_armature::lifecycle",
+                    session_id = session_id.as_str(),
+                    tool_call_id = tool_call_id.as_str(),
+                    tool_name = tool_name.as_str(),
+                    "local tool task cancelled"
+                );
                 let _ = shared_state
                     .tool_tasks
                     .remove(&session_id, &tool_call_id)
@@ -6912,6 +6954,14 @@ pub(crate) fn spawn_tool_request_task(
             eprintln!(
                 "bear-armature: local tool task failed session_id={} tool_call_id={} tool_name={} error={err:#}",
                 session_id, tool_call_id, tool_name
+            );
+            tracing::warn!(
+                target: "bear_armature::lifecycle",
+                session_id = session_id.as_str(),
+                tool_call_id = tool_call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                error = %err,
+                "local tool task failed"
             );
             let local_err = LocalToolError::error(format!("local tool task failed: {err:#}"));
             let _ = post_local_tool_error_result(
@@ -6929,6 +6979,13 @@ pub(crate) fn spawn_tool_request_task(
                 .remove(&session_id, &tool_call_id)
                 .await;
         } else if !den_owned_display_only {
+            tracing::info!(
+                target: "bear_armature::lifecycle",
+                session_id = session_id.as_str(),
+                tool_call_id = tool_call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                "local tool task finished"
+            );
             let _ = shared_state
                 .tool_tasks
                 .remove(&session_id, &tool_call_id)
@@ -8061,12 +8118,31 @@ async fn request_tool_permission(
     );
     let request =
         RequestPermissionRequest::new(session_id.to_string(), tool_call, options).meta(Some(meta));
+    let permission_timeout_ms = policy.permission_timeout_ms.unwrap_or(120_000);
+    tracing::info!(
+        target: "bear_armature::lifecycle",
+        session_id,
+        tool_call_id,
+        tool_name,
+        timeout_ms = permission_timeout_ms,
+        "ACP permission request sending"
+    );
     let decision = send_permission_request(
         adapter_state,
         request,
-        std::time::Duration::from_millis(policy.permission_timeout_ms.unwrap_or(120_000)),
+        std::time::Duration::from_millis(permission_timeout_ms),
     )
     .await?;
+    tracing::info!(
+        target: "bear_armature::lifecycle",
+        session_id,
+        tool_call_id,
+        tool_name,
+        approved = decision.approved,
+        remember = decision.remember,
+        scope = decision.scope.as_str(),
+        "ACP permission response received"
+    );
     if decision.approved {
         Ok(decision)
     } else {
@@ -8104,6 +8180,13 @@ async fn post_permission_result(
     payload: Value,
 ) -> Result<Value> {
     if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
+        tracing::info!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            permission_id,
+            "posting BearWire permission result"
+        );
         let result = bearwire::post_permission_result(
             config,
             session_id,
@@ -8112,6 +8195,14 @@ async fn post_permission_result(
             payload.clone(),
         )
         .await?;
+        tracing::info!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            permission_id,
+            response = %truncate_for_log(&result.to_string(), 360),
+            "posted BearWire permission result"
+        );
         if bear_debug_verbose() {
             eprintln!(
                 "bear-armature: posted BearWire permission result session_id={} run_id={} permission_id={} response={}",
@@ -8171,6 +8262,14 @@ async fn post_tool_result(
 ) -> Result<()> {
     if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
         let started = std::time::Instant::now();
+        tracing::info!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            tool_call_id,
+            payload_bytes = payload.to_string().len(),
+            "posting BearWire tool result"
+        );
         if bear_debug_verbose() {
             eprintln!(
                 "bear-armature: posting BearWire tool result session_id={} run_id={} tool_call_id={} payload_bytes={}",
@@ -8204,6 +8303,15 @@ async fn post_tool_result(
                 duration_ms
             );
         }
+        tracing::info!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            tool_call_id,
+            duration_ms,
+            response = %truncate_for_log(&result.to_string(), 720),
+            "posted BearWire tool result"
+        );
         log_bearwire_tool_result_response(session_id, run_id, tool_call_id, &result, duration_ms);
         return Ok(());
     }

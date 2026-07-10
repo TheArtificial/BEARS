@@ -2,7 +2,10 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use uuid::Uuid;
 
-use den_core::{client_tools::{client_tool_policy_json_for_provider, ClientToolName}, DenError};
+use den_core::{
+    client_tools::{client_tool_policy_json_for_provider, ClientToolName},
+    DenError,
+};
 
 use bearwire_protocol::wire::{
     BearWireEvent, ResourceRef, ToolCallRequestedWire, ToolCallWaitingWire, ToolPermissionWire,
@@ -12,11 +15,14 @@ use crate::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME;
 use crate::runtime::bearwire_projection::wire::tool_call_wire;
 use crate::{bearwire_events, turn_obligations, turn_runs};
 
-fn tool_call_policy(tool_name: &str) -> Option<Value> {
-    let den_owned = tool_name == RUNTIME_CHECKPOINT_TOOL_NAME
+fn den_owned_tool_call(tool_name: &str) -> bool {
+    tool_name == RUNTIME_CHECKPOINT_TOOL_NAME
         || den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
-            .is_some_and(|descriptor| descriptor.approval_policy == "never");
-    if den_owned {
+            .is_some_and(|descriptor| descriptor.execution_target == "den")
+}
+
+fn tool_call_policy(tool_name: &str) -> Option<Value> {
+    if den_owned_tool_call(tool_name) {
         return Some(json!({ "execution_target": "den" }));
     }
     ClientToolName::from_provider_alias(tool_name)
@@ -45,7 +51,7 @@ pub struct PersistToolCallWaitInput<'a> {
 pub struct PersistedToolCallWait {
     pub effective_approval_required: bool,
     pub turn_step_id: Uuid,
-    pub obligation: turn_obligations::TurnObligationRow,
+    pub obligation: Option<turn_obligations::TurnObligationRow>,
     pub event_sequence: i64,
 }
 
@@ -196,6 +202,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         );
     }
     let effective_approval_required = input.approval_required && has_permission_id;
+    let den_owned = den_owned_tool_call(input.tool_name);
     let run_state = if effective_approval_required {
         turn_runs::TurnRunState::WaitingForPermission
     } else {
@@ -211,17 +218,19 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     });
 
     let mut tx = pool.begin().await?;
-    sqlx::query(
-        r"
-        UPDATE turn_runs
-        SET state = $2, terminal_reason = NULL, updated_at = NOW()
-        WHERE run_id = $1
-        ",
-    )
-    .bind(input.run_id)
-    .bind(run_state.as_str())
-    .execute(&mut *tx)
-    .await?;
+    if !den_owned {
+        sqlx::query(
+            r"
+            UPDATE turn_runs
+            SET state = $2, terminal_reason = NULL, updated_at = NOW()
+            WHERE run_id = $1
+            ",
+        )
+        .bind(input.run_id)
+        .bind(run_state.as_str())
+        .execute(&mut *tx)
+        .await?;
+    }
 
     let step_row = if let Some(row) = sqlx::query(
         r"
@@ -257,19 +266,23 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         .await?
     };
     let turn_step_id: Uuid = step_row.get("id");
-    sqlx::query(
-        r"
-        UPDATE turn_steps
-        SET state = 'waiting_for_client'
-        WHERE id = $1
-          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
-        ",
-    )
-    .bind(turn_step_id)
-    .execute(&mut *tx)
-    .await?;
+    if !den_owned {
+        sqlx::query(
+            r"
+            UPDATE turn_steps
+            SET state = 'waiting_for_client'
+            WHERE id = $1
+              AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
+            ",
+        )
+        .bind(turn_step_id)
+        .execute(&mut *tx)
+        .await?;
+    }
 
-    let obligation_row = if effective_approval_required {
+    let obligation_row = if den_owned {
+        None
+    } else if effective_approval_required {
         let permission_id = input.approval_request_id.as_deref().unwrap_or_default();
         if let Some(row) = sqlx::query(
             r"
@@ -302,9 +315,9 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         .fetch_optional(&mut *tx)
         .await?
         {
-            row
+            Some(row)
         } else {
-            sqlx::query(
+            Some(sqlx::query(
                 r"
                 INSERT INTO turn_obligations (
                     run_id, session_id, turn_step_id, kind, expected_responder_action,
@@ -333,10 +346,10 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             .bind(permission_id)
             .bind(request_payload.clone())
             .fetch_one(&mut *tx)
-            .await?
+            .await?)
         }
     } else {
-        sqlx::query(
+        Some(sqlx::query(
             r"
             INSERT INTO turn_obligations (
                 run_id, session_id, turn_step_id, kind, expected_responder_action,
@@ -366,9 +379,9 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         .bind(input.approval_request_id.as_deref())
         .bind(request_payload.clone())
         .fetch_one(&mut *tx)
-        .await?
+        .await?)
     };
-    let obligation = obligation_from_row(obligation_row);
+    let obligation = obligation_row.map(obligation_from_row);
 
     let effective_kind = input.kind.clone().unwrap_or_else(|| "function".to_string());
     let tool_call = tool_call_wire(
@@ -379,11 +392,14 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         input.arguments,
     );
     let mut event = if effective_approval_required {
+        let obligation_ref = obligation
+            .as_ref()
+            .expect("approval-required tool call should have an obligation");
         let permission_id = input.approval_request_id.clone().unwrap_or_default();
         BearWireEvent::tool_call_waiting(ToolCallWaitingWire {
             expected_responder_action: Some("permission_decision".to_string()),
             expected_client_method: "client.permission.result".to_string(),
-            obligation_id: Some(obligation.id.to_string()),
+            obligation_id: Some(obligation_ref.id.to_string()),
             tool_call,
             permission: ToolPermissionWire {
                 id: permission_id,
@@ -393,7 +409,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             },
             approval_required: true,
             policy: tool_call_policy(input.tool_name),
-            turn_step_id: obligation.turn_step_id.map(|id| id.to_string()),
+            turn_step_id: obligation_ref.turn_step_id.map(|id| id.to_string()),
         })
     } else {
         BearWireEvent::tool_call_requested(ToolCallRequestedWire {
@@ -420,13 +436,16 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         input.tool_call_id.to_string(),
     ));
     if effective_approval_required {
-        let permission_id = obligation.permission_id.clone().unwrap_or_default();
+        let obligation_ref = obligation
+            .as_ref()
+            .expect("approval-required tool call should have an obligation");
+        let permission_id = obligation_ref.permission_id.clone().unwrap_or_default();
         event
             .resource_refs
             .push(ResourceRef::new("permission_request", permission_id));
         event.resource_refs.push(ResourceRef::new(
             "client_obligation",
-            obligation.id.to_string(),
+            obligation_ref.id.to_string(),
         ));
     }
     let persisted = bearwire_events::append_bearwire_event_on(
