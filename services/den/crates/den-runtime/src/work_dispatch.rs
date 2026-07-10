@@ -27,6 +27,7 @@ use den_sandbox::SandboxClient;
 
 const LEASE: Duration = Duration::from_secs(120);
 const ORPHAN_SWEEP_INTERVAL: Duration = Duration::from_secs(3600);
+const SURFACE_SYNC_INTERVAL: Duration = Duration::from_secs(300);
 const LOG_TAIL_BYTES: u64 = 64 * 1024;
 const DIFF_PATCH_BYTES: u64 = 256 * 1024;
 /// Margin under the container timeout so the armature self-kills (and reports)
@@ -51,6 +52,15 @@ pub async fn run_work_dispatch_worker_loop(
     let runner_id = format!("work-dispatch-{}", Uuid::new_v4().simple());
     tracing::info!(runner_id, sandbox_url, "Workers: work_dispatch loop starting");
 
+    // Seed the provider with the current managed config (surfaces + image
+    // catalog) so a fresh or wiped provider can serve provisions immediately.
+    if let Err(err) =
+        crate::surface_sync::reconcile_if_stale(&pool, &config, &client, true).await
+    {
+        tracing::warn!(error = %err, "work_dispatch: startup managed-config push failed (will retry on the sync tick)");
+    }
+    let mut last_surface_sync = std::time::Instant::now();
+
     let mut last_orphan_sweep: Option<std::time::Instant> = None;
     loop {
         tokio::select! {
@@ -63,6 +73,15 @@ pub async fn run_work_dispatch_worker_loop(
         }
         monitor_owned_runs(&pool, &config, &client, &runner_id).await;
         claim_and_provision(&pool, &config, &client, &runner_id).await;
+
+        if last_surface_sync.elapsed() >= SURFACE_SYNC_INTERVAL {
+            last_surface_sync = std::time::Instant::now();
+            if let Err(err) =
+                crate::surface_sync::reconcile_if_stale(&pool, &config, &client, false).await
+            {
+                tracing::warn!(error = %err, "work_dispatch: managed-config reconcile failed");
+            }
+        }
 
         let sweep_due = last_orphan_sweep.is_none_or(|at| at.elapsed() >= ORPHAN_SWEEP_INTERVAL);
         if sweep_due {
