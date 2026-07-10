@@ -106,7 +106,7 @@ async fn invoke_workflow_tool(
         DEN_WORK_RUN_LIST => workflow::list_work_runs(pool, context, arguments).await?,
         DEN_WORK_RUN_GET => workflow::get_work_run(pool, context, arguments).await?,
         DEN_WORK_RUN_CANCEL => workflow::cancel_work_run(pool, context, role, arguments).await?,
-        DEN_WORK_CATALOG => workflow::get_work_catalog(config, arguments).await?,
+        DEN_WORK_CATALOG => workflow::get_work_catalog(pool, config, context, arguments).await?,
         _ => {
             return Err(CustomError::NotFound(format!(
                 "unknown workflow tool: {tool_name}"

@@ -35,11 +35,11 @@ pub(super) async fn create_job(
     let job = sqlx::query_as::<_, DocketJobRow>(
         r"
         INSERT INTO bear_jobs (
-            bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+            bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
             commit_policy, work_branch, status, visibility
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
                   commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         ",
     )
@@ -48,6 +48,7 @@ pub(super) async fn create_job(
     .bind(create.created_by_role.trim())
     .bind(create.goal.trim())
     .bind(create.work_surface_ref.as_deref())
+    .bind(create.work_surface_id)
     .bind(create.commit_policy.map(|policy| policy.as_str()))
     .bind(
         create
@@ -78,7 +79,7 @@ pub(super) async fn create_job(
         UPDATE bear_jobs
         SET current_run_id = $2, updated_at = NOW()
         WHERE id = $1
-        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
                   commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         ",
     )
@@ -356,7 +357,7 @@ pub(super) async fn list_jobs(
     };
     let rows = sqlx::query_as::<_, DocketJobRow>(
         r"
-        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
                commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1
@@ -389,7 +390,7 @@ pub(super) async fn get_job(
 ) -> Result<Option<DocketJobProjection>, DenError> {
     let Some(job) = sqlx::query_as::<_, DocketJobRow>(
         r"
-        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
                commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
@@ -484,7 +485,7 @@ pub(super) async fn update_job(
     let mut tx = pool.begin().await?;
     let Some(current) = sqlx::query_as::<_, DocketJobRow>(
         r"
-        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
                commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
@@ -505,12 +506,13 @@ pub(super) async fn update_job(
         UPDATE bear_jobs
         SET goal = $3,
             work_surface_ref = $4,
-            commit_policy = $5,
-            status = $6,
-            visibility = $7,
+            work_surface_id = $5,
+            commit_policy = $6,
+            status = $7,
+            visibility = $8,
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
-        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
+        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
                   commit_policy, work_branch, status, visibility, current_run_id, created_at, updated_at
         ",
     )
@@ -528,6 +530,11 @@ pub(super) async fn update_job(
             .work_surface_ref
             .clone()
             .unwrap_or_else(|| current.work_surface_ref.clone()),
+    )
+    .bind(
+        update
+            .work_surface_id
+            .unwrap_or(current.work_surface_id),
     )
     .bind(
         update
@@ -900,6 +907,7 @@ pub(super) async fn execute_job(
                 actor_agent_id: request.actor_agent_id,
                 goal: None,
                 work_surface_ref: None,
+                work_surface_id: None,
                 commit_policy: None,
                 status: Some(DocketJobStatus::Blocked),
                 visibility: None,
@@ -981,6 +989,7 @@ pub(super) async fn execute_job(
                 actor_agent_id: request.actor_agent_id,
                 goal: None,
                 work_surface_ref: None,
+                work_surface_id: None,
                 commit_policy: None,
                 status: Some(DocketJobStatus::Completed),
                 visibility: None,
@@ -1006,6 +1015,7 @@ pub(super) async fn execute_job(
                 actor_agent_id: request.actor_agent_id,
                 goal: None,
                 work_surface_ref: None,
+                work_surface_id: None,
                 commit_policy: None,
                 status: Some(DocketJobStatus::Blocked),
                 visibility: None,

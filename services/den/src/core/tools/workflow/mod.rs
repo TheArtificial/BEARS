@@ -357,6 +357,39 @@ pub(crate) async fn update_task_list(
     .into())
 }
 
+/// Resolve a `work_surface_ref` against managed work surfaces. When the ref
+/// names one, the bear must be assigned to it, and the canonical name + id
+/// come back; names matching no managed surface pass through unchanged (the
+/// sandbox provider is the final validator for those).
+async fn resolve_surface_ref(
+    pool: &PgPool,
+    bear_id: Uuid,
+    work_surface_ref: Option<String>,
+) -> Result<(Option<String>, Option<Uuid>), CustomError> {
+    let Some(ref_name) = work_surface_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok((None, None));
+    };
+    match den_service::work_surfaces::surface_by_name(pool, ref_name).await? {
+        Some(surface) => {
+            if !den_service::work_surfaces::bear_may_use_surface(pool, bear_id, surface.id)
+                .await?
+            {
+                return Err(DenError::ValidationError(format!(
+                    "bear is not assigned to work surface '{}'; pick a surface listed by get_work_catalog or ask a surface manager to assign this bear",
+                    surface.name
+                ))
+                .into());
+            }
+            Ok((Some(surface.name), Some(surface.id)))
+        }
+        None => Ok((Some(ref_name.to_string()), None)),
+    }
+}
+
 pub(crate) async fn create_job(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -372,13 +405,16 @@ pub(crate) async fn create_job(
         );
     }
     let args: DocketJobCreateArguments = serde_json::from_value(arguments)?;
+    let (work_surface_ref, work_surface_id) =
+        resolve_surface_ref(pool, context.bear_id, args.work_surface_ref).await?;
     let job = PgDocketService::from_pool(pool)
         .create_job(DocketJobCreate {
             bear_id: context.bear_id,
             created_by_user_id: context.user_id,
             created_by_role: role.as_str().to_string(),
             goal: args.goal,
-            work_surface_ref: args.work_surface_ref,
+            work_surface_ref,
+            work_surface_id,
             commit_policy: args.commit_policy,
             work_branch: args.work_branch,
             status: args.status,
@@ -492,6 +528,15 @@ pub(crate) async fn update_job(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobUpdateArguments = serde_json::from_value(arguments)?;
+    let (work_surface_ref, work_surface_id) = if args.clear_work_surface_ref {
+        (Some(None), Some(None))
+    } else if args.work_surface_ref.is_some() {
+        let (surface_ref, surface_id) =
+            resolve_surface_ref(pool, context.bear_id, args.work_surface_ref).await?;
+        (Some(surface_ref), Some(surface_id))
+    } else {
+        (None, None)
+    };
     let job = PgDocketService::from_pool(pool)
         .update_job(DocketJobUpdate {
             bear_id: context.bear_id,
@@ -500,10 +545,8 @@ pub(crate) async fn update_job(
             actor_user_id: Some(context.user_id),
             actor_agent_id: clean_optional(&context.binding_id),
             goal: args.goal,
-            work_surface_ref: args
-                .clear_work_surface_ref
-                .then_some(None)
-                .or_else(|| args.work_surface_ref.map(Some)),
+            work_surface_ref,
+            work_surface_id,
             commit_policy: args
                 .clear_commit_policy
                 .then_some(None)
@@ -1024,10 +1067,30 @@ pub(crate) async fn cancel_work_run(
 /// Read the sandbox provider's roots + image catalog so the model can choose
 /// a root and toolchain image before dispatching.
 pub(crate) async fn get_work_catalog(
+    pool: &PgPool,
     config: &crate::config::Config,
+    context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let _ignored_arguments: Value = serde_json::from_value(arguments)?;
+
+    // Managed surfaces assigned to this bear come from Den's database and are
+    // available even when the provider is unreachable.
+    let surfaces: Vec<Value> =
+        den_service::work_surfaces::list_surfaces_for_bears(pool, &[context.bear_id])
+            .await?
+            .into_iter()
+            .map(|surface| {
+                json!({
+                    "name": surface.name,
+                    "description": surface.description,
+                    "default_ref": surface.default_ref,
+                    "default_image": surface.default_image,
+                    "assigned": true,
+                })
+            })
+            .collect();
+
     let Some(url) = config
         .sandbox_server_url
         .as_deref()
@@ -1045,10 +1108,12 @@ pub(crate) async fn get_work_catalog(
     })?;
     Ok(json!({
         "ok": true,
+        "surfaces": surfaces,
         "images": catalog.images,
         "roots": catalog.roots,
         "notes": [
-            "Pass an image name from `images` as dispatch_work's `image` to select a toolchain; omit it to use the root's default.",
+            "Prefer a `surfaces` name (managed work surfaces assigned to this bear) as create_job's work_surface_ref / dispatch_work's root.",
+            "Pass an image name from `images` as dispatch_work's `image` to select a toolchain; omit it to use the surface's default.",
             "Roots with has_upstream=true are git-backed; pushable jobs publish to their upstream work branch."
         ],
     }))

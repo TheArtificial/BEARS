@@ -113,6 +113,7 @@ async fn seed_work_job_with_policy(
             created_by_role: "chat".to_string(),
             goal: "Ship the work-run slice".to_string(),
             work_surface_ref: None,
+            work_surface_id: None,
             commit_policy: Some(commit_policy),
             work_branch: None,
             status: DocketJobStatus::Ready,
@@ -144,6 +145,75 @@ fn enqueue_for(bear_id: Uuid, task_id: Uuid, user_id: i32) -> WorkRunEnqueue {
         image_name: None,
         requested_by_user_id: Some(user_id),
     }
+}
+
+#[tokio::test]
+async fn enqueue_enforces_managed_surface_assignment() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "surface").await;
+
+    let suffix = Uuid::new_v4().simple().to_string();
+    let surface_name = format!("enq-surface-{}", &suffix[..12]);
+    let (surface_id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO work_surfaces (name, upstream_url, created_by_user_id)
+         VALUES ($1, 'https://example.invalid/repo.git', $2) RETURNING id",
+    )
+    .bind(&surface_name)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("seed surface");
+
+    // Job bound to the surface; bear not assigned -> rejected.
+    let (job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    sqlx::query("UPDATE bear_jobs SET work_surface_id = $2, work_surface_ref = $3 WHERE id = $1")
+        .bind(job_id)
+        .bind(surface_id)
+        .bind(&surface_name)
+        .execute(&pool)
+        .await
+        .expect("bind job to surface");
+    let mut enqueue = enqueue_for(bear_id, task_ids[0], user_id);
+    enqueue.root_name = None;
+    let err = enqueue_work_run(&pool, enqueue.clone())
+        .await
+        .expect_err("unassigned bear must be rejected");
+    assert!(
+        err.to_string().contains(&surface_name),
+        "names the surface: {err}"
+    );
+
+    // Explicit root override naming the managed surface is equally gated.
+    enqueue.root_name = Some(surface_name.clone());
+    let err = enqueue_work_run(&pool, enqueue.clone())
+        .await
+        .expect_err("unassigned explicit surface root must be rejected");
+    assert!(matches!(err, DenError::ValidationError(_)), "{err:?}");
+
+    // Assign the bear -> enqueue succeeds.
+    sqlx::query("INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind(bear_id)
+        .execute(&pool)
+        .await
+        .expect("assign bear");
+    let run = enqueue_work_run(&pool, enqueue)
+        .await
+        .expect("assigned bear enqueues");
+    assert_eq!(run.state, "queued");
+
+    // Free-text roots that match no managed surface still pass through
+    // (legacy path; the provider validates them at provision time).
+    let mut free_text = enqueue_for(bear_id, task_ids[1], user_id);
+    free_text.root_name = Some(format!("no-such-surface-{}", &suffix[..8]));
+    let run = enqueue_work_run(&pool, free_text)
+        .await
+        .expect("free-text root passes Den-side");
+    assert_eq!(run.state, "queued");
 }
 
 #[tokio::test]

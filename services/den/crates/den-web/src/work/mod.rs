@@ -427,6 +427,7 @@ async fn create_job(
             created_by_role: "ui".to_string(),
             goal: form.goal,
             work_surface_ref: Some(form.root.trim().to_string()).filter(|root| !root.is_empty()),
+            work_surface_id: None,
             commit_policy,
             work_branch: Some(form.work_branch.trim().to_string())
                 .filter(|branch| !branch.is_empty()),

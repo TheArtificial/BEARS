@@ -805,6 +805,9 @@ pub struct DocketJobRow {
     pub created_by_role: String,
     pub goal: String,
     pub work_surface_ref: Option<String>,
+    /// Managed work surface this job runs on (`work_surfaces.id`), when the
+    /// ref names one. `work_surface_ref` mirrors the surface name.
+    pub work_surface_id: Option<Uuid>,
     pub commit_policy: Option<String>,
     /// Upstream branch this job's work runs publish to (set on first
     /// pushable dispatch when absent; default `den/job-<short-id>`).
@@ -985,6 +988,9 @@ pub struct DocketJobCreate {
     pub created_by_role: String,
     pub goal: String,
     pub work_surface_ref: Option<String>,
+    /// Managed surface id; callers set it together with `work_surface_ref`
+    /// (= the surface name) after checking the bear's assignment.
+    pub work_surface_id: Option<Uuid>,
     pub commit_policy: Option<DocketCommitPolicy>,
     /// Explicit upstream branch for work-run publishing; generated
     /// (`den/job-<short-id>`) on first pushable dispatch when absent.
@@ -1011,6 +1017,9 @@ pub struct DocketJobUpdate {
     pub actor_agent_id: Option<String>,
     pub goal: Option<String>,
     pub work_surface_ref: Option<Option<String>>,
+    /// Set together with `work_surface_ref` when the new ref names a managed
+    /// surface; `Some(None)` clears it.
+    pub work_surface_id: Option<Option<Uuid>>,
     pub commit_policy: Option<Option<DocketCommitPolicy>>,
     pub status: Option<DocketJobStatus>,
     pub visibility: Option<TaskListVisibility>,
@@ -1847,6 +1856,7 @@ mod tests {
             created_by_role: "work".to_string(),
             goal: "Ship Docket".to_string(),
             work_surface_ref: None,
+            work_surface_id: None,
             commit_policy: Some(DocketCommitPolicy::ProposeOnly),
             work_branch: None,
             status: DocketJobStatus::Ready,
@@ -1871,6 +1881,7 @@ mod tests {
             created_by_role: "pair".to_string(),
             goal: "Ship Docket".to_string(),
             work_surface_ref: None,
+            work_surface_id: None,
             commit_policy: None,
             work_branch: None,
             status: DocketJobStatus::Ready,
@@ -1968,6 +1979,7 @@ mod tests {
                 created_by_role: "pair".to_string(),
                 goal: "Ship Docket".to_string(),
                 work_surface_ref: Some("zed".to_string()),
+                work_surface_id: None,
                 commit_policy: Some("propose_only".to_string()),
                 work_branch: None,
                 status: "running".to_string(),
@@ -2064,6 +2076,7 @@ mod tests {
                 created_by_role: "pair".to_string(),
                 goal: "Ship Docket".to_string(),
                 work_surface_ref: Some("zed".to_string()),
+                work_surface_id: None,
                 commit_policy: Some("propose_only".to_string()),
                 work_branch: None,
                 status: "running".to_string(),

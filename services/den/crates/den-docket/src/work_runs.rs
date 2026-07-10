@@ -127,10 +127,33 @@ pub struct WorkRunEnqueue {
     pub requested_by_user_id: Option<i32>,
 }
 
+async fn ensure_bear_assigned_to_surface(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    bear_id: Uuid,
+    surface_id: Uuid,
+    surface_name: &str,
+) -> Result<(), DenError> {
+    let assigned: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2)",
+    )
+    .bind(surface_id)
+    .bind(bear_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if assigned {
+        Ok(())
+    } else {
+        Err(DenError::ValidationError(format!(
+            "bear is not assigned to work surface '{surface_name}'"
+        )))
+    }
+}
+
 /// Queue a work run for a task assigned to the `work` stance. Ensures the
 /// job has an active `bear_job_runs` row (creating an `event`-triggered one
 /// when needed). The partial unique index rejects a second active run for the
-/// same task.
+/// same task. Jobs bound to a managed work surface (or explicit root
+/// overrides naming one) additionally require the bear's surface assignment.
 pub async fn enqueue_work_run(
     pool: &PgPool,
     enqueue: WorkRunEnqueue,
@@ -163,6 +186,39 @@ pub async fn enqueue_work_run(
             enqueue.task_id,
             assigned_to_role.as_deref().unwrap_or("<none>")
         )));
+    }
+
+    // Managed-surface enforcement: a job bound to a work surface (and any
+    // explicit root override naming one) requires the bear to be assigned to
+    // that surface. Free-text roots matching no managed surface pass through;
+    // the provider stays the final validator for those.
+    let job_surface: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT s.id, s.name FROM bear_jobs j
+         JOIN work_surfaces s ON s.id = j.work_surface_id
+         WHERE j.id = $1",
+    )
+    .bind(job_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((surface_id, surface_name)) = &job_surface {
+        ensure_bear_assigned_to_surface(&mut tx, enqueue.bear_id, *surface_id, surface_name)
+            .await?;
+    }
+    if let Some(root_name) = enqueue
+        .root_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let named_surface: Option<(Uuid,)> =
+            sqlx::query_as("SELECT id FROM work_surfaces WHERE name = $1")
+                .bind(root_name)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if let Some((surface_id,)) = named_surface {
+            ensure_bear_assigned_to_surface(&mut tx, enqueue.bear_id, surface_id, root_name)
+                .await?;
+        }
     }
 
     // Reuse the job's current run when it is still live; otherwise open a new
@@ -467,7 +523,7 @@ pub async fn jobs_awaiting_completion(
 ) -> Result<Vec<crate::model::DocketJobRow>, DenError> {
     let rows = sqlx::query_as::<_, crate::model::DocketJobRow>(
         "SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-                commit_policy, work_branch, status, visibility, current_run_id,
+                work_surface_id, commit_policy, work_branch, status, visibility, current_run_id,
                 created_at, updated_at
          FROM bear_jobs j
          WHERE j.bear_id = $1

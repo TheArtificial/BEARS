@@ -67,6 +67,7 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
         created_by_role: "pair".to_string(),
         goal: "Docket integration lifecycle".to_string(),
         work_surface_ref: None,
+        work_surface_id: None,
         commit_policy: Some(DocketCommitPolicy::ProposeOnly),
         work_branch: None,
         status: DocketJobStatus::Ready,
