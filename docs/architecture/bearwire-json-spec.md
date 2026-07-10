@@ -102,6 +102,14 @@ For every model-relevant tool call, Den must be able to persist and later recons
 
 A `tool_call.completed` event that only carries `{ "status": "OK" }`, or UI content such as `Tool completed`, is not sufficient as the sole durable/projection source. If a later event is intentionally sparse, the referenced tool-call record must already be persisted and queryable by `tool_call_id`; otherwise the completion event must repeat enough detail for replay.
 
+### Non-blocking structured update invariant
+
+Some model/runtime outputs update surface or control-plane state but do not provide information the model needs before continuing. These are non-blocking structured updates, not tool exchanges or client obligations.
+
+Examples include conversation-title updates, advisory in-flight task status, and durable work-progress metadata. They may be persisted and projected immediately, but they must not by themselves create open client obligations, require `client.tool.result`, or trigger model continuation. If an update changes state the model must observe before safely continuing, represent it as a blocking tool exchange or client obligation instead.
+
+Model-facing names may remain concrete and tool-like for legibility (`set_conversation_title`, `report_progress`, `update_task_status`), but descriptor metadata owns whether the runtime treats the action as blocking, non-blocking, durable, replayable, or surface-only.
+
 ### Message/reasoning separation invariant
 
 `message.delta` is assistant answer content only. Den must not project provider/model reasoning, thinking, scratchpad, checkpoint synthesis, status text, or diagnostic progress as `message.delta`.
@@ -362,6 +370,24 @@ Emitted when the conversation-scoped model selection for a BearWire/ACP session 
 
 `selection_mode = "auto"` means the session inherits Den's Bear/profile model policy for the conversation. `selected_model` may be `null` in auto mode.
 
+#### `session.metadata.updated`
+
+Non-blocking structured update for durable or replayable session metadata.
+
+```json
+{
+  "session_id": "ses_123",
+  "conversation_id": "den-conv-123",
+  "updates": {
+    "conversation_title": "Fix Coolify sandbox roots"
+  },
+  "replay_policy": "replay",
+  "model_visibility": "surface_only"
+}
+```
+
+This event is a notification, not a client wait. It does not require a tool result or model continuation. Clients may project it live and replay it into session load/history UI according to `replay_policy`.
+
 #### `session.closed`
 
 ```json
@@ -493,6 +519,23 @@ Recommended pause reasons include:
   "message": "Replay unavailable; snapshot required"
 }
 ```
+
+#### `work.progress.updated`
+
+Non-blocking structured update for durable or semi-durable work progress that should be visible to humans or future context assembly, but does not supply data needed for immediate model continuation.
+
+```json
+{
+  "run_id": "run_123",
+  "task_ref": "task_456",
+  "status": "in_progress",
+  "summary": "Found likely watchdog mismatch after local tool result.",
+  "advisory": true,
+  "replay_policy": "replay"
+}
+```
+
+Use `run.progress` for ephemeral status text; use `work.progress.updated` or a task-specific update when the state is durable enough to replay or feed later context. Terminal task state changes may still require a blocking gate, validation, or handoff.
 
 ### Message events
 

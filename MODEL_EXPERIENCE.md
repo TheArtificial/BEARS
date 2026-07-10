@@ -28,7 +28,7 @@ tools:    merged Den-hosted + client descriptors
 | **Prompt-memory blocks** | Editable standing context scoped by Bear/stance/session/work surface. Distinct from long-term memory and from transcript. | Den Postgres ([contract](docs/architecture/den-prompt-memory-block-contract.md)) |
 | **Runtime supplements** | Turn-local reminders rendered from typed runtime state: tool/memory scope for a trusted session, active Docket execution, date/budget reminders, compaction state. | Repository-owned runtime fragments |
 | **Transcript** | The model-replay projection of canonical conversation storage — a distinct projection from user-visible history. | Den conversation persistence |
-| **Tool descriptors** | The model-facing tool surface and schemas for this stance and surface. | Descriptor registry + client capabilities |
+| **Tool/action descriptors** | The model-facing action surface and schemas for this stance and surface. Descriptors also carry runtime semantics: blocking tool, client obligation, non-blocking structured update, or ephemeral progress. | Descriptor registry + client capabilities |
 
 ## What the model deliberately does not see
 
@@ -42,12 +42,29 @@ The exclusions are as designed as the inclusions:
 - **Raw provider/protocol machinery.** ACP is an edge adapter; the model should never learn ACP-specific fake capabilities as core semantics ([ADR-0043](docs/decisions/adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md)).
 - **Provider reasoning display streams.** Provider-emitted reasoning deltas may be projected live to capable clients as thought UI, but they are display telemetry: not assistant answer content, not model transcript replay, not canonical conversation history, not task state, and not memory.
 
-## The tool surface
+## The tool and action surface
 
 - **Names are stable and provider-safe.** Model-facing names are concise action names (`memory_search`, `web_fetch`, `fs_edit_file`); canonical internal names are scoped and dotted (`den.memory.search`). Legacy aliases are accepted at boundaries but never advertised ([ADR-0017](docs/decisions/adr-0017-provider-safe-tool-naming.md), [ADR-0025](docs/decisions/adr-0025-tool-naming-and-execution-strategy.md)).
-- **Execution location is descriptor-owned.** Whether a tool runs inside Den, through the armature, or in a sandbox is metadata, never inferred from the name.
-- **The surface is stable across turns.** Tools are not hidden or revealed per-turn by prompt heuristics — that teaches the model false capabilities. Availability changes only with the stance, surface, or explicit policy.
-- **Tool exchanges are replayable transcript state**: stable call id, canonical name, typed arguments, matching result or error, bounded output. What the model saw a tool do is always reconstructable next turn.
+- **Execution location is descriptor-owned.** Whether an action runs inside Den, through the armature, or in a sandbox is metadata, never inferred from the name.
+- **Runtime semantics are descriptor-owned.** The model may see simple, tool-like verbs, but Den decides whether each action is a blocking tool exchange, a client obligation, a non-blocking structured update, or ephemeral progress. The model does not need to understand implementation terms such as "non-blocking"; it needs clear actions with narrow schemas.
+- **The surface is stable across turns.** Actions are not hidden or revealed per-turn by prompt heuristics — that teaches the model false capabilities. Availability changes only with the stance, surface, or explicit policy.
+- **Blocking tool exchanges are replayable transcript state**: stable call id, canonical name, typed arguments, matching result or error, bounded output. What the model saw a data-dependent tool do is always reconstructable next turn.
+
+### Blocking tools vs structured updates
+
+The operative question for a model-facing action is: **does the model need the result before it can continue reasoning?**
+
+| Model-facing action | Runtime semantics | Model needs result before continuing? |
+|---------------------|-------------------|---------------------------------------|
+| `fs_read_text_file`, `git_diff`, `web_fetch` | Blocking tool exchange | Yes |
+| approval / local tool execution | Client obligation | Yes, as a decision/result |
+| `set_conversation_title` | Non-blocking structured session update | Usually no |
+| `report_progress`, in-flight task status | Non-blocking structured update or ephemeral progress | No |
+| task completion, handoff, resource binding | Blocking/gated update or client obligation | Often yes |
+
+Non-blocking structured updates may be persisted, replayed, and projected to UI, but they must not by themselves create open client obligations, require tool-result continuation, or cause model continuation. They are how Den records surface/control-plane facts such as conversation titles or in-flight task status without turning metadata into a model dependency ([non-blocking structured updates](docs/architecture/non-blocking-structured-updates.md)). For smaller or less reliable models, keep these actions concrete (`report_progress`, `update_task_status`) and schema-limited; Den may coalesce, rate-limit, or gate authoritative terminal state changes.
+
+Model-facing communication should use provider-native function/tool calls whenever available. If Den needs a text fallback for a weaker provider path, the fallback should be a small function-call DSL such as `update_task_status(status="in_progress", summary="Reading config")`, not raw JSON, Markdown fences, XML blocks, or protocol event names.
 
 ## Memory visibility
 
@@ -61,7 +78,8 @@ Trusted facts come from typed context, not chat text: human identity for an ACP 
 
 ## Continuation, obligations, and budgets
 
-- **Continuation is core runtime behavior.** After a tool result or an approval decision, the core turn coordinator — not an edge or the model — decides when the turn may legally continue; open client obligations block continuation ([ADR-0048](docs/decisions/adr-0048-core-turn-client-obligation-coordinator.md)).
+- **Continuation is core runtime behavior.** After a blocking tool result or an approval decision, the core turn coordinator — not an edge or the model — decides when the turn may legally continue; open client obligations block continuation ([ADR-0048](docs/decisions/adr-0048-core-turn-client-obligation-coordinator.md)).
+- **Non-blocking updates are not continuation gates.** Surface/control updates such as conversation title or advisory in-flight task status can be persisted and projected without forcing the model/tool/result continuation loop. If the model must observe the result before continuing, the action is not non-blocking and should be modeled as a blocking tool or obligation.
 - **Approvals pause, then resume, the same turn.** A denied action returns as a result the model can react to, not a broken session.
 - **Agent loop control is ledger-first.** Wall-clock, tool-class, failure, ko, checkpoint, and control-level signals govern loop health; the model receives explicit low-budget warnings and concise runtime checkpoint nudges in-band, while hidden operational outcome records preserve the truth for future replay ([ADR-0050](docs/decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)). When a checkpoint is pending, Den exposes a runtime-owned `checkpoint` tool and expects the model to report the checkpoint through that tool rather than embedding JSON in assistant text. Some exploration budgets such as `read`/`search` may be replenished after a successful meaningful mutative step so interactive turns can perform bounded post-edit verification, but global fuses such as wall-clock, total tool calls, repeated failure, and emergency hard-step limits remain turn-global. Context-window pressure is tracked against the fully assembled request before inference ([ADR-0047](docs/decisions/adr-0047-context-window-budget-and-token-estimation.md)); on provider overflow, Den compacts and retries once, preserving in-flight tool results and unresolved approvals.
 - **Work has stopping conditions.** Docket tasks carry concrete `completion_criteria`, so the model has a defined "done" rather than an open-ended loop, and completion requires a factual `result_summary` ([ADR-0034](docs/decisions/adr-0034-jobs-and-tasks-work-management.md)). How hard the loop drives vs. yields is owned by the run's governance mode, referenced against those criteria ([ADR-0039](docs/decisions/adr-0039-trust-profiles-and-governance-modes.md)).
@@ -88,7 +106,7 @@ Agent loop control and budgets: [ADR-0050](docs/decisions/adr-0050-agent-loop-co
 
 Work management: [ADR-0034](docs/decisions/adr-0034-jobs-and-tasks-work-management.md) · [ADR-0045](docs/decisions/adr-0045-session-task-lists-and-docket-checkout.md) · [DOCKET_IMPLEMENTATION_PLAN.md](docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md)
 
-Tool surface: `AGENTS.md` ("Tool Naming", "BearWire, ACP, and Tool Routing") · [ADR-0025](docs/decisions/adr-0025-tool-naming-and-execution-strategy.md) · [ADR-0017](docs/decisions/adr-0017-provider-safe-tool-naming.md)
+Tool/action surface: `AGENTS.md` ("Tool Naming", "BearWire, ACP, and Tool Routing") · [ADR-0025](docs/decisions/adr-0025-tool-naming-and-execution-strategy.md) · [ADR-0017](docs/decisions/adr-0017-provider-safe-tool-naming.md) · [non-blocking structured updates](docs/architecture/non-blocking-structured-updates.md)
 
 Memory visibility: `AGENTS.md` ("Memory and Reflection") · [ADR-0031](docs/decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md) · [ADR-0041](docs/decisions/adr-0041-archival-recall-and-async-curation.md)
 

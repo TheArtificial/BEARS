@@ -66,6 +66,12 @@ Den projects:
 - armature-local tool requests
 - tool status transitions and summaries
 
+Tool projection is for model-visible tool exchanges whose results matter to continuation or replay.
+
+### Non-blocking structured updates
+
+Den also projects surface/control-plane updates that do not block model continuation, such as conversation-title updates, advisory task progress, or other durable UI state. ACP clients may render and replay these updates, but they are not client obligations and do not require a tool-result response from the armature.
+
 ### Client obligations
 
 When Den needs an armature action, it emits a structured client obligation such as:
@@ -80,7 +86,7 @@ ACP can request cancellation of the current active turn or operation through Den
 
 ### History and replay
 
-ACP can load or replay prior conversation/tool history from Den-owned transcript state.
+ACP can load or replay prior conversation/tool history from Den-owned transcript state. Replay may also include typed non-blocking structured updates when their replay policy says they are part of session/work surface state.
 
 ## Runtime-owned types
 

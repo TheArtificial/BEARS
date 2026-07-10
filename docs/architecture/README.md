@@ -24,14 +24,15 @@ If you need one linear path that yields a complete mental model without reading 
 6. [bear stances](bear-stances.md) — stance model and stance boundaries
 7. [bear channel and ACP](bear-channel-and-acp.md) — channels, armatures, and trusted work surfaces
 8. [context compilation scenarios](context-compilation-scenarios.md) — how prompt/context assembly behaves in practice
-9. [runtime error UX policy](runtime-error-ux-policy.md) — how failures split across user copy, model continuity, and diagnostics
-10. [memory model](memory-model.md) — canonical memory model and promotion boundaries
-11. [reflection system](reflection-system.md) — how reflection, review, and curation operate
-12. [tasks and autonomy](tasks-and-autonomy.md) — Docket work, approvals, and autonomous execution boundaries
-13. [planning](planning.md) — workboard plans, plan mode, and plan artifacts
-14. [capabilities and skills](capabilities-and-skills.md) — capability model, tools, and skill governance
-15. [task schema](task-schema.md) — current task and task-result shapes
-16. [stance vocabulary](stance-vocabulary.md) — canonical naming and terminology
+9. [non-blocking structured updates](non-blocking-structured-updates.md) — model-facing actions vs blocking tools, obligations, progress, and metadata updates
+10. [runtime error UX policy](runtime-error-ux-policy.md) — how failures split across user copy, model continuity, and diagnostics
+11. [memory model](memory-model.md) — canonical memory model and promotion boundaries
+12. [reflection system](reflection-system.md) — how reflection, review, and curation operate
+13. [tasks and autonomy](tasks-and-autonomy.md) — Docket work, approvals, and autonomous execution boundaries
+14. [planning](planning.md) — workboard plans, plan mode, and plan artifacts
+15. [capabilities and skills](capabilities-and-skills.md) — capability model, tools, and skill governance
+16. [task schema](task-schema.md) — current task and task-result shapes
+17. [stance vocabulary](stance-vocabulary.md) — canonical naming and terminology
 
 ## What this section should let you answer
 
