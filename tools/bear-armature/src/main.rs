@@ -8570,6 +8570,15 @@ pub(crate) async fn handle_permission_request_event(
     let obligation_id = Some(canonical.obligation_id.trim());
     let tool_call_id = canonical.tool_call.id.trim();
     let tool_name = canonical.tool_call.name.trim();
+    if tool_request_execution_target(event) == Some("den") {
+        eprintln!(
+            "bear-armature: BearWire invariant violation: Den-owned tool arrived as client.waiting session_id={} tool_call_id={} tool_name={} permission_id={}",
+            session_id,
+            tool_call_id,
+            tool_name,
+            permission_id
+        );
+    }
     let title = canonical
         .permission
         .title
@@ -9330,11 +9339,17 @@ fn mcp_tool_title(provider_name: &str) -> String {
 
 fn tool_request_execution_target(event: &Value) -> Option<&str> {
     event
-        .get("policy")
-        .or_else(|| event.pointer("/data/policy"))
-        .or_else(|| event.pointer("/data/tool_call/policy"))
-        .and_then(|policy| policy.get("execution_target"))
+        .get("execution_target")
+        .or_else(|| event.pointer("/data/execution_target"))
         .and_then(Value::as_str)
+        .or_else(|| {
+            event
+                .get("policy")
+                .or_else(|| event.pointer("/data/policy"))
+                .or_else(|| event.pointer("/data/tool_call/policy"))
+                .and_then(|policy| policy.get("execution_target"))
+                .and_then(Value::as_str)
+        })
 }
 
 fn is_den_server_tool_request(event: &Value) -> bool {

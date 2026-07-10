@@ -151,10 +151,14 @@ fn tool_call_requested_bearwire_event_has_canonical_tool_call_payload() {
     assert!(event.data.get("tool_call_id").is_none());
     assert!(event.data.get("tool_name").is_none());
     assert!(event.data.get("arguments").is_none());
+    assert_eq!(event.data["execution_target"], "armature_local");
     assert_eq!(event.data["policy"]["execution_target"], "armature_local");
     assert_eq!(event.data["policy"]["approval_policy"], "never");
     assert_eq!(event.data["policy"]["approval_required"], false);
-    assert_eq!(event.data["policy"]["target_policy"]["kind"], "workspace_path");
+    assert_eq!(
+        event.data["policy"]["target_policy"]["kind"],
+        "workspace_path"
+    );
     assert!(event.data["tool_call"]["display"].is_object());
 }
 
@@ -178,8 +182,12 @@ fn den_owned_tool_call_requested_bearwire_event_marks_den_execution_target() {
         .iter()
         .find(|event| event.event_type == "tool_call.requested")
         .expect("tool_call.requested event");
+    assert_eq!(event.data["execution_target"], "den");
     assert_eq!(event.data["policy"]["execution_target"], "den");
-    assert_eq!(event.data["tool_call"]["arguments"]["title"], "Surface replay");
+    assert_eq!(
+        event.data["tool_call"]["arguments"]["title"],
+        "Surface replay"
+    );
 }
 
 #[test]

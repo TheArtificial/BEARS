@@ -8,7 +8,8 @@ use den_core::{
 };
 
 use bearwire_protocol::wire::{
-    BearWireEvent, ResourceRef, ToolCallRequestedWire, ToolCallWaitingWire, ToolPermissionWire,
+    BearWireEvent, ExecutionTargetWire, ResourceRef, ToolCallRequestedWire, ToolCallWaitingWire,
+    ToolPermissionWire,
 };
 
 use crate::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME;
@@ -19,6 +20,15 @@ use crate::{bearwire_events, turn_obligations, turn_runs};
 enum ToolExecutionOwner {
     Den,
     Armature,
+}
+
+impl ToolExecutionOwner {
+    const fn to_wire(self) -> ExecutionTargetWire {
+        match self {
+            Self::Den => ExecutionTargetWire::Den,
+            Self::Armature => ExecutionTargetWire::ArmatureLocal,
+        }
+    }
 }
 
 pub fn descriptor_resolution_failed(error: &DenError) -> bool {
@@ -33,7 +43,9 @@ fn resolve_tool_execution_owner(tool_name: &str) -> Result<ToolExecutionOwner, D
     if tool_name == RUNTIME_CHECKPOINT_TOOL_NAME {
         return Ok(ToolExecutionOwner::Den);
     }
-    if let Some(descriptor) = den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name) {
+    if let Some(descriptor) =
+        den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
+    {
         return match descriptor.execution_target {
             "den" => Ok(ToolExecutionOwner::Den),
             other => Err(DenError::ValidationError(format!(
@@ -436,6 +448,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
                 target: None,
             },
             approval_required: true,
+            execution_target: execution_owner.to_wire(),
             policy: Some(tool_call_policy(input.tool_name, execution_owner)),
             turn_step_id: obligation_ref.turn_step_id.map(|id| id.to_string()),
         })
@@ -444,6 +457,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             policy: Some(tool_call_policy(input.tool_name, execution_owner)),
             tool_call,
             approval_required: false,
+            execution_target: execution_owner.to_wire(),
             approval_request_id: input.approval_request_id.clone(),
             reason: input.approval_reason.clone(),
         })

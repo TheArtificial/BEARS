@@ -216,10 +216,18 @@ pub struct ToolPermissionWire {
     pub target: Option<Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionTargetWire {
+    Den,
+    ArmatureLocal,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCallRequestedWire {
     pub tool_call: ToolCallWire,
     pub approval_required: bool,
+    pub execution_target: ExecutionTargetWire,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -238,6 +246,7 @@ pub struct ToolCallWaitingWire {
     pub tool_call: ToolCallWire,
     pub permission: ToolPermissionWire,
     pub approval_required: bool,
+    pub execution_target: ExecutionTargetWire,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
