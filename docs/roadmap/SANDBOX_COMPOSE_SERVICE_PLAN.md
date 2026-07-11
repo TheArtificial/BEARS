@@ -92,13 +92,19 @@ bears-sandbox-provider:
         DOCKER_TLS_VERIFY: "1"
         DOCKER_CERT_PATH: /certs/client
         SANDBOX_WORKSPACES_DIR: /var/lib/bears/sandbox-workspaces
-        SANDBOX_ROOTS_CONFIG: /etc/bears/sandbox-roots.json
+        SANDBOX_BUILD_CONTEXT_DIR: /opt/bears/sandbox-build
         SANDBOX_SERVICE_TOKEN / SANDBOX_PORT / limits as today
     volumes:
         - bears-sandbox-certs:/certs:ro
         - bears-sandbox-workspaces:/var/lib/bears/sandbox-workspaces
-        - ${SANDBOX_ROOTS_FILE:-./data/sandbox-roots.json}:/etc/bears/sandbox-roots.json:ro
+        - ./packaging/sandbox-image:/opt/bears/sandbox-build/packaging/sandbox-image:ro
+        - ./tools/bear-armature:/opt/bears/sandbox-build/tools/bear-armature:ro
 ```
+
+(As landed. The originally planned roots-file mount + `SANDBOX_ROOTS_CONFIG`
+were retired before shipping: surfaces and the image catalog arrive via
+`PUT /sandbox/v1/managed-config` and persist on the workspaces volume; the
+read-only build-context mounts power `/admin/sandbox` one-click builds.)
 
 Plus named volumes `bears-sandbox-engine-data`, `bears-sandbox-certs`,
 `bears-sandbox-workspaces`. The old `bears-sandbox` service definition (host
@@ -128,14 +134,18 @@ not for relays/sandboxes. Fix provider-side, once, for all nested setups:
 
 ### 4. Sandbox images inside the engine — DONE
 
-The catalog images must exist in the **engine's** store. Two mechanisms:
+The catalog images must exist in the **engine's** store. Three mechanisms:
 
 - **Registry pull (production default)**: `.github/workflows/sandbox-images.yml`
   publishes `ghcr.io/<owner>/bears-sandbox{,-rust,-node,-godot}` (`latest` +
   `sha-*` tags) on pushes touching the armature or the image definitions;
-  the roots-file catalog references those and the engine pulls on first use.
-  Mount a registry `config.json` into the engine when the packages are
-  private.
+  the Den-managed catalog (`/admin/sandbox`) references those and the engine
+  pulls on first use. Mount a registry `config.json` into the engine when
+  the packages are private.
+- **`/admin/sandbox` UI (added post-plan)**: site admins trigger registry
+  pulls and one-click builds of the shipped variants directly on the engine
+  via the provider's background-operation endpoints (uses the read-only
+  build-context mounts from step 2).
 - **One-shot builder (dev / air-gapped)**: the `bears-sandbox-images`
   compose service (profile `sandbox-build`): docker CLI image, repo mounted
   read-only, `DOCKER_HOST` pointed at the engine, running

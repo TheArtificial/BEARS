@@ -16,8 +16,9 @@ encrypted credentials, `/work/surfaces` UI) and the **Den-managed image
 catalog + image-store ops UI** (`/admin/sandbox`: engine store, registry
 pulls, one-click shipped-variant builds, background operations). The
 provider is configured exclusively via `PUT /sandbox/v1/managed-config`;
-`SANDBOX_ROOTS_CONFIG` is deprecated and ignored. Items below that say
-"roots file" now mean the managed surface/catalog settings.
+`SANDBOX_ROOTS_CONFIG` is deprecated and ignored. Consequence for the items
+below: "per-root settings" now means a `work_surfaces` column threaded
+through `ManagedSurface` in the config sync, not a roots-file key.
 
 ## 1. Docker within sandboxes
 
@@ -44,7 +45,8 @@ Plan outline:
 2. Backend: provision/destroy the sidecar with the same labeling scheme
    (`den.sandbox.dind=<id>`); wire `DOCKER_HOST`; storage on a tmpfs or a
    per-run directory under the workspace parent so teardown reclaims it.
-3. Policy: dind requires explicit opt-in per root (roots-file flag) — it
+3. Policy: dind requires explicit opt-in per surface (a `work_surfaces`
+   flag synced via managed config) — it
    meaningfully raises resource cost and attack surface; capacity accounting
    should weigh dind sandboxes double.
 4. Image availability inside dind: nested pulls are blocked by the internal
@@ -91,7 +93,8 @@ needs more memory than a docs edit).
 
 Plan outline: add an optional `sandbox_policy` JSON column on `bear_jobs`
 (timeout, memory/cpus/pids, network mode, egress allowlist); validate
-against per-root ceilings in the roots file (the host stays authoritative);
+against per-surface ceilings on the managed work surface (the provider
+stays authoritative);
 worker merges job policy into `CreateSandboxRequest`; expose in `create_job`
 / `/work/new`; extend the relay to N forward targets for a small allowlist
 (one socat per target, or one relay with multiple listeners).
@@ -152,7 +155,8 @@ test — most of the timeout budget gone before any work happens.
 
 Plan outline: per-root persistent cache directories under
 `SANDBOX_WORKSPACES_DIR/caches/<root>/` (or a dedicated volume), declared
-per root in the roots file (`"caches": ["cargo", "npm"]`) and bind-mounted
+per managed surface (a `caches` column, e.g. `["cargo", "npm"]`, carried on
+`ManagedSurface` in the config sync) and bind-mounted
 into sandboxes at conventional paths (`/home/bear/.cargo/registry`,
 `CARGO_TARGET_DIR=/cache/target`, `~/.npm`, …) via a small cache→mount table
 in the backend. Trade-off to document: runs within one root share cache
@@ -250,8 +254,10 @@ time in `/work` and `get_job`. **Effort**: ~1–2 days.
 
 ## 14. Smaller items
 
-- **Catalog-declared image digests** (`image: "…@sha256:…"` encouraged in
-  docs; optionally verify at provision) — supply-chain hygiene, ~½ day.
+- **Catalog-declared image digests**: the catalog is now
+  `sandbox_catalog_images` rows edited at `/admin/sandbox`; encourage
+  `…@sha256:…` in `image_ref` (optionally verify at provision) —
+  supply-chain hygiene, ~½ day.
 - **Workspace cache reuse** for big repos: keyed by root+ref, clone from a
   local cache instead of the pristine mirror every run (git alternates),
   ~1 day; measure first — local clones are already cheap via hardlinks.

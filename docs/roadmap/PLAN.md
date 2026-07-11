@@ -1,6 +1,6 @@
 # BEARS roadmap
 
-> **Status (2026-06): the in-process Den runtime is the live stack.** BEARS runs a single **in-process Den agent runtime** for all trust stances (`chat`, `pair`, `curate`, `work`, `watch`). **Letta, Letta Code, Codepool, and the git MemFS sidecar are removed** from compose and the execution path. Bear memory/cognition is canonical in **per-Bear SQLite** ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); tasks/jobs target **Docket**-canonical Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). There are no Letta-runtime Bears in production, so legacy Letta/MemFS backfill is not an active roadmap item. Canonical architecture: [`../architecture/den-runtime.md`](../architecture/den-runtime.md). Canonical runtime plan: [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) (**Phases 1–6 largely landed; Phase 7 `work` sandbox open**). **[§1](#historical-§1-system-architecture-letta-era)–[Summary](#historical-summary-letta-era)** below are **Letta-era historical reference** only.
+> **Status (2026-06): the in-process Den runtime is the live stack.** BEARS runs a single **in-process Den agent runtime** for all trust stances (`chat`, `pair`, `curate`, `work`, `watch`). **Letta, Letta Code, Codepool, and the git MemFS sidecar are removed** from compose and the execution path. Bear memory/cognition is canonical in **per-Bear SQLite** ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); tasks/jobs target **Docket**-canonical Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)). There are no Letta-runtime Bears in production, so legacy Letta/MemFS backfill is not an active roadmap item. Canonical architecture: [`../architecture/den-runtime.md`](../architecture/den-runtime.md). Canonical runtime plan: [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) (**Phases 1–6 largely landed; Phase 7 `work` sandbox implemented 2026-07 — follow-ups in [`SANDBOX_IMPROVEMENTS_ROADMAP.md`](SANDBOX_IMPROVEMENTS_ROADMAP.md)**). **[§1](#historical-§1-system-architecture-letta-era)–[Summary](#historical-summary-letta-era)** below are **Letta-era historical reference** only.
 
 High-level planning hub for BEARS. This file answers what works today, what is next, and which detailed plans are canonical — without duplicating every contract.
 
@@ -30,7 +30,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **Reflection / curation** | `memory_curate` + `recall_index` workers; pair→curate enqueue on ACP close; harvest/consolidation open | [`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md), [`MEMORY_CURATION_PLAN.md`](MEMORY_CURATION_PLAN.md), [`REFLECTION_SYSTEM_PLAN.md`](REFLECTION_SYSTEM_PLAN.md) |
 | **Personalization** | Planned: replace blanket anti-user-memory guidance with safe proactive human understanding; `curate` stance promotes safe memories and quarantines risks | [`PERSONALIZATION_PLAN.md`](PERSONALIZATION_PLAN.md) |
 | **Docket / tasks** | **Relational Docket is canonical**: new jobs/tasks use ADR-0034 Postgres tables; Docket-backed task-list projections and minimal `TaskDispatcher` seam exist; legacy `bear_work_plans` service/DB/model shims and old task-list provider aliases are retired from active runtime paths. Historical `bear_work_plans` references remain only in migrations/archive/docs. | [`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md), [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) |
-| **`work` sandbox** | **Not started** — blocks real coding harness | [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) Phase 7, [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) |
+| **`work` sandbox** | **Implemented (2026-07)**: native RUN_SANDBOX provider + dind engine in the default compose stack; Docket-dispatched container runs with publish-to-upstream and restricted egress; Den-managed work surfaces + image catalog (`/work/surfaces`, `/admin/sandbox`) | [work-sandbox internals](../guides/work-sandbox-internals.md), [`SANDBOX_IMPROVEMENTS_ROADMAP.md`](SANDBOX_IMPROVEMENTS_ROADMAP.md), [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) |
 | **Context compaction** | Designed; end-to-end runtime **not finished** | [`DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md`](DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN.md), [ADR-0032](../decisions/adr-0032-den-context-compaction-architecture.md) |
 | **Context budget tracking** | Planned: final-request token estimation against resolved model limits, with component attribution and runtime diagnostics | [`CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md`](CONTEXT_WINDOW_BUDGET_IMPLEMENTATION_PLAN.md), [ADR-0047](../decisions/adr-0047-context-window-budget-and-token-estimation.md) |
 | **BearWire armature wire** | **Phases 0–3.2 complete**; BearWire HTTP edge + `bear-armature` client implemented; Phase 4 deprecates adapter-SSE/legacy `/acp/**` after smoke/parity | [`BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md`](BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md), [`BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md`](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md) |
@@ -46,12 +46,13 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 - **Memory:** Per-Bear SQLite `memory_records` with logical paths; `core/` promotion via `curate`; key memory projection at turn start.
 - **Web chat:** Den-hosted Deep Chat; canonical conversation persistence; native tool loop for server-side Den tools.
 - **ACP/BearWire pair:** Native turn execution over BearWire with `bear-armature` owning local filesystem/git/terminal/MCP execution; legacy ACP HTTP/SSE is compatibility only.
+- **Work:** Docket jobs dispatch to container sandboxes (RUN_SANDBOX provider + dind engine, in the default compose stack); headless armatures run the native loop over BearWire; successful runs publish to `den/job-*` upstream branches; surfaces and the image catalog are Den-managed (`/work/surfaces`, `/admin/sandbox`).
 - **Recall (optional):** Passage indexer + `recall_index` worker; turn-start `## Recalled memory` when Qdrant + embeddings configured.
 - **Build:** Crate split is complete; Cargo workspace supports per-crate `cargo test -p …`; CI clippy `-D warnings` with pedantic/nursery gated.
 
 ### What is next (priority order)
 
-1. **`work` sandbox (native Phase 7)** — `bears-sandbox-runner`, `SandboxBackend`, coding tools, Docket-driven dispatch using the landed `TaskDispatcher` seam. Unblocks the `work` stance.
+1. **`work` sandbox follow-ups** — the sandbox system itself is landed; next are per-surface build caches and command-criteria verification at harvest ([`SANDBOX_IMPROVEMENTS_ROADMAP.md`](SANDBOX_IMPROVEMENTS_ROADMAP.md) items 7–8), then the compose runtime verification walk ([`SANDBOX_COMPOSE_SERVICE_PLAN.md`](SANDBOX_COMPOSE_SERVICE_PLAN.md) step 6).
 2. **ADR-0041 harvest + consolidation** — consolidation policy/supersession usage, freshness trend, and `archive_harvest` lane ([`MEMORY_AUTOMATION_ROADMAP.md`](MEMORY_AUTOMATION_ROADMAP.md) P2.5); core schema pieces are mostly landed.
 3. **Context compaction** — Den-owned transcript compaction per ADR-0032.
 4. **BearWire Phase 4** — finish Zed/ACP smoke and parity, then deprecate adapter-SSE and legacy `/acp/**` hot path.
@@ -75,7 +76,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 
 See [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md):
 
-- Phase 7: sandbox runner, `work` harness, chat→work delegation.
+- Phase 7 (`work` sandbox) is implemented — provider/engine services, Docket-driven dispatch, `dispatch_work` delegation from chat/pair; remaining work is tracked in [`SANDBOX_IMPROVEMENTS_ROADMAP.md`](SANDBOX_IMPROVEMENTS_ROADMAP.md).
 - Residual Letta/MemFS naming cleanup remains regular cleanup when touching affected schema/UI surfaces; it is not a migration milestone.
 
 ### 2. Complete the memory/recall stack
@@ -89,7 +90,7 @@ See [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md):
 
 ### 3. Finish Docket-driven execution UX
 
-[`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) is landed through relational Docket, task-list projection/sync, and legacy compatibility retirement. Remaining Docket-related work is Phase 5 runtime/operator UX: dispatching Docket work through the `work` sandbox, surfacing current Docket job/task state clearly, and keeping session task lists as explicit working projections. Product/UX details live in [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md).
+[`DOCKET_IMPLEMENTATION_PLAN.md`](DOCKET_IMPLEMENTATION_PLAN.md) is landed through relational Docket, task-list projection/sync, and legacy compatibility retirement. Dispatching Docket work through the `work` sandbox is landed (dispatch worker + `/work` pages + `dispatch_work` tool); remaining Docket-related work is Phase 5 runtime/operator UX: surfacing current Docket job/task state clearly and keeping session task lists as explicit working projections. Product/UX details live in [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md).
 
 ### 4. Harden BearWire `pair` and web chat
 
@@ -105,7 +106,7 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 ### Canonical spine (read these first)
 
 - [Den runtime architecture](../architecture/den-runtime.md)
-- [Den runtime plan](DEN_RUNTIME_PLAN.md) — Phase 7 work sandbox remains active
+- [Den runtime plan](DEN_RUNTIME_PLAN.md) — Phase 7 work sandbox landed; follow-ups in [`SANDBOX_IMPROVEMENTS_ROADMAP.md`](SANDBOX_IMPROVEMENTS_ROADMAP.md)
 - [Derived recall index](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) — Qdrant + hybrid search
 - [Bear entity layer](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) — entities + relations
 - [Memory automation roadmap](MEMORY_AUTOMATION_ROADMAP.md) — pair→curate→work pipeline
@@ -178,7 +179,7 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 - **Users ↔ bears** — many-to-many membership; Den enforces on every chat/ACP call.
 - **Den** — control plane + gateway: auth, bear lifecycle, native runtime, reflection workers, operator UI, `/v1` chat, ACP surface. **Inference:** Den-native loop → **Bifrost** (`LLM_API_URL`).
 - **Canonical memory** — per-Bear SQLite (`memory_records`, proposals, promotions). **Derived recall** — Qdrant index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)), not source of truth.
-- **Docket** — canonical jobs/tasks in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)); session task lists are explicit projections/checkouts ([ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md)); legacy `bear_work_plans` compatibility is retired from active runtime paths; `work` execution still needs Phase 7 sandbox.
+- **Docket** — canonical jobs/tasks in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)); session task lists are explicit projections/checkouts ([ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md)); legacy `bear_work_plans` compatibility is retired from active runtime paths; `work` execution runs in the native sandbox system ([internals](../guides/work-sandbox-internals.md)).
 - **`bear_id`** — public API identifier. Legacy `letta_agent_id` columns are deprecated/transitional.
 
 ---

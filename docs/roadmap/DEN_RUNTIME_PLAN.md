@@ -85,6 +85,28 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 
 ### Phase 7 — Native coding harness (replace Codepool + Letta Code) for `work`
 
+> **Status (2026-07): implemented**, with a different shape than sketched
+> below (the bullets are the original design, kept for the record).
+> Canonical internals: [work-sandbox internals](../guides/work-sandbox-internals.md);
+> remaining items: [`SANDBOX_IMPROVEMENTS_ROADMAP.md`](SANDBOX_IMPROVEMENTS_ROADMAP.md).
+> Design → reality:
+>
+> - `bears-sandbox-runner` → the **RUN_SANDBOX provider** (`den-sandbox`
+>   crate) shipped as `bears-sandbox-provider` + `bears-sandbox-engine`
+>   (dind) in the **default** compose stack
+>   ([`SANDBOX_COMPOSE_SERVICE_PLAN.md`](SANDBOX_COMPOSE_SERVICE_PLAN.md)).
+> - Runner-RPC coding tools → a headless **`bear-armature`** inside each
+>   sandbox drives the native loop over BearWire; egress is restricted to
+>   the Den callback by default.
+> - Durable workspace records → durable **run** rows (`bear_work_runs`);
+>   sandboxes are ephemeral and successful runs **publish to upstream
+>   `den/job-*` branches** instead of archiving workspaces.
+> - Den-managed remote origins → **managed work surfaces**
+>   (`/work/surfaces`: user-owned, bear-assigned, encrypted credentials)
+>   plus the admin-managed image catalog (`/admin/sandbox`).
+> - Still open from this sketch: a work canvas beyond the `/work` pages,
+>   first-class workflow actions, strategy policy, and PR/forge handoff.
+
 **Design:** [ADR-0037](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md).
 
 - Add **`bears-sandbox-runner`** compose service: **`docker_workspace`** backend only (v1); paired **workspace + egress gateway**; **git/gh command bridge** at gateway (defense-in-depth; credential boundary is primary); Den owns policy, runner owns materialized workspaces; **telemetry** to gate warm pool and second backend choice.
@@ -117,7 +139,7 @@ Foundational; parallelizable with Phase 1. Replaces the git MemFS sidecar so the
 - **Recall index (parallel track):** [Derived recall index plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) — Qdrant + `bears-embed-v1`; not blocking Phase 4 ACP wiring but required for Letta archival parity at scale.
 - **Memory model shift (Phase 2):** moving from a markdown file tree to append-only SQLite records is the biggest conceptual change. The logical-path projection must preserve the stable-anchor UX prompts depend on; no production MemFS backfill is required.
 - **Cross-store discipline:** Den Postgres (control plane) and per-Bear SQLite (cognition) must not grow a sync seam; control plane references cognition by id only.
-- **Harness is the frontier (Phase 7):** sandbox isolation and lifecycle are a sub-project; keep `pair` (Phases 1-5) shippable and Letta-free independently of it. Phase 7 is not only container isolation: durable workspace identity, status/canvas UX, output shaping, recap/archive/recovery, and workflow actions are in-scope from v1.
+- **Harness (Phase 7):** landed as the RUN_SANDBOX system without blocking `pair` (Phases 1–5), as intended. Container isolation, run lifecycle, and publish shipped; status/canvas UX beyond `/work`, output shaping, and workflow actions remain follow-ups ([`SANDBOX_IMPROVEMENTS_ROADMAP.md`](SANDBOX_IMPROVEMENTS_ROADMAP.md)).
 - Letta runtime and live MemFS are no longer supported runtime paths.
 
 ## Non-goals
