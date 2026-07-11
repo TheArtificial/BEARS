@@ -61,6 +61,16 @@ struct OverviewView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            GroupBox("Operator Console") {
+                VStack(alignment: .leading, spacing: 12) {
+                    operatorConsoleSection("Needs Attention", cards: viewModel.operatorConsoleSnapshot.needsAttention)
+                    operatorConsoleSection("Active Work", cards: viewModel.operatorConsoleSnapshot.activeWork)
+                    operatorConsoleSection("Recent Runs", cards: viewModel.operatorConsoleSnapshot.recentRuns)
+                    operatorConsoleSection("Capabilities", cards: viewModel.operatorConsoleSnapshot.capabilities)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             HStack {
                 Button("Refresh") {
                     viewModel.refreshManifestAndState()
@@ -100,6 +110,55 @@ struct OverviewView: View {
             }
             .buttonStyle(.plain)
             .help(path + "\n\nClick to copy managed armature path to clipboard.")
+        }
+    }
+
+    @ViewBuilder
+    private func operatorConsoleSection(_ title: String, cards: [OperatorConsoleCard]) -> some View {
+        if !cards.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.headline)
+                ForEach(OperatorConsoleOrdering.sortedForOperator(cards)) { card in
+                    operatorConsoleCard(card)
+                }
+            }
+        }
+    }
+
+    private func operatorConsoleCard(_ card: OperatorConsoleCard) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(card.title)
+                    .font(.subheadline.weight(.semibold))
+                Text(card.status)
+                    .font(.caption)
+                    .foregroundStyle(color(for: card.severity))
+            }
+            Text(card.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if !card.metadata.isEmpty {
+                Text(card.metadata.joined(separator: " • "))
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func color(for severity: OperatorConsoleSeverity) -> Color {
+        switch severity {
+        case .attention:
+            return .red
+        case .active:
+            return .blue
+        case .neutral, .unavailable:
+            return .secondary
+        case .success:
+            return .green
         }
     }
 
