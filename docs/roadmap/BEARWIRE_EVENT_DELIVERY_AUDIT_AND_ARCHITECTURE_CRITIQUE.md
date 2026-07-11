@@ -27,7 +27,7 @@ Armature:
 
 The armature keeps polling the correct session (it receives the eventual `run.failed`),
 yet event `N` is never delivered. A recovery guardrail in
-`tools/bear-armature/src/bearwire.rs` reconstructs safe read-only tool requests from
+`tools/bear-armature/src/bearwire.rs` reconstructs eligible client obligations from
 `run.state`; it is a mitigation, not the root fix.
 
 ## Root causes, ranked
@@ -213,7 +213,7 @@ Exit criteria:
 
 ### Phase 2 — Obligations as authoritative actionable work
 
-Status: partially implemented for safe, approval-free, armature-local read-only tools. Bear-armature now polls `run.state` as a regular obligation sync loop and services eligible open obligations even if their projection event was missed. Mutating, approval-required, Den-owned, and human-input obligations remain fail-closed until their idempotency and safety policy is explicit.
+Status: expanded. Bear-armature now polls `run.state` as a regular obligation sync loop and services eligible open obligations even if their projection event was missed. Approval-free tool-result obligations are auto-executed only when Den-persisted policy metadata marks them armature-local, approval-free, and `read_only`; older policy-less read-only file obligations retain a compatibility fallback. Approval-required armature-local obligations reconstruct `client.waiting` and go through the existing permission UX/cache path rather than bypassing approval gating. Den-owned and human-input obligations remain fail-closed here.
 
 Promote `run.state` / open-obligation polling from recovery guardrail to a first-class
 armature work loop.
@@ -229,10 +229,11 @@ Rules:
 
 Exit criteria:
 
-- Safe read-only path implemented: missing an event should not cause an armature-local read-only tool obligation to time out.
-- Mutating, approval-required, Den-owned, and human-input obligations fail closed unless their idempotency/safety policy is explicit.
-- Normal event-driven and `run.state`-serviced tool execution share the same atomic dedup path by `session_id` + `tool_call_id`.
-- Remaining: promote obligation identity/idempotency policy into descriptors before expanding beyond the read-only allowlist.
+- Implemented: missing an event should not cause an eligible armature-local approval-free read-only tool obligation to time out.
+- Implemented: approval-required armature-local obligations are actionable from `run.state` through normal permission handling.
+- Implemented: normal event-driven and `run.state`-serviced tool execution share the same atomic dedup path by `session_id` + `tool_call_id`.
+- Den-owned and human-input obligations fail closed in the armature obligation sync path.
+- Remaining: move all obligation identity/idempotency semantics into first-class descriptor fields rather than policy JSON conventions.
 
 ### Phase 3 — Run lifecycle ownership
 

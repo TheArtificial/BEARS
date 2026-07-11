@@ -23,7 +23,7 @@ const BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS: usize = 24 * 1024;
 const BEARWIRE_OBLIGATION_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 const BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(5);
 
-fn recoverable_read_only_tool(tool_name: &str) -> bool {
+fn legacy_approval_free_read_only_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
         "fs_read_text_file" | "fs_list_directory" | "fs_find_paths" | "fs_search_files" | "fs_stat"
@@ -867,10 +867,73 @@ fn run_state_obligation_summary(state: &Value) -> Option<String> {
     ))
 }
 
-fn actionable_read_only_tool_request_event_from_obligation(
+fn obligation_request_payload<'a>(obligation: &'a Value) -> &'a Value {
+    obligation
+        .get("request_payload")
+        .filter(|value| value.is_object())
+        .unwrap_or(obligation)
+}
+
+fn obligation_id(obligation: &Value) -> Option<&str> {
+    obligation
+        .get("id")
+        .or_else(|| obligation.get("obligation_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn obligation_open_for_client(obligation: &Value) -> bool {
+    matches!(
+        obligation
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        "requested" | "waiting_for_client"
+    )
+}
+
+fn obligation_execution_target_is_den(request: &Value, obligation: &Value) -> bool {
+    request
+        .get("execution_target")
+        .or_else(|| obligation.get("execution_target"))
+        .and_then(Value::as_str)
+        .is_some_and(|target| target == "den")
+}
+
+fn policy_allows_approval_free_obligation_service(request: &Value, tool_name: &str) -> bool {
+    let Some(policy) = request.get("policy").filter(|value| value.is_object()) else {
+        return legacy_approval_free_read_only_tool(tool_name);
+    };
+    policy
+        .get("execution_target")
+        .and_then(Value::as_str)
+        .is_some_and(|target| target == "armature_local")
+        && policy
+            .get("approval_required")
+            .and_then(Value::as_bool)
+            .is_some_and(|required| !required)
+        && policy
+            .get("approval_policy")
+            .and_then(Value::as_str)
+            .is_some_and(|policy| policy == "never")
+        && policy
+            .get("risk")
+            .and_then(Value::as_str)
+            .is_some_and(|risk| risk == "read_only")
+}
+
+fn actionable_tool_request_event_from_obligation(
     run_id: &str,
     obligation: &Value,
 ) -> Option<Value> {
+    if !obligation_open_for_client(obligation) {
+        return None;
+    }
+    let request = obligation_request_payload(obligation);
+    if obligation_execution_target_is_den(request, obligation) {
+        return None;
+    }
     let expected = obligation
         .get("expected_responder_action")
         .and_then(Value::as_str)
@@ -879,44 +942,12 @@ fn actionable_read_only_tool_request_event_from_obligation(
         .get("kind")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if expected != "tool_result" && kind != "tool_result" {
-        return None;
-    }
-    let state = obligation
-        .get("state")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !matches!(state, "requested" | "waiting_for_client") {
-        return None;
-    }
-    let request = obligation
-        .get("request_payload")
-        .filter(|value| value.is_object())
-        .unwrap_or(obligation);
-    if request
-        .get("approval_required")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return None;
-    }
-    let execution_target = request
-        .get("execution_target")
-        .or_else(|| obligation.get("execution_target"))
-        .and_then(Value::as_str)
-        .unwrap_or("armature_local");
-    if execution_target == "den" {
-        return None;
-    }
     let tool_name = request
         .get("tool_name")
         .or_else(|| obligation.get("tool_name"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
-    if !recoverable_read_only_tool(tool_name) {
-        return None;
-    }
     let tool_call_id = request
         .get("tool_call_id")
         .or_else(|| obligation.get("tool_call_id"))
@@ -927,6 +958,54 @@ fn actionable_read_only_tool_request_event_from_obligation(
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+
+    if expected == "permission_decision" || kind == "permission_decision" {
+        let permission_id = request
+            .get("approval_request_id")
+            .or_else(|| obligation.get("permission_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        let obligation_id = obligation_id(obligation)?;
+        return Some(json!({
+            "type": "client.waiting",
+            "run_id": run_id,
+            "data": {
+                "expected_responder_action": "permission_decision",
+                "expected_client_method": "client.permission.result",
+                "obligation_id": obligation_id,
+                "tool_call": {
+                    "id": tool_call_id,
+                    "name": tool_name,
+                    "kind": "function",
+                    "arguments": arguments.clone(),
+                },
+                "permission": {
+                    "id": permission_id,
+                    "reason": request.get("approval_reason").cloned().unwrap_or_else(|| json!("BEARS requests permission.")),
+                    "target": arguments,
+                },
+                "approval_required": true,
+                "execution_target": "armature_local",
+                "policy": request.get("policy").cloned().unwrap_or(Value::Null),
+                "serviced_from_run_state": true,
+            }
+        }));
+    }
+
+    if expected != "tool_result" && kind != "tool_result" {
+        return None;
+    }
+    if request
+        .get("approval_required")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    if !policy_allows_approval_free_obligation_service(request, tool_name) {
+        return None;
+    }
     Some(json!({
         "type": "tool_call.requested",
         "run_id": run_id,
@@ -939,6 +1018,7 @@ fn actionable_read_only_tool_request_event_from_obligation(
             },
             "approval_required": false,
             "execution_target": "armature_local",
+            "policy": request.get("policy").cloned().unwrap_or(Value::Null),
             "serviced_from_run_state": true,
         }
     }))
@@ -956,9 +1036,7 @@ async fn service_run_state_tool_obligations(
         return;
     };
     for obligation in open {
-        let Some(event) =
-            actionable_read_only_tool_request_event_from_obligation(run_id, obligation)
-        else {
+        let Some(event) = actionable_tool_request_event_from_obligation(run_id, obligation) else {
             continue;
         };
         let tool_call_id = event
@@ -983,15 +1061,44 @@ async fn service_run_state_tool_obligations(
             run_id,
             tool_call_id,
             tool_name,
-            "servicing read-only local tool obligation from BearWire run.state"
+            event_type = event.get("type").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+            "servicing local client obligation from BearWire run.state"
         );
-        spawn_tool_request_task(
-            config.clone(),
-            shared_state.clone(),
-            session_id.to_string(),
-            event,
-            turn_token,
-        );
+        if event.get("type").and_then(Value::as_str) == Some("client.waiting") {
+            let mut task_state = AdapterState {
+                client_capabilities: shared_state.client_capabilities.lock().await.clone(),
+                session_contexts: shared_state.session_contexts.lock().await.clone(),
+                transport: shared_state.transport.clone(),
+            };
+            if let Err(err) = handle_permission_request_event(
+                config,
+                &mut task_state,
+                shared_state,
+                &shared_state.mcp_registry,
+                session_id,
+                &event,
+            )
+            .await
+            {
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    tool_call_id,
+                    tool_name,
+                    error = %err,
+                    "failed to service permission obligation from BearWire run.state"
+                );
+            }
+        } else {
+            spawn_tool_request_task(
+                config.clone(),
+                shared_state.clone(),
+                session_id.to_string(),
+                event,
+                turn_token,
+            );
+        }
     }
 }
 
@@ -1965,7 +2072,7 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_actionable_read_only_tool_request_from_run_state() {
+    fn reconstructs_approval_free_policy_allowed_tool_request_from_run_state() {
         let obligation = json!({
             "id": "obl-1",
             "kind": "tool_result",
@@ -1977,12 +2084,18 @@ mod tests {
                 "tool_name": "fs_search_files",
                 "arguments": { "path": "docs", "query": "BearWire", "limit": 100 },
                 "approval_required": false,
-                "execution_target": "armature_local"
+                "execution_target": "armature_local",
+                "policy": {
+                    "execution_target": "armature_local",
+                    "approval_required": false,
+                    "approval_policy": "never",
+                    "risk": "read_only"
+                }
             }
         });
 
-        let event = actionable_read_only_tool_request_event_from_obligation("run-1", &obligation)
-            .expect("actionable read-only tool");
+        let event = actionable_tool_request_event_from_obligation("run-1", &obligation)
+            .expect("actionable approval-free tool");
 
         assert_eq!(event["type"], "tool_call.requested");
         assert_eq!(event["run_id"], "run-1");
@@ -1993,7 +2106,48 @@ mod tests {
     }
 
     #[test]
-    fn does_not_service_mutating_or_approval_obligations_from_run_state() {
+    fn reconstructs_permission_wait_from_run_state() {
+        let obligation = json!({
+            "id": "obl-perm",
+            "kind": "permission_decision",
+            "expected_responder_action": "permission_decision",
+            "state": "waiting_for_client",
+            "tool_call_id": "call-edit",
+            "permission_id": "perm-edit",
+            "request_payload": {
+                "tool_call_id": "call-edit",
+                "tool_name": "fs_edit_file",
+                "arguments": { "path": "README.md", "old_text": "a", "new_text": "b" },
+                "approval_required": true,
+                "approval_request_id": "perm-edit",
+                "approval_reason": "Edit README.md",
+                "execution_target": "armature_local",
+                "policy": {
+                    "execution_target": "armature_local",
+                    "approval_required": true,
+                    "approval_policy": "required",
+                    "risk": "writes_workspace"
+                }
+            }
+        });
+
+        let event = actionable_tool_request_event_from_obligation("run-1", &obligation)
+            .expect("actionable permission wait");
+
+        assert_eq!(event["type"], "client.waiting");
+        assert_eq!(event["run_id"], "run-1");
+        assert_eq!(
+            event["data"]["expected_client_method"],
+            "client.permission.result"
+        );
+        assert_eq!(event["data"]["obligation_id"], "obl-perm");
+        assert_eq!(event["data"]["tool_call"]["id"], "call-edit");
+        assert_eq!(event["data"]["permission"]["id"], "perm-edit");
+        assert_eq!(event["data"]["serviced_from_run_state"], true);
+    }
+
+    #[test]
+    fn does_not_auto_execute_mutating_or_approval_required_tool_result_obligations() {
         let mutating = json!({
             "kind": "tool_result",
             "expected_responder_action": "tool_result",
@@ -2006,9 +2160,7 @@ mod tests {
                 "execution_target": "armature_local"
             }
         });
-        assert!(
-            actionable_read_only_tool_request_event_from_obligation("run-1", &mutating).is_none()
-        );
+        assert!(actionable_tool_request_event_from_obligation("run-1", &mutating).is_none());
 
         let approval = json!({
             "kind": "tool_result",
@@ -2022,9 +2174,7 @@ mod tests {
                 "execution_target": "armature_local"
             }
         });
-        assert!(
-            actionable_read_only_tool_request_event_from_obligation("run-1", &approval).is_none()
-        );
+        assert!(actionable_tool_request_event_from_obligation("run-1", &approval).is_none());
     }
 
     #[test]
@@ -2041,9 +2191,7 @@ mod tests {
                 "execution_target": "den"
             }
         });
-        assert!(
-            actionable_read_only_tool_request_event_from_obligation("run-1", &obligation).is_none()
-        );
+        assert!(actionable_tool_request_event_from_obligation("run-1", &obligation).is_none());
     }
 
     #[test]

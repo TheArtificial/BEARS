@@ -252,6 +252,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         ToolExecutionOwner::Den => "den",
         ToolExecutionOwner::Armature => "armature_local",
     };
+    let policy = tool_call_policy(input.tool_name, execution_owner);
     let request_payload = json!({
         "tool_call_id": input.tool_call_id,
         "tool_name": input.tool_name,
@@ -259,6 +260,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         "approval_required": effective_approval_required,
         "approval_request_id": input.approval_request_id,
         "execution_target": execution_target,
+        "policy": policy,
         "request_id": input.request_id,
     });
 
@@ -457,12 +459,12 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             },
             approval_required: true,
             execution_target: execution_owner.to_wire(),
-            policy: Some(tool_call_policy(input.tool_name, execution_owner)),
+            policy: request_payload.get("policy").cloned(),
             turn_step_id: obligation_ref.turn_step_id.map(|id| id.to_string()),
         })
     } else {
         BearWireEvent::tool_call_requested(ToolCallRequestedWire {
-            policy: Some(tool_call_policy(input.tool_name, execution_owner)),
+            policy: request_payload.get("policy").cloned(),
             tool_call,
             approval_required: false,
             execution_target: execution_owner.to_wire(),

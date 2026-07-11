@@ -255,6 +255,10 @@ async fn armature_owned_tool_call_creates_client_obligation(pool: sqlx::PgPool) 
     assert_eq!(obligation.kind, "tool_result");
     assert_eq!(obligation.expected_responder_action, "tool_result");
     assert_eq!(obligation.tool_call_id.as_deref(), Some("call-list"));
+    assert_eq!(obligation.request_payload["execution_target"], "armature_local");
+    assert_eq!(obligation.request_payload["policy"]["execution_target"], "armature_local");
+    assert_eq!(obligation.request_payload["policy"]["approval_policy"], "never");
+    assert_eq!(obligation.request_payload["policy"]["risk"], "read_only");
 
     let run = turn_runs::get_run(&pool, &run_id)
         .await
