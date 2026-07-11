@@ -232,7 +232,7 @@ Turn closed session archives into durable memory candidates, not just the active
 
 - transcripts are source material, never auto-promoted to memory;
 - bounded token budget per run;
-- feeds `memory_curate` for dedup, supersession, and promotion.
+- feeds `memory_curate` for dedup, supersession, and promotion. Deterministic exact-claim/different-path matches now add human-review `consolidation_review` metadata; broader semantic duplicate/supersession scoring remains curate/model-assisted work.
 
 ---
 
@@ -378,7 +378,7 @@ Humans should see what the system is doing and override when necessary, without 
 3. ✅ **Tool exposure (read side)** — `chat`, `pair`, `curate`, `work`, and `watch` have read/status/search descriptors; write/review policy for `work`/`watch` remains open.
 4. Next: add manual/queued conductor runner for the `memory_curate` lane.
 5. Next: surface generated proposals and queued reflection runs in UI.
-6. ✅ Apply core [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) store deltas (`salience` on `memory_records`, `valid_from`/`invalid_at`, store-level supersession invalidation, `memory_harvest_marks`). Next: use them from curate/consolidation policy.
+6. ✅ Apply core [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) store deltas (`salience` on `memory_records`, `valid_from`/`invalid_at`, store-level supersession invalidation, `memory_harvest_marks`) and deterministic proposal safety metadata (freshness conflicts, archive/risk gates, exact-claim different-path consolidation review). Next: model-assisted curate/consolidation policy.
 7. Then: add model-assisted pair reflection (P2) and the `archive_harvest` lane (P2.5).
 8. ✅ Derived Qdrant recall index (P3) and hybrid scored `memory_search` (P4) are landed; remaining recall work is live ops exercise and deeper salience/freshness scoring.
 9. Then: work task context bridge (P5).

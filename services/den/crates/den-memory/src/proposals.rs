@@ -23,6 +23,7 @@ pub async fn create_memory_proposal(
     payload: &Value,
 ) -> Result<SqliteMemoryProposal, DenError> {
     let enriched = enrich_payload_with_freshness(store, payload).await?;
+    let enriched = enrich_payload_with_consolidation_review(store, &enriched).await?;
     let enriched = enrich_payload_with_archive_lane(&enriched, suggested_action);
     let enriched = enrich_payload_with_sensitivity_gate(&enriched, sensitivity);
     let payload = payload_with_dedupe_key(&enriched, suggested_action, sensitivity);
@@ -160,6 +161,90 @@ async fn enrich_payload_with_freshness(
         }),
     );
     Ok(payload)
+}
+
+async fn enrich_payload_with_consolidation_review(
+    store: &BearMemoryStore,
+    payload: &Value,
+) -> Result<Value, DenError> {
+    if payload.get("consolidation_review").is_some() {
+        return Ok(payload.clone());
+    }
+    let Some(new_fingerprint) = payload_claim_fingerprint(payload) else {
+        return Ok(payload.clone());
+    };
+    let target_ref = payload
+        .get("target_ref")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    let Some(candidate) =
+        active_record_with_claim_fingerprint(store, &new_fingerprint, target_ref).await?
+    else {
+        return Ok(payload.clone());
+    };
+
+    let mut payload = ensure_object_payload(payload);
+    let obj = payload.as_object_mut().expect("payload object initialized");
+    obj.insert("requires_human".to_string(), json!(true));
+    obj.insert(
+        "consolidation_review".to_string(),
+        json!({
+            "status": "needs_human_review",
+            "reason": "same_claim_different_path",
+            "candidate_memory_id": candidate.memory_id,
+            "candidate_logical_path": candidate.logical_path,
+            "candidate_sequence_no": candidate.sequence_no,
+            // ponytail: consolidation is exact normalized-claim matching over recent active records only;
+            // upgrade path is model-assisted semantic duplicate/supersession proposals.
+            "detector": "deterministic-claim-fingerprint-v1"
+        }),
+    );
+    Ok(payload)
+}
+
+struct ConsolidationCandidate {
+    memory_id: String,
+    logical_path: Option<String>,
+    sequence_no: i64,
+}
+
+async fn active_record_with_claim_fingerprint(
+    store: &BearMemoryStore,
+    fingerprint: &str,
+    target_ref: &str,
+) -> Result<Option<ConsolidationCandidate>, DenError> {
+    let rows = sqlx::query_as::<_, (String, i64, Option<String>, String)>(
+        r"
+        SELECT memory_id, sequence_no, logical_path, content_text
+        FROM memory_records
+        WHERE bear_id = ?
+          AND visibility = 'normal'
+          AND invalid_at IS NULL
+          AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') NOT IN ('archived', 'archive-candidate')
+        ORDER BY sequence_no DESC
+        LIMIT 100
+        ",
+    )
+    .bind(store.bear_id().to_string())
+    .fetch_all(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("sqlite consolidation lookup failed: {e}")))?;
+
+    Ok(rows
+        .into_iter()
+        .find_map(|(memory_id, sequence_no, logical_path, content_text)| {
+            if logical_path.as_deref() == Some(target_ref) {
+                return None;
+            }
+            (super::promotions::memory_claim_fingerprint(&content_text) == fingerprint).then_some(
+                ConsolidationCandidate {
+                    memory_id,
+                    logical_path,
+                    sequence_no,
+                },
+            )
+        }))
 }
 
 fn ensure_object_payload(payload: &Value) -> Value {
@@ -630,6 +715,66 @@ mod tests {
                 .pointer("/freshness/review_required")
                 .and_then(Value::as_bool),
             Some(true)
+        );
+        assert_eq!(
+            proposal
+                .payload_json
+                .get("requires_human")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn same_claim_different_path_gets_consolidation_review_metadata() {
+        let store = new_test_store().await;
+        let existing = store
+            .append_record(
+                &crate::LogicalMemoryPath::from_logical_path("core/decisions/runtime.md"),
+                "decision",
+                "curate",
+                None,
+                "Use SQLite as canonical memory.",
+                &json!({}),
+                "normal",
+            )
+            .await
+            .unwrap();
+
+        let proposal = create_memory_proposal(
+            &store,
+            "promote_to_core",
+            "normal",
+            false,
+            &json!({
+                "target_ref": "core/policies/memory.md",
+                "source_paths": ["pair/summaries/run.md"],
+                "proposed_content": "use sqlite as canonical memory"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            proposal
+                .payload_json
+                .pointer("/consolidation_review/status")
+                .and_then(Value::as_str),
+            Some("needs_human_review")
+        );
+        assert_eq!(
+            proposal
+                .payload_json
+                .pointer("/consolidation_review/reason")
+                .and_then(Value::as_str),
+            Some("same_claim_different_path")
+        );
+        assert_eq!(
+            proposal
+                .payload_json
+                .pointer("/consolidation_review/candidate_memory_id")
+                .and_then(Value::as_str),
+            Some(existing.memory_id.as_str())
         );
         assert_eq!(
             proposal
