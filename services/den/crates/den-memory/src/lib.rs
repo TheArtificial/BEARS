@@ -38,7 +38,8 @@ pub use entity::{
     split_entity, EntityHandleRow, EntityRow,
 };
 pub use harvest::{
-    harvest_mark_for_source, harvest_source_marked, record_harvest_mark, MemoryHarvestMark,
+    harvest_mark_for_source, harvest_source_hash_marked, harvest_source_marked,
+    record_harvest_mark, MemoryHarvestMark,
 };
 pub use import::{
     import_legacy_memory_bundle, import_legacy_memory_git_dir, LegacyMemoryBranchReport,

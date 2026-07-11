@@ -109,6 +109,27 @@ pub async fn harvest_source_marked(
     Ok(n > 0)
 }
 
+pub async fn harvest_source_hash_marked(
+    store: &BearMemoryStore,
+    source_kind: &str,
+    source_hash: &str,
+) -> Result<bool, DenError> {
+    let n: i64 = sqlx::query_scalar(
+        r"
+        SELECT COUNT(*)
+        FROM memory_harvest_marks
+        WHERE bear_id = ? AND source_kind = ? AND source_hash = ?
+        ",
+    )
+    .bind(store.bear_id().to_string())
+    .bind(source_kind)
+    .bind(source_hash)
+    .fetch_one(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("check harvest mark hash failed: {e}")))?;
+    Ok(n > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,5 +164,33 @@ mod tests {
         assert!(harvest_source_marked(&store, "conversation", "den-conv-1")
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn harvest_mark_can_be_checked_by_source_hash() {
+        let store = new_test_store().await;
+        record_harvest_mark(
+            &store,
+            "compaction_artifact",
+            "artifact-1",
+            Some("sha256:same-content"),
+            Some("run-1"),
+            &[],
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            harvest_source_hash_marked(&store, "compaction_artifact", "sha256:same-content")
+                .await
+                .unwrap()
+        );
+        assert!(!harvest_source_hash_marked(
+            &store,
+            "compaction_artifact",
+            "sha256:different-content"
+        )
+        .await
+        .unwrap());
     }
 }

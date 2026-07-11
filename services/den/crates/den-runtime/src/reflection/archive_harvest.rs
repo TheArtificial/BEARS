@@ -1,5 +1,7 @@
 use den_core::{config::Config, DenError};
-use den_memory::{harvest_source_marked, record_harvest_mark, MemoryStoreManager};
+use den_memory::{
+    harvest_source_hash_marked, harvest_source_marked, record_harvest_mark, MemoryStoreManager,
+};
 use den_service::memory_proposals::CreateMemoryProposal;
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
@@ -54,10 +56,14 @@ pub async fn harvest_compaction_artifacts_once(
 
     for artifact in artifacts {
         let source_ref = artifact.id.to_string();
-        if harvest_source_marked(&store, "compaction_artifact", &source_ref).await? {
+        let source_hash = source_hash(&artifact.artifact_json);
+        // ponytail: exact content hash only; upgrade path is source equivalence metadata when
+        // artifacts can be reserialized with semantically identical but byte-different JSON.
+        if harvest_source_marked(&store, "compaction_artifact", &source_ref).await?
+            || harvest_source_hash_marked(&store, "compaction_artifact", &source_hash).await?
+        {
             continue;
         }
-        let source_hash = source_hash(&artifact.artifact_json);
         let summary = decode_summary(&artifact.artifact_json)?;
         let proposed_content = proposal_content_from_summary(&summary);
         let Some(assessment) = assess_harvest_candidate(&summary, &proposed_content) else {
@@ -283,13 +289,7 @@ fn assess_harvest_candidate(
     }
     if contains_any(
         &haystack,
-        &[
-            "prefers",
-            "preference",
-            "human ",
-            "user ",
-            "personally",
-        ],
+        &["prefers", "preference", "human ", "user ", "personally"],
     ) {
         risk_signals.push("person");
     }
@@ -359,7 +359,10 @@ mod tests {
     ) -> RuntimeIterativeSummary {
         RuntimeIterativeSummary {
             active_user_goals: Vec::new(),
-            important_constraints: constraints.iter().map(|value| (*value).to_string()).collect(),
+            important_constraints: constraints
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
             decisions_made: decisions.iter().map(|value| (*value).to_string()).collect(),
             artifact_refs: artifacts.iter().map(|value| (*value).to_string()).collect(),
             workflow_state_refs: Vec::new(),
@@ -398,7 +401,12 @@ mod tests {
 
     #[test]
     fn assessment_keeps_durable_decisions_with_high_confidence() {
-        let summary = summary_with(&["Do not auto-promote raw transcripts."], &["Use SQLite as canonical memory."], &[], &[]);
+        let summary = summary_with(
+            &["Do not auto-promote raw transcripts."],
+            &["Use SQLite as canonical memory."],
+            &[],
+            &[],
+        );
         let content = proposal_content_from_summary(&summary);
         let assessment = assess_harvest_candidate(&summary, &content).expect("assessment");
 
