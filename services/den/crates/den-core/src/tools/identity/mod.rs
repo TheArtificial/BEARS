@@ -16,6 +16,10 @@ use serde_json::{json, Value};
 use crate::{BearProfile, DenError};
 
 use crate::tools::{
+    capability_catalog::{
+        code_mode_capability, describe_capability, search_capabilities,
+        tool_descriptor_to_capability, CapabilityDescribeArguments, CapabilitySearchArguments,
+    },
     context::DenToolInvocationContext,
     descriptor::{builtin_den_tool_descriptors, builtin_den_tool_descriptors_for_profile},
 };
@@ -42,6 +46,33 @@ pub fn list_capabilities_self(context: &DenToolInvocationContext, role: BearProf
         "channel": context.channel,
         "capabilities": descriptors,
     })
+}
+
+/// Pure: searchable capability catalog entries for the caller's resolved role.
+pub fn capability_entries_for_role(role: BearProfile) -> Vec<crate::tools::capability_catalog::CapabilityEntry> {
+    let mut entries: Vec<_> = builtin_den_tool_descriptors_for_profile(role)
+        .into_iter()
+        .map(tool_descriptor_to_capability)
+        .collect();
+    entries.push(code_mode_capability(role));
+    entries
+}
+
+/// Pure: search the caller-visible Capability Catalog.
+pub fn capability_search(arguments: Value, role: BearProfile) -> Result<Value, DenError> {
+    let args: CapabilitySearchArguments = serde_json::from_value(arguments)
+        .map_err(|err| DenError::ValidationError(format!("invalid capability_search arguments: {err}")))?;
+    let entries = capability_entries_for_role(role);
+    Ok(search_capabilities(&entries, args))
+}
+
+/// Pure: describe one caller-visible Capability Catalog entry.
+pub fn capability_describe(arguments: Value, role: BearProfile) -> Result<Value, DenError> {
+    let args: CapabilityDescribeArguments = serde_json::from_value(arguments)
+        .map_err(|err| DenError::ValidationError(format!("invalid capability_describe arguments: {err}")))?;
+    let entries = capability_entries_for_role(role);
+    describe_capability(&entries, &args.r#ref)
+        .ok_or_else(|| DenError::NotFound(format!("unknown capability: {}", args.r#ref)))
 }
 
 pub async fn get_bear_self(

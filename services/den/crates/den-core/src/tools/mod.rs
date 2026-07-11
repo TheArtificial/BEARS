@@ -17,6 +17,7 @@
 
 pub mod aliases;
 pub mod arguments;
+pub mod capability_catalog;
 pub mod constants;
 pub mod context;
 pub mod conversation;

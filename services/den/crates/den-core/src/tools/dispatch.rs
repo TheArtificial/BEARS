@@ -15,7 +15,8 @@ use crate::DenError;
 use crate::tools::{
     constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_GET_SELF, DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF,
-        DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE, DEN_CORE_WRITE_RESULT_SUMMARY,
+        DEN_CAPABILITY_DESCRIBE, DEN_CAPABILITY_SEARCH, DEN_CHANNEL_GET_CONTEXT,
+        DEN_CONVERSATION_SET_TITLE, DEN_CORE_WRITE_RESULT_SUMMARY,
         DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_LINK_MEMORY,
         DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE, DEN_ENTITY_MERGE_PROVIDER,
         DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER, DEN_ENTITY_SPLIT,
@@ -85,6 +86,8 @@ pub async fn invoke_den_tool(
         DEN_USER_GET_CURRENT => identity::get_current_user(ctx, &context).await,
         DEN_BEAR_LIST_MEMBERS => identity::list_bear_members(ctx, &context).await,
         DEN_CAPABILITIES_LIST_SELF => Ok(identity::list_capabilities_self(&context, role)),
+        DEN_CAPABILITY_SEARCH => identity::capability_search(arguments, role),
+        DEN_CAPABILITY_DESCRIBE => identity::capability_describe(arguments, role),
         DEN_CHANNEL_GET_CONTEXT => Ok(identity::channel_context(&context)),
         DEN_POLICY_GET_SELF => identity::policy_self(ctx, &context).await,
         DEN_SITUATION_GET | DEN_SITUATION_GET_PROVIDER => {

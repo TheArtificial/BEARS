@@ -17,8 +17,9 @@ use crate::BearProfile;
 use crate::tools::{
     constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER, DEN_BEAR_GET_SELF,
-        DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CHANNEL_GET_CONTEXT,
-        DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
+        DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CAPABILITY_DESCRIBE,
+        DEN_CAPABILITY_DESCRIBE_PROVIDER, DEN_CAPABILITY_SEARCH, DEN_CAPABILITY_SEARCH_PROVIDER,
+        DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
         DEN_CORE_WRITE_RESULT_SUMMARY, DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER,
         DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE,
         DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER,
@@ -91,6 +92,8 @@ pub struct DenToolDescriptor {
 
 pub fn provider_safe_tool_name(name: &str) -> String {
     match name {
+        DEN_CAPABILITY_SEARCH => return DEN_CAPABILITY_SEARCH_PROVIDER.to_string(),
+        DEN_CAPABILITY_DESCRIBE => return DEN_CAPABILITY_DESCRIBE_PROVIDER.to_string(),
         DEN_CONVERSATION_SET_TITLE => return DEN_CONVERSATION_SET_TITLE_PROVIDER.to_string(),
         DEN_WEB_FETCH => return DEN_WEB_FETCH_PROVIDER.to_string(),
         DEN_WEB_SEARCH => return DEN_WEB_SEARCH_PROVIDER.to_string(),
@@ -210,6 +213,24 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["capabilities.read"],
             ALL_PROFILES,
             empty_schema(),
+        ),
+        descriptor(
+            DEN_CAPABILITY_SEARCH,
+            "Search capability catalog",
+            "Search the discoverable Capability Catalog using lexical query text, taxonomy tag, and kind filters. Returns compact results with locality, surface, authority, lifetime, risk, and execution-option metadata. Discovery does not grant invocation authority.",
+            "session",
+            &["capabilities.read"],
+            ALL_PROFILES,
+            json!({"type":"object","properties":{"query":{"type":"string"},"tag":{"type":"string"},"kind":{"type":"string","enum":["tool","skill","policy","memory","surface","executor","connector","example","bundle"]},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_CAPABILITY_DESCRIBE,
+            "Describe capability",
+            "Describe one Capability Catalog entry by ref, canonical tool name, or provider tool name, including locality, surface, authority, lifetime, risk, execution options, and invocation references where available.",
+            "session",
+            &["capabilities.read"],
+            ALL_PROFILES,
+            json!({"type":"object","properties":{"ref":{"type":"string","minLength":1}},"required":["ref"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_CHANNEL_GET_CONTEXT,
@@ -844,6 +865,8 @@ pub fn render_profile_tool_surface_blurb(role: BearProfile) -> String {
 pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
     &[
         DEN_CONVERSATION_SET_TITLE,
+        DEN_CAPABILITY_SEARCH,
+        DEN_CAPABILITY_DESCRIBE,
         DEN_WEB_FETCH,
         DEN_WEB_SEARCH,
         DEN_SITUATION_GET,
@@ -914,6 +937,7 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
 
 fn den_tool_description(name: &'static str, description: &'static str) -> &'static str {
     let guidance = match name {
+        DEN_CAPABILITIES_LIST_SELF | DEN_CAPABILITY_SEARCH | DEN_CAPABILITY_DESCRIBE => None,
         DEN_SITUATION_GET => None,
         DEN_CONVERSATION_SET_TITLE => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::Conversation,
