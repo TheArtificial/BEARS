@@ -565,25 +565,21 @@ impl BifrostGovernanceClient {
             }))
     }
 
-    pub async fn get_model_usage_rankings(
+    async fn usage_rankings(
         &self,
-        virtual_key_id: &str,
+        virtual_key_id: Option<&str>,
     ) -> Result<serde_json::Value, DenError> {
         let auth = self.login().await?;
-        let virtual_key_id = virtual_key_id.trim();
-        if virtual_key_id.is_empty() {
-            return Err(DenError::ValidationError(
-                "Bifrost virtual key id is required for usage rankings".to_string(),
-            ));
-        }
         let url = format!("{}/logs/rankings", self.management_url);
+        let mut query = vec![("period", "30d")];
+        if let Some(virtual_key_id) = virtual_key_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            query.push(("virtual_key_ids", virtual_key_id));
+        }
         let response = self
-            .apply_management_auth(
-                self.http
-                    .get(&url)
-                    .query(&[("virtual_key_ids", virtual_key_id), ("period", "30d")]),
-                &auth,
-            )
+            .apply_management_auth(self.http.get(&url).query(&query), &auth)
             .send()
             .await
             .map_err(|err| {
@@ -603,6 +599,23 @@ impl BifrostGovernanceClient {
                 "Bifrost usage rankings JSON failed: {err}; body: {text}"
             ))
         })
+    }
+
+    pub async fn get_model_usage_rankings(
+        &self,
+        virtual_key_id: &str,
+    ) -> Result<serde_json::Value, DenError> {
+        let virtual_key_id = virtual_key_id.trim();
+        if virtual_key_id.is_empty() {
+            return Err(DenError::ValidationError(
+                "Bifrost virtual key id is required for usage rankings".to_string(),
+            ));
+        }
+        self.usage_rankings(Some(virtual_key_id)).await
+    }
+
+    pub async fn get_server_model_usage_rankings(&self) -> Result<serde_json::Value, DenError> {
+        self.usage_rankings(None).await
     }
 
     pub async fn archive_virtual_key_by_id(
