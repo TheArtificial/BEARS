@@ -18,6 +18,9 @@ const DEFAULT_PROD_API_ORIGIN: &str = "https://api.bears.artificial.design";
 /// Bifrost OpenAI-compatible API when `LLM_API_URL` is unset — matches Docker Compose `bears-bifrost:8080/v1`.
 pub const DEFAULT_LLM_API_URL: &str = "http://bears-bifrost:8080/v1";
 
+/// Sandbox provider URL used by the default Docker Compose stack.
+const DEFAULT_SANDBOX_SERVER_URL: &str = "http://bears-sandbox-provider:3002";
+
 pub fn session_cookie_secure_from_env(default: bool) -> bool {
     std::env::var("SESSION_COOKIE_SECURE")
         .map(|v| match v.trim().to_ascii_lowercase().as_str() {
@@ -606,10 +609,11 @@ impl Config {
                 2 * 1024 * 1024
             });
 
-        let sandbox_server_url = std::env::var("SANDBOX_SERVER_URL")
-            .ok()
-            .map(|s| s.trim().trim_end_matches('/').to_string())
-            .filter(|s| !s.is_empty());
+        let sandbox_server_url = sandbox_server_url_from_env(
+            std::env::var("SANDBOX_SERVER_URL").ok(),
+            run_workers,
+            run_sandbox,
+        );
         let sandbox_server_token = std::env::var("SANDBOX_SERVER_TOKEN").unwrap_or_default();
         let sandbox_callback_api_url = std::env::var("SANDBOX_CALLBACK_API_URL")
             .ok()
@@ -727,6 +731,48 @@ impl Config {
             checkpoint_audit_mode,
             ui_fixture_profile,
         }
+    }
+}
+
+fn sandbox_server_url_from_env(
+    raw: Option<String>,
+    run_workers: bool,
+    run_sandbox: bool,
+) -> Option<String> {
+    match raw {
+        Some(value) => {
+            let value = value.trim().trim_end_matches('/').to_string();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        None if run_workers && !run_sandbox => Some(DEFAULT_SANDBOX_SERVER_URL.to_string()),
+        None => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_server_url_defaults_for_worker_only_processes() {
+        assert_eq!(
+            sandbox_server_url_from_env(None, true, false).as_deref(),
+            Some(DEFAULT_SANDBOX_SERVER_URL)
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(Some("".into()), true, false),
+            None
+        );
+        assert_eq!(sandbox_server_url_from_env(None, false, true), None);
+        assert_eq!(
+            sandbox_server_url_from_env(Some(" http://sandbox:3002/ ".into()), true, false)
+                .as_deref(),
+            Some("http://sandbox:3002")
+        );
     }
 }
 
