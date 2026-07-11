@@ -398,6 +398,14 @@ fn adapter_supports_tool(
         })
 }
 
+async fn run_is_terminal(pool: &sqlx::PgPool, run_id: &str) -> bool {
+    turn_runs::get_run(pool, run_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|run| matches!(run.state.as_str(), "completed" | "failed" | "cancelled"))
+}
+
 pub(crate) async fn persist_run_progress(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -409,6 +417,15 @@ pub(crate) async fn persist_run_progress(
     text: &str,
     detail: Value,
 ) {
+    if run_is_terminal(pool, run_id).await {
+        tracing::debug!(
+            session_id = %session_id,
+            run_id = %run_id,
+            kind,
+            "skipping BearWire run.progress for terminal run"
+        );
+        return;
+    }
     tracing::info!(
         session_id = %session_id,
         run_id = %run_id,
@@ -731,6 +748,15 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     request_id: Uuid,
     started_at: Option<Instant>,
 ) {
+    if run_is_terminal(pool, run_id).await {
+        tracing::debug!(
+            session_id = %session_id,
+            run_id = %run_id,
+            event_kind = runtime_event_kind(&runtime_event),
+            "skipping BearWire runtime event for terminal run"
+        );
+        return;
+    }
     let bear_name = bear_display_name(pool, bear_id).await;
     let history_marker = runtime_event_history_marker(&bear_name, &runtime_event);
     if let den_protocol::RuntimeStreamEvent::Semantic(
@@ -907,8 +933,19 @@ pub(crate) async fn persist_run_failed(
         error_message = %log_sample(&message),
         "BearWire run failed"
     );
-    let _ = turn_runs::transition_run(pool, run_id, turn_runs::TurnRunState::Failed, Some(reason))
-        .await;
+    let transitioned = turn_runs::transition_run(pool, run_id, turn_runs::TurnRunState::Failed, Some(reason))
+        .await
+        .ok()
+        .flatten();
+    if transitioned.is_none() {
+        tracing::debug!(
+            session_id,
+            run_id,
+            reason,
+            "skipping BearWire run.failed persistence for already-terminal run"
+        );
+        return;
+    }
     record_work_run_outcome_if_bound(
         pool,
         session_id,
@@ -995,6 +1032,110 @@ pub(crate) async fn persist_run_failed(
             .await;
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct SettledRunLifecycle {
+    run: Option<turn_runs::TurnRunRow>,
+    stream_run_ids: Vec<String>,
+    cancelled_stream: bool,
+    cancelled_tool_turn: bool,
+    settled_obligations: u64,
+    event_sequence: Option<i64>,
+}
+
+impl SettledRunLifecycle {
+    fn settled(&self) -> bool {
+        self.run.is_some() || self.cancelled_stream || self.cancelled_tool_turn
+    }
+}
+
+async fn settle_active_run_for_session(
+    state: &DenState,
+    session_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    reason: &str,
+    superseded_by_run_id: Option<&str>,
+) -> Result<SettledRunLifecycle, CustomError> {
+    let stream_cancel = state.turn_cancellations.cancel_session(session_id);
+    let active_turn = state.tool_turns.cancel_active_turn(session_id);
+    let active_run = turn_runs::active_run_for_session(&state.sqlx_pool, session_id).await?;
+    let mut settled_obligations = 0;
+    if let Some(run) = &active_run {
+        let transitioned = turn_runs::transition_run(
+            &state.sqlx_pool,
+            &run.run_id,
+            turn_runs::TurnRunState::Cancelled,
+            Some(reason),
+        )
+        .await?;
+        if transitioned.is_some() {
+            settled_obligations = turn_obligations::settle_outstanding_for_run(
+                &state.sqlx_pool,
+                &run.run_id,
+                turn_obligations::TurnObligationState::Cancelled,
+            )
+            .await?;
+            let _ = turn_steps::transition_active_steps_for_run(
+                &state.sqlx_pool,
+                &run.run_id,
+                "cancelled",
+            )
+            .await;
+            record_work_run_outcome_if_bound(&state.sqlx_pool, session_id, &run.run_id, "cancelled", None)
+                .await;
+        }
+    }
+    let stream_run_ids = stream_cancel
+        .as_ref()
+        .map(|turn| turn.run_ids.clone())
+        .unwrap_or_default();
+    let cancelled_stream = stream_cancel.is_some();
+    let cancelled_tool_turn = active_turn.is_some();
+    let should_emit = active_run.is_some() || cancelled_stream || cancelled_tool_turn;
+    let event_sequence = if should_emit {
+        let run_id = active_run.as_ref().map(|run| run.run_id.clone());
+        let mut event = BearWireEvent::ephemeral(
+            "run.cancelled",
+            json!({
+                "session_id": session_id,
+                "cancelled": true,
+                "run_ids": stream_run_ids.clone(),
+                "run_id": run_id.clone(),
+                "reason": reason,
+                "superseded_by_run_id": superseded_by_run_id,
+                "settled_obligations": settled_obligations,
+                "cancelled_stream": cancelled_stream,
+                "cancelled_tool_turn": cancelled_tool_turn,
+            }),
+        );
+        event.bear_id = Some(bear_id.to_string());
+        event.human_id = Some(user_id.to_string());
+        event.session_id = Some(session_id.to_string());
+        event.run_id = active_run.as_ref().map(|run| run.run_id.clone());
+        Some(
+            bearwire_events::append_bearwire_event(
+                &state.sqlx_pool,
+                session_id,
+                Some(bear_id),
+                Some(user_id),
+                event,
+            )
+            .await?
+            .sequence_no,
+        )
+    } else {
+        None
+    };
+    Ok(SettledRunLifecycle {
+        run: active_run,
+        stream_run_ids,
+        cancelled_stream,
+        cancelled_tool_turn,
+        settled_obligations,
+        event_sequence,
+    })
 }
 
 /// Work-run hook: when this session was bound by `work.checkout`, record the
@@ -1399,26 +1540,29 @@ pub(crate) async fn run_start_result(
         .await?;
     }
 
-    if let Some(active_run) = turn_runs::supersede_active_run_for_session(
-        &state.sqlx_pool,
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let superseded = settle_active_run_for_session(
+        state,
         &session_id,
         bear.id,
         user_id,
         "superseded_by_new_run",
+        Some(&run_id),
     )
-    .await?
-    {
-        let _ = state.turn_cancellations.cancel_session(&session_id);
-        let _ = state.tool_turns.cancel_active_turn(&session_id);
-        let _ = turn_obligations::settle_outstanding_for_run(
-            &state.sqlx_pool,
-            &active_run.run_id,
-            turn_obligations::TurnObligationState::Failed,
-        )
-        .await;
+    .await?;
+    if superseded.settled() {
+        tracing::info!(
+            session_id = %session_id,
+            new_run_id = %run_id,
+            old_run_id = superseded.run.as_ref().map(|run| run.run_id.as_str()),
+            cancelled_stream = superseded.cancelled_stream,
+            cancelled_tool_turn = superseded.cancelled_tool_turn,
+            settled_obligations = superseded.settled_obligations,
+            event_sequence = superseded.event_sequence,
+            "BearWire superseded active run before starting new run"
+        );
     }
 
-    let run_id = format!("run_{}", Uuid::new_v4().simple());
     let run =
         turn_runs::create_run(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id).await?;
     let mut accepted = BearWireEvent::ephemeral(
@@ -1441,6 +1585,14 @@ pub(crate) async fn run_start_result(
     )
     .await?;
 
+    let request_id = Uuid::new_v4();
+    let (cancel_handle, mut cancel_rx) = state.turn_cancellations.register(
+        session_id.clone(),
+        request_id,
+        Some(upstream_target.clone()),
+    );
+    let _ = cancel_handle.record_run_id(&run_id);
+
     let pool = state.sqlx_pool.clone();
     let config = state.config.clone();
     let memory_stores = state.memory_stores.clone();
@@ -1455,9 +1607,9 @@ pub(crate) async fn run_start_result(
     let api_style_for_task = resolved_model.api_style;
     let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
+        let _cancel_handle = cancel_handle;
         let mut eager_prefix_tx = Some(eager_prefix_tx);
         let run_started_at = Instant::now();
-        let request_id = Uuid::new_v4();
         persist_run_progress(
             &pool,
             &session_for_task,
@@ -1568,69 +1720,92 @@ pub(crate) async fn run_start_result(
                 .await;
                 let mut first_event_seen = false;
                 let mut terminal_or_wait_seen = false;
-                while let Some(item) = stream.next().await {
-                    match item {
-                        Ok(runtime_event) => {
-                            if runtime_event_is_terminal_or_wait(&runtime_event) {
-                                terminal_or_wait_seen = true;
-                            }
-                            if !first_event_seen
-                                && runtime_event_satisfies_eager_prefix(&runtime_event)
-                            {
+                let mut cancellation_seen = false;
+                loop {
+                    tokio::select! {
+                        changed = cancel_rx.changed() => {
+                            if changed.is_ok() && *cancel_rx.borrow() {
+                                cancellation_seen = true;
                                 if let Some(tx) = eager_prefix_tx.take() {
                                     let _ = tx.send(());
                                 }
+                                tracing::info!(
+                                    session_id = %session_for_task,
+                                    run_id = %run_id_for_task,
+                                    request_id = %request_id,
+                                    "BearWire background run stream observed cancellation"
+                                );
+                                break;
                             }
-                            if !first_event_seen {
-                                first_event_seen = true;
-                                persist_run_progress(
-                                    &pool,
-                                    &session_for_task,
-                                    &run_id_for_task,
-                                    bear_id,
-                                    user_id,
-                                    run_started_at,
-                                    "first_runtime_event",
-                                    "Received first runtime event from model/native loop.",
-                                    json!({
-                                        "request_id": request_id,
-                                        "event_kind": runtime_event_kind(&runtime_event),
-                                    }),
-                                )
-                                .await;
-                            }
-                            persist_runtime_event_as_bearwire(
-                                &pool,
-                                &session_for_task,
-                                &run_id_for_task,
-                                bear_id,
-                                user_id,
-                                runtime_event,
-                                request_id,
-                                Some(run_started_at),
-                            )
-                            .await;
                         }
-                        Err(err) => {
-                            if let Some(tx) = eager_prefix_tx.take() {
-                                let _ = tx.send(());
+                        item = stream.next() => {
+                            let Some(item) = item else {
+                                break;
+                            };
+                            match item {
+                                Ok(runtime_event) => {
+                                    if runtime_event_is_terminal_or_wait(&runtime_event) {
+                                        terminal_or_wait_seen = true;
+                                    }
+                                    if !first_event_seen
+                                        && runtime_event_satisfies_eager_prefix(&runtime_event)
+                                    {
+                                        if let Some(tx) = eager_prefix_tx.take() {
+                                            let _ = tx.send(());
+                                        }
+                                    }
+                                    if !first_event_seen {
+                                        first_event_seen = true;
+                                        persist_run_progress(
+                                            &pool,
+                                            &session_for_task,
+                                            &run_id_for_task,
+                                            bear_id,
+                                            user_id,
+                                            run_started_at,
+                                            "first_runtime_event",
+                                            "Received first runtime event from model/native loop.",
+                                            json!({
+                                                "request_id": request_id,
+                                                "event_kind": runtime_event_kind(&runtime_event),
+                                            }),
+                                        )
+                                        .await;
+                                    }
+                                    persist_runtime_event_as_bearwire(
+                                        &pool,
+                                        &session_for_task,
+                                        &run_id_for_task,
+                                        bear_id,
+                                        user_id,
+                                        runtime_event,
+                                        request_id,
+                                        Some(run_started_at),
+                                    )
+                                    .await;
+                                }
+                                Err(err) => {
+                                    if let Some(tx) = eager_prefix_tx.take() {
+                                        let _ = tx.send(());
+                                    }
+                                    persist_run_failed(
+                                        &pool,
+                                        &session_for_task,
+                                        &run_id_for_task,
+                                        bear_id,
+                                        user_id,
+                                        "stream_error",
+                                        err.to_string(),
+                                        None,
+                                    )
+                                    .await;
+                                    break;
+                                }
                             }
-                            persist_run_failed(
-                                &pool,
-                                &session_for_task,
-                                &run_id_for_task,
-                                bear_id,
-                                user_id,
-                                "stream_error",
-                                err.to_string(),
-                                None,
-                            )
-                            .await;
-                            break;
                         }
                     }
                 }
-                if !terminal_or_wait_seen {
+                if !terminal_or_wait_seen && !cancellation_seen {
                     if let Some(tx) = eager_prefix_tx.take() {
                         let _ = tx.send(());
                     }
@@ -1883,64 +2058,28 @@ pub(crate) async fn run_cancel_result(
         }));
     };
 
-    let stream_cancel = state
-        .turn_cancellations
-        .cancel_session(&session.client_session_id);
-    let active_turn = state
-        .tool_turns
-        .cancel_active_turn(&session.client_session_id);
-    let active_run = turn_runs::active_run_for_session(&state.sqlx_pool, &session_id).await?;
-    if let Some(run) = &active_run {
-        let _ = turn_runs::transition_run(
-            &state.sqlx_pool,
-            &run.run_id,
-            turn_runs::TurnRunState::Cancelled,
-            Some("client_requested"),
-        )
-        .await?;
-        let _ = turn_obligations::settle_outstanding_for_run(
-            &state.sqlx_pool,
-            &run.run_id,
-            turn_obligations::TurnObligationState::Cancelled,
-        )
-        .await?;
-    }
-    let cancelled = stream_cancel.is_some() || active_turn.is_some() || active_run.is_some();
-    let run_ids = stream_cancel
-        .as_ref()
-        .map(|turn| turn.run_ids.clone())
-        .unwrap_or_default();
-
-    let mut event = BearWireEvent::ephemeral(
-        "run.cancelled",
-        json!({
-            "session_id": session_id,
-            "cancelled": cancelled,
-            "run_ids": run_ids,
-            "run_id": active_run.as_ref().map(|run| run.run_id.clone()),
-            "reason": if cancelled { "client_requested" } else { "no_active_run" },
-        }),
-    );
-    event.bear_id = Some(bear.id.to_string());
-    event.human_id = Some(user_id.to_string());
-    event.session_id = Some(session_id.clone());
-    let persisted = bearwire_events::append_bearwire_event(
-        &state.sqlx_pool,
-        &session_id,
-        Some(bear.id),
-        Some(user_id),
-        event,
+    let settled = settle_active_run_for_session(
+        state,
+        &session.client_session_id,
+        bear.id,
+        user_id,
+        "client_requested",
+        None,
     )
     .await?;
+    let cancelled = settled.settled();
 
     Ok(json!({
         "ok": true,
         "cancelled": cancelled,
         "session_id": session_id,
-        "run_ids": run_ids,
-        "run_id": active_run.as_ref().map(|run| run.run_id.clone()),
-        "active_turn": active_turn.map(|turn| turn.diagnostic()),
-        "event_sequence": persisted.sequence_no,
+        "run_ids": settled.stream_run_ids,
+        "run_id": settled.run.as_ref().map(|run| run.run_id.clone()),
+        "cancelled_stream": settled.cancelled_stream,
+        "cancelled_tool_turn": settled.cancelled_tool_turn,
+        "settled_obligations": settled.settled_obligations,
+        "event_sequence": settled.event_sequence,
+        "reason": if cancelled { "client_requested" } else { "no_active_run" },
     }))
 }
 

@@ -2175,6 +2175,18 @@ async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
     assert_eq!(response["result"]["ok"], true, "{response}");
     assert_eq!(response["result"]["cancelled"], true, "{response}");
     assert_eq!(response["result"]["run_id"], run_id, "{response}");
+    assert_eq!(response["result"]["settled_obligations"], 1, "{response}");
+
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list BearWire events");
+    let cancelled = events
+        .iter()
+        .find(|row| row.event_type == "run.cancelled")
+        .expect("run.cancelled event persisted");
+    assert_eq!(cancelled.event.run_id.as_deref(), Some(run_id.as_str()));
+    assert_eq!(cancelled.event.data["run_id"], run_id);
+    assert_eq!(cancelled.event.data["reason"], "client_requested");
 
     let tool = turn_obligations::get_tool_call_obligation(&pool, &run_id, "call-cancelled")
         .await

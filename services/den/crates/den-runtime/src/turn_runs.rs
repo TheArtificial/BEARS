@@ -364,6 +364,7 @@ pub async fn transition_run(
             updated_at = NOW(),
             completed_at = CASE WHEN $4 THEN COALESCE(completed_at, NOW()) ELSE completed_at END
         WHERE run_id = $1
+          AND state NOT IN ('completed','failed','cancelled')
         RETURNING {RUN_RETURNING}
         "
     ))

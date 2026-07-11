@@ -238,6 +238,8 @@ Exit criteria:
 
 ### Phase 3 — Run lifecycle ownership
 
+Status: partially implemented. BearWire run supersession and explicit cancellation now share a lifecycle helper that cancels registered active stream/tool work, transitions the active run to `cancelled`, settles open obligations, transitions active steps, records work-run cancellation, and emits a run-scoped `run.cancelled` event. BearWire background run tasks register with the cancellation registry and stop when superseded/cancelled, while terminal `turn_runs` can no longer be reopened or overwritten by stale runtime events. Remaining work is to move all terminal transitions into this owner and make continuation tasks use the same lifecycle path.
+
 Introduce a single run lifecycle owner that coordinates DB state, task cancellation,
 obligation settlement, and terminal event emission.
 
@@ -251,9 +253,11 @@ Supersession should be one conceptual operation:
 
 Exit criteria:
 
-- Superseded background tasks cannot append future model/tool events for the old run.
-- Every terminal state transition has a corresponding terminal projection event.
-- Armature and Den agree on why a loop exited.
+- Implemented for BearWire start supersession: registered background tasks observe cancellation, and terminal run rows reject stale transitions.
+- Implemented for explicit `run.cancel`: cancellation emits a run-scoped `run.cancelled` event and settles obligations.
+- Remaining: route continuation-task terminal handling through the same lifecycle owner instead of direct `persist_run_failed` calls.
+- Remaining: every terminal state transition has a corresponding terminal projection event from the owner.
+- Remaining: Armature and Den agree on why every loop exited across start, continuation, cancellation, and timeout paths.
 
 ### Phase 4 — Move expiry out of `GET /events`
 

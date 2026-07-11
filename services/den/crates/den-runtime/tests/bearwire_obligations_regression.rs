@@ -417,6 +417,47 @@ async fn den_owned_approval_required_tool_creates_permission_obligation(pool: sq
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    let cancelled = turn_runs::transition_run(
+        &pool,
+        &run_id,
+        turn_runs::TurnRunState::Cancelled,
+        Some("superseded_by_new_run"),
+    )
+    .await
+    .expect("cancel run");
+    assert!(cancelled.is_some());
+
+    let reopened = turn_runs::transition_run(&pool, &run_id, turn_runs::TurnRunState::Running, None)
+        .await
+        .expect("attempt reopen terminal run");
+    assert!(reopened.is_none());
+    let completed = turn_runs::transition_run(
+        &pool,
+        &run_id,
+        turn_runs::TurnRunState::Completed,
+        Some("stale_completed"),
+    )
+    .await
+    .expect("attempt overwrite terminal run");
+    assert!(completed.is_none());
+
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run exists");
+    assert_eq!(run.state, "cancelled");
+    assert_eq!(run.terminal_reason.as_deref(), Some("superseded_by_new_run"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn expired_client_obligation_is_marked_failed(pool: sqlx::PgPool) {
     let (user_id, bear_id) = create_user_and_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
