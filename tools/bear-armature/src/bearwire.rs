@@ -18,6 +18,7 @@ use crate::{
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BEARWIRE_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
+const BEARWIRE_EVENT_FETCH_MAX_CONSECUTIVE_ERRORS: usize = 5;
 const BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS: usize = 24 * 1024;
 const BEARWIRE_OBLIGATION_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 const BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(5);
@@ -464,16 +465,64 @@ pub(crate) async fn handle_prompt(
     let mut last_run_state_diagnostic_log = Instant::now();
     let mut last_run_state_summary: Option<String> = None;
     let mut logged_initial_wait = false;
+    let mut consecutive_fetch_errors = 0usize;
 
     while started.elapsed() < BEARWIRE_PROMPT_TIMEOUT {
-        let replay = fetch_events(http, config, session_id, after).await?;
+        let replay = match fetch_events(http, config, session_id, after).await {
+            Ok(replay) => {
+                consecutive_fetch_errors = 0;
+                replay
+            }
+            Err(err) => {
+                consecutive_fetch_errors += 1;
+                diagnostics.fetch_errors += 1;
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    after = ?after,
+                    consecutive_fetch_errors,
+                    error = %err,
+                    "BearWire event fetch failed; retrying before aborting prompt loop"
+                );
+                if consecutive_fetch_errors >= BEARWIRE_EVENT_FETCH_MAX_CONSECUTIVE_ERRORS {
+                    return Err(err).context("BearWire event fetch failed repeatedly");
+                }
+                if run_id != "<unknown>" {
+                    match fetch_run_state(http, config, session_id, run_id).await {
+                        Ok(state) => {
+                            service_run_state_tool_obligations(
+                                config,
+                                shared_state,
+                                session_id,
+                                run_id,
+                                &state,
+                                turn_token,
+                            )
+                            .await;
+                        }
+                        Err(state_err) => {
+                            tracing::debug!(
+                                target: "bear_armature::lifecycle",
+                                session_id,
+                                run_id,
+                                error = %state_err,
+                                "BearWire run.state obligation sync failed after event fetch error"
+                            );
+                        }
+                    }
+                }
+                sleep(BEARWIRE_POLL_INTERVAL).await;
+                continue;
+            }
+        };
         let replay_count = replay.frames.len();
         let next_after = replay.next_after;
         for frame in replay.frames {
             let Some(event) = frame.event else {
                 continue;
             };
-            let outcome = handle_bearwire_event(
+            let outcome = match handle_bearwire_event(
                 config,
                 adapter_state,
                 shared_state,
@@ -483,7 +532,26 @@ pub(crate) async fn handle_prompt(
                 &mut diagnostics,
                 turn_token,
             )
-            .await?;
+            .await
+            {
+                Ok(outcome) => outcome,
+                Err(err) if event.get("type").and_then(Value::as_str) == Some("run.failed") => {
+                    return Err(err);
+                }
+                Err(err) => {
+                    diagnostics.event_errors += 1;
+                    tracing::warn!(
+                        target: "bear_armature::lifecycle",
+                        session_id,
+                        run_id,
+                        event_type = event.get("type").and_then(|value| value.as_str()).unwrap_or("<missing>"),
+                        error = %err,
+                        sample = %truncate_for_log(&event.to_string(), 360),
+                        "BearWire event handling failed; skipping non-terminal event"
+                    );
+                    continue;
+                }
+            };
             saw_done |= outcome.saw_done;
             saw_visible_output |= outcome.saw_visible_output;
             saw_tool_activity |= outcome.saw_tool_activity;
@@ -1139,24 +1207,41 @@ async fn fetch_events_sse(
     }
 
     let mut buffer = Vec::<u8>::new();
-    let mut frames = Vec::new();
+    let mut raw_frames = Vec::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         buffer.extend_from_slice(&chunk.context("read BearWire events chunk")?);
         while let Some(pos) = buffer.windows(2).position(|window| window == b"\n\n") {
-            let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            frames.push(parse_event_frame(&frame)?);
+            raw_frames.push(buffer.drain(..pos + 2).collect::<Vec<u8>>());
         }
     }
     if !buffer.is_empty() {
-        frames.push(parse_event_frame(&buffer)?);
+        raw_frames.push(buffer);
+    }
+    Ok(parse_sse_replay_frames(raw_frames, after))
+}
+
+fn parse_sse_replay_frames(raw_frames: Vec<Vec<u8>>, after: Option<i64>) -> BearWireReplay {
+    let mut frames = Vec::new();
+    for raw_frame in raw_frames {
+        match parse_event_frame(&raw_frame) {
+            Ok(frame) => frames.push(frame),
+            Err(err) => {
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    error = %err,
+                    sample = %truncate_for_log(&String::from_utf8_lossy(&raw_frame), 360),
+                    "skipping malformed BearWire SSE frame"
+                );
+            }
+        }
     }
     let next_after = frames
         .iter()
         .filter_map(|frame| frame.sequence)
         .max()
         .or(after);
-    Ok(BearWireReplay { frames, next_after })
+    BearWireReplay { frames, next_after }
 }
 
 fn bearwire_plan_update_entries(event: &Value) -> Value {
@@ -1850,6 +1935,27 @@ mod tests {
 
         assert_eq!(parsed.next_after, Some(41));
         assert!(parsed.frames.is_empty());
+    }
+
+    #[test]
+    fn parse_sse_replay_frames_skips_malformed_frame_and_keeps_valid_frames() {
+        let valid = br#"id: 42
+data: {"jsonrpc":"2.0","method":"event","params":{"type":"run.progress","run_id":"run-1","data":{}}}
+
+"#;
+        let malformed = br#"id: 43
+data: {not-json}
+
+"#;
+        let replay = parse_sse_replay_frames(vec![malformed.to_vec(), valid.to_vec()], Some(41));
+
+        assert_eq!(replay.next_after, Some(42));
+        assert_eq!(replay.frames.len(), 1);
+        assert_eq!(replay.frames[0].sequence, Some(42));
+        assert_eq!(
+            replay.frames[0].event.as_ref().unwrap()["type"],
+            "run.progress"
+        );
     }
 
     #[test]

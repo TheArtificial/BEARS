@@ -1205,6 +1205,8 @@ fn summarize_mcp_for_log(mcp: Option<&Value>) -> Value {
 struct SseStreamDiagnostics {
     frames: usize,
     events: usize,
+    fetch_errors: usize,
+    event_errors: usize,
     event_types: HashMap<String, usize>,
     unknown_event_samples: Vec<String>,
     saw_turn_complete: bool,
@@ -1233,9 +1235,11 @@ impl SseStreamDiagnostics {
 
     fn summary(&self) -> String {
         format!(
-            "frames={}, events={}, event_types={:?}, unknown_samples={:?}, saw_turn_complete={}, saw_visible_output={}, saw_tool_activity={}, saw_error={}",
+            "frames={}, events={}, fetch_errors={}, event_errors={}, event_types={:?}, unknown_samples={:?}, saw_turn_complete={}, saw_visible_output={}, saw_tool_activity={}, saw_error={}",
             self.frames,
             self.events,
+            self.fetch_errors,
+            self.event_errors,
             self.event_types,
             self.unknown_event_samples,
             self.saw_turn_complete,
@@ -6863,10 +6867,57 @@ pub(crate) fn spawn_tool_request_task(
             Ok(canonical) => canonical,
             Err(err) => {
                 eprintln!(
-                    "bear-armature: ignoring malformed canonical tool request session_id={} error={err:#} event={}",
+                    "bear-armature: malformed canonical tool request session_id={} error={err:#} event={}",
                     session_id,
                     truncate_for_log(&event.to_string(), 400)
                 );
+                let run_id = event
+                    .get("run_id")
+                    .or_else(|| event.pointer("/data/run_id"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let tool_call_id = event
+                    .pointer("/data/tool_call/id")
+                    .or_else(|| event.pointer("/data/tool_call_id"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if let (Some(run_id), Some(tool_call_id)) = (run_id, tool_call_id) {
+                    let tool_name = event
+                        .pointer("/data/tool_call/name")
+                        .or_else(|| event.pointer("/data/tool_name"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("malformed_tool_request");
+                    let payload = json!({
+                        "status": "error",
+                        "tool_name": tool_name,
+                        "content": "Malformed BearWire tool request could not be executed by the armature.",
+                        "diagnostic": {
+                            "category": "malformed_tool_request",
+                            "message": err.to_string(),
+                            "event_sample": truncate_for_log(&event.to_string(), 1000),
+                        }
+                    });
+                    if let Err(post_err) = crate::bearwire::post_tool_result(
+                        &config,
+                        &session_id,
+                        run_id,
+                        tool_call_id,
+                        payload,
+                    )
+                    .await
+                    {
+                        eprintln!(
+                            "bear-armature: failed to post malformed tool request error result session_id={} run_id={} tool_call_id={} error={post_err:#}",
+                            session_id,
+                            run_id,
+                            tool_call_id,
+                        );
+                    }
+                }
                 return;
             }
         };

@@ -280,6 +280,8 @@ Exit criteria:
 
 ### Phase 5 — Fault-isolated armature event processing
 
+Status: partially implemented. Bear-armature now retries transient event-fetch failures before aborting, services safe `run.state` obligations during fetch-error windows, skips malformed SSE frames while preserving valid frames, skips/logs non-terminal event handler failures, and posts a structured error result for malformed `tool_call.requested` events when `run_id` and `tool_call_id` are available. `run.failed` remains intentionally fatal to the prompt loop.
+
 Make event handling at-least-once friendly.
 
 Rules:
@@ -295,8 +297,10 @@ Rules:
 
 Exit criteria:
 
-- One malformed event cannot orphan unrelated open obligations.
-- Duplicate delivery of a tool request cannot spawn duplicate local tool execution.
+- Implemented: one malformed non-terminal event should not stop unrelated event processing or safe obligation servicing.
+- Implemented: malformed tool requests with enough identity are answered with structured error results instead of silently timing out.
+- Implemented: duplicate delivery of a tool request cannot spawn duplicate local tool execution.
+- Remaining: broader integration tests for malformed actionable permission waits and repeated transient HTTP failures.
 
 ### Phase 6 — Choose real streaming or explicit JSON polling
 
