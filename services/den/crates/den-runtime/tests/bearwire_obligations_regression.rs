@@ -421,6 +421,69 @@ async fn den_owned_approval_required_tool_creates_permission_obligation(pool: sq
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn armature_approval_required_tool_persists_policy_for_permission_reconstruction(
+    pool: sqlx::PgPool,
+) {
+    let (user_id, bear_id) = create_user_and_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+
+    let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
+        &pool,
+        turn_waits::PersistToolCallWaitInput {
+            session_id: &session_id,
+            run_id: &run_id,
+            bear_id,
+            user_id,
+            request_id: Uuid::new_v4(),
+            tool_call_id: "call-edit",
+            tool_name: "fs_edit_file",
+            title: &Some("Edit file".to_string()),
+            kind: &Some("function".to_string()),
+            arguments: &serde_json::json!({
+                "path": "README.md",
+                "old_text": "old",
+                "new_text": "new"
+            }),
+            approval_request_id: &Some("perm-edit".to_string()),
+            approval_required: true,
+            approval_reason: &Some("Edit README.md".to_string()),
+            event_run_id: &Some(run_id.clone()),
+        },
+    )
+    .await
+    .expect("persist armature approval wait");
+
+    assert!(persisted.effective_approval_required);
+    let obligation = persisted
+        .obligation
+        .expect("armature approval-required tool should create permission obligation");
+    assert_eq!(obligation.kind, "permission_decision");
+    assert_eq!(obligation.expected_responder_action, "permission_decision");
+    assert_eq!(obligation.tool_call_id.as_deref(), Some("call-edit"));
+    assert_eq!(obligation.permission_id.as_deref(), Some("perm-edit"));
+    assert_eq!(obligation.request_payload["execution_target"], "armature_local");
+    assert_eq!(obligation.request_payload["policy"]["execution_target"], "armature_local");
+    assert_eq!(obligation.request_payload["policy"]["approval_policy"], "required");
+    assert_eq!(obligation.request_payload["policy"]["risk"], "writes_workspace");
+
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list events");
+    let event = events
+        .iter()
+        .find(|event| event.event_type == "client.waiting")
+        .expect("client.waiting event");
+    assert_eq!(event.event.data["execution_target"], "armature_local");
+    assert_eq!(event.event.data["policy"]["approval_policy"], "required");
+    assert_eq!(event.event.data["obligation_id"], obligation.id.to_string());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool) {
     let (user_id, bear_id) = create_user_and_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());

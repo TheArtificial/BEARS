@@ -2162,6 +2162,29 @@ mod tests {
         });
         assert!(actionable_tool_request_event_from_obligation("run-1", &mutating).is_none());
 
+        let policy_described_write = json!({
+            "kind": "tool_result",
+            "expected_responder_action": "tool_result",
+            "state": "waiting_for_client",
+            "request_payload": {
+                "tool_call_id": "call-edit-policy",
+                "tool_name": "fs_edit_file",
+                "arguments": { "path": "README.md" },
+                "approval_required": false,
+                "execution_target": "armature_local",
+                "policy": {
+                    "execution_target": "armature_local",
+                    "approval_required": false,
+                    "approval_policy": "never",
+                    "risk": "writes_workspace"
+                }
+            }
+        });
+        assert!(
+            actionable_tool_request_event_from_obligation("run-1", &policy_described_write)
+                .is_none()
+        );
+
         let approval = json!({
             "kind": "tool_result",
             "expected_responder_action": "tool_result",
