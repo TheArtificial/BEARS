@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use super::records::BearMemoryStore;
+use super::records::{head_record_for_logical_path, BearMemoryStore};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SqliteMemoryProposal {
@@ -22,7 +22,13 @@ pub async fn create_memory_proposal(
     requires_human: bool,
     payload: &Value,
 ) -> Result<SqliteMemoryProposal, DenError> {
-    let payload = payload_with_dedupe_key(payload, suggested_action, sensitivity);
+    let enriched = enrich_payload_with_freshness(store, payload).await?;
+    let payload = payload_with_dedupe_key(&enriched, suggested_action, sensitivity);
+    let effective_requires_human = requires_human
+        || payload
+            .get("requires_human")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
     if let Some(key) = payload
         .pointer("/dedupe/key")
         .and_then(Value::as_str)
@@ -51,7 +57,7 @@ pub async fn create_memory_proposal(
     .bind(sequence_no)
     .bind(suggested_action)
     .bind(sensitivity)
-    .bind(i32::from(requires_human))
+    .bind(i32::from(effective_requires_human))
     .bind(payload.to_string())
     .bind(&created_at)
     .execute(store.pool())
@@ -64,6 +70,67 @@ pub async fn create_memory_proposal(
         payload_json: payload,
         created_at,
     })
+}
+
+async fn enrich_payload_with_freshness(
+    store: &BearMemoryStore,
+    payload: &Value,
+) -> Result<Value, DenError> {
+    let Some(target_ref) = payload
+        .get("target_ref")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(payload.clone());
+    };
+    let Some(new_fingerprint) = payload_claim_fingerprint(payload) else {
+        return Ok(payload.clone());
+    };
+    let Some(head) = head_record_for_logical_path(store, target_ref).await? else {
+        return Ok(payload.clone());
+    };
+    let head_fingerprint = super::promotions::memory_claim_fingerprint(&head.content_text);
+    if head_fingerprint.is_empty() || head_fingerprint == new_fingerprint {
+        return Ok(payload.clone());
+    }
+
+    let mut payload = ensure_object_payload(payload);
+    let obj = payload.as_object_mut().expect("payload object initialized");
+    obj.insert("requires_human".to_string(), json!(true));
+    obj.insert(
+        "freshness".to_string(),
+        json!({
+            "status": "potential_conflict",
+            "review_required": true,
+            "target_ref": target_ref,
+            "current_memory_id": head.memory_id,
+            "current_sequence_no": head.sequence_no,
+            "current_claim_fingerprint": head_fingerprint,
+            "proposed_claim_fingerprint": new_fingerprint,
+            // ponytail: contradiction detection is deterministic inequality at the same target_ref;
+            // upgrade path is semantic entailment/contradiction review proposals.
+            "detector": "same-path-different-claim-v1"
+        }),
+    );
+    Ok(payload)
+}
+
+fn ensure_object_payload(payload: &Value) -> Value {
+    if payload.is_object() {
+        payload.clone()
+    } else {
+        json!({ "value": payload })
+    }
+}
+
+fn payload_claim_fingerprint(payload: &Value) -> Option<String> {
+    payload
+        .get("proposed_content")
+        .and_then(Value::as_str)
+        .or_else(|| payload.get("summary").and_then(Value::as_str))
+        .map(super::promotions::memory_claim_fingerprint)
+        .filter(|value| !value.is_empty())
 }
 
 async fn pending_proposal_for_dedupe_key(
@@ -373,6 +440,67 @@ mod tests {
                 .pointer("/dedupe/version")
                 .and_then(Value::as_str),
             Some("deterministic-v1")
+        );
+    }
+
+    #[tokio::test]
+    async fn same_path_different_claim_gets_freshness_review_metadata() {
+        let store = new_test_store().await;
+        let path = "core/decisions/runtime.md";
+        let existing = store
+            .append_record(
+                &crate::LogicalMemoryPath::from_logical_path(path),
+                "decision",
+                "curate",
+                None,
+                "Use SQLite as canonical memory.",
+                &json!({}),
+                "normal",
+            )
+            .await
+            .unwrap();
+
+        let proposal = create_memory_proposal(
+            &store,
+            "promote_to_core",
+            "normal",
+            false,
+            &json!({
+                "target_ref": path,
+                "source_paths": ["pair/summaries/run.md"],
+                "proposed_content": "Use Postgres as canonical memory."
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            proposal
+                .payload_json
+                .pointer("/freshness/status")
+                .and_then(Value::as_str),
+            Some("potential_conflict")
+        );
+        assert_eq!(
+            proposal
+                .payload_json
+                .pointer("/freshness/current_memory_id")
+                .and_then(Value::as_str),
+            Some(existing.memory_id.as_str())
+        );
+        assert_eq!(
+            proposal
+                .payload_json
+                .pointer("/freshness/review_required")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            proposal
+                .payload_json
+                .get("requires_human")
+                .and_then(Value::as_bool),
+            Some(true)
         );
     }
 }
