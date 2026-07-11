@@ -432,8 +432,222 @@ pub struct ResponsesStreamAccumulator {
     saw_tool_call: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct ResponsesStreamDiagnostics {
+    telemetry: Option<LlmRequestTelemetry>,
+    started_at: Instant,
+    sse_frame_count: u64,
+    json_frame_count: u64,
+    zero_runtime_event_frame_count: u64,
+    consecutive_zero_runtime_event_frame_count: u64,
+    emitted_runtime_event_count: u64,
+    event_type_counts: HashMap<String, u64>,
+    last_event_type: Option<String>,
+    tool_arg_lengths: HashMap<String, usize>,
+    tool_names: HashMap<String, String>,
+    tool_call_ids: HashMap<String, String>,
+}
+
+impl ResponsesStreamDiagnostics {
+    pub fn new(telemetry: Option<LlmRequestTelemetry>) -> Self {
+        Self {
+            telemetry,
+            started_at: Instant::now(),
+            sse_frame_count: 0,
+            json_frame_count: 0,
+            zero_runtime_event_frame_count: 0,
+            consecutive_zero_runtime_event_frame_count: 0,
+            emitted_runtime_event_count: 0,
+            event_type_counts: HashMap::new(),
+            last_event_type: None,
+            tool_arg_lengths: HashMap::new(),
+            tool_names: HashMap::new(),
+            tool_call_ids: HashMap::new(),
+        }
+    }
+
+    fn telemetry(&self) -> Option<&LlmRequestTelemetry> {
+        self.telemetry.as_ref()
+    }
+
+    pub fn observe_sse_frame(&mut self, byte_len: usize) {
+        self.sse_frame_count = self.sse_frame_count.saturating_add(1);
+        let telemetry = self.telemetry();
+        tracing::trace!(
+            target: "den.llm.stream",
+            api_style = "responses_stream",
+            request_id = telemetry.and_then(|t| t.request_id.as_deref()),
+            run_id = telemetry.and_then(|t| t.run_id.as_deref()),
+            session_id = telemetry.and_then(|t| t.session_id.as_deref()),
+            conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
+            sse_frame_count = self.sse_frame_count,
+            frame_bytes = byte_len,
+            elapsed_ms = self.started_at.elapsed().as_millis(),
+            "LLM Responses stream SSE frame parsed"
+        );
+    }
+
+    pub fn observe_json_frame(&mut self, json: &Value) {
+        self.json_frame_count = self.json_frame_count.saturating_add(1);
+        let event_type = json
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>");
+        *self
+            .event_type_counts
+            .entry(event_type.to_string())
+            .or_default() += 1;
+        self.last_event_type = Some(event_type.to_string());
+
+        let key = response_item_key(json);
+        if let Some(delta) = json.get("delta").and_then(Value::as_str) {
+            if event_type == "response.function_call_arguments.delta" {
+                let total = self.tool_arg_lengths.entry(key.clone()).or_insert(0);
+                *total = total.saturating_add(delta.len());
+            }
+        }
+        if let Some(arguments) = json.get("arguments").and_then(Value::as_str) {
+            if event_type == "response.function_call_arguments.done" {
+                self.tool_arg_lengths.insert(key.clone(), arguments.len());
+            }
+        }
+        if let Some(item) = json.get("item") {
+            let item_key = response_item_key_from_item(json, item);
+            if item.get("type").and_then(Value::as_str) == Some("function_call") {
+                if let Some(name) = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    self.tool_names.insert(item_key.clone(), name.to_string());
+                }
+                if let Some(call_id) = item
+                    .get("call_id")
+                    .or_else(|| item.get("id"))
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    self.tool_call_ids
+                        .insert(item_key.clone(), call_id.to_string());
+                }
+                if let Some(arguments) = item.get("arguments").and_then(Value::as_str) {
+                    self.tool_arg_lengths.insert(item_key, arguments.len());
+                }
+            }
+        }
+
+        let telemetry = self.telemetry();
+        tracing::trace!(
+            target: "den.llm.stream",
+            api_style = "responses_stream",
+            request_id = telemetry.and_then(|t| t.request_id.as_deref()),
+            run_id = telemetry.and_then(|t| t.run_id.as_deref()),
+            session_id = telemetry.and_then(|t| t.session_id.as_deref()),
+            conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
+            json_frame_count = self.json_frame_count,
+            event_type,
+            elapsed_ms = self.started_at.elapsed().as_millis(),
+            "LLM Responses stream JSON frame parsed"
+        );
+    }
+
+    fn observe_response_parse(&mut self, event_type: &str, emitted_events: &[RuntimeStreamEvent]) {
+        if emitted_events.is_empty() {
+            self.zero_runtime_event_frame_count =
+                self.zero_runtime_event_frame_count.saturating_add(1);
+            self.consecutive_zero_runtime_event_frame_count = self
+                .consecutive_zero_runtime_event_frame_count
+                .saturating_add(1);
+            let telemetry = self.telemetry();
+            tracing::trace!(
+                target: "den.llm.stream",
+                api_style = "responses_stream",
+                request_id = telemetry.and_then(|t| t.request_id.as_deref()),
+                run_id = telemetry.and_then(|t| t.run_id.as_deref()),
+                session_id = telemetry.and_then(|t| t.session_id.as_deref()),
+                conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
+                event_type,
+                zero_runtime_event_frame_count = self.zero_runtime_event_frame_count,
+                consecutive_zero_runtime_event_frame_count = self.consecutive_zero_runtime_event_frame_count,
+                elapsed_ms = self.started_at.elapsed().as_millis(),
+                "LLM Responses stream provider event emitted no runtime events"
+            );
+            return;
+        }
+        self.consecutive_zero_runtime_event_frame_count = 0;
+        self.observe_emitted_events(emitted_events);
+    }
+
+    pub fn observe_emitted_events(&mut self, events: &[RuntimeStreamEvent]) {
+        if events.is_empty() {
+            return;
+        }
+        self.emitted_runtime_event_count = self
+            .emitted_runtime_event_count
+            .saturating_add(events.len() as u64);
+        let telemetry = self.telemetry();
+        let event_kinds = events.iter().map(runtime_event_kind).collect::<Vec<_>>();
+        tracing::debug!(
+            target: "den.llm.stream",
+            api_style = "responses_stream",
+            request_id = telemetry.and_then(|t| t.request_id.as_deref()),
+            run_id = telemetry.and_then(|t| t.run_id.as_deref()),
+            session_id = telemetry.and_then(|t| t.session_id.as_deref()),
+            conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
+            emitted_runtime_event_count = self.emitted_runtime_event_count,
+            emitted_this_frame = events.len(),
+            event_kinds = ?event_kinds,
+            zero_runtime_event_frame_count = self.zero_runtime_event_frame_count,
+            consecutive_zero_runtime_event_frame_count = self.consecutive_zero_runtime_event_frame_count,
+            last_provider_event_type = self.last_event_type.as_deref(),
+            event_type_counts = ?self.event_type_counts,
+            tool_arg_lengths = ?self.tool_arg_lengths,
+            tool_names = ?self.tool_names,
+            tool_call_ids = ?self.tool_call_ids,
+            elapsed_ms = self.started_at.elapsed().as_millis(),
+            "LLM Responses stream runtime events emitted"
+        );
+    }
+
+    pub fn observe_incomplete_frame_on_end(&self, buffered_bytes: usize) {
+        let telemetry = self.telemetry();
+        tracing::warn!(
+            target: "den.llm.stream",
+            api_style = "responses_stream",
+            request_id = telemetry.and_then(|t| t.request_id.as_deref()),
+            run_id = telemetry.and_then(|t| t.run_id.as_deref()),
+            session_id = telemetry.and_then(|t| t.session_id.as_deref()),
+            conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
+            buffered_bytes,
+            sse_frame_count = self.sse_frame_count,
+            json_frame_count = self.json_frame_count,
+            emitted_runtime_event_count = self.emitted_runtime_event_count,
+            zero_runtime_event_frame_count = self.zero_runtime_event_frame_count,
+            consecutive_zero_runtime_event_frame_count = self.consecutive_zero_runtime_event_frame_count,
+            last_provider_event_type = self.last_event_type.as_deref(),
+            event_type_counts = ?self.event_type_counts,
+            tool_arg_lengths = ?self.tool_arg_lengths,
+            tool_names = ?self.tool_names,
+            tool_call_ids = ?self.tool_call_ids,
+            elapsed_ms = self.started_at.elapsed().as_millis(),
+            "LLM Responses stream ended with incomplete SSE frame"
+        );
+    }
+}
+
 impl ResponsesStreamAccumulator {
     pub fn ingest_sse_data_line(&mut self, json: &Value) -> OpenAiStreamParseResult {
+        self.ingest_sse_data_line_with_diagnostics(json, None)
+    }
+
+    pub fn ingest_sse_data_line_with_diagnostics(
+        &mut self,
+        json: &Value,
+        mut diagnostics: Option<&mut ResponsesStreamDiagnostics>,
+    ) -> OpenAiStreamParseResult {
+        if let Some(diagnostics) = diagnostics.as_deref_mut() {
+            diagnostics.observe_json_frame(json);
+        }
         let mut out = OpenAiStreamParseResult::default();
         if let Some(error) = json
             .get("error")
@@ -460,6 +674,9 @@ impl ResponsesStreamAccumulator {
                     context: None,
                 }));
             self.completed = true;
+            if let Some(diagnostics) = diagnostics.as_deref_mut() {
+                diagnostics.observe_response_parse("error", &out.events);
+            }
             return out;
         }
         let event_type = json.get("type").and_then(Value::as_str).unwrap_or_default();
@@ -564,6 +781,9 @@ impl ResponsesStreamAccumulator {
             }
             _ => {}
         }
+        if let Some(diagnostics) = diagnostics.as_deref_mut() {
+            diagnostics.observe_response_parse(event_type, &out.events);
+        }
         out
     }
 
@@ -666,6 +886,17 @@ pub fn responses_sse_frame_to_runtime_events(
     accumulator: &mut ResponsesStreamAccumulator,
     body: &[u8],
 ) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
+    responses_sse_frame_to_runtime_events_with_diagnostics(accumulator, body, None)
+}
+
+pub fn responses_sse_frame_to_runtime_events_with_diagnostics(
+    accumulator: &mut ResponsesStreamAccumulator,
+    body: &[u8],
+    mut diagnostics: Option<&mut ResponsesStreamDiagnostics>,
+) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
+    if let Some(diagnostics) = diagnostics.as_deref_mut() {
+        diagnostics.observe_sse_frame(body.len());
+    }
     let text = std::str::from_utf8(body).map_err(|_| {
         den_core::DenError::System("invalid UTF-8 in LLM Responses SSE frame".to_string())
     })?;
@@ -683,13 +914,18 @@ pub fn responses_sse_frame_to_runtime_events(
             continue;
         }
         if data == "[DONE]" {
-            events.extend(accumulator.flush_end_of_stream());
+            let flushed = accumulator.flush_end_of_stream();
+            if let Some(diagnostics) = diagnostics.as_deref_mut() {
+                diagnostics.observe_emitted_events(&flushed);
+            }
+            events.extend(flushed);
             continue;
         }
         let json = serde_json::from_str::<Value>(data).map_err(|e| {
             den_core::DenError::System(format!("invalid LLM Responses SSE JSON: {e}"))
         })?;
-        let parsed = accumulator.ingest_sse_data_line(&json);
+        let parsed =
+            accumulator.ingest_sse_data_line_with_diagnostics(&json, diagnostics.as_deref_mut());
         events.extend(parsed.events);
     }
     Ok(events)

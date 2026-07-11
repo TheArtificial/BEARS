@@ -23,7 +23,8 @@ use crate::{
         LlmApiStyle, LlmClient,
     },
     native_runtime::{
-        openai_byte_stream_to_event_stream_with_telemetry, responses_byte_stream_to_event_stream,
+        openai_byte_stream_to_event_stream_with_telemetry,
+        responses_byte_stream_to_event_stream_with_telemetry,
     },
     runtime_compaction::{den_error_indicates_context_overflow, CompactionMode},
 };
@@ -341,7 +342,9 @@ impl LazyAgentStepStream {
             LlmApiStyle::ChatCompletionsStream => {
                 openai_byte_stream_to_event_stream_with_telemetry(byte_stream, telemetry)
             }
-            LlmApiStyle::ResponsesStream => responses_byte_stream_to_event_stream(byte_stream),
+            LlmApiStyle::ResponsesStream => {
+                responses_byte_stream_to_event_stream_with_telemetry(byte_stream, telemetry)
+            }
         })
     }
 
