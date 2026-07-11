@@ -8,6 +8,7 @@ use bearwire_protocol::{
 use den_http::errors::CustomError;
 use den_runtime::{
     bearwire_events,
+    pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
     turn_obligations,
 };
@@ -258,12 +259,60 @@ pub(crate) async fn session_close_result(
     else {
         return Ok(json!({ "ok": true, "closed": false, "session_id": session_id }));
     };
+    let conversation_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .unwrap_or(&session.conversation_id)
+        .to_string();
+    let reflection_result = match prepare_turn_compaction(
+        &state.sqlx_pool,
+        &state.config,
+        bear.id,
+        &conversation_id,
+        BearProfile::Pair,
+        TurnCompactionTrigger::Manual,
+    )
+    .await
+    {
+        Ok(_) => create_pair_reflection_proposals_from_latest_summary(
+            &state.sqlx_pool,
+            &state.config,
+            &state.memory_stores,
+            bear.id,
+            &conversation_id,
+            &session_id,
+        )
+        .await
+        .map_err(CustomError::from),
+        Err(error) => Err(CustomError::from(error)),
+    };
+    let reflection_payload = match reflection_result {
+        Ok(output) => json!({
+            "status": "processed",
+            "candidate_count": output.candidate_count,
+            "dropped_followup_count": output.dropped_followup_count,
+            "proposal_ids": output.created_proposal_ids,
+        }),
+        Err(error) => {
+            tracing::warn!(
+                bear_id = %bear.id,
+                session_id = %session_id,
+                error = %error,
+                "pair reflection failed during session close"
+            );
+            json!({
+                "status": "failed_open",
+                "error": error.to_string(),
+            })
+        }
+    };
     client_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
     let mut event = BearWireEvent::ephemeral(
         "session.closed",
         json!({
             "session_id": session_id,
             "bear_slug": bear.slug,
+            "pair_reflection": reflection_payload,
         }),
     );
     event.bear_id = Some(bear.id.to_string());
@@ -282,6 +331,7 @@ pub(crate) async fn session_close_result(
         "closed": true,
         "session_id": session_id,
         "event_sequence": persisted.sequence_no,
+        "pair_reflection": reflection_payload,
     }))
 }
 

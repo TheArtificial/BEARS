@@ -107,13 +107,13 @@ Proactively scan **un-mined** closed sessions and compaction artifacts and run a
 - **Idempotency:** record processed sources in `memory_harvest_marks` (source kind + ref + hash); never re-harvest unchanged sources.
 - **Triggers:** `session_archived`, `cumulative_salience_threshold`, and a throttled/adaptive heartbeat — not a fixed cron.
 - **Provenance:** every candidate links back to source `conversation_messages`.
-- **Quality filter:** drop low-confidence extractions before they become proposals (guards against hallucination propagation). The current deterministic compaction-artifact filter keeps decisions/constraints/artifact refs, drops follow-up-only and goal/workflow-only summaries, tags artifact-only candidates as medium confidence, and routes person/secret/external-risk signals to human review; richer model-assisted confidence scoring remains open.
+- **Quality filter:** drop low-confidence extractions before they become proposals (guards against hallucination propagation). The current deterministic compaction-artifact filter keeps decisions/constraints/artifact refs, drops follow-up-only and goal/workflow-only summaries, tags artifact-only candidates as medium confidence, and routes person/secret/external-risk signals to human review; richer model-assisted confidence scoring is deferred until proposal quality metrics show a problem.
 
 ### Consolidation
 
 Before writing `core/`, reconcile candidates against existing canonical memory:
 
-- **Dedup** — semantically identical candidate ⇒ no-op (optionally bump salience). Exact duplicate core updates already record a `dedupe_core_noop` promotion without writing a new memory record. Proposal creation now also adds human-review `consolidation_review` metadata when an exact normalized claim already exists at a different active logical path; broader model-assisted semantic dedup remains open.
+- **Dedup** — semantically identical candidate ⇒ no-op (optionally bump salience). Exact duplicate core updates already record a `dedupe_core_noop` promotion without writing a new memory record. Proposal creation now also adds human-review `consolidation_review` metadata when an exact normalized claim already exists at a different active logical path; broader model-assisted semantic dedup is deferred until duplicate proposals become a real review burden.
 - **Supersession, not overwrite** — a contradicting candidate writes a *new* record that sets `supersedes_memory_id` and encodes the transition ("previously X; now Y"); the old record is marked `invalid_at` and preserved as history. This is the bears-native form of temporal fact invalidation, without a graph database.
 - **Synthesis** — when cumulative `salience` over recent records crosses a threshold, synthesize a higher-level `reflection` record (Generative-Agents-style) and store it as retrievable memory.
 

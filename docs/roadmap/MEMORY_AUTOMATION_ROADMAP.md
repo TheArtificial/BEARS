@@ -3,9 +3,9 @@
 > **Direction changed (2026-06).** Canonical memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); Letta Archives and `pair/` MemFS branches are removed. Long-term recall is a **derived Qdrant index** over canonical SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); the engine that *fills* it (extraction-first **harvest** + **consolidation** by supersession) and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
 For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
-Status: implementation roadmap; P0 pair-reflection proposal enqueue is implemented for ACP close.
+Status: implementation roadmap; P0 pair-reflection proposal enqueue and P2 compaction-summary-assisted pair reflection proposals are implemented for ACP close. Remaining automation enhancements are optional and evidence-driven.
 
-This roadmap sequences the remaining work needed for `pair` learning to become useful to `work` through reflection, curation, `core/`, Cabinet, task context, and the **derived recall index**.
+This roadmap sequences the work needed for `pair` learning to become useful to `work` through reflection, curation, `core/`, Cabinet, task context, and the **derived recall index**. The safety-critical flywheel is now in place; further automation should wait for concrete operational evidence.
 
 Related docs:
 
@@ -160,13 +160,15 @@ Signals:
 
 ## P2 — Model-assisted pair reflection
 
+Status: 🟡 v1 implemented for ACP close by extracting durable candidates from the latest structured compaction summary and creating memory proposals. A separate direct model pass over raw turn/tool context is deferred until there is evidence that summary-based extraction misses important facts.
+
 ### Goal
 
 Upgrade deterministic pair summaries into useful role-local reflection.
 
 ### Behavior
 
-A model-assisted pair reflection pass should extract:
+A model-assisted pair reflection pass should extract (v1 does this from structured compaction summaries):
 
 - durable technical decisions;
 - repeated failure modes;
@@ -196,6 +198,20 @@ pair/notes/
 
 May create memory proposals.
 
+### Current v1
+
+- ACP `session.close` runs pair compaction, then reads the latest structured compaction summary.
+- Decisions and constraints become `retain_profile_local` memory proposals.
+- Artifact refs become human-review memory proposals.
+- Goals, workflow refs, and unresolved follow-ups are treated as continuation state and are not proposed as durable memory.
+- Secret/person/external-risk signals use proposal sensitivity and force human review.
+
+### Deferred until evidence
+
+- Direct model pass over raw ACP messages/tool activity.
+- Source-turn-level scoring and richer confidence explanations.
+- Promotion from goals/workflow buckets when they encode durable preferences or conventions.
+
 ### Constraints
 
 - No `core/` writes.
@@ -214,9 +230,9 @@ Turn closed session archives into durable memory candidates, not just the active
 
 ### Behavior
 
-- 🟡 Compaction-artifact harvest is implemented: scan **un-mined** compaction artifacts, distill structured summary sections, and create human-review memory proposals. Broader closed-conversation mining and model-assisted extraction remain open.
+- 🟡 Compaction-artifact harvest is implemented: scan **un-mined** compaction artifacts, distill structured summary sections, and create human-review memory proposals. Broader closed-conversation mining and model-assisted extraction are deferred until compaction-artifact coverage proves insufficient.
 - ✅ Emit memory proposals (candidate durable entries) with harvest provenance (`source_hash`, `run_id`, source refs); do not write `core/` (that is `memory_curate`).
-- 🟡 Apply a deterministic quality/risk filter before a candidate becomes a proposal: transient follow-up-only artifacts and goal/workflow-only summaries are marked harvested without a proposal; durable decisions/constraints/artifacts receive confidence metadata; artifact-only candidates are retained at medium confidence; person/secret/external-risk signals set proposal sensitivity for human review. Fixture coverage exists for each deterministic branch. Richer model-assisted confidence scoring remains open.
+- 🟡 Apply a deterministic quality/risk filter before a candidate becomes a proposal: transient follow-up-only artifacts and goal/workflow-only summaries are marked harvested without a proposal; durable decisions/constraints/artifacts receive confidence metadata; artifact-only candidates are retained at medium confidence; person/secret/external-risk signals set proposal sensitivity for human review. Fixture coverage exists for each deterministic branch. Richer model-assisted confidence scoring is deferred until proposal quality metrics show a problem.
 
 ### Triggers
 
@@ -232,7 +248,7 @@ Turn closed session archives into durable memory candidates, not just the active
 
 - transcripts are source material, never auto-promoted to memory;
 - bounded token budget per run;
-- feeds `memory_curate` for dedup, supersession, and promotion. Deterministic exact-claim/different-path matches now add human-review `consolidation_review` metadata; broader semantic duplicate/supersession scoring remains curate/model-assisted work.
+- feeds `memory_curate` for dedup, supersession, and promotion. Deterministic exact-claim/different-path matches now add human-review `consolidation_review` metadata; broader semantic duplicate/supersession scoring is deferred until duplicate/conflict misses become a real review burden.
 
 ---
 

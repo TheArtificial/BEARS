@@ -16,8 +16,8 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den ru
 | **Legacy memory import tooling** | `den import-legacy-memory`, git-dir + bundle, history/supersession import, fixture tests, bear-admin legacy bundle upload UI | Optional archived-bundle use only; no production migration required | [MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md](MEMFS_TO_SQLITE_ETL_IMPLEMENTATION_PLAN.md) |
 | **Derived recall index** | Qdrant optional stack, indexer worker, turn-start recall, hybrid `memory_search` (vector + keyword + graph + temporal), `den reindex` | Cabinet leg (blocked); embedding-standard migration | [DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md) |
 | **Entity layer** | Schema, resolver, relations, access gate, entity-filter recall, graph leg, explicit anchors, read/write/governance tools, `session_info.entities` | Portability/export-import | [BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md](BEAR_ENTITY_LAYER_IMPLEMENTATION_PLAN.md) |
-| **Reflection / automation** | `memory_curate` + `recall_index` workers; pair-reflection → proposal enqueue (ACP close); deterministic consolidation-review metadata | Model-assisted pair reflection; broader `archive_harvest`; semantic consolidation | [MEMORY_AUTOMATION_ROADMAP.md](MEMORY_AUTOMATION_ROADMAP.md) |
-| **ADR-0041 schema + curation engine** | `valid_from`/`invalid_at`, `salience`, lifecycle/freshness indicators, harvest marks, archive-harvest lane, reviewed supersession writes, deterministic harvest quality fixtures, exact-claim consolidation review metadata | richer model-assisted harvest/consolidation quality | [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_CURATION_PLAN.md](MEMORY_CURATION_PLAN.md) |
+| **Reflection / automation** | `memory_curate` + `recall_index` workers; pair-reflection → proposal enqueue (ACP close); compaction-summary-assisted pair reflection proposals; deterministic consolidation-review metadata | Optional/evidence-driven: dedicated run UI, broader `archive_harvest`, semantic consolidation | [MEMORY_AUTOMATION_ROADMAP.md](MEMORY_AUTOMATION_ROADMAP.md) |
+| **ADR-0041 schema + curation engine** | `valid_from`/`invalid_at`, `salience`, lifecycle/freshness indicators, harvest marks, archive-harvest lane, reviewed supersession writes, deterministic harvest quality fixtures, exact-claim consolidation review metadata | Optional/evidence-driven richer model-assisted harvest/consolidation quality | [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_CURATION_PLAN.md](MEMORY_CURATION_PLAN.md) |
 | **Work-surface memory** | Resolver on entity layer; scaffolds in logical-path model | End-to-end scaffolding + resolution UX | [WORK_SURFACE_MEMORY_SCAFFOLDING_PLAN.md](WORK_SURFACE_MEMORY_SCAFFOLDING_PLAN.md), [WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md](WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md) |
 | **Semantic memory schema (ADR-0022)** | Logical-path projection | Resource-scoped write paths, `plan` kind removal | [SEMANTIC_MEMORY_SCHEMA_IMPLEMENTATION_PLAN.md](SEMANTIC_MEMORY_SCHEMA_IMPLEMENTATION_PLAN.md) |
 
@@ -69,9 +69,10 @@ Canonical architecture: [Memory model](../architecture/memory-model.md), [Den ru
 ### Reflection / pair learning (partial)
 
 - **P0 landed:** ACP close → pair summary + `memory_proposal` + queued `memory_curate` run.
+- **P2 v1 landed:** ACP close also runs pair reflection over the latest structured compaction summary and creates review proposals for durable decisions, constraints, and artifact refs; continuation-only goals/workflow/follow-ups are dropped.
 - **`memory_curate` worker** processes queued runs (rule-based executor + optional native briefing turn).
 - **`recall_index` worker** reconciles derived index after canonical writes.
-- **Pending P0 UI:** surface generated proposal + queued curate run in product UI.
+- **Optional UI:** dedicated generated-proposal / queued-run detail and retry surfaces.
 
 ---
 
@@ -113,12 +114,12 @@ pair learns → role-local SQLite → pair reflection → proposals
 | Priority | Item | Status |
 |---|---|---|
 | P0 | UI: show pair-reflection proposal + queued curate run | 🟡 memory dashboard surfaces Postgres + native SQLite proposals plus recent reflection-run performance; dedicated run detail/retry UI still open |
-| P1 | Autonomous **curation conductor** (daily curate conversation, bounded context, approved tools only) | 🟡 worker exists; deterministic exact-claim/different-path consolidation-review metadata is added to proposals; model-assisted review depth open |
-| P2 | **Model-assisted pair reflection** (extract decisions/conventions vs deterministic last-N summary) | ◻ |
-| P2.5 | **`archive_harvest` reflection lane** (extraction-first mining of closed sessions / compaction artifacts) | 🟡 lane + compaction-artifact harvest proposals + deterministic quality/risk filter and fixture coverage landed; broader conversation mining/model extraction open |
+| P1 | Autonomous **curation conductor** (daily curate conversation, bounded context, approved tools only) | 🟡 worker exists; deterministic exact-claim/different-path consolidation-review metadata is added to proposals; model-assisted review depth deferred until review-noise evidence |
+| P2 | **Model-assisted pair reflection** (extract decisions/conventions vs deterministic last-N summary) | 🟡 v1 landed via structured compaction-summary extraction on ACP close; direct model pass/source-turn scoring deferred |
+| P2.5 | **`archive_harvest` reflection lane** (extraction-first mining of closed sessions / compaction artifacts) | 🟡 lane + compaction-artifact harvest proposals + deterministic quality/risk filter and fixture coverage landed; broader conversation mining/model extraction deferred |
 | P3 | Derived recall indexing | ✅ (`recall_index` + `den reindex`) |
 | P4 | Semantic recall for **`work`** | 🟡 hybrid search exists; **`work` tool exposure** not done |
-| — | **Consolidation** (dedup, supersede-on-contradiction, synthesize `reflection` records, promote to shared) | 🟡 reviewed supersession, exact duplicate no-op, and unsafe-promotion gates landed; semantic dedup/synthesis open |
+| — | **Consolidation** (dedup, supersede-on-contradiction, synthesize `reflection` records, promote to shared) | 🟡 reviewed supersession, exact duplicate no-op, and unsafe-promotion gates landed; semantic dedup/synthesis deferred until duplicate/conflict misses become painful |
 
 **Exit:** pair session → proposal → curate promotion → `work` finds it via `memory_search` without reading `pair/`.
 
@@ -180,16 +181,18 @@ Cross-cutting cleanup items after retiring Letta/MemFS runtime paths:
 
 ## Suggested sequencing
 
+The memory automation flywheel now has the safety-critical pieces needed for practical use. Remaining automation work is intentionally evidence-driven: do it when operators see concrete pain such as missed durable facts, excessive duplicate proposals, or blocked review/debug workflows.
+
 ```mermaid
 flowchart TD
-  subgraph now [Now — fills the memory flywheel]
+  subgraph landed [Landed — fills the memory flywheel]
     S[ADR-0041 schema: salience + harvest_marks + supersession writes]
     H[archive_harvest lane]
   end
 
-  subgraph next [Next — curation quality]
+  subgraph optional [Optional — revisit on evidence]
     C[Broader semantic consolidation in memory_curate]
-    P[Model-assisted pair reflection]
+    P[Direct model-assisted pair reflection/source scoring]
   end
 
   subgraph then [Then — richer cognition]

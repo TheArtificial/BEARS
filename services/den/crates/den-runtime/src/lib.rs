@@ -64,6 +64,8 @@ pub mod agent_loop;
 /// The native runtime provider: profile turns, OpenAI streaming, web-chat loop.
 pub mod native_runtime;
 
+/// Pair-session reflection proposal extraction.
+pub mod pair_reflection;
 /// Reflection/curation worker subsystem: the memory-curate conductor + conversation lanes.
 pub mod reflection;
 pub mod surface_sync;
