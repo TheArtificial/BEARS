@@ -107,7 +107,7 @@ Proactively scan **un-mined** closed sessions and compaction artifacts and run a
 - **Idempotency:** record processed sources in `memory_harvest_marks` (source kind + ref + hash); never re-harvest unchanged sources.
 - **Triggers:** `session_archived`, `cumulative_salience_threshold`, and a throttled/adaptive heartbeat — not a fixed cron.
 - **Provenance:** every candidate links back to source `conversation_messages`.
-- **Quality filter:** drop low-confidence extractions before they become proposals (guards against hallucination propagation).
+- **Quality filter:** drop low-confidence extractions before they become proposals (guards against hallucination propagation). The current deterministic compaction-artifact filter keeps decisions/constraints/artifact refs, drops follow-up-only and goal/workflow-only summaries, tags artifact-only candidates as medium confidence, and routes person/secret/external-risk signals to human review; richer model-assisted confidence scoring remains open.
 
 ### Consolidation
 

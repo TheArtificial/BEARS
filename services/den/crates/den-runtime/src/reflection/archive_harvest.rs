@@ -416,6 +416,32 @@ mod tests {
     }
 
     #[test]
+    fn assessment_keeps_artifact_references_with_medium_confidence() {
+        let summary = summary_with(
+            &[],
+            &[],
+            &["docs/roadmap/MEMORY_AUTOMATION_ROADMAP.md"],
+            &[],
+        );
+        let content = proposal_content_from_summary(&summary);
+        let assessment = assess_harvest_candidate(&summary, &content).expect("assessment");
+
+        assert_eq!(assessment.confidence, "medium");
+        assert_eq!(assessment.sensitivity, "normal");
+        assert_eq!(assessment.durable_signal_count, 1);
+    }
+
+    #[test]
+    fn assessment_drops_goals_and_workflow_state_without_durable_signals() {
+        let mut summary = summary_with(&[], &[], &[], &["revisit later"]);
+        summary.active_user_goals = vec!["finish the current task".to_string()];
+        summary.workflow_state_refs = vec!["job-123".to_string()];
+        let content = proposal_content_from_summary(&summary);
+
+        assert!(assess_harvest_candidate(&summary, &content).is_none());
+    }
+
+    #[test]
     fn assessment_flags_secret_external_and_person_risk() {
         let summary = summary_with(
             &["Hans prefers not to share the API key from https://example.invalid."],
