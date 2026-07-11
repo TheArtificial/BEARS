@@ -9,6 +9,7 @@ This document explains the distinction and the governance boundary between them.
 - A capability is a product-level permission or ability.
 - A tool is a concrete operation exposed to one or more stances.
 - A skill is reusable know-how.
+- Capability discovery is the model-facing strategy for large tool and skill catalogs; see [ADR-0054](../decisions/adr-0054-capability-discovery-and-code-mode.md).
 - Den owns capability policy and tool exposure.
 - Durable skill learning is reviewed and governed; it is not arbitrary self-installation.
 
@@ -26,6 +27,8 @@ Examples:
 - use a team-specific engineering workflow.
 
 Capabilities are product language. They may map to tools, credentials, policies, prompt fragments, memory structures, or sandbox rights underneath.
+
+Large catalogs are presented to models through capability discovery rather than by listing every tool and schema in prompt. A discovery result may bundle concrete tools, skills, policies, memories, surfaces, and execution options such as direct invocation, Code Mode, or delegated runs.
 
 ## Tools
 
@@ -145,6 +148,7 @@ Avoid:
 
 ## Related docs
 
+- [ADR-0054: Capability Discovery and Code Mode](../decisions/adr-0054-capability-discovery-and-code-mode.md)
 - [bear stances](bear-stances.md)
 - [bears and den](bears-and-den.md)
 - [memory model](memory-model.md)

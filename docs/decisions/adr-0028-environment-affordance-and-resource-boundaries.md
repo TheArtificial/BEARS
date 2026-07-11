@@ -245,6 +245,7 @@ Rejected as insufficient. Examples can reduce confusion temporarily, but the env
 - [ADR 0016: Pair Tool Discovery and Scope Orientation](./adr-0016-pair-tool-discovery-and-scope-orientation.md)
 - [ADR 0025: Tool Naming and Execution Strategy](./adr-0025-tool-naming-and-execution-strategy.md)
 - [ADR 0027: Workflow State Ontology](./adr-0027-workflow-state-ontology.md)
+- [ADR 0054: Capability Discovery and Code Mode](./adr-0054-capability-discovery-and-code-mode.md)
 - [Memory model](../architecture/memory-model.md)
 - [Planning in Bear Den](../architecture/planning.md)
 - [Bear environment tool contract](../architecture/bear-environment-tool-contract.md)

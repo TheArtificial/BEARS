@@ -106,6 +106,7 @@ Near-term slices:
 ## Related documents
 
 - `docs/decisions/adr-0028-environment-affordance-and-resource-boundaries.md`
+- `docs/decisions/adr-0054-capability-discovery-and-code-mode.md`
 - `docs/roadmap/PAIR_TOOL_DISCOVERY_AND_SCOPE_POLICY.md`
 - `docs/roadmap/PAIR_LETTA_MESSAGE_BOUNDARY_PLAN.md`
 - `docs/roadmap/ROLE_ENVIRONMENT_PROMPT_CONSTRUCTION_SPEC.md`

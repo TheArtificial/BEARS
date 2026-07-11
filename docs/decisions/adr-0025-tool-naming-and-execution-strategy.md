@@ -665,6 +665,8 @@ Examples:
 6. Update prompt guidance to prefer `web_fetch`, not `den_web_fetch`.
 7. Migrate memory/situation provider names away from `den_*` prefixes: `session_info`, `memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, and `memory_search`.
 
+- Model-facing direct-tool capability context and descriptor hints should be treated as one projection of the broader Capability Catalog. As the catalog matures, new tools should be discoverable through capability discovery before they are added to always-visible prompt surfaces; see [ADR-0054: Capability Discovery and Code Mode](adr-0054-capability-discovery-and-code-mode.md).
+
 ---
 
 ## Relationship to previous ADR
