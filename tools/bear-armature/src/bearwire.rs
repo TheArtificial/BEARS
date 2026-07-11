@@ -19,6 +19,7 @@ use crate::{
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BEARWIRE_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
 const BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS: usize = 24 * 1024;
+const BEARWIRE_OBLIGATION_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 const BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(5);
 
 fn recoverable_read_only_tool(tool_name: &str) -> bool {
@@ -459,7 +460,8 @@ pub(crate) async fn handle_prompt(
     let mut saw_error = false;
     let started = Instant::now();
     let mut last_poll_log = Instant::now();
-    let mut last_run_state_check = Instant::now();
+    let mut last_obligation_sync: Option<Instant> = None;
+    let mut last_run_state_diagnostic_log = Instant::now();
     let mut last_run_state_summary: Option<String> = None;
     let mut logged_initial_wait = false;
 
@@ -532,31 +534,40 @@ pub(crate) async fn handle_prompt(
             );
             last_poll_log = Instant::now();
         }
-        if last_run_state_check.elapsed() >= BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL
-            && run_id != "<unknown>"
-        {
-            last_run_state_check = Instant::now();
+        let should_sync_obligations = run_id != "<unknown>"
+            && last_obligation_sync
+                .map(|last_sync| last_sync.elapsed() >= BEARWIRE_OBLIGATION_SYNC_INTERVAL)
+                .unwrap_or(true);
+        if should_sync_obligations {
+            last_obligation_sync = Some(Instant::now());
             match fetch_run_state(http, config, session_id, run_id).await {
                 Ok(state) => {
-                    if let Some(summary) = run_state_recovery_summary(&state) {
-                        if last_run_state_summary.as_deref() != Some(summary.as_str()) {
+                    if let Some(summary) = run_state_obligation_summary(&state) {
+                        let should_log_summary = last_run_state_summary.as_deref()
+                            != Some(summary.as_str())
+                            || last_run_state_diagnostic_log.elapsed()
+                                >= BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL;
+                        if should_log_summary {
+                            last_run_state_diagnostic_log = Instant::now();
                             tracing::warn!(
                                 target: "bear_armature::lifecycle",
                                 session_id,
                                 run_id,
                                 summary = %summary,
-                                "BearWire run.state diagnostic found active client obligations"
+                                "BearWire run.state reports active client obligations"
                             );
                             if crate::bear_debug_verbose() {
                                 eprintln!(
-                                    "bear-armature: BearWire run.state diagnostic session_id={} run_id={} {}",
+                                    "bear-armature: BearWire run.state obligations session_id={} run_id={} {}",
                                     session_id, run_id, summary
                                 );
                             }
                             last_run_state_summary = Some(summary);
                         }
+                    } else {
+                        last_run_state_summary = None;
                     }
-                    recover_run_state_tool_obligations(
+                    service_run_state_tool_obligations(
                         config,
                         shared_state,
                         session_id,
@@ -572,7 +583,7 @@ pub(crate) async fn handle_prompt(
                         session_id,
                         run_id,
                         error = %err,
-                        "BearWire run.state diagnostic failed"
+                        "BearWire run.state obligation sync failed"
                     );
                 }
             }
@@ -728,7 +739,7 @@ async fn fetch_run_state(
     .await
 }
 
-fn run_state_recovery_summary(state: &Value) -> Option<String> {
+fn run_state_obligation_summary(state: &Value) -> Option<String> {
     let run_state = state
         .pointer("/run/state")
         .and_then(Value::as_str)
@@ -787,7 +798,7 @@ fn run_state_recovery_summary(state: &Value) -> Option<String> {
     ))
 }
 
-fn recoverable_tool_request_event_from_obligation(
+fn actionable_read_only_tool_request_event_from_obligation(
     run_id: &str,
     obligation: &Value,
 ) -> Option<Value> {
@@ -859,12 +870,12 @@ fn recoverable_tool_request_event_from_obligation(
             },
             "approval_required": false,
             "execution_target": "armature_local",
-            "recovered_from_run_state": true,
+            "serviced_from_run_state": true,
         }
     }))
 }
 
-async fn recover_run_state_tool_obligations(
+async fn service_run_state_tool_obligations(
     config: &Config,
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -876,7 +887,9 @@ async fn recover_run_state_tool_obligations(
         return;
     };
     for obligation in open {
-        let Some(event) = recoverable_tool_request_event_from_obligation(run_id, obligation) else {
+        let Some(event) =
+            actionable_read_only_tool_request_event_from_obligation(run_id, obligation)
+        else {
             continue;
         };
         let tool_call_id = event
@@ -901,7 +914,7 @@ async fn recover_run_state_tool_obligations(
             run_id,
             tool_call_id,
             tool_name,
-            "recovering missed read-only local tool request from BearWire run.state"
+            "servicing read-only local tool obligation from BearWire run.state"
         );
         spawn_tool_request_task(
             config.clone(),
@@ -1964,7 +1977,7 @@ data: "params":{"type":"run.completed","run_id":"run-1","data":{}}}
     }
 
     #[test]
-    fn run_state_recovery_summary_reports_open_obligations() {
+    fn run_state_obligation_summary_reports_open_obligations() {
         let state = json!({
             "run": { "state": "waiting_for_tool_result" },
             "open_obligations": [{
@@ -1978,7 +1991,7 @@ data: "params":{"type":"run.completed","run_id":"run-1","data":{}}}
             }]
         });
 
-        let summary = run_state_recovery_summary(&state).unwrap();
+        let summary = run_state_obligation_summary(&state).unwrap();
 
         assert!(summary.contains("waiting_for_tool_result"), "{summary}");
         assert!(summary.contains("obl-1"), "{summary}");
@@ -1987,7 +2000,7 @@ data: "params":{"type":"run.completed","run_id":"run-1","data":{}}}
     }
 
     #[test]
-    fn run_state_recovery_summary_accepts_continuation_obligation_shape() {
+    fn run_state_obligation_summary_accepts_continuation_obligation_shape() {
         let state = json!({
             "run": { "state": "waiting_for_tool_result" },
             "open_obligations": [{
@@ -2000,20 +2013,20 @@ data: "params":{"type":"run.completed","run_id":"run-1","data":{}}}
             }]
         });
 
-        let summary = run_state_recovery_summary(&state).unwrap();
+        let summary = run_state_obligation_summary(&state).unwrap();
 
         assert!(summary.contains("obl-2"), "{summary}");
         assert!(summary.contains("call-2"), "{summary}");
     }
 
     #[test]
-    fn run_state_recovery_summary_ignores_clean_state() {
+    fn run_state_obligation_summary_ignores_clean_state() {
         let state = json!({ "run": { "state": "running" }, "open_obligations": [] });
-        assert!(run_state_recovery_summary(&state).is_none());
+        assert!(run_state_obligation_summary(&state).is_none());
     }
 
     #[test]
-    fn reconstructs_recoverable_read_only_tool_request_from_run_state() {
+    fn reconstructs_actionable_read_only_tool_request_from_run_state() {
         let obligation = json!({
             "id": "obl-1",
             "kind": "tool_result",
@@ -2029,19 +2042,19 @@ data: "params":{"type":"run.completed","run_id":"run-1","data":{}}}
             }
         });
 
-        let event = recoverable_tool_request_event_from_obligation("run-1", &obligation)
-            .expect("recoverable read-only tool");
+        let event = actionable_read_only_tool_request_event_from_obligation("run-1", &obligation)
+            .expect("actionable read-only tool");
 
         assert_eq!(event["type"], "tool_call.requested");
         assert_eq!(event["run_id"], "run-1");
         assert_eq!(event["data"]["tool_call"]["id"], "call-search");
         assert_eq!(event["data"]["tool_call"]["name"], "fs_search_files");
         assert_eq!(event["data"]["tool_call"]["arguments"]["query"], "BearWire");
-        assert_eq!(event["data"]["recovered_from_run_state"], true);
+        assert_eq!(event["data"]["serviced_from_run_state"], true);
     }
 
     #[test]
-    fn does_not_recover_mutating_or_approval_obligations_from_run_state() {
+    fn does_not_service_mutating_or_approval_obligations_from_run_state() {
         let mutating = json!({
             "kind": "tool_result",
             "expected_responder_action": "tool_result",
@@ -2054,7 +2067,9 @@ data: "params":{"type":"run.completed","run_id":"run-1","data":{}}}
                 "execution_target": "armature_local"
             }
         });
-        assert!(recoverable_tool_request_event_from_obligation("run-1", &mutating).is_none());
+        assert!(
+            actionable_read_only_tool_request_event_from_obligation("run-1", &mutating).is_none()
+        );
 
         let approval = json!({
             "kind": "tool_result",
@@ -2068,11 +2083,13 @@ data: "params":{"type":"run.completed","run_id":"run-1","data":{}}}
                 "execution_target": "armature_local"
             }
         });
-        assert!(recoverable_tool_request_event_from_obligation("run-1", &approval).is_none());
+        assert!(
+            actionable_read_only_tool_request_event_from_obligation("run-1", &approval).is_none()
+        );
     }
 
     #[test]
-    fn does_not_recover_den_owned_obligations_from_run_state() {
+    fn does_not_service_den_owned_obligations_from_run_state() {
         let obligation = json!({
             "kind": "tool_result",
             "expected_responder_action": "tool_result",
@@ -2085,7 +2102,9 @@ data: "params":{"type":"run.completed","run_id":"run-1","data":{}}}
                 "execution_target": "den"
             }
         });
-        assert!(recoverable_tool_request_event_from_obligation("run-1", &obligation).is_none());
+        assert!(
+            actionable_read_only_tool_request_event_from_obligation("run-1", &obligation).is_none()
+        );
     }
 
     #[test]

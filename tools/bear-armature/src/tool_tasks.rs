@@ -26,16 +26,21 @@ impl ToolTaskRegistry {
         format!("{session_id}\n{tool_call_id}")
     }
 
-    pub(crate) async fn register(
+    pub(crate) async fn try_register(
         &self,
         session_id: &str,
         tool_call_id: &str,
         tool_name: &str,
         turn_token: Option<Uuid>,
-    ) {
+    ) -> bool {
         let now = std::time::Instant::now();
-        self.tasks.lock().await.insert(
-            Self::key(session_id, tool_call_id),
+        let mut tasks = self.tasks.lock().await;
+        let key = Self::key(session_id, tool_call_id);
+        if tasks.contains_key(&key) {
+            return false;
+        }
+        tasks.insert(
+            key,
             ToolTaskRecord {
                 session_id: session_id.to_string(),
                 tool_call_id: tool_call_id.to_string(),
@@ -47,6 +52,7 @@ impl ToolTaskRegistry {
                 updated_at: now,
             },
         );
+        true
     }
 
     pub(crate) async fn remember_input(
@@ -256,9 +262,11 @@ mod tests {
     #[tokio::test]
     async fn registry_tracks_phase_and_session_entries() {
         let registry = ToolTaskRegistry::default();
-        registry
-            .register("session-1", "call-1", "fs_list_directory", None)
-            .await;
+        assert!(
+            registry
+                .try_register("session-1", "call-1", "fs_list_directory", None)
+                .await
+        );
         registry
             .set_phase(
                 "session-1",
@@ -275,5 +283,31 @@ mod tests {
         let removed = registry.remove("session-1", "call-1").await.unwrap();
         assert_eq!(removed.tool_call_id, "call-1");
         assert!(registry.list_for_session("session-1").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn try_register_rejects_duplicate_tool_call_for_session() {
+        let registry = ToolTaskRegistry::default();
+
+        assert!(
+            registry
+                .try_register("session-1", "call-1", "fs_read_text_file", None)
+                .await
+        );
+        assert!(
+            !registry
+                .try_register("session-1", "call-1", "fs_read_text_file", None)
+                .await
+        );
+        assert!(
+            registry
+                .try_register("session-1", "call-2", "fs_read_text_file", None)
+                .await
+        );
+        assert!(
+            registry
+                .try_register("session-2", "call-1", "fs_read_text_file", None)
+                .await
+        );
     }
 }

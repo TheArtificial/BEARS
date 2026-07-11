@@ -6872,6 +6872,21 @@ pub(crate) fn spawn_tool_request_task(
         };
         let tool_call_id = canonical.tool_call.id.clone();
         let tool_name = canonical.tool_call.name.clone();
+        if !shared_state
+            .tool_tasks
+            .try_register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
+            .await
+        {
+            tracing::debug!(
+                target: "bear_armature::lifecycle",
+                session_id = session_id.as_str(),
+                tool_call_id = tool_call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                "duplicate local tool task ignored"
+            );
+            return;
+        }
         tracing::info!(
             target: "bear_armature::lifecycle",
             session_id = session_id.as_str(),
@@ -6880,10 +6895,6 @@ pub(crate) fn spawn_tool_request_task(
             run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
             "local tool task spawned"
         );
-        shared_state
-            .tool_tasks
-            .register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
-            .await;
         let mut task_state = AdapterState {
             client_capabilities: shared_state.client_capabilities.lock().await.clone(),
             session_contexts: shared_state.session_contexts.lock().await.clone(),
@@ -9032,10 +9043,20 @@ pub(crate) async fn handle_permission_request_event(
             .and_then(Value::as_str)
             .unwrap_or(tool_name);
         let args = local_tool.get("args").cloned().unwrap_or_else(|| json!({}));
-        shared_state
+        if !shared_state
             .tool_tasks
-            .register(session_id, tool_call_id, tool_name, None)
-            .await;
+            .try_register(session_id, tool_call_id, tool_name, None)
+            .await
+        {
+            tracing::debug!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                tool_call_id,
+                tool_name,
+                "duplicate permission-local tool task ignored"
+            );
+            return Ok(());
+        }
         shared_state
             .tool_tasks
             .remember_input(session_id, tool_call_id, tool_name, args.clone())
@@ -11303,15 +11324,17 @@ mod tests {
                 conversation_id: Some("conv-1".to_string()),
             },
         );
-        shared
-            .tool_tasks
-            .register(
-                "acp-session",
-                "call-1",
-                "fs_read_text_file",
-                Some(turn_token),
-            )
-            .await;
+        assert!(
+            shared
+                .tool_tasks
+                .try_register(
+                    "acp-session",
+                    "call-1",
+                    "fs_read_text_file",
+                    Some(turn_token),
+                )
+                .await
+        );
         let mut cancel_rx = shared.cancellation_tx.subscribe();
         let http = reqwest::Client::new();
 
@@ -11399,15 +11422,17 @@ mod tests {
                 conversation_id: Some("conv-1".to_string()),
             },
         );
-        shared
-            .tool_tasks
-            .register(
-                "acp-session",
-                "call-1",
-                "fs_read_text_file",
-                Some(turn_token),
-            )
-            .await;
+        assert!(
+            shared
+                .tool_tasks
+                .try_register(
+                    "acp-session",
+                    "call-1",
+                    "fs_read_text_file",
+                    Some(turn_token),
+                )
+                .await
+        );
         let mut cancel_rx = shared.cancellation_tx.subscribe();
         let http = reqwest::Client::new();
 
@@ -11497,15 +11522,17 @@ mod tests {
                 conversation_id: Some("conv-1".to_string()),
             },
         );
-        shared
-            .tool_tasks
-            .register(
-                "acp-session",
-                "call-1",
-                "fs_read_text_file",
-                Some(turn_token),
-            )
-            .await;
+        assert!(
+            shared
+                .tool_tasks
+                .try_register(
+                    "acp-session",
+                    "call-1",
+                    "fs_read_text_file",
+                    Some(turn_token),
+                )
+                .await
+        );
         let mut cancel_rx = shared.cancellation_tx.subscribe();
         let http = reqwest::Client::new();
 
