@@ -10,8 +10,9 @@ use crate::{
     adapter_contract_context, den_request_context, env_bool,
     handle_conversation_resolved_projection, handle_permission_request_event,
     handle_plan_update_projection, handle_session_info_projection, handle_status_text_for_turn,
-    plan_entries_from_plan_update_event, send_agent_message_chunk_for_turn,
-    send_agent_thought_chunk_for_turn, send_tool_call_update, spawn_tool_request_task,
+    is_den_server_tool_request, plan_entries_from_plan_update_event,
+    project_den_owned_tool_request, send_agent_message_chunk_for_turn,
+    send_agent_thought_chunk_for_turn, send_tool_call_update_for_turn, spawn_tool_request_task,
     stream_has_successful_terminal_condition, truncate_for_log, AdapterSharedState, AdapterState,
     Config, SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
 };
@@ -1366,6 +1367,7 @@ async fn handle_bearwire_tool_call_finished_event(
     session_id: &str,
     event: &Value,
     failed: bool,
+    turn_token: Uuid,
 ) -> Result<()> {
     let data = event.get("data").unwrap_or(&Value::Null);
     let canonical = BearWireToolCallFinishedData::parse(event)?;
@@ -1402,8 +1404,10 @@ async fn handle_bearwire_tool_call_finished_event(
     if let Some(display) = canonical.tool_call.display {
         projection_event["data"]["tool_call"]["display"] = display;
     }
-    send_tool_call_update(
+    send_tool_call_update_for_turn(
+        shared_state,
         session_id,
+        turn_token,
         &tool_call_id,
         &tool_name,
         ToolCallUpdatePayload {
@@ -1747,13 +1751,17 @@ async fn handle_bearwire_event(
             );
             outcome.saw_tool_activity = true;
             diagnostics.saw_tool_activity = true;
-            spawn_tool_request_task(
-                config.clone(),
-                shared_state.clone(),
-                session_id.to_string(),
-                event.clone(),
-                turn_token,
-            );
+            if is_den_server_tool_request(event) {
+                project_den_owned_tool_request(shared_state, session_id, event, turn_token).await?;
+            } else {
+                spawn_tool_request_task(
+                    config.clone(),
+                    shared_state.clone(),
+                    session_id.to_string(),
+                    event.clone(),
+                    turn_token,
+                );
+            }
         }
         "tool_call.completed" | "tool_call.warning" | "tool_call.cancelled" => {
             tracing::info!(
@@ -1766,8 +1774,14 @@ async fn handle_bearwire_event(
             );
             outcome.saw_tool_activity = true;
             diagnostics.saw_tool_activity = true;
-            handle_bearwire_tool_call_finished_event(shared_state, session_id, event, false)
-                .await?;
+            handle_bearwire_tool_call_finished_event(
+                shared_state,
+                session_id,
+                event,
+                false,
+                turn_token,
+            )
+            .await?;
         }
         "tool_call.failed" => {
             tracing::warn!(
@@ -1781,7 +1795,14 @@ async fn handle_bearwire_event(
             outcome.saw_error = true;
             diagnostics.saw_tool_activity = true;
             diagnostics.saw_error = true;
-            handle_bearwire_tool_call_finished_event(shared_state, session_id, event, true).await?;
+            handle_bearwire_tool_call_finished_event(
+                shared_state,
+                session_id,
+                event,
+                true,
+                turn_token,
+            )
+            .await?;
         }
         "client.waiting" => {
             tracing::info!(

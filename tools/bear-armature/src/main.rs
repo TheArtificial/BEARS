@@ -6956,11 +6956,13 @@ pub(crate) fn spawn_tool_request_task(
         let tool_future = handle_tool_request_event(
             &config,
             &mut task_state,
+            &shared_state,
             &shared_state.tool_tasks,
             &shared_state.mcp_registry,
             &shared_state.approval_cache,
             &session_id,
             &event,
+            turn_token,
         );
         let result = match wait_for_tool_future_or_matching_cancellation(
             &shared_state,
@@ -7051,6 +7053,15 @@ pub(crate) fn spawn_tool_request_task(
                 tool_name = tool_name.as_str(),
                 "den-owned display-only tool task finished without posting client result"
             );
+            shared_state
+                .tool_tasks
+                .set_phase(
+                    &session_id,
+                    &tool_call_id,
+                    &tool_name,
+                    ToolTaskPhase::ResultPosted,
+                )
+                .await;
             let _ = shared_state
                 .tool_tasks
                 .remove(&session_id, &tool_call_id)
@@ -7071,14 +7082,118 @@ pub(crate) fn spawn_tool_request_task(
     });
 }
 
+pub(crate) async fn project_den_owned_tool_request(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    event: &Value,
+    turn_token: Uuid,
+) -> Result<()> {
+    let canonical = BearWireToolCallRequestData::parse(event)?;
+    let tool_call_id = canonical.tool_call.id.as_str();
+    let tool_name = canonical.tool_call.name.as_str();
+    if current_surface_tool_status(session_id, tool_call_id)
+        .await
+        .is_some_and(SurfaceToolStatus::is_terminal)
+    {
+        tracing::debug!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            tool_call_id,
+            tool_name,
+            "skipping Den-owned display-only tool projection because surface is already terminal"
+        );
+        return Ok(());
+    }
+    if !is_current_prompt_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        "den_owned_tool_projection",
+    )
+    .await
+    {
+        return Ok(());
+    }
+    if shared_state
+        .tool_tasks
+        .try_register(session_id, tool_call_id, tool_name, Some(turn_token))
+        .await
+    {
+        shared_state
+            .tool_tasks
+            .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
+            .await;
+        log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
+        shared_state
+            .tool_tasks
+            .remember_input(
+                session_id,
+                tool_call_id,
+                tool_name,
+                canonical.tool_call.arguments.clone(),
+            )
+            .await;
+    }
+    let preparing = friendly_tool_status(tool_name, event, "preparing");
+    send_tool_call_update_for_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        tool_call_id,
+        tool_name,
+        ToolCallUpdatePayload {
+            status: "pending",
+            text: &preparing,
+            event: Some(event),
+            raw_output: None,
+            extra_content: Vec::new(),
+        },
+    )
+    .await?;
+    let running = friendly_tool_status(tool_name, event, "running");
+    send_tool_call_update_for_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        tool_call_id,
+        tool_name,
+        ToolCallUpdatePayload {
+            status: "in_progress",
+            text: &running,
+            event: Some(event),
+            raw_output: None,
+            extra_content: Vec::new(),
+        },
+    )
+    .await?;
+    shared_state
+        .tool_tasks
+        .set_phase(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolTaskPhase::ExecutionStarted,
+        )
+        .await;
+    log_tool_task_phase(
+        session_id,
+        tool_call_id,
+        tool_name,
+        ToolTaskPhase::ExecutionStarted,
+    );
+    Ok(())
+}
+
 async fn handle_tool_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     task_registry: &ToolTaskRegistry,
     mcp_registry: &McpRegistry,
     approval_cache: &ApprovalCache,
     session_id: &str,
     event: &Value,
+    turn_token: Uuid,
 ) -> Result<()> {
     let canonical = BearWireToolCallRequestData::parse(event)?;
     let tool_call_id = canonical.tool_call.id.as_str();
@@ -7092,48 +7207,15 @@ async fn handle_tool_request_event(
         .remember_input(session_id, tool_call_id, tool_name, args.clone())
         .await;
     if is_den_server_tool_request(event) {
-        let preparing = friendly_tool_status(tool_name, event, "preparing");
-        send_tool_call_update(
-            session_id,
-            tool_call_id,
-            tool_name,
-            ToolCallUpdatePayload {
-                status: "pending",
-                text: &preparing,
-                event: Some(event),
-                raw_output: None,
-                extra_content: Vec::new(),
-            },
-        )
-        .await?;
-        let running = friendly_tool_status(tool_name, event, "running");
-        send_tool_call_update(
-            session_id,
-            tool_call_id,
-            tool_name,
-            ToolCallUpdatePayload {
-                status: "in_progress",
-                text: &running,
-                event: Some(event),
-                raw_output: None,
-                extra_content: Vec::new(),
-            },
-        )
-        .await?;
+        project_den_owned_tool_request(shared_state, session_id, event, turn_token).await?;
         task_registry
             .set_phase(
                 session_id,
                 tool_call_id,
                 tool_name,
-                ToolTaskPhase::ExecutionStarted,
+                ToolTaskPhase::ResultPosted,
             )
             .await;
-        log_tool_task_phase(
-            session_id,
-            tool_call_id,
-            tool_name,
-            ToolTaskPhase::ExecutionStarted,
-        );
         return Ok(());
     }
     let preparing = friendly_tool_status(tool_name, event, "preparing");
@@ -9439,7 +9521,7 @@ fn tool_request_execution_target(event: &Value) -> Option<&str> {
         })
 }
 
-fn is_den_server_tool_request(event: &Value) -> bool {
+pub(crate) fn is_den_server_tool_request(event: &Value) -> bool {
     tool_request_execution_target(event) == Some("den")
 }
 
@@ -10065,14 +10147,27 @@ fn should_emit_surface_tool_status(
     let Some(previous) = previous else {
         return true;
     };
-    if previous.is_terminal() && next.is_terminal() {
+    if previous.is_terminal() {
         return false;
     }
-    next.rank() >= previous.rank() || previous.is_terminal()
+    next.rank() >= previous.rank()
 }
 
 static SURFACE_TOOL_STATUSES: OnceLock<TokioMutex<HashMap<String, SurfaceToolStatus>>> =
     OnceLock::new();
+
+async fn current_surface_tool_status(
+    session_id: &str,
+    tool_call_id: &str,
+) -> Option<SurfaceToolStatus> {
+    let key = format!("{session_id}\n{tool_call_id}");
+    SURFACE_TOOL_STATUSES
+        .get_or_init(|| TokioMutex::new(HashMap::new()))
+        .lock()
+        .await
+        .get(&key)
+        .copied()
+}
 
 async fn record_surface_tool_status(
     session_id: &str,
@@ -10157,6 +10252,21 @@ struct ToolCallUpdatePayload<'a> {
     event: Option<&'a Value>,
     raw_output: Option<Value>,
     extra_content: Vec<ToolCallContent>,
+}
+
+pub(crate) async fn send_tool_call_update_for_turn(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    tool_call_id: &str,
+    tool_name: &str,
+    payload: ToolCallUpdatePayload<'_>,
+) -> Result<()> {
+    if is_current_prompt_turn(shared_state, session_id, turn_token, "tool_call_update").await {
+        send_tool_call_update(session_id, tool_call_id, tool_name, payload).await
+    } else {
+        Ok(())
+    }
 }
 
 async fn send_tool_call_update(
@@ -13240,7 +13350,7 @@ mod tests {
             vec![
                 json!({
                     "type": "tool_call.requested",
-                    "run_id": "run-den-owned",
+                    "run_id": "run-test-title",
                     "data": {
                         "policy": { "execution_target": "den" },
                         "tool_call": {
@@ -13253,7 +13363,7 @@ mod tests {
                 }),
                 json!({
                     "type": "tool_call.completed",
-                    "run_id": "run-den-owned",
+                    "run_id": "run-test-title",
                     "data": {
                         "tool_call": {
                             "id": "call-den-owned-title",
@@ -13264,10 +13374,10 @@ mod tests {
                 }),
                 json!({
                     "type": "message.delta",
-                    "run_id": "run-den-owned",
+                    "run_id": "run-test-title",
                     "data": { "delta": "Done." }
                 }),
-                json!({ "type": "run.completed", "run_id": "run-den-owned", "data": {} }),
+                json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }),
             ],
         )
         .await;
@@ -16004,10 +16114,135 @@ mod tests {
             Some(SurfaceToolStatus::Failed),
             SurfaceToolStatus::Failed
         ));
-        assert!(should_emit_surface_tool_status(
+        assert!(!should_emit_surface_tool_status(
             Some(SurfaceToolStatus::Completed),
             SurfaceToolStatus::InProgress
         ));
+        assert!(!should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Completed),
+            SurfaceToolStatus::Pending
+        ));
+        assert!(!should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Failed),
+            SurfaceToolStatus::InProgress
+        ));
+        assert!(!should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Completed),
+            SurfaceToolStatus::Completed
+        ));
+    }
+
+    #[tokio::test]
+    async fn den_owned_tool_projection_skips_after_terminal_surface() {
+        let shared = test_shared_state();
+        let session_id = format!("session-{}", Uuid::new_v4());
+        let tool_call_id = format!("call-{}", Uuid::new_v4());
+        let turn_token = Uuid::new_v4();
+        shared.active_prompts.lock().await.insert(
+            session_id.clone(),
+            ActivePromptTurn {
+                token: turn_token,
+                conversation_id: None,
+            },
+        );
+        let completed_event = json!({
+            "type": "tool_call.completed",
+            "run_id": "run-terminal-first",
+            "data": {
+                "tool_call": { "id": tool_call_id, "name": "checkpoint" },
+                "summary": "Checkpoint accepted."
+            }
+        });
+        let requested_event = json!({
+            "type": "tool_call.requested",
+            "run_id": "run-terminal-first",
+            "data": {
+                "policy": { "execution_target": "den" },
+                "tool_call": {
+                    "id": tool_call_id,
+                    "name": "checkpoint",
+                    "arguments": { "reason": "test" }
+                }
+            }
+        });
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            send_tool_call_update(
+                &session_id,
+                requested_event
+                    .pointer("/data/tool_call/id")
+                    .and_then(Value::as_str)
+                    .unwrap(),
+                "checkpoint",
+                ToolCallUpdatePayload {
+                    status: "completed",
+                    text: "Checkpoint accepted.",
+                    event: Some(&completed_event),
+                    raw_output: None,
+                    extra_content: Vec::new(),
+                },
+            )
+            .await?;
+            project_den_owned_tool_request(&shared, &session_id, &requested_event, turn_token)
+                .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+        let tool_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tool_frames.len(),
+            1,
+            "late Den-owned start regressed card: {output:#?}"
+        );
+        assert!(
+            tool_frames[0].to_string().contains("completed"),
+            "expected only terminal card: {output:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn den_owned_tool_projection_is_turn_gated() {
+        let shared = test_shared_state();
+        let session_id = format!("session-{}", Uuid::new_v4());
+        let requested_event = json!({
+            "type": "tool_call.requested",
+            "run_id": "run-stale-den-owned",
+            "data": {
+                "policy": { "execution_target": "den" },
+                "tool_call": {
+                    "id": format!("call-{}", Uuid::new_v4()),
+                    "name": "checkpoint",
+                    "arguments": { "reason": "stale" }
+                }
+            }
+        });
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            project_den_owned_tool_request(&shared, &session_id, &requested_event, Uuid::new_v4())
+                .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+        assert!(
+            output.iter().all(|frame| {
+                frame
+                    .pointer("/params/update/sessionUpdate")
+                    .and_then(Value::as_str)
+                    != Some("tool_call")
+            }),
+            "stale Den-owned projection emitted a tool card: {output:#?}"
+        );
     }
 
     #[test]
