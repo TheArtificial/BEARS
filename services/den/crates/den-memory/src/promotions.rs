@@ -274,6 +274,9 @@ mod tests {
             .unwrap()
             .expect("head record");
         assert_eq!(head.memory_id, second_id);
-        assert_eq!(head.supersedes_memory_id.as_deref(), Some(first_id.as_str()));
+        assert_eq!(
+            head.supersedes_memory_id.as_deref(),
+            Some(first_id.as_str())
+        );
     }
 }

@@ -976,6 +976,68 @@ mod as_of_tests {
     }
 
     #[tokio::test]
+    async fn active_path_reads_hide_superseded_archived_and_archive_candidates() {
+        let store = new_test_store().await;
+        let path = LogicalMemoryPath::profile_local("pair", "note");
+        let superseded = append_memory_record(
+            &store,
+            &path,
+            "note",
+            "pair",
+            None,
+            "superseded note",
+            &json!({}),
+        )
+        .await
+        .unwrap();
+        mark_memory_record_lifecycle(&store, &superseded.memory_id, "superseded", None)
+            .await
+            .unwrap();
+        append_memory_record(
+            &store,
+            &path,
+            "note",
+            "pair",
+            None,
+            "archived note",
+            &json!({ "lifecycle": { "status": "archived" } }),
+        )
+        .await
+        .unwrap();
+        append_memory_record(
+            &store,
+            &path,
+            "note",
+            "pair",
+            None,
+            "archive candidate note",
+            &json!({ "lifecycle": { "status": "archive-candidate" } }),
+        )
+        .await
+        .unwrap();
+        let active = append_memory_record(
+            &store,
+            &path,
+            "note",
+            "pair",
+            None,
+            "active note",
+            &json!({}),
+        )
+        .await
+        .unwrap();
+
+        let rows = list_records_for_logical_path(&store, "pair/note.md", 10)
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].memory_id, active.memory_id);
+        assert_eq!(rows[0].lifecycle_status, "active");
+        assert_eq!(rows[0].freshness_trend, "stable");
+    }
+
+    #[tokio::test]
     async fn entity_anchor_heads_require_resolved_salient_subject_and_explicit_anchor() {
         let store = new_test_store().await;
         let entity = match resolve(
