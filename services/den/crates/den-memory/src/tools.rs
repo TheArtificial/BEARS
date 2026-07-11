@@ -25,6 +25,10 @@ pub async fn sqlite_write_at_path(
     };
     let mut metadata_obj = metadata.as_object().cloned().unwrap_or_default();
     metadata_obj.insert("title".to_string(), json!(title));
+    metadata_obj.insert(
+        "claim_fingerprint".to_string(),
+        json!(crate::promotions::memory_claim_fingerprint(&content)),
+    );
     metadata_obj.insert("storage".to_string(), json!("sqlite"));
     metadata_obj.insert("runtime".to_string(), json!("native"));
     let row = append_memory_record(
@@ -80,6 +84,7 @@ pub async fn sqlite_write_profile_entry(
         "lifecycle": lifecycle,
         "source": source,
         "author": author,
+        "claim_fingerprint": crate::promotions::memory_claim_fingerprint(&content),
         "storage": "sqlite",
         "runtime": "native",
     });
@@ -104,6 +109,8 @@ pub async fn sqlite_memory_browse(store: &BearMemoryStore, role: &str) -> Result
         SELECT DISTINCT logical_path
         FROM memory_records
         WHERE bear_id = ? AND scope_profile = ? AND logical_path IS NOT NULL
+          AND invalid_at IS NULL
+          AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') NOT IN ('archived', 'archive-candidate')
         ORDER BY logical_path ASC
         ",
     )
@@ -292,6 +299,8 @@ pub async fn sqlite_collect_role_logical_paths(
         SELECT DISTINCT logical_path
         FROM memory_records
         WHERE bear_id = ? AND scope_profile = ? AND logical_path IS NOT NULL
+          AND invalid_at IS NULL
+          AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') NOT IN ('archived', 'archive-candidate')
         ORDER BY logical_path ASC
         ",
     )

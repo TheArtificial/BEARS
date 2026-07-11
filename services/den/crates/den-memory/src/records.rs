@@ -490,6 +490,8 @@ pub async fn list_records_for_logical_path(
                supersedes_memory_id, invalid_at
         FROM memory_records
         WHERE bear_id = ? AND logical_path = ?
+          AND invalid_at IS NULL
+          AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') NOT IN ('archived', 'archive-candidate')
         ORDER BY sequence_no DESC
         LIMIT ?
         ",

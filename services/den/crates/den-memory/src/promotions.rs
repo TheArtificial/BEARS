@@ -79,7 +79,7 @@ pub async fn promote_to_shared_core_at_path(
     }
     let prior_head = head_record_for_logical_path(store, target_path).await?;
     if let Some(head) = &prior_head {
-        if normalized_memory_text(&head.content_text) == normalized_memory_text(content_text) {
+        if memory_claim_fingerprint(&head.content_text) == memory_claim_fingerprint(content_text) {
             let promotion_id = append_memory_promotion(
                 store,
                 source_memory_id,
@@ -129,8 +129,15 @@ pub async fn promote_to_shared_core_at_path(
     Ok((row.memory_id, promotion_id))
 }
 
-fn normalized_memory_text(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+pub fn memory_claim_fingerprint(text: &str) -> String {
+    // ponytail: deterministic text fingerprint only; upgrade path is semantic dedup proposal mode.
+    text.chars()
+        .flat_map(char::to_lowercase)
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -184,6 +191,45 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(action, "dedupe_core_noop");
+    }
+
+    #[tokio::test]
+    async fn duplicate_promotion_ignores_case_and_punctuation_noise() {
+        let store = new_test_store().await;
+        let (first_id, _) = promote_to_shared_core_at_path(
+            &store,
+            "proposal-1",
+            "core/decisions/runtime.md",
+            "runtime",
+            "Use BearWire for armature transport.",
+            "curate",
+            None,
+        )
+        .await
+        .unwrap();
+
+        let (second_id, _) = promote_to_shared_core_at_path(
+            &store,
+            "proposal-2",
+            "core/decisions/runtime.md",
+            "runtime",
+            "use bearwire for armature transport",
+            "curate",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(second_id, first_id);
+        let records_at_path: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND logical_path = ?",
+        )
+        .bind(store.bear_id().to_string())
+        .bind("core/decisions/runtime.md")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(records_at_path, 1);
     }
 
     #[tokio::test]
