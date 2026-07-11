@@ -23,6 +23,7 @@ pub async fn create_memory_proposal(
     payload: &Value,
 ) -> Result<SqliteMemoryProposal, DenError> {
     let enriched = enrich_payload_with_freshness(store, payload).await?;
+    let enriched = enrich_payload_with_archive_lane(&enriched, suggested_action);
     let payload = payload_with_dedupe_key(&enriched, suggested_action, sensitivity);
     let effective_requires_human = requires_human
         || payload
@@ -70,6 +71,27 @@ pub async fn create_memory_proposal(
         payload_json: payload,
         created_at,
     })
+}
+
+fn enrich_payload_with_archive_lane(payload: &Value, suggested_action: &str) -> Value {
+    if suggested_action != "archive_index" {
+        return payload.clone();
+    }
+
+    let mut payload = ensure_object_payload(payload);
+    let obj = payload.as_object_mut().expect("payload object initialized");
+    obj.insert("requires_human".to_string(), json!(true));
+    obj.insert(
+        "archive_lane".to_string(),
+        json!({
+            "status": "review_required",
+            "apply_mode": "proposal_only",
+            // ponytail: archive harvest is represented as archive_index proposals only;
+            // upgrade path is a dedicated archive-harvest runner with richer ambiguity scoring.
+            "detector": "archive-index-proposal-v1"
+        }),
+    );
+    payload
 }
 
 async fn enrich_payload_with_freshness(
@@ -441,6 +463,56 @@ mod tests {
                 .and_then(Value::as_str),
             Some("deterministic-v1")
         );
+    }
+
+    #[tokio::test]
+    async fn archive_index_proposals_are_review_only() {
+        let store = new_test_store().await;
+
+        let proposal = create_memory_proposal(
+            &store,
+            "archive_index",
+            "normal",
+            false,
+            &json!({
+                "summary": "Older notes suggest duplicate Den terminology guidance.",
+                "source_paths": ["pair/summaries/old.md"],
+                "refs": { "source_hash": "sha256:archive" }
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(proposal.status, "pending");
+        assert_eq!(
+            proposal
+                .payload_json
+                .pointer("/archive_lane/status")
+                .and_then(Value::as_str),
+            Some("review_required")
+        );
+        assert_eq!(
+            proposal
+                .payload_json
+                .pointer("/archive_lane/apply_mode")
+                .and_then(Value::as_str),
+            Some("proposal_only")
+        );
+        assert_eq!(
+            proposal
+                .payload_json
+                .get("requires_human")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        let active_records: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND invalid_at IS NULL",
+        )
+        .bind(store.bear_id().to_string())
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(active_records, 0);
     }
 
     #[tokio::test]
