@@ -11,9 +11,9 @@ use uuid::Uuid;
 
 use crate::{
     agent_loop::{
-        CheckpointNextAction, CheckpointState, KeyMemoryProjectionCacheKey, ResolvedAgentLoopControl,
-        RuntimeCheckpointRequest, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
-        TurnBudgetState,
+        CheckpointNextAction, CheckpointState, KeyMemoryProjectionCacheKey,
+        ResolvedAgentLoopControl, RuntimeCheckpointRequest, StrategyProfile, ToolCallBudgetLimits,
+        TurnBudgetPolicy, TurnBudgetState,
     },
     context_budget::AssembledTurnBudgetComponents,
     llm::{ChatMessage, LlmApiStyle, LlmRequestTelemetry, LlmToolDefinition},

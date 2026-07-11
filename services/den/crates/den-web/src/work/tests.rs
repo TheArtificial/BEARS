@@ -205,13 +205,12 @@ async fn create_job_form_creates_work_job_with_tasks() {
     assert!(branch.is_none(), "blank branch stays unset until dispatch");
 
     // Exactly one non-blank task, assigned to work, with the criterion.
-    let tasks: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT title, assigned_to_role FROM bear_tasks WHERE job_id = $1",
-    )
-    .bind(job_id)
-    .fetch_all(&pool)
-    .await
-    .expect("tasks");
+    let tasks: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT title, assigned_to_role FROM bear_tasks WHERE job_id = $1")
+            .bind(job_id)
+            .fetch_all(&pool)
+            .await
+            .expect("tasks");
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0].0, "Update headline");
     assert_eq!(tasks[0].1.as_deref(), Some("work"));
@@ -247,13 +246,12 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .expect("create job response");
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
-    let (task_id,): (Uuid,) = sqlx::query_as(
-        "SELECT id FROM bear_tasks WHERE bear_id = $1 AND title = 'Do the thing'",
-    )
-    .bind(bear_id)
-    .fetch_one(&pool)
-    .await
-    .expect("task id");
+    let (task_id,): (Uuid,) =
+        sqlx::query_as("SELECT id FROM bear_tasks WHERE bear_id = $1 AND title = 'Do the thing'")
+            .bind(bear_id)
+            .fetch_one(&pool)
+            .await
+            .expect("task id");
 
     let response = app
         .oneshot(
@@ -329,13 +327,12 @@ async fn surface_management_is_owner_scoped_and_grantable() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let (surface_id, created_by): (Uuid, i32) = sqlx::query_as(
-        "SELECT id, created_by_user_id FROM work_surfaces WHERE name = $1",
-    )
-    .bind(&name)
-    .fetch_one(&pool)
-    .await
-    .expect("surface row");
+    let (surface_id, created_by): (Uuid, i32) =
+        sqlx::query_as("SELECT id, created_by_user_id FROM work_surfaces WHERE name = $1")
+            .bind(&name)
+            .fetch_one(&pool)
+            .await
+            .expect("surface row");
     assert_eq!(created_by, owner_id);
 
     // Non-manager: manage page and mutations deny as 404.
@@ -361,12 +358,11 @@ async fn surface_management_is_owner_scoped_and_grantable() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Owner grants the other user; the grantee can now update.
-    let other_username: String =
-        sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
-            .bind(other_id)
-            .fetch_one(&pool)
-            .await
-            .expect("username");
+    let other_username: String = sqlx::query_scalar("SELECT username FROM users WHERE id = $1")
+        .bind(other_id)
+        .fetch_one(&pool)
+        .await
+        .expect("username");
     let response = post_form(
         &app,
         &owner_cookie,
@@ -415,12 +411,11 @@ async fn create_job_enforces_surface_assignment() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let (surface_id,): (Uuid,) =
-        sqlx::query_as("SELECT id FROM work_surfaces WHERE name = $1")
-            .bind(&name)
-            .fetch_one(&pool)
-            .await
-            .expect("surface row");
+    let (surface_id,): (Uuid,) = sqlx::query_as("SELECT id FROM work_surfaces WHERE name = $1")
+        .bind(&name)
+        .fetch_one(&pool)
+        .await
+        .expect("surface row");
 
     // The bear is not assigned: job creation with the surface is rejected.
     let job_body = format!(

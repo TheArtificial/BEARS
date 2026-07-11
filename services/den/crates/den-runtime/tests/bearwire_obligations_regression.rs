@@ -78,9 +78,10 @@ async fn same_session_bearwire_appends_are_commit_order_visible(pool: sqlx::PgPo
         "autocommit append must wait for same-session transactional append to commit"
     );
 
-    let visible_before_commit = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
-        .await
-        .expect("list before commit");
+    let visible_before_commit =
+        bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+            .await
+            .expect("list before commit");
     assert!(
         visible_before_commit.is_empty(),
         "uncommitted lower-sequence event and blocked higher-sequence event must not be visible"
@@ -255,9 +256,18 @@ async fn armature_owned_tool_call_creates_client_obligation(pool: sqlx::PgPool) 
     assert_eq!(obligation.kind, "tool_result");
     assert_eq!(obligation.expected_responder_action, "tool_result");
     assert_eq!(obligation.tool_call_id.as_deref(), Some("call-list"));
-    assert_eq!(obligation.request_payload["execution_target"], "armature_local");
-    assert_eq!(obligation.request_payload["policy"]["execution_target"], "armature_local");
-    assert_eq!(obligation.request_payload["policy"]["approval_policy"], "never");
+    assert_eq!(
+        obligation.request_payload["execution_target"],
+        "armature_local"
+    );
+    assert_eq!(
+        obligation.request_payload["policy"]["execution_target"],
+        "armature_local"
+    );
+    assert_eq!(
+        obligation.request_payload["policy"]["approval_policy"],
+        "never"
+    );
     assert_eq!(obligation.request_payload["policy"]["risk"], "read_only");
 
     let run = turn_runs::get_run(&pool, &run_id)
@@ -414,10 +424,7 @@ async fn den_owned_approval_required_tool_creates_permission_obligation(pool: sq
         event.event.data["expected_client_method"],
         "client.permission.result"
     );
-    assert_eq!(
-        event.event.data["obligation_id"],
-        obligation.id.to_string()
-    );
+    assert_eq!(event.event.data["obligation_id"], obligation.id.to_string());
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -466,10 +473,22 @@ async fn armature_approval_required_tool_persists_policy_for_permission_reconstr
     assert_eq!(obligation.expected_responder_action, "permission_decision");
     assert_eq!(obligation.tool_call_id.as_deref(), Some("call-edit"));
     assert_eq!(obligation.permission_id.as_deref(), Some("perm-edit"));
-    assert_eq!(obligation.request_payload["execution_target"], "armature_local");
-    assert_eq!(obligation.request_payload["policy"]["execution_target"], "armature_local");
-    assert_eq!(obligation.request_payload["policy"]["approval_policy"], "required");
-    assert_eq!(obligation.request_payload["policy"]["risk"], "writes_workspace");
+    assert_eq!(
+        obligation.request_payload["execution_target"],
+        "armature_local"
+    );
+    assert_eq!(
+        obligation.request_payload["policy"]["execution_target"],
+        "armature_local"
+    );
+    assert_eq!(
+        obligation.request_payload["policy"]["approval_policy"],
+        "required"
+    );
+    assert_eq!(
+        obligation.request_payload["policy"]["risk"],
+        "writes_workspace"
+    );
 
     let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
         .await
@@ -502,9 +521,10 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
     .expect("cancel run");
     assert!(cancelled.is_some());
 
-    let reopened = turn_runs::transition_run(&pool, &run_id, turn_runs::TurnRunState::Running, None)
-        .await
-        .expect("attempt reopen terminal run");
+    let reopened =
+        turn_runs::transition_run(&pool, &run_id, turn_runs::TurnRunState::Running, None)
+            .await
+            .expect("attempt reopen terminal run");
     assert!(reopened.is_none());
     let completed = turn_runs::transition_run(
         &pool,
@@ -521,7 +541,10 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
         .expect("load run")
         .expect("run exists");
     assert_eq!(run.state, "cancelled");
-    assert_eq!(run.terminal_reason.as_deref(), Some("superseded_by_new_run"));
+    assert_eq!(
+        run.terminal_reason.as_deref(),
+        Some("superseded_by_new_run")
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -730,8 +753,14 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
         .expect("client permission wait should create obligation");
     assert_eq!(obligation.kind, "permission_decision");
     assert_eq!(obligation.expected_responder_action, "permission_decision");
-    assert_eq!(obligation.permission_id.as_deref(), permission_id.as_deref());
-    assert_eq!(obligation.tool_call_id.as_deref(), Some("call-transactional-wait"));
+    assert_eq!(
+        obligation.permission_id.as_deref(),
+        permission_id.as_deref()
+    );
+    assert_eq!(
+        obligation.tool_call_id.as_deref(),
+        Some("call-transactional-wait")
+    );
     assert_eq!(obligation.turn_step_id, Some(persisted.turn_step_id));
 
     let run = turn_runs::get_run(&pool, &run_id)
@@ -762,7 +791,10 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
         .find(|row| row.event_type == "client.waiting")
         .expect("client.waiting event exists");
     assert_eq!(waiting.sequence_no, persisted.event_sequence);
-    assert_eq!(waiting.event.data["obligation_id"], obligation.id.to_string());
+    assert_eq!(
+        waiting.event.data["obligation_id"],
+        obligation.id.to_string()
+    );
     assert_eq!(
         waiting.event.data["expected_client_method"],
         "client.permission.result"

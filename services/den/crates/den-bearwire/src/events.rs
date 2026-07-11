@@ -50,7 +50,6 @@ pub(crate) fn events_page_body(
     }))
 }
 
-
 pub(crate) async fn events_page(
     State(state): State<DenState>,
     headers: HeaderMap,
@@ -118,7 +117,6 @@ mod tests {
         .expect_err("missing auth should error");
         assert!(err.to_string().contains("missing Authorization"));
     }
-
 
     fn event_row(sequence_no: i64, event_type: &str) -> bearwire_events::BearWireEventRow {
         bearwire_events::BearWireEventRow {

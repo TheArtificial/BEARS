@@ -13,8 +13,14 @@ fn all_client_tool_policies_have_descriptor_owned_execution_contract() {
         );
         let json = policy.to_json(descriptor);
         assert_eq!(json["execution_target"], "armature_local");
-        assert!(json.get("approval_policy").is_some(), "{tool:?} missing approval_policy");
-        assert!(json.get("target_policy").is_some(), "{tool:?} missing target_policy");
+        assert!(
+            json.get("approval_policy").is_some(),
+            "{tool:?} missing approval_policy"
+        );
+        assert!(
+            json.get("target_policy").is_some(),
+            "{tool:?} missing target_policy"
+        );
         assert_eq!(json["provider_tool"], descriptor.provider_name);
     }
 }
@@ -58,18 +64,22 @@ fn read_only_fs_tool_policies_do_not_require_permission() {
             ApprovalPolicy::Never,
             "{tool:?} should not pause for permission"
         );
-        assert!(!policy
-            .approval_policy
-            .requires_unconditional_approval());
+        assert!(!policy.approval_policy.requires_unconditional_approval());
     }
 }
 
 #[test]
 fn find_paths_policy_is_descriptor_owned() {
     let policy = client_tool_policy(ClientToolName::FindPaths);
-    assert_eq!(policy.execution_target, ExecutionTargetPolicy::ArmatureLocal);
+    assert_eq!(
+        policy.execution_target,
+        ExecutionTargetPolicy::ArmatureLocal
+    );
     assert_eq!(policy.approval_policy, ApprovalPolicy::Never);
-    assert_eq!(policy.sensitive_path_policy, SensitivePathPolicy::FilterResults);
+    assert_eq!(
+        policy.sensitive_path_policy,
+        SensitivePathPolicy::FilterResults
+    );
     assert_eq!(
         policy.target_policy,
         TargetPolicy::WorkspaceRootOrPath {

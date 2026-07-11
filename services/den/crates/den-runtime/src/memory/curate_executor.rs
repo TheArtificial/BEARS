@@ -210,7 +210,11 @@ fn can_auto_promote_to_core(proposal: &MemoryProposalRow) -> bool {
     if proposal.requires_human || sensitivity_requires_human(&proposal.sensitivity) {
         return false;
     }
-    if proposal.proposed_patch.as_deref().is_some_and(|value| !value.trim().is_empty()) {
+    if proposal
+        .proposed_patch
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
         return false;
     }
     if proposal

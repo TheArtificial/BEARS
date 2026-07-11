@@ -562,12 +562,18 @@ impl TargetPolicy {
                 "default_to_workspace_root": default_to_workspace_root,
                 "required_kind": required_kind.map(FsTargetKindPolicy::as_str),
             }),
-            Self::SourceDestination { source_arg, destination_arg } => json!({
+            Self::SourceDestination {
+                source_arg,
+                destination_arg,
+            } => json!({
                 "kind": "source_destination",
                 "source_arg": source_arg,
                 "destination_arg": destination_arg,
             }),
-            Self::Command { command_arg, cwd_arg } => json!({
+            Self::Command {
+                command_arg,
+                cwd_arg,
+            } => json!({
                 "kind": "command",
                 "command_arg": command_arg,
                 "cwd_arg": cwd_arg,

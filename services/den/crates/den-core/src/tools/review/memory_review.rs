@@ -93,7 +93,10 @@ pub struct MemoryRequestReviewArguments {
 }
 
 fn normalize_suggested_action(value: Option<&str>) -> Result<String, DenError> {
-    let value = value.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("unspecified");
+    let value = value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unspecified");
     if matches!(
         value,
         "unspecified"
@@ -116,7 +119,10 @@ fn normalize_suggested_action(value: Option<&str>) -> Result<String, DenError> {
 }
 
 fn normalize_memory_sensitivity(value: Option<&str>) -> Result<String, DenError> {
-    let value = value.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("normal");
+    let value = value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("normal");
     if matches!(
         value,
         "normal" | "person" | "secret_risk" | "external_untrusted" | "unknown"
@@ -145,7 +151,12 @@ fn normalize_proposal_status_filter(value: Option<&str>) -> Result<Option<String
     };
     if matches!(
         value,
-        "pending" | "rejected" | "retained_local" | "deferred" | "superseded" | "needs_human_review"
+        "pending"
+            | "rejected"
+            | "retained_local"
+            | "deferred"
+            | "superseded"
+            | "needs_human_review"
     ) {
         Ok(Some(value.to_string()))
     } else {
@@ -374,11 +385,8 @@ pub async fn request_memory_review(
         args.proposed_content.as_deref(),
         20_000,
     )?;
-    let proposed_patch = validate_optional_review_text(
-        "proposed_patch",
-        args.proposed_patch.as_deref(),
-        20_000,
-    )?;
+    let proposed_patch =
+        validate_optional_review_text("proposed_patch", args.proposed_patch.as_deref(), 20_000)?;
     validate_optional_object("refs", &args.refs)?;
     let suggested_action = normalize_suggested_action(args.suggested_action.as_deref())?;
     let sensitivity = normalize_memory_sensitivity(args.sensitivity.as_deref())?;
@@ -427,7 +435,10 @@ mod tests {
     #[test]
     fn memory_review_defaults_to_safe_action_and_sensitivity() {
         assert_eq!(normalize_suggested_action(None).unwrap(), "unspecified");
-        assert_eq!(normalize_suggested_action(Some("  ")).unwrap(), "unspecified");
+        assert_eq!(
+            normalize_suggested_action(Some("  ")).unwrap(),
+            "unspecified"
+        );
         assert_eq!(normalize_memory_sensitivity(None).unwrap(), "normal");
         assert_eq!(normalize_memory_sensitivity(Some("  ")).unwrap(), "normal");
     }

@@ -161,10 +161,7 @@ mod tests {
         std::fs::write(dir.join("pnpm-lock.yaml"), "").unwrap();
         let surface = recognize_work_surface(&dir).await;
         assert_eq!(surface.language_hints, vec!["rust", "javascript"]);
-        assert!(surface
-            .package_manager_hints
-            .iter()
-            .any(|pm| pm == "pnpm"));
+        assert!(surface.package_manager_hints.iter().any(|pm| pm == "pnpm"));
         assert!(surface.lockfiles.contains(&"Cargo.lock".to_string()));
         assert!(surface
             .test_command_hints

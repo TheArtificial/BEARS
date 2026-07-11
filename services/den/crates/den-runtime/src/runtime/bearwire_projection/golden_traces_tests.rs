@@ -154,11 +154,10 @@ async fn golden_trace_multi_text_delta_preserves_each_chunk() {
 
 #[test]
 fn reasoning_delta_bearwire_event_is_display_only() {
-    let events = runtime_semantic_event_to_bearwire_events(
-        RuntimeSemanticEvent::ReasoningTextDelta {
+    let events =
+        runtime_semantic_event_to_bearwire_events(RuntimeSemanticEvent::ReasoningTextDelta {
             text: "thinking".to_string(),
-        },
-    );
+        });
 
     assert_eq!(events.len(), 1);
     let event = &events[0];

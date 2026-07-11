@@ -12,9 +12,7 @@ use axum::{
 };
 use axum_extra::routing::RouterExt;
 use den_core::{
-    client_tools::ClientToolName,
-    tools::descriptor::builtin_den_tool_descriptors,
-    BearProfile,
+    client_tools::ClientToolName, tools::descriptor::builtin_den_tool_descriptors, BearProfile,
 };
 use minijinja::context;
 use serde::Serialize;

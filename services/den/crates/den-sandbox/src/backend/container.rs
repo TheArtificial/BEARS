@@ -130,7 +130,10 @@ impl DockerCliBackend {
         if !out.success() {
             return Err(BackendError::Operation {
                 id: spec.id.clone(),
-                detail: format!("docker network create failed: {}", out.stderr_lossy().trim()),
+                detail: format!(
+                    "docker network create failed: {}",
+                    out.stderr_lossy().trim()
+                ),
             });
         }
 
@@ -158,7 +161,10 @@ impl DockerCliBackend {
             if !out.success() {
                 return Err(BackendError::Operation {
                     id: spec.id.clone(),
-                    detail: format!("relay network connect failed: {}", out.stderr_lossy().trim()),
+                    detail: format!(
+                        "relay network connect failed: {}",
+                        out.stderr_lossy().trim()
+                    ),
                 });
             }
             env.insert("DEN_API_URL".to_string(), target.rewritten_url(&relay));
@@ -556,7 +562,10 @@ fn sandbox_run_args(
         "-v".into(),
         // The bind source is resolved by the HOST docker daemon, so it must
         // be the host-side path, not the provider's container-local one.
-        format!("{}:/workspace", spec.workspace_bind_source.to_string_lossy()),
+        format!(
+            "{}:/workspace",
+            spec.workspace_bind_source.to_string_lossy()
+        ),
         "-w".into(),
         "/workspace".into(),
     ];
@@ -635,7 +644,10 @@ mod tests {
         );
         let joined = args.join(" ");
         assert!(joined.contains("--network den-sbx-net-abc123"), "{joined}");
-        assert!(joined.contains("den.sandbox.network=restricted"), "{joined}");
+        assert!(
+            joined.contains("den.sandbox.network=restricted"),
+            "{joined}"
+        );
         // The bind source is the HOST path, never the provider-local one.
         assert!(joined.contains("-v /host/ws/abc123:/workspace"), "{joined}");
         assert!(!joined.contains("/srv/ws/abc123"), "{joined}");
@@ -652,7 +664,10 @@ mod tests {
         );
         let joined = args.join(" ");
         assert!(!joined.contains("--network "), "{joined}");
-        assert!(joined.contains("--add-host bears-den:172.20.0.5"), "{joined}");
+        assert!(
+            joined.contains("--add-host bears-den:172.20.0.5"),
+            "{joined}"
+        );
         assert!(joined.contains("den.sandbox.network=open"), "{joined}");
     }
 
@@ -698,12 +713,18 @@ mod tests {
         );
         let joined = args.join(" ");
         assert!(joined.contains("--entrypoint socat"), "{joined}");
-        assert!(joined.contains("TCP-LISTEN:3001,fork,reuseaddr"), "{joined}");
+        assert!(
+            joined.contains("TCP-LISTEN:3001,fork,reuseaddr"),
+            "{joined}"
+        );
         assert!(joined.contains("TCP:den.internal:3001"), "{joined}");
         assert!(joined.contains("den.sandbox.relay=abc123"), "{joined}");
         // The relay resolves the callback host via the provision-time mapping
         // (nested engines cannot resolve compose service names).
-        assert!(joined.contains("--add-host den.internal:172.20.0.5"), "{joined}");
+        assert!(
+            joined.contains("--add-host den.internal:172.20.0.5"),
+            "{joined}"
+        );
         // Relays are not labeled as sandboxes: adoption must never pick them up.
         assert!(!joined.contains("den.sandbox=1"), "{joined}");
     }
@@ -716,7 +737,9 @@ mod tests {
             env
         };
         // IP literals and host.docker.internal need no mapping.
-        assert!(callback_add_host(&env_with("http://192.168.1.10:3001")).await.is_none());
+        assert!(callback_add_host(&env_with("http://192.168.1.10:3001"))
+            .await
+            .is_none());
         assert!(
             callback_add_host(&env_with("http://host.docker.internal:3001"))
                 .await

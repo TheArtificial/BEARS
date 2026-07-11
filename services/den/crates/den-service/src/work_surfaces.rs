@@ -440,11 +440,7 @@ pub async fn grant_manager(
 
 /// Revoke a manager. Refuses to remove the last owner so a surface can never
 /// become unmanageable (site admins bypass grants entirely).
-pub async fn revoke_manager(
-    pool: &PgPool,
-    surface_id: Uuid,
-    user_id: i32,
-) -> Result<(), DenError> {
+pub async fn revoke_manager(pool: &PgPool, surface_id: Uuid, user_id: i32) -> Result<(), DenError> {
     let mut tx = pool.begin().await?;
     let role: Option<String> = sqlx::query_scalar(
         r"
@@ -592,9 +588,7 @@ pub async fn create_catalog_image(
     .fetch_one(pool)
     .await
     .map_err(|err| match &err {
-        sqlx::Error::Database(db)
-            if db.constraint() == Some("sandbox_catalog_images_name_key") =>
-        {
+        sqlx::Error::Database(db) if db.constraint() == Some("sandbox_catalog_images_name_key") => {
             DenError::ValidationError(format!("a catalog image named '{name}' already exists"))
         }
         _ => DenError::from(err),
@@ -721,11 +715,9 @@ pub async fn build_managed_config(
     let mut surfaces = Vec::with_capacity(surface_rows.len());
     for row in surface_rows {
         let credential = match (row.credential_kind.as_deref(), &row.credential_encrypted) {
-            (Some(CREDENTIAL_KIND_SSH_KEY), Some(encrypted)) => {
-                Some(ManagedCredential::SshKey {
-                    private_key: crate::secrets::decrypt_secret(encrypted, secret_key)?,
-                })
-            }
+            (Some(CREDENTIAL_KIND_SSH_KEY), Some(encrypted)) => Some(ManagedCredential::SshKey {
+                private_key: crate::secrets::decrypt_secret(encrypted, secret_key)?,
+            }),
             (Some(CREDENTIAL_KIND_HTTPS_TOKEN), Some(encrypted)) => {
                 Some(ManagedCredential::HttpsToken {
                     token: crate::secrets::decrypt_secret(encrypted, secret_key)?,

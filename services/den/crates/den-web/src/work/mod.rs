@@ -106,11 +106,11 @@ fn ts(value: time::OffsetDateTime) -> String {
 }
 
 fn run_view(run: &WorkRunRow, bear_slug: &str) -> RunView {
-    let is_active = run
-        .state_enum()
-        .is_some_and(|state| !state.is_terminal());
+    let is_active = run.state_enum().is_some_and(|state| !state.is_terminal());
     let duration_secs = run.started_at.map(|started| {
-        let end = run.finished_at.unwrap_or_else(time::OffsetDateTime::now_utc);
+        let end = run
+            .finished_at
+            .unwrap_or_else(time::OffsetDateTime::now_utc);
         (end - started).whole_seconds()
     });
     let cleanup_failed = run
@@ -395,9 +395,9 @@ async fn create_job(
     let commit_policy = match form.commit_policy.trim() {
         "" => None,
         raw => Some(
-            serde_json::from_value::<DocketCommitPolicy>(serde_json::json!(raw)).map_err(
-                |_| CustomError::ValidationError(format!("invalid commit policy '{raw}'")),
-            )?,
+            serde_json::from_value::<DocketCommitPolicy>(serde_json::json!(raw)).map_err(|_| {
+                CustomError::ValidationError(format!("invalid commit policy '{raw}'"))
+            })?,
         ),
     };
 
@@ -467,8 +467,7 @@ async fn create_job(
             )));
         }
         (Some(surface.name), Some(surface.id))
-    } else if let Some(root) = Some(form.root.trim().to_string()).filter(|root| !root.is_empty())
-    {
+    } else if let Some(root) = Some(form.root.trim().to_string()).filter(|root| !root.is_empty()) {
         match den_service::work_surfaces::surface_by_name(state.sqlx_pool(), &root).await? {
             Some(surface) => {
                 if !den_service::work_surfaces::bear_may_use_surface(
@@ -526,12 +525,11 @@ async fn job_detail(
 
     // Resolve which member bear owns this job.
     let owner: Option<(Uuid, String)> = {
-        let row: Option<(Uuid,)> =
-            sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
-                .bind(job_id)
-                .fetch_optional(state.sqlx_pool())
-                .await
-                .map_err(den_core::DenError::from)?;
+        let row: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_optional(state.sqlx_pool())
+            .await
+            .map_err(den_core::DenError::from)?;
         row.and_then(|(bear_id,)| bears.get(&bear_id).map(|slug| (bear_id, slug.clone())))
     };
     let Some((bear_id, bear_slug)) = owner else {
@@ -615,10 +613,7 @@ async fn run_detail(
         .await?
         .filter(|run| bears.contains_key(&run.bear_id))
         .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
-    let bear_slug = bears
-        .get(&run.bear_id)
-        .cloned()
-        .unwrap_or_default();
+    let bear_slug = bears.get(&run.bear_id).cloned().unwrap_or_default();
 
     let dispatch_context =
         work_runs::get_work_run_dispatch_context(state.sqlx_pool(), run.id).await?;

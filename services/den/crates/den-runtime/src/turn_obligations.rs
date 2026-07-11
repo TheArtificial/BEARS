@@ -599,7 +599,10 @@ pub async fn open_client_obligations_for_session(
     Ok(rows.into_iter().map(row_to_obligation).collect())
 }
 
-async fn open_client_obligations(pool: &PgPool, limit: i64) -> Result<Vec<TurnObligationRow>, DenError> {
+async fn open_client_obligations(
+    pool: &PgPool,
+    limit: i64,
+) -> Result<Vec<TurnObligationRow>, DenError> {
     let limit = limit.clamp(1, 10_000);
     let rows = sqlx::query(
         r#"

@@ -174,9 +174,7 @@ impl SandboxClient {
     }
 
     /// Non-secret summary (counts + version) of the applied managed config.
-    pub async fn managed_config_status(
-        &self,
-    ) -> Result<ManagedConfigStatus, SandboxClientError> {
+    pub async fn managed_config_status(&self) -> Result<ManagedConfigStatus, SandboxClientError> {
         self.get_json("/sandbox/v1/managed-config").await
     }
 
@@ -242,10 +240,7 @@ impl SandboxClient {
         self.get_json("/sandbox/v1/operations").await
     }
 
-    pub async fn get_operation(
-        &self,
-        id: &str,
-    ) -> Result<OperationDescriptor, SandboxClientError> {
+    pub async fn get_operation(&self, id: &str) -> Result<OperationDescriptor, SandboxClientError> {
         self.get_json(&format!("/sandbox/v1/operations/{id}")).await
     }
 
@@ -265,7 +260,10 @@ impl SandboxClient {
         &self,
         path: &str,
     ) -> Result<T, SandboxClientError> {
-        let response = self.authorized(self.http.get(self.url(path))).send().await?;
+        let response = self
+            .authorized(self.http.get(self.url(path)))
+            .send()
+            .await?;
         Self::json_or_error(response).await
     }
 

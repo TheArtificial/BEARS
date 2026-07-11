@@ -78,11 +78,10 @@ pub fn load(workspaces_dir: &Path) -> Result<Option<PersistedManagedConfig>, Roo
             })
         }
     };
-    let persisted =
-        serde_json::from_str(&raw).map_err(|source| RootsError::ConfigParse {
-            path: path.to_string_lossy().into_owned(),
-            source,
-        })?;
+    let persisted = serde_json::from_str(&raw).map_err(|source| RootsError::ConfigParse {
+        path: path.to_string_lossy().into_owned(),
+        source,
+    })?;
     Ok(Some(persisted))
 }
 
@@ -254,10 +253,8 @@ mod tests {
     use crate::protocol::{ManagedImage, ManagedSurface};
 
     fn tempdir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "den-sbx-managed-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("den-sbx-managed-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

@@ -450,9 +450,7 @@ pub async fn assemble_native_turn_for_bear(
     let messages = repair_tool_call_message_chain(messages);
     let messages = if ctx.native_runtime && compaction_active && transcript_cutoff.is_some() {
         messages
-    } else if ctx.native_runtime
-        && matches!(ctx.profile, BearProfile::Pair | BearProfile::Chat)
-    {
+    } else if ctx.native_runtime && matches!(ctx.profile, BearProfile::Pair | BearProfile::Chat) {
         let pruned = prune_messages_for_native_pair_with_diagnostics(messages);
         budget_components.transcript_fallback_pruned_chars =
             pruned.diagnostics.pruned_character_count;

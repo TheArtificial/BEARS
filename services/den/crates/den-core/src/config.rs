@@ -750,9 +750,9 @@ fn sandbox_server_url_from_env(
                 Some(value)
             }
         }
-        None if run_workers && !run_sandbox => {
-            Some(format!("http://{DEFAULT_SANDBOX_SERVER_HOST}:{sandbox_port}"))
-        }
+        None if run_workers && !run_sandbox => Some(format!(
+            "http://{DEFAULT_SANDBOX_SERVER_HOST}:{sandbox_port}"
+        )),
         None => None,
     }
 }

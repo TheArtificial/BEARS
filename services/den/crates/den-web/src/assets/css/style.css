@@ -31,6 +31,8 @@
 
     --thin-line-unit: 1px;
     --spacing-unit: 0.5em;
+    --chunky-line-unit: calc(var(--spacing-unit) * 0.75);
+    --shadow-offset: calc(var(--spacing-unit) * 1.25);
 
     --logo-font-family: "Geist", sans-serif;
     --logo-font-weight: 700;
@@ -44,19 +46,21 @@
     --data-font-weight: 400;
     --data-font-style: normal;
 
-    --meta-color: #aaaaaa;
-    --accent-color: #cc11dd;
+    --meta-color: #666666;
+    --accent-color: #121212;
     --error-color: #CC0000;
     --warning-color: #ee7700;
     --success-color: #009900;
 
-    --page-color: #EEEEEE;
+    --page-color: #ffffff;
     --text-color: #121212;
     --border-color: #121212;
     --selected-color: #121212;
-    --selected-text-color: #EEEEEE;
+    --selected-text-color: #ffffff;
+    --paper-pattern-color: rgba(18, 18, 18, 0.14);
+    --hatch-color: #121212;
     /* Panels / alternate message surfaces (bear chat, etc.) */
-    --surface-color: #DDDDDD;
+    --surface-color: #ffffff;
     /* Text fields, textareas, selects, chat composer — high-contrast fill vs --page-color */
     --field-fill-color: #ffffff;
 
@@ -89,6 +93,8 @@ html.theme-dark {
     --border-color: #DDDDDD;
     --selected-color: #DDDDDD;
     --selected-text-color: #121212;
+    --paper-pattern-color: rgba(221, 221, 221, 0.16);
+    --hatch-color: #DDDDDD;
     --surface-color: #1a1a1a;
     --field-fill-color: #ffffff;
 }
@@ -100,17 +106,21 @@ html.theme-dark {
         --border-color: #DDDDDD;
         --selected-color: #DDDDDD;
         --selected-text-color: #121212;
+        --paper-pattern-color: rgba(221, 221, 221, 0.16);
+        --hatch-color: #DDDDDD;
         --surface-color: #1a1a1a;
         --field-fill-color: #ffffff;
     }
 
     html.theme-light {
-        --page-color: #DDDDDD;
+        --page-color: #ffffff;
         --text-color: #121212;
         --border-color: #121212;
         --selected-color: #121212;
-        --selected-text-color: #DDDDDD;
-        --surface-color: #cccccc;
+        --selected-text-color: #ffffff;
+        --paper-pattern-color: rgba(18, 18, 18, 0.14);
+        --hatch-color: #121212;
+        --surface-color: #ffffff;
         --field-fill-color: #ffffff;
     }
 }

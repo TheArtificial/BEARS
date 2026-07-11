@@ -232,7 +232,10 @@ impl RootsManager {
             match &root.path {
                 Some(path) if Path::new(path).is_dir() => (true, None),
                 Some(path) => (false, Some(format!("source path {path} missing"))),
-                None => (false, Some("root has neither path nor upstream".to_string())),
+                None => (
+                    false,
+                    Some("root has neither path nor upstream".to_string()),
+                ),
             }
         }
     }
@@ -479,11 +482,7 @@ impl RootsManager {
             root,
             Some(workspace),
             &env,
-            &[
-                "push",
-                &upstream.url,
-                &format!("HEAD:refs/heads/{branch}"),
-            ],
+            &["push", &upstream.url, &format!("HEAD:refs/heads/{branch}")],
         )
         .await?;
 
@@ -754,7 +753,9 @@ mod tests {
 
         // Request wins.
         assert_eq!(
-            manager.resolve_image(Some("rust"), &root, "fallback").unwrap(),
+            manager
+                .resolve_image(Some("rust"), &root, "fallback")
+                .unwrap(),
             "bears/sandbox-rust:latest"
         );
         // Root default next.
@@ -777,7 +778,10 @@ mod tests {
 
         // Empty catalog falls back to the configured default reference.
         let empty = manager_with_images(Vec::new());
-        assert_eq!(empty.resolve_image(None, &root, "fallback").unwrap(), "fallback");
+        assert_eq!(
+            empty.resolve_image(None, &root, "fallback").unwrap(),
+            "fallback"
+        );
         assert!(matches!(
             empty.resolve_image(Some("rust"), &root, "fallback"),
             Err(RootsError::UnknownImage { .. })
@@ -818,7 +822,8 @@ mod tests {
     }
 
     fn publish_fixture() -> PublishFixture {
-        let tmp = std::env::temp_dir().join(format!("den-sbx-publish-{}", uuid::Uuid::new_v4().simple()));
+        let tmp =
+            std::env::temp_dir().join(format!("den-sbx-publish-{}", uuid::Uuid::new_v4().simple()));
         let upstream = tmp.join("upstream.git");
         std::fs::create_dir_all(&upstream).unwrap();
         sh_git(&upstream, &["init", "--bare", "-b", "main", "."]);
@@ -899,7 +904,10 @@ mod tests {
         let upstream_head = sh_git(&upstream, &["rev-parse", "den/job-test"]);
         assert_eq!(upstream_head.trim(), outcome.commit);
         // main is untouched.
-        assert_eq!(sh_git(&upstream, &["rev-parse", "main"]).trim(), fx.base_commit);
+        assert_eq!(
+            sh_git(&upstream, &["rev-parse", "main"]).trim(),
+            fx.base_commit
+        );
     }
 
     #[tokio::test]
@@ -922,7 +930,10 @@ mod tests {
             )
             .await
             .expect_err("default ref must be refused");
-        assert!(matches!(err, RootsError::DefaultRefRefused { .. }), "{err:?}");
+        assert!(
+            matches!(err, RootsError::DefaultRefRefused { .. }),
+            "{err:?}"
+        );
 
         // Nothing beyond the base: no push, no branch created.
         let outcome = fx
@@ -951,6 +962,9 @@ mod tests {
             .publish_workspace(&plain, &fx.tmp, &publish_request("den/job-x"), None)
             .await
             .expect_err("path roots cannot publish");
-        assert!(matches!(err, RootsError::PublishUnsupported { .. }), "{err:?}");
+        assert!(
+            matches!(err, RootsError::PublishUnsupported { .. }),
+            "{err:?}"
+        );
     }
 }

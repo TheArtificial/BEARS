@@ -685,7 +685,9 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
             event.get("kind").and_then(Value::as_str) == Some("message")
                 && event.get("role").and_then(Value::as_str) == Some("user")
         })
-        .unwrap_or_else(|| panic!("surface history should include user message: {surface_response}"));
+        .unwrap_or_else(|| {
+            panic!("surface history should include user message: {surface_response}")
+        });
     let surface_text = user_event
         .get("text")
         .and_then(Value::as_str)
@@ -699,15 +701,20 @@ async fn run_start_persists_wrapped_host_context_as_structured_metadata(pool: sq
         "surface text should render referenced resource heading: {surface_text}"
     );
     assert!(
-        surface_text.contains("src/lib.rs") && surface_text.contains("file:///workspace/src/lib.rs"),
+        surface_text.contains("src/lib.rs")
+            && surface_text.contains("file:///workspace/src/lib.rs"),
         "surface text should render referenced resource label and URI: {surface_text}"
     );
     assert_eq!(
-        user_event.pointer("/resources/0/uri").and_then(Value::as_str),
+        user_event
+            .pointer("/resources/0/uri")
+            .and_then(Value::as_str),
         Some("file:///workspace/src/lib.rs")
     );
     assert_eq!(
-        user_event.pointer("/resources/0/label").and_then(Value::as_str),
+        user_event
+            .pointer("/resources/0/label")
+            .and_then(Value::as_str),
         Some("src/lib.rs")
     );
 }
@@ -1516,7 +1523,10 @@ async fn run_state_reports_run_obligations_results_and_events(pool: sqlx::PgPool
     assert_eq!(result["run"]["run_id"], run_id);
     assert_eq!(result["obligations"][0]["id"], obligation.id.to_string());
     assert_eq!(result["results"][0]["obligation_id"], "call-state");
-    assert_eq!(result["recent_events"][0]["event_type"], "tool_call.completed");
+    assert_eq!(
+        result["recent_events"][0]["event_type"],
+        "tool_call.completed"
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -2154,7 +2164,10 @@ async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) 
         .expect("load run")
         .expect("run exists");
     assert_eq!(run.state, "failed");
-    assert_eq!(run.terminal_reason.as_deref(), Some("client_obligation_timeout"));
+    assert_eq!(
+        run.terminal_reason.as_deref(),
+        Some("client_obligation_timeout")
+    );
     let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
         .await
         .expect("list events");

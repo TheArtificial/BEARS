@@ -185,7 +185,8 @@ pub async fn run_next_archive_harvest_once(
     };
 
     let run_id = run.id.to_string();
-    match harvest_compaction_artifacts_once(pool, config, stores, bear_id, 20, Some(&run_id)).await {
+    match harvest_compaction_artifacts_once(pool, config, stores, bear_id, 20, Some(&run_id)).await
+    {
         Ok(output) => {
             let completed = mark_archive_harvest_completed(
                 pool,

@@ -202,7 +202,8 @@ fn responses_completed_flushes_pending_function_call_without_output_item_done() 
     assert!(responses_sse_frame_to_runtime_events(&mut acc, args_delta)
         .expect("parse delta")
         .is_empty());
-    let events = responses_sse_frame_to_runtime_events(&mut acc, completed).expect("parse completed");
+    let events =
+        responses_sse_frame_to_runtime_events(&mut acc, completed).expect("parse completed");
     assert_eq!(events.len(), 1);
     match &events[0] {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
@@ -213,7 +214,10 @@ fn responses_completed_flushes_pending_function_call_without_output_item_done() 
         }) => {
             assert_eq!(tool_call_id, "call_1");
             assert_eq!(tool_name, "memory_read");
-            assert_eq!(arguments, &serde_json::Value::String("{\"path\":".to_string()));
+            assert_eq!(
+                arguments,
+                &serde_json::Value::String("{\"path\":".to_string())
+            );
         }
         other => panic!("unexpected event: {other:?}"),
     }

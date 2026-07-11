@@ -30,8 +30,8 @@ pub mod stack_health;
 pub mod status;
 pub mod user;
 pub mod v1;
-pub mod work;
 pub mod web_chat_runtime;
+pub mod work;
 
 #[cfg(test)]
 mod tests;

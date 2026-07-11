@@ -99,7 +99,12 @@ impl SurfaceHistoryEvent {
 
     pub fn validate_replay_record(&self) -> Result<(), &'static str> {
         match self {
-            SurfaceHistoryEvent::Message { role, text, resources, .. } => {
+            SurfaceHistoryEvent::Message {
+                role,
+                text,
+                resources,
+                ..
+            } => {
                 if role.trim().is_empty() {
                     return Err("message missing required role");
                 }
@@ -174,7 +179,9 @@ impl SurfaceHistoryEvent {
                         .trim()
                         .is_empty()
                 {
-                    return Err("session info update missing title, title_updated_at, or current_mode");
+                    return Err(
+                        "session info update missing title, title_updated_at, or current_mode",
+                    );
                 }
             }
         }

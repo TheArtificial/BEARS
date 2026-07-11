@@ -225,7 +225,11 @@ async fn operation(
     let (operation, unknown) = match client.get_operation(&operation_id).await {
         Ok(descriptor) => (Some(descriptor), false),
         Err(err) if err.kind() == Some("unknown_operation") => (None, true),
-        Err(err) => return Err(CustomError::System(format!("operation fetch failed: {err}"))),
+        Err(err) => {
+            return Err(CustomError::System(format!(
+                "operation fetch failed: {err}"
+            )))
+        }
     };
     let running = operation
         .as_ref()
@@ -472,19 +476,24 @@ mod tests {
         let body = format!("name={name}&image_ref=example.invalid%2Fimg%3Alatest&description=t");
 
         // Non-admin is bounced by the nest guard before any handler runs.
-        let response = post_form(&app, &regular_cookie, "/admin/sandbox/catalog", body.clone()).await;
+        let response = post_form(
+            &app,
+            &regular_cookie,
+            "/admin/sandbox/catalog",
+            body.clone(),
+        )
+        .await;
         assert_ne!(response.status(), StatusCode::SEE_OTHER);
 
         // Admin creates, sets default, deletes.
         let response = post_form(&app, &admin_cookie, "/admin/sandbox/catalog", body).await;
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        let (image_id,): (Uuid,) = sqlx::query_as(
-            "SELECT id FROM sandbox_catalog_images WHERE name = $1",
-        )
-        .bind(&name)
-        .fetch_one(&pool)
-        .await
-        .expect("catalog row");
+        let (image_id,): (Uuid,) =
+            sqlx::query_as("SELECT id FROM sandbox_catalog_images WHERE name = $1")
+                .bind(&name)
+                .fetch_one(&pool)
+                .await
+                .expect("catalog row");
         let response = post_form(
             &app,
             &admin_cookie,

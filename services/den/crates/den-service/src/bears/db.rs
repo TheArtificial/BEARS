@@ -1093,13 +1093,9 @@ mod model_setting_tests {
         .await
         .expect("create bear");
 
-        set_bear_agent_loop_control_setting(
-            &pool,
-            bear_id,
-            Some(AgentLoopControlLevel::Standard),
-        )
-        .await
-        .expect("set bear loop control");
+        set_bear_agent_loop_control_setting(&pool, bear_id, Some(AgentLoopControlLevel::Standard))
+            .await
+            .expect("set bear loop control");
         set_profile_agent_loop_control_setting(
             &pool,
             bear_id,
@@ -1110,7 +1106,9 @@ mod model_setting_tests {
         .expect("set profile loop control");
 
         assert_eq!(
-            bear_agent_loop_control_setting(&pool, bear_id).await.unwrap(),
+            bear_agent_loop_control_setting(&pool, bear_id)
+                .await
+                .unwrap(),
             Some(AgentLoopControlLevel::Standard)
         );
         assert_eq!(
@@ -1131,6 +1129,9 @@ mod model_setting_tests {
 
         let settings = list_profile_model_settings(&pool, bear_id).await.unwrap();
         assert_eq!(settings.len(), 1);
-        assert_eq!(settings[0].agent_loop_control_level.as_deref(), Some("strict"));
+        assert_eq!(
+            settings[0].agent_loop_control_level.as_deref(),
+            Some("strict")
+        );
     }
 }

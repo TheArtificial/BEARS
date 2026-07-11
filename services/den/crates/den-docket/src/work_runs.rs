@@ -232,7 +232,9 @@ pub async fn enqueue_work_run(
     .fetch_optional(&mut *tx)
     .await?;
     let job_run_id = match current_run {
-        Some((run_id, state)) if !matches!(state.as_str(), "completed" | "failed" | "cancelled") => {
+        Some((run_id, state))
+            if !matches!(state.as_str(), "completed" | "failed" | "cancelled") =>
+        {
             run_id
         }
         _ => {
@@ -244,11 +246,13 @@ pub async fn enqueue_work_run(
             .bind(job_id)
             .fetch_one(&mut *tx)
             .await?;
-            sqlx::query("UPDATE bear_jobs SET current_run_id = $2, updated_at = now() WHERE id = $1")
-                .bind(job_id)
-                .bind(run_id)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "UPDATE bear_jobs SET current_run_id = $2, updated_at = now() WHERE id = $1",
+            )
+            .bind(job_id)
+            .bind(run_id)
+            .execute(&mut *tx)
+            .await?;
             run_id
         }
     };
@@ -278,7 +282,9 @@ pub async fn enqueue_work_run(
 
     let run = match inserted {
         Ok(run) => run,
-        Err(sqlx::Error::Database(db)) if db.constraint() == Some("idx_bear_work_runs_one_active_per_task") => {
+        Err(sqlx::Error::Database(db))
+            if db.constraint() == Some("idx_bear_work_runs_one_active_per_task") =>
+        {
             return Err(DenError::ValidationError(format!(
                 "task {} already has an active work run",
                 enqueue.task_id
@@ -759,7 +765,11 @@ pub async fn finalize_work_run(
 
 /// Ask the owning worker to cancel; teardown happens asynchronously. Returns
 /// false when the run is already terminal.
-pub async fn request_work_run_cancel(pool: &PgPool, run_id: Uuid, bear_id: Uuid) -> Result<bool, DenError> {
+pub async fn request_work_run_cancel(
+    pool: &PgPool,
+    run_id: Uuid,
+    bear_id: Uuid,
+) -> Result<bool, DenError> {
     let result = sqlx::query(
         "UPDATE bear_work_runs
          SET cancel_requested = TRUE, updated_at = now()
@@ -812,12 +822,11 @@ pub async fn checkout_work_run_for_session(
 ) -> Result<WorkRunCheckout, DenError> {
     let run = bind_work_run_session(pool, run_id, bear_id, session_id).await?;
 
-    let task: (String, String, sqlx::types::Json<Vec<String>>) = sqlx::query_as(
-        "SELECT title, body, completion_criteria FROM bear_tasks WHERE id = $1",
-    )
-    .bind(run.task_id)
-    .fetch_one(pool)
-    .await?;
+    let task: (String, String, sqlx::types::Json<Vec<String>>) =
+        sqlx::query_as("SELECT title, body, completion_criteria FROM bear_tasks WHERE id = $1")
+            .bind(run.task_id)
+            .fetch_one(pool)
+            .await?;
     let (goal, commit_policy): (String, Option<String>) =
         sqlx::query_as("SELECT goal, commit_policy FROM bear_jobs WHERE id = $1")
             .bind(run.job_id)
@@ -985,13 +994,12 @@ pub async fn get_task_run_status(
     job_run_id: Uuid,
     task_id: Uuid,
 ) -> Result<Option<String>, DenError> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2",
-    )
-    .bind(job_run_id)
-    .bind(task_id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2")
+            .bind(job_run_id)
+            .bind(task_id)
+            .fetch_optional(pool)
+            .await?;
     Ok(row.map(|(status,)| status))
 }
 
@@ -1017,11 +1025,10 @@ pub async fn close_work_execution_session(
 /// Bears that have any work-assigned tasks, for the optional auto-enqueue
 /// sweep (`WORK_DISPATCH_AUTO`).
 pub async fn list_bears_with_work_tasks(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
-    let rows: Vec<(Uuid,)> = sqlx::query_as(
-        "SELECT DISTINCT bear_id FROM bear_tasks WHERE assigned_to_role = 'work'",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(Uuid,)> =
+        sqlx::query_as("SELECT DISTINCT bear_id FROM bear_tasks WHERE assigned_to_role = 'work'")
+            .fetch_all(pool)
+            .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 

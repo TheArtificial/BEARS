@@ -119,10 +119,7 @@ impl OpsRegistry {
                 }
                 Ok(outcome) if outcome.timed_out => {
                     mutable.state = OperationState::Failed;
-                    mutable.error = Some(format!(
-                        "timed out after {}s",
-                        timeout.as_secs()
-                    ));
+                    mutable.error = Some(format!("timed out after {}s", timeout.as_secs()));
                 }
                 Ok(outcome) => {
                     mutable.state = OperationState::Failed;
@@ -241,7 +238,11 @@ mod tests {
         );
         let descriptor = wait_terminal(&registry, &id).await;
         assert_eq!(descriptor.state, OperationState::Failed);
-        assert!(descriptor.error.as_deref().unwrap_or("").contains("timed out"));
+        assert!(descriptor
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("timed out"));
     }
 
     #[tokio::test]

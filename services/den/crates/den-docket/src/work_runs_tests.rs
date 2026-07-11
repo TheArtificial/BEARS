@@ -8,10 +8,9 @@ use uuid::Uuid;
 
 use crate::work_runs::{
     checkout_work_run_for_session, claim_next_work_run, enqueue_work_run, ensure_job_work_branch,
-    finalize_work_run, get_live_work_run_by_session, get_work_run,
-    get_work_run_dispatch_context, heartbeat_work_run, record_work_run_provisioned,
-    record_work_run_turn_outcome, request_work_run_cancel, WorkRunEnqueue, WorkRunFinalize,
-    WorkRunProvisioned, WorkRunState,
+    finalize_work_run, get_live_work_run_by_session, get_work_run, get_work_run_dispatch_context,
+    heartbeat_work_run, record_work_run_provisioned, record_work_run_turn_outcome,
+    request_work_run_cancel, WorkRunEnqueue, WorkRunFinalize, WorkRunProvisioned, WorkRunState,
 };
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
@@ -347,15 +346,24 @@ async fn runs_within_one_job_serialize() {
     let infos = crate::work_runs::queued_run_positions(&pool, &[run_a.id, run_b.id])
         .await
         .unwrap();
-    assert_eq!(infos.len(), 1, "only queued runs have queue info: {infos:?}");
+    assert_eq!(
+        infos.len(),
+        1,
+        "only queued runs have queue info: {infos:?}"
+    );
     assert_eq!(infos[0].run_id, run_b.id);
     assert_eq!(infos[0].position, 1);
     assert_eq!(infos[0].waiting_on_run_id, Some(run_a.id));
 
     // Terminal first run unblocks the sibling.
-    finalize_work_run(&pool, run_a.id, WorkRunState::Failed, WorkRunFinalize::default())
-        .await
-        .unwrap();
+    finalize_work_run(
+        &pool,
+        run_a.id,
+        WorkRunState::Failed,
+        WorkRunFinalize::default(),
+    )
+    .await
+    .unwrap();
     let second = claim_next_work_run(&pool, "runner-2", lease)
         .await
         .unwrap()
@@ -363,9 +371,14 @@ async fn runs_within_one_job_serialize() {
     assert_eq!(second.id, run_b.id);
 
     // Cleanup so later tests' claims see no leftovers.
-    finalize_work_run(&pool, run_b.id, WorkRunState::Failed, WorkRunFinalize::default())
-        .await
-        .unwrap();
+    finalize_work_run(
+        &pool,
+        run_b.id,
+        WorkRunState::Failed,
+        WorkRunFinalize::default(),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -489,7 +502,9 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     assert_eq!(reporting.state, "reporting");
 
     // Cancel is still possible pre-finalize, then finalize wins.
-    assert!(request_work_run_cancel(&pool, run.id, bear_id).await.unwrap());
+    assert!(request_work_run_cancel(&pool, run.id, bear_id)
+        .await
+        .unwrap());
 
     let finalized = finalize_work_run(
         &pool,
@@ -514,10 +529,17 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     assert_eq!(refs.get("changed_files"), Some(&serde_json::json!(1)));
 
     // Terminal runs cannot be finalized twice or cancelled.
-    assert!(finalize_work_run(&pool, run.id, WorkRunState::Failed, WorkRunFinalize::default())
+    assert!(finalize_work_run(
+        &pool,
+        run.id,
+        WorkRunState::Failed,
+        WorkRunFinalize::default()
+    )
+    .await
+    .is_err());
+    assert!(!request_work_run_cancel(&pool, run.id, bear_id)
         .await
-        .is_err());
-    assert!(!request_work_run_cancel(&pool, run.id, bear_id).await.unwrap());
+        .unwrap());
 
     // Completed audit event exists.
     let (events,): (i64,) = sqlx::query_as(
@@ -604,8 +626,16 @@ async fn publish_wiring_image_branch_and_prompt() {
     let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
         .await
         .unwrap();
-    assert!(checkout.prompt.contains("Commit your work"), "{}", checkout.prompt);
-    assert!(checkout.prompt.contains("Do not push"), "{}", checkout.prompt);
+    assert!(
+        checkout.prompt.contains("Commit your work"),
+        "{}",
+        checkout.prompt
+    );
+    assert!(
+        checkout.prompt.contains("Do not push"),
+        "{}",
+        checkout.prompt
+    );
 
     // An explicit branch set at creation is never overwritten.
     let (job2_id, _) =
@@ -621,7 +651,9 @@ async fn publish_wiring_image_branch_and_prompt() {
     );
 
     // Cleanup: cancel the queued run so it cannot satisfy later claims.
-    assert!(request_work_run_cancel(&pool, run.id, bear_id).await.unwrap());
+    assert!(request_work_run_cancel(&pool, run.id, bear_id)
+        .await
+        .unwrap());
     purge_claimable_runs(&pool).await;
 }
 
@@ -706,9 +738,14 @@ async fn attention_and_completion_visibility() {
     assert!(awaiting.iter().any(|job| job.id == job_id), "{awaiting:?}");
 
     // Cleanup the queued retry so later tests' claims see no leftovers.
-    finalize_work_run(&pool, retry.id, WorkRunState::Cancelled, WorkRunFinalize::default())
-        .await
-        .unwrap();
+    finalize_work_run(
+        &pool,
+        retry.id,
+        WorkRunState::Cancelled,
+        WorkRunFinalize::default(),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

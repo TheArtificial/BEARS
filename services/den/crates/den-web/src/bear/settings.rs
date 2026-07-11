@@ -46,8 +46,7 @@ use den_service::{
 use crate::web::admin::bears::{
     bear_agent_health_rows, bear_plan_mode_rows, bear_web_approvals, bear_web_fetches,
     bear_web_sources, membership_role_label, AddWebApprovalForm, AddWebSourceForm,
-    BearMemberAdminRow, BearPlanModeRow, BearWebApprovalRow,
-    BearWebFetchRow, BearWebSourceRow,
+    BearMemberAdminRow, BearPlanModeRow, BearWebApprovalRow, BearWebFetchRow, BearWebSourceRow,
 };
 use crate::web::bear::create_support::{
     all_model_catalog_options_context_for_bear, canonical_default_model_handle,
@@ -590,21 +589,24 @@ async fn conversation_checkpoint_artifacts(
     let Some(session_id) = session_id.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(Vec::new());
     };
-    let rows = sqlx::query_as::<_, (
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        serde_json::Value,
-        Option<serde_json::Value>,
-        time::OffsetDateTime,
-        time::OffsetDateTime,
-    )>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            Option<serde_json::Value>,
+            time::OffsetDateTime,
+            time::OffsetDateTime,
+        ),
+    >(
         r"
         SELECT
             c.run_id,
@@ -660,7 +662,9 @@ async fn conversation_checkpoint_artifacts(
                 related_task_list_id,
                 related_task_item_id,
                 request_json: pretty_json(request),
-                response_json: response.map(pretty_json).unwrap_or_else(|| "null".to_string()),
+                response_json: response
+                    .map(pretty_json)
+                    .unwrap_or_else(|| "null".to_string()),
                 created_at: created_at.to_string(),
                 updated_at: updated_at.to_string(),
             },
@@ -1933,7 +1937,8 @@ async fn models_post(
         let model = configured_model_from_form(raw);
         bears_db::set_profile_model_setting(state.sqlx_pool(), bear.id, profile, model.as_deref())
             .await?;
-        let loop_control = parse_loop_control_form_value(form_profile_loop_control(&form, profile))?;
+        let loop_control =
+            parse_loop_control_form_value(form_profile_loop_control(&form, profile))?;
         bears_db::set_profile_agent_loop_control_setting(
             state.sqlx_pool(),
             bear.id,
@@ -2319,10 +2324,9 @@ async fn context_view(
             }
             let applies_to = match block.scope {
                 PromptMemoryBlockScope::BearWide => "every stance".to_string(),
-                PromptMemoryBlockScope::RoleLocal => format!(
-                    "{} stance",
-                    block.role.as_deref().unwrap_or("one")
-                ),
+                PromptMemoryBlockScope::RoleLocal => {
+                    format!("{} stance", block.role.as_deref().unwrap_or("one"))
+                }
                 PromptMemoryBlockScope::WorkSurface => format!(
                     "work surface {}",
                     block.work_surface.as_deref().unwrap_or("(unnamed)")

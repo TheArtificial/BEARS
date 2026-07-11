@@ -402,9 +402,10 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].checkpoint_id, "ckpt-1");
 
-        let by_session = list_checkpoints_for_session(&pool, bear_id, &format!("session-{run_id}"), 10)
-            .await
-            .expect("list checkpoints by session");
+        let by_session =
+            list_checkpoints_for_session(&pool, bear_id, &format!("session-{run_id}"), 10)
+                .await
+                .expect("list checkpoints by session");
         assert_eq!(by_session.len(), 1);
         assert_eq!(by_session[0].checkpoint_id, "ckpt-1");
     }

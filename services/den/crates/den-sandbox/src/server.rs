@@ -14,8 +14,8 @@ use crate::proc::{run_command, CommandSpec};
 use crate::protocol::{
     CatalogImage, CatalogResponse, CatalogRoot, CleanupState, CreateSandboxRequest, DiffResponse,
     ErrorBody, HealthResponse, ManagedConfig, ManagedConfigStatus, NetworkMode, PublishRequest,
-    RootStatus, SandboxDescriptor, SandboxLifecycleState, SandboxLimits, SandboxType,
-    SandboxUsage, SyncRootResponse, WorkSurface,
+    RootStatus, SandboxDescriptor, SandboxLifecycleState, SandboxLimits, SandboxType, SandboxUsage,
+    SyncRootResponse, WorkSurface,
 };
 use crate::recognize::recognize_work_surface;
 use crate::roots::{RootsError, RootsManager};
@@ -186,7 +186,10 @@ pub fn create_sandbox_app(config: SandboxServerConfig) -> Result<Router, RootsEr
     let open = Router::new().route("/sandbox/v1/health", get(health));
     let guarded = Router::new()
         .route("/sandbox/v1/metrics", get(metrics_text))
-        .route("/sandbox/v1/sandboxes", post(create_sandbox).get(list_sandboxes))
+        .route(
+            "/sandbox/v1/sandboxes",
+            post(create_sandbox).get(list_sandboxes),
+        )
         .route("/sandbox/v1/sandboxes/{id}", get(get_sandbox))
         .route("/sandbox/v1/sandboxes/{id}", delete(destroy_sandbox))
         .route("/sandbox/v1/sandboxes/{id}/logs", get(sandbox_logs))
@@ -252,9 +255,15 @@ fn error_response(status: StatusCode, kind: &str, message: impl Into<String>) ->
 
 fn policy_error_response(err: &PolicyError) -> Response {
     let (status, kind) = match err {
-        PolicyError::UnimplementedType { .. } => (StatusCode::UNPROCESSABLE_ENTITY, "unimplemented_type"),
-        PolicyError::ReadonlyWriteConflict => (StatusCode::UNPROCESSABLE_ENTITY, "readonly_write_conflict"),
-        PolicyError::RuntimeUnavailable { .. } => (StatusCode::SERVICE_UNAVAILABLE, "runtime_unavailable"),
+        PolicyError::UnimplementedType { .. } => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "unimplemented_type")
+        }
+        PolicyError::ReadonlyWriteConflict => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "readonly_write_conflict")
+        }
+        PolicyError::RuntimeUnavailable { .. } => {
+            (StatusCode::SERVICE_UNAVAILABLE, "runtime_unavailable")
+        }
         PolicyError::QueueFull { .. } => (StatusCode::TOO_MANY_REQUESTS, "queue_full"),
         PolicyError::UnknownRoot { .. } => (StatusCode::NOT_FOUND, "unknown_root"),
     };
@@ -263,24 +272,42 @@ fn policy_error_response(err: &PolicyError) -> Response {
 
 fn roots_error_response(err: &RootsError) -> Response {
     match err {
-        RootsError::UnknownRoot(_) => error_response(StatusCode::NOT_FOUND, "unknown_root", err.to_string()),
-        RootsError::UnknownImage { .. } => {
-            error_response(StatusCode::UNPROCESSABLE_ENTITY, "unknown_image", err.to_string())
+        RootsError::UnknownRoot(_) => {
+            error_response(StatusCode::NOT_FOUND, "unknown_root", err.to_string())
         }
-        RootsError::PublishUnsupported { .. } => {
-            error_response(StatusCode::UNPROCESSABLE_ENTITY, "publish_unsupported", err.to_string())
+        RootsError::UnknownImage { .. } => error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unknown_image",
+            err.to_string(),
+        ),
+        RootsError::PublishUnsupported { .. } => error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "publish_unsupported",
+            err.to_string(),
+        ),
+        RootsError::DefaultRefRefused { .. } => error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "default_ref_refused",
+            err.to_string(),
+        ),
+        RootsError::Git { .. } => {
+            error_response(StatusCode::CONFLICT, "root_sync_failed", err.to_string())
         }
-        RootsError::DefaultRefRefused { .. } => {
-            error_response(StatusCode::UNPROCESSABLE_ENTITY, "default_ref_refused", err.to_string())
-        }
-        RootsError::Git { .. } => error_response(StatusCode::CONFLICT, "root_sync_failed", err.to_string()),
-        RootsError::InvalidManagedConfig(_) => {
-            error_response(StatusCode::UNPROCESSABLE_ENTITY, "invalid_managed_config", err.to_string())
-        }
-        RootsError::ManagedPersist(_) => {
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "managed_persist_failed", err.to_string())
-        }
-        _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, "roots_error", err.to_string()),
+        RootsError::InvalidManagedConfig(_) => error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_managed_config",
+            err.to_string(),
+        ),
+        RootsError::ManagedPersist(_) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "managed_persist_failed",
+            err.to_string(),
+        ),
+        _ => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "roots_error",
+            err.to_string(),
+        ),
     }
 }
 
@@ -300,11 +327,11 @@ async fn put_managed_config(
         images: persisted.images.len(),
         version: persisted.version.clone(),
     };
-    state.roots.write().await.apply_managed(
-        persisted.roots,
-        persisted.images,
-        persisted.version,
-    );
+    state
+        .roots
+        .write()
+        .await
+        .apply_managed(persisted.roots, persisted.images, persisted.version);
     tracing::info!(
         surfaces = status.surfaces,
         images = status.images,
@@ -314,7 +341,9 @@ async fn put_managed_config(
     Json(status).into_response()
 }
 
-async fn managed_config_status(State(state): State<Arc<ProviderState>>) -> Json<ManagedConfigStatus> {
+async fn managed_config_status(
+    State(state): State<Arc<ProviderState>>,
+) -> Json<ManagedConfigStatus> {
     let manager = state.roots_snapshot().await;
     Json(ManagedConfigStatus {
         surfaces: manager.names().len(),
@@ -331,9 +360,9 @@ fn image_reference_is_valid(reference: &str) -> bool {
     if bytes.is_empty() || bytes.len() > 255 || bytes[0] == b'-' {
         return false;
     }
-    bytes.iter().all(|b| {
-        b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/' | b':' | b'@')
-    })
+    bytes
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/' | b':' | b'@'))
 }
 
 fn invalid_reference_response(reference: &str) -> Response {
@@ -372,8 +401,7 @@ async fn list_images(State(state): State<Arc<ProviderState>>) -> Response {
             let tag = field("Tag");
             let reference = format!("{repository}:{tag}");
             crate::protocol::EngineImage {
-                in_catalog: catalog_refs.contains(&reference)
-                    || catalog_refs.contains(&repository),
+                in_catalog: catalog_refs.contains(&reference) || catalog_refs.contains(&repository),
                 repository,
                 tag,
                 id: field("ID"),
@@ -499,7 +527,9 @@ async fn remove_image(
         Ok(Err(detail)) if detail.contains("is being used") || detail.contains("in use") => {
             error_response(StatusCode::CONFLICT, "image_in_use", detail)
         }
-        Ok(Err(detail)) => error_response(StatusCode::UNPROCESSABLE_ENTITY, "remove_failed", detail),
+        Ok(Err(detail)) => {
+            error_response(StatusCode::UNPROCESSABLE_ENTITY, "remove_failed", detail)
+        }
         Err(err) => backend_error_response(&err),
     }
 }
@@ -524,9 +554,11 @@ async fn get_operation(
 
 fn backend_error_response(err: &BackendError) -> Response {
     match err {
-        BackendError::RuntimeUnavailable(_) => {
-            error_response(StatusCode::SERVICE_UNAVAILABLE, "runtime_unavailable", err.to_string())
-        }
+        BackendError::RuntimeUnavailable(_) => error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "runtime_unavailable",
+            err.to_string(),
+        ),
         _ => error_response(StatusCode::BAD_GATEWAY, "backend_error", err.to_string()),
     }
 }
@@ -560,7 +592,10 @@ async fn health(State(state): State<Arc<ProviderState>>) -> Json<HealthResponse>
 async fn metrics_text(State(state): State<Arc<ProviderState>>) -> Response {
     let active = state.active_count().await;
     (
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
         metrics::render_prometheus_text(active),
     )
         .into_response()
@@ -578,14 +613,11 @@ async fn create_sandbox(
         Ok(root) => root.clone(),
         Err(err) => return roots_error_response(&err),
     };
-    let image = match roots.resolve_image(
-        request.image.as_deref(),
-        &root,
-        &state.config.default_image,
-    ) {
-        Ok(image) => image,
-        Err(err) => return roots_error_response(&err),
-    };
+    let image =
+        match roots.resolve_image(request.image.as_deref(), &root, &state.config.default_image) {
+            Ok(image) => image,
+            Err(err) => return roots_error_response(&err),
+        };
     if image.trim().is_empty() {
         return error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -611,7 +643,8 @@ async fn create_sandbox(
         if let Err(err) = validate_selection(&request, &ctx) {
             return policy_error_response(&err);
         }
-        let timeout_secs = effective_timeout_secs(&request.limits, state.config.default_timeout_secs);
+        let timeout_secs =
+            effective_timeout_secs(&request.limits, state.config.default_timeout_secs);
         registry.insert(
             sandbox_id.clone(),
             SandboxRecord {
@@ -684,7 +717,9 @@ fn effective_timeout_secs(limits: &SandboxLimits, default_secs: u64) -> u64 {
     if limits.timeout_secs == 0 {
         default_secs
     } else {
-        limits.timeout_secs.min(default_secs.max(limits.timeout_secs))
+        limits
+            .timeout_secs
+            .min(default_secs.max(limits.timeout_secs))
     }
 }
 
@@ -717,9 +752,12 @@ async fn provision(
 
     let work_surface = recognize_work_surface(&workspace).await;
 
-    let workspace_bind_source =
-        host_bind_source(&workspace, &state.config.workspaces_dir, state.config.workspaces_host_dir.as_deref())
-            .map_err(|detail| error_response(StatusCode::INTERNAL_SERVER_ERROR, "bind_source", detail))?;
+    let workspace_bind_source = host_bind_source(
+        &workspace,
+        &state.config.workspaces_dir,
+        state.config.workspaces_host_dir.as_deref(),
+    )
+    .map_err(|detail| error_response(StatusCode::INTERNAL_SERVER_ERROR, "bind_source", detail))?;
     let spec = ProvisionSpec {
         id: sandbox_id.to_string(),
         workspace,
@@ -761,7 +799,10 @@ fn host_bind_source(
     workspaces_dir: &str,
     workspaces_host_dir: Option<&str>,
 ) -> Result<PathBuf, String> {
-    let Some(host_dir) = workspaces_host_dir.map(str::trim).filter(|dir| !dir.is_empty()) else {
+    let Some(host_dir) = workspaces_host_dir
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+    else {
         return Ok(workspace.to_path_buf());
     };
     let relative = workspace.strip_prefix(workspaces_dir).map_err(|_| {
@@ -814,7 +855,11 @@ async fn get_sandbox(
     let registry = state.registry.lock().await;
     match registry.get(&id) {
         Some(record) => Json(record.descriptor(state.backend.strength_label())).into_response(),
-        None => error_response(StatusCode::NOT_FOUND, "unknown_sandbox", format!("no sandbox {id}")),
+        None => error_response(
+            StatusCode::NOT_FOUND,
+            "unknown_sandbox",
+            format!("no sandbox {id}"),
+        ),
     }
 }
 
@@ -829,7 +874,11 @@ async fn sandbox_logs(
     Query(query): Query<LogsQuery>,
 ) -> Response {
     if !state.registry.lock().await.contains_key(&id) {
-        return error_response(StatusCode::NOT_FOUND, "unknown_sandbox", format!("no sandbox {id}"));
+        return error_response(
+            StatusCode::NOT_FOUND,
+            "unknown_sandbox",
+            format!("no sandbox {id}"),
+        );
     }
     let tail_bytes = query.tail_bytes.unwrap_or(DEFAULT_LOG_TAIL_BYTES);
     match state.backend.logs(&id, tail_bytes).await {
@@ -888,7 +937,10 @@ async fn sandbox_diff(
 /// Diff of the workspace against its provisioned state, computed host-side on
 /// the bind-mounted directory. Untracked files are listed but their contents
 /// are not embedded in the patch.
-async fn compute_diff(workspace: &std::path::Path, max_patch_bytes: u64) -> Result<DiffResponse, String> {
+async fn compute_diff(
+    workspace: &std::path::Path,
+    max_patch_bytes: u64,
+) -> Result<DiffResponse, String> {
     if !workspace.join(".git").exists() {
         return Ok(DiffResponse {
             changed_files: Vec::new(),
@@ -896,13 +948,19 @@ async fn compute_diff(workspace: &std::path::Path, max_patch_bytes: u64) -> Resu
             patch_truncated: false,
         });
     }
-    let status_args: Vec<String> = ["status", "--porcelain"].iter().map(|s| (*s).to_string()).collect();
+    let status_args: Vec<String> = ["status", "--porcelain"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
     let mut spec = CommandSpec::new("git", &status_args);
     spec.cwd = Some(workspace);
     spec.timeout = Duration::from_secs(60);
     let status_out = run_command(spec).await.map_err(|e| e.to_string())?;
     if !status_out.success() {
-        return Err(format!("git status failed: {}", status_out.stderr_lossy().trim()));
+        return Err(format!(
+            "git status failed: {}",
+            status_out.stderr_lossy().trim()
+        ));
     }
     let changed_files = status_out
         .stdout_lossy()
@@ -926,7 +984,10 @@ async fn compute_diff(workspace: &std::path::Path, max_patch_bytes: u64) -> Resu
     spec.max_output_bytes = usize::try_from(max_patch_bytes).unwrap_or(usize::MAX);
     let diff_out = run_command(spec).await.map_err(|e| e.to_string())?;
     if !diff_out.success() {
-        return Err(format!("git diff failed: {}", diff_out.stderr_lossy().trim()));
+        return Err(format!(
+            "git diff failed: {}",
+            diff_out.stderr_lossy().trim()
+        ));
     }
     Ok(DiffResponse {
         changed_files,
@@ -947,7 +1008,11 @@ async fn destroy_sandbox(
     Query(query): Query<DestroyQuery>,
 ) -> Response {
     if !state.registry.lock().await.contains_key(&id) {
-        return error_response(StatusCode::NOT_FOUND, "unknown_sandbox", format!("no sandbox {id}"));
+        return error_response(
+            StatusCode::NOT_FOUND,
+            "unknown_sandbox",
+            format!("no sandbox {id}"),
+        );
     }
     teardown(&state, &id, query.preserve_workspace).await;
     metrics::sandbox_destroyed();
@@ -1268,7 +1333,10 @@ mod tests {
             service_token: token.into(),
             workspaces_host_dir: None,
             workspaces_dir: std::env::temp_dir()
-                .join(format!("den-sbx-srv-test-{}", uuid::Uuid::new_v4().simple()))
+                .join(format!(
+                    "den-sbx-srv-test-{}",
+                    uuid::Uuid::new_v4().simple()
+                ))
                 .to_string_lossy()
                 .into_owned(),
             build_context_dir: None,
@@ -1283,7 +1351,12 @@ mod tests {
     async fn health_is_open_and_reports_shape() {
         let app = create_sandbox_app(test_config("secret")).unwrap();
         let response = app
-            .oneshot(Request::builder().uri("/sandbox/v1/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/sandbox/v1/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -1298,7 +1371,12 @@ mod tests {
         let app = create_sandbox_app(test_config("secret")).unwrap();
         let unauthorized = app
             .clone()
-            .oneshot(Request::builder().uri("/sandbox/v1/sandboxes").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/sandbox/v1/sandboxes")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
@@ -1425,14 +1503,22 @@ mod tests {
     async fn catalog_lists_images_and_roots() {
         let app = create_sandbox_app(test_config_with_catalog()).unwrap();
         let response = app
-            .oneshot(Request::builder().uri("/sandbox/v1/catalog").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/sandbox/v1/catalog")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let catalog: CatalogResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(catalog.images.len(), 2);
-        assert!(catalog.images.iter().any(|image| image.name == "base" && image.default));
+        assert!(catalog
+            .images
+            .iter()
+            .any(|image| image.name == "base" && image.default));
         assert_eq!(catalog.roots.len(), 1);
         assert_eq!(catalog.roots[0].default_image.as_deref(), Some("rust"));
         assert!(!catalog.roots[0].has_upstream);
@@ -1463,7 +1549,11 @@ mod tests {
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(error.kind, "unknown_image");
-        assert!(error.error.contains("base"), "lists catalog: {}", error.error);
+        assert!(
+            error.error.contains("base"),
+            "lists catalog: {}",
+            error.error
+        );
     }
 
     async fn put_config(app: &Router, body: serde_json::Value) -> (StatusCode, axum::body::Bytes) {
@@ -1493,11 +1583,21 @@ mod tests {
         // Nothing pushed yet.
         let status_response = app
             .clone()
-            .oneshot(Request::builder().uri("/sandbox/v1/managed-config").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/sandbox/v1/managed-config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(status_response.status(), StatusCode::OK);
-        let bytes = status_response.into_body().collect().await.unwrap().to_bytes();
+        let bytes = status_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
         let status: ManagedConfigStatus = serde_json::from_slice(&bytes).unwrap();
         assert_eq!((status.surfaces, status.images), (0, 0));
         assert!(status.version.is_none());
@@ -1517,7 +1617,12 @@ mod tests {
             }),
         )
         .await;
-        assert_eq!(put_status, StatusCode::OK, "{}", String::from_utf8_lossy(&bytes));
+        assert_eq!(
+            put_status,
+            StatusCode::OK,
+            "{}",
+            String::from_utf8_lossy(&bytes)
+        );
         let applied: ManagedConfigStatus = serde_json::from_slice(&bytes).unwrap();
         assert_eq!((applied.surfaces, applied.images), (1, 1));
         assert_eq!(applied.version.as_deref(), Some("v-abc"));
@@ -1526,7 +1631,12 @@ mod tests {
         // and absent from the persisted config.
         let response = app
             .clone()
-            .oneshot(Request::builder().uri("/sandbox/v1/catalog").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/sandbox/v1/catalog")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
@@ -1549,7 +1659,12 @@ mod tests {
         assert_eq!(put_status, StatusCode::OK);
         let response = app
             .clone()
-            .oneshot(Request::builder().uri("/sandbox/v1/catalog").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/sandbox/v1/catalog")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
@@ -1682,7 +1797,11 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method} {uri}");
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {uri}"
+            );
         }
     }
 }

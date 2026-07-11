@@ -41,9 +41,9 @@ use crate::{
         tool_signature_from_call, AgentLoopControlResolutionInput, AgentLoopSession,
         AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
         CheckpointArtifactInput, CheckpointField, CheckpointReplayPolicy, CheckpointTaskContext,
-        CheckpointTrigger, CheckpointVisibility, NativeToolDispatchMode,
-        RuntimeCheckpointRequest, SessionTrackingStream, ToolContinuationObservation,
-        TurnBudgetStopReason, TurnBudgetWarning,
+        CheckpointTrigger, CheckpointVisibility, NativeToolDispatchMode, RuntimeCheckpointRequest,
+        SessionTrackingStream, ToolContinuationObservation, TurnBudgetStopReason,
+        TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
@@ -1128,7 +1128,10 @@ fn checkpoint_audit_enabled_for_session(config: &Config, session: &AgentLoopSess
     }
 }
 
-fn render_checkpoint_nudge(request: &RuntimeCheckpointRequest, trigger: &CheckpointTrigger) -> String {
+fn render_checkpoint_nudge(
+    request: &RuntimeCheckpointRequest,
+    trigger: &CheckpointTrigger,
+) -> String {
     let request_json = serde_json::to_string_pretty(request)
         .unwrap_or_else(|_| "{\"error\":\"checkpoint_request_unavailable\"}".to_string());
     format!(
@@ -1492,13 +1495,16 @@ pub async fn continue_native_client_turn_event_stream(
         record_checkpoint_request_if_audited(request.sqlx_pool, request.config, &session, trigger)
             .await;
         if agent_loop_control_enforce_enabled(request.config) {
-            if let Some(checkpoint_request) = runtime_checkpoint_request_for_trigger(&session, trigger)
+            if let Some(checkpoint_request) =
+                runtime_checkpoint_request_for_trigger(&session, trigger)
             {
                 SESSION_STORE.update(&session_key, |session| {
                     apply_checkpoint_nudge(session, &checkpoint_request, trigger);
                 });
                 session = SESSION_STORE.get(&session_key).ok_or_else(|| {
-                    DenError::System("native agent loop session not found after checkpoint nudge".to_string())
+                    DenError::System(
+                        "native agent loop session not found after checkpoint nudge".to_string(),
+                    )
                 })?;
             }
         }

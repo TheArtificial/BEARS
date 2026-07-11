@@ -933,10 +933,11 @@ pub(crate) async fn fail_run_lifecycle(
         error_message = %log_sample(&message),
         "BearWire run failed"
     );
-    let transitioned = turn_runs::transition_run(pool, run_id, turn_runs::TurnRunState::Failed, Some(reason))
-        .await
-        .ok()
-        .flatten();
+    let transitioned =
+        turn_runs::transition_run(pool, run_id, turn_runs::TurnRunState::Failed, Some(reason))
+            .await
+            .ok()
+            .flatten();
     if transitioned.is_none() {
         tracing::debug!(
             session_id,
@@ -1099,8 +1100,14 @@ async fn settle_active_run_for_session(
                 "cancelled",
             )
             .await;
-            record_work_run_outcome_if_bound(&state.sqlx_pool, session_id, &run.run_id, "cancelled", None)
-                .await;
+            record_work_run_outcome_if_bound(
+                &state.sqlx_pool,
+                session_id,
+                &run.run_id,
+                "cancelled",
+                None,
+            )
+            .await;
         }
     }
     let stream_run_ids = stream_cancel
@@ -1886,7 +1893,10 @@ pub(crate) async fn run_start_result(
     }))
 }
 
-async fn run_obligations_payload(pool: &sqlx::PgPool, run_id: &str) -> Result<Vec<Value>, CustomError> {
+async fn run_obligations_payload(
+    pool: &sqlx::PgPool,
+    run_id: &str,
+) -> Result<Vec<Value>, CustomError> {
     let rows = sqlx::query(
         r"
         SELECT id, run_id, session_id, kind, expected_responder_action,

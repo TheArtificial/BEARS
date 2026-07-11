@@ -204,7 +204,10 @@ fn checkpoint_next_action_from_value(
     match value {
         serde_json::Value::String(value) => checkpoint_next_action_from_str(&value),
         serde_json::Value::Object(mut object) => {
-            if let Some(tool_name) = object.remove("call_tool").or_else(|| object.remove("tool_name")) {
+            if let Some(tool_name) = object
+                .remove("call_tool")
+                .or_else(|| object.remove("tool_name"))
+            {
                 return Ok(CheckpointNextAction::CallTool {
                     tool_name: tool_name.as_str().map(str::to_string),
                 });
@@ -214,7 +217,10 @@ fn checkpoint_next_action_from_value(
                 .or_else(|| object.remove("type"))
                 .and_then(|value| value.as_str().map(str::to_string))
             else {
-                return Err("next_action object must include action/type or call_tool/tool_name".to_string());
+                return Err(
+                    "next_action object must include action/type or call_tool/tool_name"
+                        .to_string(),
+                );
             };
             let mut action = checkpoint_next_action_from_str(&action)?;
             if let CheckpointNextAction::CallTool { tool_name } = &mut action {
@@ -403,9 +409,7 @@ pub fn evaluate_checkpoint_trigger(
         ))
     } else if threshold_reached(
         next_state.read_search_since_mutation,
-        profile
-            .checkpoints
-            .exploration_without_mutation_threshold,
+        profile.checkpoints.exploration_without_mutation_threshold,
     ) {
         Some(checkpoint_trigger(
             CheckpointReason::OverExploration,
@@ -436,17 +440,16 @@ pub fn validate_checkpoint_response(
 
     for field in &request.required_fields {
         if checkpoint_field_missing(*field, response) {
-            return Err(CheckpointResponseValidationError::MissingRequiredField(*field));
+            return Err(CheckpointResponseValidationError::MissingRequiredField(
+                *field,
+            ));
         }
     }
 
     Ok(())
 }
 
-fn checkpoint_field_missing(
-    field: CheckpointField,
-    response: &RuntimeCheckpointResponse,
-) -> bool {
+fn checkpoint_field_missing(field: CheckpointField, response: &RuntimeCheckpointResponse) -> bool {
     match field {
         CheckpointField::ActiveObjective => response.active_objective.trim().is_empty(),
         CheckpointField::Learned => {
@@ -466,7 +469,9 @@ fn checkpoint_field_missing(
     }
 }
 
-pub fn task_gate_checkpoint_trigger(profile: &AgentLoopControlProfile) -> Option<CheckpointTrigger> {
+pub fn task_gate_checkpoint_trigger(
+    profile: &AgentLoopControlProfile,
+) -> Option<CheckpointTrigger> {
     profile
         .checkpoints
         .require_on_task_gate_rejection
@@ -505,7 +510,10 @@ fn observe_checkpoint_tool_result(
 
     if observation_is_meaningful_mutation(observation) {
         state.read_search_since_mutation = 0;
-    } else if matches!(observation.class, ToolBudgetClass::Read | ToolBudgetClass::Search) {
+    } else if matches!(
+        observation.class,
+        ToolBudgetClass::Read | ToolBudgetClass::Search
+    ) {
         state.read_search_since_mutation = state.read_search_since_mutation.saturating_add(1);
     }
 }
@@ -534,7 +542,14 @@ impl AgentLoopControlProfile {
         match level {
             AgentLoopControlLevel::Light => Self::new(
                 level,
-                budget(240_000, 96, limits(128, 48, 32, 16, 20, 28, 3, 24), 3, 2, Some((6, 3))),
+                budget(
+                    240_000,
+                    96,
+                    limits(128, 48, 32, 16, 20, 28, 3, 24),
+                    3,
+                    2,
+                    Some((6, 3)),
+                ),
                 CheckpointPolicy {
                     enabled: true,
                     exploration_without_mutation_threshold: Some(8),
@@ -552,7 +567,14 @@ impl AgentLoopControlProfile {
             ),
             AgentLoopControlLevel::Standard => Self::new(
                 level,
-                budget(360_000, 80, limits(112, 32, 20, 12, 16, 24, 2, 16), 3, 2, Some((4, 2))),
+                budget(
+                    360_000,
+                    80,
+                    limits(112, 32, 20, 12, 16, 24, 2, 16),
+                    3,
+                    2,
+                    Some((4, 2)),
+                ),
                 CheckpointPolicy {
                     enabled: true,
                     exploration_without_mutation_threshold: Some(5),
@@ -570,7 +592,14 @@ impl AgentLoopControlProfile {
             ),
             AgentLoopControlLevel::Careful => Self::new(
                 level,
-                budget(360_000, 80, limits(96, 24, 16, 10, 14, 20, 2, 14), 2, 2, Some((4, 2))),
+                budget(
+                    360_000,
+                    80,
+                    limits(96, 24, 16, 10, 14, 20, 2, 14),
+                    2,
+                    2,
+                    Some((4, 2)),
+                ),
                 CheckpointPolicy {
                     enabled: true,
                     exploration_without_mutation_threshold: Some(3),
@@ -588,7 +617,14 @@ impl AgentLoopControlProfile {
             ),
             AgentLoopControlLevel::Strict => Self::new(
                 level,
-                budget(240_000, 64, limits(72, 16, 12, 8, 10, 14, 1, 10), 1, 1, Some((2, 1))),
+                budget(
+                    240_000,
+                    64,
+                    limits(72, 16, 12, 8, 10, 14, 1, 10),
+                    1,
+                    1,
+                    Some((2, 1)),
+                ),
                 CheckpointPolicy {
                     enabled: true,
                     exploration_without_mutation_threshold: Some(2),
@@ -688,7 +724,11 @@ fn budget(
 mod tests {
     use super::*;
 
-    fn observation(class: ToolBudgetClass, signature: &str, failed: bool) -> ToolContinuationObservation {
+    fn observation(
+        class: ToolBudgetClass,
+        signature: &str,
+        failed: bool,
+    ) -> ToolContinuationObservation {
         ToolContinuationObservation {
             tool_name: class.label().to_string(),
             signature: signature.to_string(),
@@ -863,12 +903,8 @@ mod tests {
     #[test]
     fn checkpoint_evaluator_triggers_on_failures_and_low_budget() {
         let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Standard);
-        let low_budget = evaluate_checkpoint_trigger(
-            &profile,
-            &CheckpointState::default(),
-            &[],
-            true,
-        );
+        let low_budget =
+            evaluate_checkpoint_trigger(&profile, &CheckpointState::default(), &[], true);
         assert_eq!(
             low_budget.trigger.as_ref().map(|trigger| trigger.reason),
             Some(CheckpointReason::LowBudget)

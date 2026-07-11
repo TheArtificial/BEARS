@@ -50,13 +50,15 @@ pub async fn run_work_dispatch_worker_loop(
     };
     let client = SandboxClient::new(&sandbox_url, &config.sandbox_server_token);
     let runner_id = format!("work-dispatch-{}", Uuid::new_v4().simple());
-    tracing::info!(runner_id, sandbox_url, "Workers: work_dispatch loop starting");
+    tracing::info!(
+        runner_id,
+        sandbox_url,
+        "Workers: work_dispatch loop starting"
+    );
 
     // Seed the provider with the current managed config (surfaces + image
     // catalog) so a fresh or wiped provider can serve provisions immediately.
-    if let Err(err) =
-        crate::surface_sync::reconcile_if_stale(&pool, &config, &client, true).await
-    {
+    if let Err(err) = crate::surface_sync::reconcile_if_stale(&pool, &config, &client, true).await {
         tracing::warn!(error = %err, "work_dispatch: startup managed-config push failed (will retry on the sync tick)");
     }
     let mut last_surface_sync = std::time::Instant::now();
@@ -187,7 +189,12 @@ async fn claim_and_provision(
     }
 }
 
-async fn provision_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient, run: &WorkRunRow) {
+async fn provision_run(
+    pool: &PgPool,
+    config: &Arc<Config>,
+    client: &SandboxClient,
+    run: &WorkRunRow,
+) {
     let context = match work_runs::get_work_run_dispatch_context(pool, run.id).await {
         Ok(context) => context,
         Err(err) => {
@@ -258,12 +265,18 @@ async fn provision_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClie
     let timeout_secs = config.sandbox_default_timeout_secs;
     let deadline_secs = timeout_secs.saturating_sub(DEADLINE_MARGIN_SECS).max(30);
     let mut env = std::collections::BTreeMap::new();
-    env.insert("DEN_API_URL".to_string(), config.sandbox_callback_api_url.clone());
+    env.insert(
+        "DEN_API_URL".to_string(),
+        config.sandbox_callback_api_url.clone(),
+    );
     env.insert("BEAR_SLUG".to_string(), context.bear_slug.clone());
     env.insert("DEN_TOKEN".to_string(), token.raw_token.clone());
     env.insert("DEN_WORK_ORDER_ID".to_string(), run.id.to_string());
     env.insert("DEN_WORKSPACE".to_string(), "/workspace".to_string());
-    env.insert("DEN_HEADLESS_DEADLINE_SECS".to_string(), deadline_secs.to_string());
+    env.insert(
+        "DEN_HEADLESS_DEADLINE_SECS".to_string(),
+        deadline_secs.to_string(),
+    );
     // In-run commits carry the bear's identity (the provider's auto-commit of
     // leftovers uses its own).
     let git_identity = format!("{} (Den work)", context.bear_slug);
@@ -292,10 +305,7 @@ async fn provision_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClie
             max_log_bytes: Some(config.sandbox_max_log_bytes),
             ..SandboxLimits::default()
         },
-        labels: std::collections::BTreeMap::from([(
-            "work_run_id".to_string(),
-            run.id.to_string(),
-        )]),
+        labels: std::collections::BTreeMap::from([("work_run_id".to_string(), run.id.to_string())]),
     };
 
     let descriptor = match client.create_sandbox(&request).await {
@@ -323,7 +333,12 @@ async fn provision_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClie
     }
     let service = PgDocketService::from_pool(pool);
     if let Err(err) = service
-        .mark_task_started(run.bear_id, run.task_id, run.job_run_id, Some("work-dispatch".to_string()))
+        .mark_task_started(
+            run.bear_id,
+            run.task_id,
+            run.job_run_id,
+            Some("work-dispatch".to_string()),
+        )
         .await
     {
         tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: mark_task_started failed");
@@ -389,7 +404,14 @@ async fn reconcile_running(
     run: &WorkRunRow,
 ) {
     let Some(sandbox_id) = run.sandbox_id.as_deref() else {
-        fail_run(pool, run, "missing_sandbox", "running work run has no sandbox id", None).await;
+        fail_run(
+            pool,
+            run,
+            "missing_sandbox",
+            "running work run has no sandbox id",
+            None,
+        )
+        .await;
         return;
     };
     let descriptor = match client.get_sandbox(sandbox_id).await {
@@ -455,7 +477,12 @@ async fn reconcile_running(
 /// Harvest a run whose turn reached a terminal event: collect diff/logs/usage,
 /// decide the Docket outcome (done ⟺ the model marked the task done
 /// in-turn), finalize, and tear down.
-async fn harvest_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient, run: &WorkRunRow) {
+async fn harvest_run(
+    pool: &PgPool,
+    config: &Arc<Config>,
+    client: &SandboxClient,
+    run: &WorkRunRow,
+) {
     let sandbox_id = run.sandbox_id.as_deref();
     let diff = match sandbox_id {
         Some(id) => client.diff(id, Some(DIFF_PATCH_BYTES)).await.ok(),
@@ -502,7 +529,9 @@ async fn harvest_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient
     let mut published: Option<Value> = None;
     let mut publish_failed: Option<String> = None;
     if succeeded {
-        let context = work_runs::get_work_run_dispatch_context(pool, run.id).await.ok();
+        let context = work_runs::get_work_run_dispatch_context(pool, run.id)
+            .await
+            .ok();
         if let Some(context) = context.filter(WorkRunDispatchContext::publishes) {
             match (sandbox_id, context.work_branch.as_deref()) {
                 (Some(id), Some(branch)) => {
@@ -521,8 +550,7 @@ async fn harvest_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient
                                 pushed = outcome.pushed,
                                 "work_dispatch: run published to upstream"
                             );
-                            published =
-                                Some(serde_json::to_value(&outcome).unwrap_or(Value::Null));
+                            published = Some(serde_json::to_value(&outcome).unwrap_or(Value::Null));
                         }
                         Err(err) => publish_failed = Some(err.to_string()),
                     }
@@ -692,7 +720,13 @@ async fn teardown_sandbox(
     }
 }
 
-async fn fail_run(pool: &PgPool, run: &WorkRunRow, reason: &str, message: &str, refs: Option<Value>) {
+async fn fail_run(
+    pool: &PgPool,
+    run: &WorkRunRow,
+    reason: &str,
+    message: &str,
+    refs: Option<Value>,
+) {
     tracing::warn!(work_run_id = %run.id, reason, message, "work_dispatch: run failed");
     let service = PgDocketService::from_pool(pool);
     let _ = service
@@ -818,8 +852,8 @@ async fn orphan_sweep(pool: &PgPool, config: &Arc<Config>, client: &SandboxClien
                 %work_run_id,
                 "work_dispatch: destroying orphaned sandbox for terminal run"
             );
-            let preserve = config.sandbox_preserve_failed
-                && run.as_ref().is_some_and(|r| r.state == "failed");
+            let preserve =
+                config.sandbox_preserve_failed && run.as_ref().is_some_and(|r| r.state == "failed");
             let _ = client.destroy(&descriptor.id, preserve).await;
         }
     }

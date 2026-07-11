@@ -43,7 +43,10 @@ pub fn render_prometheus_text(active_sandboxes: usize) -> String {
             "den_sandbox_provisioned_total",
             PROVISIONED_TOTAL.load(Ordering::Relaxed),
         ),
-        ("den_sandbox_failed_total", FAILED_TOTAL.load(Ordering::Relaxed)),
+        (
+            "den_sandbox_failed_total",
+            FAILED_TOTAL.load(Ordering::Relaxed),
+        ),
         (
             "den_sandbox_destroyed_total",
             DESTROYED_TOTAL.load(Ordering::Relaxed),

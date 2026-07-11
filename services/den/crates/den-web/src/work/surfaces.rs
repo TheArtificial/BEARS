@@ -39,27 +39,36 @@ pub fn router() -> Router<AppState> {
         .route("/work/surfaces/new", get(new_form).post(create))
         .route("/work/surfaces/{surface_id}", get(detail))
         .route("/work/surfaces/{surface_id}/update", post(update))
-        .route("/work/surfaces/{surface_id}/credential", post(set_credential))
+        .route(
+            "/work/surfaces/{surface_id}/credential",
+            post(set_credential),
+        )
         .route(
             "/work/surfaces/{surface_id}/credential/clear",
             post(clear_credential),
         )
-        .route("/work/surfaces/{surface_id}/managers/grant", post(grant_manager))
+        .route(
+            "/work/surfaces/{surface_id}/managers/grant",
+            post(grant_manager),
+        )
         .route(
             "/work/surfaces/{surface_id}/managers/revoke",
             post(revoke_manager),
         )
-        .route("/work/surfaces/{surface_id}/bears/assign", post(assign_bear))
-        .route("/work/surfaces/{surface_id}/bears/unassign", post(unassign_bear))
+        .route(
+            "/work/surfaces/{surface_id}/bears/assign",
+            post(assign_bear),
+        )
+        .route(
+            "/work/surfaces/{surface_id}/bears/unassign",
+            post(unassign_bear),
+        )
         .route("/work/surfaces/{surface_id}/delete", post(delete))
         .route("/work/surfaces/{surface_id}/sync", post(sync_now))
 }
 
 fn viewer_is_admin(auth_session: &AuthSession) -> bool {
-    auth_session
-        .user
-        .as_ref()
-        .is_some_and(|user| user.is_admin)
+    auth_session.user.as_ref().is_some_and(|user| user.is_admin)
 }
 
 /// Manage-scope guard: manager/owner grant or site admin; anything else is a
@@ -260,7 +269,11 @@ async fn create(
     )
     .await?;
     let sync_note = push_surfaces_best_effort(&state).await;
-    Ok(surface_redirect(surface.id, "Work surface created.", sync_note))
+    Ok(surface_redirect(
+        surface.id,
+        "Work surface created.",
+        sync_note,
+    ))
 }
 
 async fn detail(
@@ -378,8 +391,7 @@ async fn set_credential(
     Form(form): Form<CredentialForm>,
 ) -> Result<Response, CustomError> {
     load_managed_surface(&state, &auth_session, surface_id).await?;
-    let Some((kind, value)) =
-        credential_from_form(&form.credential_kind, &form.credential_value)?
+    let Some((kind, value)) = credential_from_form(&form.credential_kind, &form.credential_value)?
     else {
         return Err(CustomError::ValidationError(
             "credential kind and value are both required".to_string(),
@@ -394,7 +406,11 @@ async fn set_credential(
     )
     .await?;
     let sync_note = push_surfaces_best_effort(&state).await;
-    Ok(surface_redirect(surface_id, "Credential stored.", sync_note))
+    Ok(surface_redirect(
+        surface_id,
+        "Credential stored.",
+        sync_note,
+    ))
 }
 
 async fn clear_credential(
@@ -405,7 +421,11 @@ async fn clear_credential(
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::clear_credential(state.sqlx_pool(), surface_id).await?;
     let sync_note = push_surfaces_best_effort(&state).await;
-    Ok(surface_redirect(surface_id, "Credential cleared.", sync_note))
+    Ok(surface_redirect(
+        surface_id,
+        "Credential cleared.",
+        sync_note,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -525,7 +545,11 @@ async fn sync_now(
     load_managed_surface(&state, &auth_session, surface_id).await?;
     let message = match push_surfaces_best_effort(&state).await {
         None => {
-            if state.config.sandbox_server_url.as_deref().is_some_and(|url| !url.trim().is_empty())
+            if state
+                .config
+                .sandbox_server_url
+                .as_deref()
+                .is_some_and(|url| !url.trim().is_empty())
             {
                 "Synced to the sandbox provider."
             } else {

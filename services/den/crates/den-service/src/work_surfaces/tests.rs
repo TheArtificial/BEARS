@@ -69,7 +69,9 @@ fn unique_name() -> String {
 #[tokio::test]
 async fn creator_becomes_owner_and_may_manage() {
     let _guard = DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let user = create_user(&pool).await;
     let other = create_user(&pool).await;
 
@@ -105,7 +107,9 @@ async fn creator_becomes_owner_and_may_manage() {
 
 #[tokio::test]
 async fn rejects_invalid_names() {
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let user = create_user(&pool).await;
     for bad in ["../evil", "a/b", "", "-leading", "UPPER"] {
         let err = create_surface(&pool, user, new_surface(bad), TEST_SECRET_KEY)
@@ -121,7 +125,9 @@ async fn rejects_invalid_names() {
 #[tokio::test]
 async fn bear_assignment_gates_use() {
     let _guard = DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let user = create_user(&pool).await;
     let bear = create_bear(&pool).await;
     let surface = create_surface(&pool, user, new_surface(&unique_name()), TEST_SECRET_KEY)
@@ -154,7 +160,9 @@ async fn bear_assignment_gates_use() {
 #[tokio::test]
 async fn credential_roundtrips_through_managed_config() {
     let _guard = DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let user = create_user(&pool).await;
     let name = unique_name();
     let mut surface = new_surface(&name);
@@ -215,7 +223,9 @@ async fn credential_roundtrips_through_managed_config() {
 #[tokio::test]
 async fn catalog_single_default_invariant_and_seed() {
     let _guard = DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let user = create_user(&pool).await;
 
     // Migration seed is present.
@@ -247,7 +257,9 @@ async fn catalog_single_default_invariant_and_seed() {
 #[tokio::test]
 async fn surface_update_and_delete() {
     let _guard = DB_LOCK.lock().await;
-    let Some(pool) = test_pool().await else { return };
+    let Some(pool) = test_pool().await else {
+        return;
+    };
     let user = create_user(&pool).await;
     let surface = create_surface(&pool, user, new_surface(&unique_name()), TEST_SECRET_KEY)
         .await
