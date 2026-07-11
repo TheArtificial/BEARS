@@ -66,7 +66,12 @@ Den projects:
 - armature-local tool requests
 - tool status transitions and summaries
 
-Tool projection is for model-visible tool exchanges whose results matter to continuation or replay.
+Tool projection is for model-visible tool exchanges whose results matter to continuation or replay. Execution ownership stays explicit in the projection:
+
+- Den-hosted / Den-owned tool events are display-only from the armature's perspective. ACP may render them as tool cards, but the armature must not execute them locally or answer them with `client.tool.result`.
+- Armature-local tool requests are client obligations. The armature may request permission, execute the local action, and return the result to Den.
+
+Live ACP tool-card projection should be idempotent and monotonic for each tool call. Terminal card states such as `completed` and `failed` are final for the live surface, and stale updates from older turns/runs should not regress the visible card state.
 
 ### Non-blocking structured updates
 

@@ -99,7 +99,9 @@ Examples of armature-local tools:
 - terminal/process execution
 - local browser integrations exposed by the armature
 
-The model sees one coherent tool surface, but execution location is descriptor-owned and policy-owned.
+The model sees one coherent tool surface, but execution location is descriptor-owned and policy-owned. The armature projection layer should preserve that ownership in UI as well: Den-hosted tool events may be rendered as display-only cards, but they are not local client obligations and must not be answered with `client.tool.result`; armature-local tool requests are the only tool calls executed through the trusted local boundary.
+
+Live tool-card rendering should also be monotonic for a given tool call. Once the projected card is terminal (`completed` or `failed`), stale display updates from overlapping turns or delayed Den-owned projections should be ignored rather than regressing the visible state.
 
 ## Approval model
 

@@ -18,7 +18,7 @@ Implemented:
 - `session/prompt`
 - `session/cancel`
 - `session/close`
-- Den SSE -> ACP `session/update` text/thought chunks
+- BearWire -> ACP `session/update` projection for assistant text/thought chunks, tool cards/status, and structured session state
 - ACP client-tool relay for editor file-system tools:
   - `fs/read_text_file`
   - `fs/write_text_file`
@@ -29,7 +29,9 @@ Session setup requires an absolute local `cwd`. The adapter prefers explicit `pa
 
 ACP-provided `mcpServers` are intentionally rejected when non-empty. BEARS currently exposes Den tools plus ACP client filesystem bridges, and does not own stdio MCP subprocess lifecycle. The adapter also reports `mcpCapabilities.http = false` and `mcpCapabilities.sse = false` until real MCP support exists.
 
-`session/load` replays persisted history as user/assistant text-only `session/update` notifications. Tool calls/results, status/reasoning chunks, errors, images/audio, and richer upstream runtime event history are not reconstructed unless Den exposes faithful historical event data in a future version.
+Live BearWire projection keeps execution ownership explicit: Den-hosted tool events are rendered as display-only tool cards and must not produce `client.tool.result` responses from the armature, while armature-local tool calls are executed through the trusted local boundary. Tool-card states are monotonic for the live surface; once a card reaches `completed` or `failed`, later stale `pending`/`in_progress` updates for the same tool call are suppressed.
+
+`session/load` replays persisted conversation history and typed surface records as ACP `session/update` notifications where Den has enough structured history to reconstruct them. This can include user/assistant text, reasoning/thought chunks, and completed tool records; richer upstream runtime event history is still limited to what Den persisted as replayable surface state.
 
 `session/list` lists persisted/resumable Den ACP sessions only. Newly-created adapter-local sessions are transient until the first prompt causes Den to persist them, and they are not listed after adapter restart.
 

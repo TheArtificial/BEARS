@@ -49,7 +49,26 @@ Look for:
 
 This is the fastest way to understand whether a provider payload class needs promotion into a first-class semantic event.
 
-### 3. Continuation/resume flows
+### 3. Tool-card projection ordering
+
+Smoke test turns that include Den-hosted tools such as memory/checkpoint tools and armature-local tools such as filesystem reads/edits.
+
+Healthy expectation:
+
+- Den-owned tool events render as display-only cards and do not cause `client.tool.result` posts from the armature
+- armature-local tool requests are the only tool calls that create local execution obligations
+- a tool card that reaches `completed` or `failed` does not later regress to `pending` or `in_progress`
+- stale tool-card updates from older prompt turns are dropped, matching stale text/thought chunk behavior
+
+Useful logs to inspect:
+
+- `BearWire tool_call.requested received`
+- `BearWire tool_call terminal update received`
+- `den-owned display-only tool task finished without posting client result`
+- `suppressing duplicate/non-monotonic tool surface update`
+- `dropped stale turn update`
+
+### 4. Continuation/resume flows
 
 Smoke test:
 
