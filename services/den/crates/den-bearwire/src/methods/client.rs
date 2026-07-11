@@ -50,7 +50,7 @@ use den_service::{
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
 use crate::methods::run::{
-    persist_run_failed, persist_run_progress, persist_runtime_event_as_bearwire,
+    fail_run_lifecycle, persist_run_progress, persist_runtime_event_as_bearwire,
 };
 
 fn deserialize_tool_result_status<'de, D>(deserializer: D) -> Result<ToolResultStatus, D::Error>
@@ -289,9 +289,16 @@ fn spawn_continuation_task(
     let pool = state.sqlx_pool.clone();
     let config = state.config.clone();
     let memory_stores = state.memory_stores.clone();
+    let request_id = Uuid::new_v4();
+    let (cancel_handle, mut cancel_rx) = state.turn_cancellations.register(
+        run.session_id.clone(),
+        request_id,
+        Some(conversation_id.clone()),
+    );
+    let _ = cancel_handle.record_run_id(&run.run_id);
     tokio::spawn(async move {
+        let _cancel_handle = cancel_handle;
         let continuation_started_at = Instant::now();
-        let request_id = Uuid::new_v4();
         persist_run_progress(
             &pool,
             &run.session_id,
@@ -317,7 +324,7 @@ fn spawn_continuation_task(
             binding_id,
             compatibility_backend: Some("native".to_string()),
         };
-        let result = continue_native_client_turn_event_stream(
+        let continuation_future = continue_native_client_turn_event_stream(
             TurnContinueRequest {
                 sqlx_pool: &pool,
                 config: config.as_ref(),
@@ -333,8 +340,23 @@ fn spawn_continuation_task(
                 stream_context: default_tool_continue_stream_context(),
             },
             BearProfile::Pair,
-        )
-        .await;
+        );
+        tokio::pin!(continuation_future);
+        let result = tokio::select! {
+            changed = cancel_rx.changed() => {
+                if changed.is_ok() && *cancel_rx.borrow() {
+                    tracing::info!(
+                        session_id = %run.session_id,
+                        run_id = %run.run_id,
+                        request_id = %request_id,
+                        "BearWire continuation startup observed cancellation"
+                    );
+                    return;
+                }
+                continuation_future.await
+            }
+            result = &mut continuation_future => result,
+        };
         match result {
             Ok((_continuation, mut stream)) => {
                 persist_run_progress(
@@ -355,6 +377,7 @@ fn spawn_continuation_task(
                 let mut runtime_event_count = 0usize;
                 let mut terminal_event_seen = false;
                 let mut wait_event_seen = false;
+                let mut cancellation_seen = false;
                 let mut last_event_kind: Option<&'static str> = None;
                 let idle_watchdog_timeout = continuation_watchdog_timeout();
                 let handshake_timeout = native_llm_handshake_timeout();
@@ -373,46 +396,63 @@ fn spawn_continuation_task(
                     } else {
                         first_event_watchdog_timeout
                     };
-                    let item = match tokio::time::timeout(watchdog_timeout, stream.next()).await {
-                        Ok(item) => item,
-                        Err(_) => {
-                            let context = json!({
-                                "continuation_request_id": request_id,
-                                "watchdog_phase": watchdog_phase,
-                                "watchdog_timeout_ms": watchdog_timeout.as_millis(),
-                                "first_event_watchdog_timeout_ms": first_event_watchdog_timeout.as_millis(),
-                                "handshake_timeout_ms": handshake_timeout.as_millis(),
-                                "idle_watchdog_timeout_ms": idle_watchdog_timeout.as_millis(),
-                                "runtime_event_count": runtime_event_count,
-                                "first_event_seen": first_event_seen,
-                                "terminal_event_seen": terminal_event_seen,
-                                "last_event_kind": last_event_kind,
-                            });
-                            let message = if first_event_seen {
-                                format!(
-                                    "Den received the client result and continuation request {request_id} emitted runtime events, but no further runtime event arrived within {}ms. This usually means the resumed model/runtime stream stalled after it started.",
-                                    watchdog_timeout.as_millis()
-                                )
-                            } else {
-                                format!(
-                                    "Den received the client result and started continuation request {request_id}, but no runtime event arrived within {}ms. This includes the configured LLM handshake allowance ({}ms) plus the continuation idle watchdog ({}ms). This usually means the resumed model/runtime stream stalled before emitting its first event.",
-                                    watchdog_timeout.as_millis(),
-                                    handshake_timeout.as_millis(),
-                                    idle_watchdog_timeout.as_millis()
-                                )
-                            };
-                            persist_run_failed(
-                                &pool,
-                                &run.session_id,
-                                &run.run_id,
-                                run.bear_id,
-                                run.user_id,
-                                "continuation_watchdog_timeout",
-                                message,
-                                Some(context),
-                            )
-                            .await;
-                            break;
+                    let item = tokio::select! {
+                        changed = cancel_rx.changed() => {
+                            if changed.is_ok() && *cancel_rx.borrow() {
+                                cancellation_seen = true;
+                                tracing::info!(
+                                    session_id = %run.session_id,
+                                    run_id = %run.run_id,
+                                    request_id = %request_id,
+                                    "BearWire continuation stream observed cancellation"
+                                );
+                                break;
+                            }
+                            continue;
+                        }
+                        timed = tokio::time::timeout(watchdog_timeout, stream.next()) => {
+                            match timed {
+                                Ok(item) => item,
+                                Err(_) => {
+                                    let context = json!({
+                                        "continuation_request_id": request_id,
+                                        "watchdog_phase": watchdog_phase,
+                                        "watchdog_timeout_ms": watchdog_timeout.as_millis(),
+                                        "first_event_watchdog_timeout_ms": first_event_watchdog_timeout.as_millis(),
+                                        "handshake_timeout_ms": handshake_timeout.as_millis(),
+                                        "idle_watchdog_timeout_ms": idle_watchdog_timeout.as_millis(),
+                                        "runtime_event_count": runtime_event_count,
+                                        "first_event_seen": first_event_seen,
+                                        "terminal_event_seen": terminal_event_seen,
+                                        "last_event_kind": last_event_kind,
+                                    });
+                                    let message = if first_event_seen {
+                                        format!(
+                                            "Den received the client result and continuation request {request_id} emitted runtime events, but no further runtime event arrived within {}ms. This usually means the resumed model/runtime stream stalled after it started.",
+                                            watchdog_timeout.as_millis()
+                                        )
+                                    } else {
+                                        format!(
+                                            "Den received the client result and started continuation request {request_id}, but no runtime event arrived within {}ms. This includes the configured LLM handshake allowance ({}ms) plus the continuation idle watchdog ({}ms). This usually means the resumed model/runtime stream stalled before emitting its first event.",
+                                            watchdog_timeout.as_millis(),
+                                            handshake_timeout.as_millis(),
+                                            idle_watchdog_timeout.as_millis()
+                                        )
+                                    };
+                                    fail_run_lifecycle(
+                                        &pool,
+                                        &run.session_id,
+                                        &run.run_id,
+                                        run.bear_id,
+                                        run.user_id,
+                                        "continuation_watchdog_timeout",
+                                        message,
+                                        Some(context),
+                                    )
+                                    .await;
+                                    break;
+                                }
+                            }
                         }
                     };
                     let Some(item) = item else {
@@ -474,7 +514,7 @@ fn spawn_continuation_task(
                             .await;
                         }
                         Err(err) => {
-                            persist_run_failed(
+                            fail_run_lifecycle(
                                 &pool,
                                 &run.session_id,
                                 &run.run_id,
@@ -490,8 +530,8 @@ fn spawn_continuation_task(
                     }
                 }
                 let terminal_or_wait_seen = terminal_event_seen || wait_event_seen;
-                if !terminal_or_wait_seen {
-                    persist_run_failed(
+                if !terminal_or_wait_seen && !cancellation_seen {
+                    fail_run_lifecycle(
                         &pool,
                         &run.session_id,
                         &run.run_id,
@@ -509,6 +549,7 @@ fn spawn_continuation_task(
                             "first_event_seen": first_event_seen,
                             "terminal_event_seen": terminal_event_seen,
                             "wait_event_seen": wait_event_seen,
+                            "cancellation_seen": cancellation_seen,
                             "last_event_kind": last_event_kind,
                         })),
                     )
@@ -544,7 +585,7 @@ fn spawn_continuation_task(
                 }
             }
             Err(err) => {
-                persist_run_failed(
+                fail_run_lifecycle(
                     &pool,
                     &run.session_id,
                     &run.run_id,

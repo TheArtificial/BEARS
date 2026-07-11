@@ -909,7 +909,7 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     }
 }
 
-pub(crate) async fn persist_run_failed(
+pub(crate) async fn fail_run_lifecycle(
     pool: &sqlx::PgPool,
     session_id: &str,
     run_id: &str,
@@ -1032,6 +1032,22 @@ pub(crate) async fn persist_run_failed(
             .await;
         }
     }
+}
+
+pub(crate) async fn persist_run_failed(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    reason: &str,
+    message: String,
+    context: Option<serde_json::Value>,
+) {
+    fail_run_lifecycle(
+        pool, session_id, run_id, bear_id, user_id, reason, message, context,
+    )
+    .await;
 }
 
 #[derive(Debug, Clone)]

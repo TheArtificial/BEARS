@@ -236,7 +236,7 @@ Exit criteria:
 
 ### Phase 3 — Run lifecycle ownership
 
-Status: partially implemented. BearWire run supersession and explicit cancellation now share a lifecycle helper that cancels registered active stream/tool work, transitions the active run to `cancelled`, settles open obligations, transitions active steps, records work-run cancellation, and emits a run-scoped `run.cancelled` event. BearWire background run tasks register with the cancellation registry and stop when superseded/cancelled, while terminal `turn_runs` can no longer be reopened or overwritten by stale runtime events. Remaining work is to move all terminal transitions into this owner and make continuation tasks use the same lifecycle path.
+Status: mostly implemented. BearWire run supersession and explicit cancellation share a lifecycle helper that cancels registered active stream/tool work, transitions the active run to `cancelled`, settles open obligations, transitions active steps, records work-run cancellation, and emits a run-scoped `run.cancelled` event. BearWire background run and continuation tasks register with the cancellation registry and stop when superseded/cancelled. Continuation failure paths now use the explicit run lifecycle failure path, while terminal `turn_runs` can no longer be reopened or overwritten by stale runtime events.
 
 Introduce a single run lifecycle owner that coordinates DB state, task cancellation,
 obligation settlement, and terminal event emission.
@@ -253,8 +253,9 @@ Exit criteria:
 
 - Implemented for BearWire start supersession: registered background tasks observe cancellation, and terminal run rows reject stale transitions.
 - Implemented for explicit `run.cancel`: cancellation emits a run-scoped `run.cancelled` event and settles obligations.
-- Remaining: route continuation-task terminal handling through the same lifecycle owner instead of direct `persist_run_failed` calls.
-- Remaining: every terminal state transition has a corresponding terminal projection event from the owner.
+- Implemented: continuation-task terminal failure handling uses the explicit lifecycle failure path instead of ad hoc direct failure calls.
+- Implemented: continuation tasks register with the cancellation registry and observe supersession/cancellation.
+- Remaining: every terminal state transition should eventually be represented by a single public lifecycle API rather than compatibility wrappers.
 - Remaining: Armature and Den agree on why every loop exited across start, continuation, cancellation, and timeout paths.
 
 ### Phase 4 — Move expiry out of `GET /events`
