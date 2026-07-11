@@ -505,6 +505,31 @@ pub async fn list_records_for_logical_path(
     Ok(rows.into_iter().map(MemoryRecordSqlRow::into_row).collect())
 }
 
+pub async fn list_record_history_for_logical_path(
+    store: &BearMemoryStore,
+    logical_path: &str,
+    limit: i64,
+) -> Result<Vec<MemoryRecordRow>, DenError> {
+    let rows = sqlx::query_as::<_, MemoryRecordSqlRow>(
+        r"
+        SELECT memory_id, sequence_no, scope_type, scope_profile, kind, content_text,
+               logical_path, work_surface_ref, metadata_json, created_at, salience,
+               supersedes_memory_id, invalid_at
+        FROM memory_records
+        WHERE bear_id = ? AND logical_path = ?
+        ORDER BY sequence_no DESC
+        LIMIT ?
+        ",
+    )
+    .bind(store.bear_id.to_string())
+    .bind(logical_path)
+    .bind(limit)
+    .fetch_all(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("list memory_record history failed: {e}")))?;
+    Ok(rows.into_iter().map(MemoryRecordSqlRow::into_row).collect())
+}
+
 /// Explicit entity anchor records eligible for key-memory projection (ADR-0042 Phase 5 v1).
 ///
 /// Policy is intentionally conservative: an entity must be resolved/confirmed, descriptor
@@ -1035,6 +1060,19 @@ mod as_of_tests {
         assert_eq!(rows[0].memory_id, active.memory_id);
         assert_eq!(rows[0].lifecycle_status, "active");
         assert_eq!(rows[0].freshness_trend, "stable");
+
+        let history = list_record_history_for_logical_path(&store, "pair/note.md", 10)
+            .await
+            .unwrap();
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[0].memory_id, active.memory_id);
+        assert!(history
+            .iter()
+            .any(|row| row.lifecycle_status == "superseded"));
+        assert!(history.iter().any(|row| row.lifecycle_status == "archived"));
+        assert!(history
+            .iter()
+            .any(|row| row.lifecycle_status == "archive-candidate"));
     }
 
     #[tokio::test]

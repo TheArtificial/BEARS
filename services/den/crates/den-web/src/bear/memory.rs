@@ -2014,11 +2014,10 @@ async fn record_view(
 
     let store = manager.store_for_bear(bear.id).await?;
 
-    // History: all versions at this logical path (newest first). The newest is the head today
-    // (supersession is latest-at-path by sequence; `supersedes_memory_id` is not yet written).
+    // History: all versions at this logical path (newest first).
     let mut history: Vec<HistoryItem> = Vec::new();
     if let Some(path) = record.logical_path.as_deref() {
-        let versions = store::list_records_for_logical_path(&store, path, 50)
+        let versions = store::list_record_history_for_logical_path(&store, path, 50)
             .await
             .unwrap_or_default();
         for (idx, v) in versions.iter().enumerate() {

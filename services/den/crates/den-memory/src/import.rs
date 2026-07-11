@@ -585,7 +585,9 @@ fn git_bytes(
 mod tests {
     use super::*;
     use crate::test_support::new_test_store;
-    use crate::{head_record_for_logical_path, list_records_for_logical_path, MemoryScopeType};
+    use crate::{
+        head_record_for_logical_path, list_record_history_for_logical_path, MemoryScopeType,
+    };
 
     #[test]
     fn normalizes_and_rejects_legacy_memory_paths() {
@@ -716,7 +718,7 @@ mod tests {
             LegacyMemoryImportSource::GitDir { .. }
         ));
 
-        let history = list_records_for_logical_path(&store, "core/bear-overview.md", 10)
+        let history = list_record_history_for_logical_path(&store, "core/bear-overview.md", 10)
             .await
             .expect("list history");
         assert_eq!(history.len(), 2);

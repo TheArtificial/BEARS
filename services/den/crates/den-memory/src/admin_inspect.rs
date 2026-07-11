@@ -540,8 +540,8 @@ mod tests {
     use super::*;
     use crate::{
         append_memory_record, append_relation, create_entity, get_entity,
-        list_records_for_logical_path, list_relations_for_source, EntityTrust, LogicalMemoryPath,
-        ResolutionState,
+        list_record_history_for_logical_path, list_relations_for_source, EntityTrust,
+        LogicalMemoryPath, ResolutionState,
     };
     use serde_json::json;
 
@@ -606,7 +606,7 @@ mod tests {
         assert_eq!(detail.visibility, "normal");
 
         // History: both versions at the path, newest first.
-        let versions = list_records_for_logical_path(&store, &path.to_logical_path(), 50)
+        let versions = list_record_history_for_logical_path(&store, &path.to_logical_path(), 50)
             .await
             .expect("versions");
         assert_eq!(versions.len(), 2);
