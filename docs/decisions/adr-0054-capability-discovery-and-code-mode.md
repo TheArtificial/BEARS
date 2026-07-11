@@ -30,6 +30,7 @@ What remains undecided is the sustainable model-facing strategy for a large and 
 - Den should not solve context pressure by proactively selecting a large likely-tool bundle for every turn.
 - Tools and skills should not have unrelated discovery mechanisms.
 - Code Mode is promising for large MCP/tool catalogs, but should not become a separate conceptual world from skills, policies, and other Bear capabilities.
+- Session-local tools, such as tools exposed by an armature or adapter, complicate catalog discovery because availability, authority, filesystem/process access, and lifetime may be bound to a live user session rather than to a durable Den-managed surface.
 
 ## Decision
 
@@ -47,6 +48,8 @@ A capability is the model- and product-facing thing the Bear can use to get work
 The runtime prompt should not enumerate the full catalog. Instead, it should teach the model that the catalog is discoverable and that it should search or browse capabilities when it needs external state, side effects, specialized procedures, project knowledge, or an execution substrate not already visible.
 
 Den will prefer **taxonomy-enabled discovery with search and browsing** over capability profiles or broad proactive tool injection. Taxonomy is registry metadata, not the only navigation mechanism.
+
+Capability discovery must model both durable capability definitions and ephemeral capability instances. In particular, local or armature-provided tools are session/surface-bound instances: discovery results must say where they execute, what surface they can see, whose authority they use, and how long they are expected to remain available.
 
 Den will also maintain a compact **recently discovered** working set in runtime context. This is a recency cache, not a capability profile. It exists so the model can reuse capabilities it has already discovered during the current run, turn, session, or job without re-searching or requiring the full catalog in prompt.
 
@@ -93,6 +96,10 @@ memories, examples, surfaces, and executors.
 Prefer direct invocation for simple one-off actions. Prefer Code Mode when
 a task requires loops, batching, filtering, aggregation, retries, joins, or
 large intermediate state.
+
+Discovery results identify where a capability executes, what surface it can
+access, whose authority it uses, and how long it is expected to remain
+available. Do not assume similarly named capabilities operate on the same state.
 ```
 
 The model should not need to know whether the current Bear is doing "code work", "browser work", "ops work", or "curation work" before discovering capabilities. The task type should emerge from the model's local need and the capabilities it requests.
@@ -117,12 +124,19 @@ Discovery results should include enough information for safe selection without l
 - taxonomy tags;
 - good-for / not-good-for hints;
 - risk and side-effect posture;
+- provider or origin, such as Den, Bifrost, MCP server, armature, adapter, or work runner;
+- execution locality, such as Den-managed sandbox, user-session-local adapter, local workspace, browser session, or remote work run;
+- authority source, such as Bear policy, user local session, workspace assignment, service credential, or delegated job;
+- availability and lifetime, such as durable, current run, current session, current workspace, or while adapter is connected;
 - scope or target surface;
 - related skills, policies, memories, tools, and executors;
 - whether direct invocation, Code Mode, or delegation is recommended;
+- for Code Mode, whether the executor can invoke the relevant local/session capability providers;
 - how to request details or invoke the capability.
 
 Detailed schemas and long examples should be loaded lazily through description or documentation search.
+
+Do not rely on labels such as "local" without a surface and authority qualifier. A local filesystem tool exposed by an armature, a Den-managed workspace file tool, and a remote work-run file tool may all implement similar operations while seeing different state and using different authority. Discovery and description text should make that difference model-visible.
 
 ## Recently discovered working set
 
@@ -130,10 +144,10 @@ The runtime may inject a compact section such as:
 
 ```text
 Recently discovered:
-- workspace.read_file — read a text file from the mounted workspace
-- workspace.search_files — search files by path or content
+- armature.fs.read_text_file — read a text file from the current ACP local workspace; session-local, read-only
+- den.workspace.search_files — search Den-managed workspace files by path or content; read-only
 - skill.minimal-code-change — make the smallest safe workspace edit and run one focused check
-- executor.code_mode — compose multiple capability calls with loops, parsing, aggregation, or retries
+- executor.code_mode.den — compose multiple allowed capability calls with loops, parsing, aggregation, or retries; Den-managed sandbox
 ```
 
 This section should be:
@@ -142,6 +156,7 @@ This section should be:
 - scoped to the current run, turn, session, or job;
 - replaced by recency and usefulness rather than grown indefinitely;
 - clear about risk and scope for mutating capabilities;
+- clear about locality, surface, authority, and lifetime for session-local capabilities;
 - removed or compacted when it stops helping the current work.
 
 It must not become a hidden capability profile that grants authority by implication. Authorization remains stance-, policy-, surface-, and approval-governed.
@@ -168,6 +183,10 @@ Discovery should prefer direct invocation when:
 
 Code Mode is not a separate global mode for the Bear. It is an executor capability. A Bear can discover direct tools, skills, policies, and Code Mode in the same capability result.
 
+Code Mode executor capabilities must declare their own execution locality and the capability providers they can invoke. A Den-managed Code Mode executor that can call Den-owned tools is not automatically able to read an armature-local filesystem, run a user-local command, or use a browser session exposed by an adapter. If a Code Mode executor can invoke session-local or armature-provided capabilities, the discovery result must make the data movement, authority, and lifetime constraints explicit.
+
+`ponytail:` The first Code Mode implementation may only support Den-managed executor locality and Den-owned or explicitly mediated capability calls. The ceiling is that Code Mode will not accelerate some live local-adapter workflows. The upgrade path is an explicitly governed armature-local executor or mediated batching API, not pretending all "local" tools share one surface.
+
 ## Registry guidance
 
 Capability registry entries and bundles should support both search and taxonomy browsing.
@@ -178,6 +197,10 @@ Useful metadata includes:
 - kind: tool, skill, policy, memory, surface, executor, connector, example, or bundle;
 - taxonomy tags;
 - summary;
+- provider or origin;
+- execution locality;
+- authority source;
+- availability and lifetime;
 - risk class;
 - side-effect posture;
 - stance applicability;
@@ -199,6 +222,7 @@ Useful metadata includes:
 - Keeps Code Mode visible and recommended where it is actually useful.
 - Lets taxonomy remain useful without making the model manually browse a giant tree.
 - Gives the runtime a natural place to surface policy, risk, and scope before invocation.
+- Makes session-local and armature-provided tools safer to expose by making locality, surface, authority, and lifetime explicit at discovery time.
 
 ### Tradeoffs
 
@@ -207,6 +231,8 @@ Useful metadata includes:
 - The model may need prompt reinforcement to discover instead of hallucinating unavailable tool names.
 - The registry must avoid becoming another bloated prompt surface through overlong summaries.
 - Code Mode needs a constrained SDK/runtime policy so it does not bypass normal capability governance.
+- Capability entries need more metadata than name/schema/description, especially for session-local or adapter-provided tools.
+- Model-facing reminders must distinguish similarly named capabilities that operate on different surfaces.
 
 ## Alternatives considered
 
@@ -239,5 +265,5 @@ Near-term work should be deliberately small:
 3. Add a compact "recently discovered" runtime context section.
 4. Add Code Mode as an executor capability and advertise it in relevant discovery results.
 5. Keep concrete direct tools available only when they are already part of the current runtime surface or have been discovered/loaded.
-6. Update capability and tool descriptors to include short good-for/not-good-for, risk, scope, and execution-option hints.
+6. Update capability and tool descriptors to include short good-for/not-good-for, provider/origin, locality, authority, lifetime, risk, scope, and execution-option hints.
 7. Prefer deleting duplicated prompt tool lists as discovery becomes reliable.

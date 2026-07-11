@@ -33,6 +33,8 @@ The first implementation should be deliberately boring: taxonomy-enabled search 
 - Taxonomy is catalog metadata, not the only navigation path.
 - Discovery result text must be short enough that discovery does not become the new prompt bloat.
 - "Recently discovered" is a recency cache, not an authority grant. Authorization remains stance-, surface-, policy-, and approval-governed.
+- Discovery and recently-discovered text must distinguish durable Den-managed capabilities from session-local capability instances exposed by armatures, adapters, browser sessions, or work runners.
+- Labels such as "local" are insufficient without locality, surface, authority, and lifetime metadata.
 - Direct invocation remains preferred for simple one-off actions. Code Mode should be recommended for loops, batching, filtering, aggregation, joins, retries, or large intermediate state.
 
 ## Phases
@@ -53,15 +55,21 @@ The first implementation should be deliberately boring: taxonomy-enabled search 
    - kind,
    - summary,
    - taxonomy tags,
+   - provider/origin,
+   - execution locality,
+   - authority source,
+   - availability/lifetime,
    - risk/side-effect posture,
    - stance applicability,
    - scope/surface requirements,
    - good-for / not-good-for hints,
    - related skills, policies, tools, and executors,
+   - Code Mode compatibility for local/session-bound providers,
    - deprecation/replacement hints.
 4. Mark the first-pass catalog as curated metadata, not generated prose.
+5. Identify which existing tools are durable Den-managed capabilities versus session-local capability instances exposed by an armature, adapter, browser session, or work runner.
 
-**Exit criteria:** there is a checked-in inventory or schema sketch that maps current tools and skills to initial capability entries without changing runtime behavior.
+**Exit criteria:** there is a checked-in inventory or schema sketch that maps current tools and skills to initial capability entries, including locality/surface metadata for local and armature-provided tools, without changing runtime behavior.
 
 ### Phase 1 — Read-only capability search and describe
 
@@ -70,7 +78,7 @@ The first implementation should be deliberately boring: taxonomy-enabled search 
    - `capability_search(query, filters?)`,
    - `capability_describe(ref)`.
 3. Start with lexical and taxonomy/tag search over curated summaries.
-4. Return compact results with refs, summaries, risk posture, scope, and execution hints.
+4. Return compact results with refs, summaries, risk posture, provider/origin, execution locality, authority source, availability/lifetime, scope, and execution hints.
 5. Include tools and approved skills first; allow policies, memories, surfaces, and executors as result kinds once their metadata is ready.
 6. Add tests for search filtering, unknown refs, disabled/deprecated entries, and stance applicability.
 
@@ -86,8 +94,9 @@ The first implementation should be deliberately boring: taxonomy-enabled search 
 2. Project a compact `Recently discovered` section into runtime context after successful discovery calls.
 3. Bound the section by recency and size; do not let it grow indefinitely.
 4. Include risk/scope notes for mutating or externally visible capabilities.
-5. Add context-budget attribution so capability discovery text can be measured and trimmed.
-6. Begin deleting duplicated static tool-list guidance only after discovery quality is good enough for the affected stance.
+5. Include locality, surface, authority, and lifetime notes for session-local capabilities.
+6. Add context-budget attribution so capability discovery text can be measured and trimmed.
+7. Begin deleting duplicated static tool-list guidance only after discovery quality is good enough for the affected stance.
 
 **Exit criteria:** runtime prompts contain capability-discovery guidance plus a bounded recently-discovered working set, and context diagnostics can attribute their token cost.
 
@@ -120,14 +129,17 @@ The first implementation should be deliberately boring: taxonomy-enabled search 
 1. Add Code Mode as an executor capability in the catalog, not as a global Bear mode.
 2. Define the constrained SDK surface for invoking discovered capabilities from code.
 3. Ensure Code Mode receives only the capabilities and scopes it is allowed to use for the current stance/session/run.
-4. Have discovery recommend Code Mode when a likely workflow involves:
+4. Declare each Code Mode executor's execution locality and provider compatibility. A Den-managed executor must not imply access to armature-local files, user-local commands, or adapter/browser session state unless those providers are explicitly mediated and authorized.
+5. Have discovery recommend Code Mode when a likely workflow involves:
    - more than a few related calls,
    - loops or batching,
    - parsing/filtering/aggregation/joins/transforms,
    - retries or conditional execution,
    - large intermediate outputs.
-5. Have discovery prefer direct invocation for one-off reads/actions and individually reviewed risky operations.
-6. Add output-size controls so Code Mode returns compact computed results instead of dumping intermediate state into conversation context.
+6. Have discovery prefer direct invocation for one-off reads/actions and individually reviewed risky operations.
+7. Add output-size controls so Code Mode returns compact computed results instead of dumping intermediate state into conversation context.
+
+`ponytail:` The first Code Mode executor can be Den-managed only and limited to Den-owned or explicitly mediated capabilities. The ceiling is that Code Mode will not speed up some live armature-local workflows. The upgrade path is a governed armature-local executor or mediated batching API with explicit locality, authority, and data-movement rules.
 
 **Exit criteria:** Bears can see Code Mode as an execution option during capability discovery, and the runtime can execute constrained Code Mode workflows without bypassing normal governance.
 
@@ -159,8 +171,10 @@ The smallest shippable slice is:
 - Snapshot tests for prompt fragments and recently-discovered context projection.
 - Integration tests showing a model-visible search/describe path for at least workspace, memory, skills, and executor entries.
 - Policy tests proving discovery does not grant invocation authority.
+- Locality/surface tests proving similarly named Den-managed, armature-local, and work-run capabilities remain distinguishable in search, describe, and recently-discovered output.
 - Context-budget checks comparing full static tool projection against capability-discovery projection.
 - Code Mode tests, once implemented, proving constrained SDK access and compact result return.
+- Code Mode locality tests proving a Den-managed executor cannot silently access session-local armature, adapter, or browser state.
 
 ## Open questions
 
@@ -168,4 +182,6 @@ The smallest shippable slice is:
 - Where should catalog metadata live long term: descriptor registry, prompt fragment registry, Skills catalog, or a dedicated Capability Catalog table?
 - How much of the Capability Catalog should be user-visible in UI versus only model/runtime-visible?
 - What is the minimum safe SDK surface for Code Mode?
+- Should Den ever provide an armature-local Code Mode executor, or should local batching be mediated through explicit adapter APIs?
+- What concise locality/authority vocabulary is most legible to models and users?
 - Should "recently discovered" be scoped to a run, turn, session, job, or a configurable combination?
