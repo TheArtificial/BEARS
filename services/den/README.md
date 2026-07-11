@@ -63,37 +63,21 @@ Recommended dev setup (bare-metal provider, host docker):
 
 1. Build the sandbox images: `scripts/build-sandbox-image.sh all` (base
    `bears/sandbox:latest` plus `bears/sandbox-{rust,node,godot}:latest`
-   toolchain variants; see `packaging/sandbox-image/Dockerfile*`).
-2. Declare workspace roots **and the image catalog** in a JSON file, e.g.
-   `./data/sandbox-roots.json`:
-
-   ```json
-   {
-     "images": [
-       { "name": "base", "image": "bears/sandbox:latest", "default": true },
-       { "name": "rust", "image": "bears/sandbox-rust:latest",
-           "description": "rust stable + build deps" },
-       { "name": "node", "image": "bears/sandbox-node:latest",
-           "description": "node 22 (11ty sites)" },
-       { "name": "godot", "image": "bears/sandbox-godot:latest",
-           "description": "godot 4 headless + export templates" }
-     ],
-     "roots": [
-       { "name": "scratch", "path": "/srv/scratch" },
-       { "name": "site", "default_image": "node",
-         "upstream": { "url": "git@github.com:you/site.git",
-           "default_ref": "main",
-           "credential": { "ssh_key_path": "/etc/bears/keys/site" } } }
-     ]
-   }
-   ```
-
-   Git-backed roots are pristine server-managed bare clones, synced
-   fetch/fast-forward-only before each provisioning; sandboxes get an
-   ephemeral local clone at the requested ref. Dispatch selects images by
-   **catalog name** only — raw image references never travel from Den.
+   toolchain variants; see `packaging/sandbox-image/Dockerfile*`) — or use
+   the `/admin/sandbox` build buttons once everything is running.
+2. Roots and the image catalog are **Den-managed** (no config file): work
+   surfaces at `/work/surfaces` (git upstream + optional encrypted
+   credential, assigned to bears) and the catalog at `/admin/sandbox`
+   (migration seeds the four `bears/sandbox*` entries). Den pushes both to
+   the provider (`PUT /sandbox/v1/managed-config`) at worker startup, after
+   every UI mutation, and on a 5-minute reconcile; the provider persists
+   them under its workspaces dir. Git-backed surfaces are pristine
+   server-managed bare clones, synced fetch/fast-forward-only before each
+   provisioning; sandboxes get an ephemeral local clone at the requested
+   ref. Dispatch selects images by **catalog name** only — raw image
+   references never travel from Den.
 3. Run the provider:
-   `RUN_SANDBOX=true SANDBOX_ROOTS_CONFIG=./data/sandbox-roots.json SANDBOX_SERVICE_TOKEN=devtoken cargo run -- serve`
+   `RUN_SANDBOX=true SANDBOX_SERVICE_TOKEN=devtoken cargo run -- serve`
 4. Point the Den workers at it (in the Den process env):
    `SANDBOX_SERVER_URL=http://localhost:3002 SANDBOX_SERVER_TOKEN=devtoken`
    plus `SANDBOX_CALLBACK_API_URL` set to the Den API URL as reachable from

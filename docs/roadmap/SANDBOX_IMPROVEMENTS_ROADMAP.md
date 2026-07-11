@@ -10,6 +10,15 @@ they bite on the first real jobs (rust surfaces recompile cold every run,
 success is self-graded, and multi-task jobs race their work branch). Item 9
 is **implemented**; 7 and 8 are the recommended next two.
 
+Since implemented (2026-07-11), superseding the static roots file: **managed
+work surfaces** (den-level entities, user-permissioned, bear-assigned,
+encrypted credentials, `/work/surfaces` UI) and the **Den-managed image
+catalog + image-store ops UI** (`/admin/sandbox`: engine store, registry
+pulls, one-click shipped-variant builds, background operations). The
+provider is configured exclusively via `PUT /sandbox/v1/managed-config`;
+`SANDBOX_ROOTS_CONFIG` is deprecated and ignored. Items below that say
+"roots file" now mean the managed surface/catalog settings.
+
 ## 1. Docker within sandboxes
 
 **Why**: several real work surfaces (this repository included) need docker

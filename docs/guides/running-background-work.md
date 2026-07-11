@@ -11,13 +11,16 @@ branch on your repository's upstream.
 
 ## What you need
 
-- A **work surface**: a *root* configured on the sandbox server, usually a
-  git repository (ask your operator, or ask the bear to run
-  `get_work_catalog`). Roots are named — e.g. `site` — and jobs reference
-  them by name.
-- A bear you are a member of, and a running work stack (sandbox provider +
-  Den workers). If dispatch fails with "no sandbox provider configured",
-  see the [ops guide](sandbox-server-ops.md).
+- A **work surface**: a named git upstream managed at **`/work/surfaces`**.
+  Anyone can create one (repo URL, default branch, default toolchain image,
+  optional deploy key/token — stored encrypted, never shown again). The
+  creator owns it and **assigns bears** to it; only assigned bears can run
+  jobs on it. Ask the bear to run `get_work_catalog` to see which surfaces
+  it can use.
+- A bear you are a member of that is **assigned to the surface**, and a
+  running work stack (sandbox provider + Den workers). If dispatch fails
+  with "no sandbox provider configured", see the
+  [ops guide](sandbox-server-ops.md).
 
 ## Create the job
 
@@ -46,8 +49,9 @@ The bear uses `create_job`. The pieces that matter:
   branch is never pushed implicitly.
 
 **Web UI** — go to `/work` → **New work job**. The form covers the same
-fields: bear, goal, root, commit policy, optional branch, and task rows
-(title + semicolon-separated criteria).
+fields: bear, goal, work surface (a select of surfaces assigned to your
+bears), commit policy, optional branch, and task rows (title +
+semicolon-separated criteria).
 
 ## Dispatch it
 
@@ -55,12 +59,13 @@ Nothing runs until a task is dispatched:
 
 - In conversation: "dispatch the footer task" (`dispatch_work`). Optionally
   pick a toolchain **image** from the catalog (`get_work_catalog` lists
-  them — e.g. `rust`, `node`, `godot`) when the root's default isn't right.
+  them — e.g. `rust`, `node`, `godot`) when the surface's default isn't
+  right.
 - In the UI: the job page has a **Dispatch** button per work task, with root
   and image selects.
 
 Dispatch queues a **work run**. A background worker claims it, provisions a
-fresh clone of the root (at the job's work branch when it already exists, so
+fresh clone of the surface (at the job's work branch when it already exists, so
 sequential tasks build on each other), starts the sandbox, and the bear works
 until the task is done, blocked, or the run times out.
 

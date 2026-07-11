@@ -118,7 +118,9 @@ queued → claimed → provisioning → running → reporting → succeeded
   v1 treats them identically — every successful run pushes to the same job
   branch. `propose_only` / `none` stay diff-only.
 - The push happens **host-side on the sandbox server** with the root's
-  credentials (`RootsManager::publish_workspace`): optional auto-commit of
+  credentials (managed-surface credentials arrive via the Den config sync —
+  encrypted at rest in Den, written to per-surface 0600 files on the
+  provider) (`RootsManager::publish_workspace`): optional auto-commit of
   leftover changes ("work run `<id>`: uncommitted changes", Den identity),
   commit count against the provisioned base, push `HEAD:refs/heads/<branch>`
   to the upstream URL, then a pristine re-sync so the branch is immediately
@@ -137,8 +139,10 @@ queued → claimed → provisioning → running → reporting → succeeded
   network mode.
 - Images resolve **by catalog name only** (`RootsManager::resolve_image`:
   request → root default → catalog default → `SANDBOX_IMAGE`); unknown names
-  are rejected listing the catalog. Raw image references never travel from
-  Den — the roots file on the sandbox host is the trust boundary.
+  are rejected listing the catalog. Raw image references never travel on
+  the dispatch path — the provider's applied managed config (admin-managed
+  `sandbox_catalog_images`, pushed via `PUT /sandbox/v1/managed-config` and
+  persisted on the provider) is the trust boundary.
 - `NetworkMode::Restricted` (default): per-sandbox `docker network create
   --internal` plus a socat relay container that is the only bridge to the
   Den callback endpoint; the backend rewrites `DEN_API_URL` to the relay.

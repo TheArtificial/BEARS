@@ -149,9 +149,11 @@ worker env (http — satisfies restricted mode). The sandbox services are now
 part of the **default stack** (no profile): `RUN_WORKERS` defaults to true,
 `SANDBOX_SERVER_URL` defaults to `http://bears-sandbox-provider:3002`, and
 `SANDBOX_SERVER_TOKEN`/`SANDBOX_SERVICE_TOKEN` share a matched default
-(override in production). The provider mounts the committed
-`data/sandbox-roots.json` (image catalog, no roots) unless
-`SANDBOX_ROOTS_FILE` points elsewhere. `services/den/README.md` and
+(override in production). Configuration is now fully **Den-managed** (the
+roots file and its mount are retired): surfaces and the image catalog live
+in Postgres, are pushed to the provider, and persist on the workspaces
+volume; the provider also mounts the shipped image build context read-only
+for `/admin/sandbox` one-click builds. `services/den/README.md` and
 `docs/guides/sandbox-server-ops.md` describe the setup; the "needs a docker
 CLI" ponytail is gone.
 
@@ -160,8 +162,8 @@ CLI" ponytail is gone.
 - `docker compose up -d` on a clean host: health green,
   `/sandbox/v1/catalog` lists the images, `docker -H tcp://…engine ps`
   empty until a dispatch.
-- `scripts/work-e2e.sh` variant pointed at the compose provider (root added
-  to the mounted roots file) — the full job → sandbox → publish walk.
+- `scripts/work-e2e.sh` variant pointed at the compose provider (surface
+  created at `/work/surfaces`) — the full job → sandbox → publish walk.
 - Egress check inside a nested sandbox: external `curl` fails, Den callback
   succeeds. Redeploy check: `compose down && up` re-adopts running
   sandboxes (engine volume persists) and leaks nothing project-external.

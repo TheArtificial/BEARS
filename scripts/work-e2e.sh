@@ -13,8 +13,11 @@
 # What it does:
 #   1. Creates a bare git repo in $E2E_DIR/upstream.git seeded with NOTES.md —
 #      this is the "remote upstream" work surface.
-#   2. Writes a roots file exposing it as root `e2e` with the base image.
-#   3. Starts the sandbox provider (RUN_SANDBOX) against that roots file.
+#   2. Registers it as a managed work surface in Den's database (assigned to
+#      BEAR_ID) — the durable path the /work/surfaces UI uses.
+#   3. Starts the sandbox provider (RUN_SANDBOX) and pushes the managed
+#      config to it directly (Den's dispatch worker converges to the same
+#      content on its own sync ticks).
 #   4. Seeds a Docket job (commit_policy per_task) with one work task:
 #      append a line to NOTES.md.
 #   5. Enqueues a work run and waits for the dispatch worker to finish it.
@@ -42,20 +45,29 @@ git init -b main "$E2E_DIR/seed"
     git push -q "$E2E_DIR/upstream.git" main
 )
 
-# 2. Roots file: the upstream as root `e2e`, base image catalog.
-cat > "$E2E_DIR/roots.json" <<ROOTS
-{
-  "images": [ {"name": "base", "image": "${SANDBOX_IMAGE:-bears/sandbox:latest}", "default": true} ],
-  "roots": [ {"name": "e2e", "upstream": {"url": "$E2E_DIR/upstream.git", "default_ref": "main"}} ]
-}
-ROOTS
+# 2. Managed work surface in Den's database, assigned to the bear. Use a
+#    unique name so reruns don't collide (surface names are immutable).
+SURFACE_NAME="e2e-$(date +%s)"
+psql "$DATABASE_URL" -qtA <<SQL >/dev/null
+WITH surface AS (
+    INSERT INTO work_surfaces (name, upstream_url, default_ref, created_by_user_id)
+    VALUES ('$SURFACE_NAME', '$E2E_DIR/upstream.git', 'main', $USER_ID)
+    RETURNING id
+), owner AS (
+    INSERT INTO work_surface_managers (surface_id, user_id, role)
+    SELECT id, $USER_ID, 'owner' FROM surface
+)
+INSERT INTO work_surface_bears (surface_id, bear_id, granted_by_user_id)
+SELECT id, '$BEAR_ID', $USER_ID FROM surface;
+SQL
+echo "== registered managed surface $SURFACE_NAME"
 
-# 3. Sandbox provider (backgrounded; killed on exit).
+# 3. Sandbox provider (backgrounded; killed on exit). No config file: the
+#    provider starts empty and receives the managed config over the API.
 (
     cd "$REPO_ROOT/services/den"
     RUN_SANDBOX=true RUN_WEB=false RUN_API=false RUN_WORKERS=false \
     SANDBOX_PORT="$SANDBOX_PORT" \
-    SANDBOX_ROOTS_CONFIG="$E2E_DIR/roots.json" \
     SANDBOX_WORKSPACES_DIR="$E2E_DIR/workspaces" \
     SANDBOX_SERVICE_TOKEN="${SANDBOX_SERVICE_TOKEN:-e2e-token}" \
     cargo run --quiet -- serve
@@ -68,6 +80,17 @@ for _ in $(seq 1 60); do
 done
 curl -fsS "http://127.0.0.1:$SANDBOX_PORT/sandbox/v1/health" >/dev/null
 echo "== provider is up on :$SANDBOX_PORT"
+
+# Seed the provider immediately (a versionless push; the Den worker's own
+# reconcile replaces it with equivalent DB-derived content within 5 min).
+curl -fsS -X PUT "http://127.0.0.1:$SANDBOX_PORT/sandbox/v1/managed-config" \
+    -H "Authorization: Bearer ${SANDBOX_SERVICE_TOKEN:-e2e-token}" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"surfaces\": [{\"name\": \"$SURFACE_NAME\", \"upstream_url\": \"$E2E_DIR/upstream.git\", \"default_ref\": \"main\"}],
+      \"images\": [{\"name\": \"base\", \"image\": \"${SANDBOX_IMAGE:-bears/sandbox:latest}\", \"default\": true}]
+    }" >/dev/null
+echo "== managed config pushed"
 echo "== ensure the Den worker process has:"
 echo "   SANDBOX_SERVER_URL=http://<this-host>:$SANDBOX_PORT SANDBOX_SERVER_TOKEN=${SANDBOX_SERVICE_TOKEN:-e2e-token}"
 
@@ -75,9 +98,10 @@ echo "   SANDBOX_SERVER_URL=http://<this-host>:$SANDBOX_PORT SANDBOX_SERVER_TOKE
 JOB_ID=$(psql "$DATABASE_URL" -qtA <<SQL
 WITH job AS (
     INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal,
-                           work_surface_ref, commit_policy, status, visibility)
-    VALUES ('$BEAR_ID', $USER_ID, 'ui', 'work-e2e: append a line to NOTES.md',
-            'e2e', 'per_task', 'ready', 'same_user')
+                           work_surface_ref, work_surface_id, commit_policy, status, visibility)
+    SELECT '$BEAR_ID', $USER_ID, 'ui', 'work-e2e: append a line to NOTES.md',
+           '$SURFACE_NAME', s.id, 'per_task', 'ready', 'same_user'
+    FROM work_surfaces s WHERE s.name = '$SURFACE_NAME'
     RETURNING id
 ), run AS (
     INSERT INTO bear_job_runs (job_id, trigger, state)
@@ -95,7 +119,7 @@ WITH job AS (
     FROM job RETURNING id, job_id
 )
 INSERT INTO bear_work_runs (bear_id, job_id, task_id, job_run_id, root_name)
-SELECT '$BEAR_ID', task.job_id, task.id, run.id, 'e2e' FROM task, run
+SELECT '$BEAR_ID', task.job_id, task.id, run.id, '$SURFACE_NAME' FROM task, run
 RETURNING job_id;
 SQL
 )
