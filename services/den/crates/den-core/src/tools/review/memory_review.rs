@@ -129,6 +129,16 @@ fn normalize_memory_sensitivity(value: Option<&str>) -> Result<String, DenError>
     }
 }
 
+fn validate_optional_review_text(
+    field: &str,
+    value: Option<&str>,
+    max_len: usize,
+) -> Result<Option<String>, DenError> {
+    value
+        .map(|value| validate_bounded_text(field, value, 0, max_len))
+        .transpose()
+}
+
 /// The `conversation_events` projection scope id for this invocation.
 fn projection_scope_id(
     context: &DenToolInvocationContext,
@@ -344,6 +354,16 @@ pub async fn request_memory_review(
     let title = validate_bounded_text("title", &args.title, 1, 200)?;
     let summary = validate_bounded_text("summary", &args.summary, 1, 4_000)?;
     let rationale = validate_bounded_text("rationale", &args.rationale, 0, 4_000)?;
+    let proposed_content = validate_optional_review_text(
+        "proposed_content",
+        args.proposed_content.as_deref(),
+        20_000,
+    )?;
+    let proposed_patch = validate_optional_review_text(
+        "proposed_patch",
+        args.proposed_patch.as_deref(),
+        20_000,
+    )?;
     validate_optional_object("refs", &args.refs)?;
     let suggested_action = normalize_suggested_action(args.suggested_action.as_deref())?;
     let sensitivity = normalize_memory_sensitivity(args.sensitivity.as_deref())?;
@@ -370,8 +390,8 @@ pub async fn request_memory_review(
             title,
             summary,
             rationale,
-            proposed_content: args.proposed_content,
-            proposed_patch: args.proposed_patch,
+            proposed_content,
+            proposed_patch,
             refs: args.refs.unwrap_or_else(|| json!({})),
             sensitivity,
             requires_human: args.requires_human,
@@ -401,5 +421,14 @@ mod tests {
     fn memory_review_rejects_unknown_action_and_sensitivity() {
         assert!(normalize_suggested_action(Some("archive-index")).is_err());
         assert!(normalize_memory_sensitivity(Some("private")).is_err());
+    }
+
+    #[test]
+    fn memory_review_bounds_optional_large_text() {
+        assert_eq!(
+            validate_optional_review_text("proposed_content", Some("ok"), 2).unwrap(),
+            Some("ok".to_string())
+        );
+        assert!(validate_optional_review_text("proposed_content", Some("too long"), 3).is_err());
     }
 }
