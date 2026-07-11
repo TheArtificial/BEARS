@@ -103,10 +103,11 @@ pub async fn create_api_app(
         Arc::new(BifrostClient::new(config.as_ref())),
         MemoryStoreManager::new(config.as_ref()),
     );
-    den_service::bifrost::spawn_catalog_refresh(
+    den_service::bifrost::spawn_managed_catalog_refresh(
         api_state.bifrost.clone(),
         api_state.bifrost_catalog.clone(),
         config.bifrost_catalog_refresh_secs,
+        config.clone(),
     );
 
     // Create OAuth state (separate from main API state for OAuth endpoints)

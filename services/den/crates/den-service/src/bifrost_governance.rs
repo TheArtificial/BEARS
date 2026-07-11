@@ -756,4 +756,53 @@ impl BifrostGovernanceClient {
             reset_usage_tracking,
         })
     }
+
+    pub async fn ensure_catalog_virtual_key(
+        &self,
+    ) -> Result<BifrostVirtualKeyProvisioned, DenError> {
+        let auth = self.login().await?;
+        let name = "den:catalog";
+        if let Some(existing) = self.find_virtual_key_by_name(&auth, name).await? {
+            return Ok(BifrostVirtualKeyProvisioned {
+                id: existing.id,
+                name: existing.name,
+                value: existing.value,
+                reset_usage_tracking: false,
+            });
+        }
+
+        let description = "Bifrost virtual key for Den model catalog refresh";
+        match self
+            .create_virtual_key_with_name(&auth, name, description)
+            .await
+        {
+            Ok(payload) => Ok(BifrostVirtualKeyProvisioned {
+                id: payload.virtual_key.id,
+                name: payload.virtual_key.name,
+                value: payload.virtual_key.value,
+                reset_usage_tracking: false,
+            }),
+            Err((status, text))
+                if status == reqwest::StatusCode::CONFLICT && text.contains("already exists") =>
+            {
+                let existing = self
+                    .find_virtual_key_by_name(&auth, name)
+                    .await?
+                    .ok_or_else(|| {
+                        DenError::System(format!(
+                            "Bifrost reported virtual key name conflict for {name}, but list/search did not return an exact matching key; original HTTP {status}: {text}"
+                        ))
+                    })?;
+                Ok(BifrostVirtualKeyProvisioned {
+                    id: existing.id,
+                    name: existing.name,
+                    value: existing.value,
+                    reset_usage_tracking: false,
+                })
+            }
+            Err((status, text)) => Err(DenError::System(format!(
+                "Bifrost catalog virtual key create HTTP {status}: {text}"
+            ))),
+        }
+    }
 }

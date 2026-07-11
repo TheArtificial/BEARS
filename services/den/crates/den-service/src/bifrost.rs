@@ -154,6 +154,79 @@ pub fn new_bear_catalog_store() -> BearBifrostCatalogStore {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
+pub fn spawn_catalog_refresh_with_virtual_key(
+    client: Arc<BifrostClient>,
+    store: BifrostCatalogStore,
+    refresh_secs: u64,
+    virtual_key: String,
+) {
+    tokio::spawn(async move {
+        loop {
+            refresh_catalog_with_virtual_key(&client, &store, &virtual_key).await;
+            if refresh_secs == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(refresh_secs)).await;
+        }
+    });
+}
+
+pub fn spawn_managed_catalog_refresh(
+    client: Arc<BifrostClient>,
+    store: BifrostCatalogStore,
+    refresh_secs: u64,
+    config: Arc<Config>,
+) {
+    tokio::spawn(async move {
+        loop {
+            match crate::bifrost_governance::BifrostGovernanceClient::new(&config)
+                .ensure_catalog_virtual_key()
+                .await
+            {
+                Ok(virtual_key) => {
+                    refresh_catalog_with_virtual_key(&client, &store, &virtual_key.value).await;
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "Bifrost catalog virtual key ensure failed");
+                    mark_catalog_stale(&store);
+                }
+            }
+
+            if refresh_secs == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(refresh_secs)).await;
+        }
+    });
+}
+
+async fn refresh_catalog_with_virtual_key(
+    client: &BifrostClient,
+    store: &BifrostCatalogStore,
+    virtual_key: &str,
+) {
+    match client
+        .list_available_models_with_virtual_key(Some(virtual_key))
+        .await
+    {
+        Ok(models) => {
+            if let Ok(mut guard) = store.write() {
+                *guard = BifrostCatalogSnapshot::from_available_models(models);
+            }
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "Bifrost catalog refresh failed");
+            mark_catalog_stale(store);
+        }
+    }
+}
+
+fn mark_catalog_stale(store: &BifrostCatalogStore) {
+    if let Ok(mut guard) = store.write() {
+        guard.stale = true;
+    }
+}
+
 /// Spawn a background task that warms `store` immediately and then refreshes it
 /// every `refresh_secs`. Failed refreshes keep the last good snapshot and flag
 /// it `stale`. A `refresh_secs` of `0` warms once with no periodic refresh.
