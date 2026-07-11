@@ -3,8 +3,10 @@
 Status: findings from a 2026-07-11 code review into recurring `client_obligation_timeout`
 failures where Den persists a `tool_call.requested` event and armature-local
 `tool_result` obligation, but the active armature prompt loop never processes the event.
-No fixes are implemented by this document; it records root causes, the architectural
-weaknesses behind them, and the recommended direction.
+This document records root causes, architectural weaknesses, and the recommended direction.
+Immediate mitigations landed after the review include same-session BearWire append
+serialization, armature run-id filtering for run-scoped events, stale-run cancellation on
+supersession, SSE parser hardening, and read-only obligation recovery from `run.state`.
 
 Related: [BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md](BEARWIRE_V1_PROTOCOL_REFINEMENT_ROADMAP.md),
 [BEARWIRE_TURN_COORDINATOR_REFACTOR_PLAN.md](BEARWIRE_TURN_COORDINATOR_REFACTOR_PLAN.md),
@@ -100,12 +102,14 @@ the second category: `turn_obligations` is durable, idempotent, keyed by run, an
 queryable. The recovery guardrail that polls `run.state` is the architecturally correct
 delivery mechanism demoted to a fallback and artificially restricted to read-only tools.
 
-**Recommended direction (highest leverage):** invert the roles. The armature's primary
-loop for *work* polls open obligations (self-healing, cursorless, at-least-once by
-construction; the tool-result coordinator's duplicate handling already provides the
-idempotency this needs). The event stream remains for display, where a missed event costs
-nothing. This makes the hardest problem here — exactly-once event delivery over Postgres
-polling — one we no longer have to solve.
+**Recommended direction (highest leverage):** make obligations authoritative for
+actionable work while keeping events as ordered projection/replay. The armature's primary
+loop for *work* should be able to discover and satisfy open obligations directly
+(self-healing, cursorless, at-least-once by construction; the tool-result coordinator's
+duplicate handling already provides the idempotency this needs). The event stream remains
+valuable for live UI, replay, and ordering, but a missed event must degrade projection
+rather than runtime correctness. This demotes exactly-once event delivery over Postgres
+polling from a correctness requirement to a projection-quality concern.
 
 ### B. The event log is a hand-rolled queue with the classic Postgres pitfall
 
@@ -159,7 +163,148 @@ optional.
   designed-for duplicate delivery (dedup on `tool_call_id` in the normal spawn path) are
   prerequisites for any at-least-once story.
 
-## Suggested instrumentation (until fixed)
+## Implementation plan
+
+### Phase 0 — Containment already landed
+
+Status: implemented immediately after this review.
+
+- Serialize same-session BearWire appends with a transaction-scoped advisory lock so
+  sequence cursor order matches commit visibility.
+- Wrap autocommit event appenders in explicit transactions that also take that lock.
+- Filter run-scoped armature events by the active prompt `run_id`.
+- Cancel registered session turn/tool-turn state when a new run supersedes an active run.
+- Harden armature SSE parsing for multi-line `data:` frames and no-data frames.
+- Keep read-only `run.state` obligation recovery as a temporary safety net.
+
+Exit criteria:
+
+- The known cursor-skip race is covered by regression tests.
+- Foreign terminal run events no longer terminate the active armature prompt loop.
+
+### Phase 1 — Server-owned cursor pages
+
+Replace client-inferred cursor advancement with server-attested paging.
+
+Target response shape, even if still delivered through the existing endpoint initially:
+
+```json
+{
+  "events": [],
+  "next_after": 234820,
+  "has_more": false
+}
+```
+
+Rules:
+
+- Den, not the client, decides the safe cursor to persist/advance.
+- Empty incremental polls return `next_after = previous_after`.
+- Frames/pages with no event data cannot advance the cursor.
+- The current SSE-shaped buffered response may be kept as a compatibility projection, but
+  a plain JSON page should become the canonical polling contract if the endpoint remains
+  request/response rather than real streaming.
+
+Exit criteria:
+
+- Armature no longer computes `after = max(sequence seen)` from raw frames.
+- Tests cover empty pages, missing event ids, and immediate post-`run.start` tool events.
+
+### Phase 2 — Obligations as authoritative actionable work
+
+Promote `run.state` / open-obligation polling from recovery guardrail to a first-class
+armature work loop.
+
+Rules:
+
+- `tool_call.requested` / `client.waiting` events remain the fast projection path.
+- Open obligations are the authoritative source for work the armature must perform.
+- The armature may execute an obligation at least once; Den's coordinator owns duplicate
+  and conflict handling.
+- Recovery should expand beyond read-only only after each obligation kind has explicit
+  idempotency, approval, and safety semantics.
+
+Exit criteria:
+
+- Missing an event cannot cause an armature-local read-only tool obligation to time out.
+- Mutating, approval-required, and human-input obligations fail closed unless their
+  idempotency/safety policy is explicit.
+- Normal and recovered tool execution share the same dedup path by `tool_call_id` /
+  `obligation_id`.
+
+### Phase 3 — Run lifecycle ownership
+
+Introduce a single run lifecycle owner that coordinates DB state, task cancellation,
+obligation settlement, and terminal event emission.
+
+Supersession should be one conceptual operation:
+
+1. cancel active runtime task / registered turn work;
+2. settle or fail outstanding obligations;
+3. transition the `turn_runs` row;
+4. emit a terminal `run.cancelled` or `run.failed`/`run.superseded` event;
+5. prevent future stale appends for that run.
+
+Exit criteria:
+
+- Superseded background tasks cannot append future model/tool events for the old run.
+- Every terminal state transition has a corresponding terminal projection event.
+- Armature and Den agree on why a loop exited.
+
+### Phase 4 — Move expiry out of `GET /events`
+
+Move client-obligation expiration from the events polling handler into a Den-owned sweeper
+or coordinator-owned timeout task.
+
+Rules:
+
+- Read endpoints do not mutate run/obligation state.
+- Expiry cadence is owned by Den runtime policy, not by whichever client happens to poll.
+- Expiry events remain run-scoped and do not affect unrelated active runs.
+
+Exit criteria:
+
+- `GET /events` is side-effect-free except for auth/observability.
+- Tests prove an old orphaned obligation cannot inject a terminal event into a current
+  run's consumer.
+
+### Phase 5 — Fault-isolated armature event processing
+
+Make event handling at-least-once friendly.
+
+Rules:
+
+- Transient `fetch_events` failures are retried with bounded backoff while the run is
+  non-terminal.
+- Malformed or unknown non-actionable events are logged and skipped without killing the
+  prompt loop.
+- Malformed actionable events are converted into structured error results where possible,
+  so obligations close rather than timing out.
+- Normal `tool_call.requested` spawning dedups by `tool_call_id` / `obligation_id`, matching
+  the recovery path.
+
+Exit criteria:
+
+- One malformed event cannot orphan unrelated open obligations.
+- Duplicate delivery of a tool request cannot spawn duplicate local tool execution.
+
+### Phase 6 — Choose real streaming or explicit JSON polling
+
+Retire the current buffered-SSE ambiguity.
+
+Options:
+
+- real long-lived SSE/WebSocket stream for live projection, plus obligation polling for
+  actionable work; or
+- explicit JSON event pages with `next_after`, plus optional separate push channel later.
+
+Exit criteria:
+
+- Protocol docs describe one canonical delivery contract.
+- Armature implementation no longer hand-parses buffered SSE pages as if they were a true
+  stream.
+
+## Suggested instrumentation (until all phases are complete)
 
 - Den: after committing a tool wait, log `sequence_no`, transaction begin→commit
   duration, and commit timestamp. In the events endpoint, log per poll:
