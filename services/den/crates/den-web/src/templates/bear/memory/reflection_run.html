@@ -7,7 +7,10 @@
 {% include "bear/memory/_memory_nav.html" %}
 
 <div class="box">
-    <p><a href="/bear/{{ bear.slug | e }}/memory">Back to memory dashboard</a></p>
+    <p>
+        <a href="/bear/{{ bear.slug | e }}/memory">Back to memory dashboard</a> ·
+        <a href="/bear/{{ bear.slug | e }}/memory/reflection/{{ detail.run.id }}/evidence">Evidence</a>
+    </p>
     <h2>Reflection run {{ detail.run.short_id | e }}</h2>
     <p class="form-hint">
         This page explains one sleep-time reflection job: what lane ran, what it consumed,

@@ -1,0 +1,132 @@
+{% extends "bear/_manage.html" %}
+{% set memory_subnav = "dashboard" %}
+
+{% block title %}Reflection evidence · {{ bear.slug }}{% endblock %}
+
+{% block manage %}
+{% include "bear/memory/_memory_nav.html" %}
+
+<div class="box">
+    <p>
+        <a href="/bear/{{ bear.slug | e }}/memory/reflection/{{ evidence.detail.run.id }}">Back to reflection run</a> ·
+        <a href="/bear/{{ bear.slug | e }}/memory">Memory dashboard</a>
+    </p>
+    <h2>Reflection evidence {{ evidence.detail.run.short_id | e }}</h2>
+    <p class="form-hint">
+        This page shows existing persisted evidence only: reflection summaries, linked proposals,
+        conversation compaction artifacts, and links to conversation history when present.
+        It does not generate a fresh LLM summary.
+    </p>
+    <dl class="fields-grid">
+        <dt>Lane</dt>
+        <dd><code>{{ evidence.detail.run.lane | e }}</code></dd>
+        <dt>Status</dt>
+        <dd><code>{{ evidence.detail.run.status_label | e }}</code></dd>
+        <dt>Trigger</dt>
+        <dd><code>{{ evidence.detail.run.trigger | e }}</code></dd>
+        <dt>Artifact refs found</dt>
+        <dd>{{ evidence.artifact_ref_count }}</dd>
+        <dt>Conversation refs found</dt>
+        <dd>{{ evidence.conversation_ref_count }}</dd>
+        <dt>Artifacts loaded</dt>
+        <dd>{{ evidence.artifacts | length }}</dd>
+    </dl>
+</div>
+
+<div class="box">
+    <h3>Conversations</h3>
+    {% if evidence.conversations %}
+    <table>
+        <thead>
+            <tr>
+                <th>Conversation</th>
+                <th>External id</th>
+                <th>Title</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for conversation in evidence.conversations %}
+            <tr>
+                <td><a href="{{ conversation.href | e }}"><code>{{ conversation.id | e }}</code></a></td>
+                <td>{% if conversation.external_conversation_id %}<code>{{ conversation.external_conversation_id | e }}</code>{% else %}<span class="form-hint">—</span>{% endif %}</td>
+                <td>{% if conversation.current_title %}{{ conversation.current_title | e }}{% else %}<span class="form-hint">untitled</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="form-hint">No persisted conversation row matched the run or proposal references.</p>
+    {% endif %}
+</div>
+
+<div class="box">
+    <h3>Linked proposals</h3>
+    {% if evidence.detail.linked_proposals %}
+    <table>
+        <thead>
+            <tr>
+                <th>Proposal</th>
+                <th>Action</th>
+                <th>Risk</th>
+                <th>Status</th>
+                <th>Store</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for proposal in evidence.detail.linked_proposals %}
+            <tr>
+                <td><a href="/bear/{{ bear.slug | e }}/memory/proposals/{{ proposal.id }}">{{ proposal.title | e }}</a></td>
+                <td><code>{{ proposal.suggested_action | e }}</code></td>
+                <td>{% if proposal.requires_human %}<strong>human</strong> · {% endif %}<code>{{ proposal.sensitivity | e }}</code></td>
+                <td><code>{{ proposal.status | e }}</code></td>
+                <td><code>{{ proposal.store | e }}</code></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="form-hint">No linked proposals were found for this run.</p>
+    {% endif %}
+</div>
+
+<div class="box">
+    <h3>Compaction artifacts</h3>
+    {% if evidence.artifacts %}
+    {% for artifact in evidence.artifacts %}
+    <details{% if loop.first %} open{% endif %}>
+        <summary><code>{{ artifact.id | e }}</code> · {{ artifact.artifact_kind | e }} · {{ artifact.evidence_source | e }} · {{ artifact.created_at | e }}</summary>
+        <dl class="fields-grid">
+            <dt>Conversation</dt>
+            <dd><a href="{{ artifact.conversation_href | e }}"><code>{{ artifact.conversation_id | e }}</code></a>{% if artifact.external_conversation_id %} · <code>{{ artifact.external_conversation_id | e }}</code>{% endif %}</dd>
+            <dt>Policy</dt>
+            <dd><code>{{ artifact.policy_version | e }}</code></dd>
+            <dt>Trigger</dt>
+            <dd><code>{{ artifact.trigger | e }}</code></dd>
+            <dt>Source messages</dt>
+            <dd>{{ artifact.source_message_start_seq }}–{{ artifact.source_message_end_seq }}</dd>
+            <dt>Source groups</dt>
+            <dd>{% if artifact.source_group_start is not none and artifact.source_group_end is not none %}{{ artifact.source_group_start }}–{{ artifact.source_group_end }}{% else %}<span class="form-hint">none</span>{% endif %}</dd>
+            <dt>Superseded by</dt>
+            <dd>{% if artifact.superseded_by %}<code>{{ artifact.superseded_by | e }}</code>{% else %}<span class="form-hint">current</span>{% endif %}</dd>
+        </dl>
+        <pre style="white-space: pre-wrap; max-height: 28rem; overflow: auto;">{{ artifact.artifact_json_pretty | e }}</pre>
+    </details>
+    {% endfor %}
+    {% else %}
+    <p class="form-hint">No persisted compaction artifacts matched the run or proposal references.</p>
+    {% endif %}
+</div>
+
+<div class="box">
+    <h3>Run summaries</h3>
+    <details>
+        <summary>Input summary</summary>
+        <pre style="white-space: pre-wrap; max-height: 20rem; overflow: auto;">{{ evidence.detail.input_summary_pretty | e }}</pre>
+    </details>
+    <details>
+        <summary>Output summary</summary>
+        <pre style="white-space: pre-wrap; max-height: 20rem; overflow: auto;">{{ evidence.detail.output_summary_pretty | e }}</pre>
+    </details>
+</div>
+
+{% endblock %}

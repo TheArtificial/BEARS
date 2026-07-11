@@ -17,11 +17,11 @@ Landed baseline:
 - Dashboard has lane/status filters plus SLO-style indicators for oldest queued run age, 24h failure rate, and p50/p95 runtime by lane.
 - Dashboard has minimal attention chips for `failed today`, `queued > 10m`, and `slow completed` filtered views.
 - Reflection run detail pages (`/bear/{slug}/memory/reflection/{run_id}`) show timing metadata, `input_summary`, `output_summary`, error text, linked proposal ids/proposals, and conversation identifiers when present.
+- Reflection evidence pages (`/bear/{slug}/memory/reflection/{run_id}/evidence`) show existing persisted run summaries, linked proposals, matching compaction artifacts, and direct conversation-history links without generating a fresh LLM summary.
 
 Next slices:
 
 1. Add operator affordances: retry failed run, enqueue `archive_harvest`, enqueue `memory_curate`, enqueue `recall_index`.
-2. Decide whether reflection run detail pages should link to a safe conversation summary view without exposing raw pair/chat transcripts.
 
 Non-goals:
 

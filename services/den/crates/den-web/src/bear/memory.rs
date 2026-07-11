@@ -17,7 +17,10 @@ use axum_extra::routing::RouterExt;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::{Path as FsPath, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path as FsPath, PathBuf},
+};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
@@ -62,6 +65,10 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr(
             "/bear/{slug}/memory/reflection/{run_id}",
             get(reflection_run_get),
+        )
+        .route_with_tsr(
+            "/bear/{slug}/memory/reflection/{run_id}/evidence",
+            get(reflection_evidence_get),
         )
         .route_with_tsr(
             "/bear/{slug}/memory/proposals/{proposal_id}",
@@ -274,6 +281,42 @@ struct ReflectionRunDetailView {
     proposal_ids: Vec<String>,
     linked_proposals: Vec<MemoryProposalView>,
     item_count: i64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ReflectionEvidenceConversationView {
+    id: String,
+    external_conversation_id: Option<String>,
+    current_title: Option<String>,
+    href: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ReflectionEvidenceArtifactView {
+    id: String,
+    conversation_id: String,
+    external_conversation_id: Option<String>,
+    conversation_href: String,
+    artifact_kind: String,
+    policy_version: String,
+    trigger: String,
+    source_message_start_seq: i64,
+    source_message_end_seq: i64,
+    source_group_start: Option<i32>,
+    source_group_end: Option<i32>,
+    superseded_by: Option<String>,
+    created_at: String,
+    evidence_source: String,
+    artifact_json_pretty: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ReflectionEvidenceView {
+    detail: ReflectionRunDetailView,
+    conversations: Vec<ReflectionEvidenceConversationView>,
+    artifacts: Vec<ReflectionEvidenceArtifactView>,
+    artifact_ref_count: usize,
+    conversation_ref_count: usize,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -883,6 +926,273 @@ async fn get_reflection_run_detail(
         proposal_ids,
         linked_proposals,
         item_count,
+    }))
+}
+
+fn collect_uuid(value: &Value, key: &str, out: &mut BTreeSet<Uuid>) {
+    match value {
+        Value::Object(map) => {
+            for (field, nested) in map {
+                if field == key {
+                    if let Some(id) = nested
+                        .as_str()
+                        .and_then(|value| Uuid::parse_str(value).ok())
+                    {
+                        out.insert(id);
+                    } else if let Some(values) = nested.as_array() {
+                        for value in values {
+                            if let Some(id) =
+                                value.as_str().and_then(|value| Uuid::parse_str(value).ok())
+                            {
+                                out.insert(id);
+                            }
+                        }
+                    }
+                }
+                collect_uuid(nested, key, out);
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                collect_uuid(nested, key, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_string_field(value: &Value, key: &str, out: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(map) => {
+            for (field, nested) in map {
+                if field == key {
+                    if let Some(text) = nested
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        out.insert(text.to_string());
+                    }
+                }
+                collect_string_field(nested, key, out);
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                collect_string_field(nested, key, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_evidence_refs(
+    detail: &ReflectionRunDetailView,
+) -> (BTreeSet<Uuid>, BTreeSet<Uuid>, BTreeSet<String>) {
+    let mut artifact_ids = BTreeSet::new();
+    let mut conversation_uuids = BTreeSet::new();
+    let mut external_conversation_ids = BTreeSet::new();
+
+    for value in [&detail.input_summary, &detail.run.output_summary] {
+        collect_uuid(value, "artifact_id", &mut artifact_ids);
+        collect_uuid(value, "artifact_ids", &mut artifact_ids);
+        collect_uuid(value, "conversation_uuid", &mut conversation_uuids);
+        collect_string_field(value, "conversation_id", &mut external_conversation_ids);
+    }
+    if let Some(conversation_id) = detail.run.conversation_id.as_deref() {
+        if let Ok(id) = Uuid::parse_str(conversation_id) {
+            conversation_uuids.insert(id);
+        } else if !conversation_id.trim().is_empty() {
+            external_conversation_ids.insert(conversation_id.to_string());
+        }
+    }
+    for proposal in &detail.linked_proposals {
+        for value in [&proposal.source_refs, &proposal.refs] {
+            collect_uuid(value, "artifact_id", &mut artifact_ids);
+            collect_uuid(value, "artifact_ids", &mut artifact_ids);
+            collect_uuid(value, "conversation_uuid", &mut conversation_uuids);
+            collect_string_field(value, "conversation_id", &mut external_conversation_ids);
+        }
+    }
+
+    (artifact_ids, conversation_uuids, external_conversation_ids)
+}
+
+async fn load_evidence_conversations(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    conversation_uuids: &BTreeSet<Uuid>,
+    external_conversation_ids: &BTreeSet<String>,
+    slug: &str,
+) -> Result<Vec<ReflectionEvidenceConversationView>, CustomError> {
+    let uuid_values: Vec<Uuid> = conversation_uuids.iter().copied().collect();
+    let external_values: Vec<String> = external_conversation_ids.iter().cloned().collect();
+    let rows = sqlx::query_as::<_, (Uuid, Option<String>, Option<String>)>(
+        r"
+        SELECT id, external_conversation_id, current_title
+        FROM conversations
+        WHERE bear_id = $1
+          AND (
+              id = ANY($2::uuid[])
+              OR external_conversation_id = ANY($3::text[])
+          )
+        ORDER BY updated_at DESC
+        LIMIT 50
+        ",
+    )
+    .bind(bear_id)
+    .bind(&uuid_values)
+    .bind(&external_values)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("load evidence conversations: {err}")))?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, external_conversation_id, current_title)| ReflectionEvidenceConversationView {
+                id: id.to_string(),
+                external_conversation_id,
+                current_title,
+                href: format!("/bear/{slug}/conversations/{id}"),
+            },
+        )
+        .collect())
+}
+
+async fn load_evidence_artifacts(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    artifact_ids: &BTreeSet<Uuid>,
+    conversations: &[ReflectionEvidenceConversationView],
+    slug: &str,
+) -> Result<Vec<ReflectionEvidenceArtifactView>, CustomError> {
+    let artifact_values: Vec<Uuid> = artifact_ids.iter().copied().collect();
+    let conversation_values: Vec<Uuid> = conversations
+        .iter()
+        .filter_map(|conversation| Uuid::parse_str(&conversation.id).ok())
+        .collect();
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            Option<String>,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            Option<i32>,
+            Option<i32>,
+            serde_json::Value,
+            Option<Uuid>,
+            OffsetDateTime,
+        ),
+    >(
+        r"
+        SELECT a.id,
+               a.conversation_id,
+               c.external_conversation_id,
+               a.artifact_kind,
+               a.policy_version,
+               a.trigger,
+               a.source_message_start_seq,
+               a.source_message_end_seq,
+               a.source_group_start,
+               a.source_group_end,
+               a.artifact_json,
+               a.superseded_by,
+               a.created_at
+        FROM conversation_compaction_artifacts a
+        JOIN conversations c ON c.id = a.conversation_id
+        WHERE c.bear_id = $1
+          AND (
+              a.id = ANY($2::uuid[])
+              OR a.conversation_id = ANY($3::uuid[])
+          )
+        ORDER BY a.created_at DESC
+        LIMIT 100
+        ",
+    )
+    .bind(bear_id)
+    .bind(&artifact_values)
+    .bind(&conversation_values)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("load evidence artifacts: {err}")))?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                id,
+                conversation_id,
+                external_conversation_id,
+                artifact_kind,
+                policy_version,
+                trigger,
+                source_message_start_seq,
+                source_message_end_seq,
+                source_group_start,
+                source_group_end,
+                artifact_json,
+                superseded_by,
+                created_at,
+            )| ReflectionEvidenceArtifactView {
+                evidence_source: if artifact_ids.contains(&id) {
+                    "linked artifact".to_string()
+                } else {
+                    "conversation artifact".to_string()
+                },
+                id: id.to_string(),
+                conversation_id: conversation_id.to_string(),
+                external_conversation_id,
+                conversation_href: format!("/bear/{slug}/conversations/{conversation_id}"),
+                artifact_kind,
+                policy_version,
+                trigger,
+                source_message_start_seq,
+                source_message_end_seq,
+                source_group_start,
+                source_group_end,
+                superseded_by: superseded_by.map(|id| id.to_string()),
+                created_at: created_at.to_string(),
+                artifact_json_pretty: serde_json::to_string_pretty(&artifact_json)
+                    .unwrap_or_else(|_| "{}".to_string()),
+            },
+        )
+        .collect())
+}
+
+async fn get_reflection_evidence(
+    pool: &sqlx::PgPool,
+    manager: &MemoryStoreManager,
+    bear_id: Uuid,
+    slug: &str,
+    run_id: Uuid,
+) -> Result<Option<ReflectionEvidenceView>, CustomError> {
+    let Some(detail) = get_reflection_run_detail(pool, manager, bear_id, run_id).await? else {
+        return Ok(None);
+    };
+    let (artifact_ids, conversation_uuids, external_conversation_ids) =
+        collect_evidence_refs(&detail);
+    let conversations = load_evidence_conversations(
+        pool,
+        bear_id,
+        &conversation_uuids,
+        &external_conversation_ids,
+        slug,
+    )
+    .await?;
+    let artifacts =
+        load_evidence_artifacts(pool, bear_id, &artifact_ids, &conversations, slug).await?;
+    Ok(Some(ReflectionEvidenceView {
+        detail,
+        conversations,
+        artifacts,
+        artifact_ref_count: artifact_ids.len(),
+        conversation_ref_count: conversation_uuids.len() + external_conversation_ids.len(),
     }))
 }
 
@@ -1943,6 +2253,38 @@ async fn reflection_run_get(
         context! {
             bear,
             detail,
+            can_manage_bear,
+            native_runtime => true,
+            ..bear_nav_context(&bear, "memory"),
+        },
+    )
+    .await
+}
+
+async fn reflection_evidence_get(
+    Path((slug, run_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth_session: crate::auth_backend::AuthSession,
+) -> Result<Response, CustomError> {
+    let user = session_user(&auth_session).await?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
+        return Ok(r.into_response());
+    }
+    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
+    let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
+    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let evidence =
+        get_reflection_evidence(state.sqlx_pool(), &manager, bear.id, &bear.slug, run_id)
+            .await?
+            .ok_or_else(|| CustomError::NotFound("reflection run not found".to_string()))?;
+
+    web::render_template(
+        &state,
+        "bear/memory/reflection_evidence.html",
+        auth_session,
+        context! {
+            bear,
+            evidence,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "memory"),
