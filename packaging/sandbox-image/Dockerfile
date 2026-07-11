@@ -15,6 +15,8 @@
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY tools/bear-armature ./tools/bear-armature
+COPY services/den/Cargo.toml ./services/den/Cargo.toml
+COPY services/den/crates/bearwire-protocol ./services/den/crates/bearwire-protocol
 # BEAR_ARMATURE_BUILD_SHA lets build.rs stamp a version without a .git dir.
 ARG BEAR_ARMATURE_BUILD_SHA=container
 ENV BEAR_ARMATURE_BUILD_SHA=${BEAR_ARMATURE_BUILD_SHA}
