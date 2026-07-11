@@ -7,7 +7,10 @@ use den_service::DenState;
 mod auth;
 mod events;
 mod methods;
+mod obligation_expiry;
 mod rpc;
+
+pub use obligation_expiry::{expire_client_obligations_once, run_client_obligation_expiry_loop};
 
 pub fn router() -> Router<DenState> {
     Router::new()

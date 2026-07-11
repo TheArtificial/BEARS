@@ -599,12 +599,46 @@ pub async fn open_client_obligations_for_session(
     Ok(rows.into_iter().map(row_to_obligation).collect())
 }
 
+async fn open_client_obligations(pool: &PgPool, limit: i64) -> Result<Vec<TurnObligationRow>, DenError> {
+    let limit = limit.clamp(1, 10_000);
+    let rows = sqlx::query(
+        r#"
+        SELECT id, run_id, session_id, kind, expected_responder_action,
+               tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
+               request_payload, result_payload, created_at, updated_at, completed_at
+        FROM turn_obligations
+        WHERE state IN ('requested','waiting_for_client')
+        ORDER BY created_at ASC, id ASC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(row_to_obligation).collect())
+}
+
 pub async fn expire_open_client_obligations_for_session(
     pool: &PgPool,
     session_id: &str,
 ) -> Result<Vec<TurnObligationRow>, DenError> {
-    let now = OffsetDateTime::now_utc();
     let open = open_client_obligations_for_session(pool, session_id).await?;
+    expire_open_client_obligations_from_rows(pool, open).await
+}
+
+pub async fn expire_open_client_obligations(
+    pool: &PgPool,
+    limit: i64,
+) -> Result<Vec<TurnObligationRow>, DenError> {
+    let open = open_client_obligations(pool, limit).await?;
+    expire_open_client_obligations_from_rows(pool, open).await
+}
+
+async fn expire_open_client_obligations_from_rows(
+    pool: &PgPool,
+    open: Vec<TurnObligationRow>,
+) -> Result<Vec<TurnObligationRow>, DenError> {
+    let now = OffsetDateTime::now_utc();
     let mut expired = Vec::new();
     for obligation in open
         .into_iter()

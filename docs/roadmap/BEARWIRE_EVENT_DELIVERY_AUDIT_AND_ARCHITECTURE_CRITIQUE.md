@@ -261,6 +261,8 @@ Exit criteria:
 
 ### Phase 4 — Move expiry out of `GET /events`
 
+Status: implemented for BearWire API processes. `GET /events` and `/events/page` are read-only with respect to obligation/run state, and the API composition root starts a BearWire client-obligation expiry loop that marks timed-out obligations and persists run-scoped `run.failed(client_obligation_timeout)` events.
+
 Move client-obligation expiration from the events polling handler into a Den-owned sweeper
 or coordinator-owned timeout task.
 
@@ -272,9 +274,9 @@ Rules:
 
 Exit criteria:
 
-- `GET /events` is side-effect-free except for auth/observability.
-- Tests prove an old orphaned obligation cannot inject a terminal event into a current
-  run's consumer.
+- Implemented: `GET /events` is side-effect-free except for auth/observability.
+- Implemented: timeout mutation is owned by the BearWire client-obligation expiry loop.
+- Remaining: tests prove an old orphaned obligation cannot inject a terminal event into a current run's consumer across a live multi-run session.
 
 ### Phase 5 — Fault-isolated armature event processing
 

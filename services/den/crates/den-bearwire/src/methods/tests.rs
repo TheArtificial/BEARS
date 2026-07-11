@@ -2131,6 +2131,113 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    let obligation = turn_obligations::upsert_tool_result_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-timeout",
+        None,
+        json!({ "tool_name": "fs_list_directory" }),
+    )
+    .await
+    .expect("insert tool obligation");
+    sqlx::query(
+        "UPDATE turn_obligations SET created_at = NOW() - INTERVAL '10 minutes' WHERE id = $1",
+    )
+    .bind(obligation.id)
+    .execute(&pool)
+    .await
+    .expect("age obligation");
+
+    let expired_runs = crate::expire_client_obligations_once(&pool, 100)
+        .await
+        .expect("expire obligations");
+    assert_eq!(expired_runs, 1);
+
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run exists");
+    assert_eq!(run.state, "failed");
+    assert_eq!(run.terminal_reason.as_deref(), Some("client_obligation_timeout"));
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list events");
+    assert!(events.iter().any(|row| {
+        row.event_type == "run.failed"
+            && row.event.data["reason"] == "client_obligation_timeout"
+            && row.event.data["context"]["source"] == "bearwire_client_obligation_expiry_loop"
+    }));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn events_poll_does_not_expire_client_obligations(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    let obligation = turn_obligations::upsert_tool_result_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-timeout",
+        None,
+        json!({ "tool_name": "fs_list_directory" }),
+    )
+    .await
+    .expect("insert tool obligation");
+    sqlx::query(
+        "UPDATE turn_obligations SET created_at = NOW() - INTERVAL '10 minutes' WHERE id = $1",
+    )
+    .bind(obligation.id)
+    .execute(&pool)
+    .await
+    .expect("age obligation");
+
+    let replay = events(
+        State(test_state(pool.clone())),
+        bearer_headers(&token),
+        Path(session_id.clone()),
+        Query(EventStreamQuery {
+            bear_slug: bear_slug.clone(),
+            after: None,
+        }),
+    )
+    .await
+    .expect("events response");
+    let body = axum::body::to_bytes(replay.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let replay_text = std::str::from_utf8(&body).unwrap();
+    assert!(!replay_text.contains("client_obligation_timeout"));
+
+    let obligation = turn_obligations::get_tool_call_obligation(&pool, &run_id, "call-timeout")
+        .await
+        .expect("load obligation")
+        .expect("obligation exists");
+    assert_eq!(obligation.state, "waiting_for_client");
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run exists");
+    assert_eq!(run.state, "accepted");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn run_cancel_settles_outstanding_obligations(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

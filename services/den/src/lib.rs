@@ -198,6 +198,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
     // this branch. A standalone sandbox server (RUN_SANDBOX only) skips it all
     // — it must be able to run on a host with no database.
     let mut worker_token_opt: Option<CancellationToken> = None;
+    let mut bearwire_expiry_token_opt: Option<CancellationToken> = None;
     let mut deletion_task_abort_handle = None;
     if needs_db {
         let sqlx_pool = connect_database(config.as_ref()).await?;
@@ -299,6 +300,19 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
                     .with_graceful_shutdown(shutdown_signal())
                     .await
                     .map_err(std::io::Error::other)
+            });
+
+            let expiry_token = CancellationToken::new();
+            bearwire_expiry_token_opt = Some(expiry_token.clone());
+            let expiry_pool = sqlx_pool.clone();
+            task_set.spawn(async move {
+                den_bearwire::run_client_obligation_expiry_loop(
+                    expiry_pool,
+                    expiry_token,
+                    std::time::Duration::from_secs(1),
+                )
+                .await
+                .map_err(std::io::Error::other)
             });
         }
 
@@ -454,6 +468,10 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
     }
 
     if let Some(token) = worker_token_opt {
+        token.cancel();
+    }
+
+    if let Some(token) = bearwire_expiry_token_opt {
         token.cancel();
     }
 
