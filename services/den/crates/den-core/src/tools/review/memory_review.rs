@@ -92,6 +92,43 @@ pub struct MemoryRequestReviewArguments {
     pub proposed_patch: Option<String>,
 }
 
+fn normalize_suggested_action(value: Option<&str>) -> Result<String, DenError> {
+    let value = value.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("unspecified");
+    if matches!(
+        value,
+        "unspecified"
+            | "summarize_into_core"
+            | "promote_to_core"
+            | "cabinet_update"
+            | "skill_review"
+            | "retain_profile_local"
+            | "delete_after_review"
+            | "human_review"
+            | "archive_index"
+            | "task_context"
+    ) {
+        Ok(value.to_string())
+    } else {
+        Err(DenError::ValidationError(format!(
+            "suggested_action must be one of the supported memory review actions; got {value}"
+        )))
+    }
+}
+
+fn normalize_memory_sensitivity(value: Option<&str>) -> Result<String, DenError> {
+    let value = value.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("normal");
+    if matches!(
+        value,
+        "normal" | "person" | "secret_risk" | "external_untrusted" | "unknown"
+    ) {
+        Ok(value.to_string())
+    } else {
+        Err(DenError::ValidationError(format!(
+            "sensitivity must be normal, person, secret_risk, external_untrusted, or unknown; got {value}"
+        )))
+    }
+}
+
 /// The `conversation_events` projection scope id for this invocation.
 fn projection_scope_id(
     context: &DenToolInvocationContext,
@@ -308,20 +345,8 @@ pub async fn request_memory_review(
     let summary = validate_bounded_text("summary", &args.summary, 1, 4_000)?;
     let rationale = validate_bounded_text("rationale", &args.rationale, 0, 4_000)?;
     validate_optional_object("refs", &args.refs)?;
-    let suggested_action = args
-        .suggested_action
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("unspecified")
-        .to_string();
-    let sensitivity = args
-        .sensitivity
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("normal")
-        .to_string();
+    let suggested_action = normalize_suggested_action(args.suggested_action.as_deref())?;
+    let sensitivity = normalize_memory_sensitivity(args.sensitivity.as_deref())?;
     let source_refs = json!({
         "conversation_id": clean_optional(&context.conversation_id),
         "session_id": source_client_session_id(context).or_else(|| clean_optional(&context.session_id)),
@@ -358,4 +383,23 @@ pub async fn request_memory_review(
         "proposal": proposal,
         "note": "Review requested. Reflection/curate decides the final outcome; this did not write core, Cabinet, skills, tasks, observations, or run results."
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_review_defaults_to_safe_action_and_sensitivity() {
+        assert_eq!(normalize_suggested_action(None).unwrap(), "unspecified");
+        assert_eq!(normalize_suggested_action(Some("  ")).unwrap(), "unspecified");
+        assert_eq!(normalize_memory_sensitivity(None).unwrap(), "normal");
+        assert_eq!(normalize_memory_sensitivity(Some("  ")).unwrap(), "normal");
+    }
+
+    #[test]
+    fn memory_review_rejects_unknown_action_and_sensitivity() {
+        assert!(normalize_suggested_action(Some("archive-index")).is_err());
+        assert!(normalize_memory_sensitivity(Some("private")).is_err());
+    }
 }
