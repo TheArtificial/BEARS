@@ -46,14 +46,7 @@ fn default_history_limit() -> i64 {
     50
 }
 
-#[derive(Debug, Deserialize)]
-pub struct EventStreamQuery {
-    #[serde(deserialize_with = "deserialize_required_string")]
-    pub bear_slug: String,
-    #[serde(default)]
-    #[serde(deserialize_with = "deserialize_optional_i64_from_value")]
-    pub after: Option<i64>,
-}
+
 
 #[derive(Debug, Deserialize)]
 pub struct EventPageQuery {

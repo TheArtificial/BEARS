@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use futures_util::StreamExt;
+
 use reqwest::header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -519,6 +519,7 @@ pub(crate) async fn handle_prompt(
         let replay_count = replay.frames.len();
         let next_after = replay.next_after;
         for frame in replay.frames {
+            let _sequence = frame.sequence;
             let Some(event) = frame.event else {
                 continue;
             };
@@ -1114,25 +1115,8 @@ async fn fetch_events(
     session_id: &str,
     after: Option<i64>,
 ) -> Result<BearWireReplay> {
-    match fetch_event_page(http, config, session_id, after).await {
-        Ok(replay) => Ok(replay),
-        Err(err) if err.downcast_ref::<EventPageUnavailable>().is_some() => {
-            fetch_events_sse(http, config, session_id, after).await
-        }
-        Err(err) => Err(err),
-    }
+    fetch_event_page(http, config, session_id, after).await
 }
-
-#[derive(Debug)]
-struct EventPageUnavailable;
-
-impl std::fmt::Display for EventPageUnavailable {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("BearWire event page endpoint unavailable")
-    }
-}
-
-impl std::error::Error for EventPageUnavailable {}
 
 async fn fetch_event_page(
     http: &reqwest::Client,
@@ -1160,9 +1144,7 @@ async fn fetch_event_page(
         .await
         .with_context(|| den_request_context(&url))?;
     let status = response.status();
-    if status == reqwest::StatusCode::NOT_FOUND {
-        return Err(EventPageUnavailable.into());
-    }
+
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         return Err(anyhow!(
@@ -1173,75 +1155,6 @@ async fn fetch_event_page(
     let body = response.text().await.unwrap_or_default();
     parse_event_page(&body, after)
         .with_context(|| format!("parse BearWire event page JSON: {body}"))
-}
-
-async fn fetch_events_sse(
-    http: &reqwest::Client,
-    config: &Config,
-    session_id: &str,
-    after: Option<i64>,
-) -> Result<BearWireReplay> {
-    let mut url = format!(
-        "{}/bearwire/v1/sessions/{}/events?bear_slug={}",
-        config.api_url,
-        urlencoding::encode(session_id),
-        urlencoding::encode(&config.bear)
-    );
-    if let Some(after) = after {
-        url.push_str("&after=");
-        url.push_str(&after.to_string());
-    }
-    let response = http
-        .get(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .send()
-        .await
-        .with_context(|| den_request_context(&url))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(anyhow!("BearWire events HTTP {status}: {}", body.trim()));
-    }
-
-    let mut buffer = Vec::<u8>::new();
-    let mut raw_frames = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        buffer.extend_from_slice(&chunk.context("read BearWire events chunk")?);
-        while let Some(pos) = buffer.windows(2).position(|window| window == b"\n\n") {
-            raw_frames.push(buffer.drain(..pos + 2).collect::<Vec<u8>>());
-        }
-    }
-    if !buffer.is_empty() {
-        raw_frames.push(buffer);
-    }
-    Ok(parse_sse_replay_frames(raw_frames, after))
-}
-
-fn parse_sse_replay_frames(raw_frames: Vec<Vec<u8>>, after: Option<i64>) -> BearWireReplay {
-    let mut frames = Vec::new();
-    for raw_frame in raw_frames {
-        match parse_event_frame(&raw_frame) {
-            Ok(frame) => frames.push(frame),
-            Err(err) => {
-                tracing::warn!(
-                    target: "bear_armature::lifecycle",
-                    error = %err,
-                    sample = %truncate_for_log(&String::from_utf8_lossy(&raw_frame), 360),
-                    "skipping malformed BearWire SSE frame"
-                );
-            }
-        }
-    }
-    let next_after = frames
-        .iter()
-        .filter_map(|frame| frame.sequence)
-        .max()
-        .or(after);
-    BearWireReplay { frames, next_after }
 }
 
 fn bearwire_plan_update_entries(event: &Value) -> Value {
@@ -1481,43 +1394,6 @@ fn parse_event_page(body: &str, after: Option<i64>) -> Result<BearWireReplay> {
         })
         .unwrap_or_default();
     Ok(BearWireReplay { frames, next_after })
-}
-
-fn parse_event_frame(frame: &[u8]) -> Result<BearWireFrame> {
-    let text = String::from_utf8_lossy(frame);
-    let mut sequence = None;
-    let mut data_lines = Vec::new();
-    for line in text.lines() {
-        if let Some(id) = line.strip_prefix("id:") {
-            sequence = id.trim().parse::<i64>().ok();
-            continue;
-        }
-        let Some(data) = line.strip_prefix("data:") else {
-            continue;
-        };
-        let data = data
-            .strip_prefix(' ')
-            .unwrap_or(data)
-            .trim_end_matches('\r');
-        data_lines.push(data.to_string());
-    }
-    if data_lines.is_empty() {
-        return Ok(BearWireFrame {
-            sequence: None,
-            event: None,
-        });
-    }
-    let data = data_lines.join("\n");
-    let data = data.trim();
-    if data.is_empty() || data == "[DONE]" {
-        return Ok(BearWireFrame {
-            sequence: None,
-            event: None,
-        });
-    }
-    let notification: Value = serde_json::from_str(data).context("parse BearWire SSE data")?;
-    let event = notification.get("params").cloned().or(Some(notification));
-    Ok(BearWireFrame { sequence, event })
 }
 
 fn event_run_id(event: &Value) -> Option<&str> {
@@ -1935,49 +1811,6 @@ mod tests {
 
         assert_eq!(parsed.next_after, Some(41));
         assert!(parsed.frames.is_empty());
-    }
-
-    #[test]
-    fn parse_sse_replay_frames_skips_malformed_frame_and_keeps_valid_frames() {
-        let valid = br#"id: 42
-data: {"jsonrpc":"2.0","method":"event","params":{"type":"run.progress","run_id":"run-1","data":{}}}
-
-"#;
-        let malformed = br#"id: 43
-data: {not-json}
-
-"#;
-        let replay = parse_sse_replay_frames(vec![malformed.to_vec(), valid.to_vec()], Some(41));
-
-        assert_eq!(replay.next_after, Some(42));
-        assert_eq!(replay.frames.len(), 1);
-        assert_eq!(replay.frames[0].sequence, Some(42));
-        assert_eq!(
-            replay.frames[0].event.as_ref().unwrap()["type"],
-            "run.progress"
-        );
-    }
-
-    #[test]
-    fn parse_event_frame_concatenates_sse_data_lines() {
-        let frame = br#"id: 42
-data: {"jsonrpc":"2.0","method":"event",
-data: "params":{"type":"run.completed","run_id":"run-1","data":{}}}
-
-"#;
-
-        let parsed = parse_event_frame(frame).unwrap();
-
-        assert_eq!(parsed.sequence, Some(42));
-        assert_eq!(parsed.event.unwrap()["type"], "run.completed");
-    }
-
-    #[test]
-    fn parse_event_frame_does_not_advance_cursor_without_event_data() {
-        let parsed = parse_event_frame(b"id: 42\ndata: [DONE]\n\n").unwrap();
-
-        assert_eq!(parsed.sequence, None);
-        assert!(parsed.event.is_none());
     }
 
     #[test]

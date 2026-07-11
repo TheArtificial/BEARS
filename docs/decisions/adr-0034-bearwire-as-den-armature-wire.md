@@ -64,25 +64,25 @@ The crate/module that today serves `/acp/**` (typically `den-acp`, composed by t
 
 It is **not** responsible for ACP stdio or editor UX.
 
-### 3. v1 transport binding: HTTP control + SSE events (BearWire envelopes)
+### 3. v1 transport binding: HTTP control + JSON event pages
 
-The [BearWire JSON specification](../architecture/bearwire-json-spec.md) prefers WebSocket JSON-RPC at `wss://<den>/bearwire/v1`. **v1 implementation** uses a pragmatic binding that reuses existing Axum patterns and allows incremental migration:
+The [BearWire JSON specification](../architecture/bearwire-json-spec.md) may later add WebSocket JSON-RPC at `wss://<den>/bearwire/v1`. **v1 implementation** uses a pragmatic HTTP binding that reuses existing Axum patterns:
 
 | Concern | v1 binding |
 | --- | --- |
 | Control methods | `POST /bearwire/v1/rpc` — single JSON-RPC 2.0 request/response endpoint (or method-scoped REST aliases during transition) |
-| Event stream | `GET /bearwire/v1/sessions/{session_id}/events` — SSE stream of JSON-RPC **`event` notifications** per the JSON spec |
+| Event projection | `GET /bearwire/v1/sessions/{session_id}/events/page` — JSON page with ordered events and server-owned `next_after` cursor |
 | Auth | Same bearer/OAuth machinery as today; `Authorization: Bearer`, `BearWire-Version: 1` |
 | Capability negotiation | `connection.capabilities` event + `initialize` method on connect |
 
-WebSocket JSON-RPC at `/bearwire/v1` is **v2** (same semantic model, different transport). Adapter-SSE and `/acp/**` are **deprecated** once parity is proven.
+WebSocket JSON-RPC at `/bearwire/v1` remains a possible future binding (same semantic model, different transport). Buffered SSE is not part of BearWire v1; adapter-SSE and `/acp/**` are deprecated once parity is proven.
 
 ### 4. Canonical projection path
 
 ```text
 RuntimeSemanticEvent  (den-runtime, in-process)
   → BearWire wire event (serializable, versioned)
-  → JSON-RPC `event` notification (SSE or WebSocket)
+  → JSON event page item (`sequence`, `event`)
   → armature projects to client protocol (ACP stdio, etc.)
 ```
 

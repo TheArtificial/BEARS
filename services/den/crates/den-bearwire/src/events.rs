@@ -1,56 +1,20 @@
 use axum::{
-    body::Body,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
-    response::Response,
+    http::HeaderMap,
     Json,
 };
-use bearwire_protocol::wire::{bearwire_event_to_json_rpc_notification, BearWireEvent};
-use bytes::Bytes;
+use bearwire_protocol::wire::bearwire_event_to_json_rpc_notification;
 use den_http::errors::CustomError;
 use den_runtime::bearwire_events;
 use den_service::{client_sessions, DenState};
 use serde_json::{json, Value};
 
-pub(crate) use bearwire_protocol::methods::{EventPageQuery, EventStreamQuery};
+pub(crate) use bearwire_protocol::methods::EventPageQuery;
 
 use crate::auth::authenticate_for_bear_slug;
 
-
 const DEFAULT_EVENT_PAGE_LIMIT: i64 = 100;
 const MAX_EVENT_PAGE_LIMIT: i64 = 500;
-
-pub(crate) fn events_sse_body(
-    session_id: &str,
-    events: Vec<bearwire_events::BearWireEventRow>,
-    emit_initial_state: bool,
-) -> Result<String, CustomError> {
-    let mut frame = String::new();
-    if events.is_empty() && emit_initial_state {
-        let event = BearWireEvent::ephemeral(
-            "session.state",
-            json!({
-                "session_id": session_id,
-                "status": "connected",
-                "note": "No persisted BearWire events for this session yet."
-            }),
-        );
-        let notification = bearwire_event_to_json_rpc_notification(event);
-        let payload = serde_json::to_string(&notification).map_err(|err| {
-            CustomError::System(format!("serialize BearWire event failed: {err}"))
-        })?;
-        frame.push_str(&format!("data: {payload}\n\n"));
-    } else if !events.is_empty() {
-        for row in events {
-            let notification = bearwire_event_to_json_rpc_notification(row.event);
-            let payload = serde_json::to_string(&notification).map_err(|err| {
-                CustomError::System(format!("serialize BearWire event failed: {err}"))
-            })?;
-            frame.push_str(&format!("id: {}\ndata: {payload}\n\n", row.sequence_no));
-        }
-    }
-    Ok(frame)
-}
 
 pub(crate) fn events_page_body(
     session_id: &str,
@@ -86,49 +50,6 @@ pub(crate) fn events_page_body(
     }))
 }
 
-
-
-pub(crate) fn last_event_id(headers: &HeaderMap) -> Option<i64> {
-    headers
-        .get("last-event-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .and_then(|value| value.parse::<i64>().ok())
-}
-
-pub(crate) async fn events(
-    State(state): State<DenState>,
-    headers: HeaderMap,
-    Path(session_id): Path<String>,
-    Query(query): Query<EventStreamQuery>,
-) -> Result<Response, CustomError> {
-    let user_id = authenticate_for_bear_slug(&state, &headers, &query.bear_slug).await?;
-    let session = client_sessions::find_for_user_bear_session(
-        &state.sqlx_pool,
-        user_id,
-        &query.bear_slug,
-        &session_id,
-    )
-    .await?
-    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
-    let after = query.after.or_else(|| last_event_id(&headers));
-    let events = bearwire_events::list_bearwire_events_after(
-        &state.sqlx_pool,
-        &session.client_session_id,
-        after,
-        DEFAULT_EVENT_PAGE_LIMIT,
-    )
-    .await?;
-    let frame = events_sse_body(&session.client_session_id, events, after.is_none())?;
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from(Bytes::from(frame)))
-        .map_err(|err| CustomError::System(format!("build BearWire SSE response failed: {err}")))
-}
 
 pub(crate) async fn events_page(
     State(state): State<DenState>,
@@ -179,24 +100,18 @@ mod tests {
         )
     }
 
-    #[test]
-    fn last_event_id_header_is_parsed_as_sequence_cursor() {
-        let mut headers = HeaderMap::new();
-        headers.insert("last-event-id", "42".parse().unwrap());
-        assert_eq!(last_event_id(&headers), Some(42));
-    }
-
     #[tokio::test]
-    async fn events_endpoint_requires_bearer_token_for_bear_session() {
-        let err = events(
+    async fn events_page_endpoint_requires_bearer_token_for_bear_session() {
+        let err = events_page(
             State(test_state(
                 sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop").unwrap(),
             )),
             HeaderMap::new(),
             Path("session-test".to_string()),
-            Query(EventStreamQuery {
+            Query(EventPageQuery {
                 bear_slug: "meta".to_string(),
                 after: None,
+                limit: None,
             }),
         )
         .await
@@ -204,19 +119,6 @@ mod tests {
         assert!(err.to_string().contains("missing Authorization"));
     }
 
-    #[tokio::test]
-    async fn events_endpoint_emits_json_rpc_event_notification() {
-        let text = events_sse_body("session-test", Vec::new(), true).unwrap();
-        assert!(text.starts_with("data: "));
-        assert!(text.contains("\"method\":\"event\""));
-        assert!(text.contains("\"type\":\"session.state\""));
-    }
-
-    #[tokio::test]
-    async fn events_endpoint_does_not_emit_synthetic_state_for_empty_incremental_poll() {
-        let text = events_sse_body("session-test", Vec::new(), false).unwrap();
-        assert_eq!(text, "");
-    }
 
     fn event_row(sequence_no: i64, event_type: &str) -> bearwire_events::BearWireEventRow {
         bearwire_events::BearWireEventRow {

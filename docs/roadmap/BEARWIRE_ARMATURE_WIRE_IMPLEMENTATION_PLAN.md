@@ -117,13 +117,13 @@ Editor ──ACP stdio──► bears-acp-adapter
 | --- | --- | --- |
 | Add `den-bearwire` crate **or** `den-acp/src/bearwire/` module | edge crate | Prefer new module first; rename crate when `/acp` is gone |
 | `POST /bearwire/v1/rpc` — JSON-RPC dispatcher | edge router | Methods: `initialize`, `session.open`, `session.resume`, `session.close`, `session.state`, `run.start`, `run.cancel`, `client.tool.result`, `client.permission.result`, `resource.update` |
-| `GET /bearwire/v1/sessions/{session_id}/events` — SSE | edge router | Stream `event` notifications; `sequence` monotonic per session |
+| `GET /bearwire/v1/sessions/{session_id}/events/page` — JSON event pages | edge router | Return ordered event page items with server-owned `next_after`; `sequence` monotonic per session |
 | Wire auth | reuse `den-oauth` bearer + ACP token paths | Same scopes as `/acp/auth-check` |
 | Map handlers to existing den-runtime / session store calls | reuse `den-acp` handler bodies | Thin RPC façade over current logic |
 | Binary composition | `services/den/src/lib.rs` | Mount `/bearwire` peer router (same pattern as post-ADR-0043 composition) |
 | Feature flag | retired; BearWire mounts with `RUN_API=true` | Den advertises BearWire in `initialize` result when the API listener is enabled |
 
-**Exit gate:** Complete. `den-bearwire` integration coverage now exercises RPC `run.start` with a mock OpenAI-compatible provider, then replays BearWire SSE and asserts `run.accepted`, `run.started`, `message.delta`, and `run.completed`.
+**Exit gate:** Complete. `den-bearwire` integration coverage now exercises RPC `run.start` with a mock OpenAI-compatible provider, then replays BearWire JSON event pages and asserts `run.accepted`, `run.started`, `message.delta`, and `run.completed`.
 
 ## Phase 3 — `bear-armature` BearWire client — Implementation complete; smoke validation pending
 

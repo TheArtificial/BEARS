@@ -10492,25 +10492,26 @@ mod tests {
     ) -> Response {
         let path = request.uri().path().to_string();
         state.paths.lock().await.push(path.clone());
-        if path.starts_with("/bearwire/v1/sessions/") && path.ends_with("/events") {
+        if path.starts_with("/bearwire/v1/sessions/") && path.ends_with("/events/page") {
             let events = state.events.lock().await.clone();
-            let body = events
+            let events = events
                 .into_iter()
                 .enumerate()
                 .map(|(index, event)| {
-                    format!(
-                        "id: {}\ndata: {}\n\n",
-                        index + 1,
-                        json!({ "params": event })
-                    )
+                    json!({
+                        "sequence": index + 1,
+                        "event": event,
+                    })
                 })
-                .collect::<String>();
-            return (
-                axum::http::StatusCode::OK,
-                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
-                body,
-            )
-                .into_response();
+                .collect::<Vec<_>>();
+            let next_after = events.len();
+            return Json(json!({
+                "ok": true,
+                "events": events,
+                "next_after": next_after,
+                "has_more": false,
+            }))
+            .into_response();
         }
         if path != "/bearwire/v1/rpc" {
             return (

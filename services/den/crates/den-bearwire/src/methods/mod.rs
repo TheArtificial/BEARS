@@ -24,8 +24,7 @@ pub(crate) fn initialize_result(_state: &DenState) -> Value {
         },
         "bearwire": {
             "rpc": "/bearwire/v1/rpc",
-            "events": "/bearwire/v1/sessions/{session_id}/events",
-            "event_page": "/bearwire/v1/sessions/{session_id}/events/page"
+            "events_page": "/bearwire/v1/sessions/{session_id}/events/page"
         },
         "legacy_acp_enabled": false,
         "legacy_acp_deprecated": true,

@@ -74,9 +74,9 @@ the current run's obligations too — a self-perpetuating chain.
 
 ### 4. Hard `?` aborts leave obligations open
 
-In the armature poll loop, a transient `fetch_events` HTTP error, malformed SSE JSON
-(`parse_event_frame`), or a `tool_call.completed` whose `data` fails to parse aborts the
-entire prompt with no retry while Den keeps waiting.
+Historically, the armature poll loop let transient `fetch_events` HTTP errors,
+malformed buffered-SSE JSON, or a `tool_call.completed` whose `data` failed to parse abort
+the entire prompt with no retry while Den kept waiting.
 
 ### 5. Silent drop of malformed tool requests (latent)
 
@@ -184,11 +184,11 @@ Exit criteria:
 
 ### Phase 1 — Server-owned cursor pages
 
-Status: partially implemented. Den now exposes `/bearwire/v1/sessions/{session_id}/events/page`, advertises it from `initialize`, and bear-armature prefers it while retaining SSE fallback. The armature now advances from Den's `next_after` for JSON pages instead of computing `max(sequence seen)` itself. Remaining work is the broader integration coverage listed below.
+Status: implemented. Den exposes `/bearwire/v1/sessions/{session_id}/events/page`, advertises it from `initialize`, and bear-armature uses JSON pages exclusively. The armature advances from Den's `next_after` instead of computing `max(sequence seen)` itself.
 
 Replace client-inferred cursor advancement with server-attested paging.
 
-Target response shape, even if still delivered through the existing endpoint initially:
+Canonical response shape:
 
 ```json
 {
@@ -202,16 +202,14 @@ Rules:
 
 - Den, not the client, decides the safe cursor to persist/advance.
 - Empty incremental polls return `next_after = previous_after`.
-- Frames/pages with no event data cannot advance the cursor.
-- The current SSE-shaped buffered response may be kept as a compatibility projection, but
-  a plain JSON page should become the canonical polling contract if the endpoint remains
-  request/response rather than real streaming.
+- Pages with no event data cannot advance the cursor.
+- JSON event pages are the canonical polling contract.
 
 Exit criteria:
 
-- Armature no longer computes `after = max(sequence seen)` for the canonical JSON page path.
-- Unit tests cover empty JSON pages and server-owned `next_after` semantics.
-- Remaining: integration tests cover missing event ids and immediate post-`run.start` tool events across the HTTP endpoint.
+- Implemented: Armature no longer computes `after = max(sequence seen)`.
+- Implemented: unit tests cover empty JSON pages and server-owned `next_after` semantics.
+- Remaining: integration tests cover immediate post-`run.start` tool events across the HTTP endpoint.
 
 ### Phase 2 — Obligations as authoritative actionable work
 
@@ -261,7 +259,7 @@ Exit criteria:
 
 ### Phase 4 — Move expiry out of `GET /events`
 
-Status: implemented for BearWire API processes. `GET /events` and `/events/page` are read-only with respect to obligation/run state, and the API composition root starts a BearWire client-obligation expiry loop that marks timed-out obligations and persists run-scoped `run.failed(client_obligation_timeout)` events.
+Status: implemented for BearWire API processes. `/events/page` is read-only with respect to obligation/run state, and the API composition root starts a BearWire client-obligation expiry loop that marks timed-out obligations and persists run-scoped `run.failed(client_obligation_timeout)` events.
 
 Move client-obligation expiration from the events polling handler into a Den-owned sweeper
 or coordinator-owned timeout task.
@@ -274,7 +272,7 @@ Rules:
 
 Exit criteria:
 
-- Implemented: `GET /events` is side-effect-free except for auth/observability.
+- Implemented: `/events/page` is side-effect-free except for auth/observability.
 - Implemented: timeout mutation is owned by the BearWire client-obligation expiry loop.
 - Remaining: tests prove an old orphaned obligation cannot inject a terminal event into a current run's consumer across a live multi-run session.
 
@@ -304,6 +302,8 @@ Exit criteria:
 
 ### Phase 6 — Choose real streaming or explicit JSON polling
 
+Status: implemented as explicit JSON polling. Den no longer exposes the buffered-SSE `/events` route and bear-armature no longer carries an SSE fallback parser. The canonical event projection path is `/bearwire/v1/sessions/{session_id}/events/page` with server-owned `next_after` cursors.
+
 Retire the current buffered-SSE ambiguity.
 
 Options:
@@ -314,9 +314,8 @@ Options:
 
 Exit criteria:
 
-- Protocol docs describe one canonical delivery contract.
-- Armature implementation no longer hand-parses buffered SSE pages as if they were a true
-  stream.
+- Implemented: protocol docs describe JSON event pages as the canonical delivery contract.
+- Implemented: armature implementation no longer hand-parses buffered SSE pages as if they were a true stream.
 
 ## Suggested instrumentation (until all phases are complete)
 

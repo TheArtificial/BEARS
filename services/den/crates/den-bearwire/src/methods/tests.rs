@@ -42,7 +42,7 @@ use den_service::{
 };
 
 use crate::{
-    events::{events, EventStreamQuery},
+    events::{events_page, EventPageQuery},
     methods::run::persist_run_failed,
     rpc::rpc,
 };
@@ -237,55 +237,42 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
     assert_eq!(value["result"]["ok"], true);
     let sequence = value["result"]["event_sequence"].as_i64().unwrap();
 
-    let replay = events(
+    let replay = events_page(
         State(state),
         bearer_headers(&token),
         Path(session_id.clone()),
-        Query(EventStreamQuery {
+        Query(EventPageQuery {
             bear_slug: value["result"]["session"]["bear_slug"]
                 .as_str()
                 .unwrap()
                 .to_string(),
             after: None,
+            limit: None,
         }),
     )
     .await
-    .expect("events response");
-    let replay_body = axum::body::to_bytes(replay.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let replay_text = std::str::from_utf8(&replay_body).unwrap();
-    assert!(
-        replay_text.contains(&format!("id: {sequence}")),
-        "{replay_text}"
-    );
-    assert!(
-        replay_text.contains("\"type\":\"session.opened\""),
-        "{replay_text}"
-    );
+    .expect("events page response")
+    .0;
+    assert_eq!(replay["events"][0]["sequence"], sequence);
+    assert_eq!(replay["events"][0]["event"]["type"], "session.opened");
 
-    let replay_after = events(
+    let replay_after = events_page(
         State(test_state(pool)),
         bearer_headers(&token),
         Path(session_id),
-        Query(EventStreamQuery {
+        Query(EventPageQuery {
             bear_slug: value["result"]["session"]["bear_slug"]
                 .as_str()
                 .unwrap()
                 .to_string(),
             after: Some(sequence),
+            limit: None,
         }),
     )
     .await
-    .expect("events response after cursor");
-    let replay_after_body = axum::body::to_bytes(replay_after.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let replay_after_text = std::str::from_utf8(&replay_after_body).unwrap();
-    assert!(
-        !replay_after_text.contains("session.opened"),
-        "{replay_after_text}"
-    );
+    .expect("events page response after cursor")
+    .0;
+    assert!(replay_after["events"].as_array().unwrap().is_empty());
 }
 
 fn start_mock_openai_sse_server() -> String {
@@ -417,21 +404,20 @@ async fn replay_events_text(
     bear_slug: &str,
     session_id: &str,
 ) -> String {
-    let replay = events(
+    let replay = events_page(
         State(state),
         bearer_headers(token),
         Path(session_id.to_string()),
-        Query(EventStreamQuery {
+        Query(EventPageQuery {
             bear_slug: bear_slug.to_string(),
             after: None,
+            limit: None,
         }),
     )
     .await
-    .expect("events response");
-    let replay_body = axum::body::to_bytes(replay.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    std::str::from_utf8(&replay_body).unwrap().to_string()
+    .expect("events page response")
+    .0;
+    replay.to_string()
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -2208,22 +2194,20 @@ async fn events_poll_does_not_expire_client_obligations(pool: sqlx::PgPool) {
     .await
     .expect("age obligation");
 
-    let replay = events(
+    let replay = events_page(
         State(test_state(pool.clone())),
         bearer_headers(&token),
         Path(session_id.clone()),
-        Query(EventStreamQuery {
+        Query(EventPageQuery {
             bear_slug: bear_slug.clone(),
             after: None,
+            limit: None,
         }),
     )
     .await
-    .expect("events response");
-    let body = axum::body::to_bytes(replay.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let replay_text = std::str::from_utf8(&body).unwrap();
-    assert!(!replay_text.contains("client_obligation_timeout"));
+    .expect("events page response")
+    .0;
+    assert!(!replay.to_string().contains("client_obligation_timeout"));
 
     let obligation = turn_obligations::get_tool_call_obligation(&pool, &run_id, "call-timeout")
         .await

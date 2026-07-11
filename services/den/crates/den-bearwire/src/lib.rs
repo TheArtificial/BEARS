@@ -15,7 +15,6 @@ pub use obligation_expiry::{expire_client_obligations_once, run_client_obligatio
 pub fn router() -> Router<DenState> {
     Router::new()
         .route("/v1/rpc", post(rpc::rpc))
-        .route("/v1/sessions/{session_id}/events", get(events::events))
         .route(
             "/v1/sessions/{session_id}/events/page",
             get(events::events_page),
