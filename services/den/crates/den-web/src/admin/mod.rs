@@ -3,6 +3,7 @@ pub mod api;
 pub mod bears;
 pub mod membership;
 pub mod oauth_clients;
+pub mod sandbox_images;
 pub mod users;
 
 use axum::response::Response;
@@ -22,6 +23,7 @@ pub fn router() -> Router<AppState> {
         .merge(oauth_clients::router())
         .merge(bears::router())
         .merge(membership::router())
+        .merge(sandbox_images::router())
 }
 
 async fn admin_home(

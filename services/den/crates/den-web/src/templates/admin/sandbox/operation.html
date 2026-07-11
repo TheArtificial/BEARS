@@ -1,0 +1,29 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Sandbox operation{% endblock %}
+
+{% block head %}
+{% if running %}<meta http-equiv="refresh" content="3" />{% endif %}
+{% endblock %}
+
+{% block admin_content %}
+<p><a href="/admin/sandbox">← Sandbox images</a></p>
+{% if unknown %}
+<h3>Operation unknown</h3>
+<p>
+    This operation is not tracked (operations do not survive provider
+    restarts). Check the engine store on the
+    <a href="/admin/sandbox">images page</a> — the underlying docker work may
+    still have completed.
+</p>
+{% else %}
+<h3>{{ operation.kind }} <code>{{ operation.target }}</code></h3>
+<p>
+    State: <strong>{{ operation.state }}</strong>
+    {% if operation.error %} — {{ operation.error }}{% endif %}<br>
+    Started {{ operation.started_at }}{% if operation.finished_at %}, finished {{ operation.finished_at }}{% endif %}.
+    {% if running %}This page refreshes every 3 seconds.{% endif %}
+</p>
+<pre style="max-height: 30em; overflow: auto">{{ operation.log_tail }}</pre>
+{% endif %}
+{% endblock %}

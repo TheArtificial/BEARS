@@ -101,6 +101,15 @@ Member-facing bear management at `/bear/{slug}/…` (read for members, write for
 - `GET|POST /admin/oauth_clients/*` — OAuth client CRUD, PKCE test
 - `GET|POST /admin/oauth_tokens/*` — token admin
 
+### Sandbox images (`src/admin/sandbox_images.rs`)
+
+- `GET /admin/sandbox` — Den-managed image catalog (editable even when the provider is down), engine image store + disk usage, recent operations, pull form, shipped-variant build buttons
+- `POST /admin/sandbox/pull` — background registry pull (redirects to the operation page)
+- `POST /admin/sandbox/build` — background build of a shipped variant (base/rust/node/godot; needs `SANDBOX_BUILD_CONTEXT_DIR` on the provider)
+- `POST /admin/sandbox/images/remove` — synchronous engine-store removal
+- `GET /admin/sandbox/operations/{id}` — operation state + log tail (auto-refreshes while running; ops don't survive provider restarts)
+- `POST /admin/sandbox/catalog` · `/{id}/update` · `/{id}/delete` · `/{id}/default` — catalog CRUD; each pushes the managed config to the provider best-effort
+
 All `/admin/*` routes use `permission_required!(…, "admin")`.
 
 ## Work (`src/work/mod.rs`)
