@@ -1408,6 +1408,8 @@ pub(crate) async fn run_start_result(
     )
     .await?
     {
+        let _ = state.turn_cancellations.cancel_session(&session_id);
+        let _ = state.tool_turns.cancel_active_turn(&session_id);
         let _ = turn_obligations::settle_outstanding_for_run(
             &state.sqlx_pool,
             &active_run.run_id,

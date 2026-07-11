@@ -1,3 +1,4 @@
+use bearwire_protocol::wire::BearWireEvent;
 use den_runtime::{
     bearwire_events,
     surface_projection::{project_obligation_for_surface, SurfaceActionKind, TurnSurfaceKind},
@@ -42,6 +43,64 @@ async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
     .expect("create test bear");
 
     (user_id, bear_id)
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn same_session_bearwire_appends_are_commit_order_visible(pool: sqlx::PgPool) {
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let mut tx = pool.begin().await.expect("begin transaction");
+    let first = bearwire_events::append_bearwire_event_on(
+        &mut tx,
+        &session_id,
+        None,
+        None,
+        BearWireEvent::ephemeral("run.progress", serde_json::json!({ "order": "first" })),
+    )
+    .await
+    .expect("append first event in transaction");
+
+    let pool_for_task = pool.clone();
+    let session_for_task = session_id.clone();
+    let second_task = tokio::spawn(async move {
+        bearwire_events::append_bearwire_event(
+            &pool_for_task,
+            &session_for_task,
+            None,
+            None,
+            BearWireEvent::ephemeral("run.progress", serde_json::json!({ "order": "second" })),
+        )
+        .await
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !second_task.is_finished(),
+        "autocommit append must wait for same-session transactional append to commit"
+    );
+
+    let visible_before_commit = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list before commit");
+    assert!(
+        visible_before_commit.is_empty(),
+        "uncommitted lower-sequence event and blocked higher-sequence event must not be visible"
+    );
+
+    tx.commit().await.expect("commit first append");
+    let second = second_task
+        .await
+        .expect("join second append")
+        .expect("second append succeeds");
+    assert!(second.sequence_no > first.sequence_no);
+
+    let visible = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list visible events");
+    assert_eq!(visible.len(), 2);
+    assert_eq!(visible[0].sequence_no, first.sequence_no);
+    assert_eq!(visible[0].event.data["order"], "first");
+    assert_eq!(visible[1].sequence_no, second.sequence_no);
+    assert_eq!(visible[1].event.data["order"], "second");
 }
 
 #[sqlx::test(migrations = "../../migrations")]

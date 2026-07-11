@@ -23,6 +23,11 @@ pub async fn append_bearwire_event_on(
     user_id: Option<i32>,
     mut event: BearWireEvent,
 ) -> Result<BearWireEventRow, DenError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(session_id)
+        .execute(&mut *conn)
+        .await?;
+
     let initial_json = serde_json::to_value(&event)
         .map_err(|err| DenError::System(format!("serialize BearWire event failed: {err}")))?;
     let row = sqlx::query(
@@ -78,8 +83,10 @@ pub async fn append_bearwire_event(
     user_id: Option<i32>,
     event: BearWireEvent,
 ) -> Result<BearWireEventRow, DenError> {
-    let mut conn = pool.acquire().await?;
-    append_bearwire_event_on(&mut conn, session_id, bear_id, user_id, event).await
+    let mut tx = pool.begin().await?;
+    let row = append_bearwire_event_on(&mut tx, session_id, bear_id, user_id, event).await?;
+    tx.commit().await?;
+    Ok(row)
 }
 
 pub async fn list_bearwire_events_after(

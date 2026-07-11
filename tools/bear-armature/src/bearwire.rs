@@ -479,6 +479,7 @@ pub(crate) async fn handle_prompt(
                 adapter_state,
                 shared_state,
                 session_id,
+                run_id,
                 &event,
                 &mut diagnostics,
                 turn_token,
@@ -1298,7 +1299,7 @@ fn bearwire_message_delta_is_reasoning(event: &Value) -> bool {
 fn parse_event_frame(frame: &[u8]) -> Result<BearWireFrame> {
     let text = String::from_utf8_lossy(frame);
     let mut sequence = None;
-    let mut event = None;
+    let mut data_lines = Vec::new();
     for line in text.lines() {
         if let Some(id) = line.strip_prefix("id:") {
             sequence = id.trim().parse::<i64>().ok();
@@ -1307,14 +1308,50 @@ fn parse_event_frame(frame: &[u8]) -> Result<BearWireFrame> {
         let Some(data) = line.strip_prefix("data:") else {
             continue;
         };
-        let data = data.trim();
-        if data.is_empty() || data == "[DONE]" {
-            continue;
-        }
-        let notification: Value = serde_json::from_str(data).context("parse BearWire SSE data")?;
-        event = notification.get("params").cloned().or(Some(notification));
+        let data = data
+            .strip_prefix(' ')
+            .unwrap_or(data)
+            .trim_end_matches('\r');
+        data_lines.push(data.to_string());
     }
+    if data_lines.is_empty() {
+        return Ok(BearWireFrame {
+            sequence: None,
+            event: None,
+        });
+    }
+    let data = data_lines.join("\n");
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return Ok(BearWireFrame {
+            sequence: None,
+            event: None,
+        });
+    }
+    let notification: Value = serde_json::from_str(data).context("parse BearWire SSE data")?;
+    let event = notification.get("params").cloned().or(Some(notification));
     Ok(BearWireFrame { sequence, event })
+}
+
+fn event_run_id(event: &Value) -> Option<&str> {
+    event
+        .get("run_id")
+        .and_then(Value::as_str)
+        .or_else(|| event.pointer("/data/run_id").and_then(Value::as_str))
+}
+
+fn event_is_run_scoped(ty: &str) -> bool {
+    ty.starts_with("run.")
+        || ty.starts_with("message.")
+        || ty.starts_with("tool_call.")
+        || matches!(
+            ty,
+            "client.waiting"
+                | "permission.requested"
+                | "permission.granted"
+                | "permission.denied"
+                | "permission.expired"
+        )
 }
 
 async fn handle_bearwire_event(
@@ -1322,13 +1359,30 @@ async fn handle_bearwire_event(
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
+    current_run_id: &str,
     event: &Value,
     diagnostics: &mut SseStreamDiagnostics,
     turn_token: Uuid,
 ) -> Result<SseFrameOutcome> {
     diagnostics.frames += 1;
-    let mut outcome = SseFrameOutcome::default();
+    let outcome = SseFrameOutcome::default();
     let ty = event.get("type").and_then(Value::as_str).unwrap_or("");
+    if current_run_id != "<unknown>" && event_is_run_scoped(ty) {
+        if let Some(event_run_id) = event_run_id(event) {
+            if event_run_id != current_run_id {
+                tracing::debug!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    current_run_id,
+                    event_run_id,
+                    event_type = ty,
+                    "ignoring BearWire event for non-current run"
+                );
+                return Ok(outcome);
+            }
+        }
+    }
+    let mut outcome = outcome;
     diagnostics.observe_event(event);
 
     match ty {
@@ -1656,6 +1710,42 @@ async fn handle_bearwire_event(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parse_event_frame_concatenates_sse_data_lines() {
+        let frame = br#"id: 42
+data: {"jsonrpc":"2.0","method":"event",
+data: "params":{"type":"run.completed","run_id":"run-1","data":{}}}
+
+"#;
+
+        let parsed = parse_event_frame(frame).unwrap();
+
+        assert_eq!(parsed.sequence, Some(42));
+        assert_eq!(parsed.event.unwrap()["type"], "run.completed");
+    }
+
+    #[test]
+    fn parse_event_frame_does_not_advance_cursor_without_event_data() {
+        let parsed = parse_event_frame(b"id: 42\ndata: [DONE]\n\n").unwrap();
+
+        assert_eq!(parsed.sequence, None);
+        assert!(parsed.event.is_none());
+    }
+
+    #[test]
+    fn run_scoped_event_helpers_identify_foreign_terminal_events() {
+        let event = json!({
+            "type": "run.failed",
+            "run_id": "run-old",
+            "data": { "reason": "client_obligation_timeout" }
+        });
+
+        assert!(event_is_run_scoped("run.failed"));
+        assert_eq!(event_run_id(&event), Some("run-old"));
+        assert_ne!(event_run_id(&event), Some("run-current"));
+        assert!(!event_is_run_scoped("session.bound"));
+    }
 
     #[test]
     fn message_delta_with_reasoning_metadata_is_thought_not_visible_output() {
