@@ -85,6 +85,8 @@ struct DashboardQuery {
     reflection_lane: Option<String>,
     #[serde(default)]
     reflection_status: Option<String>,
+    #[serde(default)]
+    reflection_attention: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,6 +241,7 @@ struct ReflectionRunSummary {
 struct ReflectionRunFilterView {
     selected_lane: String,
     selected_status: String,
+    selected_attention: String,
     lane_options: Vec<String>,
     status_options: Vec<String>,
 }
@@ -424,10 +427,24 @@ fn valid_reflection_status(value: Option<&str>) -> Option<String> {
     }
 }
 
-fn reflection_run_filter_view(lane: Option<&str>, status: Option<&str>) -> ReflectionRunFilterView {
+fn valid_reflection_attention(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if matches!(value, "failed_today" | "queued_over_10m" | "slow_completed") {
+        Some(value.to_string())
+    } else {
+        None
+    }
+}
+
+fn reflection_run_filter_view(
+    lane: Option<&str>,
+    status: Option<&str>,
+    attention: Option<&str>,
+) -> ReflectionRunFilterView {
     ReflectionRunFilterView {
         selected_lane: lane.unwrap_or("all").to_string(),
         selected_status: status.unwrap_or("all").to_string(),
+        selected_attention: attention.unwrap_or("all").to_string(),
         lane_options: [
             "memory_curate",
             "archive_harvest",
@@ -541,6 +558,7 @@ async fn list_recent_reflection_runs(
     limit: i64,
     lane_filter: Option<&str>,
     status_filter: Option<&str>,
+    attention_filter: Option<&str>,
 ) -> Vec<ReflectionRunView> {
     let rows = sqlx::query_as::<
         _,
@@ -567,6 +585,18 @@ async fn list_recent_reflection_runs(
           AND lane IN ('memory_curate', 'archive_harvest', 'recall_index', 'context_compact')
           AND ($3::text IS NULL OR lane = $3)
           AND ($4::text IS NULL OR status = $4)
+          AND (
+              $5::text IS NULL
+              OR ($5 = 'failed_today' AND status = 'failed' AND created_at >= date_trunc('day', NOW()))
+              OR ($5 = 'queued_over_10m' AND status = 'queued' AND created_at <= NOW() - INTERVAL '10 minutes')
+              OR (
+                  $5 = 'slow_completed'
+                  AND status = 'completed'
+                  AND started_at IS NOT NULL
+                  AND completed_at IS NOT NULL
+                  AND completed_at - started_at >= INTERVAL '5 minutes'
+              )
+          )
         ORDER BY created_at DESC
         LIMIT $2
         ",
@@ -575,6 +605,7 @@ async fn list_recent_reflection_runs(
     .bind(limit.clamp(1, 200))
     .bind(lane_filter)
     .bind(status_filter)
+    .bind(attention_filter)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
@@ -1134,19 +1165,24 @@ async fn dashboard_view(
         .unwrap_or_default();
     let reflection_lane = valid_reflection_lane(query.reflection_lane.as_deref());
     let reflection_status = valid_reflection_status(query.reflection_status.as_deref());
+    let reflection_attention = valid_reflection_attention(query.reflection_attention.as_deref());
     let reflection_runs = list_recent_reflection_runs(
         state.sqlx_pool(),
         id,
         25,
         reflection_lane.as_deref(),
         reflection_status.as_deref(),
+        reflection_attention.as_deref(),
     )
     .await;
     let reflection_run_summary = reflection_summary(
-        &list_recent_reflection_runs(state.sqlx_pool(), id, 100, None, None).await,
+        &list_recent_reflection_runs(state.sqlx_pool(), id, 100, None, None, None).await,
     );
-    let reflection_run_filters =
-        reflection_run_filter_view(reflection_lane.as_deref(), reflection_status.as_deref());
+    let reflection_run_filters = reflection_run_filter_view(
+        reflection_lane.as_deref(),
+        reflection_status.as_deref(),
+        reflection_attention.as_deref(),
+    );
     let reflection_slo = reflection_performance_slo(state.sqlx_pool(), id).await;
 
     web::render_template(

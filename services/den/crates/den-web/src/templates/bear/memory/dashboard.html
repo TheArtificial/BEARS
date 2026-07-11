@@ -171,6 +171,16 @@
     </details>
     {% endif %}
 
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 1rem 0;">
+        <span class="form-hint">Attention:</span>
+        <a href="/bear/{{ bear.slug | e }}/memory?reflection_status=failed&amp;reflection_attention=failed_today"{% if reflection_run_filters.selected_attention == "failed_today" %} aria-current="page"{% endif %} style="border: 1px solid currentColor; border-radius: 999px; padding: 0.15rem 0.55rem;">failed today</a>
+        <a href="/bear/{{ bear.slug | e }}/memory?reflection_status=queued&amp;reflection_attention=queued_over_10m"{% if reflection_run_filters.selected_attention == "queued_over_10m" %} aria-current="page"{% endif %} style="border: 1px solid currentColor; border-radius: 999px; padding: 0.15rem 0.55rem;">queued &gt; 10m</a>
+        <a href="/bear/{{ bear.slug | e }}/memory?reflection_status=completed&amp;reflection_attention=slow_completed"{% if reflection_run_filters.selected_attention == "slow_completed" %} aria-current="page"{% endif %} style="border: 1px solid currentColor; border-radius: 999px; padding: 0.15rem 0.55rem;">slow completed</a>
+        {% if reflection_run_filters.selected_attention != "all" %}
+        <a href="/bear/{{ bear.slug | e }}/memory" class="form-hint">clear attention</a>
+        {% endif %}
+    </div>
+
     <form method="get" action="/bear/{{ bear.slug | e }}/memory" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin: 1rem 0;">
         <label>
             Lane<br />
