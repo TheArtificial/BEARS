@@ -6938,12 +6938,14 @@ pub(crate) fn spawn_tool_request_task(
             );
             return;
         }
+        let den_owned_display_only = is_den_server_tool_request(&event);
         tracing::info!(
             target: "bear_armature::lifecycle",
             session_id = session_id.as_str(),
             tool_call_id = tool_call_id.as_str(),
             tool_name = tool_name.as_str(),
             run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+            den_owned_display_only,
             "local tool task spawned"
         );
         let mut task_state = AdapterState {
@@ -6951,7 +6953,6 @@ pub(crate) fn spawn_tool_request_task(
             session_contexts: shared_state.session_contexts.lock().await.clone(),
             transport: shared_state.transport.clone(),
         };
-        let den_owned_display_only = is_den_server_tool_request(&event);
         let tool_future = handle_tool_request_event(
             &config,
             &mut task_state,
@@ -7042,7 +7043,19 @@ pub(crate) fn spawn_tool_request_task(
                 .tool_tasks
                 .remove(&session_id, &tool_call_id)
                 .await;
-        } else if !den_owned_display_only {
+        } else if den_owned_display_only {
+            tracing::info!(
+                target: "bear_armature::lifecycle",
+                session_id = session_id.as_str(),
+                tool_call_id = tool_call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                "den-owned display-only tool task finished without posting client result"
+            );
+            let _ = shared_state
+                .tool_tasks
+                .remove(&session_id, &tool_call_id)
+                .await;
+        } else {
             tracing::info!(
                 target: "bear_armature::lifecycle",
                 session_id = session_id.as_str(),

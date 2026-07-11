@@ -89,6 +89,23 @@ pub async fn append_bearwire_event(
     Ok(row)
 }
 
+pub async fn latest_event_sequence(
+    pool: &PgPool,
+    session_id: &str,
+) -> Result<Option<i64>, DenError> {
+    let row = sqlx::query(
+        r#"
+        SELECT MAX(sequence_no) AS sequence_no
+        FROM bearwire_events
+        WHERE session_id = $1
+        "#,
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.get("sequence_no"))
+}
+
 pub async fn list_bearwire_events_after(
     pool: &PgPool,
     session_id: &str,

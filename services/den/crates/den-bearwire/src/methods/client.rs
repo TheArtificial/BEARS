@@ -379,6 +379,8 @@ fn spawn_continuation_task(
                 let mut wait_event_seen = false;
                 let mut cancellation_seen = false;
                 let mut last_event_kind: Option<&'static str> = None;
+                let mut last_runtime_event_at: Option<Instant> = None;
+                let mut last_event_sequence: Option<i64> = None;
                 let idle_watchdog_timeout = continuation_watchdog_timeout();
                 let handshake_timeout = native_llm_handshake_timeout();
                 let first_event_watchdog_timeout = continuation_first_event_watchdog_timeout(
@@ -414,6 +416,8 @@ fn spawn_continuation_task(
                             match timed {
                                 Ok(item) => item,
                                 Err(_) => {
+                                    let last_event_age_ms = last_runtime_event_at
+                                        .map(|at| at.elapsed().as_millis());
                                     let context = json!({
                                         "continuation_request_id": request_id,
                                         "watchdog_phase": watchdog_phase,
@@ -421,10 +425,15 @@ fn spawn_continuation_task(
                                         "first_event_watchdog_timeout_ms": first_event_watchdog_timeout.as_millis(),
                                         "handshake_timeout_ms": handshake_timeout.as_millis(),
                                         "idle_watchdog_timeout_ms": idle_watchdog_timeout.as_millis(),
+                                        "continuation_elapsed_ms": continuation_started_at.elapsed().as_millis(),
                                         "runtime_event_count": runtime_event_count,
                                         "first_event_seen": first_event_seen,
                                         "terminal_event_seen": terminal_event_seen,
+                                        "wait_event_seen": wait_event_seen,
                                         "last_event_kind": last_event_kind,
+                                        "last_event_sequence": last_event_sequence,
+                                        "last_event_age_ms": last_event_age_ms,
+                                        "diagnostic_note": "The continuation watchdog observes Den runtime events, not raw provider chunks. Check den_llm stream timing logs for provider chunk/byte counts for this request_id.",
                                     });
                                     let message = if first_event_seen {
                                         format!(
@@ -461,6 +470,7 @@ fn spawn_continuation_task(
                     match item {
                         Ok(runtime_event) => {
                             runtime_event_count += 1;
+                            last_runtime_event_at = Some(Instant::now());
                             let event_kind =
                                 crate::methods::run::runtime_event_kind(&runtime_event);
                             last_event_kind = Some(event_kind);
@@ -497,6 +507,7 @@ fn spawn_continuation_task(
                                     json!({
                                         "request_id": request_id,
                                         "event_kind": event_kind,
+                                        "runtime_event_count": runtime_event_count,
                                     }),
                                 )
                                 .await;
@@ -512,6 +523,11 @@ fn spawn_continuation_task(
                                 Some(continuation_started_at),
                             )
                             .await;
+                            last_event_sequence =
+                                bearwire_events::latest_event_sequence(&pool, &run.session_id)
+                                    .await
+                                    .ok()
+                                    .flatten();
                         }
                         Err(err) => {
                             fail_run_lifecycle(
