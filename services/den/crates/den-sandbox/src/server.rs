@@ -146,6 +146,8 @@ pub struct ProviderState {
     roots: tokio::sync::RwLock<RootsManager>,
     backend: Backend,
     registry: tokio::sync::Mutex<BTreeMap<String, SandboxRecord>>,
+    /// Long-running image operations (pulls, builds).
+    ops: Arc<crate::ops::OpsRegistry>,
 }
 
 impl ProviderState {
@@ -176,6 +178,7 @@ pub fn create_sandbox_app(config: SandboxServerConfig) -> Result<Router, RootsEr
         roots: tokio::sync::RwLock::new(roots),
         backend,
         registry: tokio::sync::Mutex::new(BTreeMap::new()),
+        ops: Arc::new(crate::ops::OpsRegistry::new()),
     });
 
     tokio::spawn(reaper_loop(state.clone()));
@@ -195,6 +198,12 @@ pub fn create_sandbox_app(config: SandboxServerConfig) -> Result<Router, RootsEr
             "/sandbox/v1/managed-config",
             axum::routing::put(put_managed_config).get(managed_config_status),
         )
+        .route("/sandbox/v1/images", get(list_images))
+        .route("/sandbox/v1/images/pull", post(pull_image))
+        .route("/sandbox/v1/images/build", post(build_image))
+        .route("/sandbox/v1/images/remove", post(remove_image))
+        .route("/sandbox/v1/operations", get(list_operations))
+        .route("/sandbox/v1/operations/{id}", get(get_operation))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             require_service_token,
@@ -312,6 +321,205 @@ async fn managed_config_status(State(state): State<Arc<ProviderState>>) -> Json<
         images: manager.images().len(),
         version: manager.managed_version().map(str::to_string),
     })
+}
+
+/// Conservative image-reference validation. References are only ever passed
+/// as a single argv element (never a shell), but this still rejects
+/// whitespace, control characters, and flag-shaped values outright.
+fn image_reference_is_valid(reference: &str) -> bool {
+    let bytes = reference.as_bytes();
+    if bytes.is_empty() || bytes.len() > 255 || bytes[0] == b'-' {
+        return false;
+    }
+    bytes.iter().all(|b| {
+        b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/' | b':' | b'@')
+    })
+}
+
+fn invalid_reference_response(reference: &str) -> Response {
+    error_response(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "invalid_reference",
+        format!("invalid image reference '{reference}'"),
+    )
+}
+
+/// Engine image store + disk usage, annotated with catalog membership.
+async fn list_images(State(state): State<Arc<ProviderState>>) -> Response {
+    let raw = match state.backend.image_ls_json().await {
+        Ok(raw) => raw,
+        Err(err) => return backend_error_response(&err),
+    };
+    let catalog_refs: std::collections::BTreeSet<String> = state
+        .roots_snapshot()
+        .await
+        .images()
+        .iter()
+        .map(|image| image.image.clone())
+        .collect();
+    let images: Vec<crate::protocol::EngineImage> = raw
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .map(|entry| {
+            let field = |key: &str| {
+                entry
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            let repository = field("Repository");
+            let tag = field("Tag");
+            let reference = format!("{repository}:{tag}");
+            crate::protocol::EngineImage {
+                in_catalog: catalog_refs.contains(&reference)
+                    || catalog_refs.contains(&repository),
+                repository,
+                tag,
+                id: field("ID"),
+                size: field("Size"),
+                created: field("CreatedSince"),
+            }
+        })
+        .collect();
+    let disk_usage = state.backend.system_df().await;
+    Json(crate::protocol::ImageStoreResponse { images, disk_usage }).into_response()
+}
+
+/// Start a background pull of a registry reference into the engine store.
+async fn pull_image(
+    State(state): State<Arc<ProviderState>>,
+    Json(request): Json<crate::protocol::PullImageRequest>,
+) -> Response {
+    let reference = request.reference.trim();
+    if !image_reference_is_valid(reference) {
+        return invalid_reference_response(reference);
+    }
+    let operation_id = state.ops.spawn(
+        "pull",
+        reference.to_string(),
+        state.backend.docker_bin().to_string(),
+        vec!["pull".to_string(), reference.to_string()],
+        crate::ops::PULL_TIMEOUT,
+    );
+    tracing::info!(operation_id, reference, "image pull started");
+    (
+        StatusCode::ACCEPTED,
+        Json(crate::protocol::OperationAccepted { operation_id }),
+    )
+        .into_response()
+}
+
+/// Start a background build of one of the shipped image variants. The build
+/// context is a read-only mount of this repository's packaging tree
+/// (`SANDBOX_BUILD_CONTEXT_DIR`); there is no free-form build input.
+async fn build_image(
+    State(state): State<Arc<ProviderState>>,
+    Json(request): Json<crate::protocol::BuildImageRequest>,
+) -> Response {
+    let Some(context_dir) = state
+        .config
+        .build_context_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+    else {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "build_unavailable",
+            "image builds are disabled: SANDBOX_BUILD_CONTEXT_DIR is not configured",
+        );
+    };
+    let packaging = format!("{context_dir}/packaging/sandbox-image");
+    let (args, tag) = match request.variant {
+        crate::protocol::BuildVariant::Base => (
+            vec![
+                "build".to_string(),
+                "-f".to_string(),
+                format!("{packaging}/Dockerfile"),
+                "--build-arg".to_string(),
+                "BEAR_ARMATURE_BUILD_SHA=container".to_string(),
+                "-t".to_string(),
+                "bears/sandbox:latest".to_string(),
+                // The base Dockerfile COPYs tools/bear-armature, so the
+                // context is the packaging tree root.
+                context_dir.to_string(),
+            ],
+            "bears/sandbox:latest",
+        ),
+        variant => {
+            let name = variant.as_str();
+            (
+                vec![
+                    "build".to_string(),
+                    "-f".to_string(),
+                    format!("{packaging}/Dockerfile.{name}"),
+                    "--build-arg".to_string(),
+                    "BASE_IMAGE=bears/sandbox:latest".to_string(),
+                    "-t".to_string(),
+                    format!("bears/sandbox-{name}:latest"),
+                    packaging,
+                ],
+                // Leaked once per variant name at most; the set is closed.
+                match variant {
+                    crate::protocol::BuildVariant::Rust => "bears/sandbox-rust:latest",
+                    crate::protocol::BuildVariant::Node => "bears/sandbox-node:latest",
+                    crate::protocol::BuildVariant::Godot => "bears/sandbox-godot:latest",
+                    crate::protocol::BuildVariant::Base => unreachable!(),
+                },
+            )
+        }
+    };
+    let operation_id = state.ops.spawn(
+        "build",
+        tag.to_string(),
+        state.backend.docker_bin().to_string(),
+        args,
+        crate::ops::BUILD_TIMEOUT,
+    );
+    tracing::info!(operation_id, tag, "image build started");
+    (
+        StatusCode::ACCEPTED,
+        Json(crate::protocol::OperationAccepted { operation_id }),
+    )
+        .into_response()
+}
+
+/// Synchronous image removal; in-use images are a 409.
+async fn remove_image(
+    State(state): State<Arc<ProviderState>>,
+    Json(request): Json<crate::protocol::RemoveImageRequest>,
+) -> Response {
+    let reference = request.reference.trim();
+    if !image_reference_is_valid(reference) {
+        return invalid_reference_response(reference);
+    }
+    match state.backend.remove_image(reference).await {
+        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Err(detail)) if detail.contains("is being used") || detail.contains("in use") => {
+            error_response(StatusCode::CONFLICT, "image_in_use", detail)
+        }
+        Ok(Err(detail)) => error_response(StatusCode::UNPROCESSABLE_ENTITY, "remove_failed", detail),
+        Err(err) => backend_error_response(&err),
+    }
+}
+
+async fn list_operations(State(state): State<Arc<ProviderState>>) -> Response {
+    Json(state.ops.list()).into_response()
+}
+
+async fn get_operation(
+    State(state): State<Arc<ProviderState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    match state.ops.get(&id) {
+        Some(descriptor) => Json(descriptor).into_response(),
+        None => error_response(
+            StatusCode::NOT_FOUND,
+            "unknown_operation",
+            format!("operation {id} not found (operations do not survive provider restarts)"),
+        ),
+    }
 }
 
 fn backend_error_response(err: &BackendError) -> Response {
@@ -1369,6 +1577,90 @@ mod tests {
         let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(error.kind, "invalid_managed_config");
         let _ = std::fs::remove_dir_all(&workspaces_dir);
+    }
+
+    #[test]
+    fn image_reference_validation_blocks_hostile_values() {
+        for ok in [
+            "bears/sandbox:latest",
+            "ghcr.io/org/bears-sandbox-rust:v1.2",
+            "alpine",
+            "img@sha256:abcdef0123",
+        ] {
+            assert!(image_reference_is_valid(ok), "{ok}");
+        }
+        for bad in ["", "-rm", "--privileged", "a b", "img;rm -rf /", "img\n"] {
+            assert!(!image_reference_is_valid(bad), "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn image_endpoints_validate_before_touching_docker() {
+        let app = create_sandbox_app(test_config("")).unwrap();
+
+        // Flag-shaped pull reference is rejected deterministically.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sandbox/v1/images/pull")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"reference": "--privileged"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(error.kind, "invalid_reference");
+
+        // Builds are disabled without a configured context dir.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sandbox/v1/images/build")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"variant": "rust"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(error.kind, "build_unavailable");
+
+        // Unknown operations 404 with the restart caveat.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/sandbox/v1/operations/nope")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(error.kind, "unknown_operation");
+
+        // Operations listing is empty but well-formed.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/sandbox/v1/operations")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

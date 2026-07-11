@@ -15,6 +15,8 @@ pub enum BackendError {
     RuntimeUnavailable(String),
     #[error("sandbox {id}: {detail}")]
     Operation { id: String, detail: String },
+    #[error("{what} failed: {detail}")]
+    CommandFailed { what: String, detail: String },
     #[error(transparent)]
     Proc(#[from] crate::proc::ProcError),
 }
@@ -100,6 +102,36 @@ impl Backend {
     pub async fn list_adopted(&self) -> Result<Vec<AdoptedSandbox>, BackendError> {
         match self {
             Self::DockerCli(b) => b.list_adopted().await,
+        }
+    }
+
+    /// Engine image store as `docker image ls --format {{json .}}` lines.
+    pub async fn image_ls_json(&self) -> Result<String, BackendError> {
+        match self {
+            Self::DockerCli(b) => b.image_ls_json().await,
+        }
+    }
+
+    /// Human-readable `docker system df` summary, when the engine answers.
+    pub async fn system_df(&self) -> Option<String> {
+        match self {
+            Self::DockerCli(b) => b.system_df().await,
+        }
+    }
+
+    /// Remove an image from the engine store. `Ok(Err(stderr))` = docker
+    /// refused (e.g. image in use); `Err` = the engine was unreachable.
+    pub async fn remove_image(&self, reference: &str) -> Result<Result<(), String>, BackendError> {
+        match self {
+            Self::DockerCli(b) => b.remove_image(reference).await,
+        }
+    }
+
+    /// The docker binary this backend invokes (for spawning long-running
+    /// image operations with the same engine connection env).
+    pub fn docker_bin(&self) -> &str {
+        match self {
+            Self::DockerCli(b) => b.docker_bin(),
         }
     }
 }

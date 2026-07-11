@@ -336,7 +336,7 @@ fn duration_label(milliseconds: Option<i128>) -> String {
 fn elapsed_ms(start: Option<OffsetDateTime>, end: Option<OffsetDateTime>) -> Option<i128> {
     let start = start?;
     let end = end.unwrap_or_else(OffsetDateTime::now_utc);
-    Some((end - start).whole_milliseconds().into())
+    Some((end - start).whole_milliseconds())
 }
 
 fn proposal_count_from_summary(output: &Value) -> Option<usize> {
@@ -411,14 +411,14 @@ async fn list_recent_reflection_runs(
             OffsetDateTime,
         ),
     >(
-        r#"
+        r"
         SELECT id, lane, trigger, status, output_summary, error, started_at, completed_at, created_at
         FROM bear_reflection_runs
         WHERE bear_id = $1
           AND lane IN ('memory_curate', 'archive_harvest', 'recall_index', 'context_compact')
         ORDER BY created_at DESC
         LIMIT $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(limit.clamp(1, 100))

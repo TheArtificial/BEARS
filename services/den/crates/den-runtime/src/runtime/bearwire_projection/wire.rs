@@ -117,7 +117,7 @@ pub fn runtime_semantic_event_to_bearwire_events(
             json!({
                 "delta": text,
                 "source": "provider_reasoning",
-                "replay_policy": "none",
+                "replay_policy": "thought",
             }),
         )],
         RuntimeSemanticEvent::StatusText { text } => vec![BearWireEvent::ephemeral(

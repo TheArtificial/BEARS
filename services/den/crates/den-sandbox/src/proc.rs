@@ -198,6 +198,143 @@ async fn read_limited<R: tokio::io::AsyncRead + Unpin>(
     Ok((bytes, truncated))
 }
 
+/// Shared, byte-capped live tail of a running command's combined output.
+/// Readers may snapshot it at any time (e.g. an operation-status endpoint
+/// while a long `docker build` streams).
+#[derive(Debug)]
+pub struct TailBuffer {
+    bytes: Vec<u8>,
+    limit: usize,
+    truncated: bool,
+}
+
+impl TailBuffer {
+    pub fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+            truncated: false,
+        }
+    }
+
+    pub fn push(&mut self, chunk: &[u8]) {
+        self.bytes.extend_from_slice(chunk);
+        if self.bytes.len() > self.limit {
+            let drop = self.bytes.len() - self.limit;
+            self.bytes.drain(..drop);
+            self.truncated = true;
+        }
+    }
+
+    pub fn snapshot_lossy(&self) -> String {
+        String::from_utf8_lossy(&self.bytes).into_owned()
+    }
+
+    pub fn truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
+#[derive(Debug)]
+pub struct StreamedOutcome {
+    pub exit_code: Option<i64>,
+    pub timed_out: bool,
+    pub elapsed: Duration,
+}
+
+impl StreamedOutcome {
+    pub fn success(&self) -> bool {
+        !self.timed_out && self.exit_code == Some(0)
+    }
+}
+
+/// Like [`run_command`], but pushes stdout and stderr chunks into `sink` as
+/// they arrive (interleaved in arrival order) instead of buffering them.
+/// Same kill-on-timeout contract; `spec.max_output_bytes`/`window` are
+/// ignored — the sink enforces its own tail cap.
+pub async fn run_streaming(
+    spec: CommandSpec<'_>,
+    sink: std::sync::Arc<std::sync::Mutex<TailBuffer>>,
+) -> Result<StreamedOutcome, ProcError> {
+    let started = std::time::Instant::now();
+    let mut command = Command::new(spec.program);
+    command
+        .args(spec.args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(cwd) = spec.cwd {
+        command.current_dir(cwd);
+    }
+    for (key, value) in spec.env {
+        command.env(key, value);
+    }
+    let mut child = command.spawn().map_err(|source| ProcError::Spawn {
+        program: spec.program.to_string(),
+        source,
+    })?;
+
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let stdout_task = tokio::spawn(stream_into(stdout, sink.clone()));
+    let stderr_task = tokio::spawn(stream_into(stderr, sink));
+
+    let (exit_code, timed_out) = match tokio::time::timeout(spec.timeout, child.wait()).await {
+        Ok(status) => {
+            let status = status.map_err(|source| ProcError::Io {
+                program: spec.program.to_string(),
+                source,
+            })?;
+            (status.code().map(i64::from), false)
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            (None, true)
+        }
+    };
+    for task in [stdout_task, stderr_task] {
+        match task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(source)) => {
+                return Err(ProcError::Io {
+                    program: spec.program.to_string(),
+                    source,
+                })
+            }
+            Err(join_err) => {
+                return Err(ProcError::Io {
+                    program: spec.program.to_string(),
+                    source: std::io::Error::other(join_err),
+                })
+            }
+        }
+    }
+
+    Ok(StreamedOutcome {
+        exit_code,
+        timed_out,
+        elapsed: started.elapsed(),
+    })
+}
+
+async fn stream_into<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    sink: std::sync::Arc<std::sync::Mutex<TailBuffer>>,
+) -> Result<(), std::io::Error> {
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            return Ok(());
+        }
+        if let Ok(mut tail) = sink.lock() {
+            tail.push(&buf[..n]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,5 +380,30 @@ mod tests {
         let out = run_command(spec).await.unwrap();
         assert_eq!(out.stdout, b"bbbb");
         assert!(out.stdout_truncated);
+    }
+
+    #[tokio::test]
+    async fn run_streaming_delivers_chunks_and_keeps_tail() {
+        let sink = std::sync::Arc::new(std::sync::Mutex::new(TailBuffer::new(8)));
+        let a = args(&["-c", "printf 'aaaa'; printf 'bbbbcccc' >&2; printf 'dddd'"]);
+        let outcome = run_streaming(CommandSpec::new("sh", &a), sink.clone())
+            .await
+            .unwrap();
+        assert!(outcome.success());
+        let tail = sink.lock().unwrap();
+        // 16 bytes total through an 8-byte tail: only the last 8 survive.
+        assert_eq!(tail.snapshot_lossy().len(), 8);
+        assert!(tail.truncated());
+    }
+
+    #[tokio::test]
+    async fn run_streaming_kills_on_timeout() {
+        let sink = std::sync::Arc::new(std::sync::Mutex::new(TailBuffer::new(1024)));
+        let a = args(&["-c", "printf 'started'; sleep 5"]);
+        let mut spec = CommandSpec::new("sh", &a);
+        spec.timeout = Duration::from_millis(200);
+        let outcome = run_streaming(spec, sink.clone()).await.unwrap();
+        assert!(outcome.timed_out);
+        assert!(sink.lock().unwrap().snapshot_lossy().contains("started"));
     }
 }

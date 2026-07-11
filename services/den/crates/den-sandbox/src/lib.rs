@@ -10,6 +10,7 @@ pub mod backend;
 pub mod client;
 pub mod managed;
 pub mod metrics;
+pub mod ops;
 pub mod policy;
 pub mod proc;
 pub mod protocol;

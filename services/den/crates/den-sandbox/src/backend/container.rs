@@ -343,6 +343,45 @@ impl DockerCliBackend {
         Ok(path)
     }
 
+    pub(crate) fn docker_bin(&self) -> &str {
+        &self.docker_bin
+    }
+
+    pub(crate) async fn image_ls_json(&self) -> Result<String, BackendError> {
+        let out = self
+            .docker(&["image", "ls", "--format", "{{json .}}"], None)
+            .await?;
+        if out.success() {
+            Ok(out.stdout_lossy())
+        } else {
+            Err(BackendError::CommandFailed {
+                what: "docker image ls".to_string(),
+                detail: out.stderr_lossy().trim().to_string(),
+            })
+        }
+    }
+
+    pub(crate) async fn system_df(&self) -> Option<String> {
+        let out = self.docker(&["system", "df"], None).await.ok()?;
+        if out.success() {
+            Some(out.stdout_lossy())
+        } else {
+            None
+        }
+    }
+
+    pub(crate) async fn remove_image(
+        &self,
+        reference: &str,
+    ) -> Result<Result<(), String>, BackendError> {
+        let out = self.docker(&["rmi", reference], None).await?;
+        if out.success() {
+            Ok(Ok(()))
+        } else {
+            Ok(Err(out.stderr_lossy().trim().to_string()))
+        }
+    }
+
     async fn docker(
         &self,
         args: &[&str],
