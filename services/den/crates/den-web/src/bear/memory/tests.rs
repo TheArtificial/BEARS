@@ -25,6 +25,7 @@ fn memory_templates_compile() {
         "bear/memory/search.html",
         "bear/memory/browse.html",
         "bear/memory/record.html",
+        "bear/memory/reflection_run.html",
         "bear/memory/entities.html",
         "bear/memory/entity.html",
         "bear/memory_proposal.html",

@@ -106,12 +106,13 @@
 </div>
 
 <div class="box">
-    <h3>R</h3>eflection performance</h3>
+    <h3>Reflection performance</h3>
     <p class="form-hint">
         Recent sleep-time memory work across curation, archive harvest, recall indexing,
         and context compaction. Queue wait is time from enqueue to start; runtime is time
         from start to completion (or age while running).
     </p>
+
     <div
         style="
             display: grid;
@@ -126,10 +127,78 @@
         <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.failed }}</strong><br />failed</div>
         <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.avg_completed_duration_label | e }}</strong><br />avg runtime</div>
     </div>
+
+    <div
+        style="
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+            gap: 0.75rem;
+            margin: 1rem 0;
+        "
+    >
+        <div class="box" style="margin: 0">
+            <strong{% if reflection_slo.oldest_queued_attention %} class="form-errors"{% endif %}>{{ reflection_slo.oldest_queued_label | e }}</strong><br />oldest queued
+        </div>
+        <div class="box" style="margin: 0">
+            <strong{% if reflection_slo.failure_attention %} class="form-errors"{% endif %}>{{ reflection_slo.failure_rate_24h_label | e }}</strong><br />24h failure rate
+            <div class="form-hint">{{ reflection_slo.failed_24h }} / {{ reflection_slo.runs_24h }} runs</div>
+        </div>
+    </div>
+
+    {% if reflection_slo.lane_runtimes %}
+    <details>
+        <summary>Runtime percentiles by lane (last 7 days)</summary>
+        <table>
+            <thead>
+                <tr>
+                    <th>Lane</th>
+                    <th>Completed</th>
+                    <th>p50</th>
+                    <th>p95</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for lane in reflection_slo.lane_runtimes %}
+                <tr>
+                    <td><code>{{ lane.lane | e }}</code></td>
+                    <td>{{ lane.completed_runs }}</td>
+                    <td>{{ lane.p50_duration_label | e }}</td>
+                    <td>{{ lane.p95_duration_label | e }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </details>
+    {% endif %}
+
+    <form method="get" action="/bear/{{ bear.slug | e }}/memory" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin: 1rem 0;">
+        <label>
+            Lane<br />
+            <select name="reflection_lane">
+                <option value="all"{% if reflection_run_filters.selected_lane == "all" %} selected{% endif %}>All lanes</option>
+                {% for lane in reflection_run_filters.lane_options %}
+                <option value="{{ lane | e }}"{% if reflection_run_filters.selected_lane == lane %} selected{% endif %}>{{ lane | e }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            Status<br />
+            <select name="reflection_status">
+                <option value="all"{% if reflection_run_filters.selected_status == "all" %} selected{% endif %}>All statuses</option>
+                {% for status in reflection_run_filters.status_options %}
+                <option value="{{ status | e }}"{% if reflection_run_filters.selected_status == status %} selected{% endif %}>{{ status | e }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="submit">Filter runs</button>
+        <a href="/bear/{{ bear.slug | e }}/memory">Clear</a>
+    </form>
+
     {% if reflection_runs %}
     <table>
         <thead>
-</thead>            <tr></tr>
+            <tr>
+                <th>Run</th>
                 <th>Lane</th>
                 <th>Status</th>
                 <th>Trigger</th>
@@ -142,8 +211,9 @@
         <tbody>
             {% for run in reflection_runs %}
             <tr>
+                <td><a href="/bear/{{ bear.slug | e }}/memory/reflection/{{ run.id }}"><code>{{ run.short_id | e }}</code></a></td>
                 <td><code>{{ run.lane | e }}</code></td>
-                <td>{{ run.status_label | e }}</td>
+                <td>{{ run.status_label | e }}{% if run.status == "queued" %}<span class="form-hint"> · age {{ run.queued_age_label | e }}</span>{% endif %}</td>
                 <td>{{ run.trigger | e }}</td>
                 <td>{{ run.queue_wait_label | e }}</td>
                 <td>{{ run.duration_label | e }}</td>
@@ -159,7 +229,7 @@
         </tbody>
     </table>
     {% else %}
-    <p class="form-hint">No reflection runs recorded yet.</p>
+    <p class="form-hint">No reflection runs match these filters.</p>
     {% endif %}
 </div>
 

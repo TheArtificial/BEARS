@@ -14,13 +14,14 @@ Landed baseline:
 - Bear memory dashboard surfaces Postgres and native SQLite memory proposals.
 - Dashboard shows recent reflection runs for `memory_curate`, `archive_harvest`, `recall_index`, and `context_compact`.
 - Dashboard shows queue/running/completed/failed counts, average completed runtime, per-run queue wait, runtime, trigger, lane, and outcome counts.
+- Dashboard has lane/status filters plus SLO-style indicators for oldest queued run age, 24h failure rate, and p50/p95 runtime by lane.
+- Reflection run detail pages (`/bear/{slug}/memory/reflection/{run_id}`) show timing metadata, `input_summary`, `output_summary`, error text, linked proposal ids/proposals, and conversation identifiers when present.
 
 Next slices:
 
-1. Add lane-specific detail pages for a reflection run (`/bear/{slug}/memory/reflection/{run_id}`) with full `input_summary`, `output_summary`, error, linked proposal ids, and conversation link when present.
-2. Add filters by lane/status and age buckets (`queued > N minutes`, `failed today`, `slow completed runs`).
-3. Add operator affordances: retry failed run, enqueue `archive_harvest`, enqueue `memory_curate`, enqueue `recall_index`.
-4. Add lightweight SLO indicators: oldest queued run age, failure rate over last 24h, p50/p95 runtime by lane.
+1. Add richer age/attention chips (`queued > N minutes`, `failed today`, `slow completed runs`) that jump directly to filtered views.
+2. Add operator affordances: retry failed run, enqueue `archive_harvest`, enqueue `memory_curate`, enqueue `recall_index`.
+3. Decide whether reflection run detail pages should link to a safe conversation summary view without exposing raw pair/chat transcripts.
 
 Non-goals:
 

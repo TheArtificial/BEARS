@@ -18,7 +18,7 @@ use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path as FsPath, PathBuf};
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use crate::{
@@ -60,6 +60,10 @@ pub fn router() -> Router<AppState> {
         )
         .route_with_tsr("/bear/{slug}/memory/records/{memory_id}", get(record_view))
         .route_with_tsr(
+            "/bear/{slug}/memory/reflection/{run_id}",
+            get(reflection_run_get),
+        )
+        .route_with_tsr(
             "/bear/{slug}/memory/proposals/{proposal_id}",
             get(proposal_get).post(proposal_post),
         )
@@ -77,6 +81,10 @@ struct DashboardQuery {
     import_notice: Option<String>,
     #[serde(default)]
     import_error: Option<String>,
+    #[serde(default)]
+    reflection_lane: Option<String>,
+    #[serde(default)]
+    reflection_status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,6 +205,7 @@ struct LinkedRecord {
 #[derive(Debug, Serialize, Clone)]
 struct ReflectionRunView {
     id: String,
+    short_id: String,
     lane: String,
     trigger: String,
     status: String,
@@ -204,8 +213,12 @@ struct ReflectionRunView {
     created_at: String,
     started_at: Option<String>,
     completed_at: Option<String>,
+    conversation_id: Option<String>,
+    conversation_key: Option<String>,
+    conversation_date: Option<String>,
     queue_wait_label: String,
     duration_label: String,
+    queued_age_label: String,
     proposal_count: Option<usize>,
     scanned_artifacts: Option<i64>,
     output_summary: Value,
@@ -220,6 +233,44 @@ struct ReflectionRunSummary {
     completed: usize,
     failed: usize,
     avg_completed_duration_label: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ReflectionRunFilterView {
+    selected_lane: String,
+    selected_status: String,
+    lane_options: Vec<String>,
+    status_options: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ReflectionLaneRuntimeView {
+    lane: String,
+    completed_runs: i64,
+    p50_duration_label: String,
+    p95_duration_label: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ReflectionPerformanceSloView {
+    oldest_queued_label: String,
+    oldest_queued_attention: bool,
+    runs_24h: i64,
+    failed_24h: i64,
+    failure_rate_24h_label: String,
+    failure_attention: bool,
+    lane_runtimes: Vec<ReflectionLaneRuntimeView>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ReflectionRunDetailView {
+    run: ReflectionRunView,
+    input_summary: Value,
+    input_summary_pretty: String,
+    output_summary_pretty: String,
+    proposal_ids: Vec<String>,
+    linked_proposals: Vec<MemoryProposalView>,
+    item_count: i64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -339,18 +390,107 @@ fn elapsed_ms(start: Option<OffsetDateTime>, end: Option<OffsetDateTime>) -> Opt
     Some((end - start).whole_milliseconds())
 }
 
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
+fn valid_reflection_lane(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if matches!(
+        value,
+        "memory_curate" | "archive_harvest" | "recall_index" | "context_compact"
+    ) {
+        Some(value.to_string())
+    } else {
+        None
+    }
+}
+
+fn valid_reflection_status(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if matches!(
+        value,
+        "queued"
+            | "running"
+            | "completed"
+            | "failed"
+            | "cancelled"
+            | "skipped"
+            | "needs_human_review"
+    ) {
+        Some(value.to_string())
+    } else {
+        None
+    }
+}
+
+fn reflection_run_filter_view(lane: Option<&str>, status: Option<&str>) -> ReflectionRunFilterView {
+    ReflectionRunFilterView {
+        selected_lane: lane.unwrap_or("all").to_string(),
+        selected_status: status.unwrap_or("all").to_string(),
+        lane_options: [
+            "memory_curate",
+            "archive_harvest",
+            "recall_index",
+            "context_compact",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        status_options: [
+            "queued",
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+            "skipped",
+            "needs_human_review",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    }
+}
+
+fn proposal_ids_from_summary(summary: &Value) -> Vec<String> {
+    let mut ids = Vec::new();
+    for key in [
+        "proposal_ids",
+        "created_proposal_ids",
+        "resolved_proposal_ids",
+    ] {
+        if let Some(values) = summary.get(key).and_then(Value::as_array) {
+            for value in values {
+                if let Some(id) = value.as_str() {
+                    if !ids.iter().any(|existing| existing == id) {
+                        ids.push(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if let Some(outcomes) = summary.get("outcomes").and_then(Value::as_array) {
+        for outcome in outcomes {
+            if let Some(id) = outcome.get("proposal_id").and_then(Value::as_str) {
+                if !ids.iter().any(|existing| existing == id) {
+                    ids.push(id.to_string());
+                }
+            }
+        }
+    }
+    ids
+}
+
 fn proposal_count_from_summary(output: &Value) -> Option<usize> {
-    output
-        .get("created_proposal_ids")
-        .and_then(Value::as_array)
-        .map(Vec::len)
-        .or_else(|| {
-            output
-                .get("resolved_proposal_ids")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-        })
-        .or_else(|| output.get("outcomes").and_then(Value::as_array).map(Vec::len))
+    let proposal_count = proposal_ids_from_summary(output).len();
+    if proposal_count > 0 {
+        Some(proposal_count)
+    } else {
+        output
+            .get("outcomes")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+    }
 }
 
 fn scanned_artifacts_from_summary(output: &Value) -> Option<i64> {
@@ -364,7 +504,10 @@ fn reflection_summary(runs: &[ReflectionRunView]) -> ReflectionRunSummary {
             if let (Some(started), Some(completed)) = (&run.started_at, &run.completed_at) {
                 if let (Ok(started), Ok(completed)) = (
                     OffsetDateTime::parse(started, &time::format_description::well_known::Rfc3339),
-                    OffsetDateTime::parse(completed, &time::format_description::well_known::Rfc3339),
+                    OffsetDateTime::parse(
+                        completed,
+                        &time::format_description::well_known::Rfc3339,
+                    ),
                 ) {
                     completed_durations.push((completed - started).whole_milliseconds());
                 }
@@ -396,6 +539,8 @@ async fn list_recent_reflection_runs(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
     limit: i64,
+    lane_filter: Option<&str>,
+    status_filter: Option<&str>,
 ) -> Vec<ReflectionRunView> {
     let rows = sqlx::query_as::<
         _,
@@ -409,30 +554,58 @@ async fn list_recent_reflection_runs(
             Option<OffsetDateTime>,
             Option<OffsetDateTime>,
             OffsetDateTime,
+            Option<String>,
+            Option<String>,
+            Option<time::Date>,
         ),
     >(
         r"
-        SELECT id, lane, trigger, status, output_summary, error, started_at, completed_at, created_at
+        SELECT id, lane, trigger, status, output_summary, error, started_at, completed_at, created_at,
+               conversation_id, conversation_key, conversation_date
         FROM bear_reflection_runs
         WHERE bear_id = $1
           AND lane IN ('memory_curate', 'archive_harvest', 'recall_index', 'context_compact')
+          AND ($3::text IS NULL OR lane = $3)
+          AND ($4::text IS NULL OR status = $4)
         ORDER BY created_at DESC
         LIMIT $2
         ",
     )
     .bind(bear_id)
-    .bind(limit.clamp(1, 100))
+    .bind(limit.clamp(1, 200))
+    .bind(lane_filter)
+    .bind(status_filter)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
     rows.into_iter()
         .map(
-            |(id, lane, trigger, status, output_summary, error, started_at, completed_at, created_at)| {
+            |(
+                id,
+                lane,
+                trigger,
+                status,
+                output_summary,
+                error,
+                started_at,
+                completed_at,
+                created_at,
+                conversation_id,
+                conversation_key,
+                conversation_date,
+            )| {
                 let queue_wait_ms = elapsed_ms(Some(created_at), started_at.or(completed_at));
                 let duration_ms = elapsed_ms(started_at, completed_at);
+                let queued_age_ms = if status == "queued" {
+                    elapsed_ms(Some(created_at), None)
+                } else {
+                    None
+                };
+                let id = id.to_string();
                 ReflectionRunView {
-                    id: id.to_string(),
+                    short_id: short_id(&id),
+                    id,
                     lane,
                     trigger,
                     status_label: match status.as_str() {
@@ -446,8 +619,12 @@ async fn list_recent_reflection_runs(
                     created_at: created_at.to_string(),
                     started_at: started_at.map(|value| value.to_string()),
                     completed_at: completed_at.map(|value| value.to_string()),
+                    conversation_id,
+                    conversation_key,
+                    conversation_date: conversation_date.map(|value| value.to_string()),
                     queue_wait_label: duration_label(queue_wait_ms),
                     duration_label: duration_label(duration_ms),
+                    queued_age_label: duration_label(queued_age_ms),
                     proposal_count: proposal_count_from_summary(&output_summary),
                     scanned_artifacts: scanned_artifacts_from_summary(&output_summary),
                     output_summary,
@@ -456,6 +633,226 @@ async fn list_recent_reflection_runs(
             },
         )
         .collect()
+}
+
+async fn reflection_performance_slo(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+) -> ReflectionPerformanceSloView {
+    let (oldest_queued_at, runs_24h, failed_24h) = sqlx::query_as::<
+        _,
+        (Option<OffsetDateTime>, i64, i64),
+    >(
+        r"
+        SELECT
+            MIN(created_at) FILTER (WHERE status = 'queued') AS oldest_queued_at,
+            COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::bigint AS runs_24h,
+            COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours' AND status = 'failed')::bigint AS failed_24h
+        FROM bear_reflection_runs
+        WHERE bear_id = $1
+          AND lane IN ('memory_curate', 'archive_harvest', 'recall_index', 'context_compact')
+        ",
+    )
+    .bind(bear_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or((None, 0, 0));
+
+    let oldest_queued_ms = oldest_queued_at
+        .map(|created_at| (OffsetDateTime::now_utc() - created_at).whole_milliseconds());
+    let failure_rate = if runs_24h > 0 {
+        (failed_24h as f64 / runs_24h as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let lane_rows = sqlx::query_as::<_, (String, i64, Option<f64>, Option<f64>)>(
+        r"
+        SELECT lane,
+               COUNT(*)::bigint AS completed_runs,
+               percentile_cont(0.50) WITHIN GROUP (
+                   ORDER BY EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000
+               ) AS p50_ms,
+               percentile_cont(0.95) WITHIN GROUP (
+                   ORDER BY EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000
+               ) AS p95_ms
+        FROM bear_reflection_runs
+        WHERE bear_id = $1
+          AND lane IN ('memory_curate', 'archive_harvest', 'recall_index', 'context_compact')
+          AND status = 'completed'
+          AND started_at IS NOT NULL
+          AND completed_at IS NOT NULL
+          AND completed_at >= NOW() - INTERVAL '7 days'
+        GROUP BY lane
+        ORDER BY lane ASC
+        ",
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    ReflectionPerformanceSloView {
+        oldest_queued_label: duration_label(oldest_queued_ms),
+        oldest_queued_attention: oldest_queued_ms
+            .map(|ms| ms >= Duration::minutes(10).whole_milliseconds())
+            .unwrap_or(false),
+        runs_24h,
+        failed_24h,
+        failure_rate_24h_label: format!("{failure_rate:.0}%"),
+        failure_attention: failed_24h > 0,
+        lane_runtimes: lane_rows
+            .into_iter()
+            .map(
+                |(lane, completed_runs, p50_ms, p95_ms)| ReflectionLaneRuntimeView {
+                    lane,
+                    completed_runs,
+                    p50_duration_label: duration_label(p50_ms.map(|value| value.round() as i128)),
+                    p95_duration_label: duration_label(p95_ms.map(|value| value.round() as i128)),
+                },
+            )
+            .collect(),
+    }
+}
+
+async fn get_reflection_run_detail(
+    pool: &sqlx::PgPool,
+    manager: &MemoryStoreManager,
+    bear_id: Uuid,
+    run_id: Uuid,
+) -> Result<Option<ReflectionRunDetailView>, CustomError> {
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            String,
+            serde_json::Value,
+            serde_json::Value,
+            Option<String>,
+            Option<OffsetDateTime>,
+            Option<OffsetDateTime>,
+            OffsetDateTime,
+            Option<String>,
+            Option<String>,
+            Option<time::Date>,
+        ),
+    >(
+        r"
+        SELECT id, lane, trigger, status, input_summary, output_summary, error,
+               started_at, completed_at, created_at, conversation_id, conversation_key, conversation_date
+        FROM bear_reflection_runs
+        WHERE bear_id = $1
+          AND id = $2
+          AND lane IN ('memory_curate', 'archive_harvest', 'recall_index', 'context_compact')
+        ",
+    )
+    .bind(bear_id)
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some((
+        id,
+        lane,
+        trigger,
+        status,
+        input_summary,
+        output_summary,
+        error,
+        started_at,
+        completed_at,
+        created_at,
+        conversation_id,
+        conversation_key,
+        conversation_date,
+    )) = row
+    else {
+        return Ok(None);
+    };
+
+    let queue_wait_ms = elapsed_ms(Some(created_at), started_at.or(completed_at));
+    let duration_ms = elapsed_ms(started_at, completed_at);
+    let queued_age_ms = if status == "queued" {
+        elapsed_ms(Some(created_at), None)
+    } else {
+        None
+    };
+    let output_proposal_ids = proposal_ids_from_summary(&output_summary);
+    let input_proposal_ids = proposal_ids_from_summary(&input_summary);
+    let mut proposal_ids = input_proposal_ids;
+    for id in output_proposal_ids {
+        if !proposal_ids.iter().any(|existing| existing == &id) {
+            proposal_ids.push(id);
+        }
+    }
+
+    let mut linked_proposals = Vec::new();
+    for proposal_id in &proposal_ids {
+        if let Ok(uuid) = Uuid::parse_str(proposal_id) {
+            if let Some(row) = memory_proposals::get_for_bear(pool, bear_id, uuid).await? {
+                linked_proposals.push(proposal_view_from_postgres(row));
+                continue;
+            }
+        }
+        if let Ok(store) = manager.store_for_bear(bear_id).await {
+            if let Some(row) = get_sqlite_memory_proposal(&store, proposal_id).await? {
+                linked_proposals.push(proposal_view_from_sqlite(row));
+            }
+        }
+    }
+
+    let item_count = sqlx::query_scalar::<_, i64>(
+        r"
+        SELECT COUNT(*)::bigint
+        FROM bear_reflection_run_items
+        WHERE run_id = $1
+        ",
+    )
+    .bind(run_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let id = id.to_string();
+    Ok(Some(ReflectionRunDetailView {
+        run: ReflectionRunView {
+            short_id: short_id(&id),
+            id,
+            lane,
+            trigger,
+            status_label: match status.as_str() {
+                "queued" => "queued".to_string(),
+                "running" | "started" => "running".to_string(),
+                "completed" => "completed".to_string(),
+                "failed" => "failed".to_string(),
+                other => other.to_string(),
+            },
+            status,
+            created_at: created_at.to_string(),
+            started_at: started_at.map(|value| value.to_string()),
+            completed_at: completed_at.map(|value| value.to_string()),
+            conversation_id,
+            conversation_key,
+            conversation_date: conversation_date.map(|value| value.to_string()),
+            queue_wait_label: duration_label(queue_wait_ms),
+            duration_label: duration_label(duration_ms),
+            queued_age_label: duration_label(queued_age_ms),
+            proposal_count: proposal_count_from_summary(&output_summary),
+            scanned_artifacts: scanned_artifacts_from_summary(&output_summary),
+            output_summary: output_summary.clone(),
+            error,
+        },
+        input_summary_pretty: serde_json::to_string_pretty(&input_summary)
+            .unwrap_or_else(|_| "{}".to_string()),
+        output_summary_pretty: serde_json::to_string_pretty(&output_summary)
+            .unwrap_or_else(|_| "{}".to_string()),
+        input_summary,
+        proposal_ids,
+        linked_proposals,
+        item_count,
+    }))
 }
 
 fn proposal_view_from_postgres(row: memory_proposals::MemoryProposalRow) -> MemoryProposalView {
@@ -514,7 +911,10 @@ fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
             .and_then(Value::as_str)
             .map(str::to_string),
         source_paths,
-        source_refs: payload.get("source_refs").cloned().unwrap_or_else(|| json!({})),
+        source_refs: payload
+            .get("source_refs")
+            .cloned()
+            .unwrap_or_else(|| json!({})),
         suggested_action: string_field("suggested_action", "unspecified"),
         target_ref: payload
             .get("target_ref")
@@ -566,17 +966,13 @@ async fn list_dashboard_proposals(
     status: Option<&str>,
     limit: i64,
 ) -> Vec<MemoryProposalView> {
-    let mut proposals: Vec<MemoryProposalView> = memory_proposals::list_for_bear(
-        state.sqlx_pool(),
-        bear_id,
-        status,
-        limit,
-    )
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(proposal_view_from_postgres)
-    .collect();
+    let mut proposals: Vec<MemoryProposalView> =
+        memory_proposals::list_for_bear(state.sqlx_pool(), bear_id, status, limit)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(proposal_view_from_postgres)
+            .collect();
 
     if let Ok(store) = manager.store_for_bear(bear_id).await {
         proposals.extend(
@@ -731,12 +1127,27 @@ async fn dashboard_view(
         .collect();
 
     let proposals = list_dashboard_proposals(&state, &manager, id, None, 10).await;
-    let pending_proposals = list_dashboard_proposals(&state, &manager, id, Some("pending"), 10).await;
+    let pending_proposals =
+        list_dashboard_proposals(&state, &manager, id, Some("pending"), 10).await;
     let pair_reflection_runs = pair_reflection::list_recent_for_bear(state.sqlx_pool(), id, 8)
         .await
         .unwrap_or_default();
-    let reflection_runs = list_recent_reflection_runs(state.sqlx_pool(), id, 12).await;
-    let reflection_run_summary = reflection_summary(&reflection_runs);
+    let reflection_lane = valid_reflection_lane(query.reflection_lane.as_deref());
+    let reflection_status = valid_reflection_status(query.reflection_status.as_deref());
+    let reflection_runs = list_recent_reflection_runs(
+        state.sqlx_pool(),
+        id,
+        25,
+        reflection_lane.as_deref(),
+        reflection_status.as_deref(),
+    )
+    .await;
+    let reflection_run_summary = reflection_summary(
+        &list_recent_reflection_runs(state.sqlx_pool(), id, 100, None, None).await,
+    );
+    let reflection_run_filters =
+        reflection_run_filter_view(reflection_lane.as_deref(), reflection_status.as_deref());
+    let reflection_slo = reflection_performance_slo(state.sqlx_pool(), id).await;
 
     web::render_template(
         &state,
@@ -755,6 +1166,8 @@ async fn dashboard_view(
             pair_reflection_runs,
             reflection_runs,
             reflection_run_summary,
+            reflection_run_filters,
+            reflection_slo,
             import_notice => query.import_notice.as_deref().map(str::trim).filter(|s| !s.is_empty()),
             import_error => query.import_error.as_deref().map(str::trim).filter(|s| !s.is_empty()),
             legacy_import_locked,
@@ -1459,6 +1872,41 @@ async fn entity_detail_view(
             entity,
             handles,
             related,
+            can_manage_bear,
+            native_runtime => true,
+            ..bear_nav_context(&bear, "memory"),
+        },
+    )
+    .await
+}
+
+// ---------------------------------------------------------------------------
+// Reflection runs (performance + review trace)
+// ---------------------------------------------------------------------------
+
+async fn reflection_run_get(
+    Path((slug, run_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth_session: crate::auth_backend::AuthSession,
+) -> Result<Response, CustomError> {
+    let user = session_user(&auth_session).await?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
+        return Ok(r.into_response());
+    }
+    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
+    let can_manage_bear = viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await?;
+    let manager = MemoryStoreManager::new(state.config.as_ref());
+    let detail = get_reflection_run_detail(state.sqlx_pool(), &manager, bear.id, run_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("reflection run not found".to_string()))?;
+
+    web::render_template(
+        &state,
+        "bear/memory/reflection_run.html",
+        auth_session,
+        context! {
+            bear,
+            detail,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "memory"),
