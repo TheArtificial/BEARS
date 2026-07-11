@@ -24,6 +24,7 @@ pub async fn create_memory_proposal(
 ) -> Result<SqliteMemoryProposal, DenError> {
     let enriched = enrich_payload_with_freshness(store, payload).await?;
     let enriched = enrich_payload_with_archive_lane(&enriched, suggested_action);
+    let enriched = enrich_payload_with_sensitivity_gate(&enriched, sensitivity);
     let payload = payload_with_dedupe_key(&enriched, suggested_action, sensitivity);
     let effective_requires_human = requires_human
         || payload
@@ -89,6 +90,29 @@ fn enrich_payload_with_archive_lane(payload: &Value, suggested_action: &str) -> 
             // ponytail: archive harvest is represented as archive_index proposals only;
             // upgrade path is a dedicated archive-harvest runner with richer ambiguity scoring.
             "detector": "archive-index-proposal-v1"
+        }),
+    );
+    payload
+}
+
+fn enrich_payload_with_sensitivity_gate(payload: &Value, sensitivity: &str) -> Value {
+    if !matches!(
+        sensitivity.trim(),
+        "person" | "secret_risk" | "external_untrusted" | "unknown"
+    ) {
+        return payload.clone();
+    }
+
+    let mut payload = ensure_object_payload(payload);
+    let obj = payload.as_object_mut().expect("payload object initialized");
+    obj.insert("requires_human".to_string(), json!(true));
+    obj.insert(
+        "risk_review".to_string(),
+        json!({
+            "status": "review_required",
+            "sensitivity": sensitivity.trim(),
+            // ponytail: sensitivity routing is enum-based only; upgrade path is content scanning/classification.
+            "detector": "sensitivity-enum-v1"
         }),
     );
     payload
@@ -513,6 +537,46 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(active_records, 0);
+    }
+
+    #[tokio::test]
+    async fn risky_sensitivity_proposals_require_human_review() {
+        let store = new_test_store().await;
+
+        let proposal = create_memory_proposal(
+            &store,
+            "retain_profile_local",
+            "person",
+            false,
+            &json!({
+                "summary": "User prefers concise technical plans.",
+                "source_paths": ["pair/notes/profile.md"]
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            proposal
+                .payload_json
+                .pointer("/risk_review/status")
+                .and_then(Value::as_str),
+            Some("review_required")
+        );
+        assert_eq!(
+            proposal
+                .payload_json
+                .pointer("/risk_review/sensitivity")
+                .and_then(Value::as_str),
+            Some("person")
+        );
+        assert_eq!(
+            proposal
+                .payload_json
+                .get("requires_human")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[tokio::test]
