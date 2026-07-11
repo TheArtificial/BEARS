@@ -12,7 +12,7 @@
 {% endif %}
 
 {% if native_runtime %}
-<p class="form-hint">Den-native bindings with SQLite-backed memory. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
+<p class="form-hint">Role bindings and health. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
 <table>
   <thead><tr><th>Role</th><th>Branch</th><th>Binding</th><th>Status</th><th>Last sync</th></tr></thead>
   <tbody>
@@ -33,7 +33,7 @@
   </tbody>
 </table>
 {% else %}
-<p class="form-hint">Role rows from <code>bear_profile_bindings</code>. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
+<p class="form-hint">Role bindings and health. Web chat uses <strong>chat</strong>; ACP uses <strong>pair</strong>.</p>
 {% if runtime_configured %}
 <form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-profiles" style="margin: 0 0 1rem 0;">
   <button type="submit">Provision missing profiles</button>

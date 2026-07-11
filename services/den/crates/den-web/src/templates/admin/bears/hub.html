@@ -58,7 +58,7 @@ endblock %} {% block admin_content %} {% include "admin/bears/_bear_nav.html" %}
 
         <section class="box" style="margin: 0">
             <h4><a href="/admin/bears/{{ bear.id }}/memory">Memory</a></h4>
-            <p class="form-hint">SQLite cognition store inspector.</p>
+            <p class="form-hint">Memory inspector.</p>
             {% if memory_stats %}
             <p>
                 {{ memory_stats.record_count }} records · {{
@@ -75,7 +75,7 @@ endblock %} {% block admin_content %} {% include "admin/bears/_bear_nav.html" %}
                     >Conversations</a
                 >
             </h4>
-            <p class="form-hint">Persisted chat and ACP transcripts.</p>
+            <p class="form-hint">Persisted conversations.</p>
             <p>{{ conversation_count }} conversation(s)</p>
         </section>
     </div>

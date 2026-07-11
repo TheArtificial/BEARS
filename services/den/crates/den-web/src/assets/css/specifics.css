@@ -17,6 +17,72 @@ body.bear_chat {
     flex-direction: column;
 }
 
+/* ---- Admin layout ---- */
+.admin-shell {
+    display: grid;
+    grid-template-columns: minmax(10rem, 14rem) minmax(0, 1fr);
+    gap: calc(var(--spacing-unit) * 3);
+    align-items: start;
+}
+
+.admin-sidebar {
+    border-right: solid var(--thin-line-unit) var(--border-color);
+    padding-right: calc(var(--spacing-unit) * 2);
+}
+
+.admin-sidebar h3,
+.admin-sidebar h4 {
+    margin-bottom: var(--spacing-unit);
+    text-transform: uppercase;
+}
+
+.admin-sidebar h4 {
+    margin-top: calc(var(--spacing-unit) * 2);
+}
+
+.admin-sidebar ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.admin-sidebar li {
+    margin: 0 0 var(--spacing-unit) 0;
+}
+
+.admin-sidebar a {
+    text-decoration: none;
+}
+
+.admin-sidebar a:hover {
+    text-decoration: underline;
+}
+
+.admin-main {
+    min-width: 0;
+}
+
+.admin-dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: calc(var(--spacing-unit) * 3);
+}
+
+@media (max-width: 699px) {
+    .admin-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .admin-sidebar {
+        border-right: 0;
+        border-bottom: solid var(--thin-line-unit) var(--border-color);
+        padding-right: 0;
+        padding-bottom: var(--spacing-unit);
+    }
+}
+
+/* ---- Bear chat (/bear/:slug) — extends base.html; body class from template_tag (bear_chat) ---- */
+
 body.bear_chat > section#content {
     flex: 1 1 auto;
     min-height: 0;

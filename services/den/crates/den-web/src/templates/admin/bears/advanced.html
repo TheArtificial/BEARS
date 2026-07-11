@@ -16,7 +16,7 @@
   <dt>Bear id</dt>
   <dd><code>{{ bear.id }}</code></dd>
   <dt>Runtime</dt>
-  <dd>Native (Den in-process)</dd>
+  <dd>Active</dd>
   <dt>Created</dt>
   <dd>{{ bear.created_at | datetimeformat(format="short") }}</dd>
   <dt>Updated</dt>
@@ -24,7 +24,7 @@
 </dl>
 
 {% if stats %}
-<h3>SQLite memory file</h3>
+<h3>Memory file</h3>
 <dl>
   <dt>Path</dt>
   <dd><code>{{ stats.db_path | e }}</code></dd>
