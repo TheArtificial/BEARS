@@ -218,7 +218,7 @@ services:
             # defaults must match SANDBOX_SERVICE_TOKEN on the provider —
             # setting either env var updates both sides; override it in
             # production.
-            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-http://bears-sandbox-provider:3002}
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-http://bears-sandbox-provider:${SANDBOX_PORT:-3002}}
             SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
             SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
@@ -316,7 +316,7 @@ services:
             # defaults must match SANDBOX_SERVICE_TOKEN on the provider —
             # setting either env var updates both sides; override it in
             # production.
-            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-http://bears-sandbox-provider:3002}
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-http://bears-sandbox-provider:${SANDBOX_PORT:-3002}}
             SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
             SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
@@ -463,7 +463,7 @@ services:
             retries: 5
             start_period: 30s
         expose:
-            - "3002"
+            - "${SANDBOX_PORT:-3002}"
 
     # One-shot builder: compiles the sandbox images INTO the engine's store
     # (dev / air-gapped alternative to registry-published catalog images).
