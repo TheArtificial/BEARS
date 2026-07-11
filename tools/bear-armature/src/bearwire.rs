@@ -466,11 +466,8 @@ pub(crate) async fn handle_prompt(
     while started.elapsed() < BEARWIRE_PROMPT_TIMEOUT {
         let replay = fetch_events(http, config, session_id, after).await?;
         let replay_count = replay.frames.len();
-        let mut max_sequence = after;
+        let next_after = replay.next_after;
         for frame in replay.frames {
-            if let Some(sequence) = frame.sequence {
-                max_sequence = Some(max_sequence.map_or(sequence, |current| current.max(sequence)));
-            }
             let Some(event) = frame.event else {
                 continue;
             };
@@ -493,7 +490,7 @@ pub(crate) async fn handle_prompt(
                 break;
             }
         }
-        after = max_sequence;
+        after = next_after;
         if saw_done {
             if crate::bear_debug_verbose() {
                 eprintln!(
@@ -1022,6 +1019,7 @@ pub(crate) async fn rpc_call(
 
 struct BearWireReplay {
     frames: Vec<BearWireFrame>,
+    next_after: Option<i64>,
 }
 
 struct BearWireFrame {
@@ -1030,6 +1028,73 @@ struct BearWireFrame {
 }
 
 async fn fetch_events(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    after: Option<i64>,
+) -> Result<BearWireReplay> {
+    match fetch_event_page(http, config, session_id, after).await {
+        Ok(replay) => Ok(replay),
+        Err(err) if err.downcast_ref::<EventPageUnavailable>().is_some() => {
+            fetch_events_sse(http, config, session_id, after).await
+        }
+        Err(err) => Err(err),
+    }
+}
+
+#[derive(Debug)]
+struct EventPageUnavailable;
+
+impl std::fmt::Display for EventPageUnavailable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("BearWire event page endpoint unavailable")
+    }
+}
+
+impl std::error::Error for EventPageUnavailable {}
+
+async fn fetch_event_page(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+    after: Option<i64>,
+) -> Result<BearWireReplay> {
+    let mut url = format!(
+        "{}/bearwire/v1/sessions/{}/events/page?bear_slug={}",
+        config.api_url,
+        urlencoding::encode(session_id),
+        urlencoding::encode(&config.bear)
+    );
+    if let Some(after) = after {
+        url.push_str("&after=");
+        url.push_str(&after.to_string());
+    }
+    let response = http
+        .get(&url)
+        .header(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+        )
+        .send()
+        .await
+        .with_context(|| den_request_context(&url))?;
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err(EventPageUnavailable.into());
+    }
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!(
+            "BearWire event page HTTP {status}: {}",
+            body.trim()
+        ));
+    }
+    let body = response.text().await.unwrap_or_default();
+    parse_event_page(&body, after)
+        .with_context(|| format!("parse BearWire event page JSON: {body}"))
+}
+
+async fn fetch_events_sse(
     http: &reqwest::Client,
     config: &Config,
     session_id: &str,
@@ -1073,7 +1138,12 @@ async fn fetch_events(
     if !buffer.is_empty() {
         frames.push(parse_event_frame(&buffer)?);
     }
-    Ok(BearWireReplay { frames })
+    let next_after = frames
+        .iter()
+        .filter_map(|frame| frame.sequence)
+        .max()
+        .or(after);
+    Ok(BearWireReplay { frames, next_after })
 }
 
 fn bearwire_plan_update_entries(event: &Value) -> Value {
@@ -1294,6 +1364,25 @@ fn bearwire_message_delta_is_reasoning(event: &Value) -> bool {
         || data.get("reasoning").is_some()
         || data.get("thinking").is_some()
         || data.get("thought").is_some()
+}
+
+fn parse_event_page(body: &str, after: Option<i64>) -> Result<BearWireReplay> {
+    let value: Value = serde_json::from_str(body)?;
+    let next_after = value.get("next_after").and_then(Value::as_i64).or(after);
+    let frames = value
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|events| {
+            events
+                .iter()
+                .map(|entry| BearWireFrame {
+                    sequence: entry.get("sequence").and_then(Value::as_i64),
+                    event: entry.get("event").cloned(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(BearWireReplay { frames, next_after })
 }
 
 fn parse_event_frame(frame: &[u8]) -> Result<BearWireFrame> {
@@ -1710,6 +1799,45 @@ async fn handle_bearwire_event(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parse_event_page_uses_server_owned_cursor() {
+        let page = json!({
+            "ok": true,
+            "events": [
+                {
+                    "sequence": 42,
+                    "event": {"type": "run.progress", "run_id": "run-1", "data": {}}
+                }
+            ],
+            "next_after": 100,
+            "has_more": true
+        });
+
+        let parsed = parse_event_page(&page.to_string(), Some(41)).unwrap();
+
+        assert_eq!(parsed.next_after, Some(100));
+        assert_eq!(parsed.frames.len(), 1);
+        assert_eq!(parsed.frames[0].sequence, Some(42));
+        assert_eq!(
+            parsed.frames[0].event.as_ref().unwrap()["type"],
+            "run.progress"
+        );
+    }
+
+    #[test]
+    fn parse_event_page_does_not_advance_without_next_after() {
+        let page = json!({
+            "ok": true,
+            "events": [],
+            "has_more": false
+        });
+
+        let parsed = parse_event_page(&page.to_string(), Some(41)).unwrap();
+
+        assert_eq!(parsed.next_after, Some(41));
+        assert!(parsed.frames.is_empty());
+    }
 
     #[test]
     fn parse_event_frame_concatenates_sse_data_lines() {

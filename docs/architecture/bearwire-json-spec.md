@@ -59,6 +59,34 @@ Each SSE frame contains one JSON-RPC notification with `method: "event"`:
 data: {"jsonrpc":"2.0","method":"event","params":{...event envelope...}}
 ```
 
+HTTP clients that poll rather than hold a streaming connection should prefer the server-owned JSON page endpoint:
+
+```text
+GET https://<den-host>/bearwire/v1/sessions/{session_id}/events/page?after=<sequence>&limit=<n>
+Authorization: Bearer <token>
+BearWire-Version: 1
+Accept: application/json
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "session_id": "acp-...",
+  "events": [
+    {
+      "sequence": 234820,
+      "event": { "type": "tool_call.requested", "data": {} }
+    }
+  ],
+  "next_after": 234820,
+  "has_more": false
+}
+```
+
+`next_after` is authoritative. Polling clients must feed it back as the next `after` cursor instead of deriving a cursor from the maximum sequence they successfully processed. If a page is empty, `next_after` remains the previous cursor; clients should not advance merely because an HTTP response was received.
+
 ### WebSocket profile (preferred future binding)
 
 ```text

@@ -95,7 +95,7 @@ pub async fn list_bearwire_events_after(
     after_sequence: Option<i64>,
     limit: i64,
 ) -> Result<Vec<BearWireEventRow>, DenError> {
-    let limit = limit.clamp(1, 500);
+    let limit = limit.clamp(1, 501);
     let rows = sqlx::query(
         r"
         SELECT id, sequence_no, session_id, event_type, event_json, created_at

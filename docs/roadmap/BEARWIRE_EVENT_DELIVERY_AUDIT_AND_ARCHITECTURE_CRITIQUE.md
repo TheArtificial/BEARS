@@ -184,6 +184,8 @@ Exit criteria:
 
 ### Phase 1 — Server-owned cursor pages
 
+Status: partially implemented. Den now exposes `/bearwire/v1/sessions/{session_id}/events/page`, advertises it from `initialize`, and bear-armature prefers it while retaining SSE fallback. The armature now advances from Den's `next_after` for JSON pages instead of computing `max(sequence seen)` itself. Remaining work is the broader integration coverage listed below.
+
 Replace client-inferred cursor advancement with server-attested paging.
 
 Target response shape, even if still delivered through the existing endpoint initially:
@@ -207,8 +209,9 @@ Rules:
 
 Exit criteria:
 
-- Armature no longer computes `after = max(sequence seen)` from raw frames.
-- Tests cover empty pages, missing event ids, and immediate post-`run.start` tool events.
+- Armature no longer computes `after = max(sequence seen)` for the canonical JSON page path.
+- Unit tests cover empty JSON pages and server-owned `next_after` semantics.
+- Remaining: integration tests cover missing event ids and immediate post-`run.start` tool events across the HTTP endpoint.
 
 ### Phase 2 — Obligations as authoritative actionable work
 
