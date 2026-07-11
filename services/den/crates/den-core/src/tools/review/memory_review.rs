@@ -139,6 +139,26 @@ fn validate_optional_review_text(
         .transpose()
 }
 
+fn normalize_proposal_status_filter(value: Option<&str>) -> Result<Option<String>, DenError> {
+    let Some(value) = value.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if matches!(
+        value,
+        "pending" | "rejected" | "retained_local" | "deferred" | "superseded" | "needs_human_review"
+    ) {
+        Ok(Some(value.to_string()))
+    } else {
+        Err(DenError::ValidationError(format!(
+            "status must be pending, rejected, retained_local, deferred, superseded, or needs_human_review; got {value}"
+        )))
+    }
+}
+
+fn bounded_proposal_limit(value: Option<i64>) -> i64 {
+    value.unwrap_or(50).clamp(1, 200)
+}
+
 /// The `conversation_events` projection scope id for this invocation.
 fn projection_scope_id(
     context: &DenToolInvocationContext,
@@ -244,14 +264,9 @@ pub async fn list_memory_proposals(
         ));
     }
     let args: MemoryListProposalsArguments = serde_json::from_value(arguments)?;
-    let status = args
-        .status
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
+    let status = normalize_proposal_status_filter(args.status.as_deref())?;
     let proposals = store
-        .list_proposals(context.bear_id, status, args.limit.unwrap_or(50))
+        .list_proposals(context.bear_id, status, bounded_proposal_limit(args.limit))
         .await?;
     Ok(json!({ "bear_id": context.bear_id, "proposals": proposals }))
 }
@@ -430,5 +445,18 @@ mod tests {
             Some("ok".to_string())
         );
         assert!(validate_optional_review_text("proposed_content", Some("too long"), 3).is_err());
+    }
+
+    #[test]
+    fn list_proposals_validates_status_and_bounds_limit() {
+        assert_eq!(normalize_proposal_status_filter(None).unwrap(), None);
+        assert_eq!(
+            normalize_proposal_status_filter(Some(" pending ")).unwrap(),
+            Some("pending".to_string())
+        );
+        assert!(normalize_proposal_status_filter(Some("done")).is_err());
+        assert_eq!(bounded_proposal_limit(None), 50);
+        assert_eq!(bounded_proposal_limit(Some(-10)), 1);
+        assert_eq!(bounded_proposal_limit(Some(500)), 200);
     }
 }
