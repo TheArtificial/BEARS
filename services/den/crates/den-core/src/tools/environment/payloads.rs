@@ -42,22 +42,26 @@ fn memory_context_layers(
     memory_status: &Value,
     entities: &Value,
 ) -> Value {
-    let projected_memory = context.projected_memory.clone().unwrap_or_else(|| {
-        json!({
-            "status": "unknown",
-            "count": "unknown",
-            "reason": "Projection metadata is not wired into session_info yet.",
-            "next_surface": "prompt memory blocks in model prompt / future projection diagnostic"
-        })
+    let default_projected_memory = json!({
+        "status": "unknown",
+        "count": "unknown",
+        "reason": "Projection metadata is not wired into session_info yet.",
+        "next_surface": "prompt memory blocks in model prompt / future projection diagnostic"
     });
-    let recalled_memory = context.recalled_memory.clone().unwrap_or_else(|| {
-        json!({
-            "status": "unknown",
-            "count": "unknown",
-            "reason": "Recall passage metadata is not wired into session_info yet.",
-            "next_surface": "memory_search / future recall diagnostic"
-        })
+    let projected_memory = context
+        .projected_memory
+        .as_ref()
+        .unwrap_or(&default_projected_memory);
+    let default_recalled_memory = json!({
+        "status": "unknown",
+        "count": "unknown",
+        "reason": "Recall passage metadata is not wired into session_info yet.",
+        "next_surface": "memory_search / future recall diagnostic"
     });
+    let recalled_memory = context
+        .recalled_memory
+        .as_ref()
+        .unwrap_or(&default_recalled_memory);
     let durable_memory_status = if memory_status
         .get("available")
         .and_then(Value::as_bool)
