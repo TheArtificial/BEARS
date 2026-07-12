@@ -6,7 +6,7 @@
 
 use axum::{
     extract::{Query, State},
-    http::{header::AUTHORIZATION, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
     Form, Json,
 };
@@ -16,6 +16,7 @@ use time::OffsetDateTime;
 use url::Url;
 
 use crate::{
+    auth::extract_bearer_token_oauth,
     oauth::{
         db,
         error::OAuthError,
@@ -1132,7 +1133,7 @@ pub async fn userinfo_get(
     headers: HeaderMap,
 ) -> Result<Response, CustomError> {
     // Extract Bearer token from Authorization header
-    let access_token = match extract_bearer_token(&headers) {
+    let access_token = match extract_bearer_token_oauth(&headers) {
         Ok(token) => token,
         Err(oauth_error) => return Ok(bearer_error_response(oauth_error)),
     };
@@ -1185,47 +1186,6 @@ pub async fn userinfo_get(
     let user_info = build_user_info_response(&user, &granted_scopes);
 
     Ok(Json(user_info).into_response())
-}
-
-/// Extract Bearer token from Authorization header
-///
-/// Parses the Authorization header and extracts the Bearer token following RFC 6750.
-///
-/// # Arguments
-/// * `headers` - HTTP headers from the request
-///
-/// # Returns
-/// The extracted access token or an OAuth error
-///
-/// # Errors
-/// - `InvalidRequest` if Authorization header is missing or malformed
-/// - `InvalidToken` if the header doesn't contain a valid Bearer token
-fn extract_bearer_token(headers: &HeaderMap) -> Result<String, OAuthError> {
-    // Get Authorization header
-    let auth_header = headers
-        .get(AUTHORIZATION)
-        .ok_or_else(|| OAuthError::InvalidRequest("Missing Authorization header".to_string()))?;
-
-    // Convert to string
-    let auth_str = auth_header.to_str().map_err(|_| {
-        OAuthError::InvalidRequest("Invalid Authorization header encoding".to_string())
-    })?;
-
-    // Check for Bearer prefix
-    if !auth_str.starts_with("Bearer ") {
-        return Err(OAuthError::InvalidRequest(
-            "Authorization header must use Bearer scheme".to_string(),
-        ));
-    }
-
-    // Extract token (everything after "Bearer ")
-    let token = auth_str[7..].trim(); // "Bearer " is 7 characters
-
-    if token.is_empty() {
-        return Err(OAuthError::InvalidToken);
-    }
-
-    Ok(token.to_string())
 }
 
 /// Build user info response based on granted scopes
