@@ -3,11 +3,19 @@
 use serde::Serialize;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BearProfileSyncStatus {
+    Synced,
+    Failed,
+    SkippedMissingBinding,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BearProfileSyncOutcome {
     pub profile: String,
     pub runtime_binding_id: Option<String>,
-    pub status: String,
+    pub status: BearProfileSyncStatus,
     pub message: Option<String>,
 }
 
@@ -21,21 +29,21 @@ impl BearSyncSummary {
     pub fn failed_profiles(&self) -> Vec<&BearProfileSyncOutcome> {
         self.outcomes
             .iter()
-            .filter(|o| o.status == "failed")
+            .filter(|o| o.status == BearProfileSyncStatus::Failed)
             .collect()
     }
 
     pub fn skipped_profiles(&self) -> Vec<&BearProfileSyncOutcome> {
         self.outcomes
             .iter()
-            .filter(|o| o.status == "skipped_missing_binding")
+            .filter(|o| o.status == BearProfileSyncStatus::SkippedMissingBinding)
             .collect()
     }
 
     pub fn synced_count(&self) -> usize {
         self.outcomes
             .iter()
-            .filter(|o| o.status == "synced")
+            .filter(|o| o.status == BearProfileSyncStatus::Synced)
             .count()
     }
 

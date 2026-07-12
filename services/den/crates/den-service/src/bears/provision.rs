@@ -70,7 +70,7 @@ async fn reconcile_one_native_profile(
     bear: &Bear,
     profile: BearProfile,
 ) -> Result<crate::bears::sync::BearProfileSyncOutcome, DenError> {
-    use crate::bears::sync::BearProfileSyncOutcome;
+    use crate::bears::sync::{BearProfileSyncOutcome, BearProfileSyncStatus};
 
     let binding_id = format!("den-native:{}:{}", bear.id, profile.as_str());
     let config_hash = profile_config_hash(pool, bear, profile).await?;
@@ -101,7 +101,7 @@ async fn reconcile_one_native_profile(
             return Ok(BearProfileSyncOutcome {
                 profile: profile.as_str().to_string(),
                 runtime_binding_id: Some(binding_id),
-                status: "failed".to_string(),
+                status: BearProfileSyncStatus::Failed,
                 message: Some(message),
             });
         }
@@ -110,7 +110,7 @@ async fn reconcile_one_native_profile(
     Ok(BearProfileSyncOutcome {
         profile: profile.as_str().to_string(),
         runtime_binding_id: Some(binding_id),
-        status: "synced".to_string(),
+        status: BearProfileSyncStatus::Synced,
         message: None,
     })
 }
