@@ -1,5 +1,5 @@
 use den_core::DenError;
-use serde_json::{json, Value};
+use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -9,8 +9,6 @@ use den_service::prompt_memory_block_store::{
 use den_service::prompt_memory_blocks::{
     compile_prompt_memory_blocks, render_prompt_memory_block_context, PromptMemoryCompilationInput,
 };
-
-use crate::runtime::compaction::TurnCompactionState;
 
 pub fn runtime_context_already_includes_den_owned_blocks(runtime_context: &str) -> bool {
     let trimmed = runtime_context.trim();
@@ -69,8 +67,6 @@ pub async fn assemble_den_owned_runtime_supplement(
     profile_slug: &str,
     session_id: &str,
     workspace_roots: &[String],
-    _client_context: &Value,
-    _compaction_state: Option<&TurnCompactionState>,
 ) -> Result<String, DenError> {
     let mut parts = Vec::new();
     let prompt_memory =

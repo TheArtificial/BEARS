@@ -367,15 +367,12 @@ pub async fn assemble_native_turn_for_bear(
             .workspace_roots
             .map(|items| items.to_vec())
             .unwrap_or_default();
-        let client_context = ctx.client_context.cloned().unwrap_or_default();
         let supplement = assemble_den_owned_runtime_supplement(
             ctx.pool,
             ctx.bear_id,
             ctx.profile.as_str(),
             session_id,
             &roots,
-            &client_context,
-            compaction_state.as_ref(),
         )
         .await?;
         if !supplement.trim().is_empty() {

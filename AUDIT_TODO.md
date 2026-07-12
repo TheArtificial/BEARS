@@ -581,8 +581,8 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/agent_loop/transcript.rs:19-168` — `spawn_persist_native_agent_step`/`spawn_persist_web_chat_turn` duplicate the "approval_required → policy reason" ternary verbatim — extract `native_policy_reason(...)`.
 - [ ] `src/agent_loop/transcript.rs` — four public `spawn_persist_*` functions each take 6-8 loosely-related positional args — use a `PersistenceIdentity` struct.
 - [ ] `src/agent_assist/runtime_stream_parser.rs:56-235` `runtime_stream_event_from_provider_json` — ~180-line match with 10+ chained `.or_else()` field lookups per branch — genuine god-function, split per message-type.
-- [ ] `src/agent_loop/runtime_context.rs:66-83` `assemble_den_owned_runtime_supplement` — two entirely unused parameters (`_client_context`, `_compaction_state`) in a public async fn.
-- [ ] `src/agent_loop/overflow_retry.rs:69` `rebuild_messages_after_overflow_compaction` takes unused `_config: &Config`.
+- [x] `src/agent_loop/runtime_context.rs:66-83` `assemble_den_owned_runtime_supplement` — two entirely unused parameters (`_client_context`, `_compaction_state`) in a public async fn. **DONE** (cleanup batch): removed the unused parameters and call-site arguments; `den-runtime` clippy green.
+- [x] `src/agent_loop/overflow_retry.rs:69` `rebuild_messages_after_overflow_compaction` takes unused `_config: &Config`. **DONE** (cleanup batch): removed the unused helper parameter and call-site argument; `den-runtime` clippy green.
 - [ ] `src/agent_assist/assistant_display.rs:70-83` `strip_prompt_scaffolding_prefix` hardcodes magic sentinel strings inline rather than named constants, inconsistent with `overflow_retry.rs:22`'s `COMPACTION_BLOCK_MARKER` const pattern.
 - [ ] `src/agent_assist/agent_prefill.rs:54-58` — `while s.contains("--") { s = s.replace(...) }` O(n²)-ish manual collapse loop instead of a regex (already a dependency elsewhere in the crate).
 - [ ] `src/agent_loop/session_store.rs:66` `AgentLoopSessionStore` derives `Default` but also hand-writes a redundant `new()`.
