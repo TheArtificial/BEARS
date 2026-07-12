@@ -4,44 +4,26 @@ pub fn render_compacted_context_block(summary: &RuntimeIterativeSummary) -> Stri
     let mut sections = Vec::new();
     sections.push("# Compacted context".to_string());
 
-    if !summary.active_user_goals.is_empty() {
-        sections.push(format!(
-            "## Active goals\n{}",
-            bullet_list(&summary.active_user_goals)
-        ));
-    }
-    if !summary.important_constraints.is_empty() {
-        sections.push(format!(
-            "## Constraints\n{}",
-            bullet_list(&summary.important_constraints)
-        ));
-    }
-    if !summary.decisions_made.is_empty() {
-        sections.push(format!(
-            "## Decisions\n{}",
-            bullet_list(&summary.decisions_made)
-        ));
-    }
-    if !summary.artifact_refs.is_empty() {
-        sections.push(format!(
-            "## Artifacts\n{}",
-            bullet_list(&summary.artifact_refs)
-        ));
-    }
-    if !summary.workflow_state_refs.is_empty() {
-        sections.push(format!(
-            "## Workflow state\n{}",
-            bullet_list(&summary.workflow_state_refs)
-        ));
-    }
-    if !summary.unresolved_followups.is_empty() {
-        sections.push(format!(
-            "## Unresolved follow-ups\n{}",
-            bullet_list(&summary.unresolved_followups)
-        ));
+    let mut rendered_summary_fields = false;
+    for (heading, items) in [
+        ("Active goals", summary.active_user_goals.as_slice()),
+        ("Constraints", summary.important_constraints.as_slice()),
+        ("Decisions", summary.decisions_made.as_slice()),
+        ("Artifacts", summary.artifact_refs.as_slice()),
+        ("Workflow state", summary.workflow_state_refs.as_slice()),
+        (
+            "Unresolved follow-ups",
+            summary.unresolved_followups.as_slice(),
+        ),
+    ] {
+        if items.is_empty() {
+            continue;
+        }
+        rendered_summary_fields = true;
+        sections.push(format!("## {heading}\n{}", bullet_list(items)));
     }
 
-    if sections.len() == 1 {
+    if !rendered_summary_fields {
         sections.push(
             "_No compacted continuity signals yet; older transcript groups were folded without structured summary fields._"
                 .to_string(),
