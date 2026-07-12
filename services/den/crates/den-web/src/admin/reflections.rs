@@ -10,7 +10,7 @@ pub fn router() -> Router<AppState> {
 
 pub async fn index(State(state): State<AppState>) -> Result<Response, CustomError> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT
             bear_slug,
             current_mode,
@@ -20,7 +20,7 @@ pub async fn index(State(state): State<AppState>) -> Result<Response, CustomErro
         FROM client_sessions
         GROUP BY bear_slug, current_mode
         ORDER BY bear_slug, current_mode
-        "#,
+        ",
     )
     .fetch_all(state.sqlx_pool())
     .await?;

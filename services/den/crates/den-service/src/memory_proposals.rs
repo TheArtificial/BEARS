@@ -85,10 +85,10 @@ fn maybe_project_memory_proposal_created(pool: &PgPool, row: &MemoryProposalRow)
         memory_proposal_created_projection(
             memory_proposal_provenance(row.bear_id),
             row.id,
-            row.source_profile.clone(),
-            row.suggested_action.clone(),
-            row.title.clone(),
-            row.status.clone(),
+            &row.source_profile,
+            &row.suggested_action,
+            &row.title,
+            &row.status,
         ),
     );
 }
@@ -102,10 +102,10 @@ fn maybe_project_memory_proposal_resolved(pool: &PgPool, row: &MemoryProposalRow
         memory_proposal_resolved_projection(
             memory_proposal_provenance(row.bear_id),
             row.id,
-            row.source_profile.clone(),
-            row.suggested_action.clone(),
-            row.title.clone(),
-            row.status.clone(),
+            &row.source_profile,
+            &row.suggested_action,
+            &row.title,
+            &row.status,
             row.reviewer_profile.clone(),
             row.result_path.clone(),
             row.result_commit.clone(),
