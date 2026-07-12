@@ -3,6 +3,8 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use super::json_fields::{model_field, pick_str};
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentSummary {
     pub id: String,
@@ -18,31 +20,6 @@ pub struct AgentSummary {
     pub system: Option<String>,
     /// Short excerpt when the provider exposes a top-level system string.
     pub system_excerpt: Option<String>,
-}
-
-fn pick_str(v: &Value, keys: &[&str]) -> Option<String> {
-    for k in keys {
-        if let Some(s) = v.get(*k).and_then(|x| x.as_str()) {
-            if !s.is_empty() {
-                return Some(s.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn model_field(v: &Value) -> Option<String> {
-    let m = v.get("model")?;
-    if let Some(s) = m.as_str() {
-        return Some(s.to_string());
-    }
-    if let Some(obj) = m.as_object() {
-        if let Some(s) = obj.get("model").and_then(|x| x.as_str()) {
-            return Some(s.to_string());
-        }
-        return Some(m.to_string());
-    }
-    None
 }
 
 fn excerpt(s: &str, max: usize) -> String {

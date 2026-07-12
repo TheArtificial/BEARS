@@ -12,6 +12,7 @@ mod agent_prefill;
 mod agent_summary;
 mod assistant_display;
 mod conversation_title;
+mod json_fields;
 pub mod runtime_stream_parser;
 pub mod tool_policy;
 
