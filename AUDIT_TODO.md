@@ -636,7 +636,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/runtime/role_registry.rs:17` `new(pool, _config)` accepts and discards `_config` entirely — drop the parameter or it misleads callers.
 - [ ] `src/runtime/role_registry.rs:26-29` — intentional query duplication (documented, to avoid a crate cycle) has no test/lint guarding the two copies stay in sync.
 - [ ] `src/runtime/role_registry.rs:41-44` — synthetic binding-id convention (`format!("den-native:{bear_id}:...")`) isn't documented as part of `resolve_binding`'s public contract.
-- [ ] `src/runtime/provider/mod.rs:1-12` — pure re-export shim with zero documentation on why this namespace exists separately from `den_protocol`.
+- [x] `src/runtime/provider/mod.rs:1-12` — pure re-export shim with zero documentation on why this namespace exists separately from `den_protocol`. **DONE** (docs batch): added module docs explaining the compatibility namespace and dependency-direction reason; `den-runtime` clippy green.
 - Overall: generally tidy and idiomatic (consistent `?` propagation, plain-data structs), but recurring String-typed errors swallowing causes and several near-duplicate struct-construction functions that could collapse via constructors/tables.
 
 ### den-runtime — bears/{model,templates,runtime_plan,sync}.rs, agent_loop/{mod,pending_tools,approvals,strategy,policy}.rs
