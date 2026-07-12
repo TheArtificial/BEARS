@@ -830,6 +830,37 @@ struct AsOfSqlRow {
     salience: String,
 }
 
+impl AsOfSqlRow {
+    fn into_row(self) -> MemoryRecordRow {
+        let metadata_json: Value = serde_json::from_str(&self.metadata_json)
+            .unwrap_or_else(|_| Value::Object(Default::default()));
+        let lifecycle_status = lifecycle_status(
+            &metadata_json,
+            self.supersedes_memory_id.as_deref(),
+            self.invalid_at.as_deref(),
+        );
+        let freshness_trend = freshness_trend(&lifecycle_status, self.invalid_at.as_deref());
+        MemoryRecordRow {
+            memory_id: self.memory_id,
+            sequence_no: self.sequence_no,
+            scope_type: MemoryScopeType::parse(&self.scope_type)
+                .unwrap_or(MemoryScopeType::ProfileLocal),
+            scope_profile: self.scope_profile,
+            kind: self.kind,
+            content_text: self.content_text,
+            logical_path: self.logical_path,
+            work_surface_ref: self.work_surface_ref,
+            metadata_json,
+            created_at: self.created_at,
+            salience: self.salience,
+            supersedes_memory_id: self.supersedes_memory_id,
+            invalid_at: self.invalid_at,
+            lifecycle_status,
+            freshness_trend,
+        }
+    }
+}
+
 #[cfg(test)]
 mod as_of_tests {
     use super::*;
@@ -1140,37 +1171,6 @@ mod as_of_tests {
         let anchors = list_entity_anchor_head_records(&store, 10).await.unwrap();
         assert_eq!(anchors.len(), 1);
         assert_eq!(anchors[0].memory_id, anchor.memory_id);
-    }
-}
-
-impl AsOfSqlRow {
-    fn into_row(self) -> MemoryRecordRow {
-        let metadata_json: Value = serde_json::from_str(&self.metadata_json)
-            .unwrap_or_else(|_| Value::Object(Default::default()));
-        let lifecycle_status = lifecycle_status(
-            &metadata_json,
-            self.supersedes_memory_id.as_deref(),
-            self.invalid_at.as_deref(),
-        );
-        let freshness_trend = freshness_trend(&lifecycle_status, self.invalid_at.as_deref());
-        MemoryRecordRow {
-            memory_id: self.memory_id,
-            sequence_no: self.sequence_no,
-            scope_type: MemoryScopeType::parse(&self.scope_type)
-                .unwrap_or(MemoryScopeType::ProfileLocal),
-            scope_profile: self.scope_profile,
-            kind: self.kind,
-            content_text: self.content_text,
-            logical_path: self.logical_path,
-            work_surface_ref: self.work_surface_ref,
-            metadata_json,
-            created_at: self.created_at,
-            salience: self.salience,
-            supersedes_memory_id: self.supersedes_memory_id,
-            invalid_at: self.invalid_at,
-            lifecycle_status,
-            freshness_trend,
-        }
     }
 }
 

@@ -293,6 +293,9 @@ fn sqlite_observation_to_row(
     bear_id: Uuid,
     sqlite: &store::SqliteMemoryObservation,
 ) -> BearObservationRow {
+    // SQLite observations predate the Postgres `bear_observations` row id/salience columns.
+    // The native bridge preserves the stable `observation_id` and source payload, and supplies
+    // UI-only row metadata for callers that expect the Postgres-shaped DTO.
     BearObservationRow {
         id: Uuid::new_v4(),
         bear_id,
