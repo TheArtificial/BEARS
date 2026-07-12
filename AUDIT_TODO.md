@@ -181,9 +181,9 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - Overall: small and mostly clean DTOs; error classification is fragile string-matching; traits need submodules.
 
 ### den-api
-- [ ] `src/v1/profile.rs:60-82` `get_profile` chains four sequential `match...Ok/Err` blocks instead of `?` + `From`/`map_err` into `CustomError`.
-- [ ] `src/v1/profile.rs:81` discards the underlying DB error entirely (`Err(_) => ... "Database error"`), bypassing the crate's own `CustomError`.
-- [ ] `src/v1/profile.rs:98-176` three free functions manually build `Response`/`Box<Response>` with duplicated JSON error shapes, reimplementing `CustomError`'s `IntoResponse`.
+- [x] `src/v1/profile.rs:60-82` `get_profile` chains four sequential `match...Ok/Err` blocks instead of `?` + `From`/`map_err` into `CustomError`. **DONE** (handler cleanup): DB lookup now uses `?`, bearer parsing uses the shared OAuth helper, and local response mapping is reduced; `den-api` clippy green.
+- [x] `src/v1/profile.rs:81` discards the underlying DB error entirely (`Err(_) => ... "Database error"`), bypassing the crate's own `CustomError`. **DONE** (error propagation): `user_by_id` errors now propagate through `CustomError::from` via `?`; `den-api` clippy green.
+- [ ] `src/v1/profile.rs:98-176` three free functions manually build `Response`/`Box<Response>` with duplicated JSON error shapes, reimplementing `CustomError`'s `IntoResponse`. **PARTIAL** (handler cleanup): removed the local bearer-token parser and internal-server-error helper; `bearer_error_response` remains because it adds RFC 6750 `WWW-Authenticate` metadata.
 - [ ] `src/v1/user.rs:198-246` `login` nests 3-deep if-let with duplicated `Err(CustomError::Authentication(...))` in two branches — flatten.
 - [ ] `src/v1/user.rs` — pervasive `.to_string()` for static messages where `&'static str`/`Cow` would do.
 - [ ] `src/v1/user.rs:280-282,308-309` `request_password_reset`/`confirm_password_reset` are TODO stubs that unconditionally return success — misleading public API contract.
