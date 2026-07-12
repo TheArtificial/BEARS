@@ -20,11 +20,11 @@ pub async fn run_client_obligation_expiry_loop(
     );
     loop {
         tokio::select! {
-            _ = token.cancelled() => {
+            () = token.cancelled() => {
                 tracing::info!("BearWire client-obligation expiry loop stopped");
                 return Ok(());
             }
-            _ = tokio::time::sleep(interval) => {
+            () = tokio::time::sleep(interval) => {
                 if let Err(err) = expire_client_obligations_once(&pool, DEFAULT_EXPIRY_BATCH_LIMIT).await {
                     tracing::warn!(error = %err, "BearWire client-obligation expiry sweep failed");
                 }

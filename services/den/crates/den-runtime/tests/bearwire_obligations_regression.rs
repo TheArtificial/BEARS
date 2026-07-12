@@ -619,7 +619,7 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
     .expect("create first step obligation");
     assert_eq!(first.turn_step_id, Some(first_step.id));
 
-    turn_steps::transition_step(&pool, first_step.id, "continued")
+    turn_steps::transition_step(&pool, first_step.id, turn_steps::TurnStepState::Continued)
         .await
         .expect("close first step");
     let second_step = turn_steps::ensure_active_step(&pool, &run_id)

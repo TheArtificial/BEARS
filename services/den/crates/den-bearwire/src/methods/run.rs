@@ -1097,7 +1097,7 @@ async fn settle_active_run_for_session(
             let _ = turn_steps::transition_active_steps_for_run(
                 &state.sqlx_pool,
                 &run.run_id,
-                "cancelled",
+                turn_steps::TurnStepState::Cancelled,
             )
             .await;
             record_work_run_outcome_if_bound(
@@ -1360,7 +1360,12 @@ async fn update_run_state_for_runtime_event(
                 turn_obligations::TurnObligationState::Continued,
             )
             .await;
-            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "continued").await;
+            let _ = turn_steps::transition_active_steps_for_run(
+                pool,
+                run_id,
+                turn_steps::TurnStepState::Continued,
+            )
+            .await;
             None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
@@ -1401,7 +1406,12 @@ async fn update_run_state_for_runtime_event(
                 turn_obligations::TurnObligationState::Failed,
             )
             .await;
-            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
+            let _ = turn_steps::transition_active_steps_for_run(
+                pool,
+                run_id,
+                turn_steps::TurnStepState::Failed,
+            )
+            .await;
             None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => {
@@ -1419,7 +1429,12 @@ async fn update_run_state_for_runtime_event(
                 turn_obligations::TurnObligationState::Cancelled,
             )
             .await;
-            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "cancelled").await;
+            let _ = turn_steps::transition_active_steps_for_run(
+                pool,
+                run_id,
+                turn_steps::TurnStepState::Cancelled,
+            )
+            .await;
             None
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
@@ -1464,7 +1479,12 @@ async fn update_run_state_for_runtime_event(
                 turn_obligations::TurnObligationState::Failed,
             )
             .await;
-            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
+            let _ = turn_steps::transition_active_steps_for_run(
+                pool,
+                run_id,
+                turn_steps::TurnStepState::Failed,
+            )
+            .await;
             None
         }
         _ => None,

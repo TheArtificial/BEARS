@@ -93,6 +93,7 @@ const RUN_RETURNING: &str = r"
     id, run_id, session_id, bear_id, user_id, state,
     terminal_reason, created_at, updated_at, completed_at
 ";
+const ACTIVE_RUN_STATES_SQL: &str = "'accepted','running','waiting_for_client','waiting_for_tool_result','waiting_for_permission','continuing'";
 
 pub async fn create_run(
     pool: &PgPool,
@@ -140,7 +141,7 @@ pub async fn active_run_for_session(
         SELECT {RUN_RETURNING}
         FROM turn_runs
         WHERE session_id = $1
-          AND state IN ('accepted','running','waiting_for_client','waiting_for_tool_result','waiting_for_permission','continuing')
+          AND state IN ({ACTIVE_RUN_STATES_SQL})
         ORDER BY created_at DESC
         LIMIT 1
         "
@@ -166,7 +167,7 @@ pub async fn supersede_active_run_for_session(
             SELECT id
             FROM turn_runs
             WHERE session_id = $1 AND bear_id = $2 AND user_id = $3
-              AND state IN ('accepted','running','waiting_for_client','waiting_for_tool_result','waiting_for_permission','continuing')
+              AND state IN ({ACTIVE_RUN_STATES_SQL})
             ORDER BY created_at DESC
             LIMIT 1
         )

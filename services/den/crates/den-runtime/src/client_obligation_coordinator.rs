@@ -401,7 +401,8 @@ pub async fn settle_tool_result(
             .await?;
     let _ = turn_obligations::mark_continued(pool, obligation.id).await?;
     if let Some(step_id) = obligation.turn_step_id {
-        let _ = turn_steps::transition_step(pool, step_id, "continued").await?;
+        let _ = turn_steps::transition_step(pool, step_id, turn_steps::TurnStepState::Continued)
+            .await?;
     }
     Ok(ToolResultCoordinatorOutcome::ContinueModel {
         run: transitioned,
@@ -473,7 +474,8 @@ pub async fn settle_permission_result(
             .await?;
     let _ = turn_obligations::mark_continued(pool, obligation.id).await?;
     if let Some(step_id) = obligation.turn_step_id {
-        let _ = turn_steps::transition_step(pool, step_id, "continued").await?;
+        let _ = turn_steps::transition_step(pool, step_id, turn_steps::TurnStepState::Continued)
+            .await?;
     }
     Ok(PermissionResultCoordinatorOutcome::ContinueModel {
         run: transitioned,

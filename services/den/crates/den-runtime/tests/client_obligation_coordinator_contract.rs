@@ -488,7 +488,7 @@ async fn stale_wrong_step_result_is_detected_before_settlement(pool: sqlx::PgPoo
     )
     .await
     .expect("create first-step obligation");
-    turn_steps::transition_step(&pool, first_step.id, "continued")
+    turn_steps::transition_step(&pool, first_step.id, turn_steps::TurnStepState::Continued)
         .await
         .expect("close first step");
     let second_step = turn_steps::ensure_active_step(&pool, &run.run_id)
