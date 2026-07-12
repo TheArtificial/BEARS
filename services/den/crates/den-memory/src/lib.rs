@@ -54,6 +54,7 @@ pub use observations::{
 };
 pub use promotions::{
     append_memory_promotion, promote_to_shared_core, promote_to_shared_core_at_path,
+    CorePromotionOutcome,
 };
 pub use proposals::{
     create_memory_proposal, get_memory_proposal, list_memory_proposals, resolve_memory_proposal,

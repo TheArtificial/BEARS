@@ -40,13 +40,19 @@ pub async fn append_memory_promotion(
     Ok(promotion_id)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorePromotionOutcome {
+    pub memory_id: String,
+    pub promotion_id: String,
+}
+
 pub async fn promote_to_shared_core(
     store: &BearMemoryStore,
     source_memory_id: &str,
     kind: &str,
     content_text: &str,
     author_profile: &str,
-) -> Result<(String, String), DenError> {
+) -> Result<CorePromotionOutcome, DenError> {
     let logical = LogicalMemoryPath::shared_core(kind);
     promote_to_shared_core_at_path(
         store,
@@ -68,7 +74,7 @@ pub async fn promote_to_shared_core_at_path(
     content_text: &str,
     author_profile: &str,
     salience: Option<&str>,
-) -> Result<(String, String), DenError> {
+) -> Result<CorePromotionOutcome, DenError> {
     let logical = LogicalMemoryPath::from_logical_path(target_path);
     if logical.scope_type.as_str() != "shared" {
         return Err(DenError::ValidationError(
@@ -86,7 +92,10 @@ pub async fn promote_to_shared_core_at_path(
                 Some("Candidate matched existing core head; no new memory record written."),
             )
             .await?;
-            return Ok((head.memory_id.clone(), promotion_id));
+            return Ok(CorePromotionOutcome {
+                memory_id: head.memory_id.clone(),
+                promotion_id,
+            });
         }
     }
     let supersedes_memory_id = prior_head.map(|row| row.memory_id);
@@ -124,7 +133,10 @@ pub async fn promote_to_shared_core_at_path(
         notes.as_deref(),
     )
     .await?;
-    Ok((row.memory_id, promotion_id))
+    Ok(CorePromotionOutcome {
+        memory_id: row.memory_id,
+        promotion_id,
+    })
 }
 
 pub fn memory_claim_fingerprint(text: &str) -> String {
@@ -146,7 +158,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_promotion_records_noop_provenance_without_new_record() {
         let store = new_test_store().await;
-        let (first_id, _) = promote_to_shared_core_at_path(
+        let first = promote_to_shared_core_at_path(
             &store,
             "proposal-1",
             "core/decisions/runtime.md",
@@ -158,7 +170,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (second_id, promotion_id) = promote_to_shared_core_at_path(
+        let second = promote_to_shared_core_at_path(
             &store,
             "proposal-2",
             "core/decisions/runtime.md",
@@ -170,7 +182,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(second_id, first_id);
+        assert_eq!(second.memory_id, first.memory_id);
         let records_at_path: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND logical_path = ?",
         )
@@ -184,7 +196,7 @@ mod tests {
             "SELECT action FROM memory_promotions WHERE bear_id = ? AND promotion_id = ?",
         )
         .bind(store.bear_id().to_string())
-        .bind(promotion_id)
+        .bind(&second.promotion_id)
         .fetch_one(store.pool())
         .await
         .unwrap();
@@ -194,7 +206,7 @@ mod tests {
     #[tokio::test]
     async fn duplicate_promotion_ignores_case_and_punctuation_noise() {
         let store = new_test_store().await;
-        let (first_id, _) = promote_to_shared_core_at_path(
+        let first = promote_to_shared_core_at_path(
             &store,
             "proposal-1",
             "core/decisions/runtime.md",
@@ -206,7 +218,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (second_id, _) = promote_to_shared_core_at_path(
+        let second = promote_to_shared_core_at_path(
             &store,
             "proposal-2",
             "core/decisions/runtime.md",
@@ -218,7 +230,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(second_id, first_id);
+        assert_eq!(second.memory_id, first.memory_id);
         let records_at_path: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM memory_records WHERE bear_id = ? AND logical_path = ?",
         )
@@ -233,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn promotion_at_path_supersedes_previous_core_head() {
         let store = new_test_store().await;
-        let (first_id, _) = promote_to_shared_core_at_path(
+        let first = promote_to_shared_core_at_path(
             &store,
             "proposal-1",
             "core/decisions/runtime.md",
@@ -245,7 +257,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (second_id, _) = promote_to_shared_core_at_path(
+        let second = promote_to_shared_core_at_path(
             &store,
             "proposal-2",
             "core/decisions/runtime.md",
@@ -261,7 +273,7 @@ mod tests {
             "SELECT invalid_at FROM memory_records WHERE bear_id = ? AND memory_id = ?",
         )
         .bind(store.bear_id().to_string())
-        .bind(&first_id)
+        .bind(&first.memory_id)
         .fetch_one(store.pool())
         .await
         .unwrap();
@@ -271,10 +283,10 @@ mod tests {
             .await
             .unwrap()
             .expect("head record");
-        assert_eq!(head.memory_id, second_id);
+        assert_eq!(head.memory_id, second.memory_id);
         assert_eq!(
             head.supersedes_memory_id.as_deref(),
-            Some(first_id.as_str())
+            Some(first.memory_id.as_str())
         );
     }
 }

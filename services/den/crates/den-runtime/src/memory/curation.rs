@@ -155,7 +155,10 @@ pub async fn promote_core_content(
     author_profile: &str,
 ) -> Result<(String, String), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
-    promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile).await
+    let outcome =
+        promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile)
+            .await?;
+    Ok((outcome.memory_id, outcome.promotion_id))
 }
 
 pub async fn promote_core_content_at_path(
@@ -168,7 +171,7 @@ pub async fn promote_core_content_at_path(
     author_profile: &str,
 ) -> Result<(String, String), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
-    promote_to_shared_core_at_path(
+    let outcome = promote_to_shared_core_at_path(
         &store,
         source_memory_id,
         target_path,
@@ -177,7 +180,8 @@ pub async fn promote_core_content_at_path(
         author_profile,
         None,
     )
-    .await
+    .await?;
+    Ok((outcome.memory_id, outcome.promotion_id))
 }
 
 pub async fn record_reflection_outcome_start(
