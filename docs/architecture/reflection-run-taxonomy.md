@@ -65,3 +65,17 @@ Different lanes may produce:
 - [reflection system](reflection-system.md)
 - [memory model](memory-model.md)
 - [tasks and autonomy](tasks-and-autonomy.md)
+
+## Trigger timing for `pair_reflect`
+
+`pair_reflect` reviews Collaboration Space activity and produces pair-local summaries, observations, proposals, or follow-up work. Session close is one trigger, but Den may also schedule bounded `pair_reflect` runs before close when an open session is eligible for review.
+
+Typical triggers include:
+
+- session close
+- stale-open session sweep
+- activity threshold sweep
+- manual or admin review request
+- retry after failed reflection
+
+Open-session `pair_reflect` runs checkpoint bounded activity windows. They may feed memory-related proposals into `memory_curate`, but they do not make unreviewed session material shared truth.
