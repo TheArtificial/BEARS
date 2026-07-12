@@ -36,23 +36,53 @@ pub struct RuntimeCompactionEvent {
     pub diagnostic: Option<String>,
 }
 
+impl RuntimeCompactionEvent {
+    pub fn applied(
+        conversation_id: impl Into<String>,
+        decision: &RuntimeCompactionDecision,
+        policy: &RuntimeCompactionPolicy,
+        artifact: RuntimeCompactionArtifactRef,
+    ) -> Self {
+        Self {
+            conversation_id: conversation_id.into(),
+            trigger: decision.trigger.clone(),
+            policy_version: policy.policy_version.clone(),
+            status: RuntimeCompactionEventStatus::Applied,
+            boundary: Some(decision.boundary.clone()),
+            source_group_start: Some(decision.selected_group_start),
+            source_group_end: Some(decision.selected_group_end),
+            artifact: Some(artifact),
+            diagnostic: None,
+        }
+    }
+
+    pub fn skipped(
+        conversation_id: impl Into<String>,
+        trigger: RuntimeCompactionTriggerKind,
+        policy: &RuntimeCompactionPolicy,
+        diagnostic: impl Into<String>,
+    ) -> Self {
+        Self {
+            conversation_id: conversation_id.into(),
+            trigger,
+            policy_version: policy.policy_version.clone(),
+            status: RuntimeCompactionEventStatus::Skipped,
+            boundary: None,
+            source_group_start: None,
+            source_group_end: None,
+            artifact: None,
+            diagnostic: Some(diagnostic.into()),
+        }
+    }
+}
+
 pub fn build_compaction_applied_event(
     conversation_id: impl Into<String>,
     decision: &RuntimeCompactionDecision,
     policy: &RuntimeCompactionPolicy,
     artifact: RuntimeCompactionArtifactRef,
 ) -> RuntimeCompactionEvent {
-    RuntimeCompactionEvent {
-        conversation_id: conversation_id.into(),
-        trigger: decision.trigger.clone(),
-        policy_version: policy.policy_version.clone(),
-        status: RuntimeCompactionEventStatus::Applied,
-        boundary: Some(decision.boundary.clone()),
-        source_group_start: Some(decision.selected_group_start),
-        source_group_end: Some(decision.selected_group_end),
-        artifact: Some(artifact),
-        diagnostic: None,
-    }
+    RuntimeCompactionEvent::applied(conversation_id, decision, policy, artifact)
 }
 
 pub fn build_compaction_skipped_event(
@@ -61,17 +91,7 @@ pub fn build_compaction_skipped_event(
     policy: &RuntimeCompactionPolicy,
     diagnostic: impl Into<String>,
 ) -> RuntimeCompactionEvent {
-    RuntimeCompactionEvent {
-        conversation_id: conversation_id.into(),
-        trigger,
-        policy_version: policy.policy_version.clone(),
-        status: RuntimeCompactionEventStatus::Skipped,
-        boundary: None,
-        source_group_start: None,
-        source_group_end: None,
-        artifact: None,
-        diagnostic: Some(diagnostic.into()),
-    }
+    RuntimeCompactionEvent::skipped(conversation_id, trigger, policy, diagnostic)
 }
 
 #[cfg(test)]
