@@ -43,7 +43,6 @@ use crate::errors::CustomError;
 use crate::{auth_backend::Backend, config::Config};
 
 use axum::{
-    body::Body,
     extract::{MatchedPath, State},
     http::{header, Request, StatusCode},
     response::{Html, IntoResponse, Response},
@@ -314,14 +313,13 @@ pub async fn server(
                     "/metrics",
                     get(|| async {
                         let text = crate::observability::metrics::render_prometheus_text();
-                        Response::builder()
-                            .status(StatusCode::OK)
-                            .header(
+                        (
+                            [(
                                 header::CONTENT_TYPE,
                                 "text/plain; version=0.0.4; charset=utf-8",
-                            )
-                            .body(Body::from(text))
-                            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+                            )],
+                            text,
+                        )
                     }),
                 )
                 .route("/status", get(status::page))
