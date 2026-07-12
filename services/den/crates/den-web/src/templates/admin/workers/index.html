@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Workers · Admin{% endblock %}
+
+{% block admin_content %}
+<h3>Worker health</h3>
+<p class="form-hint">Quick status rollup for background worker tables.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Worker</th>
+      <th>Total</th>
+      <th>Pending</th>
+      <th>Running</th>
+      <th>Succeeded</th>
+      <th>Failed</th>
+      <th>Blocked</th>
+      <th>Most recent</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td>{{ row.worker }}</td>
+      <td>{{ row.total }}</td>
+      <td>{{ row.pending }}</td>
+      <td>{{ row.running }}</td>
+      <td>{{ row.succeeded }}</td>
+      <td>{{ row.failed }}</td>
+      <td>{{ row.blocked }}</td>
+      <td>{% if row.most_recent_at %}{{ row.most_recent_at }}{% else %}—{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="8">No worker status is available.</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
