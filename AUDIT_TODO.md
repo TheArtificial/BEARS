@@ -667,7 +667,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/native_runtime/tools.rs:74-125` — keyword-matching heuristics (`lower.contains(keyword)`) for tool-surface gating will misfire on substrings.
 - [ ] `src/native_runtime/profile.rs:18-141` `NativeCapabilityProfile::for_profile` — ~120-line match with heavily duplicated nested struct-literal shapes across profile variants — use a builder or per-field table.
 - [ ] `src/native_runtime/profile.rs:92-136` — nested `if profile == BearProfile::Work` inside an already-destructured `Chat | Work` match arm — confusing double-dispatch, split into separate arms.
-- [ ] `src/native_runtime/profile_briefing.rs:9-26` — builds prompt via repeated `push_str(&format!(...))`, allocating a new String per item — use `write!(prompt, ...)`.
+- [x] `src/native_runtime/profile_briefing.rs:9-26` — builds prompt via repeated `push_str(&format!(...))`, allocating a new String per item — use `write!(prompt, ...)`. **DONE** (cleanup batch): uses `writeln!` against the existing prompt buffer; `den-runtime` clippy green.
 - [x] `src/recall/chunking.rs:28-30` — manual hex-encoding loop instead of a `hex`/`data-encoding` crate. **DONE** (cleanup batch): current file lives in `den-service`; replaced manual byte loop with lower-hex digest formatting without adding a dependency; `den-service` clippy green.
 - [ ] `src/recall/chunking.rs:69-70` — allocates twice (`collect()` then `trim().to_string()`) where trimming char-slice bounds first would allocate once.
 - [ ] `src/recall/policy.rs:17-20` `EXCLUDED_KINDS`/`PROFILE_LOCAL_INDEXABLE_KINDS` are untyped `&[&str]` — an enum for memory `kind` would give compile-time exhaustiveness.
