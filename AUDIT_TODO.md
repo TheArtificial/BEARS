@@ -515,7 +515,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [x] `src/agent_loop/budget.rs:29-81` hand-rolled `impl Default` for `ToolCallBudgetUsage` — `#[derive(Default)]` would suffice (all fields `u32`). **RECONCILED**: current code already derives `Default`; no code change needed.
 - [ ] `src/agent_loop/budget.rs:43-65` `count_for`/`limit_for` — two parallel manual matches over the same 7-variant enum — use an array/EnumMap indexed by variant.
 - [ ] `src/agent_loop/budget.rs:262-305` `classify_tool_budget_class` — giant hardcoded string-literal match of tool names to classes, fragile coupling — use a lookup table or tool-definition attribute.
-- [ ] `src/agent_loop/budget.rs:445-468,499-514` — same 7-element class-ordering array duplicated verbatim in two functions — extract `const ALL_CLASSES`.
+- [x] `src/agent_loop/budget.rs:445-468,499-514` — same 7-element class-ordering array duplicated verbatim in two functions — extract `const ALL_CLASSES`. **DONE** (duplication batch): added `ALL_BUDGET_CLASSES_BY_SEVERITY` and reused it in warning/exhaustion scans; `den-runtime` clippy green.
 - [ ] `src/llm/stream.rs:23-29,401-408` — two near-duplicate accumulator structs with near-identical SSE-line-parsing loops across 3 functions — needs one shared SSE-line iterator helper.
 - [ ] `src/llm/stream.rs:553,674,627` — 3 separate `from_utf8(...).map_err(...)` blocks with copy-pasted error text — extract `decode_utf8_or_system_error`.
 - [ ] `src/llm/stream.rs:592,624,650,658` — 4 public entry points with overlapping purposes and confusingly similar names, only one has a doc comment distinguishing them.

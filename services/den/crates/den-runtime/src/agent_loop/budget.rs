@@ -79,6 +79,16 @@ pub enum ToolBudgetClass {
     Other,
 }
 
+const ALL_BUDGET_CLASSES_BY_SEVERITY: &[ToolBudgetClass] = &[
+    ToolBudgetClass::Destructive,
+    ToolBudgetClass::Write,
+    ToolBudgetClass::Execute,
+    ToolBudgetClass::Fetch,
+    ToolBudgetClass::Search,
+    ToolBudgetClass::Read,
+    ToolBudgetClass::Other,
+];
+
 impl ToolBudgetClass {
     pub fn label(self) -> &'static str {
         match self {
@@ -496,15 +506,7 @@ fn budget_warning(
         });
     }
 
-    for class in [
-        ToolBudgetClass::Destructive,
-        ToolBudgetClass::Write,
-        ToolBudgetClass::Execute,
-        ToolBudgetClass::Fetch,
-        ToolBudgetClass::Search,
-        ToolBudgetClass::Read,
-        ToolBudgetClass::Other,
-    ] {
+    for &class in ALL_BUDGET_CLASSES_BY_SEVERITY {
         let count = state.tool_usage.count_for(class);
         let limit = ToolCallBudgetUsage::limit_for(policy.tool_call_limits, class);
         if count == 0 {
@@ -565,19 +567,11 @@ fn first_exhausted_class(
     usage: ToolCallBudgetUsage,
     limits: ToolCallBudgetLimits,
 ) -> Option<(ToolBudgetClass, u32, u32)> {
-    for class in [
-        ToolBudgetClass::Destructive,
-        ToolBudgetClass::Write,
-        ToolBudgetClass::Execute,
-        ToolBudgetClass::Fetch,
-        ToolBudgetClass::Search,
-        ToolBudgetClass::Read,
-        ToolBudgetClass::Other,
-    ] {
-        let count = usage.count_for(class);
+    for &class in ALL_BUDGET_CLASSES_BY_SEVERITY {
+        let used = usage.count_for(class);
         let limit = ToolCallBudgetUsage::limit_for(limits, class);
-        if count > limit {
-            return Some((class, count, limit));
+        if used > limit {
+            return Some((class, used, limit));
         }
     }
     None
