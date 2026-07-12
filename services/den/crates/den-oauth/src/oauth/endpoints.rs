@@ -890,15 +890,7 @@ fn oauth_error_response(error: OAuthError) -> Response {
         error.status_code()
     );
 
-    let status_code = match error {
-        OAuthError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-        OAuthError::InvalidClient => StatusCode::UNAUTHORIZED,
-        OAuthError::InvalidGrant => StatusCode::BAD_REQUEST,
-        OAuthError::UnsupportedGrantType => StatusCode::BAD_REQUEST,
-        OAuthError::InvalidScope => StatusCode::BAD_REQUEST,
-        OAuthError::ServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        _ => StatusCode::BAD_REQUEST,
-    };
+    let status_code = error.status_code();
 
     // Build error response with helpful context
     let mut error_response = serde_json::json!({
@@ -1239,25 +1231,9 @@ fn build_user_info_response(
 /// # Returns
 /// HTTP response with Bearer token error format
 fn bearer_error_response(error: OAuthError) -> Response {
-    let (status_code, error_code, error_description) = match error {
-        OAuthError::InvalidRequest(desc) => (StatusCode::BAD_REQUEST, "invalid_request", desc),
-        OAuthError::InvalidToken => (
-            StatusCode::UNAUTHORIZED,
-            "invalid_token",
-            "The access token provided is expired, revoked, malformed, or invalid".to_string(),
-        ),
-        OAuthError::InsufficientScope => (
-            StatusCode::FORBIDDEN,
-            "insufficient_scope",
-            "The request requires higher privileges than provided by the access token".to_string(),
-        ),
-        OAuthError::ServerError(desc) => (StatusCode::INTERNAL_SERVER_ERROR, "server_error", desc),
-        _ => (
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "Invalid request".to_string(),
-        ),
-    };
+    let status_code = error.status_code();
+    let error_code = error.error_code();
+    let error_description = error.error_description();
 
     // Build WWW-Authenticate header value
     let www_authenticate = if status_code == StatusCode::UNAUTHORIZED {
