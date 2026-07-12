@@ -247,33 +247,56 @@ pub async fn get_for_session(
     client_session_id: &str,
     plan_mode_id: Option<Uuid>,
 ) -> Result<Option<PlanModeSessionRow>, DenError> {
-    let query = if plan_mode_id.is_some() {
-        format!(
-            r"
-            SELECT {SELECT_COLUMNS}
-            FROM client_plan_mode_sessions
-            WHERE id = $4 AND user_id = $1 AND bear_id = $2 AND client_session_id = $3
-            "
-        )
-    } else {
-        format!(
-            r"
-            SELECT {SELECT_COLUMNS}
-            FROM client_plan_mode_sessions
-            WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
-            ORDER BY updated_at DESC
-            LIMIT 1
-            "
-        )
-    };
-    let mut q = sqlx::query(&query)
-        .bind(user_id)
-        .bind(bear_id)
-        .bind(client_session_id);
     if let Some(id) = plan_mode_id {
-        q = q.bind(id);
+        get_for_session_by_id(pool, user_id, bear_id, client_session_id, id).await
+    } else {
+        latest_for_session(pool, user_id, bear_id, client_session_id).await
     }
-    let row = q.fetch_optional(pool).await?;
+}
+
+async fn get_for_session_by_id(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    client_session_id: &str,
+    plan_mode_id: Uuid,
+) -> Result<Option<PlanModeSessionRow>, DenError> {
+    let row = sqlx::query(&format!(
+        r"
+        SELECT {SELECT_COLUMNS}
+        FROM client_plan_mode_sessions
+        WHERE id = $1 AND user_id = $2 AND bear_id = $3 AND client_session_id = $4
+        "
+    ))
+    .bind(plan_mode_id)
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(client_session_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.as_ref().map(row_from_sql))
+}
+
+async fn latest_for_session(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    client_session_id: &str,
+) -> Result<Option<PlanModeSessionRow>, DenError> {
+    let row = sqlx::query(&format!(
+        r"
+        SELECT {SELECT_COLUMNS}
+        FROM client_plan_mode_sessions
+        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
+        ORDER BY updated_at DESC
+        LIMIT 1
+        "
+    ))
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(client_session_id)
+    .fetch_optional(pool)
+    .await?;
     Ok(row.as_ref().map(row_from_sql))
 }
 

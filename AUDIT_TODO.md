@@ -233,7 +233,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `native_runtime/web_chat_loop.rs:267-343` `evaluate_completed_tool_batch` — nested god-closure for budget-advisory dedup, extract `push_budget_advisory()`.
 - [ ] `native_runtime/web_chat_loop.rs` (616 lines) — borderline god-file combining state machine + tool execution + persistence; split persistence into its own module.
 - [x] `plan_mode.rs:131-136` `clean_optional` reimplements `Option::filter`+trim verbosely. **DONE** (cleanup batch): simplified to `map(...).filter(...)`; `den-runtime` clippy green.
-- [ ] `plan_mode.rs:250-279` `get_for_session` builds two different SQL strings via if/else with conditional `.bind()` arity — error-prone, split into two named query fns.
+- [x] `plan_mode.rs:250-279` `get_for_session` builds two different SQL strings via if/else with conditional `.bind()` arity — error-prone, split into two named query fns. **DONE** (clarity batch): split into `get_for_session_by_id` and `latest_for_session`, each with fixed SQL/bind arity; `den-runtime` clippy green.
 - [ ] `plan_mode.rs:420-495` `approve_plan_mode`/`reject_plan_mode`/`cancel_plan_mode` duplicate the "fetch current, decide client_session_id" preamble verbatim.
 - [ ] `plan_mode.rs:497-513` `close_with_state` runtime-guards invalid states via `matches!` — model as a "ClosedPlanModeState" enum to make invalid states unrepresentable.
 - [ ] `plan_mode.rs:281-333` `enter_plan_mode` mixes `pool` and `&mut *tx` reads inside one transaction — confusing.
