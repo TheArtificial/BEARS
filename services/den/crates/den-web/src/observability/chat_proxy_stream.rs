@@ -28,6 +28,9 @@ pub(crate) fn is_ephemeral_progress_status(text: &str) -> bool {
 }
 
 /// Strips trailing ephemeral status suffixes from polluted persisted rows (e.g. `HelloThinking…`).
+///
+/// The loop terminates because each successful iteration removes one known non-empty suffix; once
+/// no suffix matches the function returns the current text.
 pub(crate) fn strip_ephemeral_status_suffixes(text: &str) -> String {
     let mut out = text.to_string();
     loop {
