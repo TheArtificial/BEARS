@@ -107,7 +107,7 @@ pub fn derive_title_from_user_message(raw: &str) -> Option<String> {
         return None;
     }
     // If the first line is still huge, cut at punctuation or hard limit.
-    if line.len() > 120 {
+    if line.chars().count() > 120 {
         line = truncate_at_word_boundary(&line, 120);
     }
 
@@ -260,22 +260,17 @@ fn looks_like_json_blob(s: &str) -> bool {
         || (t.starts_with('[') && t.ends_with(']') && t.len() > 40)
 }
 
-fn truncate_at_word_boundary(s: &str, max: usize) -> String {
-    if s.len() <= max {
+fn truncate_at_word_boundary(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
         return s.to_string();
     }
-    // Back off to a UTF-8 char boundary so multi-byte input can't panic.
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    let slice = &s[..end];
-    if let Some(pos) = slice.rfind(|c: char| c.is_whitespace()) {
+    let mut truncated = s.chars().take(max_chars).collect::<String>();
+    if let Some(pos) = truncated.rfind(|c: char| c.is_whitespace()) {
         if pos > 10 {
-            return slice[..pos].trim().to_string();
+            truncated.truncate(pos);
         }
     }
-    slice.trim().to_string()
+    truncated.trim().to_string()
 }
 
 fn truncate_to_title_length(s: &str) -> String {
@@ -297,14 +292,8 @@ fn truncate_to_title_length(s: &str) -> String {
         out.push_str(w);
     }
     if out.is_empty() {
-        // First word alone exceeds MAX_CHARS — hard cut.
-        let mut t = s.chars().take(MAX_CHARS).collect::<String>();
-        if let Some(pos) = t.rfind(|c: char| c.is_whitespace()) {
-            if pos > 5 {
-                t.truncate(pos);
-            }
-        }
-        return t.trim().to_string();
+        // First word alone exceeds MAX_CHARS — hard cut through the shared truncation helper.
+        return truncate_at_word_boundary(s, MAX_CHARS);
     }
     out
 }
