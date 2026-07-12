@@ -633,7 +633,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/runtime/compaction/render.rs:6-42` — six repetitive `if !summary.X.is_empty() { sections.push(...) }` blocks — data-driven loop would cut ~35 lines.
 - [ ] `src/runtime/compaction/render.rs:44-49` — `sections.len() == 1` used as a fragile implicit "nothing rendered" check.
 - [ ] `src/runtime/compaction_observability.rs:29-65` `build_compaction_applied_event`/`build_compaction_skipped_event` hand-assemble the same 8-field struct — unify via `RuntimeCompactionEvent::skipped(...)`/`::applied(...)` associated functions.
-- [ ] `src/runtime/role_registry.rs:17` `new(pool, _config)` accepts and discards `_config` entirely — drop the parameter or it misleads callers.
+- [x] `src/runtime/role_registry.rs:17` `new(pool, _config)` accepts and discards `_config` entirely — drop the parameter or it misleads callers. **DONE** (cleanup batch): constructor now takes only `pool`; unused `Config` import removed; `den-runtime` clippy green.
 - [ ] `src/runtime/role_registry.rs:26-29` — intentional query duplication (documented, to avoid a crate cycle) has no test/lint guarding the two copies stay in sync.
 - [ ] `src/runtime/role_registry.rs:41-44` — synthetic binding-id convention (`format!("den-native:{bear_id}:...")`) isn't documented as part of `resolve_binding`'s public contract.
 - [x] `src/runtime/provider/mod.rs:1-12` — pure re-export shim with zero documentation on why this namespace exists separately from `den_protocol`. **DONE** (docs batch): added module docs explaining the compatibility namespace and dependency-direction reason; `den-runtime` clippy green.

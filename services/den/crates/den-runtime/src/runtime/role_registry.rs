@@ -5,7 +5,6 @@ use std::str::FromStr;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use den_core::config::Config;
 use den_core::{BearProfile, DenError};
 use den_protocol::{RoleProfileRegistry, RoleRuntimeBinding};
 
@@ -14,7 +13,7 @@ pub struct DenNativeProfileRegistry<'a> {
 }
 
 impl<'a> DenNativeProfileRegistry<'a> {
-    pub fn new(pool: &'a PgPool, _config: &'a Config) -> Self {
+    pub fn new(pool: &'a PgPool) -> Self {
         Self { pool }
     }
 
