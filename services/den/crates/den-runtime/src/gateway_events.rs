@@ -94,6 +94,45 @@ pub enum GatewayEvent {
     },
 }
 
+impl GatewayEvent {
+    pub fn adapter_type(&self) -> &'static str {
+        match self {
+            Self::AssistantTextDelta { .. } => "assistant_text_delta",
+            Self::ReasoningTextDelta { .. } => "reasoning_text_delta",
+            Self::StatusText { .. } => "status_text",
+            Self::TurnComplete { .. } => "turn_complete",
+            Self::TurnResult { .. } => "turn_result",
+            Self::Error { .. } => "error",
+            Self::ToolRequest { .. } => "tool_request",
+            Self::PermissionRequest { .. } => "permission_request",
+            Self::PlanUpdate { .. }
+            | Self::PlanUpdateJson { .. }
+            | Self::PlanApprovalFallback { .. } => "plan_update",
+            Self::ModeUpdate { .. } => "mode_update",
+            Self::SessionInfoUpdate { .. } => "session_info_update",
+            Self::ConversationResolved { .. } => "conversation_resolved",
+        }
+    }
+
+    pub fn has_visible_output(&self) -> bool {
+        match self {
+            Self::AssistantTextDelta { text } | Self::StatusText { text } => !text.is_empty(),
+            Self::ReasoningTextDelta { .. } => false,
+            Self::Error { .. } => true,
+            Self::TurnComplete { .. }
+            | Self::TurnResult { .. }
+            | Self::ToolRequest { .. }
+            | Self::PermissionRequest { .. }
+            | Self::PlanApprovalFallback { .. } => true,
+            Self::PlanUpdate { .. }
+            | Self::PlanUpdateJson { .. }
+            | Self::ModeUpdate { .. }
+            | Self::ConversationResolved { .. }
+            | Self::SessionInfoUpdate { .. } => false,
+        }
+    }
+}
+
 pub fn provider_inner(msg: &serde_json::Value) -> &serde_json::Value {
     match msg.get("contents") {
         Some(c) if c.get("message_type").is_some() => c,
@@ -804,42 +843,11 @@ pub fn conversation_resolved_gateway_event(event: &serde_json::Value) -> Option<
 }
 
 pub fn gateway_event_adapter_type(event: &GatewayEvent) -> &'static str {
-    match event {
-        GatewayEvent::AssistantTextDelta { .. } => "assistant_text_delta",
-        GatewayEvent::ReasoningTextDelta { .. } => "reasoning_text_delta",
-        GatewayEvent::StatusText { .. } => "status_text",
-        GatewayEvent::TurnComplete { .. } => "turn_complete",
-        GatewayEvent::TurnResult { .. } => "turn_result",
-        GatewayEvent::Error { .. } => "error",
-        GatewayEvent::ToolRequest { .. } => "tool_request",
-        GatewayEvent::PermissionRequest { .. } => "permission_request",
-        GatewayEvent::PlanUpdate { .. }
-        | GatewayEvent::PlanUpdateJson { .. }
-        | GatewayEvent::PlanApprovalFallback { .. } => "plan_update",
-        GatewayEvent::ModeUpdate { .. } => "mode_update",
-        GatewayEvent::SessionInfoUpdate { .. } => "session_info_update",
-        GatewayEvent::ConversationResolved { .. } => "conversation_resolved",
-    }
+    event.adapter_type()
 }
 
 pub fn gateway_event_has_visible_output(event: &GatewayEvent) -> bool {
-    match event {
-        GatewayEvent::AssistantTextDelta { text } | GatewayEvent::StatusText { text } => {
-            !text.is_empty()
-        }
-        GatewayEvent::ReasoningTextDelta { .. } => false,
-        GatewayEvent::Error { .. } => true,
-        GatewayEvent::TurnComplete { .. }
-        | GatewayEvent::TurnResult { .. }
-        | GatewayEvent::ToolRequest { .. }
-        | GatewayEvent::PermissionRequest { .. }
-        | GatewayEvent::PlanApprovalFallback { .. } => true,
-        GatewayEvent::PlanUpdate { .. }
-        | GatewayEvent::PlanUpdateJson { .. }
-        | GatewayEvent::ModeUpdate { .. }
-        | GatewayEvent::ConversationResolved { .. }
-        | GatewayEvent::SessionInfoUpdate { .. } => false,
-    }
+    event.has_visible_output()
 }
 
 pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {

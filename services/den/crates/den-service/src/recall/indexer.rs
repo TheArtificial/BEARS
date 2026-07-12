@@ -121,12 +121,12 @@ impl<'a, E: PassageEmbedder> RecallIndexer<'a, E> {
             }
 
             let mut points = Vec::with_capacity(to_embed.len());
-            for (vec_pos, &chunk_pos) in to_embed.iter().enumerate() {
+            for (&chunk_pos, vector) in to_embed.iter().zip(vectors.into_iter()) {
                 let chunk = &chunks[chunk_pos];
                 let pid = point_id(req.bear_id, &req.memory_id, chunk.index, std);
                 points.push(QdrantPoint {
                     id: pid,
-                    vector: vectors[vec_pos].clone(),
+                    vector,
                     payload: build_payload(req, chunk, std),
                 });
             }

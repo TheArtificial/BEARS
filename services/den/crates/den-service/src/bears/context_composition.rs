@@ -177,8 +177,9 @@ pub fn render_managed_role_prompt_with_registry(
                 .map(|block| block.effective_content.trim().to_string())
         })
         .unwrap_or_else(|| profile.role_contracts.get(role).trim().to_string());
+    let role_contract_key = managed_space_block_key(role);
     let role_contract = render_compile_time_text(
-        managed_space_block_key(role),
+        &role_contract_key,
         &role_contract,
         &compile_context,
     )?;
@@ -238,8 +239,9 @@ pub fn compose_role_context(
         bear_slug: &bear.slug,
     };
     let den_baseline = render_compile_time_text("den_baseline", den_baseline(), &compile_context)?;
+    let role_contract_key = managed_space_block_key(role);
     let role_contract = render_compile_time_text(
-        managed_space_block_key(role),
+        &role_contract_key,
         profile.role_contracts.get(role).trim(),
         &compile_context,
     )?;

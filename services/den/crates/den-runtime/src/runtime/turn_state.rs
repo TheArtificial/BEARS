@@ -15,6 +15,10 @@ pub const TURN_STATE_AUTHORITY: &str = "current_turn_capabilities";
 
 const AUTONOMOUS_CONTINUATION_POLICY: &str = "continue_until_complete_or_blocked";
 
+fn json_null() -> Value {
+    Value::Null
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutonomousFinalResponseKind {
     CompletionFinal,
@@ -411,26 +415,28 @@ fn workplan_domain_json(
     let state = workflow_state_label(policy);
     let approval_status =
         approval_status_label(policy.plan_mode_state.as_deref(), policy.mode_label);
+    // `plan_id`, `id`, and `root_id` intentionally share the same root workplan id in the
+    // v1 wire shape: older clients read different aliases for the same root plan identity.
     json!({
         "domain": "workplan",
         "state": state,
         "approval_status": approval_status,
-        "plan_id": workplan_row.map(|row| Value::from(row.id.to_string())).unwrap_or(Value::Null),
-        "id": workplan_row.map(|row| Value::from(row.id.to_string())).unwrap_or(Value::Null),
-        "root_id": workplan_row.map(|row| Value::from(row.id.to_string())).unwrap_or(Value::Null),
-        "parent_id": Value::Null,
+        "plan_id": workplan_row.map(|row| Value::from(row.id.to_string())).unwrap_or_else(json_null),
+        "id": workplan_row.map(|row| Value::from(row.id.to_string())).unwrap_or_else(json_null),
+        "root_id": workplan_row.map(|row| Value::from(row.id.to_string())).unwrap_or_else(json_null),
+        "parent_id": json_null(),
         "relation": if state == "inactive" { "none" } else { "root" },
         "mode_label": policy.mode_label,
-        "raw_state": workplan_row.map(|row| Value::from(row.state.clone())).unwrap_or(Value::Null),
-        "title": workplan_row.and_then(|row| row.plan_title.clone()).map(Value::from).unwrap_or(Value::Null),
+        "raw_state": workplan_row.map(|row| Value::from(row.state.clone())).unwrap_or_else(json_null),
+        "title": workplan_row.and_then(|row| row.plan_title.clone()).map(Value::from).unwrap_or_else(json_null),
         "summary": workplan_row
             .and_then(|row| row.plan_body.as_ref().map(|body| summarize_text(body, 240)))
             .map(Value::from)
-            .unwrap_or(Value::Null),
+            .unwrap_or_else(json_null),
         "artifact_path": workplan_row
             .and_then(|row| row.plan_artifact_path.clone())
             .map(Value::from)
-            .unwrap_or(Value::Null),
+            .unwrap_or_else(json_null),
         "submitted_plan_present": workplan_row
             .map(|row| row.plan_artifact_path.is_some())
             .unwrap_or(false),
@@ -438,13 +444,13 @@ fn workplan_domain_json(
         "execution_unlocked_when_approved": policy.tool_enablement.enables_non_read_tools(),
         "approved_at": workplan_row
             .and_then(|row| row.approved_at.map(|t| Value::from(t.to_string())))
-            .unwrap_or(Value::Null),
+            .unwrap_or_else(json_null),
         "closed_at": workplan_row
             .and_then(|row| row.closed_at.map(|t| Value::from(t.to_string())))
-            .unwrap_or(Value::Null),
+            .unwrap_or_else(json_null),
         "updated_at": workplan_row
             .map(|row| Value::from(row.updated_at.to_string()))
-            .unwrap_or(Value::Null),
+            .unwrap_or_else(json_null),
     })
 }
 
@@ -459,18 +465,18 @@ fn activity_domain_json(plan: Option<&TaskListLocalProjection>) -> Value {
                 "plan_id": plan.id,
                 "id": plan.id,
                 "root_id": plan.id,
-                "parent_id": Value::Null,
+                "parent_id": json_null(),
                 "relation": "root",
                 "frontmost": true,
                 "status": plan.status,
                 "title": plan.title,
                 "summary": plan.summary,
-                "current_item": plan.current_item.as_ref().map(activity_item_json).unwrap_or(Value::Null),
+                "current_item": plan.current_item.as_ref().map(activity_item_json).unwrap_or_else(json_null),
                 "counts": counts,
                 "status_sync_required": status_sync_required,
                 "completion_claim_requires_status_update": status_sync_required,
-                "status_update_tool": if status_sync_required { Value::from("update_task_list") } else { Value::Null },
-                "toward_workplan_id": Value::Null,
+                "status_update_tool": if status_sync_required { Value::from("update_task_list") } else { json_null() },
+                "toward_workplan_id": json_null(),
                 "handoff_requested": plan.handoff_intent_path.is_some() || plan.handoff_task_id.is_some(),
                 "visibility": plan.visibility,
                 "owner_profile": plan.owner_profile,
@@ -479,16 +485,16 @@ fn activity_domain_json(plan: Option<&TaskListLocalProjection>) -> Value {
         }
         None => json!({
             "domain": "activity",
-            "plan_id": Value::Null,
-            "id": Value::Null,
-            "root_id": Value::Null,
-            "parent_id": Value::Null,
+            "plan_id": json_null(),
+            "id": json_null(),
+            "root_id": json_null(),
+            "parent_id": json_null(),
             "relation": "none",
             "frontmost": false,
             "status": "inactive",
-            "title": Value::Null,
-            "summary": Value::Null,
-            "current_item": Value::Null,
+            "title": json_null(),
+            "summary": json_null(),
+            "current_item": json_null(),
             "counts": {
                 "pending": 0,
                 "in_progress": 0,
@@ -498,8 +504,8 @@ fn activity_domain_json(plan: Option<&TaskListLocalProjection>) -> Value {
             },
             "status_sync_required": false,
             "completion_claim_requires_status_update": false,
-            "status_update_tool": Value::Null,
-            "toward_workplan_id": Value::Null,
+            "status_update_tool": json_null(),
+            "toward_workplan_id": json_null(),
             "handoff_requested": false
         }),
     }
@@ -511,7 +517,7 @@ fn autonomous_execution_domain_json(plan: Option<&TaskListLocalProjection>) -> V
         .unwrap_or(BearProfile::Pair);
     let Some(plan) = plan.filter(|plan| is_autonomous_implementation_plan(profile, plan)) else {
         return json!({
-            "mode": Value::Null,
+            "mode": json_null(),
             "active": false,
         });
     };
@@ -526,7 +532,7 @@ fn autonomous_execution_domain_json(plan: Option<&TaskListLocalProjection>) -> V
         .rev()
         .find(|item| item.status == TaskListItemStatus::Completed)
         .map(|item| Value::from(item.title.clone()))
-        .unwrap_or(Value::Null);
+        .unwrap_or_else(json_null);
     json!({
         "mode": "autonomous_implementation",
         "active": true,

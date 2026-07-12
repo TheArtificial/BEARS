@@ -194,7 +194,7 @@ fn managed_resolved_blocks_override_profile_and_repository_defaults() {
         blocks: vec![
             resolved_block("den_baseline", "Managed baseline for {{ bear_name }}."),
             resolved_block(
-                managed_space_block_key(BearProfile::Chat),
+                &managed_space_block_key(BearProfile::Chat),
                 "Managed chat for {{ bear_slug }}.",
             ),
         ],

@@ -76,36 +76,51 @@ pub fn chat_turn_needs_full_tool_surface(prompt: Option<&str>) -> bool {
         return false;
     }
     let lower = prompt.to_ascii_lowercase();
-    const KEYWORDS: &[&str] = &[
+    const PHRASES: &[&str] = &[
+        "work plan",
+        "rename conversation",
+        "plan mode",
+        "https://",
+    ];
+    const WORDS: &[&str] = &[
         "memory",
         "remember",
         "recall",
         "search",
         "browse",
-        "work plan",
         "workboard",
         "handoff",
-        "fetch ",
+        "fetch",
         "http",
-        "https://",
-        "url ",
-        "web ",
+        "url",
+        "web",
         "title",
-        "rename conversation",
         "policy",
         "members",
         "proposal",
         "review",
         "curate",
-        "write ",
-        "save ",
-        "update ",
-        "plan mode",
+        "write",
+        "save",
+        "update",
         "file",
         "code",
         "workspace",
     ];
-    KEYWORDS.iter().any(|keyword| lower.contains(keyword))
+    PHRASES.iter().any(|phrase| lower.contains(phrase))
+        || WORDS.iter().any(|word| contains_ascii_word(&lower, word))
+}
+
+fn contains_ascii_word(haystack: &str, word: &str) -> bool {
+    haystack.match_indices(word).any(|(start, matched)| {
+        let end = start + matched.len();
+        is_word_boundary(haystack[..start].chars().next_back())
+            && is_word_boundary(haystack[end..].chars().next())
+    })
+}
+
+fn is_word_boundary(ch: Option<char>) -> bool {
+    ch.is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_')
 }
 
 pub fn chat_turn_is_capabilities_meta_query(message: &str) -> bool {
@@ -381,6 +396,13 @@ mod tests {
         let names: Vec<_> = merged.iter().map(|tool| tool.name.as_str()).collect();
         assert!(names.contains(&"memory_search"));
         assert!(names.contains(&"session_info"));
+    }
+
+    #[test]
+    fn chat_prompt_keyword_matching_avoids_substring_false_positives() {
+        assert!(!chat_turn_needs_full_tool_surface(Some("research preview webhook ideas")));
+        assert!(chat_turn_needs_full_tool_surface(Some("please search memory")));
+        assert!(chat_turn_needs_full_tool_surface(Some("fetch https://example.com")));
     }
 
     #[test]

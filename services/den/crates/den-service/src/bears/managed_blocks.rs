@@ -165,14 +165,8 @@ pub fn content_hash(content: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub fn managed_space_block_key(role: BearProfile) -> &'static str {
-    match role {
-        BearProfile::Chat => "space_instruction.chat",
-        BearProfile::Pair => "space_instruction.pair",
-        BearProfile::Curate => "space_instruction.curate",
-        BearProfile::Work => "space_instruction.work",
-        BearProfile::Watch => "space_instruction.watch",
-    }
+pub fn managed_space_block_key(role: BearProfile) -> String {
+    format!("space_instruction.{}", role.as_str())
 }
 
 pub fn system_block_seed_data() -> Vec<SeedSystemBlock> {

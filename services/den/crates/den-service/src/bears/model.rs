@@ -7,6 +7,8 @@ use sqlx::FromRow;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use den_core::DenError;
+
 /// Bear plus `user_bear.role` for the current user (`list_bears_for_user`).
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct BearWithMembership {
@@ -61,8 +63,8 @@ pub struct BearProfileBinding {
 }
 
 impl BearProfileBinding {
-    pub fn parsed_profile(&self) -> Result<BearProfile, String> {
-        self.profile.parse()
+    pub fn parsed_profile(&self) -> Result<BearProfile, DenError> {
+        self.profile.parse().map_err(DenError::ValidationError)
     }
 }
 
