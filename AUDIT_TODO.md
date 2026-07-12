@@ -320,7 +320,7 @@ Module structure: `lib.rs` (router) → `auth.rs`, `events.rs` (SSE), `rpc.rs` (
 - [ ] `src/methods/run.rs:1246-1257` — 10+ separate `let x_for_task = x.clone();` bindings before `tokio::spawn` — use one context struct moved once.
 - [ ] `src/methods/run.rs:602` `#[allow(clippy::too_many_arguments)]` on a 14-param function — group into a `ToolCallPersistInput` struct.
 - [ ] `src/rpc.rs:81-151` — 10x repeated `method_response(...)` dispatch pattern with hand-written message strings — use a macro or `(method_name, handler)` table.
-- [ ] `src/methods/mod.rs:85-90` `deserialize_string` is a no-op alias for `deserialize_required_string` — merge or document why both exist.
+- [x] `src/methods/mod.rs:85-90` `deserialize_string` is a no-op alias for `deserialize_required_string` — merge or document why both exist. **RECONCILED**: helper no longer exists in current `methods/mod.rs`; no code change needed.
 - [ ] `src/methods/client.rs:146-157` `ClientToolResultRequest::input()` clones 5 fields incl. a `Value` — avoid by consuming `self` or borrowing.
 - [ ] `src/methods/run.rs:1148-1158`, `client.rs:189-194` — clones a `String` just for comparison; `.as_deref().unwrap_or(&x)` pattern used correctly elsewhere (`session.rs:71-76`) but inconsistently here.
 - [ ] `src/auth.rs:7-21` vs `events.rs:55-62` — duplicated "read Authorization header → strip → trim → validate" pattern — share one combinator.
