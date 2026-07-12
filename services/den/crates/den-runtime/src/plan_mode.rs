@@ -129,10 +129,9 @@ pub struct SubmitPlanModeParams {
 }
 
 fn clean_optional(value: Option<String>) -> Option<String> {
-    value.and_then(|v| {
-        let trimmed = v.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
-    })
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn row_from_sql(row: &PgRow) -> PlanModeSessionRow {
