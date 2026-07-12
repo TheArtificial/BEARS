@@ -8,9 +8,11 @@ mod auth;
 mod events;
 mod methods;
 mod obligation_expiry;
+mod open_reflection;
 mod rpc;
 
 pub use obligation_expiry::{expire_client_obligations_once, run_client_obligation_expiry_loop};
+pub use open_reflection::run_open_session_reflection_loop;
 
 pub fn router() -> Router<DenState> {
     Router::new().route("/v1/rpc", post(rpc::rpc)).route(

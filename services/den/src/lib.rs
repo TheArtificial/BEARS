@@ -349,6 +349,30 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
         }
 
         if let Some(token) = worker_token_opt.clone() {
+            let t = token;
+            let worker_pool = sqlx_pool.clone();
+            let worker_config = config.clone();
+            task_set.spawn(async move {
+                tracing::info!("Workers: open-session pair reflection loop enabled");
+                let worker_state = den_service::DenState::new(
+                    worker_pool,
+                    worker_config.clone(),
+                    Arc::new(den_service::bifrost::BifrostClient::new(
+                        worker_config.as_ref(),
+                    )),
+                    den_memory::MemoryStoreManager::new(worker_config.as_ref()),
+                );
+                den_bearwire::run_open_session_reflection_loop(
+                    worker_state,
+                    t,
+                    std::time::Duration::from_secs(300),
+                )
+                .await
+                .map_err(std::io::Error::other)
+            });
+        }
+
+        if let Some(token) = worker_token_opt.clone() {
             if config.qdrant_url.is_some() {
                 let t = token;
                 let worker_pool = sqlx_pool.clone();

@@ -279,6 +279,138 @@ pub struct SessionListParams<'a> {
     pub cursor_id: Option<Uuid>,
 }
 
+#[derive(Debug, Clone)]
+pub struct OpenReflectionCandidatesParams {
+    pub stale_after_minutes: i64,
+    pub activity_threshold: i64,
+    pub limit: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct OpenReflectionCandidateRow {
+    pub id: Uuid,
+    pub user_id: i32,
+    pub bear_id: Uuid,
+    pub bear_slug: String,
+    pub client_session_id: String,
+    pub runtime_session_id: String,
+    pub conversation_id: String,
+    pub resolved_conversation_id: Option<String>,
+    pub client: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adapter_environment: Option<serde_json::Value>,
+    pub current_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_title_updated_at: Option<OffsetDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_title_synced_at: Option<OffsetDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closed_at: Option<OffsetDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+    pub event_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_reflected_at: Option<OffsetDateTime>,
+    pub reflection_trigger: String,
+}
+
+impl OpenReflectionCandidateRow {
+    pub fn session(&self) -> ClientSessionRow {
+        ClientSessionRow {
+            id: self.id,
+            user_id: self.user_id,
+            bear_id: self.bear_id,
+            bear_slug: self.bear_slug.clone(),
+            client_session_id: self.client_session_id.clone(),
+            runtime_session_id: self.runtime_session_id.clone(),
+            conversation_id: self.conversation_id.clone(),
+            resolved_conversation_id: self.resolved_conversation_id.clone(),
+            client: self.client.clone(),
+            cwd: self.cwd.clone(),
+            adapter_environment: self.adapter_environment.clone(),
+            current_mode: self.current_mode.clone(),
+            conversation_title: self.conversation_title.clone(),
+            conversation_title_updated_at: self.conversation_title_updated_at,
+            conversation_title_synced_at: self.conversation_title_synced_at,
+            closed_at: self.closed_at,
+            archived_at: self.archived_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+/// Finds open sessions eligible for automatic pair reflection.
+///
+/// ponytail: event-count eligibility uses total session event count and a
+/// last-reflection timestamp inferred from prior reflection events. The ceiling
+/// is duplicate reflection if historical reflection events are missing or
+/// unrelated events dominate the count. Upgrade path: persist a reflected event
+/// sequence watermark per reflection run.
+pub async fn list_open_reflection_candidates(
+    pool: &PgPool,
+    params: OpenReflectionCandidatesParams,
+) -> Result<Vec<OpenReflectionCandidateRow>, DenError> {
+    let stale_after_minutes = params.stale_after_minutes.max(1);
+    let activity_threshold = params.activity_threshold.max(1);
+    let limit = params.limit.clamp(1, 100);
+    let rows = sqlx::query_as::<_, OpenReflectionCandidateRow>(
+        r#"
+        WITH open_sessions AS (
+            SELECT s.*,
+                   COALESCE(events.event_count, 0)::bigint AS event_count,
+                   reflected.last_reflected_at,
+                   CASE
+                       WHEN s.updated_at <= NOW() - ($1 * INTERVAL '1 minute') THEN 'stale_open_sweep'
+                       ELSE 'activity_threshold_sweep'
+                   END AS reflection_trigger
+            FROM client_sessions s
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::bigint AS event_count
+                FROM bearwire_events e
+                WHERE e.session_id = s.client_session_id
+                  AND e.bear_id = s.bear_id
+                  AND e.user_id = s.user_id
+            ) events ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT MAX(e.created_at) AS last_reflected_at
+                FROM bearwire_events e
+                WHERE e.session_id = s.client_session_id
+                  AND e.bear_id = s.bear_id
+                  AND e.user_id = s.user_id
+                  AND e.event_type = 'session.reflected'
+            ) reflected ON TRUE
+            WHERE s.closed_at IS NULL
+              AND s.archived_at IS NULL
+        )
+        SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
+               conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
+               conversation_title, conversation_title_updated_at, conversation_title_synced_at,
+               closed_at, archived_at, created_at, updated_at, event_count, last_reflected_at,
+               reflection_trigger
+        FROM open_sessions
+        WHERE (updated_at <= NOW() - ($1 * INTERVAL '1 minute')
+               OR event_count >= $2)
+          AND (last_reflected_at IS NULL OR last_reflected_at < updated_at)
+        ORDER BY updated_at ASC, id ASC
+        LIMIT $3
+        "#,
+    )
+    .bind(stale_after_minutes)
+    .bind(activity_threshold)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows)
+}
+
 pub async fn list_for_user_bear(
     pool: &PgPool,
     params: SessionListParams<'_>,

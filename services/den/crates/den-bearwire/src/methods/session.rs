@@ -1,5 +1,6 @@
 use axum::http::HeaderMap;
 use serde_json::{json, Value};
+use sqlx::PgPool;
 
 use bearwire_protocol::{
     methods::{SessionIdRequest, SessionModelSetRequest, SessionOpenRequest, SessionStateRequest},
@@ -16,6 +17,101 @@ use den_service::{bears::BearProfile, client_sessions, DenState};
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
 use crate::methods::{parse_params, DEFAULT_CLIENT};
+
+pub async fn reflect_open_sessions_once(state: &DenState) -> Result<usize, CustomError> {
+    let candidates = client_sessions::list_open_reflection_candidates(
+        &state.sqlx_pool,
+        client_sessions::OpenReflectionCandidatesParams {
+            stale_after_minutes: 30,
+            activity_threshold: 20,
+            limit: 25,
+        },
+    )
+    .await?;
+    let mut processed = 0;
+    for candidate in candidates {
+        let session = candidate.session();
+        match reflect_pair_session(
+            &state.sqlx_pool,
+            state,
+            &session,
+            &candidate.reflection_trigger,
+        )
+        .await
+        {
+            Ok(reflection_payload) => {
+                processed += 1;
+                let mut event = BearWireEvent::ephemeral(
+                    "session.reflected",
+                    json!({
+                        "session_id": session.client_session_id,
+                        "bear_slug": session.bear_slug,
+                        "trigger": candidate.reflection_trigger,
+                        "event_count": candidate.event_count,
+                        "pair_reflection": reflection_payload,
+                    }),
+                );
+                event.bear_id = Some(session.bear_id.to_string());
+                event.human_id = Some(session.user_id.to_string());
+                event.session_id = Some(session.client_session_id.clone());
+                if let Err(error) = bearwire_events::append_bearwire_event(
+                    &state.sqlx_pool,
+                    &session.client_session_id,
+                    Some(session.bear_id),
+                    Some(session.user_id),
+                    event,
+                )
+                .await
+                {
+                    tracing::warn!(session_id = %session.client_session_id, error = %error, "failed to record open-session reflection event");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(session_id = %session.client_session_id, error = %error, "open-session pair reflection failed")
+            }
+        }
+    }
+    Ok(processed)
+}
+
+async fn reflect_pair_session(
+    pool: &PgPool,
+    state: &DenState,
+    session: &client_sessions::ClientSessionRow,
+    trigger: &str,
+) -> Result<Value, CustomError> {
+    let conversation_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .unwrap_or(&session.conversation_id)
+        .to_string();
+    prepare_turn_compaction(
+        pool,
+        &state.config,
+        session.bear_id,
+        &conversation_id,
+        BearProfile::Pair,
+        TurnCompactionTrigger::Manual,
+    )
+    .await?;
+    let output = create_pair_reflection_proposals_from_latest_summary(
+        pool,
+        &state.config,
+        &state.memory_stores,
+        session.bear_id,
+        &conversation_id,
+        &session.client_session_id,
+    )
+    .await
+    .map_err(CustomError::from)?;
+    Ok(json!({
+        "status": "processed",
+        "trigger": trigger,
+        "candidate_count": output.candidate_count,
+        "dropped_followup_count": output.dropped_followup_count,
+        "proposal_ids": output.created_proposal_ids,
+    }))
+}
 
 fn resolved_or_stored_conversation_id(session: &client_sessions::ClientSessionRow) -> &str {
     session
@@ -258,53 +354,22 @@ pub(crate) async fn session_close_result(
     else {
         return Ok(json!({ "ok": true, "closed": false, "session_id": session_id }));
     };
-    let conversation_id = session
-        .resolved_conversation_id
-        .as_deref()
-        .unwrap_or(&session.conversation_id)
-        .to_string();
-    let reflection_result = match prepare_turn_compaction(
-        &state.sqlx_pool,
-        &state.config,
-        bear.id,
-        &conversation_id,
-        BearProfile::Pair,
-        TurnCompactionTrigger::Manual,
-    )
-    .await
-    {
-        Ok(_) => create_pair_reflection_proposals_from_latest_summary(
-            &state.sqlx_pool,
-            &state.config,
-            &state.memory_stores,
-            bear.id,
-            &conversation_id,
-            &session_id,
-        )
-        .await
-        .map_err(CustomError::from),
-        Err(error) => Err(CustomError::from(error)),
-    };
-    let reflection_payload = match reflection_result {
-        Ok(output) => json!({
-            "status": "processed",
-            "candidate_count": output.candidate_count,
-            "dropped_followup_count": output.dropped_followup_count,
-            "proposal_ids": output.created_proposal_ids,
-        }),
-        Err(error) => {
-            tracing::warn!(
-                bear_id = %bear.id,
-                session_id = %session_id,
-                error = %error,
-                "pair reflection failed during session close"
-            );
-            json!({
-                "status": "failed_open",
-                "error": error.to_string(),
-            })
-        }
-    };
+    let reflection_payload =
+        match reflect_pair_session(&state.sqlx_pool, state, &session, "session_close").await {
+            Ok(payload) => payload,
+            Err(error) => {
+                tracing::warn!(
+                    bear_id = %bear.id,
+                    session_id = %session_id,
+                    error = %error,
+                    "pair reflection failed during session close"
+                );
+                json!({
+                    "status": "failed_open",
+                    "error": error.to_string(),
+                })
+            }
+        };
     client_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
     let mut event = BearWireEvent::ephemeral(
         "session.closed",
