@@ -165,7 +165,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [x] `internal_tools.rs:94-117` — `authorize_internal_request` returns `Result<(), Box<Response>>` just to do `if let Err(response) = ...`; use `Option<Response>` or restructure to avoid boxing. **DONE** (clarity batch): now returns `Option<Response>` and the caller returns directly on `Some`; root `den` clippy green.
 - [x] `internal_tools.rs:106` — `raw.to_str().unwrap_or_default()` silently treats non-UTF8 Authorization header as empty/unauthorized — add a comment, easy to misread as a bug. **DONE** (clarity batch): added comment explaining invalid non-UTF8 Authorization values cannot match the configured token and are intentionally unauthorized.
 - [x] `seeds.rs:145` — `ensure_bear(pool, slug, _config)` has unused `_config` param — wire through or drop. **DONE** (cleanup batch): removed the unused parameter and updated the local caller; root `den` clippy green.
-- [ ] `seeds.rs:116,118` — allocates owned `String`s from `&'static str` constants inconsistently with borrow-friendly style elsewhere.
+- [x] `seeds.rs:116,118` — allocates owned `String`s from `&'static str` constants inconsistently with borrow-friendly style elsewhere. **DONE** (borrow cleanup): `ensure_user` no longer allocates a username just for lookup after `user_by_username_opt` was changed to take `&str`; root `den` clippy green.
 - [ ] `startup.rs:11` — `StartupError::Message`/`Tracing`/`SessionStore` are stringly-typed catch-alls inside an otherwise well-structured `thiserror` enum — give truly distinct errors their own variants.
 - [ ] `startup.rs:43-52` — `sqlx_migrate_ignore_missing_from_env` hand-rolls bool-env parsing instead of a shared helper/`.parse::<bool>()`.
 - [ ] `reindex.rs:43` — `--help` calls `std::process::exit(0)` inside a function typed to return `anyhow::Result`, mixing process-exit side effects into a "pure" parser.
@@ -200,8 +200,8 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `src/user/email_settings.rs:390-436` `set_admin_email_verified` hand-rolls UPDATE-then-INSERT upsert instead of `INSERT ... ON CONFLICT` (used elsewhere in crate, e.g. `armature_tokens.rs:227-273`).
 - [x] `src/email/mod.rs:83-87` `mailgun_client()` calls `.expect(...)` — panics in reachable library code, should return `Result`. **DONE** (safety batch): `mailgun_client()` now returns `Result<&Mailgun, DenError>` and `send_email_template` propagates initialization failure as `DenError::Email`; `den-http` clippy green.
 - [ ] `src/email/mod.rs:105-107` manual "split before first dot" for `type_name` with no comment explaining significance.
-- [ ] `src/user/mod.rs:11-18,22,36,43` dead commented-out struct/derive code left inline — remove.
-- [ ] `src/user/mod.rs:79-108` `user_by_username_opt` takes `username: String` by value instead of `&str`, inconsistent with rest of `db.rs`.
+- [x] `src/user/mod.rs:11-18,22,36,43` dead commented-out struct/derive code left inline — remove. **DONE** (cleanup batch): removed stale commented reserved-name examples, derive comments, unused `UserAccount` skeleton, and premium placeholder; `den-http` clippy green.
+- [x] `src/user/mod.rs:79-108` `user_by_username_opt` takes `username: String` by value instead of `&str`, inconsistent with rest of `db.rs`. **DONE** (borrow cleanup): signature now takes `&str`; root seed caller no longer allocates; `den-http` and root `den` clippy green.
 - [ ] `src/user/db.rs:171` and `mod.rs:51` — two different `User` structs and two near-duplicate `user_by_id` functions with different fetch semantics — unclear which is canonical.
 - Overall: most inconsistent crate audited so far — has good `thiserror` usage in one place (`auth_backend`) but hand-rolled boilerplate in its most important error type, plus one reachable `.expect()` panic.
 

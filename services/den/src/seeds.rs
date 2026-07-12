@@ -122,7 +122,7 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
 
 async fn ensure_user(pool: &PgPool, username: &str, password: &str) -> Result<i32> {
     let passhash = generate_hash(password);
-    if let Some(existing) = user::user_by_username_opt(pool, username.to_string()).await? {
+    if let Some(existing) = user::user_by_username_opt(pool, username).await? {
         user_db::set_user_passhash_by_id(pool, existing.id, &passhash).await?;
         return Ok(existing.id);
     }
