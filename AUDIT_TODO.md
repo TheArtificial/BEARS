@@ -330,7 +330,7 @@ Module structure: `lib.rs` (router) → `auth.rs`, `events.rs` (SSE), `rpc.rs` (
 - [ ] `src/methods/run.rs:203-211` `ResolvedRunModel.source: &'static str` is a stringly-typed log-only tag — use an enum with `Display`.
 - [ ] `src/methods/client.rs:196-295` `record_web_fetch_approval_from_permission` mixes decision-mapping, GitHub-specific URL-parsing heuristic, and DB persistence in one 100-line function — extract the GitHub-account parsing into a named/documented helper.
 - [ ] `src/methods/mod.rs` — no crate/module-level `//!` docs anywhere explaining BearWire's purpose/protocol shape.
-- [ ] `src/methods/run.rs:1140`, `session.rs:139` — `"bearwire".to_string()` default-client literal duplicated — hoist to a `const DEFAULT_CLIENT`.
+- [x] `src/methods/run.rs:1140`, `session.rs:139` — `"bearwire".to_string()` default-client literal duplicated — hoist to a `const DEFAULT_CLIENT`. **DONE** (cleanup batch): added `methods::DEFAULT_CLIENT` and reused it in run/session open paths; `den-bearwire` clippy green.
 - [ ] `src/methods/client.rs:538-787` vs `789-1032` — `client_tool_result_result`/`client_permission_result_result` are structurally near-identical ~250-line functions (biggest duplication in the crate) — factor shared skeleton into a generic helper.
 - Overall: functionally serious, mostly panic-safe, consistent `Result`/`?` usage — but `run.rs`/`client.rs` are oversized god-files with heavy structural duplication (event-context stamping, id resolution, tool/permission-result handling); due for a consolidation pass.
 

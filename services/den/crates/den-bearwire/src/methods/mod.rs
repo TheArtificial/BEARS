@@ -13,6 +13,8 @@ pub(crate) mod work;
 #[cfg(test)]
 mod tests;
 
+pub(crate) const DEFAULT_CLIENT: &str = "bearwire";
+
 pub(crate) fn initialize_result(_state: &DenState) -> Value {
     json!({
         "protocol": "bearwire",

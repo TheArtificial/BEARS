@@ -35,7 +35,7 @@ use den_service::{
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::parse_params;
+use crate::methods::{parse_params, DEFAULT_CLIENT};
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -1501,7 +1501,7 @@ pub(crate) async fn run_start_result(
     let session_id = request.session_id;
     let prompt = request.prompt;
     let prompt_context = request.prompt_context;
-    let client = request.client.unwrap_or_else(|| "bearwire".to_string());
+    let client = request.client.unwrap_or_else(|| DEFAULT_CLIENT.to_string());
     let existing = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,

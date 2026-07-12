@@ -15,7 +15,7 @@ use den_runtime::{
 use den_service::{bears::BearProfile, client_sessions, DenState};
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
-use crate::methods::parse_params;
+use crate::methods::{parse_params, DEFAULT_CLIENT};
 
 async fn session_state_payload(
     state: &DenState,
@@ -114,7 +114,7 @@ pub(crate) async fn session_open_result(
         &session_id,
     )
     .await?;
-    let client = request.client.unwrap_or_else(|| "bearwire".to_string());
+    let client = request.client.unwrap_or_else(|| DEFAULT_CLIENT.to_string());
     let conversation_id = request
         .conversation_id
         .or_else(|| {
