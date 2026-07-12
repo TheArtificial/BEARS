@@ -21,7 +21,7 @@ pub enum ImportLegacyMemoryCliSource {
     GitDir(PathBuf),
 }
 
-pub fn parse_args(args: &[String]) -> anyhow::Result<ImportLegacyMemoryArgs> {
+pub fn parse_args(args: &[String]) -> anyhow::Result<Option<ImportLegacyMemoryArgs>> {
     let mut bear_id: Option<Uuid> = None;
     let mut bundle_path: Option<PathBuf> = None;
     let mut git_dir_path: Option<PathBuf> = None;
@@ -82,7 +82,7 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<ImportLegacyMemoryArgs> {
                 println!(
                     "Usage: den import-legacy-memory --bear <uuid> (--bundle <path> | --git-dir <path>) [--dry-run] [--import-history] [--include-workflow-artifacts] [--report <path>]"
                 );
-                std::process::exit(0);
+                return Ok(None);
             }
             other => bail!("unknown import-legacy-memory argument {other:?}"),
         }
@@ -95,14 +95,14 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<ImportLegacyMemoryArgs> {
         (None, None) => bail!("import-legacy-memory requires --bundle <path> or --git-dir <path>"),
     };
 
-    Ok(ImportLegacyMemoryArgs {
+    Ok(Some(ImportLegacyMemoryArgs {
         bear_id: bear_id.ok_or_else(|| anyhow!("import-legacy-memory requires --bear <uuid>"))?,
         source,
         dry_run,
         import_history,
         include_workflow_artifacts,
         report_path,
-    })
+    }))
 }
 
 pub async fn run_import_legacy_memory(args: ImportLegacyMemoryArgs) -> anyhow::Result<()> {
@@ -176,7 +176,7 @@ mod tests {
             "--report".to_string(),
             "/tmp/report.json".to_string(),
         ];
-        let parsed = parse_args(&args).expect("parse args");
+        let parsed = parse_args(&args).expect("parse args").expect("run args");
         assert_eq!(
             parsed.bear_id,
             Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap()
@@ -199,7 +199,7 @@ mod tests {
             "/tmp/repo.git".to_string(),
             "--include-workflow-artifacts".to_string(),
         ];
-        let parsed = parse_args(&args).expect("parse args");
+        let parsed = parse_args(&args).expect("parse args").expect("run args");
         assert!(
             matches!(parsed.source, ImportLegacyMemoryCliSource::GitDir(ref path) if path == &PathBuf::from("/tmp/repo.git"))
         );

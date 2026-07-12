@@ -157,7 +157,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [x] `src/oauth/endpoints.rs:1281-1300` vs `error.rs:110-125` — `bearer_error_response`/`oauth_error_response` reimplement `OAuthError -> StatusCode` mapping instead of calling `OAuthError::status_code()` — mapping now lives in 3 places that can drift. **DONE** (duplication batch): both response helpers now use `OAuthError::status_code()`, `error_code()`, and `error_description()` instead of local mapping tables; `den-oauth` clippy green.
 
 ### services/den/src (top-level binary/lib)
-- [ ] `main.rs:58` vs `reindex.rs`/`import_legacy_memory.rs` — inconsistent `--help` convention: `return Ok(())` vs `std::process::exit(0)`.
+- [x] `main.rs:58` vs `reindex.rs`/`import_legacy_memory.rs` — inconsistent `--help` convention: `return Ok(())` vs `std::process::exit(0)`. **DONE** (CLI cleanup): reindex/import parsers now return `Ok(None)` for help, and `main` returns `Ok(())`; root `den` clippy green.
 - [ ] `main.rs:22`, `reindex.rs`, `import_legacy_memory.rs` — three near-identical hand-rolled argv-parsing loops (~80 duplicated lines) — extract shared helper or adopt `clap`.
 - [ ] `lib.rs:129` `run_server` ~270-line god function (tracing setup, config validation, DB connect/migrate, session store, 4 worker-spawn blocks) — split into `spawn_web`/`spawn_api`/`spawn_workers`.
 - [ ] `lib.rs:294-372` — four nearly identical `task_set.spawn(...)` blocks differing only in worker fn/interval — loop over `Vec<(&str, WorkerFn, Duration)>` or macro.
@@ -168,7 +168,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [x] `seeds.rs:116,118` — allocates owned `String`s from `&'static str` constants inconsistently with borrow-friendly style elsewhere. **DONE** (borrow cleanup): `ensure_user` no longer allocates a username just for lookup after `user_by_username_opt` was changed to take `&str`; root `den` clippy green.
 - [ ] `startup.rs:11` — `StartupError::Message`/`Tracing`/`SessionStore` are stringly-typed catch-alls inside an otherwise well-structured `thiserror` enum — give truly distinct errors their own variants.
 - [x] `startup.rs:43-52` — `sqlx_migrate_ignore_missing_from_env` hand-rolls bool-env parsing instead of a shared helper/`.parse::<bool>()`. **DONE** (cleanup batch): uses `trim().parse::<bool>()` with default-false fallback for unset/invalid values; root `den` clippy green.
-- [ ] `reindex.rs:43` — `--help` calls `std::process::exit(0)` inside a function typed to return `anyhow::Result`, mixing process-exit side effects into a "pure" parser.
+- [x] `reindex.rs:43` — `--help` calls `std::process::exit(0)` inside a function typed to return `anyhow::Result`, mixing process-exit side effects into a "pure" parser. **DONE** (CLI cleanup): parser returns `Ok(None)` instead of exiting; root `den` clippy green.
 - [ ] `lib.rs:39-94` — `NativeWebChatRuntime` composition-root glue has no doc comment explaining the indirection, unlike other documented composition decisions in the same file.
 - [ ] `lib.rs:398-431` — `tracing_filter: String` declared unassigned then conditionally set via `#[cfg]` blocks — reads as a borrow-checker workaround; prefer a single `if/else` expression assigned directly.
 - Overall: generally clear, good module-level docs and `thiserror` usage in `startup.rs`; main issues are duplication (`run_server`, CLI arg loops) and small inconsistencies.

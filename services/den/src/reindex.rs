@@ -20,7 +20,7 @@ pub enum ReindexTarget {
 }
 
 /// Parse `den reindex` arguments (`--bear <uuid>` | `--all`), where `args[0]` is `reindex`.
-pub fn parse_args(args: &[String]) -> anyhow::Result<ReindexTarget> {
+pub fn parse_args(args: &[String]) -> anyhow::Result<Option<ReindexTarget>> {
     let mut target: Option<ReindexTarget> = None;
     let mut i = 1;
     while i < args.len() {
@@ -40,12 +40,14 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<ReindexTarget> {
             }
             "--help" | "-h" => {
                 println!("Usage: den reindex (--bear <uuid> | --all)");
-                std::process::exit(0);
+                return Ok(None);
             }
             other => bail!("unknown reindex argument {other:?}"),
         }
     }
-    target.ok_or_else(|| anyhow!("reindex requires --bear <uuid> or --all"))
+    target
+        .map(Some)
+        .ok_or_else(|| anyhow!("reindex requires --bear <uuid> or --all"))
 }
 
 /// Reconcile the recall index for the requested target(s), printing per-Bear counts.
