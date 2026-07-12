@@ -269,7 +269,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [x] `src/reflection_outcomes.rs:70` `reflection_outcome_exists` swallows DB error via `.unwrap_or(0)`, treating real failures as "false". **DONE** (safety batch): function now returns `Result<bool, DenError>` and callers propagate DB failures; `den-memory`/`den-runtime` clippy green.
 - [ ] `src/import.rs:181` `Err(_) => { branch_skipped += 1; continue; }` on `String::from_utf8` discards the actual UTF-8 error.
 - [ ] crate-wide — `store.bear_id().to_string()` called on 60+ bind sites; cache a `bear_id_str()` or bind helper.
-- [ ] `src/migrate.rs:12` `let names = columns;` needless rebinding.
+- [x] `src/migrate.rs:12` `let names = columns;` needless rebinding. **DONE** (cleanup batch): use `columns` directly throughout migration checks; `den-memory` clippy green.
 - [ ] `src/import.rs:239-253` `ImportDraft` clones fields per commit unnecessarily inside a loop that already owns fresh values.
 - [ ] `src/entity.rs:93,240` and similar constructors — repeated "row-from-just-written-args" template across `create_entity`/`attach_handle`/`append_relation`/`append_memory_promotion` — extract shared helper.
 - [ ] `src/import.rs:118-305` `import_legacy_memory_source_inner` — ~190-line function mixing branch iteration/path filtering/git shelling/commit walking/frontmatter parsing/dry-run — decompose into per-commit/per-branch helpers.
