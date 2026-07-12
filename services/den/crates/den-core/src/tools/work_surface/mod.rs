@@ -226,23 +226,28 @@ pub fn work_surface_candidate_slug_from_hints(hints: &WorkSurfaceSessionHints) -
     None
 }
 
-fn work_surface_scaffold_paths(
-    role: BearProfile,
-    slug: &str,
-) -> (String, String, String, Option<String>, String) {
-    (
-        format!("core/work_surfaces/{slug}/index.md"),
-        format!("core/work_surfaces/{slug}/overview.md"),
-        format!("core/work_surfaces/{slug}/glossary.md"),
-        match role {
+struct WorkSurfacePaths {
+    index: String,
+    overview: String,
+    glossary: String,
+    current_understanding: Option<String>,
+    registry: String,
+}
+
+fn work_surface_scaffold_paths(role: BearProfile, slug: &str) -> WorkSurfacePaths {
+    WorkSurfacePaths {
+        index: format!("core/work_surfaces/{slug}/index.md"),
+        overview: format!("core/work_surfaces/{slug}/overview.md"),
+        glossary: format!("core/work_surfaces/{slug}/glossary.md"),
+        current_understanding: match role {
             BearProfile::Pair | BearProfile::Work => Some(format!(
                 "{}/work_surfaces/{slug}/current-understanding.md",
                 role.as_str()
             )),
             _ => None,
         },
-        "core/work_surfaces/index.md".to_string(),
-    )
+        registry: "core/work_surfaces/index.md".to_string(),
+    }
 }
 
 pub fn work_surface_index_file_body() -> &'static str {
@@ -261,8 +266,7 @@ pub fn work_surface_scaffold_requests(
     glossary: Option<&str>,
     current_understanding: Option<&str>,
 ) -> Vec<ScaffoldRequest> {
-    let (index_path, overview_path, glossary_path, current_understanding_path, registry_path) =
-        work_surface_scaffold_paths(role, slug);
+    let paths = work_surface_scaffold_paths(role, slug);
     let glossary_body =
         glossary.unwrap_or("Glossary terms for this work surface will be added here.");
     let understanding_body = current_understanding.unwrap_or(match role {
@@ -273,7 +277,7 @@ pub fn work_surface_scaffold_requests(
     });
     let mut requests = vec![
         ScaffoldRequest {
-            target_path: registry_path,
+            target_path: paths.registry,
             mode: "create_file".to_string(),
             title: Some("Work Surfaces".to_string()),
             body: Some(work_surface_index_file_body().to_string()),
@@ -289,7 +293,7 @@ pub fn work_surface_scaffold_requests(
             new_text: None,
         },
         ScaffoldRequest {
-            target_path: index_path,
+            target_path: paths.index,
             mode: "create_file".to_string(),
             title: Some(name.to_string()),
             body: Some(format!(
@@ -299,7 +303,7 @@ pub fn work_surface_scaffold_requests(
             new_text: None,
         },
         ScaffoldRequest {
-            target_path: overview_path,
+            target_path: paths.overview,
             mode: "create_file".to_string(),
             title: Some(format!("{name} overview")),
             body: Some(overview.trim().to_string()),
@@ -307,7 +311,7 @@ pub fn work_surface_scaffold_requests(
             new_text: None,
         },
         ScaffoldRequest {
-            target_path: glossary_path,
+            target_path: paths.glossary,
             mode: "create_file".to_string(),
             title: Some(format!("{name} glossary")),
             body: Some(glossary_body.trim().to_string()),
@@ -315,7 +319,7 @@ pub fn work_surface_scaffold_requests(
             new_text: None,
         },
     ];
-    if let Some(current_understanding_path) = current_understanding_path {
+    if let Some(current_understanding_path) = paths.current_understanding {
         requests.push(ScaffoldRequest {
             target_path: current_understanding_path,
             mode: "create_file".to_string(),
@@ -423,8 +427,7 @@ pub async fn create_work_surface_scaffold(
             requests,
         )
         .await?;
-    let (index_path, overview_path, glossary_path, current_understanding_path, registry_path) =
-        work_surface_scaffold_paths(role, &work_surface_slug);
+    let paths = work_surface_scaffold_paths(role, &work_surface_slug);
     let mut payload = json!({
         "ok": true,
         "bear_id": context.bear_id,
@@ -432,11 +435,11 @@ pub async fn create_work_surface_scaffold(
             "slug": work_surface_slug,
             "name": work_surface_name,
             "paths": {
-                "registry": registry_path,
-                "index": index_path,
-                "overview": overview_path,
-                "glossary": glossary_path,
-                "current_understanding": current_understanding_path,
+                "registry": paths.registry,
+                "index": paths.index,
+                "overview": paths.overview,
+                "glossary": paths.glossary,
+                "current_understanding": paths.current_understanding,
             }
         },
         "updates": outcome.updates,
