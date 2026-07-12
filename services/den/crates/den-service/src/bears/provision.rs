@@ -96,8 +96,16 @@ async fn reconcile_one_native_profile(
         .await
         {
             let message = format!("failed to record native profile binding: {err}");
-            let _ =
-                bears_db::mark_bear_profile_binding_failed(pool, bear.id, profile, &message).await;
+            if let Err(mark_err) =
+                bears_db::mark_bear_profile_binding_failed(pool, bear.id, profile, &message).await
+            {
+                tracing::warn!(
+                    bear_id = %bear.id,
+                    profile = %profile.as_str(),
+                    error = %mark_err,
+                    "failed to mark native profile binding failed after ready-write error"
+                );
+            }
             return Ok(BearProfileSyncOutcome {
                 profile: profile.as_str().to_string(),
                 runtime_binding_id: Some(binding_id),

@@ -550,7 +550,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/bears/context_composition.rs:149-155` `instructions_heading` duplicates `RoleContracts::get`'s match arms with different strings — consolidate into a `BearProfile` method.
 - [ ] `src/bears/context_composition.rs:208-226` `default_role_contracts_for_bear` — 200+ word prose blocks inline in a constructor function, hard to scan for logic.
 - [ ] `src/bears/provision.rs:16-22` `provision_bear_if_configured` — name implies a conditional that no longer exists; one-line pass-through to `provision_bear_native`.
-- [ ] `src/bears/provision.rs:100-102` — `let _ = ...mark_bear_profile_binding_failed(...).await;` silently discards a second failure's Result with no log.
+- [x] `src/bears/provision.rs:100-102` — `let _ = ...mark_bear_profile_binding_failed(...).await;` silently discards a second failure's Result with no log. **DONE** (observability batch): secondary failure is now logged with bear/profile context; `den-service` clippy green.
 - [ ] `src/bears/provision.rs:120-160` `provision_missing_bear_profiles_native` — trivial wrapper, same dead-indirection pattern as above, suggests leftover abstraction from a removed migration path.
 - Overall: solidly structured with good module docs, but leans hard on stringly-typed `DenError::System(String)`, repeats HTTP boilerplate in qdrant.rs, and uses manual `Value` extraction chains where typed structs would be more idiomatic.
 
