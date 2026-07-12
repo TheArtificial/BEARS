@@ -24,7 +24,7 @@ fn den_tool_to_llm_definition(descriptor: &DenToolDescriptor, compact: bool) -> 
     }
 }
 
-pub fn den_tools_for_profile(_config: &Config, role: BearProfile) -> Vec<LlmToolDefinition> {
+pub fn den_tools_for_profile(role: BearProfile) -> Vec<LlmToolDefinition> {
     let descriptors = if role == BearProfile::Pair {
         builtin_den_tool_descriptors_for_pair_acp_surface()
     } else {
@@ -132,7 +132,7 @@ pub fn chat_turn_is_capabilities_meta_query(message: &str) -> bool {
 }
 
 pub fn merge_den_and_client_tools(
-    config: &Config,
+    _config: &Config,
     role: BearProfile,
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
@@ -146,7 +146,7 @@ pub fn merge_den_and_client_tools(
         );
         Vec::new()
     } else {
-        den_tools_for_profile(config, role)
+        den_tools_for_profile(role)
     };
     if role == BearProfile::Chat {
         return Ok(merged);
