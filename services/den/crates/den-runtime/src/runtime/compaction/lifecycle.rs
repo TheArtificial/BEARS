@@ -307,15 +307,10 @@ pub async fn prepare_turn_compaction(
     trigger: TurnCompactionTrigger,
 ) -> Result<Option<TurnCompactionState>, DenError> {
     match trigger {
-        TurnCompactionTrigger::Manual | TurnCompactionTrigger::ModelSafetyMargin => {
-            run_compaction_job(pool, config, bear_id, conversation_id, profile, trigger).await
-        }
-        TurnCompactionTrigger::PostTurn => {
-            run_compaction_job(pool, config, bear_id, conversation_id, profile, trigger).await
-        }
         TurnCompactionTrigger::TurnStart => {
             on_turn_assemble_compaction(pool, config, bear_id, conversation_id, profile).await
         }
+        _ => run_compaction_job(pool, config, bear_id, conversation_id, profile, trigger).await,
     }
 }
 
