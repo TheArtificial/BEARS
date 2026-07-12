@@ -104,14 +104,28 @@ fn run_is_terminal(run: &turn_runs::TurnRunRow) -> bool {
     matches!(run.state.as_str(), "completed" | "failed" | "cancelled")
 }
 
-async fn existing_tool_result_or_late(
+enum ExistingClientResultOutcome {
+    DuplicateIdentical {
+        result: turn_runs::TurnObligationResultRow,
+        run_state: String,
+    },
+    DuplicateConflict {
+        existing_hash: String,
+    },
+    IgnoredLateResult {
+        run_state: String,
+        obligation_state: String,
+    },
+}
+
+async fn existing_client_result_or_late(
     pool: &PgPool,
     run: &turn_runs::TurnRunRow,
     obligation: &turn_obligations::TurnObligationRow,
     obligation_kind: &str,
     obligation_id: &str,
     result_payload: &Value,
-) -> Result<Option<ToolResultCoordinatorOutcome>, DenError> {
+) -> Result<Option<ExistingClientResultOutcome>, DenError> {
     if !run_is_terminal(run) && turn_obligations::obligation_is_open(obligation) {
         return Ok(None);
     }
@@ -126,20 +140,54 @@ async fn existing_tool_result_or_late(
         .await?
         {
             Some(turn_runs::TurnObligationResultRecord::DuplicateIdentical { row }) => {
-                ToolResultCoordinatorOutcome::DuplicateIdentical {
+                ExistingClientResultOutcome::DuplicateIdentical {
                     result: row,
                     run_state: run.state.clone(),
                 }
             }
             Some(turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash }) => {
-                ToolResultCoordinatorOutcome::DuplicateConflict { existing_hash }
+                ExistingClientResultOutcome::DuplicateConflict { existing_hash }
             }
-            _ => ToolResultCoordinatorOutcome::IgnoredLateResult {
+            _ => ExistingClientResultOutcome::IgnoredLateResult {
                 run_state: run.state.clone(),
                 obligation_state: obligation.state.clone(),
             },
         },
     ))
+}
+
+async fn existing_tool_result_or_late(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+    obligation_kind: &str,
+    obligation_id: &str,
+    result_payload: &Value,
+) -> Result<Option<ToolResultCoordinatorOutcome>, DenError> {
+    Ok(existing_client_result_or_late(
+        pool,
+        run,
+        obligation,
+        obligation_kind,
+        obligation_id,
+        result_payload,
+    )
+    .await?
+    .map(|outcome| match outcome {
+        ExistingClientResultOutcome::DuplicateIdentical { result, run_state } => {
+            ToolResultCoordinatorOutcome::DuplicateIdentical { result, run_state }
+        }
+        ExistingClientResultOutcome::DuplicateConflict { existing_hash } => {
+            ToolResultCoordinatorOutcome::DuplicateConflict { existing_hash }
+        }
+        ExistingClientResultOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state,
+        } => ToolResultCoordinatorOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state,
+        },
+    }))
 }
 
 async fn existing_permission_result_or_late(
@@ -150,34 +198,30 @@ async fn existing_permission_result_or_late(
     obligation_id: &str,
     result_payload: &Value,
 ) -> Result<Option<PermissionResultCoordinatorOutcome>, DenError> {
-    if !run_is_terminal(run) && turn_obligations::obligation_is_open(obligation) {
-        return Ok(None);
-    }
-    Ok(Some(
-        match turn_runs::existing_client_result_for_payload(
-            pool,
-            &run.run_id,
-            obligation_kind,
-            obligation_id,
-            result_payload,
-        )
-        .await?
-        {
-            Some(turn_runs::TurnObligationResultRecord::DuplicateIdentical { row }) => {
-                PermissionResultCoordinatorOutcome::DuplicateIdentical {
-                    result: row,
-                    run_state: run.state.clone(),
-                }
-            }
-            Some(turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash }) => {
-                PermissionResultCoordinatorOutcome::DuplicateConflict { existing_hash }
-            }
-            _ => PermissionResultCoordinatorOutcome::IgnoredLateResult {
-                run_state: run.state.clone(),
-                obligation_state: obligation.state.clone(),
-            },
+    Ok(existing_client_result_or_late(
+        pool,
+        run,
+        obligation,
+        obligation_kind,
+        obligation_id,
+        result_payload,
+    )
+    .await?
+    .map(|outcome| match outcome {
+        ExistingClientResultOutcome::DuplicateIdentical { result, run_state } => {
+            PermissionResultCoordinatorOutcome::DuplicateIdentical { result, run_state }
+        }
+        ExistingClientResultOutcome::DuplicateConflict { existing_hash } => {
+            PermissionResultCoordinatorOutcome::DuplicateConflict { existing_hash }
+        }
+        ExistingClientResultOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state,
+        } => PermissionResultCoordinatorOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state,
         },
-    ))
+    }))
 }
 
 fn attach_tool_result(
