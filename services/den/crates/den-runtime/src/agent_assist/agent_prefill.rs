@@ -1,9 +1,14 @@
 //! Map `GET /v1/agents/{id}` JSON into Den admin "new bear" form defaults.
 
+use std::sync::LazyLock;
+
+use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
 
 use super::json_fields::{model_field, pick_str};
+
+static REPEATED_DASHES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"-+").expect("dash regex"));
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AgentBearPrefill {
@@ -28,11 +33,8 @@ fn suggest_slug(name: &str, agent_id: &str) -> String {
         })
         .filter(|&c| c != '\0')
         .collect();
-    let mut s = slugish;
-    while s.contains("--") {
-        s = s.replace("--", "-");
-    }
-    s = s.trim_matches('-').to_string();
+    let s = REPEATED_DASHES.replace_all(&slugish, "-");
+    let s = s.trim_matches('-').to_string();
     if s.is_empty() {
         let tail: String = agent_id
             .trim_start_matches("agent-")
