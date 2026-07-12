@@ -41,7 +41,9 @@ static TOOL_INVOKER: OnceLock<Arc<dyn RuntimeToolInvoker>> = OnceLock::new();
 /// in the `den` binary. The binary injects its concrete invoker here at startup,
 /// so the edges stay free of that dependency. Idempotent; the first install wins.
 pub fn set_tool_invoker(invoker: Arc<dyn RuntimeToolInvoker>) {
-    let _ = TOOL_INVOKER.set(invoker);
+    if TOOL_INVOKER.set(invoker).is_err() {
+        tracing::warn!("builtin Den tool invoker already initialized; keeping first instance");
+    }
 }
 
 /// The installed [`set_tool_invoker`] invoker, if any. `None` before the binary

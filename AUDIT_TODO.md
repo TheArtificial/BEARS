@@ -672,7 +672,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/recall/chunking.rs:69-70` — allocates twice (`collect()` then `trim().to_string()`) where trimming char-slice bounds first would allocate once.
 - [ ] `src/recall/policy.rs:17-20` `EXCLUDED_KINDS`/`PROFILE_LOCAL_INDEXABLE_KINDS` are untyped `&[&str]` — an enum for memory `kind` would give compile-time exhaustiveness.
 - [ ] `src/native_runtime/legacy_memory_tools.rs:13-16` `filter_client_tools_for_native_runtime` clones a potentially large `Value` unnecessarily in the common non-array case — return `Option<&Value>` instead.
-- [ ] `src/native_runtime/tool_invoker.rs:33,43-45` `set_tool_invoker` silently discards `OnceLock::set` error — a double-init bug would be swallowed with no log/assert.
+- [x] `src/native_runtime/tool_invoker.rs:33,43-45` `set_tool_invoker` silently discards `OnceLock::set` error — a double-init bug would be swallowed with no log/assert. **DONE** (observability batch): duplicate initialization now emits a warning and keeps the first invoker; `den-runtime` clippy green.
 - Overall: generally solid — proper `DenError`+`?` propagation, no unwrap/panic in library paths, thorough module docs — but real duplication (SSE state machines, terminal-event matches, sqlx error wrapping, repeated column lists) that should be factored into shared helpers, plus a couple of byte-slicing panics on non-ASCII input.
 
 ### den-web — admin/users.rs, onboarding.rs, bear/profile.rs, user/settings/mod.rs, status.rs, bear/create_support.rs
