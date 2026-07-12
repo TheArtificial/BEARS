@@ -24,12 +24,12 @@ mod transcript;
 pub use step::RUNTIME_CHECKPOINT_TOOL_NAME;
 
 pub use tool_outcome::{
-    is_incomplete_tool_result, is_legacy_synthetic_interrupted_tool_result,
-    tool_call_finished_event, tool_call_finished_event_for_content,
-    tool_call_finished_event_for_incomplete, tool_message_counts_toward_llm_resolution,
-    tool_result_content_indicates_error, tool_result_persistence_status,
-    user_visible_tool_error_summary, user_visible_tool_summary, INCOMPLETE_TOOL_RESULT_MARK,
-    LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE,
+    classify_tool_result_content, is_incomplete_tool_result,
+    is_legacy_synthetic_interrupted_tool_result, tool_call_finished_event,
+    tool_call_finished_event_for_content, tool_call_finished_event_for_incomplete,
+    tool_message_counts_toward_llm_resolution, tool_result_content_indicates_error,
+    tool_result_persistence_status, user_visible_tool_error_summary, user_visible_tool_summary,
+    ToolResultContentKind, INCOMPLETE_TOOL_RESULT_MARK, LEGACY_SYNTHETIC_TOOL_RESULT_UNAVAILABLE,
 };
 
 pub use approvals::{

@@ -1,5 +1,6 @@
 use std::fmt;
 
+use den_core::DenError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -9,12 +10,15 @@ macro_rules! string_id {
         pub struct $name(String);
 
         impl $name {
-            pub fn new(value: impl Into<String>) -> Option<Self> {
+            pub fn new(value: impl Into<String>) -> Result<Self, DenError> {
                 let value = value.into();
                 if value.trim().is_empty() {
-                    None
+                    Err(DenError::ValidationError(format!(
+                        "{} must not be empty",
+                        stringify!($name)
+                    )))
                 } else {
-                    Some(Self(value))
+                    Ok(Self(value))
                 }
             }
 

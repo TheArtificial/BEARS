@@ -539,27 +539,51 @@ fn wrap_session_stream(
     ))
 }
 
-async fn build_session(
-    deps: &NativeRuntimeDeps<'_>,
+struct BuildSessionInput<'a> {
     profile: NativeCapabilityProfile,
     bear_id: Uuid,
-    conversation_id: &str,
-    client_session_id: &str,
-    human_message: Option<&str>,
-    runtime_context: Option<&str>,
-    session_id: Option<&str>,
-    workspace_roots: Option<&[String]>,
-    runtime_target: Option<&str>,
-    conversation_selection: Option<&str>,
+    conversation_id: &'a str,
+    client_session_id: &'a str,
+    human_message: Option<&'a str>,
+    runtime_context: Option<&'a str>,
+    session_id: Option<&'a str>,
+    workspace_roots: Option<&'a [String]>,
+    runtime_target: Option<&'a str>,
+    conversation_selection: Option<&'a str>,
     user_id: Option<i32>,
-    client_context: Option<&serde_json::Value>,
-    client_tools: Option<&serde_json::Value>,
+    client_context: Option<&'a serde_json::Value>,
+    client_tools: Option<&'a serde_json::Value>,
     request_id: Option<Uuid>,
-    run_id: Option<&str>,
+    run_id: Option<&'a str>,
     stream_tokens: bool,
     api_style: Option<crate::llm::LlmApiStyle>,
     tool_messages: Vec<ChatMessage>,
+}
+
+async fn build_session(
+    deps: &NativeRuntimeDeps<'_>,
+    input: BuildSessionInput<'_>,
 ) -> Result<AgentLoopSession, DenError> {
+    let BuildSessionInput {
+        profile,
+        bear_id,
+        conversation_id,
+        client_session_id,
+        human_message,
+        runtime_context,
+        session_id,
+        workspace_roots,
+        runtime_target,
+        conversation_selection,
+        user_id,
+        client_context,
+        client_tools,
+        request_id,
+        run_id,
+        stream_tokens,
+        api_style,
+        tool_messages,
+    } = input;
     let llm = LlmClient::new(deps.config);
     let bear = den_service::bears::db::get_bear(deps.pool, bear_id)
         .await?
@@ -737,24 +761,26 @@ pub async fn run_native_profile_turn_collect_assistant_text(
     let profile = NativeCapabilityProfile::for_profile(role);
     let session = build_session(
         deps,
-        profile,
-        bear_id,
-        conversation_id,
-        session_id,
-        Some(prompt),
-        None,
-        Some(session_id),
-        None,
-        Some(conversation_id),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        Vec::new(),
+        BuildSessionInput {
+            profile,
+            bear_id,
+            conversation_id,
+            client_session_id: session_id,
+            human_message: Some(prompt),
+            runtime_context: None,
+            session_id: Some(session_id),
+            workspace_roots: None,
+            runtime_target: Some(conversation_id),
+            conversation_selection: None,
+            user_id: None,
+            client_context: None,
+            client_tools: None,
+            request_id: None,
+            run_id: None,
+            stream_tokens: false,
+            api_style: None,
+            tool_messages: Vec::new(),
+        },
     )
     .await?;
     let llm = LlmClient::new(deps.config);
@@ -797,24 +823,26 @@ pub async fn start_native_web_chat_turn_event_stream(
     let profile = NativeCapabilityProfile::for_profile(BearProfile::Chat);
     let session = build_session(
         params.deps,
-        profile,
-        params.bear_id,
-        params.conversation_id,
-        params.session_id,
-        Some(params.prompt),
-        None,
-        Some(params.session_id),
-        None,
-        Some(params.conversation_id),
-        Some(params.conversation_id),
-        Some(params.user_id),
-        None,
-        None,
-        Some(params.request_id),
-        None,
-        true,
-        None,
-        Vec::new(),
+        BuildSessionInput {
+            profile,
+            bear_id: params.bear_id,
+            conversation_id: params.conversation_id,
+            client_session_id: params.session_id,
+            human_message: Some(params.prompt),
+            runtime_context: None,
+            session_id: Some(params.session_id),
+            workspace_roots: None,
+            runtime_target: Some(params.conversation_id),
+            conversation_selection: Some(params.conversation_id),
+            user_id: Some(params.user_id),
+            client_context: None,
+            client_tools: None,
+            request_id: Some(params.request_id),
+            run_id: None,
+            stream_tokens: true,
+            api_style: None,
+            tool_messages: Vec::new(),
+        },
     )
     .await?;
     tracing::info!(
@@ -827,15 +855,12 @@ pub async fn start_native_web_chat_turn_event_stream(
         "native web chat turn assembled"
     );
     let llm = LlmClient::new(params.deps.config);
-    let overflow = overflow_context(
-        params.deps.pool.clone(),
-        Arc::new(params.deps.config.clone()),
-        BearProfile::Chat,
-    );
+    let config = Arc::new(params.deps.config.clone());
+    let overflow = overflow_context(params.deps.pool.clone(), config.clone(), BearProfile::Chat);
     let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let runtime = NativeWebChatLoopRuntime {
         pool: params.deps.pool.clone(),
-        config: Arc::new(params.deps.config.clone()),
+        config,
         stores: params.deps.stores.clone(),
         llm,
         session_key: session.session_key.clone(),
@@ -889,24 +914,26 @@ pub async fn start_native_profile_turn_event_stream(
             config: request.config,
             stores: request.memory_stores,
         },
-        profile,
-        request.bear_id,
-        &conversation_id,
-        client_session_id,
-        Some(prompt_for_model.as_str()),
-        request.runtime_context,
-        Some(client_session_id),
-        workspace_roots.as_deref(),
-        Some(request.upstream_target),
-        Some(request.conversation_selection),
-        Some(request.user_id),
-        None,
-        request.client_tools.as_ref(),
-        Some(request.request_id),
-        request.run_id,
-        request.stream_tokens,
-        request.api_style,
-        Vec::new(),
+        BuildSessionInput {
+            profile,
+            bear_id: request.bear_id,
+            conversation_id: &conversation_id,
+            client_session_id,
+            human_message: Some(prompt_for_model.as_str()),
+            runtime_context: request.runtime_context,
+            session_id: Some(client_session_id),
+            workspace_roots: workspace_roots.as_deref(),
+            runtime_target: Some(request.upstream_target),
+            conversation_selection: Some(request.conversation_selection),
+            user_id: Some(request.user_id),
+            client_context: None,
+            client_tools: request.client_tools.as_ref(),
+            request_id: Some(request.request_id),
+            run_id: request.run_id,
+            stream_tokens: request.stream_tokens,
+            api_style: request.api_style,
+            tool_messages: Vec::new(),
+        },
     )
     .await?;
     if request.runtime_context.is_none() {
@@ -940,16 +967,13 @@ pub async fn start_native_profile_turn_event_stream(
         .await?;
     }
     let llm = LlmClient::new(request.config);
-    let overflow = overflow_context(
-        request.sqlx_pool.clone(),
-        Arc::new(request.config.clone()),
-        role,
-    );
+    let config = Arc::new(request.config.clone());
+    let overflow = overflow_context(request.sqlx_pool.clone(), config.clone(), role);
     let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let stream = wrap_session_stream(
         stream,
         &session,
-        Arc::new(request.config.clone()),
+        config,
         role,
         request.sqlx_pool.clone(),
         request.bear_id,
@@ -1500,11 +1524,8 @@ pub async fn continue_native_client_turn_event_stream(
         return Ok(continuation_budget_stop(reason));
     }
     let llm = LlmClient::new(request.config);
-    let overflow = overflow_context(
-        request.sqlx_pool.clone(),
-        Arc::new(request.config.clone()),
-        profile,
-    );
+    let config = Arc::new(request.config.clone());
+    let overflow = overflow_context(request.sqlx_pool.clone(), config.clone(), profile);
     let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let mut prefix_events = Vec::new();
     if warning_applied {
@@ -1528,7 +1549,7 @@ pub async fn continue_native_client_turn_event_stream(
     let stream = wrap_session_stream(
         stream,
         &session,
-        Arc::new(request.config.clone()),
+        config,
         profile,
         request.sqlx_pool.clone(),
         session.bear_id,

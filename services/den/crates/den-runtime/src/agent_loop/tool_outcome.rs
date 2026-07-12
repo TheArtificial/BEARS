@@ -18,34 +18,63 @@ pub fn is_incomplete_tool_result(content: Option<&str>) -> bool {
     content == Some(INCOMPLETE_TOOL_RESULT_MARK)
 }
 
-/// Whether a persisted or in-flight tool message body represents a failed execution.
-pub fn tool_result_content_indicates_error(content: Option<&str>) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolResultContentKind {
+    Empty,
+    LegacyInterrupted,
+    Incomplete,
+    Error,
+    Ok,
+}
+
+impl ToolResultContentKind {
+    pub const fn is_error(self) -> bool {
+        matches!(self, Self::Error)
+    }
+
+    pub const fn counts_toward_llm_resolution(self) -> bool {
+        !matches!(self, Self::Incomplete | Self::LegacyInterrupted)
+    }
+}
+
+pub fn classify_tool_result_content(content: Option<&str>) -> ToolResultContentKind {
     let Some(content) = content.map(str::trim).filter(|s| !s.is_empty()) else {
-        return false;
+        return ToolResultContentKind::Empty;
     };
-    if is_legacy_synthetic_interrupted_tool_result(Some(content))
-        || is_incomplete_tool_result(Some(content))
-    {
-        return false;
+    if is_legacy_synthetic_interrupted_tool_result(Some(content)) {
+        return ToolResultContentKind::LegacyInterrupted;
+    }
+    if is_incomplete_tool_result(Some(content)) {
+        return ToolResultContentKind::Incomplete;
     }
     let lower = content.to_ascii_lowercase();
-    lower.starts_with("error:")
+    if lower.starts_with("error:")
         || lower.starts_with("unsupported server tool:")
         || content.contains("\"ok\": false")
         || content.contains("\"ok\":false")
+    {
+        ToolResultContentKind::Error
+    } else {
+        ToolResultContentKind::Ok
+    }
+}
+
+/// Whether a persisted or in-flight tool message body represents a failed execution.
+pub fn tool_result_content_indicates_error(content: Option<&str>) -> bool {
+    classify_tool_result_content(content).is_error()
 }
 
 pub fn tool_message_counts_toward_llm_resolution(content: Option<&str>) -> bool {
-    !is_incomplete_tool_result(content) && !is_legacy_synthetic_interrupted_tool_result(content)
+    classify_tool_result_content(content).counts_toward_llm_resolution()
 }
 
 pub fn tool_result_persistence_status(content: Option<&str>) -> ToolResultStatus {
-    if is_incomplete_tool_result(content) {
-        ToolResultStatus::Incomplete
-    } else if tool_result_content_indicates_error(content) {
-        ToolResultStatus::Error
-    } else {
-        ToolResultStatus::Ok
+    match classify_tool_result_content(content) {
+        ToolResultContentKind::Incomplete => ToolResultStatus::Incomplete,
+        ToolResultContentKind::Error => ToolResultStatus::Error,
+        ToolResultContentKind::Empty
+        | ToolResultContentKind::LegacyInterrupted
+        | ToolResultContentKind::Ok => ToolResultStatus::Ok,
     }
 }
 
