@@ -251,7 +251,7 @@ async fn login(
     )
 )]
 async fn request_password_reset(
-    State(state): State<DenState>,
+    State(_state): State<DenState>,
     Json(request): Json<PasswordResetRequest>,
 ) -> Result<Json<PasswordResetResponse>, CustomError> {
     // Validate input
@@ -259,24 +259,8 @@ async fn request_password_reset(
         .validate()
         .map_err(|e| CustomError::ValidationError(format!("Validation failed: {e:?}")))?;
 
-    // Check if user exists
-    if user::db::get_user_by_email(&state.sqlx_pool, &request.email)
-        .await?
-        .is_none()
-    {
-        // Don't reveal if email exists or not for security
-        return Ok(Json(PasswordResetResponse {
-            message: "If an account with this email exists, a password reset link has been sent."
-                .to_string(),
-        }));
-    }
-
-    // TODO: Implement password reset email sending
-    // For now, just return success message
-
     Ok(Json(PasswordResetResponse {
-        message: "If an account with this email exists, a password reset link has been sent."
-            .to_string(),
+        message: "Password reset email delivery is not configured for this deployment.".to_string(),
     }))
 }
 
@@ -299,10 +283,7 @@ async fn confirm_password_reset(
         .validate()
         .map_err(|e| CustomError::ValidationError(format!("Validation failed: {e:?}")))?;
 
-    // TODO: Implement password reset confirmation
-    // For now, just return success message
-
     Ok(Json(PasswordResetConfirmResponse {
-        message: "Password has been reset successfully".to_string(),
+        message: "Password reset confirmation is not configured for this deployment.".to_string(),
     }))
 }
