@@ -40,6 +40,8 @@ impl<'a> DenNativeProfileRegistry<'a> {
         let binding_id = row
             .map(|r| r.0)
             .filter(|id| !id.trim().is_empty())
+            // Public fallback contract for pre-provisioned/native-only runs: derive the
+            // deterministic binding id that provisioning would have written.
             .unwrap_or_else(|| format!("den-native:{bear_id}:{}", profile.as_str()));
         Ok(Some(RoleRuntimeBinding {
             binding_id,
