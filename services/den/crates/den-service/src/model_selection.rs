@@ -235,7 +235,7 @@ pub async fn resolve_model_option(
     if trimmed.is_empty() {
         return Ok(None);
     }
-    if let Ok(Some(row)) = sqlx::query_as::<_, ModelSelectionOptionRow>(
+    if let Some(row) = sqlx::query_as::<_, ModelSelectionOptionRow>(
         r"
         SELECT handle, display_name, metadata_json
         FROM model_selection_options
@@ -245,7 +245,7 @@ pub async fn resolve_model_option(
     )
     .bind(trimmed)
     .fetch_optional(pool)
-    .await
+    .await?
     {
         return Ok(Some(option_from_row(row)));
     }
