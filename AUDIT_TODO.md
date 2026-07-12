@@ -164,7 +164,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `lib.rs` (multiple lines) — 7+ repeated `config.clone()`/`sqlx_pool.clone()` before spawns; consider an `AppHandles { pool, config }: Clone` struct for readability.
 - [x] `internal_tools.rs:94-117` — `authorize_internal_request` returns `Result<(), Box<Response>>` just to do `if let Err(response) = ...`; use `Option<Response>` or restructure to avoid boxing. **DONE** (clarity batch): now returns `Option<Response>` and the caller returns directly on `Some`; root `den` clippy green.
 - [x] `internal_tools.rs:106` — `raw.to_str().unwrap_or_default()` silently treats non-UTF8 Authorization header as empty/unauthorized — add a comment, easy to misread as a bug. **DONE** (clarity batch): added comment explaining invalid non-UTF8 Authorization values cannot match the configured token and are intentionally unauthorized.
-- [ ] `seeds.rs:145` — `ensure_bear(pool, slug, _config)` has unused `_config` param — wire through or drop.
+- [x] `seeds.rs:145` — `ensure_bear(pool, slug, _config)` has unused `_config` param — wire through or drop. **DONE** (cleanup batch): removed the unused parameter and updated the local caller; root `den` clippy green.
 - [ ] `seeds.rs:116,118` — allocates owned `String`s from `&'static str` constants inconsistently with borrow-friendly style elsewhere.
 - [ ] `startup.rs:11` — `StartupError::Message`/`Tracing`/`SessionStore` are stringly-typed catch-alls inside an otherwise well-structured `thiserror` enum — give truly distinct errors their own variants.
 - [ ] `startup.rs:43-52` — `sqlx_migrate_ignore_missing_from_env` hand-rolls bool-env parsing instead of a shared helper/`.parse::<bool>()`.
