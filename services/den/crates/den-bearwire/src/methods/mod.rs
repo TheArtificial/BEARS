@@ -25,8 +25,8 @@ pub(crate) fn initialize_result(_state: &DenState) -> Value {
             "git_sha": den_http::build_info::snapshot().git_sha,
         },
         "bearwire": {
-            "rpc": "/bearwire/v1/rpc",
-            "events_page": "/bearwire/v1/sessions/{session_id}/events/page"
+            "rpc": "/v1/rpc",
+            "events_page": "/v1/sessions/{session_id}/events/page"
         },
         "legacy_acp_enabled": false,
         "legacy_acp_deprecated": true,
