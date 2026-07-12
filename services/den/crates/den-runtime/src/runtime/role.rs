@@ -329,7 +329,7 @@ impl RoleRuntime {
 
 #[derive(Debug)]
 pub struct RoleTurnGuard {
-    pub guard: den_service::tool_turns::ActiveTurnGuard,
+    guard: den_service::tool_turns::ActiveTurnGuard,
 }
 
 impl RoleTurnGuard {

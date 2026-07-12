@@ -557,7 +557,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 ### den-runtime — runtime/role.rs, conversations.rs, compaction/{mod,grouping,summarize,artifact_store}.rs, compaction_store.rs, bearwire_projection/{mod,wire}.rs
 - [ ] `src/runtime/role.rs:224` `.expect("client turn lifecycle runtime requires cancellation registry")` panics in library code — should be a typed `DenError` variant.
 - [ ] `src/runtime/role.rs:20,40,95,118` — four parallel hand-written `as_str()` match blocks — use a macro or `strum` derive.
-- [ ] `src/runtime/role.rs:331-333` `RoleTurnGuard.guard` field is `pub`, defeating the point of wrapping `ActiveTurnGuard` — make private.
+- [x] `src/runtime/role.rs:331-333` `RoleTurnGuard.guard` field is `pub`, defeating the point of wrapping `ActiveTurnGuard` — make private. **DONE** (encapsulation batch): field is private and release remains the public API; `den-runtime` clippy green.
 - [ ] `src/runtime/conversations.rs:106-120,155-169` `runtime_messages_top_array`/`runtime_conversations_top_array` — near-duplicate "unwrap array from one of several keys" logic — share a helper.
 - [ ] `src/runtime/conversations.rs:171-181` `truncate_runtime_message` duplicates `summarize.rs:207-219`'s `truncate_chars` almost exactly — consolidate into one shared utility (3rd copy of this pattern in the crate, see also `key_memory_projection.rs`).
 - [ ] `src/runtime/conversations.rs` — mixes plain data types, untyped `Value`-scraping helpers, and compaction-related grouping types in one 297-line file with a generic name.
