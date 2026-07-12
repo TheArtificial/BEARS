@@ -200,7 +200,7 @@ pub async fn sqlite_memory_search(
     query: &str,
     limit: i64,
 ) -> Result<Value, DenError> {
-    let pattern = format!("%{query}%");
+    let pattern = format!("%{}%", crate::admin_inspect::escape_like(query));
     let rows = sqlx::query_as::<
         _,
         (
@@ -224,7 +224,7 @@ pub async fn sqlite_memory_search(
           AND invalid_at IS NULL
           AND COALESCE(json_extract(metadata_json, '$.lifecycle.status'), 'active') != 'archived'
           AND (scope_type = 'shared' OR scope_profile = ?)
-          AND content_text LIKE ?
+          AND content_text LIKE ? ESCAPE '\'
           AND NOT EXISTS (
             SELECT 1 FROM memory_records newer
             WHERE newer.bear_id = memory_records.bear_id

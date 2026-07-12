@@ -277,7 +277,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `src/promotions.rs:42-72` `promote_to_shared_core` returns unlabeled `Result<(String, String), DenError>` tuple — use a named struct.
 - [ ] `src/tools.rs` (whole file) — every public fn returns untyped `serde_json::Value` instead of typed response structs, unlike rest of crate.
 - [ ] `src/relations.rs:210` `descriptive_entity_ids_by_source` is dead public API — never re-exported/called outside its own test.
-- [ ] `src/tools.rs:167-214` `sqlite_memory_search` builds `LIKE` pattern without escaping metacharacters, inconsistent with `admin_inspect::escape_like` (admin_inspect.rs:454-460) which does — reuse that helper.
+- [x] `src/tools.rs:167-214` `sqlite_memory_search` builds `LIKE` pattern without escaping metacharacters, inconsistent with `admin_inspect::escape_like` (admin_inspect.rs:454-460) which does — reuse that helper. **DONE** (correctness batch): made `admin_inspect::escape_like` crate-visible and reused it with `ESCAPE '\\'` in `sqlite_memory_search`; `den-memory` clippy green.
 - [ ] `src/descriptors.rs`, `logical_path.rs`, `entity.rs` — hand-written `as_str`/`parse` pairs for `RelationClass`/`EntityTrust`/`ResolutionState`/`MemoryScopeType` instead of `Display`/`FromStr`.
 - [ ] 6+ files (`entity.rs`, `harvest.rs`, `promotions.rs`, `proposals.rs`, `reflection_outcomes.rs`, `records.rs`) — RFC3339 "now" formatting boilerplate duplicated verbatim; a `now_rfc3339()` helper already exists in `entity.rs`/`relations.rs` but isn't shared.
 - [ ] `src/records.rs:763-781` `impl AsOfSqlRow` placed after a `#[cfg(test)]` block rather than near its struct def (line 561) — breaks file's ordering convention.

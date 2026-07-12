@@ -494,7 +494,7 @@ pub async fn search_memory_records(
 }
 
 /// Escape SQLite `LIKE` metacharacters (`\`, `%`, `_`) so a user query matches literally.
-fn escape_like(input: &str) -> String {
+pub(crate) fn escape_like(input: &str) -> String {
     input
         .replace('\\', "\\\\")
         .replace('%', "\\%")
