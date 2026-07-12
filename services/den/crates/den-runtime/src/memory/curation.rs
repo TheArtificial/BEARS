@@ -7,9 +7,10 @@ use uuid::Uuid;
 
 use den_memory::{
     self as store, complete_reflection_run_outcome, create_memory_observation,
-    create_memory_proposal, create_reflection_run_outcome, list_memory_proposals,
-    mark_observation_review_queued, promote_to_shared_core, promote_to_shared_core_at_path,
-    resolve_memory_proposal, MemoryStoreManager, SqliteMemoryProposal,
+    create_memory_proposal, create_reflection_run_outcome, get_memory_proposal,
+    list_memory_proposals, mark_observation_review_queued, promote_to_shared_core,
+    promote_to_shared_core_at_path, resolve_memory_proposal, MemoryStoreManager,
+    SqliteMemoryProposal,
 };
 use den_service::bears::BearProfile;
 use den_service::memory_proposals::{
@@ -111,14 +112,17 @@ pub async fn list_proposals(
 }
 
 pub async fn get_proposal(
-    pool: &PgPool,
-    config: &Config,
+    _pool: &PgPool,
+    _config: &Config,
     stores: &MemoryStoreManager,
     bear_id: Uuid,
     proposal_id: Uuid,
 ) -> Result<Option<MemoryProposalRow>, DenError> {
-    let proposals = list_proposals(pool, config, stores, bear_id, None, 500).await?;
-    Ok(proposals.into_iter().find(|row| row.id == proposal_id))
+    let store = stores.store_for_bear(bear_id).await?;
+    get_memory_proposal(&store, &proposal_id.to_string())
+        .await?
+        .map(|row| sqlite_proposal_to_row(bear_id, &row, BearProfile::Curate))
+        .transpose()
 }
 
 pub async fn resolve_proposal(

@@ -545,7 +545,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/memory/curation.rs:205-283` `sqlite_proposal_to_row` — ~15-step manual `.get().and_then().unwrap_or().to_string()` chain — replace with a `#[derive(Deserialize)]` struct.
 - [x] `src/memory/curation.rs:212` `Uuid::parse_str(...).unwrap_or_else(|_| Uuid::new_v4())` silently manufactures a random id on parse failure instead of surfacing an error — risks hiding data corruption. **DONE** (safety batch): SQLite proposal row conversion is now fallible and returns `DenError::Parsing` on invalid stored proposal ids; callers propagate the error; `den-runtime` clippy green.
 - [ ] `src/memory/curation.rs:1-22` — every public fn takes unused `_pool`/`_config` params (7 occurrences) — vestigial signature clutter.
-- [ ] `src/memory/curation.rs:130` `get_proposal` fetches up to 500 proposals and linear-scans for one by id instead of a direct lookup.
+- [x] `src/memory/curation.rs:130` `get_proposal` fetches up to 500 proposals and linear-scans for one by id instead of a direct lookup. **DONE** (correctness/perf batch): uses `den_memory::get_memory_proposal` by id and converts the single row; `den-runtime` clippy green.
 - [ ] `src/memory/curation.rs:285-303` `sqlite_observation_to_row` fabricates `id: Uuid::new_v4()` and hardcodes `salience: "normal"` rather than reading from source — undocumented whether intentional.
 - [ ] `src/bears/context_composition.rs:149-155` `instructions_heading` duplicates `RoleContracts::get`'s match arms with different strings — consolidate into a `BearProfile` method.
 - [ ] `src/bears/context_composition.rs:208-226` `default_role_contracts_for_bear` — 200+ word prose blocks inline in a constructor function, hard to scan for logic.
