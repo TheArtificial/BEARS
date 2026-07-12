@@ -34,6 +34,29 @@ struct WebSearchArguments {
     max_results: Option<usize>,
 }
 
+async fn record_unexecuted_fetch_attempt(
+    ctx: &impl WebFetcher,
+    bear_id: Uuid,
+    session_id: &str,
+    web_url: &WebUrl,
+    decision: &WebApproval,
+) -> Result<(), DenError> {
+    ctx.record_fetch_attempt(WebFetchAudit {
+        bear_id,
+        session_id: Some(session_id),
+        tool_call_id: None,
+        url: &web_url.url,
+        final_url: None,
+        host: &web_url.host,
+        execution_location: "den",
+        approval_kind: decision.as_str(),
+        http_status: None,
+        content_type: None,
+        bytes: None,
+    })
+    .await
+}
+
 /// `web_fetch`: policy-gated, SSRF-validated, bounded page fetch.
 pub async fn web_fetch(
     ctx: &impl WebFetcher,
@@ -47,20 +70,7 @@ pub async fn web_fetch(
     let (web_url, decision) = ctx.decide_fetch_approval(bear_id, &args.url).await?;
 
     if decision.is_blocked() {
-        ctx.record_fetch_attempt(WebFetchAudit {
-            bear_id,
-            session_id: Some(session_id),
-            tool_call_id: None,
-            url: &web_url.url,
-            final_url: None,
-            host: &web_url.host,
-            execution_location: "den",
-            approval_kind: decision.as_str(),
-            http_status: None,
-            content_type: None,
-            bytes: None,
-        })
-        .await?;
+        record_unexecuted_fetch_attempt(ctx, bear_id, session_id, &web_url, &decision).await?;
         return Err(DenError::Authorization(format!(
             "web_fetch host or URL is blocked by bear policy: {}",
             web_url.host
@@ -68,20 +78,7 @@ pub async fn web_fetch(
     }
 
     if !decision.is_approved() {
-        ctx.record_fetch_attempt(WebFetchAudit {
-            bear_id,
-            session_id: Some(session_id),
-            tool_call_id: None,
-            url: &web_url.url,
-            final_url: None,
-            host: &web_url.host,
-            execution_location: "den",
-            approval_kind: decision.as_str(),
-            http_status: None,
-            content_type: None,
-            bytes: None,
-        })
-        .await?;
+        record_unexecuted_fetch_attempt(ctx, bear_id, session_id, &web_url, &decision).await?;
         return Err(DenError::Authorization(format!(
             "web_fetch requires approval for host {}",
             web_url.host
