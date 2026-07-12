@@ -8,6 +8,27 @@ use super::{
     records::{head_record_for_logical_path, BearMemoryStore},
 };
 
+#[derive(Debug, sqlx::FromRow)]
+struct ProposalSqlRow {
+    proposal_id: String,
+    sequence_no: i64,
+    status: String,
+    payload_json: String,
+    created_at: String,
+}
+
+impl ProposalSqlRow {
+    fn into_proposal(self) -> SqliteMemoryProposal {
+        SqliteMemoryProposal {
+            proposal_id: self.proposal_id,
+            sequence_no: self.sequence_no,
+            status: self.status,
+            payload_json: serde_json::from_str(&self.payload_json).unwrap_or_else(|_| json!({})),
+            created_at: self.created_at,
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SqliteMemoryProposal {
     pub proposal_id: String,
@@ -209,12 +230,20 @@ struct ConsolidationCandidate {
     sequence_no: i64,
 }
 
+#[derive(sqlx::FromRow)]
+struct ConsolidationCandidateSqlRow {
+    memory_id: String,
+    sequence_no: i64,
+    logical_path: Option<String>,
+    content_text: String,
+}
+
 async fn active_record_with_claim_fingerprint(
     store: &BearMemoryStore,
     fingerprint: &str,
     target_ref: &str,
 ) -> Result<Option<ConsolidationCandidate>, DenError> {
-    let rows = sqlx::query_as::<_, (String, i64, Option<String>, String)>(
+    let rows = sqlx::query_as::<_, ConsolidationCandidateSqlRow>(
         r"
         SELECT memory_id, sequence_no, logical_path, content_text
         FROM memory_records
@@ -231,20 +260,18 @@ async fn active_record_with_claim_fingerprint(
     .await
     .map_err(|e| DenError::System(format!("sqlite consolidation lookup failed: {e}")))?;
 
-    Ok(rows
-        .into_iter()
-        .find_map(|(memory_id, sequence_no, logical_path, content_text)| {
-            if logical_path.as_deref() == Some(target_ref) {
-                return None;
-            }
-            (super::promotions::memory_claim_fingerprint(&content_text) == fingerprint).then_some(
-                ConsolidationCandidate {
-                    memory_id,
-                    logical_path,
-                    sequence_no,
-                },
-            )
-        }))
+    Ok(rows.into_iter().find_map(|row| {
+        if row.logical_path.as_deref() == Some(target_ref) {
+            return None;
+        }
+        (super::promotions::memory_claim_fingerprint(&row.content_text) == fingerprint).then_some(
+            ConsolidationCandidate {
+                memory_id: row.memory_id,
+                logical_path: row.logical_path,
+                sequence_no: row.sequence_no,
+            },
+        )
+    }))
 }
 
 fn ensure_object_payload(payload: &Value) -> Value {
@@ -268,7 +295,7 @@ async fn pending_proposal_for_dedupe_key(
     store: &BearMemoryStore,
     dedupe_key: &str,
 ) -> Result<Option<SqliteMemoryProposal>, DenError> {
-    let row = sqlx::query_as::<_, (String, i64, String, String, String)>(
+    let row = sqlx::query_as::<_, ProposalSqlRow>(
         r"
         SELECT proposal_id, sequence_no, status, payload_json, created_at
         FROM memory_proposals
@@ -284,16 +311,7 @@ async fn pending_proposal_for_dedupe_key(
     .fetch_optional(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite find duplicate proposal failed: {e}")))?;
-    Ok(row.map(
-        |(proposal_id, sequence_no, status, payload_json, created_at)| SqliteMemoryProposal {
-            proposal_id,
-            sequence_no,
-            status,
-            payload_json: serde_json::from_str(&payload_json)
-                .unwrap_or_else(|_| json!({ "raw": payload_json })),
-            created_at,
-        },
-    ))
+    Ok(row.map(ProposalSqlRow::into_proposal))
 }
 
 fn payload_with_dedupe_key(payload: &Value, suggested_action: &str, sensitivity: &str) -> Value {
@@ -353,7 +371,7 @@ pub async fn get_memory_proposal(
     store: &BearMemoryStore,
     proposal_id: &str,
 ) -> Result<Option<SqliteMemoryProposal>, DenError> {
-    let row = sqlx::query_as::<_, (String, i64, String, String, String)>(
+    let row = sqlx::query_as::<_, ProposalSqlRow>(
         r"
         SELECT proposal_id, sequence_no, status, payload_json, created_at
         FROM memory_proposals
@@ -365,16 +383,7 @@ pub async fn get_memory_proposal(
     .fetch_optional(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite get proposal failed: {e}")))?;
-    Ok(row.map(
-        |(proposal_id, sequence_no, status, payload_json, created_at)| SqliteMemoryProposal {
-            proposal_id,
-            sequence_no,
-            status,
-            payload_json: serde_json::from_str(&payload_json)
-                .unwrap_or_else(|_| json!({ "raw": payload_json })),
-            created_at,
-        },
-    ))
+    Ok(row.map(ProposalSqlRow::into_proposal))
 }
 
 pub async fn list_memory_proposals(
@@ -383,7 +392,7 @@ pub async fn list_memory_proposals(
     limit: i64,
 ) -> Result<Vec<SqliteMemoryProposal>, DenError> {
     let rows = if let Some(status) = status {
-        sqlx::query_as::<_, (String, i64, String, String, String)>(
+        sqlx::query_as::<_, ProposalSqlRow>(
             r"
             SELECT proposal_id, sequence_no, status, payload_json, created_at
             FROM memory_proposals
@@ -398,7 +407,7 @@ pub async fn list_memory_proposals(
         .fetch_all(store.pool())
         .await
     } else {
-        sqlx::query_as::<_, (String, i64, String, String, String)>(
+        sqlx::query_as::<_, ProposalSqlRow>(
             r"
             SELECT proposal_id, sequence_no, status, payload_json, created_at
             FROM memory_proposals
@@ -415,16 +424,7 @@ pub async fn list_memory_proposals(
     .map_err(|e| DenError::System(format!("sqlite list proposals failed: {e}")))?;
     Ok(rows
         .into_iter()
-        .map(
-            |(proposal_id, sequence_no, status, payload_json, created_at)| SqliteMemoryProposal {
-                proposal_id,
-                sequence_no,
-                status,
-                payload_json: serde_json::from_str(&payload_json)
-                    .unwrap_or_else(|_| json!({ "raw": payload_json })),
-                created_at,
-            },
-        )
+        .map(ProposalSqlRow::into_proposal)
         .collect())
 }
 
@@ -434,7 +434,7 @@ pub async fn resolve_memory_proposal(
     status: &str,
     review_payload: &Value,
 ) -> Result<SqliteMemoryProposal, DenError> {
-    let existing = sqlx::query_as::<_, (String,)>(
+    let existing = sqlx::query_scalar::<_, String>(
         "SELECT payload_json FROM memory_proposals WHERE bear_id = ? AND proposal_id = ?",
     )
     .bind(store.bear_id().to_string())
@@ -443,7 +443,7 @@ pub async fn resolve_memory_proposal(
     .await
     .map_err(|e| DenError::System(format!("sqlite fetch proposal for resolve failed: {e}")))?
     .ok_or_else(|| DenError::NotFound("proposal not found".to_string()))?;
-    let mut payload: Value = serde_json::from_str(&existing.0).unwrap_or_else(|_| json!({}));
+    let mut payload: Value = serde_json::from_str(&existing).unwrap_or_else(|_| json!({}));
     if let Some(obj) = review_payload.as_object() {
         for (k, v) in obj {
             payload[k] = v.clone();
@@ -465,7 +465,7 @@ pub async fn resolve_memory_proposal(
     .execute(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite resolve proposal failed: {e}")))?;
-    let row = sqlx::query_as::<_, (String, i64, String, String, String)>(
+    let row = sqlx::query_as::<_, ProposalSqlRow>(
         r"
         SELECT proposal_id, sequence_no, status, payload_json, created_at
         FROM memory_proposals WHERE bear_id = ? AND proposal_id = ?
@@ -476,13 +476,7 @@ pub async fn resolve_memory_proposal(
     .fetch_one(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite fetch proposal failed: {e}")))?;
-    Ok(SqliteMemoryProposal {
-        proposal_id: row.0,
-        sequence_no: row.1,
-        status: row.2,
-        payload_json: serde_json::from_str(&row.3).unwrap_or_else(|_| json!({})),
-        created_at: row.4,
-    })
+    Ok(row.into_proposal())
 }
 
 #[cfg(test)]
