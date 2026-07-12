@@ -67,12 +67,13 @@ pub fn normalize_display_status_text(s: &str) -> String {
     format!("{s}.\n")
 }
 
+const CLIENT_WORKFLOW_STATE_PREFIX: &str = "client workflow state for this session:";
+const AUTHORITATIVE_WORKFLOW_STATE_PREFIX: &str = "AUTHORITATIVE WORKFLOW STATE for this turn:";
+
 fn strip_prompt_scaffolding_prefix(s: &str) -> String {
     let trimmed = s.trim_start();
-    let is_scaffold =
-        find_ascii_case_insensitive(trimmed, "client workflow state for this session:") == Some(0)
-            || find_ascii_case_insensitive(trimmed, "AUTHORITATIVE WORKFLOW STATE for this turn:")
-                == Some(0);
+    let is_scaffold = find_ascii_case_insensitive(trimmed, CLIENT_WORKFLOW_STATE_PREFIX) == Some(0)
+        || find_ascii_case_insensitive(trimmed, AUTHORITATIVE_WORKFLOW_STATE_PREFIX) == Some(0);
     if !is_scaffold {
         return s.trim().to_string();
     }
