@@ -152,7 +152,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `src/oauth/db.rs` — ~10 `SELECT` blocks manually map sqlx rows field-by-field instead of `sqlx::FromRow`/`query_as!`; each repeats the same nullable-timestamp fallback.
 - [ ] `src/oauth/error.rs:203-218` — `From<CustomError> for OAuthError` silently collapses unrelated variants and discards original message on fallback — lossy trait boundary.
 - [ ] `src/templates/mod.rs:137-151` — `generate_csrf_token` uses `DefaultHasher` timestamp hashing, doc comment admits it's a never-replaced placeholder, and it's unused for real validation.
-- [ ] `src/oauth/utils.rs:20-32` vs `jwt.rs:239-251` — `generate_secure_random_string` and `generate_jti` duplicate the same charset-sampling loop.
+- [x] `src/oauth/utils.rs:20-32` vs `jwt.rs:239-251` — `generate_secure_random_string` and `generate_jti` duplicate the same charset-sampling loop.
 - [ ] `src/oauth/mod.rs:6-14` — crate-wide `#![allow(clippy::...)]` silences 9 lints (incl. `too_many_arguments`, `result_large_err`) instead of fixing signatures (e.g. `create_authorization_code` takes 9 positional args — should be a struct).
 - [ ] `src/oauth/endpoints.rs:1281-1300` vs `error.rs:110-125` — `bearer_error_response`/`oauth_error_response` reimplement `OAuthError -> StatusCode` mapping instead of calling `OAuthError::status_code()` — mapping now lives in 3 places that can drift.
 
