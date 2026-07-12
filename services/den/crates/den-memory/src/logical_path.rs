@@ -1,3 +1,5 @@
+use std::{fmt, str::FromStr};
+
 use serde::{Deserialize, Serialize};
 
 use crate::descriptors;
@@ -18,10 +20,24 @@ impl MemoryScopeType {
     }
 
     pub fn parse(raw: &str) -> Option<Self> {
+        raw.parse().ok()
+    }
+}
+
+impl fmt::Display for MemoryScopeType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for MemoryScopeType {
+    type Err = ();
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
         match raw {
-            "profile_local" | "role_local" => Some(Self::ProfileLocal),
-            "shared" => Some(Self::Shared),
-            _ => None,
+            "profile_local" | "role_local" => Ok(Self::ProfileLocal),
+            "shared" => Ok(Self::Shared),
+            _ => Err(()),
         }
     }
 }

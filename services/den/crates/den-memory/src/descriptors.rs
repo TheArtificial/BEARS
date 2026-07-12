@@ -9,6 +9,8 @@
 //! - a handle's `strength` (`strong | weak`) is fixed by its descriptor and drives
 //!   resolution (ADR-0042 §11).
 
+use std::{fmt, str::FromStr};
+
 use serde::{Deserialize, Serialize};
 
 /// Relation class — a closed, immutable 2-value enum owned by the relation descriptor.
@@ -27,6 +29,24 @@ impl RelationClass {
         match self {
             Self::Descriptive => "descriptive",
             Self::AccessBearing => "access_bearing",
+        }
+    }
+}
+
+impl fmt::Display for RelationClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for RelationClass {
+    type Err = ();
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "descriptive" => Ok(Self::Descriptive),
+            "access_bearing" => Ok(Self::AccessBearing),
+            _ => Err(()),
         }
     }
 }
@@ -76,10 +96,24 @@ impl EntityTrust {
     }
 
     pub fn parse(raw: &str) -> Option<Self> {
+        raw.parse().ok()
+    }
+}
+
+impl fmt::Display for EntityTrust {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for EntityTrust {
+    type Err = ();
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
         match raw {
-            "inferred" => Some(Self::Inferred),
-            "asserted" => Some(Self::Asserted),
-            _ => None,
+            "inferred" => Ok(Self::Inferred),
+            "asserted" => Ok(Self::Asserted),
+            _ => Err(()),
         }
     }
 }
@@ -113,15 +147,7 @@ impl ResolutionState {
     }
 
     pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "rejected" => Some(Self::Rejected),
-            "merged" | "superseded" => Some(Self::Merged),
-            "observed" => Some(Self::Observed),
-            "provisional" => Some(Self::Provisional),
-            "resolved" => Some(Self::Resolved),
-            "confirmed" => Some(Self::Confirmed),
-            _ => None,
-        }
+        raw.parse().ok()
     }
 
     /// Access-bearing relations may only target entities at this level or above (ADR-0042 §11).
@@ -132,6 +158,28 @@ impl ResolutionState {
     /// Whether the entity is "live" (a merged/rejected entity is dead and reads forward-point away).
     pub fn is_live(self) -> bool {
         !matches!(self, Self::Merged | Self::Rejected)
+    }
+}
+
+impl fmt::Display for ResolutionState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ResolutionState {
+    type Err = ();
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "rejected" => Ok(Self::Rejected),
+            "merged" | "superseded" => Ok(Self::Merged),
+            "observed" => Ok(Self::Observed),
+            "provisional" => Ok(Self::Provisional),
+            "resolved" => Ok(Self::Resolved),
+            "confirmed" => Ok(Self::Confirmed),
+            _ => Err(()),
+        }
     }
 }
 
