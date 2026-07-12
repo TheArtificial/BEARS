@@ -26,6 +26,10 @@ pub struct MediaStore {
 }
 
 impl MediaStore {
+    /// Build the process-wide media store from startup configuration.
+    ///
+    /// Empty `S3_ENDPOINT` disables media storage. Non-empty S3 settings are treated as
+    /// startup configuration and intentionally fail fast if URLs or bucket settings are invalid.
     pub fn new(config: &Config) -> Option<Self> {
         if config.s3_endpoint.is_empty() {
             return None;
