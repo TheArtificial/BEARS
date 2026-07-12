@@ -238,7 +238,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `plan_mode.rs:497-513` `close_with_state` runtime-guards invalid states via `matches!` — model as a "ClosedPlanModeState" enum to make invalid states unrepresentable.
 - [ ] `plan_mode.rs:281-333` `enter_plan_mode` mixes `pool` and `&mut *tx` reads inside one transaction — confusing.
 - [ ] `memory/curate_executor.rs:50-113` `CurateTriage` enum has 5 variants with identical field shapes — should be a struct with a `kind` discriminant instead.
-- [ ] `memory/curate_executor.rs:256-264` manual JSON-Map tally counter reimplements `HashMap::entry().or_insert()`.
+- [x] `memory/curate_executor.rs:256-264` manual JSON-Map tally counter reimplements `HashMap::entry().or_insert()`. **DONE** (cleanup batch): counts statuses with `HashMap<String, u64>::entry` and serializes once for the response; `den-runtime` clippy green.
 - [ ] `memory/curate_executor.rs:397-451` `apply_core_promotion` needless tuple-then-immediate-use round trip.
 - [ ] `turn_obligations.rs:19-76` `TurnObligationKind`/`ExpectedResponderAction` are two enums with byte-identical variants/impls — merge or macro-generate both (~50 duplicated lines).
 - [ ] `turn_obligations.rs:149-167` `row_to_obligation` manually maps 15 fields — should derive `sqlx::FromRow` like `plan_mode.rs`/`managed_blocks.rs` do. **DEFERRED to DB env** (structural batch A): a clean FromRow conversion here (and in the sharing `turn_waits.rs`) requires adding `responder_ref_id`/`turn_step_id` to query shapes that currently omit them + dropping the tolerant `try_get().ok()` fallback — a change to *what the queries return / how the struct is populated*, which needs a runtime/DB test to trust. Held back from the no-DB batch.
