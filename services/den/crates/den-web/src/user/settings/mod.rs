@@ -82,7 +82,7 @@ async fn settings_home(
         .id;
     let user = user::db::user_by_id(&state.sqlx_pool, user_id)
         .await?
-        .unwrap();
+        .ok_or_else(|| CustomError::NotFound(format!("User {user_id} not found")))?;
 
     web::render_template(
         &state,
@@ -116,7 +116,7 @@ async fn settings_form_view(
         .id;
     let user_settings = user::db::settings_by_id(&state.sqlx_pool, user_id)
         .await?
-        .unwrap();
+        .ok_or_else(|| CustomError::NotFound(format!("Settings for user {user_id} not found")))?;
     let settings_form = SettingsForm::from(user_settings);
 
     web::render_template(

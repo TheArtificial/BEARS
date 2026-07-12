@@ -198,7 +198,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `src/auth_backend.rs:104-113` vs `115-122` — duplicated `SessionUser{...}` literal construction — extract `From<db::UserAuth> for SessionUser`.
 - [ ] `src/user/email_settings.rs:44-121` `settings_by_id` ~80-line nested if-let mixing lookup/insert/logging — split into lookup + create-default helpers.
 - [ ] `src/user/email_settings.rs:390-436` `set_admin_email_verified` hand-rolls UPDATE-then-INSERT upsert instead of `INSERT ... ON CONFLICT` (used elsewhere in crate, e.g. `armature_tokens.rs:227-273`).
-- [ ] `src/email/mod.rs:83-87` `mailgun_client()` calls `.expect(...)` — panics in reachable library code, should return `Result`.
+- [x] `src/email/mod.rs:83-87` `mailgun_client()` calls `.expect(...)` — panics in reachable library code, should return `Result`. **DONE** (safety batch): `mailgun_client()` now returns `Result<&Mailgun, DenError>` and `send_email_template` propagates initialization failure as `DenError::Email`; `den-http` clippy green.
 - [ ] `src/email/mod.rs:105-107` manual "split before first dot" for `type_name` with no comment explaining significance.
 - [ ] `src/user/mod.rs:11-18,22,36,43` dead commented-out struct/derive code left inline — remove.
 - [ ] `src/user/mod.rs:79-108` `user_by_username_opt` takes `username: String` by value instead of `&str`, inconsistent with rest of `db.rs`.
@@ -362,7 +362,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/admin/bears.rs` — same `#![allow(dead_code)]` + stale-TODO pattern.
 - [ ] `src/user/account/mod.rs:290` `auth_session.user.clone().unwrap().id` will panic on inconsistent session state; same file at line 325 uses the safe `.as_ref().map().ok_or_else()` pattern — inconsistent within one file.
 - [ ] `src/user/settings/email.rs:64,86,118,169,193` — same `auth_session.user.clone().unwrap().id` repeated 5x — extract shared helper returning `Result<_, CustomError>`.
-- [ ] `src/admin/membership.rs:97,104` `bear_id.expect("checked")` twice, re-deriving an already-validated value instead of an `if let Some` guard/early return.
+- [x] `src/admin/membership.rs:97,104` `bear_id.expect("checked")` twice, re-deriving an already-validated value instead of an `if let Some` guard/early return. **DONE** (safety batch): replaced with `if let (true, Some(bid)) = ...` guards; `den-web` clippy green.
 - [ ] `src/core/s3/mod.rs:37,51,59,68` — four `.expect()` calls in startup config parsing, undocumented as fail-fast-only.
 - [ ] `src/v1/mod.rs:826,838,906,919` — `direct_chat_sse_response`/`chat_sse_response`/header-building block all duplicate identical `Response::builder()...text/event-stream` boilerplate 3x — share one builder.
 - [ ] `src/admin/oauth_clients.rs:246-376` `add_oauth_client_action` nests entire success path inside `if validation_errors.is_empty()` (130+ lines deep) — invert to early-return error branch.
@@ -562,7 +562,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/runtime/conversations.rs:171-181` `truncate_runtime_message` duplicates `summarize.rs:207-219`'s `truncate_chars` almost exactly — consolidate into one shared utility (3rd copy of this pattern in the crate, see also `key_memory_projection.rs`).
 - [ ] `src/runtime/conversations.rs` — mixes plain data types, untyped `Value`-scraping helpers, and compaction-related grouping types in one 297-line file with a generic name.
 - [ ] `src/runtime/compaction/mod.rs:56-115` `semantic_groups_from_runtime_messages` duplicates classification logic that also exists (more thoroughly) in `grouping.rs::classify_non_tool_row` — risk of drift.
-- [ ] `src/runtime/compaction/mod.rs:204-238` `merge_iterative_summary` uses `format!("{:?}", group.kind)` (Debug) to build a persisted label — fragile, needs explicit `Display`/`as_str()` on `RuntimeSemanticGroupKind` (recurs in `artifact_store.rs:131` and `compaction_store.rs:85-97,131` — 4 occurrences of this anti-pattern).
+- [ ] `src/runtime/compaction/mod.rs:204-238` `merge_iterative_summary` uses `format!("{:?}", group.kind)` (Debug) to build a persisted label — fragile, needs explicit `Display`/`as_str()` on `RuntimeSemanticGroupKind` (recurs in `artifact_store.rs:131` and `compaction_store.rs:85-97,131` — 4 occurrences of this anti-pattern). **PARTIAL** (typing batch): `runtime_compaction_events` trigger/status persistence and event hashing now use explicit `as_str()` on `RuntimeCompactionTriggerKind`/`RuntimeCompactionEventStatus`; remaining group-kind/artifact-store Debug strings still need follow-up.
 - [ ] `src/runtime/compaction/mod.rs:240-244` `push_unique` duplicated verbatim in `summarize.rs:222-228` (3rd copy across the crate) — needs one shared helper.
 - [ ] `src/runtime/compaction/grouping.rs:109-124,132-155` `tool_call_id_from_row`/`is_approval_interaction_row` re-parse the same JSON payload multiple times per row via redundant `try_from` calls instead of parsing once.
 - [ ] `src/runtime/compaction/grouping.rs:157-171` — brittle string-matching on lowercased content for classification with magic strings repeated between functions and duplicated in `mod.rs:85-88`.
@@ -684,7 +684,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/bear/profile.rs:48-55` `BearRoleViewRow::from_agent` takes an unused `_role: BearProfile` parameter.
 - [ ] `src/bear/profile.rs:183` `agent.clone()` unnecessary since `agent` isn't reused after.
 - [ ] `src/bear/profile.rs:57-171` — five near-identical `match role { ... }` functions (label/description/plain_name/surfaces/capabilities/memory_rules) — consolidate into a single data table as `BearProfile` metadata.
-- [ ] `src/user/settings/mod.rs:85,119` — two `.unwrap()` calls in request handlers inconsistent with the rest of the crate's `ok_or_else` convention — should be `.ok_or_else(|| CustomError::NotFound(...))?`.
+- [x] `src/user/settings/mod.rs:85,119` — two `.unwrap()` calls in request handlers inconsistent with the rest of the crate's `ok_or_else` convention — should be `.ok_or_else(|| CustomError::NotFound(...))?`. **DONE** (safety batch): both handlers now return `CustomError::NotFound`; `den-web` clippy green.
 - [ ] `src/status.rs:123-144` `build_deploy_rows` returns a `Vec` with always exactly one element — unnecessary ceremony, name implies multi-row generality it doesn't have.
 - [ ] `src/bear/create_support.rs:141-157,360-377,389-408` — `admin_bear_new_form_context`/`bear_new_form_context`/`admin_bear_edit_page_context` near-identical bodies — unify into one parameterized helper.
 - [ ] `src/bear/create_support.rs:494-508` — three sequential empty-checks for chat/pair/watch roles but not curate/work — asymmetric, confusing (not a correctness call, but a style/coverage gap).

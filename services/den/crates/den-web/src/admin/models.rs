@@ -101,7 +101,7 @@ async fn create_model(
     let form = normalize_form(form)?;
     let metadata_json = parse_metadata_json(&form.metadata_json)?;
     sqlx::query(
-        r#"
+        r"
         INSERT INTO model_selection_options (
             handle, display_name, selectable, recommended, sort_order, notes, metadata_json
         )
@@ -114,7 +114,7 @@ async fn create_model(
             notes = EXCLUDED.notes,
             metadata_json = EXCLUDED.metadata_json,
             updated_at = NOW()
-        "#,
+        ",
     )
     .bind(&form.handle)
     .bind(&form.display_name)
@@ -136,7 +136,7 @@ async fn update_model(
     let form = normalize_form(form)?;
     let metadata_json = parse_metadata_json(&form.metadata_json)?;
     let result = sqlx::query(
-        r#"
+        r"
         UPDATE model_selection_options
         SET display_name = $2,
             selectable = $3,
@@ -146,7 +146,7 @@ async fn update_model(
             metadata_json = $7,
             updated_at = NOW()
         WHERE handle = $1
-        "#,
+        ",
     )
     .bind(&form.handle)
     .bind(&form.display_name)
@@ -202,11 +202,11 @@ async fn render_index(
             Json<serde_json::Value>,
         ),
     >(
-        r#"
+        r"
         SELECT handle, display_name, selectable, recommended, sort_order, notes, metadata_json
         FROM model_selection_options
         ORDER BY sort_order NULLS LAST, display_name, handle
-        "#,
+        ",
     )
     .fetch_all(state.sqlx_pool())
     .await?;

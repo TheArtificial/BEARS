@@ -237,6 +237,17 @@ pub enum RuntimeCompactionTriggerKind {
     ModelSafetyMargin,
 }
 
+impl RuntimeCompactionTriggerKind {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::TokenPressure => "TokenPressure",
+            Self::SemanticGroupCount => "SemanticGroupCount",
+            Self::Manual => "Manual",
+            Self::ModelSafetyMargin => "ModelSafetyMargin",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeCompactionBoundary {
     pub retained_group_count: usize,

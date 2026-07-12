@@ -94,11 +94,11 @@ pub async fn latest_event_sequence(
     session_id: &str,
 ) -> Result<Option<i64>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT MAX(sequence_no) AS sequence_no
         FROM bearwire_events
         WHERE session_id = $1
-        "#,
+        ",
     )
     .bind(session_id)
     .fetch_one(pool)

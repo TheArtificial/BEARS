@@ -80,9 +80,9 @@ pub async fn record_runtime_compaction_event(
         ",
     )
     .bind(&event.conversation_id)
-    .bind(format!("{:?}", event.trigger))
+    .bind(event.trigger.as_str())
     .bind(&event.policy_version)
-    .bind(format!("{:?}", event.status))
+    .bind(event.status.as_str())
     .bind(&event_hash)
     .bind(boundary)
     .bind(event.source_group_start.map(|v| v as i32))
@@ -251,9 +251,9 @@ pub async fn latest_compaction_artifact_for_conversation(
 fn runtime_compaction_event_hash(event: &RuntimeCompactionEvent) -> Result<String, DenError> {
     let payload = serde_json::json!({
         "conversation_id": event.conversation_id,
-        "trigger": format!("{:?}", event.trigger),
+        "trigger": event.trigger.as_str(),
         "policy_version": event.policy_version,
-        "status": format!("{:?}", event.status),
+        "status": event.status.as_str(),
         "boundary": event.boundary,
         "source_group_start": event.source_group_start,
         "source_group_end": event.source_group_end,

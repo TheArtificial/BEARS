@@ -508,7 +508,7 @@ impl ResponsesStreamDiagnostics {
         }
         if let Some(arguments) = json.get("arguments").and_then(Value::as_str) {
             if event_type == "response.function_call_arguments.done" {
-                self.tool_arg_lengths.insert(key.clone(), arguments.len());
+                self.tool_arg_lengths.insert(key, arguments.len());
             }
         }
         if let Some(item) = json.get("item") {
@@ -781,7 +781,7 @@ impl ResponsesStreamAccumulator {
             }
             _ => {}
         }
-        if let Some(diagnostics) = diagnostics.as_deref_mut() {
+        if let Some(diagnostics) = diagnostics {
             diagnostics.observe_response_parse(event_type, &out.events);
         }
         out

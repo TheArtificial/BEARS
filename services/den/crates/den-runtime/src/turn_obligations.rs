@@ -605,7 +605,7 @@ async fn open_client_obligations(
 ) -> Result<Vec<TurnObligationRow>, DenError> {
     let limit = limit.clamp(1, 10_000);
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
                request_payload, result_payload, created_at, updated_at, completed_at
@@ -613,7 +613,7 @@ async fn open_client_obligations(
         WHERE state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
         LIMIT $1
-        "#,
+        ",
     )
     .bind(limit)
     .fetch_all(pool)

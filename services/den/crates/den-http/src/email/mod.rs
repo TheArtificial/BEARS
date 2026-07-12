@@ -77,10 +77,13 @@ pub fn init_mailgun(config: &Config) {
     });
 }
 
-pub fn mailgun_client() -> &'static Mailgun {
-    MAILGUN.get().expect(
-        "Mailgun client not initialized: call core::email::init_mailgun from application startup",
-    )
+pub fn mailgun_client() -> Result<&'static Mailgun, DenError> {
+    MAILGUN.get().ok_or_else(|| {
+        DenError::Email(
+            "Mailgun client not initialized: call core::email::init_mailgun from application startup"
+                .to_string(),
+        )
+    })
 }
 
 pub async fn send_email_template(
@@ -162,7 +165,7 @@ pub async fn send_email_template(
         app_config.mail_from_address.as_str(),
     );
 
-    match mailgun_client()
+    match mailgun_client()?
         .async_send(MailgunRegion::EU, &sender, message, attachments)
         .await
     {

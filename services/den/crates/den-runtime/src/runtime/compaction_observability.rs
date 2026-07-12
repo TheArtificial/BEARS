@@ -13,6 +13,16 @@ pub enum RuntimeCompactionEventStatus {
     Failed,
 }
 
+impl RuntimeCompactionEventStatus {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Applied => "Applied",
+            Self::Skipped => "Skipped",
+            Self::Failed => "Failed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeCompactionEvent {
     pub conversation_id: String,

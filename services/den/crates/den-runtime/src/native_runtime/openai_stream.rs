@@ -81,7 +81,7 @@ pub fn responses_byte_stream_to_event_stream_with_telemetry(
                 finished = true;
                 if buffer.is_empty() && !saw_terminal_or_pause {
                     for event in accumulator.flush_end_of_stream() {
-                        diagnostics.observe_emitted_events(&[event.clone()]);
+                        diagnostics.observe_emitted_events(std::slice::from_ref(&event));
                         queued_events.push_back(Ok(event));
                     }
                 } else if !buffer.is_empty() {
