@@ -753,93 +753,80 @@ async fn validate_pkce(
         token_request.code_verifier.is_some()
     );
 
-    // Check if PKCE was used in the authorization request
-    match (&auth_code.code_challenge, &auth_code.code_challenge_method) {
-        (Some(code_challenge), Some(code_challenge_method)) => {
-            tracing::debug!(
-                "PKCE was used in authorization: method={}, challenge_length={}",
-                code_challenge_method,
-                code_challenge.len()
+    let code_challenge = auth_code.code_challenge.as_deref();
+    let code_challenge_method = auth_code.code_challenge_method.as_deref();
+
+    if code_challenge.is_none() && code_challenge_method.is_none() {
+        tracing::debug!("PKCE was not used in authorization request");
+        if let Some(verifier) = token_request.code_verifier.as_ref() {
+            tracing::warn!(
+                "code_verifier provided but PKCE was not used in authorization: verifier_length={}",
+                verifier.len()
             );
-            // PKCE was used - code_verifier is required
-            match &token_request.code_verifier {
-                Some(code_verifier) => {
-                    tracing::debug!(
-                        "Validating PKCE: verifier_length={}, challenge_length={}, method={}",
-                        code_verifier.len(),
-                        code_challenge.len(),
-                        code_challenge_method
-                    );
-                    // Validate the code_verifier against the stored code_challenge
-                    match utils::validate_pkce(code_verifier, code_challenge, code_challenge_method)
-                    {
-                        Ok(()) => {
-                            tracing::info!("PKCE validation successful");
-                            Ok(())
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "PKCE validation failed: method={}, error={}",
-                                code_challenge_method,
-                                e
-                            );
-                            // The error from validate_pkce already contains detailed context
-                            // Just pass it through, but ensure it's an InvalidRequest
-                            match e {
-                                OAuthError::InvalidRequest(msg) => {
-                                    Err(OAuthError::InvalidRequest(msg))
-                                }
-                                _ => Err(OAuthError::InvalidRequest(format!(
-                                    "PKCE validation failed (method: {}): {}",
-                                    code_challenge_method,
-                                    e.error_description()
-                                ))),
-                            }
-                        }
-                    }
-                }
-                None => {
-                    // PKCE was used in auth request but no verifier provided
-                    tracing::error!(
-                        "PKCE code_challenge present but no code_verifier provided: method={}, challenge_length={}",
-                        code_challenge_method,
-                        code_challenge.len()
-                    );
-                    Err(OAuthError::InvalidRequest(format!(
-                        "PKCE was used in the authorization request (method: {}), but no code_verifier was provided in the token request. Include the code_verifier parameter with the same value used to generate the code_challenge.",
-                        code_challenge_method
-                    )))
-                }
-            }
+            return Err(OAuthError::InvalidRequest(
+                "code_verifier was provided, but PKCE was not used in the authorization request. Either remove the code_verifier parameter, or ensure code_challenge and code_challenge_method were included in the original authorization request.".to_string(),
+            ));
         }
-        (None, None) => {
-            tracing::debug!("PKCE was not used in authorization request");
-            // PKCE was not used - code_verifier should not be provided
-            if let Some(verifier) = token_request.code_verifier.as_ref() {
-                tracing::warn!(
-                    "code_verifier provided but PKCE was not used in authorization: verifier_length={}",
-                    verifier.len()
-                );
-                return Err(OAuthError::InvalidRequest(
-                    "code_verifier was provided, but PKCE was not used in the authorization request. Either remove the code_verifier parameter, or ensure code_challenge and code_challenge_method were included in the original authorization request.".to_string(),
-                ));
-            }
-            // No PKCE validation needed
-            tracing::debug!("No PKCE validation required");
-            Ok(())
-        }
-        _ => {
-            // Invalid state - either challenge or method is missing
-            tracing::error!(
-                "Invalid PKCE state: has_challenge={}, has_method={}",
-                auth_code.code_challenge.is_some(),
-                auth_code.code_challenge_method.is_some()
-            );
-            Err(OAuthError::ServerError(
-                "Invalid PKCE state in authorization code".to_string(),
-            ))
-        }
+        tracing::debug!("No PKCE validation required");
+        return Ok(());
     }
+
+    let (Some(code_challenge), Some(code_challenge_method)) =
+        (code_challenge, code_challenge_method)
+    else {
+        tracing::error!(
+            "Invalid PKCE state: has_challenge={}, has_method={}",
+            auth_code.code_challenge.is_some(),
+            auth_code.code_challenge_method.is_some()
+        );
+        return Err(OAuthError::ServerError(
+            "Invalid PKCE state in authorization code".to_string(),
+        ));
+    };
+
+    tracing::debug!(
+        "PKCE was used in authorization: method={}, challenge_length={}",
+        code_challenge_method,
+        code_challenge.len()
+    );
+
+    let Some(code_verifier) = token_request.code_verifier.as_deref() else {
+        tracing::error!(
+            "PKCE code_challenge present but no code_verifier provided: method={}, challenge_length={}",
+            code_challenge_method,
+            code_challenge.len()
+        );
+        return Err(OAuthError::InvalidRequest(format!(
+            "PKCE was used in the authorization request (method: {}), but no code_verifier was provided in the token request. Include the code_verifier parameter with the same value used to generate the code_challenge.",
+            code_challenge_method
+        )));
+    };
+
+    tracing::debug!(
+        "Validating PKCE: verifier_length={}, challenge_length={}, method={}",
+        code_verifier.len(),
+        code_challenge.len(),
+        code_challenge_method
+    );
+
+    if let Err(err) = utils::validate_pkce(code_verifier, code_challenge, code_challenge_method) {
+        tracing::error!(
+            "PKCE validation failed: method={}, error={}",
+            code_challenge_method,
+            err
+        );
+        return Err(match err {
+            OAuthError::InvalidRequest(msg) => OAuthError::InvalidRequest(msg),
+            other => OAuthError::InvalidRequest(format!(
+                "PKCE validation failed (method: {}): {}",
+                code_challenge_method,
+                other.error_description()
+            )),
+        });
+    }
+
+    tracing::info!("PKCE validation successful");
+    Ok(())
 }
 
 /// Generate standardized OAuth token response

@@ -801,29 +801,35 @@ pub(super) async fn upsert_execution_session(
     .map_err(Into::into)
 }
 
+enum ExecutionSessionRef<'a> {
+    Explicit(&'a str),
+    AcpClientSession(&'a str),
+    Conversation(&'a str),
+}
+
+impl ExecutionSessionRef<'_> {
+    fn into_session_id(self) -> String {
+        match self {
+            Self::Explicit(value) => value.to_string(),
+            Self::AcpClientSession(value) => format!("acp:{value}"),
+            Self::Conversation(value) => format!("conversation:{value}"),
+        }
+    }
+}
+
+fn non_empty_ref(value: &Option<String>) -> Option<&str> {
+    value.as_deref().map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn execution_session_ref(request: &DocketJobExecuteRequest) -> Option<ExecutionSessionRef<'_>> {
+    non_empty_ref(&request.session_id)
+        .map(ExecutionSessionRef::Explicit)
+        .or_else(|| non_empty_ref(&request.source_client_session_id).map(ExecutionSessionRef::AcpClientSession))
+        .or_else(|| non_empty_ref(&request.source_conversation_id).map(ExecutionSessionRef::Conversation))
+}
+
 fn execution_session_id(request: &DocketJobExecuteRequest) -> Option<String> {
-    request
-        .session_id
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            request
-                .source_client_session_id
-                .as_ref()
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .map(|value| format!("acp:{value}"))
-        })
-        .or_else(|| {
-            request
-                .source_conversation_id
-                .as_ref()
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .map(|value| format!("conversation:{value}"))
-        })
+    execution_session_ref(request).map(ExecutionSessionRef::into_session_id)
 }
 
 async fn record_execution_session(

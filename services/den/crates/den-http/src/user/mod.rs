@@ -35,31 +35,9 @@ pub struct UserSettings {
 }
 
 pub async fn user_by_id(db_pool: &PgPool, id: i32) -> Result<User, DenError> {
-    let user = query_as!(
-        User,
-        "
-        SELECT
-            users.id AS id,
-            username,
-            display_name,
-            email,
-            (email_configs.verified_at IS NOT NULL) AS email_verified,
-            theme,
-            week_start_day,
-            users.created_at AS created
-        FROM users
-        LEFT JOIN email_configs
-            ON users.id = email_configs.user_id
-            AND email_configs.active = true
-        WHERE
-            users.id = $1
-        ",
-        id
-    )
-    .fetch_one(db_pool)
-    .await?;
-
-    Ok(user)
+    db::user_by_id(db_pool, id)
+        .await?
+        .ok_or_else(|| DenError::NotFound(format!("user {id} not found")))
 }
 
 pub async fn user_by_username_opt(

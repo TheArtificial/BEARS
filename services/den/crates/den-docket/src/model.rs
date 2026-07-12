@@ -1359,10 +1359,28 @@ pub fn task_list_projection_from_docket_job(
     }
 }
 
+enum DocketSourceRef {
+    Job(Uuid),
+    ParentTask(Uuid),
+    Task(Uuid),
+    MissingJob,
+}
+
+impl fmt::Display for DocketSourceRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Job(id) => write!(f, "docket_job:{id}"),
+            Self::ParentTask(id) => write!(f, "docket_parent_task:{id}"),
+            Self::Task(id) => write!(f, "docket_task:{id}"),
+            Self::MissingJob => f.write_str("docket_job:<none>"),
+        }
+    }
+}
+
 fn docket_checkout_refs(job_id: Uuid, parent_task_id: Option<Uuid>) -> Vec<String> {
-    let mut refs = vec![format!("docket_job:{job_id}")];
+    let mut refs = vec![DocketSourceRef::Job(job_id).to_string()];
     if let Some(parent_task_id) = parent_task_id {
-        refs.push(format!("docket_parent_task:{parent_task_id}"));
+        refs.push(DocketSourceRef::ParentTask(parent_task_id).to_string());
     }
     refs
 }
@@ -1417,9 +1435,10 @@ fn task_list_item_from_docket_task(
             task.id.to_string(),
             vec![
                 task.job_id
-                    .map(|job_id| format!("docket_job:{job_id}"))
-                    .unwrap_or_else(|| "docket_job:<none>".to_string()),
-                format!("docket_task:{}", task.id),
+                    .map(DocketSourceRef::Job)
+                    .unwrap_or(DocketSourceRef::MissingJob)
+                    .to_string(),
+                DocketSourceRef::Task(task.id).to_string(),
             ],
         ),
         sync_state: TaskListSyncState::Clean,

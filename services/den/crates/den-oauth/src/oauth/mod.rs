@@ -166,10 +166,9 @@ pub struct AccessTokenWithContext {
 }
 
 impl AccessTokenWithContext {
-    /// Parse scopes from JSON
-    #[allow(dead_code)]
+    /// Parse scopes from JSON.
     pub fn parse_scopes(&self) -> Result<Vec<OAuthScope>, crate::oauth::error::OAuthError> {
-        scopes_from_json(&self.scopes)
+        utils::scopes_from_json(&self.scopes)
     }
 }
 
@@ -195,10 +194,9 @@ pub struct UserAccessToken {
 }
 
 impl UserAccessToken {
-    /// Parse scopes from JSON
-    #[allow(dead_code)]
+    /// Parse scopes from JSON.
     pub fn parse_scopes(&self) -> Result<Vec<OAuthScope>, crate::oauth::error::OAuthError> {
-        scopes_from_json(&self.scopes)
+        utils::scopes_from_json(&self.scopes)
     }
 }
 
@@ -444,38 +442,16 @@ pub fn scopes_to_string(scopes: &[OAuthScope]) -> String {
         .join(" ")
 }
 
-/// Helper function to convert scopes to JSON value for database storage
+/// Helper function to convert scopes to JSON value for database storage.
 pub fn _scopes_to_json(scopes: &[OAuthScope]) -> serde_json::Value {
-    let scope_strings: Vec<String> = scopes.iter().map(|s| s.as_str().to_string()).collect();
-    serde_json::Value::Array(
-        scope_strings
-            .into_iter()
-            .map(serde_json::Value::String)
-            .collect(),
-    )
+    utils::scopes_to_json(scopes)
 }
 
-/// Helper function to parse scopes from JSON value
+/// Helper function to parse scopes from JSON value.
 pub fn scopes_from_json(
     json: &serde_json::Value,
 ) -> Result<Vec<OAuthScope>, crate::oauth::error::OAuthError> {
-    match json {
-        serde_json::Value::Array(arr) => {
-            let mut scopes = Vec::new();
-            for item in arr {
-                if let serde_json::Value::String(scope_str) = item {
-                    match OAuthScope::from_str(scope_str) {
-                        Some(scope) => scopes.push(scope),
-                        None => return Err(crate::oauth::error::OAuthError::InvalidScope),
-                    }
-                } else {
-                    return Err(crate::oauth::error::OAuthError::InvalidScope);
-                }
-            }
-            Ok(scopes)
-        }
-        _ => Err(crate::oauth::error::OAuthError::InvalidScope),
-    }
+    utils::scopes_from_json(json)
 }
 
 #[cfg(test)]
