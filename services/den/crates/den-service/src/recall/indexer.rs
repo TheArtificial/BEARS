@@ -136,14 +136,16 @@ impl<'a, E: PassageEmbedder> RecallIndexer<'a, E> {
                 let chunk = &chunks[chunk_pos];
                 registry::upsert_passage(
                     self.pool,
-                    req.bear_id,
-                    &req.memory_id,
-                    req.logical_path.as_deref(),
-                    chunk.index,
-                    &chunk.content_hash,
-                    std,
-                    SOURCE_CLASS_BEAR_MEMORY,
-                    &points[vec_pos].id,
+                    registry::NewPassage {
+                        bear_id: req.bear_id,
+                        memory_id: &req.memory_id,
+                        logical_path: req.logical_path.as_deref(),
+                        chunk_index: chunk.index,
+                        content_hash: &chunk.content_hash,
+                        embedding_standard: std,
+                        source_class: SOURCE_CLASS_BEAR_MEMORY,
+                        point_id: &points[vec_pos].id,
+                    },
                 )
                 .await?;
             }

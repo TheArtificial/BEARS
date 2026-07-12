@@ -6,6 +6,10 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
+fn db_err(operation: &'static str) -> impl FnOnce(sqlx::Error) -> DenError {
+    move |err| DenError::System(format!("recall_passages {operation}: {err}"))
+}
+
 /// A live (non-deleted) registry row for an indexed chunk.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ExistingPassage {
@@ -35,7 +39,7 @@ pub async fn list_passages(
     .bind(embedding_standard)
     .fetch_all(pool)
     .await
-    .map_err(|e| DenError::System(format!("recall_passages list: {e}")))?;
+    .map_err(db_err("list"))?;
 
     Ok(rows)
 }
@@ -58,7 +62,7 @@ pub async fn list_indexed_memory_ids(
     .bind(embedding_standard)
     .fetch_all(pool)
     .await
-    .map_err(|e| DenError::System(format!("recall_passages list memory ids: {e}")))?;
+    .map_err(db_err("list memory ids"))?;
     Ok(rows)
 }
 
@@ -80,29 +84,29 @@ pub async fn passage_stats(
     .bind(embedding_standard)
     .fetch_one(pool)
     .await
-    .map_err(|e| DenError::System(format!("recall_passages stats: {e}")))?;
+    .map_err(db_err("stats"))?;
     let passages: i64 = row
         .try_get("passages")
-        .map_err(|e| DenError::System(e.to_string()))?;
+        .map_err(db_err("decode stats passages"))?;
     let memories: i64 = row
         .try_get("memories")
-        .map_err(|e| DenError::System(e.to_string()))?;
+        .map_err(db_err("decode stats memories"))?;
     Ok((passages, memories))
 }
 
+pub struct NewPassage<'a> {
+    pub bear_id: Uuid,
+    pub memory_id: &'a str,
+    pub logical_path: Option<&'a str>,
+    pub chunk_index: i32,
+    pub content_hash: &'a str,
+    pub embedding_standard: &'a str,
+    pub source_class: &'a str,
+    pub point_id: &'a str,
+}
+
 /// Insert or refresh a passage registry row (idempotent on the chunk identity).
-#[allow(clippy::too_many_arguments)]
-pub async fn upsert_passage(
-    pool: &PgPool,
-    bear_id: Uuid,
-    memory_id: &str,
-    logical_path: Option<&str>,
-    chunk_index: i32,
-    content_hash: &str,
-    embedding_standard: &str,
-    source_class: &str,
-    point_id: &str,
-) -> Result<(), DenError> {
+pub async fn upsert_passage(pool: &PgPool, passage: NewPassage<'_>) -> Result<(), DenError> {
     sqlx::query(
         r"
         INSERT INTO recall_passages (
@@ -119,17 +123,17 @@ pub async fn upsert_passage(
             deleted_at = NULL
         ",
     )
-    .bind(bear_id)
-    .bind(memory_id)
-    .bind(logical_path)
-    .bind(chunk_index)
-    .bind(content_hash)
-    .bind(embedding_standard)
-    .bind(source_class)
-    .bind(point_id)
+    .bind(passage.bear_id)
+        .bind(passage.memory_id)
+        .bind(passage.logical_path)
+        .bind(passage.chunk_index)
+        .bind(passage.content_hash)
+        .bind(passage.embedding_standard)
+        .bind(passage.source_class)
+        .bind(passage.point_id)
     .execute(pool)
     .await
-    .map_err(|e| DenError::System(format!("recall_passages upsert: {e}")))?;
+    .map_err(db_err("upsert"))?;
     Ok(())
 }
 
@@ -155,7 +159,7 @@ pub async fn delete_passages_for_memory(
     .bind(embedding_standard)
     .fetch_all(pool)
     .await
-    .map_err(|e| DenError::System(format!("recall_passages delete (memory): {e}")))?;
+    .map_err(db_err("delete (memory)"))?;
 
     Ok(rows
         .into_iter()
@@ -187,7 +191,7 @@ pub async fn delete_passages_for_chunks_ge(
     .bind(min_chunk_index)
     .fetch_all(pool)
     .await
-    .map_err(|e| DenError::System(format!("recall_passages delete (chunks): {e}")))?;
+    .map_err(db_err("delete (chunks)"))?;
 
     Ok(rows
         .into_iter()
