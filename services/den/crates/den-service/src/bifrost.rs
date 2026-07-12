@@ -13,19 +13,15 @@ use den_core::{config::Config, DenError};
 #[derive(Debug, Clone, Deserialize)]
 pub struct BifrostModelMetadata {
     pub handle: String,
-    #[allow(dead_code)]
     pub provider: String,
-    #[allow(dead_code)]
     pub model: String,
     pub display_name: Option<String>,
     pub context_window: u32,
     pub max_output_tokens: Option<u32>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    #[allow(dead_code)]
     pub supports_tools: Option<bool>,
     pub supports_responses_api: Option<bool>,
-    #[allow(dead_code)]
     pub supports_vision: Option<bool>,
 }
 
@@ -370,7 +366,10 @@ impl BifrostClient {
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(5))
             .build()
-            .expect("reqwest client");
+            .unwrap_or_else(|err| {
+                tracing::warn!(error = %err, "failed to build tuned Bifrost HTTP client; using default client");
+                reqwest::Client::new()
+            });
         Self {
             http,
             llm_api_url: config.llm_api_url.trim_end_matches('/').to_string(),

@@ -395,13 +395,13 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/conversation/persistence.rs:889-892,955-959` — manual rollback-then-return-error repeated at every failure branch inside one transaction — needs a `TxGuard`/`?`-based combinator.
 - [ ] `src/conversation/events.rs`, `message_types.rs`, `bears/managed_blocks.rs`, `bifrost_governance.rs` — 10 enums hand-implement `as_str(self) -> &'static str` instead of `Display`/`AsRef<str>`.
 - [ ] `src/memory_proposals.rs:7-9` — pointless doubled brace nesting in a `use` statement — unreviewed rustfmt/import churn.
-- [ ] `src/bifrost.rs:15,18,25,28` — 4 struct fields carry `#[allow(dead_code)]` — remove fields or investigate why suppressed.
+- [x] `src/bifrost.rs:15,18,25,28` — 4 struct fields carry `#[allow(dead_code)]` — remove fields or investigate why suppressed. **DONE** (cleanup batch): fields are now used by catalog snapshot conversion, so stale `allow(dead_code)` attributes were removed; `den-service` clippy green.
 - [ ] `src/conversation/events.rs:996-1042` — callers clone `title`/`source_profile`/`status` multiple times per call since both the payload struct and `format!` summary need owned copies — take `&str` instead (as `pair_reflection/mod.rs`'s `CreatePairReflectionRun<'a>` already does).
 - [ ] `src/tool_turns.rs:130-136,518-523` — converts `PendingToolTurn`/`ToolTurn` to `SettledToolResult` field-by-field with 5-6 clones — add a `From<&ToolTurn> for SettledToolResult` impl.
 - [ ] `src/tool_turns.rs` — 32 `.clone()` calls, highest density in the crate.
 - [ ] `src/conversation/events.rs:1075-1203` — projection builders take 6-9 positional args of the same types (`String`, `Option<String>`, `Uuid`) — error-prone at call sites, should take a payload struct.
 - [ ] `src/bears/db.rs:13-21` (`BearParams<'a>`), `pair_reflection/mod.rs:32-48` (`CreatePairReflectionRun<'a>`) show the crate's good borrowed-param-struct pattern — projection/proposal constructors should follow suit.
-- [ ] `src/bifrost.rs:300` `.expect("reqwest client")` in `BifrostClient::new` panics on construction — undocumented as intentional startup-only panic.
+- [x] `src/bifrost.rs:300` `.expect("reqwest client")` in `BifrostClient::new` panics on construction — undocumented as intentional startup-only panic. **DONE** (safety batch): tuned client build failures now log and fall back to a default `reqwest::Client` instead of panicking; `den-service` clippy green.
 - [ ] `src/conversation/events.rs:1206-1211` — two `.expect()`s assume `ProjectionEvent` always serializes to a JSON object — safe but undocumented invariant.
 - Overall: disciplined about `Result`/`?` (virtually no stray unwrap/panic), some genuinely clean modules (`secrets.rs`, `turn_controller.rs`, `recall/query.rs`, `prompt_memory_block_store.rs`), but `conversation/events.rs`/`persistence.rs` carry disproportionate duplication.
 - **Not yet covered:** `src/bears/managed_blocks.rs` (623 lines), `src/client_sessions.rs` (478 lines), `src/bears/prompt_fragments/*`, `src/recall/qdrant.rs`, `src/model_selection.rs`, `src/archived_conversations.rs`.
