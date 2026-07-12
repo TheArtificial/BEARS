@@ -92,33 +92,34 @@ fn default_tool_result_status() -> ToolResultStatus {
 }
 
 impl ClientToolResultRequest {
-    fn input(&self) -> ClientToolResultInput {
-        ClientToolResultInput::new(
-            self.tool_call_id.clone(),
-            self.tool_name.clone(),
+    fn into_run_session_input(self) -> (String, String, ClientToolResultInput) {
+        let input = ClientToolResultInput::new(
+            self.tool_call_id,
+            self.tool_name,
             self.status,
-            self.content.clone(),
-            self.structured_content.clone(),
-            self.error.clone(),
-        )
+            self.content,
+            self.structured_content,
+            self.error,
+        );
+        (self.run_id, self.session_id, input)
     }
+}
 
-    fn bearwire_finish_payload(&self, compacted: Value) -> ToolCallFinishWire {
-        let error_message = (self.status != ToolResultStatus::Ok)
-            .then(|| self.content.as_deref().or_else(|| self.error.as_str()))
-            .flatten();
-        tool_call_finish_wire(
-            &self.tool_call_id,
-            self.tool_name.as_deref(),
-            self.status.as_str(),
-            None,
-            error_message,
-            self.content.as_deref(),
-            (!self.structured_content.is_null()).then(|| self.structured_content.clone()),
-            (!self.error.is_null()).then(|| self.error.clone()),
-            Some(compacted),
-        )
-    }
+fn bearwire_finish_payload(input: &ClientToolResultInput, compacted: Value) -> ToolCallFinishWire {
+    let error_message = (input.status != ToolResultStatus::Ok)
+        .then(|| input.content.as_deref().or_else(|| input.error.as_str()))
+        .flatten();
+    tool_call_finish_wire(
+        &input.tool_call_id,
+        input.tool_name.as_deref(),
+        input.status.as_str(),
+        None,
+        error_message,
+        input.content.as_deref(),
+        (!input.structured_content.is_null()).then(|| input.structured_content.clone()),
+        (!input.error.is_null()).then(|| input.error.clone()),
+        Some(compacted),
+    )
 }
 
 fn continuation_watchdog_timeout() -> Duration {
@@ -624,10 +625,9 @@ pub(crate) async fn client_tool_result_result(
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: ClientToolResultRequest = parse_params(params)?;
-    let run_id = request.run_id.clone();
-    let session_id = request.session_id.clone();
-    let tool_call_id = request.tool_call_id.clone();
-    let status = request.status;
+    let (run_id, session_id, input) = request.into_run_session_input();
+    let tool_call_id = input.tool_call_id.clone();
+    let status = input.status;
     let Some(run) = turn_runs::get_run(&state.sqlx_pool, &run_id).await? else {
         return Ok(json!({
             "ok": false,
@@ -667,7 +667,6 @@ pub(crate) async fn client_tool_result_result(
             obligation.state
         )));
     }
-    let input = request.input();
     let mut compacted = compact_client_tool_result(&input);
     if compacted.truncated {
         if let Ok(artifact) = create_tool_output_artifact(
@@ -679,9 +678,9 @@ pub(crate) async fn client_tool_result_result(
                 conversation_id: None,
                 run_id: Some(run_id.clone()),
                 tool_call_id: tool_call_id.clone(),
-                tool_name: request.tool_name.clone(),
+                tool_name: input.tool_name.clone(),
                 source: "bearwire_client",
-                content_text: request.content.clone(),
+                content_text: input.content.clone(),
                 content_json: Some(params.clone()),
                 metadata: json!({ "status": status.as_str() }),
             },
@@ -693,7 +692,7 @@ pub(crate) async fn client_tool_result_result(
         }
     }
     let payload = compacted.payload.clone();
-    let event_payload = request.bearwire_finish_payload(payload.clone());
+    let event_payload = bearwire_finish_payload(&input, payload.clone());
 
     let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
