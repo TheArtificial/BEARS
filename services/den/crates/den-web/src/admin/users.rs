@@ -251,6 +251,10 @@ pub async fn edit_user_action(
     }
 }
 
+fn user_not_found() -> CustomError {
+    CustomError::NotFound("User not found".to_string())
+}
+
 #[derive(Validate, Serialize, Deserialize)]
 pub struct ChangePasswordForm {
     #[validate(length(min = 8))]
@@ -266,7 +270,7 @@ pub async fn change_user_password_view(
 ) -> Result<Response, CustomError> {
     let username = user_db::get_username_by_id(&state.sqlx_pool, id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
+        .ok_or_else(user_not_found)?;
 
     web::render_template(
         &state,
@@ -290,7 +294,7 @@ pub async fn change_user_password_action(
     if let Err(form_validation_errors) = form.validate() {
         let username = user_db::get_username_by_id(&state.sqlx_pool, id)
             .await?
-            .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
+            .ok_or_else(user_not_found)?;
 
         Ok(web::render_template(
             &state,
@@ -322,7 +326,7 @@ pub async fn send_test_email_action(
     let sqlx_pool = state.sqlx_pool;
     let user = user_db::get_user_by_id(&sqlx_pool, id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
+        .ok_or_else(user_not_found)?;
 
     // if ! user.email_verified.unwrap_or(false) {
     //     return Err(CustomError::Email("User email is not verified".to_string()));

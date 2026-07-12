@@ -676,7 +676,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - Overall: generally solid — proper `DenError`+`?` propagation, no unwrap/panic in library paths, thorough module docs — but real duplication (SSE state machines, terminal-event matches, sqlx error wrapping, repeated column lists) that should be factored into shared helpers, plus a couple of byte-slicing panics on non-ASCII input.
 
 ### den-web — admin/users.rs, onboarding.rs, bear/profile.rs, user/settings/mod.rs, status.rs, bear/create_support.rs
-- [ ] `src/admin/users.rs:274,298,330` — repeated `.ok_or_else(|| CustomError::NotFound(...))` boilerplate 3x — extract a helper.
+- [x] `src/admin/users.rs:274,298,330` — repeated `.ok_or_else(|| CustomError::NotFound(...))` boilerplate 3x — extract a helper. **DONE** (duplication batch): added `user_not_found()` helper and reused it at all three lookup sites; `den-web` clippy green.
 - [ ] `src/admin/users.rs:385-392` — invite code generation reimplements a random alphanumeric string inline instead of `rand::distributions::Alphanumeric`; `use rand::Rng` imported mid-function rather than at file top.
 - [ ] `src/admin/users.rs:339-350` — raw SQL INSERT written inline in a handler rather than delegated to `user_db`/`email` module, breaking module boundary.
 - [ ] `src/onboarding.rs:196-205` `first_bear_post` — ~120-line function doing form validation, slug validation, model validation, DB insert, key provisioning, membership grant, and native provisioning all inline — extract named steps.
