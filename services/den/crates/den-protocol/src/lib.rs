@@ -375,6 +375,10 @@ pub trait InteractionRunStore {
     async fn check_health(&self) -> Result<String, DenError>;
 }
 
+/// Marker for registries that expose tool actuators to a runtime boundary.
+///
+/// Concrete registries live in runtime/service crates; this protocol trait keeps the
+/// dependency direction from shared contracts toward implementations one-way.
 pub trait ToolActuatorRegistry {}
 
 #[allow(async_fn_in_trait)]

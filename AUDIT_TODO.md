@@ -177,7 +177,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `src/lib.rs:387` `classify_runtime_error` string-matches lowercased `err.to_string()` against a dozen substrings instead of using structured `DenError` variants/codes.
 - [ ] `src/lib.rs:416` `runtime_error_is_no_active_runs_cancel` duplicates the same lowercase-substring pattern; a message change in the emitting code silently breaks this with no compiler help.
 - [ ] `src/lib.rs` — seven marker/health-check traits live flat in `lib.rs` with no submodule boundaries separating DTOs/event enums/trait contracts (crate doc says otherwise).
-- [ ] `src/lib.rs:379` `ToolActuatorRegistry` is an empty marker trait with no doc comment.
+- [x] `src/lib.rs:379` `ToolActuatorRegistry` is an empty marker trait with no doc comment. **DONE** (docs batch): added a doc comment explaining its protocol-boundary marker role; `den-protocol` clippy green.
 - Overall: small and mostly clean DTOs; error classification is fragile string-matching; traits need submodules.
 
 ### den-api
