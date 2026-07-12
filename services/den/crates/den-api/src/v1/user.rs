@@ -201,49 +201,43 @@ async fn login(
         user::db::get_user_by_username(&state.sqlx_pool, &request.username_or_email).await?
     };
 
-    if let Some(user_auth) = user_auth {
-        // Verify password
-        use password_auth::verify_password;
-        if verify_password(request.password, &user_auth.passhash).is_ok() {
-            // Generate access token
-            use den_oauth::oauth::{jwt::create_jwt_manager, utils, OAuthScope};
+    let invalid_credentials = || CustomError::Authentication("Invalid credentials".to_string());
+    let user_auth = user_auth.ok_or_else(invalid_credentials)?;
 
-            let jwt_manager = create_jwt_manager();
-            let scopes = vec![OAuthScope::ProfileRead, OAuthScope::ProfileEmail];
-            let expires_at = utils::access_token_expiration();
-            let token =
-                jwt_manager.generate_access_token(user_auth.id, "api", &scopes, expires_at)?;
-
-            // Get user details
-            let db_user = user::db::user_by_id(&state.sqlx_pool, user_auth.id)
-                .await?
-                .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
-
-            let user_response = UserResponse {
-                id: db_user.id,
-                username: db_user.username,
-                display_name: db_user.display_name,
-                email: db_user.email,
-                email_verified: db_user.email_verified.unwrap_or(false),
-                created_at: db_user.created.to_string(),
-            };
-
-            Ok(Json(LoginResponse {
-                access_token: token,
-                token_type: "Bearer".to_string(),
-                expires_in: 3600, // 1 hour
-                user: user_response,
-            }))
-        } else {
-            Err(CustomError::Authentication(
-                "Invalid credentials".to_string(),
-            ))
-        }
-    } else {
-        Err(CustomError::Authentication(
-            "Invalid credentials".to_string(),
-        ))
+    // Verify password
+    use password_auth::verify_password;
+    if verify_password(request.password, &user_auth.passhash).is_err() {
+        return Err(invalid_credentials());
     }
+
+    // Generate access token
+    use den_oauth::oauth::{jwt::create_jwt_manager, utils, OAuthScope};
+
+    let jwt_manager = create_jwt_manager();
+    let scopes = vec![OAuthScope::ProfileRead, OAuthScope::ProfileEmail];
+    let expires_at = utils::access_token_expiration();
+    let token = jwt_manager.generate_access_token(user_auth.id, "api", &scopes, expires_at)?;
+
+    // Get user details
+    let db_user = user::db::user_by_id(&state.sqlx_pool, user_auth.id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
+
+    let user_response = UserResponse {
+        id: db_user.id,
+        username: db_user.username,
+        display_name: db_user.display_name,
+        email: db_user.email,
+        email_verified: db_user.email_verified.unwrap_or(false),
+        created_at: db_user.created.to_string(),
+    };
+
+    Ok(Json(LoginResponse {
+        access_token: token,
+        token_type: "Bearer".to_string(),
+        expires_in: 3600, // 1 hour
+        user: user_response,
+    }))
 }
 
 #[utoipa::path(
