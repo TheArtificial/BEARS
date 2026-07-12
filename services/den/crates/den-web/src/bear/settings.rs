@@ -83,6 +83,7 @@ pub fn router() -> Router<AppState> {
         )
         .route_with_tsr("/bear/{slug}/activity", get(conversations_view))
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
+        .route_with_tsr("/bear/{slug}/reflections", get(reflections_view))
         .route_with_tsr(
             "/bear/{slug}/conversations/{conversation_id}",
             get(conversation_detail_view),
@@ -313,6 +314,21 @@ struct MessageAdminRow {
 }
 
 #[derive(Debug, Serialize)]
+struct ReflectionAdminRow {
+    created_at: String,
+    event_type: String,
+    session_id: String,
+    conversation_id: Option<Uuid>,
+    conversation_title: Option<String>,
+    trigger: Option<String>,
+    status: Option<String>,
+    candidate_count: Option<i64>,
+    dropped_followup_count: Option<i64>,
+    proposal_count: Option<i64>,
+    payload_json: String,
+}
+
+#[derive(Debug, Serialize)]
 struct CompactionEventAdminRow {
     trigger: String,
     status: String,
@@ -504,6 +520,98 @@ fn pretty_json(value: serde_json::Value) -> String {
     // `Value` serialization is expected to be infallible; fall back to compact JSON if the pretty
     // formatter ever errors so the admin page can still render diagnostic payloads.
     serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+}
+
+fn json_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_u64().and_then(|n| i64::try_from(n).ok()))
+    })
+}
+
+async fn reflection_rows_for_bear(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    conversation_id: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<ReflectionAdminRow>, CustomError> {
+    let rows = sqlx::query_as::<
+        _,
+        (
+            time::OffsetDateTime,
+            String,
+            String,
+            Option<Uuid>,
+            Option<String>,
+            serde_json::Value,
+        ),
+    >(
+        r#"
+        SELECT e.created_at,
+               e.event_type,
+               e.session_id,
+               c.id AS conversation_id,
+               c.current_title AS conversation_title,
+               COALESCE(e.event_json->'data'->'pair_reflection', e.event_json->'data') AS payload
+        FROM bearwire_events e
+        LEFT JOIN client_sessions s ON s.bear_id = e.bear_id
+             AND s.user_id = e.user_id
+             AND s.client_session_id = e.session_id
+        LEFT JOIN LATERAL (
+            SELECT c.id, c.current_title
+            FROM conversations c
+            WHERE c.bear_id = e.bear_id
+              AND (c.source_client_session_id = e.session_id
+                   OR c.external_conversation_id = s.conversation_id
+                   OR c.external_conversation_id = s.resolved_conversation_id)
+            ORDER BY c.updated_at DESC, c.id DESC
+            LIMIT 1
+        ) c ON TRUE
+        WHERE e.bear_id = $1
+          AND e.event_type IN ('session.reflected', 'session.closed')
+          AND ($2::uuid IS NULL OR c.id = $2)
+          AND COALESCE(e.event_json->'data'->'pair_reflection', e.event_json->'data') IS NOT NULL
+        ORDER BY e.created_at DESC, e.sequence_no DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(bear_id)
+    .bind(conversation_id)
+    .bind(limit.clamp(1, 100))
+    .fetch_all(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("list reflection events: {err}")))?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(created_at, event_type, session_id, conversation_id, conversation_title, payload)| {
+                let proposal_count = payload
+                    .get("proposal_ids")
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|items| i64::try_from(items.len()).ok());
+                ReflectionAdminRow {
+                    created_at: created_at.to_string(),
+                    event_type,
+                    session_id,
+                    conversation_id,
+                    conversation_title,
+                    trigger: payload
+                        .get("trigger")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    status: payload
+                        .get("status")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    candidate_count: json_i64(&payload, "candidate_count"),
+                    dropped_followup_count: json_i64(&payload, "dropped_followup_count"),
+                    proposal_count,
+                    payload_json: pretty_json(payload),
+                }
+            },
+        )
+        .collect())
 }
 
 async fn conversation_compaction_events(
@@ -2219,6 +2327,30 @@ async fn conversations_view(
     .await
 }
 
+async fn reflections_view(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
+        Ok(v) => v,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let reflections = reflection_rows_for_bear(state.sqlx_pool(), bear.id, None, 100).await?;
+    web::render_template(
+        &state,
+        "bear/settings/reflections.html",
+        auth_session,
+        context! {
+            reflections,
+            can_manage_bear,
+            native_runtime => true,
+            ..bear_nav_context(&bear, "reflections"),
+        },
+    )
+    .await
+}
+
 async fn conversation_detail_view(
     Path((slug, conversation_id)): Path<(String, Uuid)>,
     State(state): State<AppState>,
@@ -2250,6 +2382,8 @@ async fn conversation_detail_view(
         20,
     )
     .await?;
+    let reflections =
+        reflection_rows_for_bear(state.sqlx_pool(), bear.id, Some(conversation_id), 20).await?;
     let message_rows: Vec<MessageAdminRow> = messages
         .into_iter()
         .rev()
@@ -2274,6 +2408,7 @@ async fn conversation_detail_view(
             compaction_events,
             compaction_artifacts,
             checkpoint_artifacts,
+            reflections,
             can_manage_bear,
             native_runtime => true,
             ..bear_nav_context(&bear, "activity"),

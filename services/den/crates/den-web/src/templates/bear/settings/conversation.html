@@ -76,6 +76,30 @@
 <p><em>No compaction events recorded for this conversation.</em></p>
 {% endif %}
 
+<h3>Reflections</h3>
+{% if reflections and reflections | length > 0 %}
+<table>
+  <thead><tr><th>When</th><th>Event</th><th>Status</th><th>Counts</th></tr></thead>
+  <tbody>
+  {% for reflection in reflections %}
+    <tr>
+      <td>{{ reflection.created_at }}</td>
+      <td>{{ reflection.event_type | e }}{% if reflection.trigger %}<br><small>{{ reflection.trigger | e }}</small>{% endif %}</td>
+      <td>{% if reflection.status %}{{ reflection.status | e }}{% else %}<em>unknown</em>{% endif %}</td>
+      <td>
+        candidates {% if reflection.candidate_count is not none %}{{ reflection.candidate_count }}{% else %}—{% endif %},
+        dropped {% if reflection.dropped_followup_count is not none %}{{ reflection.dropped_followup_count }}{% else %}—{% endif %},
+        proposals {% if reflection.proposal_count is not none %}{{ reflection.proposal_count }}{% else %}—{% endif %}
+      </td>
+    </tr>
+    <tr><td colspan="4"><details><summary>Reflection payload</summary><pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ reflection.payload_json | e }}</pre></details></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No pair reflection events recorded for this conversation.</em></p>
+{% endif %}
+
 <h3>Agent Loop Checkpoints</h3>
 {% if checkpoint_artifacts and checkpoint_artifacts | length > 0 %}
 <table>
