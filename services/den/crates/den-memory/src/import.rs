@@ -210,7 +210,14 @@ async fn import_legacy_memory_source_inner(
                 }
                 let raw_content_text = match String::from_utf8(content_bytes) {
                     Ok(value) => value,
-                    Err(_) => {
+                    Err(err) => {
+                        tracing::warn!(
+                            branch = %branch,
+                            path = %normalized_path,
+                            commit = %commit,
+                            error = %err,
+                            "skipping legacy memory file with non-UTF-8 content"
+                        );
                         branch_skipped += 1;
                         continue;
                     }

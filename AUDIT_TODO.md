@@ -267,7 +267,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 ### den-memory (services/den/crates/den-memory)
 - [ ] crate-wide — nearly every fallible call wraps as `DenError::System(format!("... failed: {e}"))`, discarding original error type; use a `thiserror` enum with `#[from]`/`#[source]`.
 - [x] `src/reflection_outcomes.rs:70` `reflection_outcome_exists` swallows DB error via `.unwrap_or(0)`, treating real failures as "false". **DONE** (safety batch): function now returns `Result<bool, DenError>` and callers propagate DB failures; `den-memory`/`den-runtime` clippy green.
-- [ ] `src/import.rs:181` `Err(_) => { branch_skipped += 1; continue; }` on `String::from_utf8` discards the actual UTF-8 error.
+- [x] `src/import.rs:181` `Err(_) => { branch_skipped += 1; continue; }` on `String::from_utf8` discards the actual UTF-8 error. **DONE** (observability batch): preserves skip behavior but logs branch/path/commit plus the UTF-8 error; `den-memory` clippy green.
 - [ ] crate-wide — `store.bear_id().to_string()` called on 60+ bind sites; cache a `bear_id_str()` or bind helper.
 - [x] `src/migrate.rs:12` `let names = columns;` needless rebinding. **DONE** (cleanup batch): use `columns` directly throughout migration checks; `den-memory` clippy green.
 - [ ] `src/import.rs:239-253` `ImportDraft` clones fields per commit unnecessarily inside a loop that already owns fresh values.
