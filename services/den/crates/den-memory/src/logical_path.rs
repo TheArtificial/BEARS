@@ -80,12 +80,8 @@ impl LogicalMemoryPath {
 
     pub fn from_logical_path(path: &str) -> Self {
         let trimmed = path.trim().trim_start_matches('/');
-        if trimmed.starts_with("core/work_surfaces/") {
-            let rest = trimmed.trim_start_matches("core/work_surfaces/");
-            let mut parts = rest.split('/');
-            let ws = parts.next().unwrap_or("unknown").to_string();
-            let file = parts.next().unwrap_or("index.md");
-            let kind = file.trim_end_matches(".md").to_string();
+        if let Some(rest) = trimmed.strip_prefix("core/work_surfaces/") {
+            let (ws, kind) = parse_work_surface_path(rest);
             return Self {
                 scope_type: MemoryScopeType::Shared,
                 scope_profile: None,
@@ -101,12 +97,8 @@ impl LogicalMemoryPath {
             return Self::shared_core(&kind);
         }
         if let Some((profile, rest)) = trimmed.split_once('/') {
-            if rest.starts_with("work_surfaces/") {
-                let sub = rest.trim_start_matches("work_surfaces/");
-                let mut parts = sub.split('/');
-                let ws = parts.next().unwrap_or("unknown").to_string();
-                let file = parts.next().unwrap_or("index.md");
-                let kind = file.trim_end_matches(".md").to_string();
+            if let Some(rest) = rest.strip_prefix("work_surfaces/") {
+                let (ws, kind) = parse_work_surface_path(rest);
                 return Self {
                     scope_type: MemoryScopeType::ProfileLocal,
                     scope_profile: Some(profile.to_string()),
@@ -119,6 +111,14 @@ impl LogicalMemoryPath {
         }
         Self::shared_core("note")
     }
+}
+
+fn parse_work_surface_path(path: &str) -> (String, String) {
+    let mut parts = path.split('/');
+    let work_surface = parts.next().unwrap_or("unknown").to_string();
+    let file = parts.next().unwrap_or("index.md");
+    let kind = file.trim_end_matches(".md").to_string();
+    (work_surface, kind)
 }
 
 fn sanitize_anchor_segment(raw: &str) -> String {
