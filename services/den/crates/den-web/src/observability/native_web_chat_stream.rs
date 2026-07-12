@@ -148,7 +148,7 @@ fn runtime_stream_event_to_bear_channel_bytes(
         RuntimeStreamEvent::Semantic(semantic) => {
             runtime_semantic_to_bear_channel_events(semantic, request_id)
                 .into_iter()
-                .filter_map(|value| bear_channel_sse_bytes(&value))
+                .map(|value| bear_channel_sse_bytes(&value))
                 .collect()
         }
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
@@ -186,14 +186,10 @@ impl NativeWebChatUpstreamStream {
             "error_type": error_type,
             "request_id": self.request_id.to_string(),
         });
-        if let Some(bytes) = bear_channel_sse_bytes(&value) {
-            self.pending.push_back(bytes);
-        }
-        if let Some(bytes) =
-            bear_channel_sse_bytes(&serde_json::json!({ "type": "done", "outcome": "error" }))
-        {
-            self.pending.push_back(bytes);
-        }
+        self.pending.push_back(bear_channel_sse_bytes(&value));
+        self.pending.push_back(bear_channel_sse_bytes(
+            &serde_json::json!({ "type": "done", "outcome": "error" }),
+        ));
         self.finished = true;
     }
 }
@@ -233,14 +229,11 @@ impl Stream for NativeWebChatUpstreamStream {
                     return Poll::Ready(None);
                 }
                 None => {
-                    if let Some(bytes) = bear_channel_sse_bytes(
+                    let bytes = bear_channel_sse_bytes(
                         &serde_json::json!({ "type": "done", "outcome": "ok" }),
-                    ) {
-                        this.finished = true;
-                        return Poll::Ready(Some(Ok(bytes)));
-                    }
+                    );
                     this.finished = true;
-                    return Poll::Ready(None);
+                    return Poll::Ready(Some(Ok(bytes)));
                 }
             }
         }

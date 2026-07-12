@@ -438,8 +438,8 @@ impl PendingConversationPersistence {
     }
 }
 
-pub(crate) fn bear_channel_sse_bytes(event: &serde_json::Value) -> Option<Bytes> {
-    Some(Bytes::from(format!("data: {}\n\n", event)))
+pub(crate) fn bear_channel_sse_bytes(event: &serde_json::Value) -> Bytes {
+    Bytes::from(format!("data: {}\n\n", event))
 }
 
 fn empty_terminal_bear_channel_error(request_id: Uuid) -> serde_json::Value {
@@ -470,7 +470,7 @@ fn browser_terminal_error(_request_id: Uuid, event: &serde_json::Value) -> Bytes
         "error_type": event.get("error_type").and_then(|v| v.as_str()),
         "support_ref": event.get("request_id").and_then(|v| v.as_str()),
     });
-    bear_channel_sse_bytes(&mapped).expect("terminal error serializes")
+    bear_channel_sse_bytes(&mapped)
 }
 
 fn browser_empty_terminal_error(request_id: Uuid) -> Bytes {
@@ -566,7 +566,7 @@ fn bear_channel_event_to_deep_chat_sse(event: &serde_json::Value) -> Option<Byte
         }
         _ => return None,
     };
-    bear_channel_sse_bytes(&mapped)
+    Some(bear_channel_sse_bytes(&mapped))
 }
 
 /// Maps a single assistant text payload into Deep Chat SSE bytes for direct fast-path responses

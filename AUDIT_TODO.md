@@ -370,7 +370,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/bear/settings.rs:475-477` `pretty_json` swallows serialization errors via `unwrap_or_else` with no comment.
 - [ ] `src/bear/settings.rs:694-713` `build_bear_bundle` chains 5 nearly identical `.map_err(...CustomError::System(format!(...)))` closures.
 - [ ] Crate-wide — 35+ sites of `.map_err(|err| CustomError::Database/System(format!(...)))` for errors that already have working `From` impls in `den-http/src/errors.rs` — most could just use `?`.
-- [ ] `src/observability/chat_proxy_stream.rs:473` `.expect("terminal error serializes")` in production stream-polling error-path code, not test code.
+- [x] `src/observability/chat_proxy_stream.rs:473` `.expect("terminal error serializes")` in production stream-polling error-path code, not test code. **DONE** (safety batch): `bear_channel_sse_bytes` now returns `Bytes` directly because serialization is infallible formatting; removed the `expect` and simplified callers; `den-web` clippy green.
 - [ ] `src/bear/settings.rs:452-473` `slug_base` hand-rolls slug sanitization, likely duplicating a slugify crate or existing bear-creation logic.
 - [ ] `src/bear/settings.rs:715-749` `bear_bundle_entry_name` — security-relevant path-traversal filter (`"__MACOSX/"`, `".."`) buried inline in an anonymous closure inside a formatting helper — should be a named, tested, documented function.
 - [ ] `src/bear/settings.rs:663,667` — clones `serde_json::Value` trees unnecessarily when building a manifest that's immediately serialized and dropped.
