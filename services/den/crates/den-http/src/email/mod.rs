@@ -102,6 +102,8 @@ pub async fn send_email_template(
     let recipient = EmailAddress::name_address(&config.display_name, &config.email_address);
     tracing::debug!("Sending email to {} with subject '{}'", recipient, subject);
 
+    // Persist the logical template family (`verify_email` from `verify_email.html`) so
+    // message analytics stay stable across renderer/extension changes.
     let type_name = template_name
         .split_once('.')
         .map_or(template_name, |(name, _)| name);
