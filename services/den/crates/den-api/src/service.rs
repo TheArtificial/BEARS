@@ -59,8 +59,10 @@ async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, St
 /// The API service is designed to be independent from the web service.
 ///
 /// # Arguments
-/// * `sqlx_pool` - Database connection pool
-/// * `session_store` - PostgreSQL session store for axum-login
+/// * `sqlx_pool` - Database connection pool.
+/// * `session_store` - PostgreSQL session store for axum-login.
+/// * `config` - Shared process configuration used for URLs, cookies, Bifrost, and memory stores.
+/// * `peer_routers` - Sibling edge routers mounted by the binary composition root.
 ///
 /// # Returns
 /// A configured Axum router ready for serving API requests
