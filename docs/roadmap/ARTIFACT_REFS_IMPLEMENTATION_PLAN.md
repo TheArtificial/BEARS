@@ -10,6 +10,31 @@ Make artifact refs the general Den handle for durable content objects: uploaded 
 
 Artifact refs should be Den-minted, registry-backed, permission-checked, provenance-rich, and stable after finalization. Models and clients should never use object keys, filesystem paths, signed URLs, or model-invented IDs as protocol handles.
 
+## Relationship to Jobs, runs, and other Den subjects
+
+Artifacts are durable content/evidence/output handles. Jobs are durable work-management state. Runs are execution attempts. Keep those nouns separate:
+
+- Jobs define the work objective, task tree, acceptance criteria, status, commit/work-surface policy, and completion decisions.
+- Runs record what happened during an execution attempt.
+- Artifacts hold or point at durable content such as logs, reports, diffs, screenshots, uploads, and receipts.
+- Artifact existence is evidence, not truth: criterion/task/job status remains an explicit Docket decision that may cite artifact refs.
+
+Docket and runtime records should link to artifact refs; they should not own blobs or use object keys/workspace paths as durable identity. The first implementation should prefer one small generic attachment/link model over per-surface special cases unless policy or query needs force a split:
+
+```text
+artifact_links
+- artifact_ref
+- subject_kind    -- conversation | job | task | run | criterion | delegated_run | cabinet_item | etc.
+- subject_id
+- role            -- input | source | output | evidence | test_report | diff | completion_receipt | etc.
+- created_by_role
+- created_at
+```
+
+Job-level artifact collections can be projections over direct job links plus task/run/criterion links. Do not add a separate "job artifact collection" object until users need manual curation, ordering, or policy that links cannot cover.
+
+Lifecycle and authorization remain artifact-service responsibilities. A Job link may request or justify promotion, for example from ephemeral run output to job-audit evidence, but Job visibility must not bypass artifact read policy.
+
 ## Non-goals
 
 - No full Cabinet product rebuild.
@@ -17,6 +42,7 @@ Artifact refs should be Den-minted, registry-backed, permission-checked, provena
 - No delegated-run implementation dependency; artifacts should land first and be useful without subagents.
 - No content-addressed public refs. Store hashes for integrity, but keep refs opaque.
 - No cross-storage abstraction beyond what artifact refs need now.
+- No requirement that artifact refs be attached to Jobs. Conversation-scoped and delegated-run-scoped artifacts are valid.
 
 ## ADR fulfillment
 
@@ -30,6 +56,7 @@ This plan fulfills ADR-0004 by implementing:
 - [ ] Finalized artifacts treated as stable snapshots.
 - [ ] Permission checks on read, write, mount/copy, attach, promote, and delete.
 - [ ] Provenance links to conversation, run, task, job, work surface, creating stance, source, and user/bear where applicable.
+- [ ] Generic artifact links from refs to Den subjects such as conversations, jobs, tasks, runs, criteria, delegated runs, and Cabinet items.
 - [ ] Lifecycle states for pending, ephemeral, promoted, Cabinet-durable, archived, and deleted.
 - [ ] GC that respects lifecycle and Cabinet attachment state.
 
@@ -70,9 +97,11 @@ This plan fulfills ADR-0004 by implementing:
 **Goal:** Replace ad hoc content handles in common Den surfaces.
 
 - [ ] Allow conversation events/messages to cite artifact refs for attachments and generated outputs.
-- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `evidence`, `output`, `test_report`, `diff`, or `source`.
+- [ ] Add generic artifact link/attachment records for Den subjects, including at least conversation, job, task, run, criterion, and delegated-run anchors.
+- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `input`, `source`, `output`, `evidence`, `test_report`, `diff`, or `completion_receipt`.
 - [ ] Add run/task provenance when artifacts are created by work/runtime activity.
 - [ ] Render artifact refs in task/run completion receipts.
+- [ ] Keep criterion/task/job state separate from artifact presence; completion decisions cite evidence refs but are not implied by them.
 - [ ] Stop leaking object keys or workspace paths as durable evidence handles.
 
 **Exit gate:** A task/run can produce or cite artifact-backed evidence, and the UI/model layer can display the artifact metadata by ref.

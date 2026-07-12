@@ -9,6 +9,35 @@
 
 Allow a Bear in any stance to request background or delegated work while keeping stance authority boundaries hard. Delegated runs should use the narrowest capable stance (`work`, `curate`, `watch`, or `pair`), communicate with their parent through structured Den records/events/artifacts, and never inherit the initiating stance's tools, credentials, or side-effect authority.
 
+Delegation should not require a Docket Job. Simple background work may be anchored to the current conversation turn or parent run. Jobs are for durable, user-trackable work with task state, acceptance criteria, resumability, commit/work-surface policy, or cross-turn lifecycle management. Conversation-scoped delegated runs may later be promoted into Jobs while preserving run and artifact provenance.
+
+## Delegation levels and anchors
+
+Use the lightest rung that preserves traceability:
+
+1. **Inline tool call:** synchronous work inside the current turn; no delegated run and no Job.
+2. **Background delegated run:** asynchronous, bounded work anchored to a conversation turn, parent run, artifact, Cabinet item, Job, or task; no Job required.
+3. **Job-backed delegation:** durable managed work anchored to a Docket Job/task when the user needs explicit progress tracking, acceptance criteria, handoff, resumability, commit policy, or completion evidence across turns.
+
+Every delegated run must have an anchor. A Job/task is one valid anchor, not the required anchor. Unanchored background processes are not allowed.
+
+Suggested anchor shape:
+
+```text
+delegated_run
+- run_id
+- parent_run_id nullable
+- anchor_kind    -- conversation_turn | job | task | artifact | cabinet_item
+- anchor_id
+- initiating_stance
+- resolved_stance
+- objective
+- status
+- result_summary nullable
+```
+
+Artifact refs are valid outputs for any delegated run anchor. If a conversation-scoped delegated run grows into durable work, promotion should create a Job/task linked back to the originating run/turn and re-link or additionally link existing artifact refs as initial evidence/output.
+
 ## Non-goals
 
 - No general free-form agent-to-agent chat bus.
@@ -16,6 +45,7 @@ Allow a Bear in any stance to request background or delegated work while keeping
 - No automatic mixed-domain decomposition in the first pass.
 - No requirement that all background work run as `work`.
 - No durable memory promotion, external sends, commits, deploys, or destructive actions without existing Den approval policy.
+- No requirement that every delegated run create or attach to a Docket Job.
 
 ## ADR fulfillment
 
@@ -25,9 +55,9 @@ This plan fulfills ADR-0053 by implementing:
 - [ ] A single model-facing `delegate_run` affordance.
 - [ ] Delegation broker between model and child loop.
 - [ ] Deterministic stance resolver with `desired_stance` treated as advisory.
-- [ ] Authorization from first principles: resolved stance, target, autonomy, user consent, and job policy.
+- [ ] Authorization from first principles: resolved stance, target, autonomy, user consent, trust profile, and job policy when a Job is involved.
 - [ ] Scoped capability minting for child runs.
-- [ ] Durable parent/child run records.
+- [ ] Durable parent/child run records with explicit anchors; Jobs are optional anchors.
 - [ ] Structured parent/child events, decision requests, commands, and completion results.
 - [ ] Artifact-ref outputs using ADR-0004; child loops do not mint artifact refs directly.
 - [ ] Audit log of request, resolution, authorization, capabilities, and result.
@@ -39,7 +69,8 @@ This plan fulfills ADR-0053 by implementing:
 **Goal:** Do not build subagent plumbing before the handles it needs exist.
 
 - [ ] Artifact refs exist for run outputs and evidence.
-- [ ] Docket run/task records can attach artifact refs.
+- [ ] Runtime/delegated-run records can attach artifact refs.
+- [ ] Docket run/task records can attach artifact refs when delegation is job-backed.
 - [ ] Runtime event model can carry typed child-run events or can be minimally extended.
 - [ ] Current stance/tool envelopes are explicit enough to mint a restricted child capability bundle.
 
@@ -75,7 +106,7 @@ This plan fulfills ADR-0053 by implementing:
 
 - [ ] Add initiator-to-delegation permission matrix.
 - [ ] Check target surface access independently of initiating stance.
-- [ ] Check requested autonomy against stance policy, target policy, job policy, and trust profile.
+- [ ] Check requested autonomy against stance policy, target policy, trust profile, and job policy when a Job/task anchor exists.
 - [ ] Require user approval for destructive, externally visible, durable-memory, push/deploy, or scope-expanding actions.
 - [ ] Mint scoped capability bundles for child runs.
 - [ ] Ensure child tools are derived only from minted capabilities, not parent tool availability.
@@ -87,13 +118,14 @@ This plan fulfills ADR-0053 by implementing:
 
 **Goal:** Make delegation resumable, inspectable, cancellable, and auditable.
 
-- [ ] Extend run records with parent run/task/conversation refs, initiating stance, resolved stance, target, objective, wait policy, and capability bundle ref.
+- [ ] Extend run records with parent run refs plus an explicit anchor kind/ref (`conversation_turn`, `job`, `task`, `artifact`, or `cabinet_item`), initiating stance, resolved stance, target, objective, wait policy, and capability bundle ref.
 - [ ] Add child-run statuses: queued, running, blocked, needs approval, completed, failed, cancelled.
 - [ ] Add parent-visible child handle returned from `delegate_run`.
 - [ ] Add cancellation and status lookup APIs.
-- [ ] Connect child runs to Docket tasks/jobs when applicable.
+- [ ] Connect child runs to Docket tasks/jobs when applicable, without forcing simple conversation-scoped backgrounding through Docket.
+- [ ] Add promotion path from a conversation-scoped delegated run to a Docket Job/task while preserving originating run/turn and artifact links.
 
-**Exit gate:** Parent loops and UI can list child runs and inspect their current status without direct access to child prompt/tool state.
+**Exit gate:** Parent loops and UI can list anchored child runs and inspect their current status without direct access to child prompt/tool state; simple backgrounding works without creating a Job.
 
 ### Phase 4 — Parent/child communication protocol
 
@@ -146,7 +178,7 @@ For each stance:
 
 Build these around real run records, not screenshots of logs.
 
-- [ ] Inline run card in conversation/task surfaces showing goal, stance, status, permissions summary, and actions.
+- [ ] Inline run card in conversation/task surfaces showing goal, anchor, stance, status, permissions summary, and actions.
 - [ ] Human-readable permission summary:
   - can read/edit/run/etc.
   - cannot push/deploy/write memory/send externally/etc.
@@ -156,6 +188,7 @@ Build these around real run records, not screenshots of logs.
 - [ ] Cancel action in the first version; pause/resume and scope narrowing can follow.
 - [ ] Run detail page only after inline cards are insufficient.
 - [ ] Parent/child tree view only after nested delegation becomes common.
+- [ ] "Promote to Job" affordance only after conversation-scoped background runs demonstrably grow into durable work.
 
 ## Model experience affordances
 
@@ -188,4 +221,5 @@ Delegated runs are ready when:
 - [ ] Parent/child communication uses structured events, commands, decisions, and artifact refs.
 - [ ] Human users can see what a child is doing, what it can do, and stop or approve it.
 - [ ] Models can delegate common work with one simple affordance and receive structured results.
-- [ ] Audit logs explain who requested delegation, what stance was resolved, what was granted/denied, and what artifacts/results were produced.
+- [ ] Audit logs explain who requested delegation, which anchor was used, what stance was resolved, what was granted/denied, and what artifacts/results were produced.
+- [ ] Simple background delegation can run conversation-scoped without creating a Docket Job, while durable work can still use or later promote into Jobs.
