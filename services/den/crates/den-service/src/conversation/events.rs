@@ -1204,19 +1204,41 @@ pub fn memory_curate_failed_projection(
 
 impl Projection {
     pub fn workflow_content_json(&self) -> serde_json::Value {
-        let mut value =
-            serde_json::to_value(&self.event).expect("projection event should serialize");
-        let object = value
-            .as_object_mut()
-            .expect("projection event should serialize to object");
-        object.insert(
-            "source".to_string(),
-            serde_json::json!(self.provenance.source.as_str()),
-        );
-        object.insert(
-            "scope_id".to_string(),
-            serde_json::json!(self.provenance.scope_id),
-        );
+        let mut value = match serde_json::to_value(&self.event) {
+            Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
+            Ok(other) => {
+                tracing::warn!(
+                    kind = self.event.kind().as_str(),
+                    value = %other,
+                    "projection event serialized to non-object JSON"
+                );
+                serde_json::json!({
+                    "type": self.event.kind().as_str(),
+                    "projection_serialization_shape": "non_object"
+                })
+            }
+            Err(err) => {
+                tracing::warn!(
+                    kind = self.event.kind().as_str(),
+                    error = %err,
+                    "projection event serialization failed"
+                );
+                serde_json::json!({
+                    "type": self.event.kind().as_str(),
+                    "projection_serialization_error": err.to_string()
+                })
+            }
+        };
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "source".to_string(),
+                serde_json::json!(self.provenance.source.as_str()),
+            );
+            object.insert(
+                "scope_id".to_string(),
+                serde_json::json!(self.provenance.scope_id),
+            );
+        }
         value
     }
 

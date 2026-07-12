@@ -401,8 +401,7 @@ pub async fn load_transcript_grouping_rows(
         .bind(conversation_id)
         .bind(bear_id)
         .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+        .await?;
     Ok(transcript_grouping_rows_from_history(history_rows))
 }
 
