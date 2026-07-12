@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -6,6 +7,24 @@ use den_core::DenError;
 use den_core::tools::constants::DEN_WEB_FETCH;
 
 use crate::{turn_obligations, turn_runs, turn_steps};
+
+#[derive(Debug, Deserialize)]
+struct LocalToolRequestPayload {
+    #[serde(default = "default_local_tool_name")]
+    tool_name: String,
+    #[serde(default)]
+    arguments: Value,
+}
+
+fn default_local_tool_name() -> String {
+    "local_tool".to_string()
+}
+
+fn local_tool_request_payload(value: &Value) -> Result<LocalToolRequestPayload, DenError> {
+    serde_json::from_value(value.clone()).map_err(|err| {
+        DenError::ValidationError(format!("invalid local tool request payload: {err}"))
+    })
+}
 
 fn obligation_is_den_web_fetch(obligation_payload: &Value) -> bool {
     let tool_name = obligation_payload
@@ -448,17 +467,9 @@ pub async fn settle_permission_result(
             None,
         )
         .await?;
-        let tool_name = obligation
-            .request_payload
-            .get("tool_name")
-            .and_then(Value::as_str)
-            .unwrap_or("local_tool")
-            .to_string();
-        let args = obligation
-            .request_payload
-            .get("arguments")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({}));
+        let payload = local_tool_request_payload(&obligation.request_payload)?;
+        let tool_name = payload.tool_name;
+        let args = payload.arguments;
         return Ok(PermissionResultCoordinatorOutcome::DispatchLocalTool {
             run: transitioned,
             tool_obligation: Box::new(tool_obligation),
