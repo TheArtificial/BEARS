@@ -37,8 +37,8 @@ async fn invoke_den_tool(
     headers: HeaderMap,
     Json(payload): Json<InvokeDenToolRequest>,
 ) -> Response {
-    if let Err(response) = authorize_internal_request(&state, &headers) {
-        return *response;
+    if let Some(response) = authorize_internal_request(&state, &headers) {
+        return response;
     }
 
     let tool_name = payload.tool_name.trim().to_string();
@@ -91,28 +91,29 @@ async fn invoke_den_tool(
     }
 }
 
-fn authorize_internal_request(state: &DenState, headers: &HeaderMap) -> Result<(), Box<Response>> {
+fn authorize_internal_request(state: &DenState, headers: &HeaderMap) -> Option<Response> {
     let expected = state.config.den_internal_token.trim();
     if expected.is_empty() {
-        return Ok(());
+        return None;
     }
     let Some(raw) = headers.get(axum::http::header::AUTHORIZATION) else {
-        return Err(Box::new(json_error(
+        return Some(json_error(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
             "missing Authorization header",
-        )));
+        ));
     };
+    // Non-UTF8 Authorization values cannot match the configured token; treat them as invalid.
     let value = raw.to_str().unwrap_or_default();
     let ok = value == expected || value == format!("Bearer {expected}");
     if ok {
-        Ok(())
+        None
     } else {
-        Err(Box::new(json_error(
+        Some(json_error(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
             "invalid internal token",
-        )))
+        ))
     }
 }
 
