@@ -1,9 +1,17 @@
+use std::sync::LazyLock;
+
 use den_core::DenError;
 use minijinja::context;
 use minijinja::value::Value;
 use minijinja::UndefinedBehavior;
 
 use super::registry::PromptFragment;
+
+static STRICT_TEMPLATE_ENV: LazyLock<minijinja::Environment<'static>> = LazyLock::new(|| {
+    let mut env = minijinja::Environment::new();
+    env.set_undefined_behavior(UndefinedBehavior::Strict);
+    env
+});
 
 #[derive(Debug, Clone)]
 pub struct CompileTimePromptContext<'a> {
@@ -42,10 +50,8 @@ pub fn render_turn_text(
     text: &str,
     context: &serde_json::Value,
 ) -> Result<String, DenError> {
-    let mut env = minijinja::Environment::new();
-    env.set_undefined_behavior(UndefinedBehavior::Strict);
     let value = Value::from_serialize(context);
-    env.render_str(text, value).map_err(|err| {
+    STRICT_TEMPLATE_ENV.render_str(text, value).map_err(|err| {
         DenError::Parsing(format!(
             "prompt text {source_label} failed to render: {err}"
         ))
@@ -57,18 +63,17 @@ pub fn render_compile_time_text(
     text: &str,
     context: &CompileTimePromptContext<'_>,
 ) -> Result<String, DenError> {
-    let mut env = minijinja::Environment::new();
-    env.set_undefined_behavior(UndefinedBehavior::Strict);
-    env.render_str(
-        text,
-        context! {
-            bear_name => context.bear_name,
-            bear_slug => context.bear_slug,
-        },
-    )
-    .map_err(|err| {
-        DenError::Parsing(format!(
-            "prompt text {source_label} failed to render: {err}"
-        ))
-    })
+    STRICT_TEMPLATE_ENV
+        .render_str(
+            text,
+            context! {
+                bear_name => context.bear_name,
+                bear_slug => context.bear_slug,
+            },
+        )
+        .map_err(|err| {
+            DenError::Parsing(format!(
+                "prompt text {source_label} failed to render: {err}"
+            ))
+        })
 }
