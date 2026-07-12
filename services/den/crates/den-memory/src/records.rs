@@ -6,7 +6,10 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use super::logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType};
+use super::{
+    clock::now_rfc3339,
+    logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType},
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MemoryRecordRow {
@@ -103,9 +106,7 @@ impl BearMemoryStore {
 
         let memory_id = Uuid::new_v4().to_string();
         let sequence_no = self.next_sequence().await?;
-        let created_at = OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+        let created_at = now_rfc3339()?;
         let logical_path = logical.to_logical_path();
         sqlx::query(
             r"
@@ -292,9 +293,7 @@ pub async fn mark_memory_record_lifecycle(
     if !metadata.is_object() {
         metadata = Value::Object(Default::default());
     }
-    let now = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let now = now_rfc3339()?;
     let lifecycle = metadata
         .as_object_mut()
         .expect("metadata object initialized")

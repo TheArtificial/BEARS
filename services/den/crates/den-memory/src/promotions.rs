@@ -1,9 +1,9 @@
-use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::DenError;
 
 use super::{
+    clock::now_rfc3339,
     logical_path::LogicalMemoryPath,
     records::{head_record_for_logical_path, BearMemoryStore},
 };
@@ -17,9 +17,7 @@ pub async fn append_memory_promotion(
 ) -> Result<String, DenError> {
     let promotion_id = Uuid::new_v4().to_string();
     let sequence_no = store.next_sequence().await?;
-    let created_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let created_at = now_rfc3339()?;
     sqlx::query(
         r"
         INSERT INTO memory_promotions (

@@ -1,9 +1,8 @@
 use serde_json::Value;
-use time::OffsetDateTime;
 
 use den_core::DenError;
 
-use super::records::BearMemoryStore;
+use super::{clock::now_rfc3339, records::BearMemoryStore};
 
 #[derive(Debug, Clone)]
 pub struct SqliteMemoryObservation {
@@ -26,9 +25,7 @@ pub async fn create_memory_observation(
     source: &Value,
 ) -> Result<SqliteMemoryObservation, DenError> {
     let sequence_no = store.next_sequence().await?;
-    let created_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let created_at = now_rfc3339()?;
     sqlx::query(
         r"
         INSERT INTO memory_observations (

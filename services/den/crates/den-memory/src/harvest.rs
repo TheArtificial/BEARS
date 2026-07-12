@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::DenError;
 
-use super::records::BearMemoryStore;
+use super::{clock::now_rfc3339, records::BearMemoryStore};
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct MemoryHarvestMark {
@@ -30,9 +29,7 @@ pub async fn record_harvest_mark(
 ) -> Result<MemoryHarvestMark, DenError> {
     let mark_id = Uuid::new_v4().to_string();
     let sequence_no = store.next_sequence().await?;
-    let harvested_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let harvested_at = now_rfc3339()?;
     let proposal_ids_json = serde_json::to_string(proposal_ids)
         .map_err(|e| DenError::System(format!("encode proposal ids failed: {e}")))?;
 

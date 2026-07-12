@@ -1,8 +1,6 @@
-use time::OffsetDateTime;
-
 use den_core::DenError;
 
-use super::records::BearMemoryStore;
+use super::{clock::now_rfc3339, records::BearMemoryStore};
 
 pub async fn create_reflection_run_outcome(
     store: &BearMemoryStore,
@@ -12,9 +10,7 @@ pub async fn create_reflection_run_outcome(
     input_summary: Option<&str>,
 ) -> Result<(), DenError> {
     let sequence_no = store.next_sequence().await?;
-    let created_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let created_at = now_rfc3339()?;
     sqlx::query(
         r"
         INSERT INTO reflection_run_outcomes (
@@ -43,9 +39,7 @@ pub async fn complete_reflection_run_outcome(
     output_summary: Option<&str>,
     proposal_ids: &[String],
 ) -> Result<(), DenError> {
-    let completed_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let completed_at = now_rfc3339()?;
     let ids_json = serde_json::to_string(proposal_ids)
         .map_err(|e| DenError::System(format!("proposal ids json failed: {e}")))?;
     sqlx::query(

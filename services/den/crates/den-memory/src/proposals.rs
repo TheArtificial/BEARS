@@ -1,10 +1,12 @@
 use serde_json::{json, Value};
-use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::DenError;
 
-use super::records::{head_record_for_logical_path, BearMemoryStore};
+use super::{
+    clock::now_rfc3339,
+    records::{head_record_for_logical_path, BearMemoryStore},
+};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SqliteMemoryProposal {
@@ -44,9 +46,7 @@ pub async fn create_memory_proposal(
 
     let proposal_id = Uuid::new_v4().to_string();
     let sequence_no = store.next_sequence().await?;
-    let created_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let created_at = now_rfc3339()?;
     sqlx::query(
         r"
         INSERT INTO memory_proposals (
@@ -449,9 +449,7 @@ pub async fn resolve_memory_proposal(
             payload[k] = v.clone();
         }
     }
-    let reviewed_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let reviewed_at = now_rfc3339()?;
     sqlx::query(
         r"
         UPDATE memory_proposals
