@@ -8,6 +8,14 @@ use serde_json::Value;
 
 use den_protocol::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent};
 
+fn decode_utf8_or_system_error<'a>(
+    bytes: &'a [u8],
+    context: &str,
+) -> Result<&'a str, den_core::DenError> {
+    std::str::from_utf8(bytes)
+        .map_err(|err| den_core::DenError::System(format!("invalid UTF-8 in {context}: {err}")))
+}
+
 fn delta_assistant_text(delta: &Value) -> Option<String> {
     for key in ["content", "text"] {
         if let Some(text) = delta
@@ -897,9 +905,7 @@ pub fn responses_sse_frame_to_runtime_events_with_diagnostics(
     if let Some(diagnostics) = diagnostics.as_deref_mut() {
         diagnostics.observe_sse_frame(body.len());
     }
-    let text = std::str::from_utf8(body).map_err(|_| {
-        den_core::DenError::System("invalid UTF-8 in LLM Responses SSE frame".to_string())
-    })?;
+    let text = decode_utf8_or_system_error(body, "LLM Responses SSE frame")?;
     let mut events = Vec::new();
     for line in text.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);
@@ -935,8 +941,7 @@ pub fn openai_sse_chunk_to_runtime_events(
     chunk_body: &[u8],
 ) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
     let mut events = Vec::new();
-    let text = std::str::from_utf8(chunk_body)
-        .map_err(|_| den_core::DenError::System("invalid UTF-8 in LLM SSE chunk".to_string()))?;
+    let text = decode_utf8_or_system_error(chunk_body, "LLM SSE chunk")?;
     let mut accumulator = OpenAiStreamAccumulator::default();
     for line in text.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);
@@ -982,8 +987,7 @@ pub fn openai_sse_frame_to_runtime_events_with_diagnostics(
     if let Some(diagnostics) = diagnostics.as_deref_mut() {
         diagnostics.observe_sse_frame(body.len());
     }
-    let text = std::str::from_utf8(body)
-        .map_err(|_| den_core::DenError::System("invalid UTF-8 in LLM SSE frame".to_string()))?;
+    let text = decode_utf8_or_system_error(body, "LLM SSE frame")?;
     let mut events = Vec::new();
     for line in text.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);

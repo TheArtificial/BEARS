@@ -3,6 +3,8 @@ use std::cmp::Ordering;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::text::truncate_chars;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeConversationRow {
     pub id: String,
@@ -146,7 +148,7 @@ pub fn summarize_runtime_messages(value: Option<&Value>) -> Vec<String> {
             } else {
                 Some(format!(
                     "{role}: {}",
-                    truncate_runtime_message(content, 300)
+                    truncate_chars(content, 300)
                 ))
             }
         })
@@ -158,17 +160,7 @@ pub fn runtime_conversations_top_array(value: &Value) -> &[Value] {
     top_array_from_keys(value, &["conversations", "data", "items"])
 }
 
-pub fn truncate_runtime_message(value: &str, max_chars: usize) -> String {
-    let mut out = String::new();
-    for (idx, ch) in value.chars().enumerate() {
-        if idx >= max_chars {
-            out.push('…');
-            break;
-        }
-        out.push(ch);
-    }
-    out
-}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeSemanticGroupKind {

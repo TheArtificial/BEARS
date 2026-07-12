@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::runtime::text::push_unique;
 use crate::runtime_conversations::{
     RuntimeCompactionArtifactKind, RuntimeCompactionArtifactRef, RuntimeCompactionBoundary,
     RuntimeCompactionTriggerKind, RuntimeIterativeSummary, RuntimeSemanticGroup,
@@ -235,12 +236,6 @@ pub fn merge_iterative_summary(
     }
 
     summary
-}
-
-fn push_unique(values: &mut Vec<String>, value: String) {
-    if !values.iter().any(|existing| existing == &value) {
-        values.push(value);
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

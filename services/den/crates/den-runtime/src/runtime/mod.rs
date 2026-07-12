@@ -10,5 +10,6 @@ pub mod conversations;
 pub mod pair_turn;
 pub mod provider;
 pub mod role;
+pub(crate) mod text;
 pub mod role_registry;
 pub mod turn_state;
