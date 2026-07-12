@@ -6,6 +6,7 @@
 
 **Related plans:**
 
+- [Bear capability configuration and portability](BEAR_CAPABILITY_CONFIGURATION_AND_PORTABILITY_PLAN.md)
 - [Model experience audit and refresh](MODEL_EXPERIENCE_AUDIT_REFRESH_PLAN.md)
 - [Prompt fragment registry](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md)
 - [Skills implementation](SKILLS_IMPLEMENTATION_PLAN.md)
@@ -34,6 +35,7 @@ The first implementation should be deliberately boring: taxonomy-enabled search 
 - Discovery result text must be short enough that discovery does not become the new prompt bloat.
 - "Recently discovered" is a recency cache, not an authority grant. Authorization remains stance-, surface-, policy-, and approval-governed.
 - Discovery and recently-discovered text must distinguish durable Den-managed capabilities from session-local capability instances exposed by armatures, adapters, browser sessions, or work runners.
+- Capability availability should account for per-Bear capability configuration, stance overrides, and Bear-scoped connections as defined by [ADR-0055](../decisions/adr-0055-bear-capability-configuration-connections-and-portability.md).
 - Labels such as "local" are insufficient without locality, surface, authority, and lifetime metadata.
 - Direct invocation remains preferred for simple one-off actions. Code Mode should be recommended for loops, batching, filtering, aggregation, joins, retries, or large intermediate state.
 
@@ -80,9 +82,9 @@ The first implementation should be deliberately boring: taxonomy-enabled search 
 3. Start with lexical and taxonomy/tag search over curated summaries.
 4. Return compact results with refs, summaries, risk posture, provider/origin, execution locality, authority source, availability/lifetime, scope, and execution hints.
 5. Include tools and approved skills first; allow policies, memories, surfaces, and executors as result kinds once their metadata is ready.
-6. Add tests for search filtering, unknown refs, disabled/deprecated entries, and stance applicability.
+6. Add tests for search filtering, unknown refs, disabled/deprecated entries, Bear capability configuration, stance overrides, missing Bear-scoped connections, and stance applicability.
 
-**Exit criteria:** a Bear can discover and describe existing tools/skills through a small stable surface without the full catalog being projected into prompt.
+**Exit criteria:** a Bear can discover and describe existing tools/skills through a small stable surface without the full catalog being projected into prompt, and results distinguish catalog presence from Bear+stance authority and current availability.
 
 ### Phase 2 — Prompt integration and recently discovered working set
 
@@ -103,7 +105,7 @@ The first implementation should be deliberately boring: taxonomy-enabled search 
 ### Phase 3 — Skills, policies, memories, and surfaces as bundle members
 
 1. Extend discovery results so a capability can be a bundle rather than a single invokable tool.
-2. Include approved skills from the Skills catalog with role applicability and required capability hints.
+2. Include approved and Bear-bundled skills from the Skills catalog with role applicability and required capability hints. Bear-bundled skills should just work for that Bear when imported/added, while remaining invisible to other Bears unless separately attached.
 3. Include relevant policy references and approval guidance where a capability has side effects.
 4. Include memory/search/cabinet capabilities as discoverable entries without treating memory contents themselves as tool schemas.
 5. Include surfaces such as workspace, browser, conversation, work run, or external connector where scope matters.
@@ -118,9 +120,10 @@ The first implementation should be deliberately boring: taxonomy-enabled search 
    - describe-only guidance when static tool rosters require preloading,
    - roster refresh at safe boundaries,
    - or a generic `capability_invoke(ref, args)` wrapper where policy and schema validation can remain Den-owned.
-3. Make schema loading lazy: search results stay short; `describe` or docs lookup provides full invocation details only when needed.
-4. Preserve existing approval gates for mutating, destructive, or externally visible actions.
-5. Add audit events that distinguish discovery, description, loading, and invocation.
+3. Resolve invocation against the current Bear's capability config, stance override, Bear-scoped connections, and runtime inventory. Catalog presence alone is not authority.
+4. Make schema loading lazy: search results stay short; `describe` or docs lookup provides full invocation details only when needed.
+5. Preserve existing approval gates for mutating, destructive, or externally visible actions.
+6. Add audit events that distinguish discovery, description, loading, and invocation.
 
 **Exit criteria:** discovered capabilities can be acted on through an explicit, governed path without preloading the full catalog into every turn.
 
@@ -162,6 +165,8 @@ The smallest shippable slice is:
 3. a prompt fragment telling the Bear to use discovery instead of assuming the full catalog is visible;
 4. a bounded "recently discovered" context section;
 5. Code Mode represented as a catalog entry with guidance, even if executable Code Mode lands later.
+
+Bear capability configuration, stance overrides, Bear-scoped connections, and bundled skill import are tracked in the companion [Bear capability configuration and portability plan](BEAR_CAPABILITY_CONFIGURATION_AND_PORTABILITY_PLAN.md). The discovery first slice should avoid schema choices that would prevent those status fields from being merged later.
 
 `ponytail:` This first slice can use lexical/tag search over curated YAML or Rust metadata. The ceiling is mediocre recall for fuzzy, cross-domain requests. The upgrade path is semantic indexing and better ranking after the catalog shape is validated, not preloading more tools into prompt.
 

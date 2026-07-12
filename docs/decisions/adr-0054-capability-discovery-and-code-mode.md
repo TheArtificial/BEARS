@@ -11,6 +11,7 @@
 - [ADR-0028: Environment Affordance and Resource Boundaries](adr-0028-environment-affordance-and-resource-boundaries.md)
 - [ADR-0039: Trust Profiles and Governance Modes](adr-0039-trust-profiles-and-governance-modes.md)
 - [ADR-0050: Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
+- [ADR-0055: Bear Capability Configuration, Connections, and Portability](adr-0055-bear-capability-configuration-connections-and-portability.md)
 - [Capabilities and Skills](../architecture/capabilities-and-skills.md)
 
 ## Context
