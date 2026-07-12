@@ -509,7 +509,7 @@ pub(crate) async fn session_model_set_result(
     event.bear_id = Some(bear.id.to_string());
     event.human_id = Some(user_id.to_string());
     event.session_id = Some(session_id.clone());
-    let _ = bearwire_events::append_bearwire_event(
+    let persisted = bearwire_events::append_bearwire_event(
         &state.sqlx_pool,
         &session_id,
         Some(bear.id),
@@ -518,5 +518,9 @@ pub(crate) async fn session_model_set_result(
     )
     .await?;
 
-    session_model_payload(state, user_id, &bear, &session_id).await
+    let mut payload = session_model_payload(state, user_id, &bear, &session_id).await?;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("event_sequence".to_string(), json!(persisted.sequence_no));
+    }
+    Ok(payload)
 }

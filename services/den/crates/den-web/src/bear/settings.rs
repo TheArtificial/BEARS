@@ -524,6 +524,8 @@ fn slug_base(raw: &str) -> String {
 }
 
 fn pretty_json(value: serde_json::Value) -> String {
+    // `Value` serialization is expected to be infallible; fall back to compact JSON if the pretty
+    // formatter ever errors so the admin page can still render diagnostic payloads.
     serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
 }
 
