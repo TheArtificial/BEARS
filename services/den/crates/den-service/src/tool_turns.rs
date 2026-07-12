@@ -14,6 +14,10 @@ use den_protocol::{RuntimeApprovalDecision, RuntimeContinuation, RuntimeToolResu
 
 const ACTIVE_TURN_TTL: Duration = Duration::from_mins(10);
 
+fn poisoned_lock(what: &str) -> DenError {
+    DenError::System(format!("{what} lock poisoned"))
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ToolResultRequest {
     pub turn_id: Option<String>,
@@ -292,9 +296,10 @@ impl ToolTurnCoordinator {
         request_id: Uuid,
         conversation_id: Option<String>,
     ) -> Result<ActiveTurnGuard, DenError> {
-        let mut active_turns = self.active_turns.lock().map_err(|_| {
-            DenError::System("client active turn registry lock poisoned".to_string())
-        })?;
+        let mut active_turns = self
+            .active_turns
+            .lock()
+            .map_err(|_| poisoned_lock("client active turn registry"))?;
         let now = Instant::now();
         active_turns.retain(|_, turn| turn.deadline_at > now);
         if let Some(existing) = active_turns.get(session_id) {
@@ -347,9 +352,10 @@ impl ToolTurnCoordinator {
 
     pub fn register(&self, registration: ToolTurnRegistration) -> Result<(), DenError> {
         let key = Self::key(&registration.client_session_id, &registration.tool_call_id);
-        let mut turns = self.turns.lock().map_err(|_| {
-            DenError::System("armature tool turn registry lock poisoned".to_string())
-        })?;
+        let mut turns = self
+            .turns
+            .lock()
+            .map_err(|_| poisoned_lock("armature tool turn registry"))?;
         let now = Instant::now();
         let client_session_id = registration.client_session_id.clone();
         let tool_call_id = registration.tool_call_id.clone();
@@ -390,9 +396,10 @@ impl ToolTurnCoordinator {
         mut body: ToolResultRequest,
     ) -> Result<ToolResultDelivery, DenError> {
         let key = Self::key(session_id, tool_call_id);
-        let mut turns = self.turns.lock().map_err(|_| {
-            DenError::System("armature tool turn registry lock poisoned".to_string())
-        })?;
+        let mut turns = self
+            .turns
+            .lock()
+            .map_err(|_| poisoned_lock("armature tool turn registry"))?;
         let Some(turn) = turns.get_mut(&key) else {
             tracing::warn!(
                 client_session_id = %session_id,
@@ -734,9 +741,10 @@ impl ToolTurnCoordinator {
     }
 
     fn cache_settled_result(&self, result: SettledToolResult) -> Result<(), DenError> {
-        let mut settled = self.settled_results.lock().map_err(|_| {
-            DenError::System("armature settled tool result cache lock poisoned".to_string())
-        })?;
+        let mut settled = self
+            .settled_results
+            .lock()
+            .map_err(|_| poisoned_lock("armature settled tool result cache"))?;
         prune_settled_results(&mut settled);
         settled.insert(
             Self::key(&result.client_session_id, &result.tool_call_id),

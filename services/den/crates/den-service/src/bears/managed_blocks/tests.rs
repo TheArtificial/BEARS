@@ -8,6 +8,7 @@ fn test_bear() -> Bear {
         name: "Builder Bear".to_string(),
         description: String::new(),
         default_model: Some("openai/gpt-4o".to_string()),
+        default_tool_budget_multiplier: None,
         tools_enabled: None,
         runtime_plan: None,
         context_profile: None,

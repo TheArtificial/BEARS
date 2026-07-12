@@ -391,7 +391,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/conversation/persistence.rs:853-996` `append_message` — manually wraps ~10 separate `sqlx::Error`s in `DenError::Database(format!(...))`; same pattern repeats 71x in this file.
 - [ ] `src/prompt_memory_block_store.rs:270-272` already has a clean `db_decode(field)` closure-factory pattern that `persistence.rs` should adopt instead of duplicating format strings.
 - [ ] `src/bears/db.rs:51` uses idiomatic `.map_err(Into::into)` while `persistence.rs` almost never does — inconsistent error-conversion style within the crate.
-- [ ] `src/tool_turns.rs:298,354,398,747` — 4 identical `DenError::System("... lock poisoned".to_string())` literals — extract a `poisoned(what: &str)` helper.
+- [x] `src/tool_turns.rs:298,354,398,747` — 4 identical `DenError::System("... lock poisoned".to_string())` literals — extract a `poisoned(what: &str)` helper. **DONE** (duplication batch): added `poisoned_lock(what)` and replaced Result-returning lock error literals; `den-service` clippy green.
 - [ ] `src/conversation/persistence.rs:889-892,955-959` — manual rollback-then-return-error repeated at every failure branch inside one transaction — needs a `TxGuard`/`?`-based combinator.
 - [ ] `src/conversation/events.rs`, `message_types.rs`, `bears/managed_blocks.rs`, `bifrost_governance.rs` — 10 enums hand-implement `as_str(self) -> &'static str` instead of `Display`/`AsRef<str>`.
 - [ ] `src/memory_proposals.rs:7-9` — pointless doubled brace nesting in a `use` statement — unreviewed rustfmt/import churn.
