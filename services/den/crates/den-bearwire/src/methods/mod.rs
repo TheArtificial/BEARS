@@ -1,3 +1,8 @@
+//! BearWire JSON-RPC method handlers.
+//!
+//! The crate-level router owns transport (`/v1/rpc`, SSE pages); this module tree owns typed
+//! method parsing and result construction for session/run/client/resource/work operations.
+
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 

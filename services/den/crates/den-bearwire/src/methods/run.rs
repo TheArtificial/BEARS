@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
@@ -172,14 +175,40 @@ fn runtime_upstream_target(
         .to_string()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolvedRunModelSource {
+    ConversationExplicit,
+    ConversationAuto,
+    ProfileDefault,
+    BearDefault,
+    SystemDefault,
+}
+
+impl ResolvedRunModelSource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::ConversationExplicit => "conversation_explicit",
+            Self::ConversationAuto => "conversation_auto",
+            Self::ProfileDefault => "profile_default",
+            Self::BearDefault => "bear_default",
+            Self::SystemDefault => "system_default",
+        }
+    }
+}
+
+impl fmt::Display for ResolvedRunModelSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 struct ResolvedRunModel {
     handle: String,
     provider_model_id: String,
     /// Set authoritatively by `preflight_pair_run_model` from the catalog
     /// snapshot; `resolve_pair_run_model` leaves it at a placeholder.
     api_style: den_llm::LlmApiStyle,
-    source: &'static str,
+    source: ResolvedRunModelSource,
 }
 
 /// Placeholder used while resolving model identity; overwritten by preflight.
@@ -251,7 +280,7 @@ async fn resolve_pair_run_model(
                         api_style: RESOLVE_PLACEHOLDER_API_STYLE,
                         provider_model_id,
                         handle,
-                        source: "conversation_explicit",
+                        source: ResolvedRunModelSource::ConversationExplicit,
                     });
                 }
             } else if let Some(model) = model_state
@@ -265,7 +294,7 @@ async fn resolve_pair_run_model(
                     api_style: RESOLVE_PLACEHOLDER_API_STYLE,
                     provider_model_id,
                     handle,
-                    source: "conversation_auto",
+                    source: ResolvedRunModelSource::ConversationAuto,
                 });
             }
         }
@@ -278,7 +307,7 @@ async fn resolve_pair_run_model(
             api_style: RESOLVE_PLACEHOLDER_API_STYLE,
             provider_model_id,
             handle,
-            source: "profile_default",
+            source: ResolvedRunModelSource::ProfileDefault,
         });
     }
 
@@ -294,7 +323,7 @@ async fn resolve_pair_run_model(
             api_style: RESOLVE_PLACEHOLDER_API_STYLE,
             provider_model_id,
             handle,
-            source: "bear_default",
+            source: ResolvedRunModelSource::BearDefault,
         });
     }
 
@@ -304,7 +333,7 @@ async fn resolve_pair_run_model(
         api_style: RESOLVE_PLACEHOLDER_API_STYLE,
         provider_model_id,
         handle,
-        source: "system_default",
+        source: ResolvedRunModelSource::SystemDefault,
     })
 }
 
@@ -354,7 +383,7 @@ async fn preflight_pair_run_model(
             conversation_id,
             model_handle = %resolved.handle,
             provider_model_id = %resolved.provider_model_id,
-            model_selection_source = resolved.source,
+            model_selection_source = %resolved.source,
             api_style = %resolved.api_style.as_str(),
             catalog_stale = snapshot.stale,
             catalog_fetched_at = ?snapshot.fetched_at,
@@ -369,7 +398,7 @@ async fn preflight_pair_run_model(
         conversation_id,
         model_handle = %resolved.handle,
         provider_model_id = %resolved.provider_model_id,
-        model_selection_source = resolved.source,
+        model_selection_source = %resolved.source,
         api_style = %resolved.api_style.as_str(),
         available_models = %available_model_sample(&available),
         catalog_stale = snapshot.stale,
@@ -2183,7 +2212,7 @@ mod tests {
             handle: "openai/gpt-5.5".to_string(),
             provider_model_id: "gpt-5.5".to_string(),
             api_style: den_llm::LlmApiStyle::ResponsesStream,
-            source: "conversation_explicit",
+            source: ResolvedRunModelSource::ConversationExplicit,
         };
 
         assert!(available_model_matches(
