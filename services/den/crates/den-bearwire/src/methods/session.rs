@@ -17,21 +17,20 @@ use den_service::{bears::BearProfile, client_sessions, DenState};
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
 use crate::methods::{parse_params, DEFAULT_CLIENT};
 
-async fn session_state_payload(
-    state: &DenState,
-    session: client_sessions::ClientSessionRow,
-) -> Result<Value, CustomError> {
-    let conversation_runtime_id = session
+fn resolved_or_stored_conversation_id(session: &client_sessions::ClientSessionRow) -> &str {
+    session
         .resolved_conversation_id
         .as_deref()
         .filter(|id| !id.trim().is_empty())
         .unwrap_or(session.conversation_id.as_str())
-        .to_string();
-    let conversation_external_id = session
-        .resolved_conversation_id
-        .as_deref()
-        .filter(|id| !id.trim().is_empty())
-        .unwrap_or(session.conversation_id.as_str());
+}
+
+async fn session_state_payload(
+    state: &DenState,
+    session: client_sessions::ClientSessionRow,
+) -> Result<Value, CustomError> {
+    let conversation_external_id = resolved_or_stored_conversation_id(&session);
+    let conversation_runtime_id = conversation_external_id.to_string();
     let latest_context_budget =
         den_service::conversation::persistence::get_conversation_for_external_id(
             &state.sqlx_pool,

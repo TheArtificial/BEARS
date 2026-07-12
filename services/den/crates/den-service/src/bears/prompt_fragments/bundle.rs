@@ -24,7 +24,7 @@ impl PromptBundleRegistry {
         let mut bundles = BTreeMap::new();
         for (source_name, source) in sources {
             let bundle: PromptBundle = serde_yml::from_str(source).map_err(|err| {
-                DenError::Parsing(format!(
+                DenError::ValidationError(format!(
                     "prompt bundle {source_name} failed to parse: {err}"
                 ))
             })?;

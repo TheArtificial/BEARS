@@ -266,6 +266,15 @@ impl LlmRequestTelemetry {
     }
 }
 
+fn telemetry_field_or_unknown<'a>(
+    telemetry: Option<&'a LlmRequestTelemetry>,
+    name: &str,
+) -> &'a str {
+    telemetry
+        .and_then(|telemetry| telemetry.field(name))
+        .unwrap_or("unknown")
+}
+
 impl ChatCompletionRequest {
     pub fn to_body(&self) -> Value {
         let tools: Vec<Value> = self
@@ -513,20 +522,12 @@ fn bifrost_virtual_key_not_found_diagnostic(
     status: &str,
     text: &str,
 ) -> String {
-    let request_id = telemetry
-        .and_then(|t| t.request_id.as_deref())
-        .unwrap_or("unknown");
-    let session_id = telemetry
-        .and_then(|t| t.session_id.as_deref())
-        .unwrap_or("unknown");
-    let conversation_id = telemetry
-        .and_then(|t| t.conversation_id.as_deref())
-        .unwrap_or("unknown");
-    let bear_id = telemetry
-        .and_then(|t| t.bear_id.as_deref())
-        .unwrap_or("unknown");
+    let request_id = telemetry_field_or_unknown(telemetry, "request_id");
+    let session_id = telemetry_field_or_unknown(telemetry, "session_id");
+    let conversation_id = telemetry_field_or_unknown(telemetry, "conversation_id");
+    let bear_id = telemetry_field_or_unknown(telemetry, "bear_id");
     let virtual_key_present = telemetry
-        .and_then(|t| t.bifrost_virtual_key.as_deref())
+        .and_then(|t| t.field("bifrost_virtual_key"))
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false);
     let api_style = api_style.as_str();
@@ -544,15 +545,9 @@ fn bifrost_key_selection_diagnostic(
     retry_status: Option<&str>,
     retry_text: Option<&str>,
 ) -> String {
-    let request_id = telemetry
-        .and_then(|t| t.request_id.as_deref())
-        .unwrap_or("unknown");
-    let session_id = telemetry
-        .and_then(|t| t.session_id.as_deref())
-        .unwrap_or("unknown");
-    let conversation_id = telemetry
-        .and_then(|t| t.conversation_id.as_deref())
-        .unwrap_or("unknown");
+    let request_id = telemetry_field_or_unknown(telemetry, "request_id");
+    let session_id = telemetry_field_or_unknown(telemetry, "session_id");
+    let conversation_id = telemetry_field_or_unknown(telemetry, "conversation_id");
     let retry_summary = match (retry_status, retry_text) {
         (Some(retry_status), Some(retry_text)) => format!(
             " Den retried once without x-bf-session-id/x-bf-cache-* headers and Bifrost still returned HTTP {retry_status}: {retry_text}."
