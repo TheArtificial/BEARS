@@ -287,7 +287,11 @@ async fn view_account(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session.user.clone().unwrap().id;
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|user| user.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
     let user = crate::core::user::user_by_id(&state.sqlx_pool, user_id).await?;
 
     let invites = user::invites::db::by_user_id(&state.sqlx_pool, user_id).await?;

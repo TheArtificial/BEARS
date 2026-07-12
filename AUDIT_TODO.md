@@ -360,7 +360,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/bear/settings.rs` (2450 lines) — god-file mixing routing, bundle import/export (zip/sqlite), session-flash helpers, admin row-mapping, view handlers — split into `settings/bundle.rs`/`models.rs`/`conversations.rs`.
 - [ ] `src/bear/management.rs` (1491 lines) — entire file `#![allow(dead_code)]` with stale TODO to delete "during the den-web move" — confirmed-dead handlers still compiled.
 - [ ] `src/admin/bears.rs` — same `#![allow(dead_code)]` + stale-TODO pattern.
-- [ ] `src/user/account/mod.rs:290` `auth_session.user.clone().unwrap().id` will panic on inconsistent session state; same file at line 325 uses the safe `.as_ref().map().ok_or_else()` pattern — inconsistent within one file.
+- [x] `src/user/account/mod.rs:290` `auth_session.user.clone().unwrap().id` will panic on inconsistent session state; same file at line 325 uses the safe `.as_ref().map().ok_or_else()` pattern — inconsistent within one file. **DONE** (safety batch): `view_account` now uses the same authentication error pattern as token revocation; `den-web` clippy green.
 - [ ] `src/user/settings/email.rs:64,86,118,169,193` — same `auth_session.user.clone().unwrap().id` repeated 5x — extract shared helper returning `Result<_, CustomError>`.
 - [x] `src/admin/membership.rs:97,104` `bear_id.expect("checked")` twice, re-deriving an already-validated value instead of an `if let Some` guard/early return. **DONE** (safety batch): replaced with `if let (true, Some(bid)) = ...` guards; `den-web` clippy green.
 - [ ] `src/core/s3/mod.rs:37,51,59,68` — four `.expect()` calls in startup config parsing, undocumented as fail-fast-only.
