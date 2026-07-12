@@ -1708,7 +1708,7 @@ mod tests {
     }
 
     fn test_tracking_stream_with_session(session: &AgentLoopSession) -> SessionTrackingStream {
-        let store = AgentLoopSessionStore::new();
+        let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         SessionTrackingStream::new(
             Box::pin(futures::stream::empty()),
@@ -1860,7 +1860,7 @@ mod tests {
     async fn empty_turn_completion_emits_fallback_assistant_output_first() {
         let bear_id = uuid::Uuid::new_v4();
         let session = test_session("den-conv-test:client-test", bear_id);
-        let store = AgentLoopSessionStore::new();
+        let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let mut stream = SessionTrackingStream::new(
             Box::pin(futures::stream::iter(vec![Ok(
@@ -1952,7 +1952,7 @@ mod tests {
         let session_key = "den-conv-test:client-test";
         let mut session = test_session(session_key, bear_id);
         session.workspace_roots = vec!["/workspace/project".to_string()];
-        let store = AgentLoopSessionStore::new();
+        let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let stream = SessionTrackingStream::new(
             Box::pin(futures::stream::empty()),
@@ -2004,7 +2004,7 @@ mod tests {
             name: Some("memory_read".to_string()),
             tool_calls: None,
         });
-        let store = AgentLoopSessionStore::new();
+        let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let stream = SessionTrackingStream::new(
             Box::pin(futures::stream::empty()),
@@ -2035,7 +2035,7 @@ mod tests {
     async fn server_side_den_tool_emits_started_event_before_execution_result() {
         let bear_id = uuid::Uuid::new_v4();
         let session = test_session("den-conv-test:client-test", bear_id);
-        let store = AgentLoopSessionStore::new();
+        let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let inner = futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
             RuntimeSemanticEvent::ToolCallRequested {
@@ -2088,7 +2088,7 @@ mod tests {
     async fn set_conversation_title_started_event_has_descriptor_title_and_arguments() {
         let bear_id = uuid::Uuid::new_v4();
         let session = test_session("den-conv-test:client-test", bear_id);
-        let store = AgentLoopSessionStore::new();
+        let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let inner = futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
             RuntimeSemanticEvent::ToolCallRequested {
@@ -2145,7 +2145,7 @@ mod tests {
     async fn checkpoint_tool_emits_started_event_before_finished_event() {
         let bear_id = uuid::Uuid::new_v4();
         let session = test_session("den-conv-test:client-test", bear_id);
-        let store = AgentLoopSessionStore::new();
+        let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let inner = futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
             RuntimeSemanticEvent::ToolCallRequested {
@@ -2206,7 +2206,7 @@ mod tests {
     async fn den_tools_route_server_side_but_client_tools_do_not() {
         let bear_id = uuid::Uuid::new_v4();
         let session = test_session("den-conv-test:client-test", bear_id);
-        let store = AgentLoopSessionStore::new();
+        let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let stream = SessionTrackingStream::new(
             Box::pin(futures::stream::empty()),
@@ -2239,7 +2239,7 @@ mod tests {
     async fn approval_required_tool_call_wakes_after_installing_pending_future() {
         let bear_id = uuid::Uuid::new_v4();
         let session = test_session("den-conv-test:client-test", bear_id);
-        let store = AgentLoopSessionStore::new();
+        let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let inner = futures::stream::iter(vec![Ok(RuntimeStreamEvent::Semantic(
             RuntimeSemanticEvent::ToolCallRequested {
@@ -2288,7 +2288,7 @@ mod tests {
     async fn run_paused_event_finishes_current_runtime_stream_segment() {
         let bear_id = uuid::Uuid::new_v4();
         let session = test_session("den-conv-test:client-test", bear_id);
-        let store = AgentLoopSessionStore::new();
+        let store = AgentLoopSessionStore::default();
         store.insert(session.clone());
         let mut stream = SessionTrackingStream::new(
             Box::pin(futures::stream::iter(vec![Ok(

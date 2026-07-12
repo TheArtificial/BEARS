@@ -236,10 +236,6 @@ pub struct AgentLoopSessionStore {
 }
 
 impl AgentLoopSessionStore {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn insert(&self, session: AgentLoopSession) {
         let key = session.session_key.clone();
         self.inner

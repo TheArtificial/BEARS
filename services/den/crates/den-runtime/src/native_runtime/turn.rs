@@ -54,7 +54,7 @@ use crate::{
 use den_core::DenError;
 use den_service::conversation::persistence::PersistedTranscriptRecord;
 
-static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::new);
+static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::default);
 
 fn render_host_context_for_model(prompt_context: Option<&serde_json::Value>) -> Option<String> {
     let host_context = prompt_context?.get("host_context")?;
