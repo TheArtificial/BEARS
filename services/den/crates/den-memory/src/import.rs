@@ -437,7 +437,7 @@ fn maybe_push_sample(
         return;
     }
     if import_history {
-        let short = &commit[..commit.len().min(12)];
+        let short = commit.chars().take(12).collect::<String>();
         samples.push(format!("{logical_path}@{short}"));
     } else {
         samples.push(logical_path.to_string());

@@ -283,7 +283,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `src/records.rs:763-781` `impl AsOfSqlRow` placed after a `#[cfg(test)]` block rather than near its struct def (line 561) — breaks file's ordering convention.
 - [ ] `src/proposals.rs` — uses raw positional tuples as query row types instead of a named `FromRow` struct like sibling files — `row.0`/`row.1` indexing is hard to follow.
 - [ ] `src/entity.rs:50`, `records.rs:82` — `#[allow(clippy::too_many_arguments)]` escape hatch instead of grouping params into an options struct.
-- [ ] `src/import.rs:432` `&commit[..commit.len().min(12)]` byte-slices a String assuming ASCII hex SHA — undocumented assumption.
+- [x] `src/import.rs:432` `&commit[..commit.len().min(12)]` byte-slices a String assuming ASCII hex SHA — undocumented assumption. **DONE** (safety cleanup): short commit preview now uses `chars().take(12)` instead of byte slicing; `den-memory` clippy green.
 - [ ] `src/logical_path.rs:77-117` `from_logical_path` duplicates work_surfaces extraction logic twice (shared vs profile-local paths) — factor into one helper.
 - Overall: disciplined and well-documented architecturally, but leans hard on stringly-typed errors and duplicates small helpers dozens of times instead of centralizing; `import.rs`/`tools.rs` most in need of decomposition/typing.
 
