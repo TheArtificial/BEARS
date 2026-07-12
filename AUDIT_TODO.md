@@ -681,8 +681,8 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/admin/users.rs:339-350` — raw SQL INSERT written inline in a handler rather than delegated to `user_db`/`email` module, breaking module boundary.
 - [ ] `src/onboarding.rs:196-205` `first_bear_post` — ~120-line function doing form validation, slug validation, model validation, DB insert, key provisioning, membership grant, and native provisioning all inline — extract named steps.
 - [ ] `src/onboarding.rs:264-277` — `let _ = bears_db::delete_bear(...)` on a rollback path discards the cleanup error silently with no `tracing::warn!`.
-- [ ] `src/bear/profile.rs:48-55` `BearRoleViewRow::from_agent` takes an unused `_role: BearProfile` parameter.
-- [ ] `src/bear/profile.rs:183` `agent.clone()` unnecessary since `agent` isn't reused after.
+- [x] `src/bear/profile.rs:48-55` `BearRoleViewRow::from_agent` takes an unused `_role: BearProfile` parameter. **DONE** (cleanup batch): removed the unused parameter; `den-web` clippy green.
+- [x] `src/bear/profile.rs:183` `agent.clone()` unnecessary since `agent` isn't reused after. **DONE** (cleanup batch): pass the binding by value into `BearRoleViewRow::from_agent`; `den-web` clippy green.
 - [ ] `src/bear/profile.rs:57-171` — five near-identical `match role { ... }` functions (label/description/plain_name/surfaces/capabilities/memory_rules) — consolidate into a single data table as `BearProfile` metadata.
 - [x] `src/user/settings/mod.rs:85,119` — two `.unwrap()` calls in request handlers inconsistent with the rest of the crate's `ok_or_else` convention — should be `.ok_or_else(|| CustomError::NotFound(...))?`. **DONE** (safety batch): both handlers now return `CustomError::NotFound`; `den-web` clippy green.
 - [x] `src/status.rs:123-144` `build_deploy_rows` returns a `Vec` with always exactly one element — unnecessary ceremony, name implies multi-row generality it doesn't have. **DONE** (clarity batch): helper is now `build_deploy_row` returning one row; the template boundary wraps it in a Vec; `den-web` clippy green.
