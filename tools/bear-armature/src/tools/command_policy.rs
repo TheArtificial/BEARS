@@ -5,10 +5,37 @@ pub(crate) enum CommandApprovalMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandFamily {
+    Cargo,
+    Pytest,
+    GitRead,
+    JsPackageScript,
+}
+
+impl CommandFamily {
+    pub(crate) const fn key(self) -> &'static str {
+        match self {
+            Self::Cargo => "cargo",
+            Self::Pytest => "pytest",
+            Self::GitRead => "git_read",
+            Self::JsPackageScript => "js_package_script",
+        }
+    }
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Cargo => "cargo build/check/test",
+            Self::Pytest => "pytest",
+            Self::GitRead => "read-only git",
+            Self::JsPackageScript => "package-manager scripts",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandPolicyMatch<'a> {
     pub(crate) executable: &'a str,
-    pub(crate) family_key: &'static str,
-    pub(crate) family_label: &'static str,
+    pub(crate) family: CommandFamily,
     pub(crate) approval_mode: CommandApprovalMode,
     pub(crate) terminal_allowed: bool,
     pub(crate) rtk_wrap_allowed: bool,
@@ -31,8 +58,7 @@ pub(crate) fn command_policy_for(command: &str) -> Option<CommandPolicyMatch<'_>
         ("cargo", Some("build" | "check" | "test" | "clippy" | "fmt")) => {
             Some(CommandPolicyMatch {
                 executable,
-                family_key: "cargo",
-                family_label: "cargo build/check/test",
+                family: CommandFamily::Cargo,
                 approval_mode: CommandApprovalMode::FamilyAllowed,
                 terminal_allowed: true,
                 rtk_wrap_allowed: true,
@@ -40,8 +66,7 @@ pub(crate) fn command_policy_for(command: &str) -> Option<CommandPolicyMatch<'_>
         }
         ("pytest", _) => Some(CommandPolicyMatch {
             executable,
-            family_key: "pytest",
-            family_label: "pytest",
+            family: CommandFamily::Pytest,
             approval_mode: CommandApprovalMode::FamilyAllowed,
             terminal_allowed: true,
             rtk_wrap_allowed: true,
@@ -49,8 +74,7 @@ pub(crate) fn command_policy_for(command: &str) -> Option<CommandPolicyMatch<'_>
         ("python" | "python3", Some("-m")) if args.get(1).copied() == Some("pytest") => {
             Some(CommandPolicyMatch {
                 executable,
-                family_key: "pytest",
-                family_label: "pytest",
+                family: CommandFamily::Pytest,
                 approval_mode: CommandApprovalMode::FamilyAllowed,
                 terminal_allowed: true,
                 rtk_wrap_allowed: true,
@@ -58,16 +82,14 @@ pub(crate) fn command_policy_for(command: &str) -> Option<CommandPolicyMatch<'_>
         }
         ("git", Some("status" | "diff" | "log" | "show" | "blame")) => Some(CommandPolicyMatch {
             executable,
-            family_key: "git_read",
-            family_label: "read-only git",
+            family: CommandFamily::GitRead,
             approval_mode: CommandApprovalMode::FamilyAllowed,
             terminal_allowed: false,
             rtk_wrap_allowed: true,
         }),
         ("npm" | "pnpm" | "yarn", Some("test" | "run" | "exec")) => Some(CommandPolicyMatch {
             executable,
-            family_key: "js_package_script",
-            family_label: "package-manager scripts",
+            family: CommandFamily::JsPackageScript,
             approval_mode: CommandApprovalMode::ExactOnly,
             terminal_allowed: true,
             rtk_wrap_allowed: true,
@@ -79,7 +101,7 @@ pub(crate) fn command_policy_for(command: &str) -> Option<CommandPolicyMatch<'_>
 pub(crate) fn command_family_key(command: &str) -> Option<&'static str> {
     let policy = command_policy_for(command)?;
     if policy.approval_mode == CommandApprovalMode::FamilyAllowed {
-        Some(policy.family_key)
+        Some(policy.family.key())
     } else {
         None
     }
@@ -88,14 +110,14 @@ pub(crate) fn command_family_key(command: &str) -> Option<&'static str> {
 pub(crate) fn command_workspace_scope_label(command: &str) -> Option<String> {
     let policy = command_policy_for(command)?;
     let (executable, args) = split_command(command)?;
-    match policy.family_key {
-        "git_read" => args
+    match policy.family {
+        CommandFamily::GitRead => args
             .first()
             .map(|subcommand| format!("{} {}", policy.executable, subcommand)),
-        "cargo" => args
+        CommandFamily::Cargo => args
             .first()
             .map(|subcommand| format!("{} {}", executable, subcommand)),
-        "pytest" => {
+        CommandFamily::Pytest => {
             if executable == "pytest" {
                 Some("pytest".to_string())
             } else if executable == "python" || executable == "python3" {
@@ -104,7 +126,7 @@ pub(crate) fn command_workspace_scope_label(command: &str) -> Option<String> {
                 Some(normalize_command(command))
             }
         }
-        _ => Some(normalize_command(command)),
+        CommandFamily::JsPackageScript => Some(normalize_command(command)),
     }
 }
 

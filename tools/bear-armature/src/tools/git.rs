@@ -12,6 +12,13 @@ use std::{
     process::Command,
 };
 
+fn paths_as_strings(paths: &[PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect()
+}
+
 pub(crate) async fn handle_git_status(
     context: &SessionContext,
     args: &Value,
@@ -73,7 +80,7 @@ pub(crate) async fn handle_git_diff(
     let paths = git_paths_from_args(context, &repo, args)?;
     if !paths.is_empty() {
         command_args.push("--".to_string());
-        command_args.extend(paths.iter().map(|path| path.to_string_lossy().to_string()));
+        command_args.extend(paths_as_strings(&paths));
     }
     let output = run_git_command(&repo, &command_args, max_bytes)?;
     let content = if output.stdout.trim().is_empty() {
@@ -87,7 +94,7 @@ pub(crate) async fn handle_git_diff(
         "ok": true,
         "repo_path": repo.to_string_lossy(),
         "staged": staged,
-        "paths": paths.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "paths": paths_as_strings(&paths),
         "diff": output.stdout,
         "exit_code": output.exit_code,
         "stderr": output.stderr,
@@ -120,7 +127,7 @@ pub(crate) async fn handle_git_log(
     let paths = git_paths_from_args(context, &repo, args)?;
     if !paths.is_empty() {
         command_args.push("--".to_string());
-        command_args.extend(paths.iter().map(|path| path.to_string_lossy().to_string()));
+        command_args.extend(paths_as_strings(&paths));
     }
     let output = run_git_command(&repo, &command_args, max_bytes)?;
     let commits = parse_git_log(&output.stdout);
@@ -130,7 +137,7 @@ pub(crate) async fn handle_git_log(
         "repo_path": repo.to_string_lossy(),
         "commits": commits,
         "returned_commits": commits.len(),
-        "paths": paths.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "paths": paths_as_strings(&paths),
         "exit_code": output.exit_code,
         "stderr": output.stderr,
         "truncated": output.truncated,
@@ -205,7 +212,7 @@ pub(crate) async fn handle_git_add(
     }
     enforce_git_path_limit(&paths, policy)?;
     let mut command_args = vec!["add".to_string(), "--".to_string()];
-    command_args.extend(paths.iter().map(|path| path.to_string_lossy().to_string()));
+    command_args.extend(paths_as_strings(&paths));
     let output = run_git_command(
         &repo,
         &command_args,
@@ -214,7 +221,7 @@ pub(crate) async fn handle_git_add(
     Ok(json!({
         "ok": true,
         "repo_path": repo.to_string_lossy(),
-        "paths": paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "paths": paths_as_strings(&paths),
         "stderr": output.stderr,
         "source": "adapter_local",
         "content": format!("Staged {} path(s)", paths.len()),
@@ -258,7 +265,7 @@ pub(crate) async fn handle_git_restore(
         command_args.push(source.to_string());
     }
     command_args.push("--".to_string());
-    command_args.extend(paths.iter().map(|path| path.to_string_lossy().to_string()));
+    command_args.extend(paths_as_strings(&paths));
     let output = run_git_command(
         &repo,
         &command_args,
@@ -267,7 +274,7 @@ pub(crate) async fn handle_git_restore(
     Ok(json!({
         "ok": true,
         "repo_path": repo.to_string_lossy(),
-        "paths": paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "paths": paths_as_strings(&paths),
         "staged": staged,
         "worktree": worktree,
         "stderr": output.stderr,

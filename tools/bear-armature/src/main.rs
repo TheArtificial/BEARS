@@ -84,9 +84,7 @@ use tools::chrome::{
 };
 use tower_service::Service;
 
-use tools::adapter_env::{
-    collect_bear_environment, fetch_den_runtime_state, handle_bear_environment,
-};
+use tools::adapter_env::{collect_bear_environment, fetch_den_runtime_state};
 use tools::fs::{
     handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
     handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
@@ -3800,7 +3798,7 @@ async fn execute_local_tool(
             .await
         }
         "bear_environment" => {
-            handle_bear_environment(adapter_state, session_id, None, None, &args).await
+            collect_bear_environment(adapter_state, session_id, None, None, &args).await
         }
         "local_web_fetch" => handle_local_web_fetch(session_id, &args, policy).await,
         "chrome_open" => handle_chrome_open(&args, policy).await,
@@ -8329,7 +8327,7 @@ async fn send_permission_request(
         return Err(anyhow!("permission request failed: {error}"));
     }
     let result = response.get("result").cloned().unwrap_or(Value::Null);
-    parse_permission_decision(&result)
+    Ok(parse_permission_decision(&result))
 }
 
 async fn post_permission_result(
@@ -16877,7 +16875,7 @@ mod tests {
             },
         );
 
-        let value = handle_bear_environment(
+        let value = collect_bear_environment(
             &adapter_state,
             "session-1",
             None,

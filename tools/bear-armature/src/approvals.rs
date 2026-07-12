@@ -3,13 +3,14 @@ use crate::{
     paths::session_workspace_roots,
     tools::command_policy::{
         command_family_key, command_policy_for, command_workspace_scope_label, normalize_command,
+        CommandApprovalMode,
     },
     RuntimeConfig, SessionContext,
 };
 use agent_client_protocol::schema::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionResponse,
 };
-use anyhow::Result;
+
 use reqwest::Url;
 use serde_json::Value;
 use std::{
@@ -41,7 +42,6 @@ pub(crate) struct ApprovalPersistence {
     pub(crate) client: String,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub(crate) struct ApprovalRecord {
     pub(crate) api_url: String,
@@ -67,7 +67,7 @@ struct ApprovalCacheFile {
 }
 
 fn default_approval_scope_kind() -> String {
-    ApprovalScope::Workspace.as_str().to_string()
+    String::from("workspace")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -305,9 +305,12 @@ impl ApprovalCache {
             })
             .collect::<Vec<_>>();
         let now = now_secs();
-        let mut entries = self.entries.lock().await;
-        entries.retain(|_, record| record.expires_at_secs > now);
-        candidate_keys.iter().any(|key| entries.contains_key(key))
+        let entries = self.entries.lock().await;
+        candidate_keys.iter().any(|key| {
+            entries
+                .get(key)
+                .is_some_and(|record| record.expires_at_secs > now)
+        })
     }
 
     pub(crate) async fn clear_session(&self, _session_id: &str) {
@@ -351,12 +354,30 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-pub(crate) fn approval_ttl_secs(risk: &str) -> u64 {
-    if matches!(risk, "writes_workspace" | "deletes_workspace") {
-        7 * 24 * 60 * 60
-    } else {
-        28 * 24 * 60 * 60
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovalRisk {
+    ShortLivedWorkspaceChange,
+    Standard,
+}
+
+impl ApprovalRisk {
+    fn from_label(risk: &str) -> Self {
+        match risk {
+            "writes_workspace" | "deletes_workspace" => Self::ShortLivedWorkspaceChange,
+            _ => Self::Standard,
+        }
     }
+
+    const fn ttl_secs(self) -> u64 {
+        match self {
+            Self::ShortLivedWorkspaceChange => 7 * 24 * 60 * 60,
+            Self::Standard => 28 * 24 * 60 * 60,
+        }
+    }
+}
+
+pub(crate) fn approval_ttl_secs(risk: &str) -> u64 {
+    ApprovalRisk::from_label(risk).ttl_secs()
 }
 
 fn command_workspace_fingerprint(
@@ -582,14 +603,12 @@ pub(crate) fn permission_options_for_context(
             PermissionOptionKind::AllowAlways,
         ));
         if let Some(policy) = command_policy_for(command) {
-            if policy.approval_mode
-                == crate::tools::command_policy::CommandApprovalMode::FamilyAllowed
-            {
+            if policy.approval_mode == CommandApprovalMode::FamilyAllowed {
                 options.push(PermissionOption::new(
                     "allow_command_family_workspace",
                     format!(
                         "Always allow safe {} commands in this workspace",
-                        policy.family_label
+                        policy.family.label()
                     ),
                     PermissionOptionKind::AllowAlways,
                 ));
@@ -647,9 +666,9 @@ pub(crate) struct PermissionDecision {
     pub(crate) scope: ApprovalScope,
 }
 
-pub(crate) fn parse_permission_decision(result: &Value) -> Result<PermissionDecision> {
+pub(crate) fn parse_permission_decision(result: &Value) -> PermissionDecision {
     if let Ok(response) = serde_json::from_value::<RequestPermissionResponse>(result.clone()) {
-        return Ok(match response.outcome {
+        return match response.outcome {
             RequestPermissionOutcome::Selected(selected) => {
                 permission_decision_from_option_id(&selected.option_id.to_string())
             }
@@ -663,7 +682,7 @@ pub(crate) fn parse_permission_decision(result: &Value) -> Result<PermissionDeci
                 remember: false,
                 scope: ApprovalScope::Workspace,
             },
-        });
+        };
     }
     let approved = result
         .get("approved")
@@ -674,11 +693,11 @@ pub(crate) fn parse_permission_decision(result: &Value) -> Result<PermissionDeci
             // Some clients answer `{}` after applying their own auto-approval policy.
             result.is_object()
         });
-    Ok(PermissionDecision {
+    PermissionDecision {
         approved,
         remember: false,
         scope: ApprovalScope::Workspace,
-    })
+    }
 }
 
 pub(crate) fn permission_decision_from_option_id(id: &str) -> PermissionDecision {
@@ -731,9 +750,9 @@ pub(crate) fn permission_decision_from_option_id(id: &str) -> PermissionDecision
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn parse_permission_approved(result: &Value) -> Result<bool> {
-    Ok(parse_permission_decision(result)?.approved)
+#[cfg(test)]
+pub(crate) fn parse_permission_approved(result: &Value) -> bool {
+    parse_permission_decision(result).approved
 }
 
 #[cfg(test)]
@@ -1208,7 +1227,7 @@ mod tests {
                 "optionId": "allow_always"
             }
         });
-        let decision = parse_permission_decision(&result).unwrap();
+        let decision = parse_permission_decision(&result);
         assert!(decision.approved);
         assert!(decision.remember);
         assert_eq!(decision.scope, ApprovalScope::Workspace);
@@ -1462,7 +1481,7 @@ mod tests {
                 "optionId": "allow"
             }
         });
-        assert!(parse_permission_approved(&result).unwrap());
+        assert!(parse_permission_approved(&result));
     }
 
     #[test]
@@ -1472,6 +1491,6 @@ mod tests {
                 "outcome": "cancelled"
             }
         });
-        assert!(!parse_permission_approved(&result).unwrap());
+        assert!(!parse_permission_approved(&result));
     }
 }

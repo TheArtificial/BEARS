@@ -8,7 +8,6 @@ pub(crate) struct ToolTaskRegistry {
     tasks: Arc<TokioMutex<HashMap<String, ToolTaskRecord>>>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ToolTaskRecord {
     pub(crate) session_id: String,
@@ -181,7 +180,6 @@ impl ToolTaskRegistry {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) async fn list_for_session(&self, session_id: &str) -> Vec<ToolTaskRecord> {
         self.tasks
             .lock()
