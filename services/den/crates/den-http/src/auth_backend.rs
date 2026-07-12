@@ -47,6 +47,18 @@ impl std::fmt::Debug for SessionUser {
     }
 }
 
+impl From<user::db::UserAuth> for SessionUser {
+    fn from(db_user: user::db::UserAuth) -> Self {
+        Self {
+            id: db_user.id,
+            username: db_user.username,
+            passhash: db_user.passhash,
+            is_admin: db_user.is_admin,
+            theme: db_user.theme,
+        }
+    }
+}
+
 impl AuthUser for SessionUser {
     type Id = i32;
 
@@ -103,23 +115,11 @@ impl AuthnBackend for Backend {
         if let Some(db_user) = db_user_result {
             if creds.su {
                 tracing::warn!("SU login to user: {}", creds.username);
-                return Ok(Some(SessionUser {
-                    id: db_user.id,
-                    username: db_user.username,
-                    passhash: db_user.passhash,
-                    is_admin: db_user.is_admin,
-                    theme: db_user.theme,
-                }));
+                return Ok(Some(db_user.into()));
             }
 
             match verify_password(creds.password, &db_user.passhash) {
-                Ok(()) => Ok(Some(SessionUser {
-                    id: db_user.id,
-                    username: db_user.username,
-                    passhash: db_user.passhash,
-                    is_admin: db_user.is_admin,
-                    theme: db_user.theme,
-                })),
+                Ok(()) => Ok(Some(db_user.into())),
                 Err(e) => {
                     tracing::warn!(
                         "Authentication failed for user '{}': bad credentials",

@@ -195,7 +195,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 ### den-http
 - [ ] `src/errors.rs:27-41,69-296` `CustomError` hand-rolls `Display`/`Error`/`From` impls with `String` payloads per variant despite `thiserror` being a direct dependency — should use `#[derive(thiserror::Error)]`.
 - [ ] `src/auth_backend.rs:15-27` `Error` here correctly uses `thiserror::Error` derive — inconsistent with `errors::CustomError` in the same crate.
-- [ ] `src/auth_backend.rs:104-113` vs `115-122` — duplicated `SessionUser{...}` literal construction — extract `From<db::UserAuth> for SessionUser`.
+- [x] `src/auth_backend.rs:104-113` vs `115-122` — duplicated `SessionUser{...}` literal construction — extract `From<db::UserAuth> for SessionUser`. **DONE** (duplication batch): added `impl From<user::db::UserAuth> for SessionUser` and reused it for SU/password login paths; `den-http` clippy green.
 - [ ] `src/user/email_settings.rs:44-121` `settings_by_id` ~80-line nested if-let mixing lookup/insert/logging — split into lookup + create-default helpers.
 - [ ] `src/user/email_settings.rs:390-436` `set_admin_email_verified` hand-rolls UPDATE-then-INSERT upsert instead of `INSERT ... ON CONFLICT` (used elsewhere in crate, e.g. `armature_tokens.rs:227-273`).
 - [x] `src/email/mod.rs:83-87` `mailgun_client()` calls `.expect(...)` — panics in reachable library code, should return `Result`. **DONE** (safety batch): `mailgun_client()` now returns `Result<&Mailgun, DenError>` and `send_email_template` propagates initialization failure as `DenError::Email`; `den-http` clippy green.
