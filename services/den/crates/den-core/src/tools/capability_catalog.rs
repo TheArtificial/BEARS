@@ -142,7 +142,11 @@ pub fn search_capabilities(entries: &[CapabilityEntry], args: CapabilitySearchAr
             }
         }
         if let Some(tag) = &tag_filter {
-            if !entry.tags.iter().any(|candidate| candidate.eq_ignore_ascii_case(tag)) {
+            if !entry
+                .tags
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(tag))
+            {
                 continue;
             }
         }
@@ -171,10 +175,9 @@ pub fn search_capabilities(entries: &[CapabilityEntry], args: CapabilitySearchAr
 pub fn describe_capability(entries: &[CapabilityEntry], reference: &str) -> Option<Value> {
     let entry = entries.iter().find(|entry| {
         entry.r#ref == reference
-            || entry
-                .tool
-                .as_ref()
-                .is_some_and(|tool| tool.canonical_name == reference || tool.provider_name == reference)
+            || entry.tool.as_ref().is_some_and(|tool| {
+                tool.canonical_name == reference || tool.provider_name == reference
+            })
     })?;
     Some(json!({
         "capability": entry,
@@ -259,7 +262,10 @@ fn lifetime_for_tool(descriptor: &DenToolDescriptor) -> &str {
 }
 
 fn good_for_tool(descriptor: &DenToolDescriptor) -> Vec<String> {
-    vec![format!("{} via {}", descriptor.label, descriptor.provider_name)]
+    vec![format!(
+        "{} via {}",
+        descriptor.label, descriptor.provider_name
+    )]
 }
 
 fn not_good_for_tool(descriptor: &DenToolDescriptor, risk: &str) -> Vec<String> {
@@ -268,7 +274,9 @@ fn not_good_for_tool(descriptor: &DenToolDescriptor, risk: &str) -> Vec<String> 
         notes.push("unreviewed bulk execution; consider direct review or Code Mode only with explicit approval".to_string());
     }
     if descriptor.provider == "den" {
-        notes.push("direct armature-local filesystem, process, browser, or MCP server state".to_string());
+        notes.push(
+            "direct armature-local filesystem, process, browser, or MCP server state".to_string(),
+        );
     }
     notes
 }
@@ -319,7 +327,10 @@ mod tests {
             .collect();
         let result = describe_capability(&entries, "memory_search").unwrap();
         assert_eq!(result["capability"]["ref"], "tool:den.memory.search");
-        assert_eq!(result["capability"]["execution_locality"], "den-managed runtime");
+        assert_eq!(
+            result["capability"]["execution_locality"],
+            "den-managed runtime"
+        );
     }
 
     #[test]

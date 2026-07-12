@@ -136,6 +136,8 @@ struct BearModelsForm {
     #[serde(default)]
     bear_default_model_custom: String,
     #[serde(default)]
+    bear_tool_budget_multiplier: String,
+    #[serde(default)]
     bear_loop_control: String,
     #[serde(default)]
     chat_model: String,
@@ -365,6 +367,23 @@ fn context_budget_summary(report: &ContextBudgetReport) -> String {
             report.estimated_total_tokens, report.reserved_output_tokens
         ),
     }
+}
+
+fn parse_tool_budget_multiplier_form_value(raw: &str) -> Result<Option<f64>, CustomError> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("inherit") || raw.eq_ignore_ascii_case("default")
+    {
+        return Ok(None);
+    }
+    let value = raw.parse::<f64>().map_err(|_| {
+        CustomError::ValidationError("Tool budget multiplier must be a number.".to_string())
+    })?;
+    if !value.is_finite() || value <= 0.0 || value > 10.0 {
+        return Err(CustomError::ValidationError(
+            "Tool budget multiplier must be greater than 0 and at most 10.".to_string(),
+        ));
+    }
+    Ok(Some(value))
 }
 
 #[derive(Debug, Serialize)]
@@ -1787,6 +1806,10 @@ async fn render_models_page(
         .await?
         .map(AgentLoopControlLevel::as_str)
         .unwrap_or("inherit");
+    let bear_tool_budget_multiplier = bear
+        .default_tool_budget_multiplier
+        .map(|value| value.to_string())
+        .unwrap_or_default();
     let bear_default_availability_status =
         model_availability_status(&live_model_options, bear_default_model);
     let bear_default_metadata_status = model_metadata_status(bear_default_model);
@@ -1805,6 +1828,7 @@ async fn render_models_page(
             rows,
             bear_default_custom_model => if !bear_default_model.is_empty() && !model_available(&model_options, bear_default_model) { bear_default_model } else { "" },
             bear_loop_control,
+            bear_tool_budget_multiplier,
             bear_default_availability_status,
             bear_default_metadata_status,
             bifrost_virtual_key_id => bifrost_virtual_key.as_ref().and_then(|row| row.virtual_key_id.as_deref()).unwrap_or(""),
@@ -1888,6 +1912,8 @@ async fn models_post(
     }
     let default_model = configured_model_from_form(default_trim);
     let bear_loop_control = parse_loop_control_form_value(&form.bear_loop_control)?;
+    let bear_tool_budget_multiplier =
+        parse_tool_budget_multiplier_form_value(&form.bear_tool_budget_multiplier)?;
 
     for profile in BearProfile::ALL {
         parse_loop_control_form_value(form_profile_loop_control(&form, profile))?;
@@ -1950,6 +1976,12 @@ async fn models_post(
 
     bears_db::set_bear_agent_loop_control_setting(state.sqlx_pool(), bear.id, bear_loop_control)
         .await?;
+    bears_db::set_bear_tool_budget_multiplier(
+        state.sqlx_pool(),
+        bear.id,
+        bear_tool_budget_multiplier,
+    )
+    .await?;
 
     let clear_bifrost_key = matches!(
         form.bifrost_virtual_key_clear.trim(),
@@ -1993,7 +2025,7 @@ async fn models_post(
     Ok(Redirect::to(&format!(
         "/bear/{}/models?message={}",
         bear.slug,
-        urlencoding::encode("Model and loop-control settings saved.")
+        urlencoding::encode("Model, loop-control, and tool-budget settings saved.")
     ))
     .into_response())
 }

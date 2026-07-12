@@ -548,6 +548,7 @@ pub fn composed_system_prompt_for_profile_json(
         name: name.to_string(),
         description: String::new(),
         default_model: None,
+        default_tool_budget_multiplier: None,
         tools_enabled: None,
         runtime_plan: None,
         context_profile: Some(context_profile.clone()),

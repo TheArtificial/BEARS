@@ -49,7 +49,9 @@ pub fn list_capabilities_self(context: &DenToolInvocationContext, role: BearProf
 }
 
 /// Pure: searchable capability catalog entries for the caller's resolved role.
-pub fn capability_entries_for_role(role: BearProfile) -> Vec<crate::tools::capability_catalog::CapabilityEntry> {
+pub fn capability_entries_for_role(
+    role: BearProfile,
+) -> Vec<crate::tools::capability_catalog::CapabilityEntry> {
     let mut entries: Vec<_> = builtin_den_tool_descriptors_for_profile(role)
         .into_iter()
         .map(tool_descriptor_to_capability)
@@ -60,16 +62,18 @@ pub fn capability_entries_for_role(role: BearProfile) -> Vec<crate::tools::capab
 
 /// Pure: search the caller-visible Capability Catalog.
 pub fn capability_search(arguments: Value, role: BearProfile) -> Result<Value, DenError> {
-    let args: CapabilitySearchArguments = serde_json::from_value(arguments)
-        .map_err(|err| DenError::ValidationError(format!("invalid capability_search arguments: {err}")))?;
+    let args: CapabilitySearchArguments = serde_json::from_value(arguments).map_err(|err| {
+        DenError::ValidationError(format!("invalid capability_search arguments: {err}"))
+    })?;
     let entries = capability_entries_for_role(role);
     Ok(search_capabilities(&entries, args))
 }
 
 /// Pure: describe one caller-visible Capability Catalog entry.
 pub fn capability_describe(arguments: Value, role: BearProfile) -> Result<Value, DenError> {
-    let args: CapabilityDescribeArguments = serde_json::from_value(arguments)
-        .map_err(|err| DenError::ValidationError(format!("invalid capability_describe arguments: {err}")))?;
+    let args: CapabilityDescribeArguments = serde_json::from_value(arguments).map_err(|err| {
+        DenError::ValidationError(format!("invalid capability_describe arguments: {err}"))
+    })?;
     let entries = capability_entries_for_role(role);
     describe_capability(&entries, &args.r#ref)
         .ok_or_else(|| DenError::NotFound(format!("unknown capability: {}", args.r#ref)))

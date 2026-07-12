@@ -15,6 +15,7 @@ fn legacy_test_bear(bear_id: Uuid) -> Bear {
         name: "Test Bear".to_string(),
         description: String::new(),
         default_model: None,
+        default_tool_budget_multiplier: None,
         tools_enabled: None,
         runtime_plan: None,
         context_profile: None,

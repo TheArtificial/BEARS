@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use url::Url;
 
@@ -140,6 +140,9 @@ pub struct Config {
     pub llm_api_key: String,
     /// Default model handle for native runtime turns (`DEFAULT_LLM_MODEL`).
     pub default_llm_model: String,
+    /// Per-model native tool-budget multipliers (`BEARS_MODEL_TOOL_BUDGET_MULTIPLIERS`,
+    /// comma-separated `model=multiplier` pairs). Unknown models simply do not match.
+    pub model_tool_budget_multipliers: HashMap<String, f64>,
     /// Directory for per-Bear SQLite databases (`BEAR_SQLITE_DATA_DIR`, default `/var/lib/den/bear-sqlite`).
     pub bear_sqlite_data_dir: String,
 
@@ -474,6 +477,11 @@ impl Config {
             .unwrap_or_default();
         let default_llm_model =
             std::env::var("DEFAULT_LLM_MODEL").unwrap_or_else(|_| "openai/gpt-4.1".to_string());
+        let model_tool_budget_multipliers = parse_model_tool_budget_multipliers_env(
+            std::env::var("BEARS_MODEL_TOOL_BUDGET_MULTIPLIERS")
+                .ok()
+                .as_deref(),
+        );
         let bear_sqlite_data_dir = std::env::var("BEAR_SQLITE_DATA_DIR")
             .unwrap_or_else(|_| "/var/lib/den/bear-sqlite".to_string());
 
@@ -690,6 +698,7 @@ impl Config {
             llm_api_url,
             llm_api_key,
             default_llm_model,
+            model_tool_budget_multipliers,
             bear_sqlite_data_dir,
             s3_endpoint,
             s3_bucket,
@@ -778,6 +787,57 @@ mod tests {
             Some("http://sandbox:3002")
         );
     }
+
+    #[test]
+    fn parses_model_tool_budget_multipliers() {
+        let parsed = parse_model_tool_budget_multipliers_env(Some(
+            "openai/gpt-5=1.5, gpt-4.1 = 0.75, bad, empty=0, huge=99",
+        ));
+        assert_eq!(parsed.get("openai/gpt-5"), Some(&1.5));
+        assert_eq!(parsed.get("gpt-4.1"), Some(&0.75));
+        assert!(!parsed.contains_key("empty"));
+        assert!(!parsed.contains_key("huge"));
+    }
+}
+
+fn parse_model_tool_budget_multipliers_env(raw: Option<&str>) -> HashMap<String, f64> {
+    let mut multipliers = HashMap::new();
+    let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
+        return multipliers;
+    };
+
+    for entry in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let Some((model, multiplier)) = entry.split_once('=') else {
+            tracing::warn!(
+                "Ignoring invalid BEARS_MODEL_TOOL_BUDGET_MULTIPLIERS entry '{}'. Expected model=multiplier.",
+                entry
+            );
+            continue;
+        };
+        let model = model.trim();
+        let Ok(multiplier) = multiplier.trim().parse::<f64>() else {
+            tracing::warn!(
+                "Ignoring invalid tool-budget multiplier '{}' for model '{}'.",
+                multiplier.trim(),
+                model
+            );
+            continue;
+        };
+        if model.is_empty() || !multiplier.is_finite() || multiplier <= 0.0 || multiplier > 10.0 {
+            tracing::warn!(
+                "Ignoring invalid tool-budget multiplier entry '{}'. Model must be non-empty and multiplier must be in (0, 10].",
+                entry
+            );
+            continue;
+        }
+        multipliers.insert(model.to_string(), multiplier);
+    }
+
+    multipliers
 }
 
 fn parse_choice_env(name: &str, default: &str, allowed: &[&str]) -> String {
@@ -850,6 +910,7 @@ impl Config {
             llm_api_url: String::new(),
             llm_api_key: String::new(),
             default_llm_model: "gpt-4.1".into(),
+            model_tool_budget_multipliers: HashMap::new(),
             bear_sqlite_data_dir: "/var/lib/den/bear-sqlite".into(),
             s3_endpoint: String::new(),
             s3_bucket: String::new(),

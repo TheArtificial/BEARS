@@ -647,6 +647,11 @@ async fn build_session(
         .await?
     };
     let model = llm.resolve_model(Some(&model));
+    let mut tool_budget_multiplier = bear.default_tool_budget_multiplier.unwrap_or(1.0);
+    if let Some(model_multiplier) = deps.config.model_tool_budget_multipliers.get(&model) {
+        tool_budget_multiplier *= *model_multiplier;
+    }
+    let profile = profile.with_tool_budget_multiplier(tool_budget_multiplier);
     let model_option =
         den_service::model_selection::resolve_model_option(deps.pool, &model).await?;
     let bifrost_virtual_key = den_service::bears::db::bifrost_virtual_key_for_inference(

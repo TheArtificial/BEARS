@@ -40,7 +40,7 @@ pub struct BearBifrostVirtualKey {
 pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
         r"
-        SELECT id, slug, name, description, default_model, tools_enabled,
+        SELECT id, slug, name, description, default_model, default_tool_budget_multiplier, tools_enabled,
                runtime_plan, context_profile,
                provisioning_version, system_prompt, birthday, created_at, updated_at
         FROM bears
@@ -55,7 +55,7 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
 pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
         r"
-        SELECT id, slug, name, description, default_model, tools_enabled,
+        SELECT id, slug, name, description, default_model, default_tool_budget_multiplier, tools_enabled,
                runtime_plan, context_profile,
                provisioning_version, system_prompt, birthday, created_at, updated_at
         FROM bears
@@ -322,7 +322,7 @@ pub async fn list_bears_for_user(
 ) -> Result<Vec<BearWithMembership>, DenError> {
     sqlx::query_as::<_, BearWithMembership>(
         r"
-        SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
+        SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier, b.tools_enabled,
                b.runtime_plan, b.context_profile,
                b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
                ub.role AS membership_role
@@ -346,7 +346,7 @@ pub async fn bear_for_user_by_slug(
 ) -> Result<Option<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
         r"
-        SELECT b.id, b.slug, b.name, b.description, b.default_model, b.tools_enabled,
+        SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier, b.tools_enabled,
                b.runtime_plan, b.context_profile,
                b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at
         FROM bears b
@@ -954,6 +954,35 @@ pub async fn set_bear_agent_loop_control_setting(
     )
     .bind(bear_id)
     .bind(level.map(AgentLoopControlLevel::as_str))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_bear_tool_budget_multiplier(
+    pool: &PgPool,
+    bear_id: Uuid,
+    multiplier: Option<f64>,
+) -> Result<(), DenError> {
+    let multiplier = match multiplier {
+        Some(value) if value.is_finite() && value > 0.0 && value <= 10.0 => Some(value),
+        Some(_) => {
+            return Err(DenError::ValidationError(
+                "tool budget multiplier must be in (0, 10]".to_string(),
+            ))
+        }
+        None => None,
+    };
+    sqlx::query(
+        r"
+        UPDATE bears
+        SET default_tool_budget_multiplier = $2,
+            updated_at = NOW()
+        WHERE id = $1
+        ",
+    )
+    .bind(bear_id)
+    .bind(multiplier)
     .execute(pool)
     .await?;
     Ok(())

@@ -15,6 +15,11 @@ pub struct NativeCapabilityProfile {
 }
 
 impl NativeCapabilityProfile {
+    pub fn with_tool_budget_multiplier(mut self, multiplier: f64) -> Self {
+        self.turn_budget = scaled_turn_budget(self.turn_budget, multiplier);
+        self
+    }
+
     pub fn for_profile(profile: BearProfile) -> Self {
         match profile {
             BearProfile::Pair => Self {
@@ -141,6 +146,37 @@ impl NativeCapabilityProfile {
     }
 }
 
+fn scaled_count(value: u32, multiplier: f64) -> u32 {
+    if !multiplier.is_finite() || multiplier <= 0.0 {
+        return value;
+    }
+    ((value as f64) * multiplier)
+        .ceil()
+        .clamp(1.0, u32::MAX as f64) as u32
+}
+
+fn scaled_turn_budget(mut budget: TurnBudgetPolicy, multiplier: f64) -> TurnBudgetPolicy {
+    if !multiplier.is_finite() || (multiplier - 1.0).abs() < f64::EPSILON {
+        return budget;
+    }
+    budget.emergency_hard_steps = scaled_count(budget.emergency_hard_steps, multiplier);
+    budget.tool_call_limits = ToolCallBudgetLimits {
+        total: scaled_count(budget.tool_call_limits.total, multiplier),
+        read: scaled_count(budget.tool_call_limits.read, multiplier),
+        search: scaled_count(budget.tool_call_limits.search, multiplier),
+        fetch: scaled_count(budget.tool_call_limits.fetch, multiplier),
+        execute: scaled_count(budget.tool_call_limits.execute, multiplier),
+        write: scaled_count(budget.tool_call_limits.write, multiplier),
+        destructive: scaled_count(budget.tool_call_limits.destructive, multiplier),
+        other: scaled_count(budget.tool_call_limits.other, multiplier),
+    };
+    if let Some(window) = budget.post_mutation_verification_window.as_mut() {
+        window.replenish_read = scaled_count(window.replenish_read, multiplier);
+        window.replenish_search = scaled_count(window.replenish_search, multiplier);
+    }
+    budget
+}
+
 pub fn is_native_api_direct_role(role: BearProfile) -> bool {
     matches!(
         role,
@@ -185,5 +221,21 @@ mod tests {
         let pair = NativeCapabilityProfile::for_profile(BearProfile::Pair).turn_budget;
         assert!(pair.tool_call_limits.write >= 24);
         assert!(pair.tool_call_limits.total >= 100);
+    }
+
+    #[test]
+    fn tool_budget_multiplier_scales_profile_limits() {
+        let base = NativeCapabilityProfile::for_profile(BearProfile::Pair).turn_budget;
+        let scaled = NativeCapabilityProfile::for_profile(BearProfile::Pair)
+            .with_tool_budget_multiplier(1.5)
+            .turn_budget;
+        assert_eq!(
+            scaled.tool_call_limits.total,
+            ((base.tool_call_limits.total as f64) * 1.5).ceil() as u32
+        );
+        assert_eq!(
+            scaled.emergency_hard_steps,
+            ((base.emergency_hard_steps as f64) * 1.5).ceil() as u32
+        );
     }
 }

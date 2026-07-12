@@ -24,6 +24,21 @@ use crate::{auth_backend::Backend, config::Config};
 
 static TEST_DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[test]
+fn parses_tool_budget_multiplier_form_values() {
+    assert_eq!(parse_tool_budget_multiplier_form_value("").unwrap(), None);
+    assert_eq!(
+        parse_tool_budget_multiplier_form_value("inherit").unwrap(),
+        None
+    );
+    assert_eq!(
+        parse_tool_budget_multiplier_form_value("1.5").unwrap(),
+        Some(1.5)
+    );
+    assert!(parse_tool_budget_multiplier_form_value("0").is_err());
+    assert!(parse_tool_budget_multiplier_form_value("11").is_err());
+}
+
 async fn test_pool() -> Option<sqlx::PgPool> {
     dotenvy::dotenv().ok();
     let Ok(url) = std::env::var("DATABASE_URL") else {
