@@ -47,10 +47,14 @@ Den loop uses to judge whether a candidate yield is
 premature. A projection of governance mode ×
 acceptance-criteria state × run/task status, not a
 durable record. See ADR-0023 (re-homed by ADR-0035
-and ADR-0039).
+and ADR-0039); ADR-0050 and the Agent Loop Control
+implementation plan define the concrete budget,
+checkpoint, and Docket reconciliation machinery.
 
 **continuation bias**
 how aggressively a run continues vs. yields. Owned
 by the governance mode, defaulted/modulated by the
 trust stance — not defined by the stance. See
-ADR-0039.
+ADR-0039. Tool-call budgets, failure thresholds, and
+checkpoint nudges are Agent Loop Control concerns;
+see ADR-0050.

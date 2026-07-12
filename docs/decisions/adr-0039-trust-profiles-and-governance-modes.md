@@ -147,6 +147,8 @@ The "keep the loop on-task" machinery from [ADR-0023 (Task focus supervisor)](ad
 
 Consequently, continuation bias is **governance-mode-driven, not trust-profile-driven**. ADR-0023's "`work` drives harder than `pair`" is re-expressed as: the trust profile *defaults* a run's governance mode (a `work` run typically starts more autonomous, a `pair`/`chat` run interactive), but a `pair` run in `autonomous_continuation` is driven just as hard. Focus nudges are governance-mode-aware and reference acceptance criteria as the success contract.
 
+The concrete budget/checkpoint machinery for this relationship is specified by [ADR-0050 (Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints)](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) and sequenced in [`AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md`](../roadmap/AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md): tool-call and wall-clock budgets, repeated-tool/ko detection, failure thresholds, runtime checkpoints, and task-list/Docket reconciliation are loop-control policy, while task/job state remains Docket-owned.
+
 ## Consequences
 
 - **`pair` ↔ `work` flipping largely disappears** as a runtime mechanism. Offline continuation, interrogation, and panic/resume are governance-mode transitions on a stable run + workspace session.

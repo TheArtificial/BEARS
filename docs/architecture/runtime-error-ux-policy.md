@@ -162,6 +162,8 @@ Diagnostic context must not include secrets, full file contents, full prompts, b
 
 ## Warning And Recovery Taxonomy
 
+Budget, checkpoint, and task-focus warnings are governed by [ADR-0050 (Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints)](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) and its implementation plan, [`AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md`](../roadmap/AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md). These warnings may steer continuation, but they must not mutate Docket task/job state except through task-management tools.
+
 | Class | Chat/History Marker | Model Note | Diagnostic Home |
 |---|---|---|---|
 | Near-budget warning | “close to this turn's budget” | Prefer concise wrap-up or ask for fresh turn | Den event/log context budget details |
