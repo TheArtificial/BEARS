@@ -803,21 +803,10 @@ async fn maybe_handle_direct_set_conversation_title(
     .await?;
     let text = "Conversation title updated.";
     let body = deep_chat_sse_body_for_assistant_text(text);
-    let request_id_header = HeaderValue::from_str(&request_id.to_string())
-        .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
-    let response = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .header(header::CONNECTION, "keep-alive")
-        .header(HeaderName::from_static("x-request-id"), request_id_header)
-        .body(Body::from(body))
-        .map_err(|err| CustomError::System(format!("response build: {err}")))?;
-    Ok(Some(response))
+    Ok(Some(chat_sse_body_response(Body::from(body), request_id)?))
 }
 
-fn direct_chat_sse_response(text: &str, request_id: Uuid) -> Result<Response, CustomError> {
-    let body = deep_chat_sse_body_for_assistant_text(text);
+fn chat_sse_body_response(body: Body, request_id: Uuid) -> Result<Response, CustomError> {
     let request_id_header = HeaderValue::from_str(&request_id.to_string())
         .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
     Response::builder()
@@ -826,8 +815,13 @@ fn direct_chat_sse_response(text: &str, request_id: Uuid) -> Result<Response, Cu
         .header(header::CACHE_CONTROL, "no-cache")
         .header(header::CONNECTION, "keep-alive")
         .header(HeaderName::from_static("x-request-id"), request_id_header)
-        .body(Body::from(body))
+        .body(body)
         .map_err(|err| CustomError::System(format!("response build: {err}")))
+}
+
+fn direct_chat_sse_response(text: &str, request_id: Uuid) -> Result<Response, CustomError> {
+    let body = deep_chat_sse_body_for_assistant_text(text);
+    chat_sse_body_response(Body::from(body), request_id)
 }
 
 fn chat_turn_is_capabilities_meta_query(message: &str) -> bool {
@@ -900,16 +894,7 @@ fn chat_sse_response(
     stream: BearChannelSseProxyStream,
     request_id: Uuid,
 ) -> Result<Response, CustomError> {
-    let request_id_header = HeaderValue::from_str(&request_id.to_string())
-        .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream; charset=utf-8")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .header(header::CONNECTION, "keep-alive")
-        .header(HeaderName::from_static("x-request-id"), request_id_header)
-        .body(Body::from_stream(stream))
-        .map_err(|e| CustomError::System(format!("response build: {e}")))
+    chat_sse_body_response(Body::from_stream(stream), request_id)
 }
 
 async fn chat_send_native_inner(
