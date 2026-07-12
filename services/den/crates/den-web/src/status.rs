@@ -82,7 +82,7 @@ pub async fn page(State(state): State<AppState>) -> Result<Response, crate::erro
         })
         .collect();
 
-    let deploy_rows = build_deploy_rows(&payload);
+    let deploy_rows = vec![build_deploy_row(&payload)];
     let ghcr_note = payload.ghcr_config_note.clone().unwrap_or_default();
 
     let ctx = minijinja::context! {
@@ -120,9 +120,9 @@ pub struct DeployRow {
     pub in_sync: String,
 }
 
-fn build_deploy_rows(payload: &StatusPayload) -> Vec<DeployRow> {
+fn build_deploy_row(payload: &StatusPayload) -> DeployRow {
     let den = &payload.den_version;
-    let out = vec![DeployRow {
+    DeployRow {
         component: "Den".to_string(),
         git_sha: den.git_sha.clone(),
         semver: den.version.clone(),
@@ -138,9 +138,7 @@ fn build_deploy_rows(payload: &StatusPayload) -> Vec<DeployRow> {
             .map(|g| g.updated_at.clone())
             .unwrap_or_else(|| "—".to_string()),
         in_sync: sync_label(&den.git_sha, payload.ghcr_den.as_ref()),
-    }];
-
-    out
+    }
 }
 
 fn sync_label(deployed_sha: &str, ghcr: Option<&GhcrPackageRow>) -> String {

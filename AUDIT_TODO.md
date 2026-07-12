@@ -685,7 +685,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/bear/profile.rs:183` `agent.clone()` unnecessary since `agent` isn't reused after.
 - [ ] `src/bear/profile.rs:57-171` — five near-identical `match role { ... }` functions (label/description/plain_name/surfaces/capabilities/memory_rules) — consolidate into a single data table as `BearProfile` metadata.
 - [x] `src/user/settings/mod.rs:85,119` — two `.unwrap()` calls in request handlers inconsistent with the rest of the crate's `ok_or_else` convention — should be `.ok_or_else(|| CustomError::NotFound(...))?`. **DONE** (safety batch): both handlers now return `CustomError::NotFound`; `den-web` clippy green.
-- [ ] `src/status.rs:123-144` `build_deploy_rows` returns a `Vec` with always exactly one element — unnecessary ceremony, name implies multi-row generality it doesn't have.
+- [x] `src/status.rs:123-144` `build_deploy_rows` returns a `Vec` with always exactly one element — unnecessary ceremony, name implies multi-row generality it doesn't have. **DONE** (clarity batch): helper is now `build_deploy_row` returning one row; the template boundary wraps it in a Vec; `den-web` clippy green.
 - [ ] `src/bear/create_support.rs:141-157,360-377,389-408` — `admin_bear_new_form_context`/`bear_new_form_context`/`admin_bear_edit_page_context` near-identical bodies — unify into one parameterized helper.
 - [ ] `src/bear/create_support.rs:494-508` — three sequential empty-checks for chat/pair/watch roles but not curate/work — asymmetric, confusing (not a correctness call, but a style/coverage gap).
 - [ ] `src/bear/create_support.rs:52-137` — four `impl From<&Bear> for XxxForm` blocks all clone every string field — repetitive, candidate for a macro/trait helper.
