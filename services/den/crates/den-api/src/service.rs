@@ -34,20 +34,21 @@ use std::sync::Arc;
 // so the retained `crate::service::DenState` paths in `v1`/`docs` resolve.
 pub use den_service::DenState;
 
+fn api_readiness_db_error(pool: &PgPool, error: sqlx::Error) -> StatusCode {
+    tracing::warn!(
+        error = %error,
+        pool_size = pool.size(),
+        pool_idle = pool.num_idle(),
+        "database readiness check failed (api)",
+    );
+    StatusCode::SERVICE_UNAVAILABLE
+}
+
 async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, StatusCode> {
     sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&state.sqlx_pool)
         .await
-        .map_err(|e| {
-            let pool = &state.sqlx_pool;
-            tracing::warn!(
-                error = %e,
-                pool_size = pool.size(),
-                pool_idle = pool.num_idle(),
-                "database readiness check failed (api)",
-            );
-            StatusCode::SERVICE_UNAVAILABLE
-        })?;
+        .map_err(|error| api_readiness_db_error(&state.sqlx_pool, error))?;
     Ok("OK")
 }
 

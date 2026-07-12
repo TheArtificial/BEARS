@@ -187,7 +187,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [x] `src/v1/user.rs:198-246` `login` nests 3-deep if-let with duplicated `Err(CustomError::Authentication(...))` in two branches — flatten. **DONE** (handler cleanup): uses early returns plus a shared invalid-credentials closure; success path is no longer nested; `den-api` clippy green.
 - [ ] `src/v1/user.rs` — pervasive `.to_string()` for static messages where `&'static str`/`Cow` would do.
 - [x] `src/v1/user.rs:280-282,308-309` `request_password_reset`/`confirm_password_reset` are TODO stubs that unconditionally return success — misleading public API contract. **DONE** (contract cleanup): responses now explicitly say password reset email delivery/confirmation is not configured, rather than claiming links were sent or passwords reset; `den-api` clippy green.
-- [ ] `src/service.rs:37-52` `api_readiness` inlines a `map_err` closure mixing logging + error mapping — extract a named helper.
+- [x] `src/service.rs:37-52` `api_readiness` inlines a `map_err` closure mixing logging + error mapping — extract a named helper. **DONE** (clarity batch): extracted `api_readiness_db_error`; `den-api` clippy green.
 - [ ] `src/service.rs:166-194,229-301` `create_session_layer`/`create_api_cors_layer` duplicate logic across `#[cfg(feature = "production")]` branches.
 - [ ] `src/service.rs:55-79` doc comment on `create_api_app` is stale (`config`/`peer_routers` params undocumented).
 - Overall: handler code mixes manual `Response` construction with `CustomError` idiom inconsistently; deep nesting that `?` would flatten.
