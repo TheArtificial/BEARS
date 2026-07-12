@@ -6,6 +6,7 @@
 //! title derivation; structured `role: system` user rows are skipped when present.
 
 use serde_json::Value;
+use uuid::Uuid;
 
 /// Generic UI label when nothing better is available (not persisted to provider).
 pub const UNTITLED_THREAD: &str = "Untitled thread";
@@ -319,16 +320,7 @@ fn trim_trailing_punct(mut s: String) -> String {
 }
 
 fn is_uuid_like(s: &str) -> bool {
-    let t = s.trim();
-    // 8-4-4-4-12
-    if t.len() == 36 && t.chars().filter(|c| *c == '-').count() == 4 {
-        return t.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
-    }
-    // 32 hex (no hyphens)
-    if t.len() == 32 && t.chars().all(|c| c.is_ascii_hexdigit()) {
-        return true;
-    }
-    false
+    Uuid::try_parse(s.trim()).is_ok()
 }
 
 fn looks_like_machine_or_opaque_title(s: &str, conversation_id: &str) -> bool {

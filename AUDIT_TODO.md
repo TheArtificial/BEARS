@@ -248,7 +248,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `agent_loop/step.rs:56,109,178,203` — associated functions take 7-8 positional params; use an options struct.
 - [ ] `agent_assist/conversation_title.rs:262-273` `truncate_at_word_boundary` slices by raw byte index with no char-boundary safety/doc note (non-ASCII risk).
 - [ ] `agent_assist/conversation_title.rs:275-304` two separate truncate-with-word-boundary implementations in the same file — consolidate.
-- [ ] `agent_assist/conversation_title.rs:316-327` `is_uuid_like` hand-rolls UUID shape sniffing instead of `Uuid::try_parse`.
+- [x] `agent_assist/conversation_title.rs:316-327` `is_uuid_like` hand-rolls UUID shape sniffing instead of `Uuid::try_parse`. **DONE** (cleanup batch): now uses `Uuid::try_parse` directly; `den-runtime` clippy green.
 - [ ] `agent_assist/conversation_title.rs:329-365` `looks_like_machine_or_opaque_title` — 37-line function with 5 heuristics, split into named sub-checks.
 - [ ] `client_obligation_coordinator.rs:88-162` `existing_tool_result_or_late`/`existing_permission_result_or_late` structurally identical except outcome type — share via generic helper.
 - [ ] `client_obligation_coordinator.rs:412-482` `settle_permission_result` god function — extract `dispatch_local_tool_after_grant(...)`.
