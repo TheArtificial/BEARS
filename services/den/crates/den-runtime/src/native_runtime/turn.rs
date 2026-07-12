@@ -1,7 +1,6 @@
 use den_core::config::Config;
 use den_core::tools::{
     arguments::DenToolChannelContext,
-    constants::DEN_WEB_FETCH,
     context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_client_tool_result, ClientToolResultInput, ToolResultStatus},
@@ -36,14 +35,14 @@ use crate::{
     agent_loop::{
         agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
         evaluate_checkpoint_trigger, evaluate_turn_budget, projected_memory_session_diagnostic,
-        recalled_memory_session_diagnostic, record_approval_decision, record_checkpoint_request,
-        resolve_agent_loop_control, run_agent_step_stream, tool_result_content_indicates_error,
-        tool_signature_from_call, AgentLoopControlResolutionInput, AgentLoopSession,
-        AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
-        CheckpointArtifactInput, CheckpointField, CheckpointReplayPolicy, CheckpointTaskContext,
-        CheckpointTrigger, CheckpointVisibility, NativeToolDispatchMode, RuntimeCheckpointRequest,
-        SessionTrackingStream, ToolContinuationObservation, TurnBudgetStopReason,
-        TurnBudgetWarning,
+        provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
+        record_approval_decision, record_checkpoint_request, resolve_agent_loop_control,
+        run_agent_step_stream, tool_result_content_indicates_error, tool_signature_from_call,
+        AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
+        AgentStepOverflowContext, AssembleTurnContext, CheckpointArtifactInput, CheckpointField,
+        CheckpointReplayPolicy, CheckpointTaskContext, CheckpointTrigger, CheckpointVisibility,
+        NativeToolDispatchMode, RuntimeCheckpointRequest, SessionTrackingStream,
+        ToolContinuationObservation, TurnBudgetStopReason, TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
@@ -54,7 +53,8 @@ use crate::{
 use den_core::DenError;
 use den_service::conversation::persistence::PersistedTranscriptRecord;
 
-static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::default);
+static SESSION_STORE: LazyLock<AgentLoopSessionStore> =
+    LazyLock::new(AgentLoopSessionStore::default);
 
 fn render_host_context_for_model(prompt_context: Option<&serde_json::Value>) -> Option<String> {
     let host_context = prompt_context?.get("host_context")?;
@@ -246,15 +246,7 @@ pub async fn record_native_client_tool_result(
             "native agent loop session not found".to_string(),
         ));
     };
-    let matching_call = session
-        .messages
-        .iter()
-        .rev()
-        .filter(|message| message.role == "assistant")
-        .filter_map(|message| message.tool_calls.as_ref())
-        .flat_map(|calls| calls.iter())
-        .find(|call| call.id == tool_call_id)
-        .cloned();
+    let matching_call = session.find_pending_tool_call(tool_call_id);
     let tool_name = matching_call
         .as_ref()
         .map(|call| call.function.name.clone());
@@ -988,17 +980,6 @@ pub async fn continue_native_profile_turn_event_stream(
     continue_native_client_turn_event_stream(request, role).await
 }
 
-fn find_pending_tool_call(session: &AgentLoopSession, tool_call_id: &str) -> Option<ChatToolCall> {
-    session
-        .messages
-        .iter()
-        .rev()
-        .filter_map(|message| message.tool_calls.as_ref())
-        .flatten()
-        .find(|call| call.id == tool_call_id)
-        .cloned()
-}
-
 fn tool_observation_from_call(
     call: &ChatToolCall,
     content: Option<&str>,
@@ -1240,8 +1221,7 @@ fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarn
 }
 
 fn call_is_den_web_fetch(call: &ChatToolCall) -> bool {
-    builtin_den_tool_descriptor_for_provider_name(&call.function.name)
-        .is_some_and(|descriptor| descriptor.name == DEN_WEB_FETCH)
+    provider_tool_is_den_web_fetch(&call.function.name)
 }
 
 fn normalize_approved_web_url(raw: &str) -> Result<String, DenError> {
@@ -1399,7 +1379,7 @@ pub async fn continue_native_client_turn_event_stream(
                 )
                 .await?;
             }
-            let pending_call = find_pending_tool_call(&prior_session, tool_call_id);
+            let pending_call = prior_session.find_pending_tool_call(tool_call_id);
             if let Some(call) = pending_call.as_ref() {
                 observations.push(tool_observation_from_call(call, Some(content)));
             }
@@ -1431,7 +1411,7 @@ pub async fn continue_native_client_turn_event_stream(
             if approve {
                 if let Some(session) = existing_session.as_ref() {
                     if let Some(tool_call_id) = tool_call_id.as_deref() {
-                        if let Some(call) = find_pending_tool_call(session, tool_call_id) {
+                        if let Some(call) = session.find_pending_tool_call(tool_call_id) {
                             if call_is_den_web_fetch(&call) {
                                 let tool_message = execute_approved_den_tool_for_session(
                                     &request, session, &call, profile,
@@ -1450,7 +1430,7 @@ pub async fn continue_native_client_turn_event_stream(
                 let content = reason.clone().unwrap_or_else(|| "denied".to_string());
                 let pending_call = tool_call_id
                     .as_deref()
-                    .and_then(|id| find_pending_tool_call(&prior_session, id));
+                    .and_then(|id| prior_session.find_pending_tool_call(id));
                 if let Some(call) = pending_call.as_ref() {
                     observations.push(tool_observation_from_call(call, Some(&content)));
                 }

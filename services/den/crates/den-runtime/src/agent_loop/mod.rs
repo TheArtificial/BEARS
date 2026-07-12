@@ -71,13 +71,15 @@ pub use key_memory_projection::{
 };
 pub use overflow_retry::compact_session_messages_for_overflow;
 pub use pending_tools::pending_tool_calls;
-pub use policy::{select_strategy_profile, StrategyPolicyInput};
+pub use policy::{
+    select_strategy_profile, StrategyDifficulty, StrategyPolicyInput, StrategyTaskKind,
+};
 pub use session_store::{agent_loop_session_key, AgentLoopSession, AgentLoopSessionStore};
 pub use session_stream::{NativeToolDispatchMode, SessionTrackingStream};
 pub use step::{native_llm_handshake_timeout, run_agent_step_stream, AgentStepOverflowContext};
 pub use strategy::StrategyProfile;
 pub use tool_policy::{
-    maybe_pause_for_tool_approval, provider_tool_requires_approval,
+    maybe_pause_for_tool_approval, provider_tool_is_den_web_fetch, provider_tool_requires_approval,
     provider_tool_supports_unilateral_execution, record_approval_decision,
 };
 pub use transcript::{

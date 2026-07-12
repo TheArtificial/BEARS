@@ -67,32 +67,57 @@ impl CompactionTiming {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CompactionPolicyDefaults {
+    policy_version: &'static str,
+    protected_recent_group_count: usize,
+    max_groups_before_compaction: usize,
+    max_transcript_chars: usize,
+}
+
+impl CompactionPolicyDefaults {
+    fn into_policy(self) -> RuntimeCompactionPolicy {
+        RuntimeCompactionPolicy {
+            policy_version: self.policy_version.into(),
+            protected_recent_group_count: self.protected_recent_group_count,
+            max_groups_before_compaction: self.max_groups_before_compaction,
+            max_transcript_chars: self.max_transcript_chars,
+        }
+    }
+}
+
+const PAIR_POLICY_DEFAULTS: CompactionPolicyDefaults = CompactionPolicyDefaults {
+    policy_version: "pair-v1",
+    protected_recent_group_count: 4,
+    max_groups_before_compaction: 8,
+    max_transcript_chars: 24_000,
+};
+const CHAT_POLICY_DEFAULTS: CompactionPolicyDefaults = CompactionPolicyDefaults {
+    policy_version: "chat-v1",
+    protected_recent_group_count: 3,
+    max_groups_before_compaction: 10,
+    max_transcript_chars: 16_000,
+};
+const WORK_POLICY_DEFAULTS: CompactionPolicyDefaults = CompactionPolicyDefaults {
+    policy_version: "work-v1",
+    protected_recent_group_count: 3,
+    max_groups_before_compaction: 8,
+    max_transcript_chars: 20_000,
+};
+const BACKGROUND_POLICY_DEFAULTS: CompactionPolicyDefaults = CompactionPolicyDefaults {
+    policy_version: "background-v1",
+    protected_recent_group_count: 2,
+    max_groups_before_compaction: 6,
+    max_transcript_chars: 12_000,
+};
+
 /// Per-profile compaction policy defaults.
 pub fn compaction_policy_for_profile(profile: BearProfile) -> RuntimeCompactionPolicy {
     match profile {
-        BearProfile::Pair => RuntimeCompactionPolicy {
-            policy_version: "pair-v1".into(),
-            protected_recent_group_count: 4,
-            max_groups_before_compaction: 8,
-            max_transcript_chars: 24_000,
-        },
-        BearProfile::Chat => RuntimeCompactionPolicy {
-            policy_version: "chat-v1".into(),
-            protected_recent_group_count: 3,
-            max_groups_before_compaction: 10,
-            max_transcript_chars: 16_000,
-        },
-        BearProfile::Work => RuntimeCompactionPolicy {
-            policy_version: "work-v1".into(),
-            protected_recent_group_count: 3,
-            max_groups_before_compaction: 8,
-            max_transcript_chars: 20_000,
-        },
-        BearProfile::Curate | BearProfile::Watch => RuntimeCompactionPolicy {
-            policy_version: "background-v1".into(),
-            protected_recent_group_count: 2,
-            max_groups_before_compaction: 6,
-            max_transcript_chars: 12_000,
-        },
+        BearProfile::Pair => PAIR_POLICY_DEFAULTS,
+        BearProfile::Chat => CHAT_POLICY_DEFAULTS,
+        BearProfile::Work => WORK_POLICY_DEFAULTS,
+        BearProfile::Curate | BearProfile::Watch => BACKGROUND_POLICY_DEFAULTS,
     }
+    .into_policy()
 }

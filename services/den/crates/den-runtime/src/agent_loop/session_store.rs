@@ -16,7 +16,7 @@ use crate::{
         TurnBudgetPolicy, TurnBudgetState,
     },
     context_budget::AssembledTurnBudgetComponents,
-    llm::{ChatMessage, LlmApiStyle, LlmRequestTelemetry, LlmToolDefinition},
+    llm::{ChatMessage, ChatToolCall, LlmApiStyle, LlmRequestTelemetry, LlmToolDefinition},
 };
 
 #[derive(Debug, Clone)]
@@ -58,6 +58,16 @@ pub struct AgentLoopSession {
 }
 
 impl AgentLoopSession {
+    pub fn find_pending_tool_call(&self, tool_call_id: &str) -> Option<ChatToolCall> {
+        self.messages
+            .iter()
+            .rev()
+            .filter_map(|message| message.tool_calls.as_ref())
+            .flatten()
+            .find(|call| call.id == tool_call_id)
+            .cloned()
+    }
+
     pub fn llm_telemetry(&self) -> LlmRequestTelemetry {
         LlmRequestTelemetry {
             request_id: self.request_id.clone(),

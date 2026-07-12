@@ -4,13 +4,13 @@ use den_memory::{
 };
 use den_service::memory_proposals::CreateMemoryProposal;
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{memory::create_proposal, runtime_conversations::RuntimeIterativeSummary};
 use den_service::bears::BearProfile;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 struct CompactionArtifactHarvestRow {
     id: Uuid,
     conversation_id: Uuid,
@@ -39,6 +39,20 @@ struct HarvestAssessment {
     risk_signals: Vec<&'static str>,
 }
 
+fn db_err(context: &'static str) -> impl FnOnce(sqlx::Error) -> DenError {
+    move |err| match DenError::from(err) {
+        DenError::Database(message) => DenError::Database(format!("{context}: {message}")),
+        DenError::DatabaseUnavailable(message) => {
+            DenError::DatabaseUnavailable(format!("{context}: {message}"))
+        }
+        other => other,
+    }
+}
+
+fn json_parse_err(context: &'static str) -> impl FnOnce(serde_json::Error) -> DenError {
+    move |err| DenError::Parsing(format!("{context}: {err}"))
+}
+
 pub async fn harvest_compaction_artifacts_once(
     pool: &PgPool,
     config: &Config,
@@ -55,8 +69,22 @@ pub async fn harvest_compaction_artifacts_once(
     };
 
     for artifact in artifacts {
-        let source_ref = artifact.id.to_string();
-        let source_hash = source_hash(&artifact.artifact_json);
+        let CompactionArtifactHarvestRow {
+            id,
+            conversation_id,
+            external_conversation_id,
+            artifact_kind,
+            policy_version,
+            trigger,
+            source_message_start_seq,
+            source_message_end_seq,
+            source_group_start,
+            source_group_end,
+            artifact_json,
+        } = artifact;
+
+        let source_ref = id.to_string();
+        let source_hash = source_hash(&artifact_json);
         // ponytail: exact content hash only; upgrade path is source equivalence metadata when
         // artifacts can be reserialized with semantically identical but byte-different JSON.
         if harvest_source_marked(&store, "compaction_artifact", &source_ref).await?
@@ -64,7 +92,7 @@ pub async fn harvest_compaction_artifacts_once(
         {
             continue;
         }
-        let summary = decode_summary(&artifact.artifact_json)?;
+        let summary = decode_summary(artifact_json)?;
         let proposed_content = proposal_content_from_summary(&summary);
         let Some(assessment) = assess_harvest_candidate(&summary, &proposed_content) else {
             record_harvest_mark(
@@ -79,26 +107,28 @@ pub async fn harvest_compaction_artifacts_once(
             continue;
         };
 
-        let title = proposal_title(&summary, &artifact);
+        let HarvestAssessment {
+            durable_signal_count,
+            confidence,
+            sensitivity,
+            risk_signals,
+        } = assessment;
+        let title = proposal_title(&summary, id);
         let rationale = format!(
-            "Mined from Den compaction artifact {} produced by policy {} from source messages {}-{}.",
-            artifact.id,
-            artifact.policy_version,
-            artifact.source_message_start_seq,
-            artifact.source_message_end_seq
+            "Mined from Den compaction artifact {id} produced by policy {policy_version} from source messages {source_message_start_seq}-{source_message_end_seq}."
         );
         let source_refs = serde_json::json!({
             "source": "archive_harvest",
-            "artifact_id": artifact.id,
-            "artifact_kind": artifact.artifact_kind,
-            "conversation_uuid": artifact.conversation_id,
-            "conversation_id": artifact.external_conversation_id,
-            "policy_version": artifact.policy_version,
-            "trigger": artifact.trigger,
-            "source_message_start_seq": artifact.source_message_start_seq,
-            "source_message_end_seq": artifact.source_message_end_seq,
-            "source_group_start": artifact.source_group_start,
-            "source_group_end": artifact.source_group_end,
+            "artifact_id": id,
+            "artifact_kind": artifact_kind,
+            "conversation_uuid": conversation_id,
+            "conversation_id": &external_conversation_id,
+            "policy_version": policy_version,
+            "trigger": trigger,
+            "source_message_start_seq": source_message_start_seq,
+            "source_message_end_seq": source_message_end_seq,
+            "source_group_start": source_group_start,
+            "source_group_end": source_group_end,
         });
         let proposal = create_proposal(
             pool,
@@ -118,17 +148,17 @@ pub async fn harvest_compaction_artifacts_once(
                 proposed_content: Some(&proposed_content),
                 proposed_patch: None,
                 refs: serde_json::json!({
-                    "conversation_id": artifact.external_conversation_id,
-                    "artifact_id": artifact.id,
+                    "conversation_id": &external_conversation_id,
+                    "artifact_id": id,
                     "archive_harvest": true,
                     "source_hash": source_hash,
                     "quality": {
-                        "confidence": assessment.confidence,
-                        "durable_signal_count": assessment.durable_signal_count,
+                        "confidence": confidence,
+                        "durable_signal_count": durable_signal_count,
                     },
-                    "risk_signals": assessment.risk_signals,
+                    "risk_signals": risk_signals,
                 }),
-                sensitivity: assessment.sensitivity,
+                sensitivity,
                 requires_human: true,
                 project_to_conversation: false,
             },
@@ -154,7 +184,7 @@ async fn list_unmined_compaction_artifacts(
     bear_id: Uuid,
     limit: i64,
 ) -> Result<Vec<CompactionArtifactHarvestRow>, DenError> {
-    let rows = sqlx::query(
+    sqlx::query_as::<_, CompactionArtifactHarvestRow>(
         r"
         SELECT a.id,
                a.conversation_id,
@@ -186,31 +216,11 @@ async fn list_unmined_compaction_artifacts(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|err| DenError::Database(format!("list compaction artifacts for harvest: {err}")))?;
-
-    rows.into_iter()
-        .map(|row| {
-            Ok(CompactionArtifactHarvestRow {
-                id: row.try_get("id")?,
-                conversation_id: row.try_get("conversation_id")?,
-                external_conversation_id: row.try_get("external_conversation_id")?,
-                artifact_kind: row.try_get("artifact_kind")?,
-                policy_version: row.try_get("policy_version")?,
-                trigger: row.try_get("trigger")?,
-                source_message_start_seq: row.try_get("source_message_start_seq")?,
-                source_message_end_seq: row.try_get("source_message_end_seq")?,
-                source_group_start: row.try_get("source_group_start")?,
-                source_group_end: row.try_get("source_group_end")?,
-                artifact_json: row.try_get("artifact_json")?,
-            })
-        })
-        .collect::<Result<Vec<_>, sqlx::Error>>()
-        .map_err(|err| DenError::Database(format!("decode compaction artifact harvest row: {err}")))
+    .map_err(db_err("list/decode compaction artifacts for harvest"))
 }
 
-fn decode_summary(value: &serde_json::Value) -> Result<RuntimeIterativeSummary, DenError> {
-    serde_json::from_value(value.clone())
-        .map_err(|err| DenError::Database(format!("decode compaction summary for harvest: {err}")))
+fn decode_summary(value: serde_json::Value) -> Result<RuntimeIterativeSummary, DenError> {
+    serde_json::from_value(value).map_err(json_parse_err("decode compaction summary for harvest"))
 }
 
 fn source_hash(value: &serde_json::Value) -> String {
@@ -219,15 +229,12 @@ fn source_hash(value: &serde_json::Value) -> String {
     format!("sha256:{digest:x}")
 }
 
-fn proposal_title(
-    summary: &RuntimeIterativeSummary,
-    artifact: &CompactionArtifactHarvestRow,
-) -> String {
+fn proposal_title(summary: &RuntimeIterativeSummary, artifact_id: Uuid) -> String {
     summary
         .active_user_goals
         .first()
         .map(|goal| truncate_chars(goal, 80))
-        .unwrap_or_else(|| format!("Review compaction artifact {}", artifact.id))
+        .unwrap_or_else(|| format!("Review compaction artifact {artifact_id}"))
 }
 
 fn proposal_content_from_summary(summary: &RuntimeIterativeSummary) -> String {

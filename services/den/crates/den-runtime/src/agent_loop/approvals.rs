@@ -19,6 +19,15 @@ pub enum NativeApprovalDecision {
     Deny,
 }
 
+impl NativeApprovalDecision {
+    const fn status(self) -> &'static str {
+        match self {
+            Self::Approve => "approved",
+            Self::Deny => "denied",
+        }
+    }
+}
+
 pub async fn create_native_approval(
     pool: &PgPool,
     bear_id: Uuid,
@@ -56,10 +65,7 @@ pub async fn decide_native_approval(
     decision: NativeApprovalDecision,
     reason: Option<&str>,
 ) -> Result<(), DenError> {
-    let status = match decision {
-        NativeApprovalDecision::Approve => "approved",
-        NativeApprovalDecision::Deny => "denied",
-    };
+    let status = decision.status();
     sqlx::query(
         r"
         UPDATE runtime_approvals
@@ -74,4 +80,15 @@ pub async fn decide_native_approval(
     .await
     .map_err(|e| DenError::System(format!("decide runtime approval failed: {e}")))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approval_decision_status_matches_persisted_values() {
+        assert_eq!(NativeApprovalDecision::Approve.status(), "approved");
+        assert_eq!(NativeApprovalDecision::Deny.status(), "denied");
+    }
 }

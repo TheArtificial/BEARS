@@ -1,5 +1,5 @@
-//! Reflection/curation worker subsystem: the memory-curate conductor loop and
-//! its conversation-lane persistence.
+//! Reflection/curation worker subsystem: the memory-curate conductor loop,
+//! compaction archive-harvest pass, and conversation-lane persistence.
 
 pub mod archive_harvest;
 pub mod conductor;

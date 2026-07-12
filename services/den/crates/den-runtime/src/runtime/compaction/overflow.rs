@@ -32,7 +32,7 @@ pub fn den_error_indicates_context_overflow(err: &DenError) -> bool {
             is_context_length_overflow_message(msg)
         }
         DenError::Anyhow(cause) => is_context_length_overflow_message(&cause.to_string()),
-        _ => false,
+        other => is_context_length_overflow_message(&other.to_string()),
     }
 }
 

@@ -146,10 +146,7 @@ pub fn summarize_runtime_messages(value: Option<&Value>) -> Vec<String> {
             if content.is_empty() {
                 None
             } else {
-                Some(format!(
-                    "{role}: {}",
-                    truncate_chars(content, 300)
-                ))
+                Some(format!("{role}: {}", truncate_chars(content, 300)))
             }
         })
         .take(20)
@@ -160,9 +157,7 @@ pub fn runtime_conversations_top_array(value: &Value) -> &[Value] {
     top_array_from_keys(value, &["conversations", "data", "items"])
 }
 
-
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeSemanticGroupKind {
     UserTurn,
     AssistantReply,

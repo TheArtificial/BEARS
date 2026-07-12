@@ -20,8 +20,8 @@ use crate::{
         step::RUNTIME_CHECKPOINT_TOOL_NAME,
         task_gate_checkpoint_trigger, tool_call_finished_event_for_content,
         tool_policy::{
-            maybe_pause_for_tool_approval, provider_tool_requires_approval,
-            provider_tool_supports_unilateral_execution,
+            maybe_pause_for_tool_approval, provider_tool_is_den_web_fetch,
+            provider_tool_requires_approval, provider_tool_supports_unilateral_execution,
         },
         validate_checkpoint_response, AgentStepOverflowContext, CheckpointArtifactInput,
         CheckpointField, CheckpointReplayPolicy, CheckpointResponseInput, CheckpointTaskContext,
@@ -37,7 +37,6 @@ use den_core::tools::{
     constants::{
         DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
         DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TOOL_OUTPUT_READ,
-        DEN_WEB_FETCH,
     },
     context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
@@ -69,6 +68,26 @@ type ServerToolFuture = Pin<
 >;
 type FinalGateContinuationFuture =
     Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
+
+fn recent_tool_result_matches(messages: &[ChatMessage], tool_call_id: &str) -> bool {
+    messages.last().is_some_and(|last| {
+        last.role == "tool" && last.tool_call_id.as_deref() == Some(tool_call_id)
+    })
+}
+
+fn recent_tool_exchange_start(messages: &[ChatMessage], tool_call_id: &str) -> Option<usize> {
+    if !recent_tool_result_matches(messages, tool_call_id) || messages.len() < 2 {
+        return None;
+    }
+    let assistant_index = messages.len() - 2;
+    let assistant = &messages[assistant_index];
+    (assistant.role == "assistant"
+        && assistant
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| calls.iter().any(|call| call.id == tool_call_id)))
+    .then_some(assistant_index)
+}
 
 async fn tool_output_read_result(
     pool: &sqlx::PgPool,
@@ -227,30 +246,16 @@ impl SessionTrackingStream {
     }
 
     fn remove_recent_server_tool_chain_from_session(&self, tool_call_id: &str) {
-        self.store.update(&self.session_key, |session| {
-            let Some(last) = session.messages.last() else {
-                return;
-            };
-            if last.role != "tool" || last.tool_call_id.as_deref() != Some(tool_call_id) {
-                return;
-            }
-            let tool_index = session.messages.len() - 1;
-            if tool_index == 0 {
-                session.messages.pop();
-                return;
-            }
-            let assistant_index = tool_index - 1;
-            let assistant_matches = session.messages[assistant_index].role == "assistant"
-                && session.messages[assistant_index]
-                    .tool_calls
-                    .as_ref()
-                    .is_some_and(|calls| calls.iter().any(|call| call.id == tool_call_id));
-            if assistant_matches {
-                session.messages.truncate(assistant_index);
-            } else {
-                session.messages.pop();
-            }
-        });
+        self.store.update(
+            &self.session_key,
+            |session| match recent_tool_exchange_start(&session.messages, tool_call_id) {
+                Some(assistant_index) => session.messages.truncate(assistant_index),
+                None if recent_tool_result_matches(&session.messages, tool_call_id) => {
+                    session.messages.pop();
+                }
+                None => {}
+            },
+        );
     }
 
     fn persist_outstanding_tools_as_incomplete(&self, reason: &str) {
@@ -271,24 +276,19 @@ impl SessionTrackingStream {
     }
 
     fn server_tool_context(&self) -> DenToolInvocationContext {
-        let workspace_roots = self
-            .store
-            .get(&self.session_key)
-            .map(|session| session.workspace_roots)
+        let session = self.store.get(&self.session_key);
+        let workspace_roots = session
+            .as_ref()
+            .map(|session| session.workspace_roots.clone())
             .unwrap_or_default();
-        let context_budget = self
-            .store
-            .get(&self.session_key)
-            .and_then(|session| session.latest_context_budget)
+        let context_budget = session
+            .as_ref()
+            .and_then(|session| session.latest_context_budget.clone())
             .and_then(|report| serde_json::to_value(report).ok());
-        let projected_memory = self
-            .store
-            .get(&self.session_key)
-            .and_then(|session| session.latest_projected_memory);
-        let recalled_memory = self
-            .store
-            .get(&self.session_key)
-            .and_then(|session| session.latest_recalled_memory);
+        let projected_memory = session
+            .as_ref()
+            .and_then(|session| session.latest_projected_memory.clone());
+        let recalled_memory = session.and_then(|session| session.latest_recalled_memory);
         DenToolInvocationContext {
             bear_id: self.bear_id,
             bear_slug: self.bear_slug.clone(),
@@ -320,8 +320,7 @@ impl SessionTrackingStream {
 
     fn should_request_den_tool_permission(&self, tool_name: &str) -> bool {
         self.dispatch_mode == NativeToolDispatchMode::DeferToClient
-            && builtin_den_tool_descriptor_for_provider_name(tool_name)
-                .is_some_and(|descriptor| descriptor.name == DEN_WEB_FETCH)
+            && provider_tool_is_den_web_fetch(tool_name)
     }
 
     fn should_execute_den_tool_server_side(&self, tool_name: &str) -> bool {
@@ -1177,22 +1176,6 @@ impl Stream for SessionTrackingStream {
                     (tool_name.clone(), arguments.to_string()),
                 );
                 self.sync_assistant_tool_step_to_session();
-                let approval_required = provider_tool_requires_approval(&tool_name);
-                let event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
-                    tool_call_id: tool_call_id.clone(),
-                    tool_name: tool_name.clone(),
-                    title: Self::started_tool_title(&tool_name),
-                    kind: Some("function".to_string()),
-                    arguments: arguments.clone(),
-                    approval_request_id: None,
-                    approval_required,
-                    approval_reason: if approval_required {
-                        Some("native runtime policy".to_string())
-                    } else {
-                        None
-                    },
-                    run_id: None,
-                });
                 if self.should_request_den_tool_permission(&tool_name) {
                     let pool = self.pool.clone();
                     let bear_id = self.bear_id;
@@ -1237,6 +1220,22 @@ impl Stream for SessionTrackingStream {
                     cx.waker().wake_by_ref();
                     return Poll::Pending;
                 }
+                let approval_required = provider_tool_requires_approval(&tool_name);
+                let event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+                    tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    title: Self::started_tool_title(&tool_name),
+                    kind: Some("function".to_string()),
+                    arguments: arguments.clone(),
+                    approval_request_id: None,
+                    approval_required,
+                    approval_reason: if approval_required {
+                        Some("native runtime policy".to_string())
+                    } else {
+                        None
+                    },
+                    run_id: None,
+                });
                 if self.should_execute_den_tool_server_side(&tool_name) {
                     self.persist_assistant_tool_step();
                     let call = ChatToolCall {
