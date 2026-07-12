@@ -23,7 +23,7 @@ ENV RUSTUP_HOME=/home/bear/.rustup \
     CARGO_HOME=/home/bear/.cargo \
     PATH=/home/bear/.cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain stable --component clippy rustfmt \
+        | sh -s -- -y --default-toolchain stable --component clippy --component rustfmt \
     && rustc --version
 
 WORKDIR /workspace
