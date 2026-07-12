@@ -766,40 +766,6 @@ fn sandbox_server_url_from_env(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sandbox_server_url_defaults_for_worker_only_processes() {
-        assert_eq!(
-            sandbox_server_url_from_env(None, true, false, 3137).as_deref(),
-            Some("http://bears-sandbox-provider:3137")
-        );
-        assert_eq!(
-            sandbox_server_url_from_env(Some("".into()), true, false, 3002),
-            None
-        );
-        assert_eq!(sandbox_server_url_from_env(None, false, true, 3002), None);
-        assert_eq!(
-            sandbox_server_url_from_env(Some(" http://sandbox:3002/ ".into()), true, false, 3002)
-                .as_deref(),
-            Some("http://sandbox:3002")
-        );
-    }
-
-    #[test]
-    fn parses_model_tool_budget_multipliers() {
-        let parsed = parse_model_tool_budget_multipliers_env(Some(
-            "openai/gpt-5=1.5, gpt-4.1 = 0.75, bad, empty=0, huge=99",
-        ));
-        assert_eq!(parsed.get("openai/gpt-5"), Some(&1.5));
-        assert_eq!(parsed.get("gpt-4.1"), Some(&0.75));
-        assert!(!parsed.contains_key("empty"));
-        assert!(!parsed.contains_key("huge"));
-    }
-}
-
 fn parse_model_tool_budget_multipliers_env(raw: Option<&str>) -> HashMap<String, f64> {
     let mut multipliers = HashMap::new();
     let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
@@ -971,5 +937,39 @@ pub fn requires_jwt_secret(config: &Config) -> bool {
     #[cfg(not(feature = "production"))]
     {
         config.run_api
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_server_url_defaults_for_worker_only_processes() {
+        assert_eq!(
+            sandbox_server_url_from_env(None, true, false, 3137).as_deref(),
+            Some("http://bears-sandbox-provider:3137")
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(Some(String::new()), true, false, 3002),
+            None
+        );
+        assert_eq!(sandbox_server_url_from_env(None, false, true, 3002), None);
+        assert_eq!(
+            sandbox_server_url_from_env(Some(" http://sandbox:3002/ ".into()), true, false, 3002)
+                .as_deref(),
+            Some("http://sandbox:3002")
+        );
+    }
+
+    #[test]
+    fn parses_model_tool_budget_multipliers() {
+        let parsed = parse_model_tool_budget_multipliers_env(Some(
+            "openai/gpt-5=1.5, gpt-4.1 = 0.75, bad, empty=0, huge=99",
+        ));
+        assert_eq!(parsed.get("openai/gpt-5"), Some(&1.5));
+        assert_eq!(parsed.get("gpt-4.1"), Some(&0.75));
+        assert!(!parsed.contains_key("empty"));
+        assert!(!parsed.contains_key("huge"));
     }
 }
