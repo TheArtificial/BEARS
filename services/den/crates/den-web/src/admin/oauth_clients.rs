@@ -122,6 +122,25 @@ pub struct NewOAuthClientForm {
     public: bool, // Whether this is a public client (uses PKCE)
 }
 
+fn field_error_messages(errors: &ValidationErrors, field: &str) -> Vec<String> {
+    errors
+        .field_errors()
+        .get(field)
+        .map(|items| {
+            items
+                .iter()
+                .map(|error| {
+                    error
+                        .message
+                        .as_ref()
+                        .map(|message| message.to_string())
+                        .unwrap_or_else(|| "unknown error".to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 // Custom validation for redirect URIs
 fn validate_redirect_uris(redirect_uris: &str) -> Result<(), ValidationError> {
     if redirect_uris.trim().is_empty() {
@@ -327,38 +346,8 @@ pub async fn add_oauth_client_action(
             .map(|s| s.as_str().to_string())
             .collect();
 
-        // Process validation errors for template (replacing map filter)
-        let redirect_uris_errors: Vec<String> = validation_errors
-            .field_errors()
-            .get("redirect_uris")
-            .map(|errors| {
-                errors
-                    .iter()
-                    .map(|e| {
-                        e.message
-                            .as_ref()
-                            .map(|m| m.to_string())
-                            .unwrap_or_else(|| "unknown error".to_string())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let scopes_errors: Vec<String> = validation_errors
-            .field_errors()
-            .get("scopes")
-            .map(|errors| {
-                errors
-                    .iter()
-                    .map(|e| {
-                        e.message
-                            .as_ref()
-                            .map(|m| m.to_string())
-                            .unwrap_or_else(|| "unknown error".to_string())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let redirect_uris_errors = field_error_messages(&validation_errors, "redirect_uris");
+        let scopes_errors = field_error_messages(&validation_errors, "scopes");
 
         web::render_template(
             &state,

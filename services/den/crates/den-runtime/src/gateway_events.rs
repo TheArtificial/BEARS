@@ -711,25 +711,36 @@ fn tool_call_value<'a>(
         })
 }
 
+fn lookup_field<'a>(
+    sources: &[Option<&'a serde_json::Value>],
+    paths: &[&[&str]],
+) -> Option<&'a serde_json::Value> {
+    sources.iter().filter_map(|source| *source).find_map(|source| {
+        paths.iter().find_map(|path| {
+            let mut value = source;
+            for segment in *path {
+                value = value.get(*segment)?;
+            }
+            Some(value)
+        })
+    })
+}
+
 fn tool_call_id(
     tool_call: Option<&serde_json::Value>,
     inner: &serde_json::Value,
     event: &serde_json::Value,
 ) -> Option<String> {
-    tool_call
-        .and_then(|v| v.get("tool_call_id"))
-        .or_else(|| tool_call.and_then(|v| v.get("id")))
-        .or_else(|| {
-            tool_call
-                .and_then(|v| v.get("function"))
-                .and_then(|f| f.get("tool_call_id"))
-        })
-        .or_else(|| inner.get("tool_call_id"))
-        .or_else(|| inner.get("id"))
-        .or_else(|| event.get("tool_call_id"))
-        .or_else(|| event.get("id"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
+    lookup_field(
+        &[tool_call, Some(inner), Some(event)],
+        &[
+            &["tool_call_id"],
+            &["id"],
+            &["function", "tool_call_id"],
+        ],
+    )
+    .and_then(|v| v.as_str())
+    .map(str::to_string)
 }
 
 fn tool_call_name<'a>(
@@ -737,19 +748,12 @@ fn tool_call_name<'a>(
     inner: &'a serde_json::Value,
     event: &'a serde_json::Value,
 ) -> Option<&'a str> {
-    tool_call
-        .and_then(|v| v.get("name"))
-        .or_else(|| {
-            tool_call
-                .and_then(|v| v.get("function"))
-                .and_then(|f| f.get("name"))
-        })
-        .or_else(|| inner.get("tool_name"))
-        .or_else(|| inner.get("name"))
-        .or_else(|| event.get("tool_name"))
-        .or_else(|| event.get("name"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
+    lookup_field(
+        &[tool_call, Some(inner), Some(event)],
+        &[["name"].as_slice(), &["function", "name"], &["tool_name"]],
+    )
+    .and_then(|v| v.as_str())
+    .filter(|s| !s.is_empty())
 }
 
 fn tool_call_args_raw<'a>(
@@ -757,21 +761,15 @@ fn tool_call_args_raw<'a>(
     inner: &'a serde_json::Value,
     event: &'a serde_json::Value,
 ) -> Option<&'a serde_json::Value> {
-    tool_call
-        .and_then(|v| v.get("input"))
-        .or_else(|| tool_call.and_then(|v| v.get("arguments")))
-        .or_else(|| tool_call.and_then(|v| v.get("args")))
-        .or_else(|| {
-            tool_call
-                .and_then(|v| v.get("function"))
-                .and_then(|f| f.get("arguments"))
-        })
-        .or_else(|| inner.get("input"))
-        .or_else(|| inner.get("args"))
-        .or_else(|| inner.get("arguments"))
-        .or_else(|| event.get("input"))
-        .or_else(|| event.get("args"))
-        .or_else(|| event.get("arguments"))
+    lookup_field(
+        &[tool_call, Some(inner), Some(event)],
+        &[
+            &["input"],
+            &["arguments"],
+            &["args"],
+            &["function", "arguments"],
+        ],
+    )
 }
 
 pub fn map_provider_stream_event_to_gateway_event_with_accumulator(

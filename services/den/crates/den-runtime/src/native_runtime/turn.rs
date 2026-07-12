@@ -1011,6 +1011,10 @@ fn tool_observation_from_call(
     }
 }
 
+fn parse_args_or_empty_object(raw: &str) -> serde_json::Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::Object(Default::default()))
+}
+
 fn continuation_budget_stop(
     reason: TurnBudgetStopReason,
 ) -> (RuntimeStreamContinuation, RuntimeEventStream) {
@@ -1261,8 +1265,7 @@ async fn record_web_fetch_url_approval(
     user_id: Option<i32>,
     call: &ChatToolCall,
 ) -> Result<(), DenError> {
-    let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
-        .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+    let args = parse_args_or_empty_object(&call.function.arguments);
     let raw_url = args
         .get("url")
         .and_then(|value| value.as_str())
@@ -1305,8 +1308,7 @@ async fn execute_approved_den_tool_for_session(
     let canonical = builtin_den_tool_descriptor_for_provider_name(&call.function.name)
         .map(|descriptor| descriptor.name.to_string())
         .unwrap_or_else(|| call.function.name.clone());
-    let args = serde_json::from_str(&call.function.arguments)
-        .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+    let args = parse_args_or_empty_object(&call.function.arguments);
     let context = DenToolInvocationContext {
         bear_id: session.bear_id,
         bear_slug: session.bear_slug.clone(),
