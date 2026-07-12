@@ -1,3 +1,4 @@
+use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
@@ -15,6 +16,7 @@ pub(crate) struct ToolTaskRecord {
     pub(crate) tool_name: String,
     pub(crate) turn_token: Option<Uuid>,
     pub(crate) phase: ToolTaskPhase,
+    pub(crate) input_args: Option<Value>,
     pub(crate) started_at: std::time::Instant,
     pub(crate) updated_at: std::time::Instant,
 }
@@ -24,26 +26,67 @@ impl ToolTaskRegistry {
         format!("{session_id}\n{tool_call_id}")
     }
 
-    pub(crate) async fn register(
+    pub(crate) async fn try_register(
         &self,
         session_id: &str,
         tool_call_id: &str,
         tool_name: &str,
         turn_token: Option<Uuid>,
-    ) {
+    ) -> bool {
         let now = std::time::Instant::now();
-        self.tasks.lock().await.insert(
-            Self::key(session_id, tool_call_id),
+        let mut tasks = self.tasks.lock().await;
+        let key = Self::key(session_id, tool_call_id);
+        if tasks.contains_key(&key) {
+            return false;
+        }
+        tasks.insert(
+            key,
             ToolTaskRecord {
                 session_id: session_id.to_string(),
                 tool_call_id: tool_call_id.to_string(),
                 tool_name: tool_name.to_string(),
                 turn_token,
                 phase: ToolTaskPhase::Received,
+                input_args: None,
                 started_at: now,
                 updated_at: now,
             },
         );
+        true
+    }
+
+    pub(crate) async fn remember_input(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        tool_name: &str,
+        input_args: Value,
+    ) {
+        let mut tasks = self.tasks.lock().await;
+        let now = std::time::Instant::now();
+        let entry = tasks
+            .entry(Self::key(session_id, tool_call_id))
+            .or_insert_with(|| ToolTaskRecord {
+                session_id: session_id.to_string(),
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                turn_token: None,
+                phase: ToolTaskPhase::Received,
+                input_args: None,
+                started_at: now,
+                updated_at: now,
+            });
+        entry.tool_name = tool_name.to_string();
+        entry.input_args = Some(input_args);
+        entry.updated_at = now;
+    }
+
+    pub(crate) async fn get(&self, session_id: &str, tool_call_id: &str) -> Option<ToolTaskRecord> {
+        self.tasks
+            .lock()
+            .await
+            .get(&Self::key(session_id, tool_call_id))
+            .cloned()
     }
 
     pub(crate) async fn set_phase(
@@ -62,6 +105,7 @@ impl ToolTaskRegistry {
             tool_name: tool_name.to_string(),
             turn_token: None,
             phase,
+            input_args: None,
             started_at: now,
             updated_at: now,
         });
@@ -218,9 +262,11 @@ mod tests {
     #[tokio::test]
     async fn registry_tracks_phase_and_session_entries() {
         let registry = ToolTaskRegistry::default();
-        registry
-            .register("session-1", "call-1", "fs_list_directory", None)
-            .await;
+        assert!(
+            registry
+                .try_register("session-1", "call-1", "fs_list_directory", None)
+                .await
+        );
         registry
             .set_phase(
                 "session-1",
@@ -237,5 +283,31 @@ mod tests {
         let removed = registry.remove("session-1", "call-1").await.unwrap();
         assert_eq!(removed.tool_call_id, "call-1");
         assert!(registry.list_for_session("session-1").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn try_register_rejects_duplicate_tool_call_for_session() {
+        let registry = ToolTaskRegistry::default();
+
+        assert!(
+            registry
+                .try_register("session-1", "call-1", "fs_read_text_file", None)
+                .await
+        );
+        assert!(
+            !registry
+                .try_register("session-1", "call-1", "fs_read_text_file", None)
+                .await
+        );
+        assert!(
+            registry
+                .try_register("session-1", "call-2", "fs_read_text_file", None)
+                .await
+        );
+        assert!(
+            registry
+                .try_register("session-2", "call-1", "fs_read_text_file", None)
+                .await
+        );
     }
 }

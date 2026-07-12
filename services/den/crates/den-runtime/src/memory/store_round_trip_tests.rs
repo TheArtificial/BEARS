@@ -3,10 +3,7 @@ mod tests {
     use uuid::Uuid;
 
     use den_core::config::Config;
-    use crate::memory::{
-        store::{self, LogicalMemoryPath, MemoryStoreManager},
-        tools as sqlite_tools,
-    };
+    use den_memory::{self as store, tools as sqlite_tools, LogicalMemoryPath, MemoryStoreManager};
 
     #[tokio::test]
     async fn sqlite_memory_round_trip() {
@@ -23,14 +20,13 @@ mod tests {
             "Body",
             &[],
             None,
+            None,
+            None,
             Some("tester".to_string()),
         )
         .await
         .expect("write");
-        let path = written
-            .get("path")
-            .and_then(|v| v.as_str())
-            .expect("path");
+        let path = written.get("path").and_then(|v| v.as_str()).expect("path");
         let store = stores.store_for_bear(bear_id).await.expect("store");
         let read = sqlite_tools::sqlite_memory_read(&store, path)
             .await

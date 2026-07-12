@@ -2,6 +2,9 @@
     "name": "bears-dev",
     "initializeCommand": "docker build -t bears-devcontainer:latest -f .devcontainer/Dockerfile .devcontainer",
     "image": "bears-devcontainer:latest",
+    "features": {
+        "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+    },
     "workspaceFolder": "/workspace",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=consistent",
     "mounts": [

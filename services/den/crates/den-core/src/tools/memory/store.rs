@@ -1,6 +1,6 @@
 //! The `RoleMemoryStore` capability seam: canonical per-Bear, per-role memory.
 //!
-//! Hides the SQLite `BearMemoryStore` (and the legacy MemFS HTTP fallback) behind
+//! Hides the SQLite `BearMemoryStore` behind
 //! a trait returning already-shaped tool JSON. The `den` crate implements it over
 //! `MemoryStoreManager` + `memory::tools::sqlite_*`. Methods are grown as executor
 //! groups migrate (read surface first; write surface follows).

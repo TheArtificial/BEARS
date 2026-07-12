@@ -1,6 +1,10 @@
 # Phase 1 implementation plan (Den) — Trestle bootstrap
 
-> **Superseded (2026-06).** The Phase 1 stack here (web chat via Den -> Letta Code -> Letta, "no Den memory store", Letta provisioning) predates the Den-native runtime migration. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) and the [migration plan](DEN_NATIVE_RUNTIME_PLAN.md). Read this as historical.
+> **Superseded (2026-06).** The Phase 1 stack here (web chat via Den -> Letta Code -> Letta, "no Den memory store", Letta provisioning) predates the Den runtime migration. Canonical target: [Den runtime](../architecture/den-runtime.md) and the [runtime plan](DEN_RUNTIME_PLAN.md). Read this as historical.
+>
+> **Salvaged native product scope:** operator console, onboarding, routines, Garage/artifacts, MCP, and acceptance criteria have been consolidated into [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md).
+>
+> **Skills note.** For the native Skills catalog, Bear manifest, proposal/review lifecycle, descriptor integration, and package export plan, use [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md).
 
 **Trestle** is only a **short-lived bootstrap codename** for the first milestone: bare-bones **Axum + PostgreSQL + self-building Docker**. It is **not** a service directory in this repo and does not persist after you have a working skeleton. The **lasting** binary, crate, and deploy artifact are **Den** (see [PLAN.md](PLAN.md), [DEN_ARCHITECTURE.md](../architecture/DEN_ARCHITECTURE.md)).
 

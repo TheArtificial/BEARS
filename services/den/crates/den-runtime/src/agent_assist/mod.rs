@@ -2,9 +2,9 @@
 //! runtime SSE stream parser, tool-policy filtering, assistant display/title helpers,
 //! agent JSON projections, and the model/tool option value types.
 //!
-//! History: these grew up alongside the (now removed) self-hosted Letta HTTP client; the
-//! client is gone and these native helpers were renamed off the `letta` name (this module
-//! was `core::letta`).
+//! History: these grew up alongside the (now removed) external runtime HTTP client; the
+//! client is gone and these native helpers were renamed off the provider name (this module
+//! was `agent_assist`).
 
 mod agent_diagnostics;
 mod agent_document;
@@ -12,7 +12,6 @@ mod agent_prefill;
 mod agent_summary;
 mod assistant_display;
 mod conversation_title;
-mod model_options;
 pub mod runtime_stream_parser;
 pub mod tool_policy;
 
@@ -28,7 +27,7 @@ pub enum PendingApprovalDenialMode {
     InspectOnly,
 }
 
-pub use agent_diagnostics::{AgentDiagnostics, AgentBlockRow, AgentToolRow};
+pub use agent_diagnostics::{AgentBlockRow, AgentDiagnostics, AgentToolRow};
 pub use agent_document::unwrap_agent_document;
 pub use agent_prefill::AgentBearPrefill;
 pub use agent_summary::AgentSummary;
@@ -39,5 +38,4 @@ pub use conversation_title::{
     display_conversation_title, first_user_message_text_for_title, is_acceptable_derived_title,
     is_meaningful_conversation_title, UNTITLED_THREAD,
 };
-pub use model_options::{ModelOption, ToolOption};
 pub use tool_policy::{filter_legacy_memory_tool_ids, is_legacy_memory_tool_name};

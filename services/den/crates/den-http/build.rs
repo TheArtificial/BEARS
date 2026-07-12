@@ -1,7 +1,7 @@
 //! Build script for `den-http`.
 //!
 //! Emits the build metadata env vars consumed by `build_info` (`DEN_BUILT_AT_UTC`,
-//! `DEN_GIT_SHA`) and, in production builds (the `production` feature), embeds the
+//! stable fallback `DEN_GIT_SHA`) and, in production builds (the `production` feature), embeds the
 //! email template group so `email::template_environment` can `load_templates!(.., "email")`
 //! without disk access. In dev builds the embed is a no-op (templates path-loaded).
 use std::{fs, path::Path};
@@ -48,13 +48,10 @@ fn main() {
         "cargo:rustc-env=DEN_BUILT_AT_UTC={}",
         build_time_utc_rfc3339()
     );
-    let git_sha = std::env::var("GIT_SHA")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
-    println!("cargo:rustc-env=DEN_GIT_SHA={git_sha}");
-    println!("cargo:rerun-if-env-changed=GIT_SHA");
+    // Runtime deployment metadata is supplied by DEN_GIT_SHA_OVERRIDE / SOURCE_COMMIT.
+    // Keep this fallback stable so commit-only deploys do not force recompilation of
+    // den-http and downstream edge crates.
+    println!("cargo:rustc-env=DEN_GIT_SHA=unknown");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 
     let production_enabled = std::env::var_os("CARGO_FEATURE_PRODUCTION").is_some();

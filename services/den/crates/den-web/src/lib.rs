@@ -20,13 +20,7 @@ pub mod core;
 pub mod observability;
 
 pub mod admin;
-pub mod bear_chat;
-pub mod bear_create_support;
-pub mod bear_management;
-pub mod bear_member;
-pub mod bear_memory;
-pub mod bear_profile;
-pub mod bear_settings;
+pub mod bear;
 pub mod design;
 pub mod filters;
 pub mod home;
@@ -37,6 +31,10 @@ pub mod status;
 pub mod user;
 pub mod v1;
 pub mod web_chat_runtime;
+pub mod work;
+
+#[cfg(test)]
+mod tests;
 
 use indexmap::IndexMap;
 use std::sync::OnceLock;
@@ -107,7 +105,8 @@ pub struct AppState {
     template_env: Environment<'static>,
     asset_router: Arc<Router<AppState>>,
     pub config: Arc<Config>,
-    pub bifrost: std::sync::Arc<den_runtime::bifrost::BifrostClient>,
+    pub bifrost: std::sync::Arc<den_service::bifrost::BifrostClient>,
+    pub bifrost_catalog: den_service::bifrost::BifrostCatalogStore,
     pub web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
     pub media: Option<crate::core::s3::MediaStore>,
 }
@@ -127,7 +126,7 @@ impl AppState {
             sqlx_pool,
             template_env,
             config,
-            crate::web_chat_runtime::native_web_chat_runtime(),
+            crate::web_chat_runtime::unavailable_web_chat_runtime(),
         )
     }
 
@@ -139,13 +138,14 @@ impl AppState {
         web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
     ) -> Self {
         let bifrost =
-            std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref()));
+            std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref()));
         Self {
             sqlx_pool,
             template_env,
             asset_router: Arc::new(Router::new()),
             config,
             bifrost,
+            bifrost_catalog: den_service::bifrost::new_catalog_store(),
             web_chat_runtime,
             media: None,
         }
@@ -194,6 +194,19 @@ pub async fn server_with_state(
     session_store: PostgresStore,
     config: Arc<Config>,
 ) -> Result<Router, Box<dyn std::error::Error>> {
+    server_with_state_and_runtime(
+        sqlx_pool,
+        session_store,
+        config,
+        crate::web_chat_runtime::unavailable_web_chat_runtime(),
+    )
+    .await
+}
+
+pub fn template_environment(config: &Config) -> Environment<'static> {
+    #[cfg(feature = "production")]
+    let _ = config;
+
     let mut env = Environment::new();
     env.add_filter("hexadecimal", filters::hexadecimal);
     env.add_filter("urlencode", filters::urlencode);
@@ -213,10 +226,28 @@ pub async fn server_with_state(
         env.set_loader(minijinja::path_loader(template_path));
     }
 
+    env
+}
+
+pub async fn server_with_state_and_runtime(
+    sqlx_pool: PgPool,
+    session_store: PostgresStore,
+    config: Arc<Config>,
+    web_chat_runtime: Arc<dyn crate::web_chat_runtime::WebChatRuntime>,
+) -> Result<Router, Box<dyn std::error::Error>> {
+    let env = template_environment(config.as_ref());
+
     let memory_serve =
         MemoryServe::new(load_assets!("src/assets")).cache_control(CacheControl::Short);
 
-    let bifrost = std::sync::Arc::new(den_runtime::bifrost::BifrostClient::new(config.as_ref()));
+    let bifrost = std::sync::Arc::new(den_service::bifrost::BifrostClient::new(config.as_ref()));
+    let bifrost_catalog = den_service::bifrost::new_catalog_store();
+    den_service::bifrost::spawn_managed_catalog_refresh(
+        bifrost.clone(),
+        bifrost_catalog.clone(),
+        config.bifrost_catalog_refresh_secs,
+        config.clone(),
+    );
 
     let media = crate::core::s3::MediaStore::new(config.as_ref());
     server(
@@ -226,7 +257,8 @@ pub async fn server_with_state(
             asset_router: Arc::new(memory_serve.into_router()),
             config: config.clone(),
             bifrost,
-            web_chat_runtime: crate::web_chat_runtime::native_web_chat_runtime(),
+            bifrost_catalog,
+            web_chat_runtime,
             media,
         },
         session_store,
@@ -302,11 +334,13 @@ pub async fn server(
         )
         .merge(
             Router::new()
-                .merge(bear_management::router())
-                .merge(bear_memory::router())
+                .merge(bear::management::router())
+                .merge(bear::memory::router())
+                .merge(bear::manage::router())
                 .merge(onboarding::router())
+                .merge(work::router())
                 // TSR: conversation links use `/bear/{slug}/?conversation_id=…`; plain `/bear/{slug}` is the canonical chat URL.
-                .route_with_tsr("/bear/{slug}", get(bear_chat::bear_page))
+                .route_with_tsr("/bear/{slug}", get(bear::chat::bear_page))
                 .route_layer(login_required!(Backend, login_url = "/login")),
         )
         .nest("/v1", v1::router())

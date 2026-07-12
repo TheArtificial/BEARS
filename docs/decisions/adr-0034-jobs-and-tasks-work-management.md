@@ -4,6 +4,8 @@
 **Date:** 2026-06-07
 **Deciders:** Hans
 
+> **Amended by [ADR-0045](adr-0045-session-task-lists-and-docket-checkout.md).** Docket remains canonical for durable jobs/tasks, but session task lists are the Bear/human working projection. A task-list item may be local-only or backed by a Docket task, and authorized task-list changes may sync back to Docket. Read this ADR's "session-bound tasks" language through that checkout/projection model rather than as a claim that every session task-list item is itself a Docket task.
+
 ## Context
 
 BEARS already has several overlapping work-management surfaces:
@@ -39,7 +41,7 @@ BEARS adopts a two-level durable work-management model — **jobs** and **tasks*
 
 1. **Jobs are human-initiated.** Only humans create jobs, via `pair`, `chat`, or the UI directly. Agents do not self-originate jobs.
 2. **The `review` agent role is not a required gate.** Quality gating of a job (acceptance-criteria satisfaction, pre-allocation review for decisions) is managed by the job system itself. The Reflection/`review` conductor may log a completed job to Cabinet, but the `review` *agent* need not be invoked to run a job.
-3. **One concept of "task."** Tasks are persisted whether or not they belong to a job. "Lightweight" use means *without a job*, not *without persistence*.
+3. **One canonical Docket concept of "task."** Durable Docket tasks are persisted whether or not they belong to a job. Per [ADR-0045](adr-0045-session-task-lists-and-docket-checkout.md), session task-list items are a working projection: they may be local-only or Docket-backed, and only Docket-backed items are canonical Docket tasks.
 4. **Tasks are bead-like.** Each task carries a self-contained `body` (its prompt/goal) executable in roughly one turn. More complex work is expressed as child tasks. Hierarchy is a simple tree; there are no n:n dependency edges.
 5. **Tasks are definitions; runs hold execution state.** A task's identity is stable and owned by the job. Status, results, and per-run telemetry live against a run, not on the task row.
 6. **Decomposition is live and audited.** Tasks added during execution are reflected in the report immediately and recorded with who added them, when, and in which run.
@@ -57,18 +59,18 @@ This matters because `pair` is a Den-hosted runtime (it is already API-direct to
 
 Three usage patterns all resolve to the same single store, with no data crossing a store boundary:
 
-1. **In-session focus (no job).** `pair` creates **session-bound** tasks (`session_anchor_id` set, `job_id` null) to stay focused mid-conversation. These are owned by the pair session.
-2. **ACP plans.** The `pair` harness renders task state as ACP plan entries. This is a **projection** for the client; the canonical store remains the one Docket table.
-3. **Taking a job.** `pair` adopts a Docket job by binding the job's active run to the session (`session_anchor_id` on the run). No migration or copy occurs — the tasks were already in Docket; the same ACP-plan projection now renders the job's tasks.
+1. **In-session focus.** `pair` maintains a session task list to stay focused mid-conversation. Items may be local-only or Docket-backed; local-only items are not Docket tasks until promoted/synced.
+2. **ACP task-list projection.** The `pair` harness renders task-list state as ACP plan/task-list entries. This is a projection for the client, not a separate source of truth.
+3. **Checking out Docket work.** `pair` or `work` can check out a Docket job/task subtree into the session task list. Docket-backed items preserve their Docket identity and can sync authorized changes back to Docket.
 
-#### Session-bound vs. job-bound ownership
+#### Session task lists vs. Docket ownership
 
-Within Docket, a task's **ownership and retention** distinguish the two lifecycles without splitting the concept or the store:
+Per [ADR-0045](adr-0045-session-task-lists-and-docket-checkout.md), a session task list is a working view. It can contain:
 
-- **Session-bound** (`session_anchor_id`, null `job_id`): owned by a pair session; ephemeral; archivable or garbage-collected with the session. Persisted so a session can resume and recover its live plan.
-- **Job-bound** (`job_id` set): owned by a job; durable; subject to the full run/observability model.
+- **local-only task-list items**: owned by the session task list; useful for focus, exploration, or work not yet promoted to Docket;
+- **Docket-backed task-list items**: projections of durable Docket tasks, typically checked out from a job/task subtree.
 
-Same table, same `bear_tasks` concept, different ownership and retention policy.
+Docket tables remain canonical only for Docket-backed items. Local-only task-list items should preserve enough source/sync metadata to be promoted, handed off, or discarded deliberately.
 
 ### Schema
 
@@ -122,6 +124,7 @@ bear_tasks
 - scope             task_scope         -- template | run  (see decomposition)
 - title             text NOT NULL
 - body              text NOT NULL      -- self-contained prompt
+- completion_criteria jsonb NOT NULL   -- array of concrete done-condition strings
 - difficulty        task_difficulty nullable  -- trivial | moderate | hard | unknown (advisory)
 - effort_hint       effort_level nullable     -- low | medium | high (advisory)
 - assigned_to_role  bear_agent_role nullable
@@ -129,7 +132,7 @@ bear_tasks
 - created_at, updated_at
 ```
 
-The task row holds **no status or result** — those are run-scoped. `task.kind` does double duty: pre-allocation review can scan for `decision` tasks needing human pre-decisions before dispatch, and a `decision` task moving to `blocked` is the structured, API-legible "stuck, needs input" signal that opens a `work_handoffs` record (ADR-0026).
+The task row holds **no status or result** — those are run-scoped. It does hold concrete `completion_criteria`: a lightweight array of done-condition strings that gives the model a stopping target for task execution. `task.kind` does double duty: pre-allocation review can scan for `decision` tasks needing human pre-decisions before dispatch, and a `decision` task moving to `blocked` is the structured, API-legible "stuck, needs input" signal that opens a `work_handoffs` record (ADR-0026).
 
 #### `bear_job_runs` — execution log (activity domain)
 
@@ -210,6 +213,8 @@ bear_job_events
 ```
 
 The user-facing **status report** is a projection of `bear_job_events`, not a separate mutable text field. This keeps the report auditable and consistent with the event history.
+
+Runtime checkpoints from ADR-0050 are not `bear_task_events` or `bear_job_events`. They may reference Docket run/task ids for loop-control continuity, but durable task progress, blockers, completion, criteria evaluation, and report-visible history still require explicit task/job events produced through the task-management path.
 
 ### Decomposition, template vs. run scope, and learning
 

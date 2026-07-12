@@ -10,6 +10,7 @@
 - [ADR-0029](adr-0029-den-structured-runtime-events.md) — Den structured runtime (semantic) events
 - [ADR-0030](adr-0030-bearwire-resource-oriented-event-model.md) — BearWire resource-oriented event taxonomy
 - [ADR-0003](adr-0003-acp-session-bindings.md) — ACP session bindings (edge-fed into Den session store)
+- [ADR-0048](adr-0048-core-turn-client-obligation-coordinator.md) — protocol-neutral turn/client-obligation coordinator; BearWire is transport, not the continuation state machine
 - [BearWire JSON specification](../architecture/bearwire-json-spec.md)
 - [BearWire Rust design](../architecture/bearwire-rust-design.md)
 - [BearWire armature wire implementation plan](../roadmap/BEARWIRE_ARMATURE_WIRE_IMPLEMENTATION_PLAN.md)
@@ -54,38 +55,60 @@ ACP translation (stdio framing, editor permission UX, local tool execution) stay
 
 ### 2. Evolve the gateway edge into the BearWire edge — do not delete it
 
-The crate/module that today serves `/acp/**` (typically `den-acp`, composed by the binary) **evolves** into the **BearWire HTTP edge** (`den-bearwire` is an acceptable rename when the migration completes). It remains responsible for:
+The crate/module that today serves `/acp/**` (typically `den-acp`, composed by the binary) **evolves** into the **BearWire HTTP edge** (`den-bearwire` is an acceptable rename when the migration completes). It is a transport/projection edge over Den's protocol-neutral turn/client-obligation coordinator; it must not own model-continuation decisions (see ADR-0048). It remains responsible for:
 
 - transport termination (auth, TLS, rate limits at the HTTP boundary)
-- mapping BearWire control methods to den-runtime operations
+- mapping BearWire control methods to den-runtime coordinator operations
 - emitting BearWire `event` notifications on the run stream
 - session binding persistence and multi-tenant authorization
 
 It is **not** responsible for ACP stdio or editor UX.
 
-### 3. v1 transport binding: HTTP control + SSE events (BearWire envelopes)
+### 3. v1 transport binding: HTTP control + JSON event pages
 
-The [BearWire JSON specification](../architecture/bearwire-json-spec.md) prefers WebSocket JSON-RPC at `wss://<den>/bearwire/v1`. **v1 implementation** uses a pragmatic binding that reuses existing Axum patterns and allows incremental migration:
+The [BearWire JSON specification](../architecture/bearwire-json-spec.md) may later add WebSocket JSON-RPC at `wss://<den>/bearwire/v1`. **v1 implementation** uses a pragmatic HTTP binding that reuses existing Axum patterns:
 
 | Concern | v1 binding |
 | --- | --- |
 | Control methods | `POST /bearwire/v1/rpc` — single JSON-RPC 2.0 request/response endpoint (or method-scoped REST aliases during transition) |
-| Event stream | `GET /bearwire/v1/sessions/{session_id}/events` — SSE stream of JSON-RPC **`event` notifications** per the JSON spec |
+| Event projection | `GET /bearwire/v1/sessions/{session_id}/events/page` — JSON page with ordered events and server-owned `next_after` cursor |
 | Auth | Same bearer/OAuth machinery as today; `Authorization: Bearer`, `BearWire-Version: 1` |
 | Capability negotiation | `connection.capabilities` event + `initialize` method on connect |
 
-WebSocket JSON-RPC at `/bearwire/v1` is **v2** (same semantic model, different transport). Adapter-SSE and `/acp/**` are **deprecated** once parity is proven.
+WebSocket JSON-RPC at `/bearwire/v1` remains a possible future binding (same semantic model, different transport). Buffered SSE is not part of BearWire v1; adapter-SSE and `/acp/**` are deprecated once parity is proven.
 
 ### 4. Canonical projection path
 
 ```text
 RuntimeSemanticEvent  (den-runtime, in-process)
   → BearWire wire event (serializable, versioned)
-  → JSON-RPC `event` notification (SSE or WebSocket)
+  → JSON event page item (`sequence`, `event`)
   → armature projects to client protocol (ACP stdio, etc.)
 ```
 
 `GatewayEvent` may remain an **in-process orchestration** type during transition, but it must not be the armature wire. New code projects `RuntimeSemanticEvent` → BearWire wire types directly.
+
+### 4a. Surface replay invariant
+
+BearWire is not only a live stream. For every user-visible armature surface, Den must provide a **typed surface-event history** that can replay the same UI semantics as the live stream.
+
+The following invariant is mandatory:
+
+> A live BearWire event stream and a later session/history replay for the same run must project to equivalent user-visible armature state: assistant message chunks remain assistant chunks; provider reasoning remains thought/reasoning display or is omitted by explicit replay policy; tool calls remain tool cards with stable ids, names, inputs, display metadata, status, and bounded output; session title/mode/plan updates remain typed session/resource updates. The replay path must not collapse these typed surface facts into plain assistant text.
+
+Corollaries:
+
+1. **Complete tool-call start records are required for every surfaced tool.** Every user-visible or model-relevant tool call must have a durable full tool-call surface record before any completion/failure event is projected. This applies regardless of execution location: Den-hosted tools, armature-local tools, forwarded MCP tools, runtime checkpoint tools, and future channel-local tools. A sparse completion event may reference a full persisted tool-call resource, but it must not be the only source from which an armature is expected to render the card.
+2. **History replay must not use text-only conversation history for armature UI.** Human-readable conversation history may remain a flattened text projection, but ACP/session load must use the typed BearWire/surface replay projection when reconstructing UI state.
+3. **Reasoning is typed display telemetry, not assistant answer content.** Provider reasoning deltas must be represented as reasoning/thought surface events with explicit replay policy. They must not be persisted or replayed as visible assistant text. The supported replay policies are intentionally limited to `none` (omit from replay) and `thought` (replay as thought/reasoning UI); unsupported policies must not be replayed as assistant text.
+4. **Session metadata updates are first-class surface events.** Conversation title, mode, plan/task updates, and similar UI state changes must not depend on parsing arbitrary tool-result text at the armature edge. If a tool changes session-visible state, Den must emit and persist the corresponding typed surface event.
+5. **The armature projects; it does not perform archaeology.** The ACP adapter may translate BearWire surface events into ACP wire objects, but it must not be responsible for reconstructing missing action identity, display metadata, raw inputs, or replay policy from flattened transcript prose.
+
+This invariant strengthens §4. It does not make ACP canonical; it requires Den/BearWire to carry enough typed surface state for any trusted armature to project live and replayed UI consistently.
+
+The shared Rust DTOs for this wire contract should live in a narrow `bearwire-protocol` crate. `bearwire-protocol` may contain serde DTOs and lightweight validation helpers for BearWire, but it must not depend on Den runtime, Den service, HTTP server/client code, database crates, ACP, or model/provider clients. Armatures should depend on `bearwire-protocol` directly rather than importing broad Den-internal protocol crates for BearWire surface replay.
+
+A dedicated persisted surface-event stream is intentionally deferred. The current implementation may merge canonical conversation rows, selected BearWire events, and session metadata into `conversation.surface_history`; a dedicated stream should be introduced only if exact cross-source ordering/pagination becomes product-critical.
 
 ### 5. Control-method inventory replaces `/acp/**` routes
 

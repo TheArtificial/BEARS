@@ -4,7 +4,7 @@
 
 This note captures the ACP / `pair` profile runtime invariants that Den's native agent loop must preserve. It is intentionally focused on operational/runtime behavior rather than broader product architecture.
 
-For the concurrency and turn-ownership model, see [den-native-runtime.md](../architecture/den-native-runtime.md) § Concurrency model.
+For the concurrency and turn-ownership model, see [den-runtime.md](../architecture/den-runtime.md) § Concurrency model.
 
 ## Core invariants
 
@@ -106,7 +106,7 @@ If pieces of the runtime move into optional workers or projectors later, the sys
 Optional workers should control **where capabilities run**, not redefine the Bear or profile model.
 
 Good pattern:
-- Den binary with ACP API enabled (`RUN_API=true`, `ACP_GATEWAY_ENABLED=true`)
+- Den binary with API enabled (`RUN_API=true`; BearWire routes mount with the API listener)
 - Den binary with in-process native agent loop (`AGENT_RUNTIME=native`)
 - Den binary with projector/backfill workers enabled only where needed
 

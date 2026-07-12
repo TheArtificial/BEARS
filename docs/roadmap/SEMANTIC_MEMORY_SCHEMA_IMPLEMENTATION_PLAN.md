@@ -1,8 +1,8 @@
 # Semantic Memory Schema ADR Implementation Plan
 
-> **Direction changed (2026-06).** Memory path routing is implemented over per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) via the logical-path projection, not MemFS (`git_memfs_server.py`). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md#memory-model-under-sqlite) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Memory path routing is implemented over per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) via the logical-path projection, not MemFS (`git_memfs_server.py`). Canonical target: [Den runtime](../architecture/den-runtime.md#memory-model-under-sqlite) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 ## Goal
 
 Implement the ADR in `docs/architecture/adr/semantic-memory-schema-and-resources.md` by updating semantic memory write contracts, routing, retrieval assumptions, and documentation so Bear memory aligns with the new schema.

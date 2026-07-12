@@ -1,10 +1,10 @@
 //! Integration coverage for ACP pair plan mode. Requires `DATABASE_URL`.
 
 use den::startup::run_sqlx_migrations;
-use den_runtime::{
-    bears::{db as bears_db, db::BearParams, BearProfile},
-    plan_mode::{self, EnterPlanModeParams, PlanModeRequestedBy, SubmitPlanModeParams},
+use den_runtime::plan_mode::{
+    self, EnterPlanModeParams, PlanModeRequestedBy, SubmitPlanModeParams,
 };
+use den_service::bears::{db as bears_db, db::BearParams, BearProfile};
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
@@ -46,8 +46,6 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
             system_prompt: "",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(Vec::<String>::new()),
             context_profile: None,
         },
     )
@@ -58,18 +56,16 @@ async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
 async fn insert_role_agent(pool: &sqlx::PgPool, bear_id: Uuid, role: BearProfile, agent_id: &str) {
     sqlx::query(
         r"
-        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id, provisioning_status, last_synced_at)
-        VALUES ($1, $2, $3, $4, 'ready', NOW())
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, provisioning_status, last_synced_at)
+        VALUES ($1, $2, $3, 'ready', NOW())
         ON CONFLICT (bear_id, profile)
-        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id,
-                      provisioning_status = 'ready',
+        DO UPDATE SET provisioning_status = 'ready',
                       last_synced_at = NOW(),
                       updated_at = NOW()
         ",
     )
     .bind(bear_id)
     .bind(role.as_str())
-    .bind(agent_id)
     .bind(agent_id)
     .execute(pool)
     .await
@@ -94,7 +90,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
         .expect("grant bear membership");
     let test_suffix = Uuid::new_v4().simple().to_string();
     let agent_id = format!("agent-pair-plan-mode-test-{test_suffix}");
-    let acp_session_id = format!("acp-plan-mode-session-{test_suffix}");
+    let client_session_id = format!("acp-plan-mode-session-{test_suffix}");
     insert_role_agent(&pool, bear_id, BearProfile::Pair, &agent_id).await;
 
     let entered = plan_mode::enter_plan_mode(
@@ -103,7 +99,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
             user_id,
             bear_id,
             bear_slug: "plan-mode-test".to_string(),
-            acp_session_id: acp_session_id.clone(),
+            client_session_id: client_session_id.clone(),
             reason: "Need to inspect before editing".to_string(),
             requested_by: PlanModeRequestedBy::Pair,
             previous_permission_mode: Some("default".to_string()),
@@ -118,7 +114,7 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
         SubmitPlanModeParams {
             user_id,
             bear_id,
-            acp_session_id: acp_session_id.clone(),
+            client_session_id: client_session_id.clone(),
             plan_mode_id: Some(entered.id),
             title: "Implementation plan".to_string(),
             body: "1. Read files\n2. Edit code\n3. Test".to_string(),
@@ -135,19 +131,19 @@ async fn plan_mode_lifecycle_records_artifact_and_approval() {
     );
 
     let approved =
-        plan_mode::approve_plan_mode(&pool, user_id, bear_id, &acp_session_id, entered.id)
+        plan_mode::approve_plan_mode(&pool, user_id, bear_id, &client_session_id, entered.id)
             .await
             .expect("approve plan mode");
     assert_eq!(approved.state, "approved");
     assert!(approved.closed_at.is_some());
 
-    let active = plan_mode::active_for_session(&pool, user_id, bear_id, &acp_session_id)
+    let active = plan_mode::active_for_session(&pool, user_id, bear_id, &client_session_id)
         .await
         .expect("query active plan mode");
     assert!(active.is_none());
 
     let event_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM acp_plan_mode_events WHERE plan_mode_id = $1",
+        "SELECT COUNT(*)::bigint FROM client_plan_mode_events WHERE plan_mode_id = $1",
     )
     .bind(entered.id)
     .fetch_one(&pool)

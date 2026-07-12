@@ -1,8 +1,8 @@
-use crate::runtime_contracts::{
+use den_core::DenError;
+use den_protocol::{
     RuntimeByteStream, RuntimeEventParser, RuntimeEventStream, RuntimeSemanticEvent,
     RuntimeStreamEvent,
 };
-use den_core::DenError;
 
 pub fn find_sse_frame_end(buf: &[u8]) -> Option<usize> {
     let lf = buf.windows(2).position(|w| w == b"\n\n").map(|p| p + 2);
@@ -53,7 +53,9 @@ pub fn parse_sse_event_body_to_json(body: &[u8]) -> Result<Option<serde_json::Va
         .map_err(|e| DenError::System(format!("invalid continuation SSE JSON: {e}")))
 }
 
-pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option<RuntimeStreamEvent> {
+pub fn runtime_stream_event_from_provider_json(
+    event: &serde_json::Value,
+) -> Option<RuntimeStreamEvent> {
     let inner = match event.get("contents") {
         Some(contents) if contents.get("message_type").is_some() => contents,
         _ => event,
@@ -66,14 +68,11 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
     match message_type {
         "ping" => None,
         "assistant_message" => {
-            let text =
-                crate::gateway_events::provider_stream_text_preserving_whitespace(inner)
-                    .or_else(|| {
-                        crate::gateway_events::provider_stream_text_preserving_whitespace(
-                            event,
-                        )
-                    })
-                    .unwrap_or_default();
+            let text = crate::gateway_events::provider_stream_text_preserving_whitespace(inner)
+                .or_else(|| {
+                    crate::gateway_events::provider_stream_text_preserving_whitespace(event)
+                })
+                .unwrap_or_default();
             Some(RuntimeStreamEvent::Semantic(
                 RuntimeSemanticEvent::AssistantTextDelta { text },
             ))
@@ -96,9 +95,9 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     crate::gateway_events::provider_stream_text_preserving_whitespace(event)
                 })
                 .unwrap_or_default();
-            Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
-                text,
-            }))
+            Some(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::ReasoningTextDelta { text },
+            ))
         }
         "error_message" => Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
             message: event
@@ -131,43 +130,42 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     RuntimeSemanticEvent::TurnCompleted { turn: None },
                 ))
             } else if stop_reason == "requires_approval" {
-                Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused {
-                    reason: "awaiting_approval".to_string(),
-                    resume_token: None,
-                    expires_at: None,
-                }))
+                Some(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::RunPaused {
+                        reason: "awaiting_approval".to_string(),
+                        resume_token: None,
+                        expires_at: None,
+                    },
+                ))
             } else {
-                Some(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
-                    turn: None,
-                    category: crate::runtime_contracts::RuntimeErrorCategory::BackendProtocol,
-                    message: format!(
-                        "Letta stopped before producing assistant output: {stop_reason}"
-                    ),
-                }))
+                Some(RuntimeStreamEvent::Semantic(
+                    RuntimeSemanticEvent::TurnFailed {
+                        turn: None,
+                        category: den_protocol::RuntimeErrorCategory::BackendProtocol,
+                        message: format!(
+                            "Runtime stopped before producing assistant output: {stop_reason}"
+                        ),
+                    },
+                ))
             }
         }
         "tool_call_message" | "approval_request_message" | "function_call" => Some(
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
-                // The Letta tool-call SSE nests identity and arguments under `tool_call`
+                // The provider tool-call SSE nests identity and arguments under `tool_call`
                 // (e.g. `{ "id": "approval-…", "tool_call": { "name", "tool_call_id",
-                // "arguments" } }`). Check the nested locations before top-level fallbacks,
-                // mirroring the legacy native mapper. Missing this dropped `tool_call_id`,
-                // which broke `/tool-results` delivery (every post was `late_result_ignored`).
+                // "arguments" } }`). Keep this path canonical instead of accepting stale
+                // top-level aliases that cannot represent the tool-card contract cleanly.
                 tool_call_id: event
                     .pointer("/tool_call/tool_call_id")
                     .or_else(|| inner.pointer("/tool_call/tool_call_id"))
                     .or_else(|| event.pointer("/tool_call/id"))
                     .or_else(|| inner.pointer("/tool_call/id"))
                     .or_else(|| event.pointer("/tool_call/function/tool_call_id"))
-                    .or_else(|| event.get("tool_call_id"))
-                    .or_else(|| inner.get("tool_call_id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string(),
                 tool_name: event
-                    .get("tool_name")
-                    .or_else(|| inner.get("tool_name"))
-                    .or_else(|| event.pointer("/tool_call/name"))
+                    .pointer("/tool_call/name")
                     .or_else(|| inner.pointer("/tool_call/name"))
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
@@ -186,16 +184,10 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     .or_else(|| event.pointer("/tool_call/input"))
                     .or_else(|| event.pointer("/tool_call/args"))
                     .or_else(|| event.pointer("/tool_call/function/arguments"))
-                    .or_else(|| event.get("args"))
-                    .or_else(|| inner.get("args"))
-                    .or_else(|| event.get("arguments"))
-                    .or_else(|| inner.get("arguments"))
                     .cloned()
                     .unwrap_or_else(|| serde_json::json!({})),
                 approval_request_id: event
-                    .get("approval_request_id")
-                    .or_else(|| inner.get("approval_request_id"))
-                    .or_else(|| event.pointer("/tool_call/approval_request_id"))
+                    .pointer("/tool_call/approval_request_id")
                     .or_else(|| event.get("id"))
                     .or_else(|| inner.get("id"))
                     .and_then(|v| v.as_str())
@@ -206,31 +198,38 @@ pub fn runtime_stream_event_from_letta_json(event: &serde_json::Value) -> Option
                     .or_else(|| inner.get("approval_reason"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
-                run_id: ["run_id", "message/run_id", "data/run_id", "run/id", "message/run/id", "data/run/id"]
-                    .into_iter()
-                    .find_map(|pointer| {
-                        event
-                            .pointer(&format!("/{pointer}"))
-                            .or_else(|| inner.pointer(&format!("/{pointer}")))
-                            .and_then(|v| v.as_str())
-                            .map(str::trim)
-                            .filter(|run_id| !run_id.is_empty())
-                            .map(str::to_string)
-                    }),
+                run_id: [
+                    "run_id",
+                    "message/run_id",
+                    "data/run_id",
+                    "run/id",
+                    "message/run/id",
+                    "data/run/id",
+                ]
+                .into_iter()
+                .find_map(|pointer| {
+                    event
+                        .pointer(&format!("/{pointer}"))
+                        .or_else(|| inner.pointer(&format!("/{pointer}")))
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|run_id| !run_id.is_empty())
+                        .map(str::to_string)
+                }),
             }),
         ),
-        _ => crate::gateway_events::conversation_resolved_gateway_event(event).map(
-            |evt| match evt {
-                crate::gateway_events::GatewayEvent::ConversationResolved {
-                    conversation_id,
-                } => RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved {
-                    conversation: crate::runtime_contracts::RuntimeConversationRef {
-                        id: conversation_id,
-                    },
-                }),
+        _ => {
+            crate::gateway_events::conversation_resolved_gateway_event(event).map(|evt| match evt {
+                crate::gateway_events::GatewayEvent::ConversationResolved { conversation_id } => {
+                    RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ConversationResolved {
+                        conversation: den_protocol::RuntimeConversationRef {
+                            id: conversation_id,
+                        },
+                    })
+                }
                 _ => unreachable!(),
-            },
-        ),
+            })
+        }
     }
 }
 
@@ -240,9 +239,8 @@ pub fn runtime_byte_stream_to_event_stream(
     parser: RuntimeEventParser,
 ) -> RuntimeEventStream {
     let mut buffer = Vec::new();
-    let mut queued_events: std::collections::VecDeque<
-        Result<RuntimeStreamEvent, DenError>,
-    > = std::collections::VecDeque::new();
+    let mut queued_events: std::collections::VecDeque<Result<RuntimeStreamEvent, DenError>> =
+        std::collections::VecDeque::new();
     let mut finished = false;
     let mut saw_terminal_or_pause = false;
     let stream = futures::stream::poll_fn(move |cx| loop {

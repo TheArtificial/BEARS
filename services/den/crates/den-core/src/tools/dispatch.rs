@@ -15,9 +15,15 @@ use crate::DenError;
 use crate::tools::{
     constants::{
         DEN_BEAR_ENVIRONMENT, DEN_BEAR_GET_SELF, DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF,
-        DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE, DEN_CORE_WRITE_RESULT_SUMMARY,
-        DEN_MEMORY_APPLY_CORE_UPDATE, DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
-        DEN_MEMORY_LIST_PROPOSALS, DEN_MEMORY_ORIENT_WORK_SURFACE, DEN_MEMORY_READ,
+        DEN_CAPABILITY_DESCRIBE, DEN_CAPABILITY_SEARCH, DEN_CHANNEL_GET_CONTEXT,
+        DEN_CONVERSATION_SET_TITLE, DEN_CORE_WRITE_RESULT_SUMMARY, DEN_ENTITY_BROWSE,
+        DEN_ENTITY_BROWSE_PROVIDER, DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER,
+        DEN_ENTITY_MERGE, DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE,
+        DEN_ENTITY_RESOLVE_PROVIDER, DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER,
+        DEN_ENTITY_WRITE_ACCESS_RULE, DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER,
+        DEN_ENTITY_WRITE_ANCHOR, DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_MEMORY_APPLY_CORE_UPDATE,
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, DEN_MEMORY_LIST_PROPOSALS,
+        DEN_MEMORY_MARK_LIFECYCLE, DEN_MEMORY_ORIENT_WORK_SURFACE, DEN_MEMORY_READ,
         DEN_MEMORY_READ_PROPOSAL, DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_RESOLVE_PROPOSAL,
         DEN_MEMORY_SEARCH, DEN_MEMORY_STATUS, DEN_MEMORY_TREE, DEN_MEMORY_WRITE_ENTRY,
         DEN_OBSERVATION_WRITE, DEN_PLAN_MODE_CANCEL, DEN_PLAN_MODE_ENTER, DEN_PLAN_MODE_EXIT,
@@ -25,9 +31,9 @@ use crate::tools::{
         DEN_PROMPT_MEMORY_LIST, DEN_PROMPT_MEMORY_PATCH, DEN_PROMPT_MEMORY_UPSERT,
         DEN_RUN_WRITE_RESULT, DEN_SITUATION_GET, DEN_SITUATION_GET_PROVIDER,
         DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
-        DEN_TASK_APPROVE_INTENT, DEN_TASK_REJECT_INTENT, DEN_TASK_WRITE_INTENT, DEN_USER_GET_CURRENT,
-        DEN_WEB_FETCH, DEN_WEB_SEARCH, DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_LIST,
-        DEN_WORK_PLAN_REQUEST_HANDOFF, DEN_WORK_PLAN_UPDATE,
+        DEN_TASK_APPROVE_INTENT, DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_REJECT_INTENT,
+        DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
+        DEN_WEB_SEARCH,
     },
     context::DenToolInvocationContext,
     conversation::ConversationTitleOps,
@@ -36,8 +42,10 @@ use crate::tools::{
     preflight::{prevalidate_tool_arguments, tool_warning_payload, ToolPreflight},
     web::WebFetcher,
     work_surface::WorkSurfaceOps,
-    workflow::WorkPlanOps,
-    {conversation, environment, memory, plan_mode, prompt_memory, review, web, work_surface},
+    {
+        conversation, entity, environment, memory, plan_mode, prompt_memory, review, web,
+        work_surface,
+    },
 };
 
 /// Composed bundle so the dispatcher can take one `&impl ToolContext`. Each
@@ -46,7 +54,7 @@ pub trait ToolContext:
     BearDirectory
     + ConversationTitleOps
     + EnvironmentOps
-    + WorkPlanOps
+    + entity::EntityOps
     + WorkSurfaceOps
     + WebFetcher
     + memory::RoleMemoryStore
@@ -77,6 +85,8 @@ pub async fn invoke_den_tool(
         DEN_USER_GET_CURRENT => identity::get_current_user(ctx, &context).await,
         DEN_BEAR_LIST_MEMBERS => identity::list_bear_members(ctx, &context).await,
         DEN_CAPABILITIES_LIST_SELF => Ok(identity::list_capabilities_self(&context, role)),
+        DEN_CAPABILITY_SEARCH => identity::capability_search(arguments, role),
+        DEN_CAPABILITY_DESCRIBE => identity::capability_describe(arguments, role),
         DEN_CHANNEL_GET_CONTEXT => Ok(identity::channel_context(&context)),
         DEN_POLICY_GET_SELF => identity::policy_self(ctx, &context).await,
         DEN_SITUATION_GET | DEN_SITUATION_GET_PROVIDER => {
@@ -87,6 +97,9 @@ pub async fn invoke_den_tool(
         }
         DEN_WEB_FETCH => web::web_fetch(ctx, context.bear_id, &context.session_id, arguments).await,
         DEN_WEB_SEARCH => web::web_search(ctx, Some(context.bear_id), arguments).await,
+        DEN_TOOL_OUTPUT_READ => Err(DenError::System(
+            "tool_output_read is handled by the native runtime artifact store".to_string(),
+        )),
         DEN_MEMORY_WRITE_ENTRY => {
             let current_user = ctx.current_user(context.user_id).await.ok();
             memory::write_memory_entry(
@@ -103,6 +116,27 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_TREE => memory::memory_browse(ctx, context.bear_id, role).await,
         DEN_MEMORY_READ => memory::memory_read(ctx, context.bear_id, role, arguments).await,
         DEN_MEMORY_SEARCH => memory::memory_search(ctx, context.bear_id, role, arguments).await,
+        DEN_ENTITY_BROWSE | DEN_ENTITY_BROWSE_PROVIDER => {
+            entity::entity_browse(ctx, &context, role, arguments).await
+        }
+        DEN_ENTITY_RESOLVE | DEN_ENTITY_RESOLVE_PROVIDER => {
+            entity::entity_resolve(ctx, &context, role, arguments).await
+        }
+        DEN_ENTITY_LINK_MEMORY | DEN_ENTITY_LINK_MEMORY_PROVIDER => {
+            entity::entity_link_memory(ctx, &context, role, arguments).await
+        }
+        DEN_ENTITY_MERGE | DEN_ENTITY_MERGE_PROVIDER => {
+            entity::entity_merge(ctx, &context, role, arguments).await
+        }
+        DEN_ENTITY_SPLIT | DEN_ENTITY_SPLIT_PROVIDER => {
+            entity::entity_split(ctx, &context, role, arguments).await
+        }
+        DEN_ENTITY_WRITE_ACCESS_RULE | DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER => {
+            entity::entity_write_access_rule(ctx, &context, role, arguments).await
+        }
+        DEN_ENTITY_WRITE_ANCHOR | DEN_ENTITY_WRITE_ANCHOR_PROVIDER => {
+            entity::entity_write_anchor(ctx, &context, role, arguments).await
+        }
         DEN_MEMORY_ORIENT_WORK_SURFACE => {
             work_surface::orient_work_surface(ctx, &context, role).await
         }
@@ -132,9 +166,9 @@ pub async fn invoke_den_tool(
         DEN_MEMORY_APPLY_CORE_UPDATE => {
             review::apply_core_update(ctx, &context, role, arguments).await
         }
-        DEN_WORK_PLAN_LIST => ctx.list_work_plans(&context, role, arguments).await,
-        DEN_WORK_PLAN_GET_STATUS => ctx.get_work_plan_status(&context, role, arguments).await,
-        DEN_WORK_PLAN_UPDATE => ctx.update_work_plan(&context, role, arguments).await,
+        DEN_MEMORY_MARK_LIFECYCLE => {
+            review::mark_memory_lifecycle(ctx, &context, role, arguments).await
+        }
         DEN_PLAN_MODE_ENTER => plan_mode::enter_plan_mode(ctx, &context, arguments).await,
         DEN_PLAN_MODE_STATUS => plan_mode::plan_mode_status(ctx, &context).await,
         DEN_PLAN_MODE_RECORD_APPROVAL => {
@@ -147,7 +181,7 @@ pub async fn invoke_den_tool(
         DEN_SKILL_PROPOSE
         | DEN_SKILL_APPROVE_PROPOSAL
         | DEN_SKILL_REJECT_PROPOSAL
-        | DEN_WORK_PLAN_REQUEST_HANDOFF
+        | DEN_TASK_LISTS_REQUEST_HANDOFF
         | DEN_TASK_WRITE_INTENT
         | DEN_TASK_APPROVE_INTENT
         | DEN_TASK_REJECT_INTENT

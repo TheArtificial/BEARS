@@ -4,7 +4,7 @@
 //!
 //! Each impl delegates to the per-capability concrete type already defined in the
 //! sibling tool modules (web/runtime, memory_read, prompt_memory, memory_review,
-//! work_surface, plan_mode, identity, environment, workflow, session). See
+//! work_surface, plan_mode, identity, environment, session). See
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md` (Phase B — dispatcher).
 
 use serde_json::Value;
@@ -15,6 +15,7 @@ use den_core::tools::context::DenToolInvocationContext;
 use den_core::tools::{
     conversation::ConversationTitleOps,
     dispatch::ToolContext,
+    entity::EntityOps,
     environment::EnvironmentOps,
     identity::{BearDirectory, BearMemberRecord, BearRecord, CurrentUser},
     memory::{RoleMemoryEntryWrite, RoleMemoryStore},
@@ -23,18 +24,18 @@ use den_core::tools::{
         PromptMemoryBlock, PromptMemoryBlockPatch, PromptMemoryBlockWrite, PromptMemoryStore,
     },
     review::{
-        ApplyCoreUpdateRequest, MemoryReviewStore, ObservationRecord, ObservationWriteRequest,
-        RequestReviewRequest, ResolveProposalRequest,
+        ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ObservationRecord,
+        ObservationWriteRequest, RequestReviewRequest, ResolveProposalRequest,
     },
     web::{WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl},
     work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome},
-    workflow::WorkPlanOps,
 };
 
 use crate::{
     config::Config,
     core::tools::{
         activity_payloads::{no_active_workplan_payload, plan_mode_workplan_payload},
+        entity::DenEntityOps,
         environment::DenEnvironmentOps,
         identity::DenBearDirectory,
         memory_read::DenRoleMemoryStore,
@@ -44,11 +45,11 @@ use crate::{
         session::DenConversationTitleOps,
         web::runtime::DenWebFetcher,
         work_surface::DenWorkSurfaceOps,
-        workflow::DenWorkPlanOps,
     },
     errors::DenError,
 };
-use den_runtime::{bears::BearProfile, memory::MemoryStoreManager};
+use den_memory::MemoryStoreManager;
+use den_service::bears::BearProfile;
 
 /// The composition root binding every Den tool capability to the runtime.
 pub(crate) struct DenToolContext<'a> {
@@ -117,16 +118,12 @@ impl<'a> DenToolContext<'a> {
         }
     }
 
-    fn conversation(&self) -> DenConversationTitleOps<'a> {
-        DenConversationTitleOps { pool: self.pool }
+    fn entity(&'a self) -> DenEntityOps<'a> {
+        DenEntityOps::new(self)
     }
 
-    fn work_plans(&self) -> DenWorkPlanOps<'a> {
-        DenWorkPlanOps {
-            pool: self.pool,
-            config: self.config,
-            stores: self.stores,
-        }
+    fn conversation(&self) -> DenConversationTitleOps<'a> {
+        DenConversationTitleOps { pool: self.pool }
     }
 }
 
@@ -280,6 +277,13 @@ impl MemoryReviewStore for DenToolContext<'_> {
     async fn apply_core_update(&self, request: ApplyCoreUpdateRequest) -> Result<Value, DenError> {
         self.review().apply_core_update(request).await
     }
+
+    async fn mark_memory_lifecycle(
+        &self,
+        request: MarkMemoryLifecycleRequest,
+    ) -> Result<Value, DenError> {
+        self.review().mark_memory_lifecycle(request).await
+    }
 }
 
 impl WorkSurfaceOps for DenToolContext<'_> {
@@ -305,59 +309,126 @@ impl WorkSurfaceOps for DenToolContext<'_> {
     }
 }
 
+impl EntityOps for DenToolContext<'_> {
+    async fn browse_entities(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().browse(context, role, arguments).await
+    }
+
+    async fn resolve_entity(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().resolve(context, role, arguments).await
+    }
+
+    async fn link_memory_entity(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().link_memory(context, role, arguments).await
+    }
+
+    async fn merge_entities_tool(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().merge(context, role, arguments).await
+    }
+
+    async fn split_entity_tool(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().split(context, role, arguments).await
+    }
+
+    async fn write_entity_access_rule(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity()
+            .write_access_rule(context, role, arguments)
+            .await
+    }
+
+    async fn write_entity_anchor(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+        arguments: Value,
+    ) -> Result<Value, DenError> {
+        self.entity().write_anchor(context, role, arguments).await
+    }
+}
+
 impl PlanModeOps for DenToolContext<'_> {
     async fn enter(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         reason: String,
         previous_permission_mode: Option<String>,
     ) -> Result<PlanModeView, DenError> {
         self.plan_mode()
-            .enter(context, acp_session_id, reason, previous_permission_mode)
+            .enter(context, client_session_id, reason, previous_permission_mode)
             .await
     }
 
     async fn status(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
     ) -> Result<PlanModeStatusView, DenError> {
-        self.plan_mode().status(context, acp_session_id).await
+        self.plan_mode().status(context, client_session_id).await
     }
 
     async fn record_approval(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
     ) -> Result<PlanModeView, DenError> {
         self.plan_mode()
-            .record_approval(context, acp_session_id, plan_mode_id)
+            .record_approval(context, client_session_id, plan_mode_id)
             .await
     }
 
     async fn exit(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
         title: &str,
         body: &str,
     ) -> Result<PlanModeExitView, DenError> {
         self.plan_mode()
-            .exit(context, acp_session_id, plan_mode_id, title, body)
+            .exit(context, client_session_id, plan_mode_id, title, body)
             .await
     }
 
     async fn cancel(
         &self,
         context: &DenToolInvocationContext,
-        acp_session_id: &str,
+        client_session_id: &str,
         plan_mode_id: Option<Uuid>,
     ) -> Result<PlanModeView, DenError> {
         self.plan_mode()
-            .cancel(context, acp_session_id, plan_mode_id)
+            .cancel(context, client_session_id, plan_mode_id)
             .await
     }
 }
@@ -399,10 +470,6 @@ impl EnvironmentOps for DenToolContext<'_> {
         self.environment().uses_native_runtime()
     }
 
-    fn memfs_configured(&self) -> bool {
-        self.environment().memfs_configured()
-    }
-
     async fn memory_status_value(
         &self,
         context: &DenToolInvocationContext,
@@ -411,13 +478,19 @@ impl EnvironmentOps for DenToolContext<'_> {
         self.environment().memory_status_value(context, role).await
     }
 
-    async fn fetch_acp_adapter_environment(
+    async fn session_entities(
+        &self,
+        context: &DenToolInvocationContext,
+        role: BearProfile,
+    ) -> Result<Value, DenError> {
+        self.environment().session_entities(context, role).await
+    }
+
+    async fn fetch_adapter_environment(
         &self,
         context: &DenToolInvocationContext,
     ) -> Result<Option<Value>, DenError> {
-        self.environment()
-            .fetch_acp_adapter_environment(context)
-            .await
+        self.environment().fetch_adapter_environment(context).await
     }
 }
 
@@ -430,41 +503,6 @@ impl ConversationTitleOps for DenToolContext<'_> {
     ) -> Result<u64, DenError> {
         self.conversation()
             .set_title(bear_id, conversation_id, title)
-            .await
-    }
-}
-
-impl WorkPlanOps for DenToolContext<'_> {
-    async fn list_work_plans(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .list_work_plans(context, role, arguments)
-            .await
-    }
-
-    async fn get_work_plan_status(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .get_work_plan_status(context, role, arguments)
-            .await
-    }
-
-    async fn update_work_plan(
-        &self,
-        context: &DenToolInvocationContext,
-        role: BearProfile,
-        arguments: Value,
-    ) -> Result<Value, DenError> {
-        self.work_plans()
-            .update_work_plan(context, role, arguments)
             .await
     }
 }

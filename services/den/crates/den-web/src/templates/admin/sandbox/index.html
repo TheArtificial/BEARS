@@ -1,0 +1,139 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Sandbox images{% endblock %}
+
+{% block admin_content %}
+<h3>Sandbox images</h3>
+<p>
+    The image <strong>catalog</strong> is the dispatch trust boundary: jobs
+    select images by catalog name, and the sandbox provider resolves them to
+    these references. The <strong>engine store</strong> is what the dind
+    engine actually holds — catalog entries referencing registry images are
+    pulled on first use.
+</p>
+
+{% if message %}
+<p><strong>{{ message }}</strong></p>
+{% endif %}
+
+{% if provider_error %}
+<p>⚠ Provider unavailable: {{ provider_error }}. The catalog below is still
+editable; engine-store data and pulls/builds need the provider.</p>
+{% endif %}
+
+<h4>Catalog</h4>
+<table>
+    <thead>
+        <tr><th>Name</th><th>Reference</th><th>Description</th><th>Default</th><th>In engine</th><th></th></tr>
+    </thead>
+    <tbody>
+        {% for image in catalog %}
+        <tr>
+            <td><code>{{ image.name }}</code></td>
+            <td>
+                <form method="post" action="/admin/sandbox/catalog/{{ image.id }}/update">
+                    <input type="text" name="image_ref" value="{{ image.image_ref }}" size="36">
+                    <input type="text" name="description" value="{{ image.description or '' }}" size="28">
+                    <button type="submit">Save</button>
+                </form>
+            </td>
+            <td>{{ image.description or "—" }}</td>
+            <td>
+                {% if image.is_default %}✔{% else %}
+                <form method="post" action="/admin/sandbox/catalog/{{ image.id }}/default">
+                    <button type="submit">Make default</button>
+                </form>
+                {% endif %}
+            </td>
+            <td>{% if not image.engine_known %}?{% elif image.in_engine %}✔{% else %}✖ (pull or build it){% endif %}</td>
+            <td>
+                <form method="post" action="/admin/sandbox/catalog/{{ image.id }}/delete"
+                      onsubmit="return confirm('Delete catalog entry {{ image.name }}? Dispatches naming it will be rejected.')">
+                    <button type="submit">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+<form method="post" action="/admin/sandbox/catalog">
+    <p>
+        <input type="text" name="name" placeholder="name (e.g. python)" required pattern="[a-z0-9][a-z0-9._-]{0,63}">
+        <input type="text" name="image_ref" placeholder="reference (e.g. ghcr.io/org/img:tag)" size="40" required>
+        <input type="text" name="description" placeholder="description" size="30">
+        <button type="submit">Add catalog entry</button>
+    </p>
+</form>
+
+<h4>Build shipped images</h4>
+<p>
+    Builds the repository's sandbox Dockerfiles inside the engine. Build the
+    <strong>base</strong> image first — the variants layer on it. The base
+    build compiles the armature and can take a while; follow it on the
+    operation page.
+</p>
+<p>
+    {% for variant in ["base", "rust", "node", "godot"] %}
+    <form method="post" action="/admin/sandbox/build" style="display:inline">
+        <input type="hidden" name="variant" value="{{ variant }}">
+        <button type="submit">Build {{ variant }}</button>
+    </form>
+    {% endfor %}
+</p>
+
+<h4>Pull from a registry</h4>
+<form method="post" action="/admin/sandbox/pull">
+    <p>
+        <input type="text" name="reference" size="50" required
+               placeholder="ghcr.io/org/bears-sandbox:latest">
+        <button type="submit">Pull</button>
+    </p>
+</form>
+
+{% if operations %}
+<h4>Recent operations</h4>
+<table>
+    <thead><tr><th>Kind</th><th>Target</th><th>State</th><th>Started</th><th></th></tr></thead>
+    <tbody>
+        {% for op in operations %}
+        <tr>
+            <td>{{ op.kind }}</td>
+            <td><code>{{ op.target }}</code></td>
+            <td>{{ op.state }}{% if op.error %} — {{ op.error }}{% endif %}</td>
+            <td>{{ op.started_at }}</td>
+            <td><a href="/admin/sandbox/operations/{{ op.id }}">log</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% if store %}
+<h4>Engine store</h4>
+<table>
+    <thead><tr><th>Repository</th><th>Tag</th><th>Size</th><th>Created</th><th>Catalog</th><th></th></tr></thead>
+    <tbody>
+        {% for image in store.images %}
+        <tr>
+            <td><code>{{ image.repository }}</code></td>
+            <td>{{ image.tag }}</td>
+            <td>{{ image.size }}</td>
+            <td>{{ image.created }}</td>
+            <td>{% if image.in_catalog %}✔{% else %}—{% endif %}</td>
+            <td>
+                <form method="post" action="/admin/sandbox/images/remove"
+                      onsubmit="return confirm('Remove {{ image.repository }}:{{ image.tag }} from the engine store?{% if image.in_catalog %} A catalog entry references it!{% endif %}')">
+                    <input type="hidden" name="reference" value="{{ image.repository }}:{{ image.tag }}">
+                    <button type="submit">Remove</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if store.disk_usage %}
+<h4>Engine disk usage</h4>
+<pre>{{ store.disk_usage }}</pre>
+{% endif %}
+{% endif %}
+{% endblock %}

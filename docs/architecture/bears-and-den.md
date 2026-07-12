@@ -1,123 +1,110 @@
 # Bears and Den
 
-> **Direction changed (2026-06).** Letta is no longer a transitional implementation layer beneath Bear roles. Treat "Letta agents underneath a role" and Letta-backed provisioning/drift as historical; roles are Den-native runtime profiles. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+A **Bear** is the durable assistant identity users interact with. **Den** is the system that hosts, governs, routes, and persists Bears.
 
-A **Bear** is the durable assistant identity users interact with. **Den** is the control plane that makes Bears real: it provisions them, routes traffic to them, governs access, schedules work, and keeps their underlying role runtimes reconciled.
-
-For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on the Bear/Den relationship rather than re-explaining the full role model.
+This document explains the product boundary between Bear identity and Den infrastructure.
 
 ## Summary
 
-- A Bear is the product object: the assistant with memory, skills, conversations, tasks, and identity.
-- Den is the system of record and control plane for Bears.
-- Provider-managed agents such as Letta agents are implementation components that may sit underneath a Bear role during migration, but they are not the primary product concept.
-- Surfaces such as Slack, web chat, IDEs, task dispatch, and webhooks reach a Bear through Den-managed routing.
+- A Bear is the user-facing assistant identity.
+- Den is the runtime and control plane that makes that identity real.
+- A Bear spans stances, work surfaces, conversations, memory, and tasks.
+- Den spans policy, routing, approvals, persistence, scheduling, and runtime execution.
 
-## What is a Bear?
+## What a Bear is
 
 A Bear is one coherent assistant from the user's perspective.
 
 A Bear can:
 
-- remember durable knowledge,
-- chat with users,
-- pair inside tools,
-- learn skills through review,
-- watch external events,
-- and perform approved background work.
+- remember durable knowledge;
+- converse across multiple surfaces;
+- collaborate in trusted work surfaces through `pair`;
+- create and consume tasks and plans;
+- learn through review and reflection;
+- and participate in background work and event handling through specialized roles.
 
-Internally, a Bear executes through multiple specialized roles. During the Letta-backed era, some of those role runtimes are implemented as separate provider-managed agents, but users should not have to think of a Bear as five separate bots. The Bear is the stable identity; the internal roles are how the system delivers that identity safely across contexts.
+Internally, a Bear operates through multiple roles, but those roles are not separate assistants. They are controlled capability profiles over one system-owned runtime model.
 
-## What is Den?
+## What Den is
 
-Den is the control plane for Bears.
+Den is the infrastructure and control plane for Bears.
 
 Den is responsible for:
 
-- creating and provisioning Bears,
-- tracking Bear membership and access,
-- routing each surface to the correct internal role,
-- enforcing policy around tasks, tools, skills, and memory,
-- scheduling review runs and background work,
-- receiving inbound events,
-- maintaining canonical configuration,
-- and reconciling runtime state against that configuration.
+- Bear and human identity management;
+- access control and membership;
+- routing surfaces to roles and trust boundaries;
+- running the native turn loop;
+- managing prompts, context assembly, and tool surfaces;
+- storing canonical conversations, approvals, and work state;
+- scheduling reflection and autonomous work;
+- and enforcing policy over memory, tasks, and external action.
 
-Den does not replace the Bear's assistant identity. Users chat to Bears; Den manages Bears.
+Users talk to Bears. Den is the system that hosts them safely and consistently.
 
 ## What a Bear is not
 
 A Bear is not:
 
-- a single Letta agent,
-- a single chat conversation,
-- a Slack bot alone,
-- an IDE session alone,
-- a task runner alone,
+- a single conversation;
+- a single stance;
+- a channel bot alone;
+- an IDE session alone;
+- a task record alone;
 - or Den itself.
-
-The Bear is the durable assistant identity that spans those surfaces and capabilities.
 
 ## What Den is not
 
 Den is not:
 
-- the assistant persona,
-- the LLM,
-- Letta,
-- a Letta Code harness,
-- or the place where all agent reasoning happens.
+- the assistant persona;
+- the model provider;
+- the user's long-term knowledge by itself;
+- or the thing the user thinks they are talking to.
 
-Den owns control, policy, routing, scheduling, and reconciliation. The Bear's internal roles and their runtime instances do the role-specific reasoning and work.
+Den owns execution, policy, and persistence. The Bear is the assistant identity that Den presents and maintains.
 
-## Relationship to Letta
+## Relationship to stances
 
-Letta currently provides some underlying runtime implementations and persistence during the migration era. In the Letta-backed architecture, some Bear roles map to Letta-managed agents or Letta Code harnesses.
+Different surfaces engage different Bear stances:
 
-Den owns the Bear abstraction above Letta:
+| Surface or situation | Typical stance |
+|----------------------|----------------|
+| web chat, messaging, future conversational channels | `chat` |
+| ACP and trusted work-surface collaboration | `pair` |
+| reflection, review, promotion, approval | `review` / `curate` depending on vocabulary in scope |
+| approved background execution | `work` |
+| inbound webhooks, polling, and observation intake | `watch` |
 
-- Den knows which provider-managed runtimes belong to a Bear role.
-- Den knows each role's policy, memory scope, and runtime family.
-- Den provisions prompts, tools, skills, memory policy, and runtime configuration.
-- Den repairs or reports drift when runtime state diverges from canonical configuration.
+The stance changes. The Bear identity remains stable.
 
-## Relationship to surfaces
+## Relationship to work surfaces
 
-Different surfaces reach different internal Bear roles:
+A Bear does not operate in one flat undifferentiated world. It engages **work surfaces** such as repositories, services, deployments, Docket projects, Cabinet Missions, or long-running responsibilities.
 
-| Surface | Typical role |
-|---------|--------------|
-| Slack, web chat, Discord | `chat` |
-| IDEs and ACP clients | `pair` |
-| Scheduled or approved background work | `work` |
-| Webhooks, polling, queues, subscriptions | `watch` |
-| Memory integration and review | `review` |
-
-The surface changes, but the user-facing identity remains the Bear.
+Den helps attach plans, memory, tasks, observations, and runtime context to those work surfaces so the Bear can maintain continuity without confusing one domain of work for another.
 
 ## Product language
 
 Prefer:
 
-- “your Bear” for the assistant identity,
-- “Den manages Bears” for the control plane,
-- “Bear roles” for `chat`, `pair`, `review`, `work`, and `watch`,
-- “membership roles” or “access roles” for human permissions.
+- “your Bear” for the assistant identity
+- “Den hosts and manages Bears”
+- “Bear stances” for stance contracts
+- “membership” or “access roles” for human permissions
 
 Avoid:
 
-- “Den answered the user,” unless describing infrastructure logs,
-- “a Bear is a Letta agent,”
-- “the five roles are five separate assistants,”
-- or “Bear roles” when the intended meaning is specifically human membership or access roles.
+- “Den answered the user” except in infrastructure/operator contexts
+- describing roles as separate assistants
+- using “Bear stance” when you mean human access role
 
 ## Related docs
 
-- [Bear roles](bear-roles.md)
-- [Memory model](memory-model.md)
-- [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
-- [Capabilities and skills](capabilities-and-skills.md)
-- [Observations and subscriptions](observations-and-subscriptions.md)
-- [Identity and membership](IDENTITY_AND_MEMBERSHIP.md)
-- [Multi-role runtime architecture ADR](../architecture/adr/multi-role-runtime-architecture.md)
-- [Den Bear spec](../../services/den/docs/bear-spec.md)
+- [den bear spec](den-bear-spec.md)
+- [bear stances](bear-stances.md)
+- [memory model](memory-model.md)
+- [tasks and autonomy](tasks-and-autonomy.md)
+- [capabilities and skills](capabilities-and-skills.md)
+- [identity and membership](identity-and-membership.md)

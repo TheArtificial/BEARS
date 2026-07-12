@@ -1,7 +1,7 @@
 //! Startup validation, SQLx migration runner, and structured errors for [`crate::run`].
 
 use crate::config::Config;
-use den_runtime::runtime_provider::{acp_requires_runtime, RuntimeStartupCapabilities};
+use den_protocol::edge_gateway_requires_runtime;
 use sqlx::PgPool;
 use thiserror::Error;
 
@@ -28,6 +28,13 @@ pub enum StartupError {
         db_url: String,
         hint: String,
     },
+    #[error(
+        "database schema version {database_version} is newer than this Den binary supports (latest embedded migration: {binary_version})"
+    )]
+    DatabaseSchemaTooNew {
+        database_version: i64,
+        binary_version: i64,
+    },
 }
 
 /// `true` when SQLx should ignore migration files present in `_sqlx_migrations` but missing
@@ -47,10 +54,39 @@ pub fn sqlx_migrate_ignore_missing_from_env() -> bool {
 /// Run embedded SQLx migrations from `migrations/` against `pool`.
 pub async fn run_sqlx_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
     if sqlx_migrate_ignore_missing_from_env() {
-        sqlx::migrate!().set_ignore_missing(true).run(pool).await
+        let mut migrator = sqlx::migrate!();
+        migrator.set_ignore_missing(true).run(pool).await
     } else {
         sqlx::migrate!().run(pool).await
     }
+}
+
+pub fn embedded_schema_version() -> i64 {
+    sqlx::migrate!()
+        .migrations
+        .last()
+        .map(|migration| migration.version)
+        .unwrap_or(0)
+}
+
+pub async fn ensure_database_schema_supported(pool: &PgPool) -> Result<(), StartupError> {
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT MAX(version)::BIGINT AS version FROM public._sqlx_migrations WHERE success = TRUE",
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let Some((database_version,)) = row else {
+        return Ok(());
+    };
+    let binary_version = embedded_schema_version();
+    if database_version > binary_version {
+        return Err(StartupError::DatabaseSchemaTooNew {
+            database_version,
+            binary_version,
+        });
+    }
+    Ok(())
 }
 
 /// Whether [`validate_runtime_config`] requires a non-empty `JWT_SECRET` (production builds or `RUN_API`).
@@ -59,8 +95,24 @@ pub async fn run_sqlx_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::Mig
 /// the binary's startup validation share one definition.
 pub use den_core::config::requires_jwt_secret;
 
+/// Whether any enabled service needs the Den Postgres database.
+///
+/// The sandbox provider (`RUN_SANDBOX`) is deliberately excluded: it must be able
+/// to run standalone on a host with no database, communicating with Den only
+/// over HTTP (and via in-sandbox armatures over BearWire).
+pub fn needs_database(config: &Config) -> bool {
+    config.run_web || config.run_api || config.run_workers
+}
+
 /// Validate secrets and other invariants before connecting to the database.
 pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
+    if needs_database(config) && config.database_url.trim().is_empty() {
+        return Err(StartupError::Message(
+            "DATABASE_URL must be set when RUN_WEB, RUN_API, or RUN_WORKERS is enabled. \
+             Only a standalone sandbox server (RUN_SANDBOX only) can run without it."
+                .into(),
+        ));
+    }
     if requires_jwt_secret(config) {
         let secret = std::env::var("JWT_SECRET").unwrap_or_default();
         if secret.trim().is_empty() {
@@ -71,15 +123,9 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
             ));
         }
     }
-    if config.acp_gateway_enabled && !config.run_api {
+    if edge_gateway_requires_runtime(config) && config.llm_api_url.trim().is_empty() {
         return Err(StartupError::Message(
-            "ACP_GATEWAY_ENABLED=true requires RUN_API=true because ACP is exposed only on the API listener."
-                .into(),
-        ));
-    }
-    if acp_requires_runtime(config) && config.llm_api_url.trim().is_empty() {
-        return Err(StartupError::Message(
-            "LLM_API_URL (or BIFROST_BASE_URL) must be set when ACP_GATEWAY_ENABLED=true (Den-native agent loop)."
+            "LLM_API_URL (or BIFROST_BASE_URL) must be set when RUN_API=true (Den-native agent loop)."
                 .into(),
         ));
     }
@@ -89,14 +135,12 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
 /// Verify configured upstream HTTP services respond before accepting traffic.
 ///
 /// The Den-native runtime relies only on the LLM inference substrate
-/// ([`Config::llm_api_url`], via Bifrost); there are no Letta/Codepool sidecars to probe.
+/// ([`Config::llm_api_url`], via Bifrost); there are no upstream runtime sidecars to probe.
 pub async fn validate_upstream_connections(config: &Config) -> Result<(), StartupError> {
-    let runtime_capabilities = RuntimeStartupCapabilities::from_config(config);
     if !config.llm_api_url.trim().is_empty() {
         tracing::info!(
             url = %config.llm_api_url,
             compatibility_backend = "native",
-            acp_gateway_enabled = runtime_capabilities.acp_gateway_enabled,
             "Native agent runtime configured (LLM inference substrate)"
         );
     }
@@ -147,6 +191,8 @@ mod tests {
 
         let mut api_on = base;
         api_on.run_api = true;
+        // Satisfy the separate RUN_API LLM requirement so this test only exercises JWT rules.
+        api_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
         assert!(
             validate_runtime_config(&api_on).is_err(),
             "RUN_API=true requires JWT_SECRET"
@@ -164,27 +210,21 @@ mod tests {
     }
 
     #[test]
-    fn validate_requires_api_and_llm_when_acp_enabled() {
+    fn validate_requires_llm_when_api_enabled() {
         let prev = std::env::var("JWT_SECRET").ok();
         unsafe {
             std::env::set_var("JWT_SECRET", "test-jwt-secret-for-unit-tests-min-length-ok");
         }
 
-        let mut acp_on = Config::test_stub();
-        acp_on.acp_gateway_enabled = true;
+        let mut api_on = Config::test_stub();
+        api_on.run_api = true;
         assert!(
-            validate_runtime_config(&acp_on).is_err(),
-            "ACP_GATEWAY_ENABLED requires RUN_API"
+            validate_runtime_config(&api_on).is_err(),
+            "API runtime requires LLM_API_URL"
         );
 
-        acp_on.run_api = true;
-        assert!(
-            validate_runtime_config(&acp_on).is_err(),
-            "ACP runtime requires LLM_API_URL"
-        );
-
-        acp_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
-        validate_runtime_config(&acp_on).expect("ACP with API and LLM_API_URL should pass");
+        api_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
+        validate_runtime_config(&api_on).expect("API with LLM_API_URL should pass");
 
         match prev {
             Some(v) => unsafe { std::env::set_var("JWT_SECRET", v) },
@@ -197,5 +237,22 @@ mod tests {
         let mut web_on = Config::test_stub();
         web_on.run_web = true;
         validate_runtime_config(&web_on).expect("RUN_WEB has no legacy runtime requirement");
+    }
+
+    #[test]
+    fn validate_database_url_rules() {
+        let mut sandbox_only = Config::test_stub();
+        sandbox_only.database_url = String::new();
+        sandbox_only.run_sandbox = true;
+        assert!(!needs_database(&sandbox_only));
+        validate_runtime_config(&sandbox_only)
+            .expect("RUN_SANDBOX alone must not require DATABASE_URL");
+
+        let mut web_no_db = sandbox_only;
+        web_no_db.run_web = true;
+        assert!(
+            validate_runtime_config(&web_no_db).is_err(),
+            "RUN_WEB requires DATABASE_URL"
+        );
     }
 }

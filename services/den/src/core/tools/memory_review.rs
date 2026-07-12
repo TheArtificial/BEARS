@@ -12,25 +12,28 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::tools::review::{
-    ApplyCoreUpdateRequest, MemoryReviewStore, ObservationRecord, ObservationWriteRequest,
-    ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
+    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ObservationRecord,
+    ObservationWriteRequest, ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
 };
 
 use crate::{config::Config, errors::DenError};
+use den_memory::{mark_memory_record_lifecycle, MemoryStoreManager};
 use den_runtime::{
     bear_observations::{self, BearObservationRow},
-    bears::BearProfile,
-    conversation_events::{
-        memory_proposal_resolved_projection, memory_review_requested_projection,
-        project_to_conversation, ProjectionProvenance, ProjectionSource,
-    },
     memory::{
         create_observation, create_proposal, get_observation, get_proposal as db_get_proposal,
         list_proposals as db_list_proposals, mark_observation_review_queued_for_bear,
-        promote_core_content, resolve_proposal as db_resolve_proposal, MemoryStoreManager,
+        promote_core_content_at_path, resolve_proposal as db_resolve_proposal,
+    },
+    reflection_conductor::{self, ProposalEnqueueParams},
+};
+use den_service::{
+    bears::BearProfile,
+    conversation::events::{
+        memory_proposal_resolved_projection, memory_review_requested_projection,
+        project_to_conversation, ProjectionProvenance, ProjectionSource,
     },
     memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
-    reflection_conductor::{self, ProposalEnqueueParams},
 };
 
 fn observation_record(row: &BearObservationRow) -> ObservationRecord {
@@ -48,6 +51,13 @@ fn observation_record(row: &BearObservationRow) -> ObservationRecord {
 
 fn observation_requires_human(salience: &str) -> bool {
     matches!(salience, "high" | "critical")
+}
+
+fn sensitivity_requires_human(sensitivity: &str) -> bool {
+    matches!(
+        sensitivity,
+        "person" | "secret_risk" | "external_untrusted" | "unknown"
+    )
 }
 
 /// Concrete [`MemoryReviewStore`] over the runtime pool/config/stores.
@@ -308,6 +318,39 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         Ok(json!(proposal))
     }
 
+    async fn mark_memory_lifecycle(
+        &self,
+        request: MarkMemoryLifecycleRequest,
+    ) -> Result<Value, DenError> {
+        let store = self.stores.store_for_bear(request.bear_id).await?;
+        let record = mark_memory_record_lifecycle(
+            &store,
+            &request.memory_id,
+            &request.status,
+            request.reason.as_deref(),
+        )
+        .await?;
+        reflection_conductor::enqueue_recall_index_if_enabled(
+            self.pool,
+            self.config,
+            request.bear_id,
+            "memory_mark_lifecycle",
+        )
+        .await;
+        Ok(json!({
+            "memory_id": record.memory_id,
+            "logical_path": record.logical_path,
+            "kind": record.kind,
+            "salience": record.salience,
+            "supersedes_memory_id": record.supersedes_memory_id,
+            "invalid_at": record.invalid_at,
+            "lifecycle_status": record.lifecycle_status,
+            "freshness_trend": record.freshness_trend,
+            "reviewer_profile": request.reviewer_profile.as_str(),
+            "reviewer_agent_id": request.binding_id,
+        }))
+    }
+
     async fn apply_core_update(&self, request: ApplyCoreUpdateRequest) -> Result<Value, DenError> {
         let proposal = db_get_proposal(
             self.pool,
@@ -318,6 +361,22 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         )
         .await?
         .ok_or_else(|| DenError::NotFound("memory proposal not found".to_string()))?;
+
+        if proposal.requires_human || sensitivity_requires_human(&proposal.sensitivity) {
+            return Err(DenError::ValidationError(
+                "proposal requires human review; resolve as needs_human_review instead of applying a core update autonomously".to_string(),
+            ));
+        }
+        if !request.target_path.trim().starts_with("core/") {
+            return Err(DenError::ValidationError(
+                "target_path must be under core/".to_string(),
+            ));
+        }
+        if request.mode != "append_section" && request.mode != "create_file" {
+            return Err(DenError::ValidationError(
+                "native SQLite core updates currently support append_section or create_file; replace_text must be proposed for human review".to_string(),
+            ));
+        }
 
         let content = request.body.clone().unwrap_or_else(|| {
             format!(
@@ -331,10 +390,11 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             .next_back()
             .unwrap_or("note")
             .trim_end_matches(".md");
-        let (memory_id, promotion_id) = promote_core_content(
+        let (memory_id, promotion_id) = promote_core_content_at_path(
             self.stores,
             request.bear_id,
             &proposal.id.to_string(),
+            request.target_path.as_str(),
             kind,
             &content,
             request.reviewer_profile.as_str(),

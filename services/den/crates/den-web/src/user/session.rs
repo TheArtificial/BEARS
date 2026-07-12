@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use crate::web::{self, AppState};
 use crate::{
     auth_backend::{AuthSession, Credentials},
-    errors::CustomError,
     core::user,
+    errors::CustomError,
 };
 
 // This allows us to extract the "next" field from the query string. We use this

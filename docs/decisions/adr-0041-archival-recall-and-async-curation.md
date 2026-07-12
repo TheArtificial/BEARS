@@ -20,7 +20,7 @@ Retiring Letta removed two things the native runtime has not yet replaced:
 1. **Archival memory** — Letta's vector-searchable store of overflow facts/passages, used for fuzzy long-term recall beyond in-context memory blocks.
 2. **An engine that fills it** — Letta's agent paged information into archival memory via tools; on the native runtime nothing distills sessions into durable, recallable knowledge.
 
-Today (native runtime): canonical memory is per-Bear SQLite `memory_records` ([ADR-0031](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); `memory_search` is a SQL `LIKE` scan; the derived Qdrant recall index ([ADR-0038](adr-0038-platform-embedding-standard-and-derived-recall-index.md)) is accepted but unimplemented; pair reflection emits a **deterministic** summary of the last ~20 messages rather than extracting durable memories; `supersedes_memory_id` exists in the schema but is never written; and nothing proactively mines closed sessions for memory candidates.
+Implementation status (2026-07): canonical memory is per-Bear SQLite `memory_records` ([ADR-0031](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); `memory_search` is hybrid SQL/Qdrant/graph/temporal when recall is configured; `salience`, `valid_from`, `invalid_at`, lifecycle/freshness indicators, and `memory_harvest_marks` exist in the store; archive-harvest creates human-review proposals with provenance; and reviewed core promotion writes `supersedes_memory_id` while invalidating predecessors. Remaining gaps are richer model-assisted extraction, semantic dedup, synthesis, and product UI surfacing for review queues.
 
 We surveyed leading agent-memory systems (2025–2026): **Letta/MemGPT** (sleep-time compute: a background agent reorganizes memory off the hot path), **mem0 / MenteDB / Hindsight** (extraction-first capture: distill atomic facts instead of indexing raw messages; consolidate with dedup + conflict resolution; track *how knowledge evolved*), **Zep/Graphiti** (bi-temporal validity windows and edge invalidation instead of overwrite; hybrid vector+keyword+graph retrieval), and the **Generative Agents** lineage (per-item importance/salience; reflection triggered by cumulative importance; retrieval scored by `recency × relevance × importance`).
 
@@ -136,7 +136,7 @@ The Qdrant passage registry and vector lifecycle remain as specified in ADR-0038
 
 ## Follow-ups (not decided here)
 
-- Exact salience scale (`low|normal|high|critical` vs. 1–10) and the cumulative-salience reflection threshold.
+- Cumulative-salience reflection threshold and deeper freshness weighting. The stored salience scale is currently `low|normal|high|critical`.
 - Extraction prompt/schema for harvest (what counts as a durable fact vs. filler) and quality-filter thresholds.
 - Semantic-dedup strategy and similarity threshold for consolidation (and whether it reuses the recall index).
 - Whether typed entity links (§7) are derived on demand or persisted, and their vocabulary.

@@ -6,12 +6,8 @@
 {% block admin_content %}
 <div class="box">
 <h3>Edit bear settings</h3>
-{% if native_runtime %}
 <p>Update slug, name, description, and default model. Prompts are edited separately.</p>
-{% else %}
-<p>Changes are saved in Den and synced to Letta profile runtimes when linked.</p>
-{% endif %}
-{% if letta_sync_error %}<p class="form-errors"><strong>Letta sync failed</strong>: {{ letta_sync_error | e }}</p>{% endif %}
+{% if runtime_sync_error %}<p class="form-errors"><strong>Runtime sync failed</strong>: {{ runtime_sync_error | e }}</p>{% endif %}
 {% if provision_error %}<p class="form-errors"><strong>Runtime refresh failed</strong>: {{ provision_error | e }}</p>{% endif %}
 
 <form method="post">
@@ -28,7 +24,6 @@
   <p class="form-hint">Role-aware prompts: <a href="/admin/bears/{{ bear.id }}/edit/prompt">edit prompts</a></p>
   {% endif %}
 
-  {% if native_runtime %}
   {% if model_catalog_configured and model_options and model_options | length > 0 %}
   <label for="default_model_field">Model (required)</label>
   <div class="form-field">
@@ -41,29 +36,6 @@
   {% else %}
   {{ forms.input("default_model", "Default model (required)", "text", 'required maxlength="255"', form) }}
   {% endif %}
-  {% else %}
-  <label for="letta_agent_type_field">Default Letta agent type</label>
-  <div class="form-field">
-    <select id="letta_agent_type_field" name="letta_agent_type">
-      {% for row in letta_agent_type_rows %}
-      <option value="{{ row.value | e }}"{% if form and form.letta_agent_type == row.value %} selected{% endif %}>{{ row.label | e }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  {% if letta_configured and letta_model_options and letta_model_options | length > 0 %}
-  <label for="default_model_field">Model</label>
-  <div class="form-field">
-    <select id="default_model_field" name="default_model" required>
-      {% for m in letta_model_options %}
-      <option value="{{ m.handle | e }}"{% if form and form.default_model == m.handle %} selected{% endif %}>{{ m.label | e }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  {% else %}
-  {{ forms.input("default_model", "Default model", "text", 'maxlength="255"', form) }}
-  {% endif %}
-  {% endif %}
-
   <button type="submit">Save changes</button>
 </form>
 <p><a href="/bear/{{ bear.slug | e }}/overview">View bear overview</a></p>

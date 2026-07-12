@@ -1,15 +1,13 @@
 use axum::http::HeaderMap;
 use serde_json::{json, Value};
 
+use bearwire_protocol::{methods::ResourceUpdateRequest, wire::BearWireEvent};
 use den_http::errors::CustomError;
-use den_runtime::{
-    bearwire_events,
-    runtime::bearwire_projection::wire::BearWireEvent,
-    DenState,
-};
+use den_runtime::bearwire_events;
+use den_service::DenState;
 
 use crate::auth::authenticated_bear;
-use crate::methods::required_param_string;
+use crate::methods::parse_params;
 
 pub(crate) async fn resource_update_result(
     state: &DenState,
@@ -17,11 +15,11 @@ pub(crate) async fn resource_update_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
-    let resource = params
-        .get("resource")
-        .cloned()
-        .or_else(|| params.get("payload").cloned())
+    let request: ResourceUpdateRequest = parse_params(params)?;
+    let session_id = request.session_id;
+    let resource = request
+        .resource
+        .or(request.payload)
         .unwrap_or_else(|| json!({}));
     let resource_kind = resource
         .get("kind")

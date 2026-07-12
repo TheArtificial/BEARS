@@ -25,7 +25,7 @@ pub struct DenToolInvocationContext {
     pub conversation_id: String,
     pub session_id: String,
     #[serde(default)]
-    pub acp_session_id: Option<String>,
+    pub client_session_id: Option<String>,
     #[serde(default)]
     pub conversation_selection: Option<String>,
     #[serde(default)]
@@ -40,6 +40,10 @@ pub struct DenToolInvocationContext {
     pub runtime: Option<Value>,
     #[serde(default)]
     pub context_budget: Option<Value>,
+    #[serde(default)]
+    pub projected_memory: Option<Value>,
+    #[serde(default)]
+    pub recalled_memory: Option<Value>,
     pub request_id: Option<String>,
     #[serde(default)]
     pub channel: DenToolChannelContext,

@@ -14,7 +14,7 @@ It builds a minimal macOS executable app target named `BearsApp`.
 
 - Xcode 15+ or a compatible Swift 5.10 toolchain
 - macOS 13+
-- a local `bears-acp-adapter` executable available to copy into package resources
+- a local `bear-armature` executable available to copy into package resources; the app still accepts the legacy bundled resource name `bears-acp-adapter`
 
 ## Prepare the bundled adapter resource
 
@@ -38,9 +38,9 @@ bash Scripts/prepare_adapter.sh
 
 By default the script will:
 
-1. use an existing built adapter at `target/debug/bears-acp-adapter` if present;
-2. otherwise use an existing built adapter at `tools/bears-acp-adapter/target/debug/bears-acp-adapter` if present;
-3. otherwise fall back to `cargo build` if `cargo` is available.
+1. use an existing built adapter at `target/debug/bear-armature` if present;
+2. otherwise use an existing built adapter at `tools/bear-armature/target/debug/bear-armature` if present;
+3. otherwise fall back to `cargo build --manifest-path tools/bear-armature/Cargo.toml` if `cargo` is available.
 
 To prepare a release adapter artifact instead:
 
@@ -53,7 +53,7 @@ You can also point at an explicit prebuilt adapter binary:
 
 ```bash
 cd apps/apple/Bears
-ADAPTER_BINARY=/path/to/bears-acp-adapter bash Scripts/prepare_adapter.sh
+ADAPTER_BINARY=/path/to/bear-armature bash Scripts/prepare_adapter.sh
 ```
 
 The script places the adapter at:
@@ -68,8 +68,8 @@ If no bundled adapter is present, the app will try to download a macOS adapter a
 
 The GitHub release/update-site flow is version-driven. If you rebuild the adapter package and want GitHub to publish a new package artifact at the release/update URL, you must:
 
-1. bump `version` in `tools/bears-acp-adapter/Cargo.toml`
-2. update `tools/bears-acp-adapter/Cargo.lock`
+1. bump `version` in `tools/bear-armature/Cargo.toml`
+2. update the relevant Cargo lockfile if dependency resolution changes
 3. rebuild and republish the release assets
 
 If you only change packaging or installer scripts without bumping the adapter version, the existing published release/tag may be reused and the app can keep downloading an older `.pkg` built with stale packaging behavior.

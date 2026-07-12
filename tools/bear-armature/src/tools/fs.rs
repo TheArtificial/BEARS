@@ -1,11 +1,14 @@
 use crate::{
+    bear_debug_verbose,
     paths::{
         ensure_path_allowed_for_session, is_hidden_path_component, is_sensitive_path,
-        normalize_requested_tool_path, session_workspace_roots,
+        resolve_fs_target, resolve_requested_tool_path, session_workspace_roots, FsTargetKind,
+        ResolvedFsTarget,
     },
     truncate_for_log, SessionContext, ToolPolicy,
 };
 use anyhow::{anyhow, Context, Result};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
@@ -14,29 +17,126 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+fn resolve_session_tool_target(
+    context: &SessionContext,
+    raw_path: &str,
+) -> Result<ResolvedFsTarget> {
+    resolve_fs_target(context, raw_path)
+}
+
+fn resolve_optional_session_tool_root(
+    context: &SessionContext,
+    raw_root: Option<&str>,
+) -> Result<PathBuf> {
+    match raw_root {
+        Some(root) => {
+            let target = resolve_session_tool_target(context, root)?;
+            if !target.is_directory() {
+                return Err(anyhow!(
+                    "fs_find_paths root is not a directory: {} ({:?})",
+                    target.resolved_path.display(),
+                    target.kind
+                ));
+            }
+            Ok(target.resolved_path)
+        }
+        None => Ok(session_workspace_roots(context)[0].clone()),
+    }
+}
+
+fn parse_fs_args<T: for<'de> Deserialize<'de>>(value: &Value) -> Result<T> {
+    serde_json::from_value(value.clone())
+        .map_err(|err| anyhow!("invalid filesystem tool args: {err}"))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadTextFileArgs {
+    path: String,
+    #[serde(default)]
+    line: Option<u64>,
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListDirectoryArgs {
+    path: String,
+    #[serde(default)]
+    recursive: Option<bool>,
+    #[serde(default)]
+    include_hidden: Option<bool>,
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FindPathsArgs {
+    glob: String,
+    #[serde(default)]
+    root: Option<String>,
+    #[serde(default)]
+    include_hidden: Option<bool>,
+    #[serde(default)]
+    limit: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchFilesArgs {
+    path: String,
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    limit: Option<u64>,
+    #[serde(default)]
+    max_bytes: Option<u64>,
+    #[serde(default)]
+    include_hidden: Option<bool>,
+    #[serde(default)]
+    case_sensitive: Option<bool>,
+    #[serde(default)]
+    pattern: Option<String>,
+    #[serde(default)]
+    extensions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatArgs {
+    path: String,
+    #[serde(default)]
+    include_symlink_target: Option<bool>,
+}
+
 pub(crate) async fn handle_read_text_file(
     context: &SessionContext,
     session_id: &str,
     params: Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let path = params
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("bears/read_text_file params missing path"))?;
-    let line = params
-        .get("line")
-        .and_then(Value::as_u64)
-        .unwrap_or(1)
-        .max(1) as usize;
+    let args: ReadTextFileArgs = parse_fs_args(&params)?;
+    let line = args.line.unwrap_or(1).max(1) as usize;
     let policy_max_lines = policy.max_lines.unwrap_or(2_000).clamp(1, 2_000);
-    let limit = params
-        .get("limit")
-        .and_then(Value::as_u64)
+    let limit = args
+        .limit
         .map(|v| v.clamp(1, policy_max_lines as u64) as usize)
         .unwrap_or(400.min(policy_max_lines));
-    let path = normalize_requested_tool_path(path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let target = resolve_session_tool_target(context, &args.path)?;
+    if !target.is_file() {
+        return Err(anyhow!(
+            "fs_read_text_file target is not a readable file: {} ({:?})",
+            target.resolved_path.display(),
+            target.kind
+        ));
+    }
+    ensure_read_path_allowed("fs_read_text_file", &target.resolved_path, policy)?;
+    let requested_path = target.requested_path.clone();
+    let workspace_root = target.workspace_root.clone();
+    let target_size_bytes = target.size_bytes();
+    let path = target.resolved_path;
     let started = std::time::Instant::now();
     let raw = tokio::fs::read_to_string(&path)
         .await
@@ -52,27 +152,32 @@ pub(crate) async fn handle_read_text_file(
     if raw.ends_with('\n') && !content.is_empty() && !truncated {
         content.push('\n');
     }
-    eprintln!(
-        "bear-armature: read_text_file session_id={} path={} line={} limit={} bytes={} total_lines={} returned_lines={} truncated={} duration_ms={}",
-        session_id,
-        path.display(),
-        line,
-        limit,
-        raw.len(),
-        total_lines,
-        selected.len(),
-        truncated,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: read_text_file session_id={} path={} line={} limit={} bytes={} total_lines={} returned_lines={} truncated={} duration_ms={}",
+            session_id,
+            path.display(),
+            line,
+            limit,
+            raw.len(),
+            total_lines,
+            selected.len(),
+            truncated,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
+        "requested_path": requested_path,
+        "workspace_root": workspace_root.to_string_lossy(),
         "content": content,
         "line": line,
         "returned_lines": selected.len(),
         "total_lines": total_lines,
         "truncated": truncated,
         "bytes": raw.len(),
+        "size_bytes": target_size_bytes,
         "policy": {
             "max_lines": policy_max_lines,
             "applied_limit": limit,
@@ -86,28 +191,27 @@ pub(crate) async fn handle_list_directory(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("fs_list_directory args missing path"))?;
-    let recursive = args
-        .get("recursive")
-        .and_then(Value::as_bool)
-        .or(policy.recursive_default)
-        .unwrap_or(false);
+    let args: ListDirectoryArgs = parse_fs_args(args)?;
+    let recursive = args.recursive.or(policy.recursive_default).unwrap_or(false);
     let include_hidden = args
-        .get("include_hidden")
-        .and_then(Value::as_bool)
+        .include_hidden
         .or(policy.include_hidden_default)
         .unwrap_or(false);
     let policy_max_entries = policy.max_entries.unwrap_or(1_000).clamp(1, 1_000);
     let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
+        .limit
         .map(|v| v.clamp(1, policy_max_entries as u64) as usize)
         .unwrap_or(200.min(policy_max_entries));
-    let path = normalize_requested_tool_path(path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let target = resolve_session_tool_target(context, &args.path)?;
+    if !target.is_directory() {
+        return Err(anyhow!(
+            "fs_list_directory target is not a directory: {} ({:?})",
+            target.resolved_path.display(),
+            target.kind
+        ));
+    }
+    ensure_read_path_allowed("fs_list_directory", &target.resolved_path, policy)?;
+    let path = target.resolved_path;
     let started = std::time::Instant::now();
     let mut entries = Vec::new();
     let mut total_entries_seen = 0usize;
@@ -122,6 +226,9 @@ pub(crate) async fn handle_list_directory(
         for entry in dir_entries {
             let entry_path = entry.path();
             if !include_hidden && is_hidden_path_component(&entry_path, &path) {
+                continue;
+            }
+            if should_skip_read_path(&entry_path, policy) {
                 continue;
             }
             ensure_path_allowed_for_session(context, &entry_path)?;
@@ -157,18 +264,20 @@ pub(crate) async fn handle_list_directory(
     }
     let truncated = truncated || total_entries_seen > entries.len() || !queue.is_empty();
     let content = format_directory_listing(&path, &entries, truncated);
-    eprintln!(
-        "bear-armature: list_directory session_id={} path={} recursive={} include_hidden={} limit={} returned_entries={} total_entries_seen={} truncated={} duration_ms={}",
-        session_id,
-        path.display(),
-        recursive,
-        include_hidden,
-        limit,
-        entries.len(),
-        total_entries_seen,
-        truncated,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: list_directory session_id={} path={} recursive={} include_hidden={} limit={} returned_entries={} total_entries_seen={} truncated={} duration_ms={}",
+            session_id,
+            path.display(),
+            recursive,
+            include_hidden,
+            limit,
+            entries.len(),
+            total_entries_seen,
+            truncated,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
@@ -195,28 +304,20 @@ pub(crate) async fn handle_find_paths(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let glob = args
-        .get("glob")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow!("fs_find_paths args missing glob"))?;
-    let root = args
-        .get("root")
-        .and_then(Value::as_str)
-        .map(normalize_requested_tool_path)
-        .transpose()?
-        .unwrap_or_else(|| session_workspace_roots(context)[0].clone());
-    ensure_path_allowed_for_session(context, &root)?;
+    let args: FindPathsArgs = parse_fs_args(args)?;
+    let glob = args.glob.trim();
+    if glob.is_empty() {
+        return Err(anyhow!("fs_find_paths args missing glob"));
+    }
+    let root = resolve_optional_session_tool_root(context, args.root.as_deref())?;
+    ensure_read_path_allowed("fs_find_paths", &root, policy)?;
     let include_hidden = args
-        .get("include_hidden")
-        .and_then(Value::as_bool)
+        .include_hidden
         .or(policy.include_hidden_default)
         .unwrap_or(false);
     let policy_max_results = policy.max_results.unwrap_or(500).clamp(1, 500);
     let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
+        .limit
         .map(|v| v.clamp(1, policy_max_results as u64) as usize)
         .unwrap_or(100.min(policy_max_results));
     let started = std::time::Instant::now();
@@ -229,6 +330,7 @@ pub(crate) async fn handle_find_paths(
         skipped_by_filter: &mut skipped_by_filter,
         truncated: &mut truncated,
         out: &mut matches,
+        policy,
     };
     collect_find_paths(
         context,
@@ -241,17 +343,19 @@ pub(crate) async fn handle_find_paths(
     )?;
     matches.sort();
     let content = format_find_path_results(glob, &matches, truncated);
-    eprintln!(
-        "bear-armature: find_paths session_id={} root={} glob={} limit={} matches={} visited={} truncated={} duration_ms={}",
-        session_id,
-        root.display(),
-        glob,
-        limit,
-        matches.len(),
-        visited,
-        truncated,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: find_paths session_id={} root={} glob={} limit={} matches={} visited={} truncated={} duration_ms={}",
+            session_id,
+            root.display(),
+            glob,
+            limit,
+            matches.len(),
+            visited,
+            truncated,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "root": root.to_string_lossy(),
@@ -281,35 +385,32 @@ pub(crate) async fn handle_search_files(
     args: &Value,
     policy: &ToolPolicy,
 ) -> Result<Value> {
-    let path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("fs_search_files args missing path"))?;
-    let query = args
-        .get("query")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("");
+    let args: SearchFilesArgs = parse_fs_args(args)?;
+    let query = args.query.as_deref().map(str::trim).unwrap_or("");
     let policy_max_results = policy.max_results.unwrap_or(200).clamp(1, 200);
     let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
+        .limit
         .map(|v| v.clamp(1, policy_max_results as u64) as usize)
         .unwrap_or(50.min(policy_max_results));
     let policy_max_bytes = policy.max_bytes.unwrap_or(1_048_576).clamp(1, 5_242_880);
     let max_bytes = args
-        .get("max_bytes")
-        .and_then(Value::as_u64)
+        .max_bytes
         .map(|v| v.clamp(1, policy_max_bytes))
         .unwrap_or(policy_max_bytes);
     let include_hidden = args
-        .get("include_hidden")
-        .and_then(Value::as_bool)
+        .include_hidden
         .or(policy.include_hidden_default)
         .unwrap_or(false);
-    let filters = search_filters_from_args(args)?;
-    let path = normalize_requested_tool_path(path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let filters = search_filters_from_typed_args(&args)?;
+    let target = resolve_session_tool_target(context, &args.path)?;
+    if matches!(target.kind, FsTargetKind::Missing) {
+        return Err(anyhow!(
+            "fs_search_files target does not exist: {}",
+            target.resolved_path.display()
+        ));
+    }
+    ensure_read_path_allowed("fs_search_files", &target.resolved_path, policy)?;
+    let path = target.resolved_path;
     let started = std::time::Instant::now();
     let mut files = Vec::new();
     let mut file_collection_truncated = false;
@@ -318,6 +419,7 @@ pub(crate) async fn handle_search_files(
         truncated: &mut file_collection_truncated,
         skipped_by_filter: &mut skipped_by_filter,
         out: &mut files,
+        policy,
     };
     collect_search_files(
         context,
@@ -385,19 +487,21 @@ pub(crate) async fn handle_search_files(
         }
     }
     let content = format_search_results(query, &matches, truncated);
-    eprintln!(
-        "bear-armature: search_files session_id={} path={} query_len={} limit={} max_bytes={} files_scanned={} bytes_scanned={} matches={} truncated={} duration_ms={}",
-        session_id,
-        path.display(),
-        query.len(),
-        limit,
-        max_bytes,
-        files_scanned,
-        bytes_scanned,
-        matches.len(),
-        truncated,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: search_files session_id={} path={} query_len={} limit={} max_bytes={} files_scanned={} bytes_scanned={} matches={} truncated={} duration_ms={}",
+            session_id,
+            path.display(),
+            query.len(),
+            limit,
+            max_bytes,
+            files_scanned,
+            bytes_scanned,
+            matches.len(),
+            truncated,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
@@ -430,16 +534,11 @@ pub(crate) async fn handle_stat(
     args: &Value,
     _policy: &ToolPolicy,
 ) -> Result<Value> {
-    let raw_path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("fs_stat args missing path"))?;
-    let include_symlink_target = args
-        .get("include_symlink_target")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let path = normalize_requested_tool_path(raw_path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let args: StatArgs = parse_fs_args(args)?;
+    let include_symlink_target = args.include_symlink_target.unwrap_or(false);
+    let target = resolve_session_tool_target(context, &args.path)?;
+    ensure_read_path_allowed("fs_stat", &target.resolved_path, _policy)?;
+    let path = target.resolved_path;
     let metadata =
         fs::symlink_metadata(&path).with_context(|| format!("stat {}", path.display()))?;
     let file_type = metadata.file_type();
@@ -489,14 +588,16 @@ pub(crate) async fn handle_replace_text(
     let started = std::time::Instant::now();
     let plan = ReplaceTextPlan::preflight(context, args, policy)?;
     let applied = plan.apply(context, policy)?;
-    eprintln!(
-        "bear-armature: replace_text session_id={} path={} bytes_before={} bytes_after={} duration_ms={}",
-        session_id,
-        applied["path"].as_str().unwrap_or(""),
-        applied["bytes_before"].as_u64().unwrap_or(0),
-        applied["bytes_after"].as_u64().unwrap_or(0),
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: replace_text session_id={} path={} bytes_before={} bytes_after={} duration_ms={}",
+            session_id,
+            applied["path"].as_str().unwrap_or(""),
+            applied["bytes_before"].as_u64().unwrap_or(0),
+            applied["bytes_after"].as_u64().unwrap_or(0),
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(applied)
 }
 
@@ -535,8 +636,8 @@ pub(crate) async fn handle_create_text_file(
             max_bytes
         ));
     }
-    let path = normalize_requested_tool_path(raw_path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let target = resolve_session_tool_target(context, raw_path)?;
+    let path = target.resolved_path;
     ensure_replace_text_path_allowed(&path, policy)?;
     if path.exists() {
         return Err(anyhow!("fs_create_text_file path already exists"));
@@ -571,13 +672,15 @@ pub(crate) async fn handle_create_text_file(
             "sensitive_path_policy": policy.sensitive_path_policy,
         }
     });
-    eprintln!(
-        "bear-armature: create_text_file session_id={} path={} bytes={} duration_ms={}",
-        session_id,
-        path.display(),
-        content.len(),
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: create_text_file session_id={} path={} bytes={} duration_ms={}",
+            session_id,
+            path.display(),
+            content.len(),
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(result)
 }
 
@@ -599,8 +702,8 @@ pub(crate) async fn handle_create_directory(
         .get("allow_existing")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let path = normalize_requested_tool_path(raw_path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let target = resolve_session_tool_target(context, raw_path)?;
+    let path = target.resolved_path;
     ensure_replace_text_path_allowed(&path, policy)?;
     if path.exists() {
         if path.is_dir() && allow_existing {
@@ -642,13 +745,15 @@ pub(crate) async fn handle_create_directory(
     } else {
         fs::create_dir(&path).with_context(|| format!("create directory {}", path.display()))?;
     }
-    eprintln!(
-        "bear-armature: create_directory session_id={} path={} parents={} duration_ms={}",
-        session_id,
-        path.display(),
-        parents,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: create_directory session_id={} path={} parents={} duration_ms={}",
+            session_id,
+            path.display(),
+            parents,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
@@ -686,8 +791,8 @@ pub(crate) async fn handle_move_path(
         .get("expected_kind")
         .and_then(Value::as_str)
         .unwrap_or("any");
-    let source = normalize_requested_tool_path(raw_source)?;
-    let destination = normalize_requested_tool_path(raw_destination)?;
+    let source = resolve_session_tool_target(context, raw_source)?.resolved_path;
+    let destination = resolve_session_tool_target(context, raw_destination)?.resolved_path;
     ensure_path_allowed_for_session(context, &source)?;
     ensure_path_allowed_for_session(context, &destination)?;
     ensure_replace_text_path_allowed(&source, policy)?;
@@ -742,15 +847,17 @@ pub(crate) async fn handle_move_path(
     let started = std::time::Instant::now();
     fs::rename(&source, &destination)
         .with_context(|| format!("move {} to {}", source.display(), destination.display()))?;
-    eprintln!(
-        "bear-armature: move_path session_id={} source={} destination={} kind={} overwrite={} duration_ms={}",
-        session_id,
-        source.display(),
-        destination.display(),
-        kind,
-        overwrite,
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: move_path session_id={} source={} destination={} kind={} overwrite={} duration_ms={}",
+            session_id,
+            source.display(),
+            destination.display(),
+            kind,
+            overwrite,
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "source_path": source.to_string_lossy(),
@@ -796,10 +903,8 @@ pub(crate) async fn handle_copy_path(
         .unwrap_or("any");
     let max_entries = policy.max_entries.unwrap_or(1_000).clamp(1, 10_000);
     let max_bytes = policy.max_bytes.unwrap_or(5_242_880).clamp(1, 52_428_800);
-    let source = normalize_requested_tool_path(raw_source)?;
-    let destination = normalize_requested_tool_path(raw_destination)?;
-    ensure_path_allowed_for_session(context, &source)?;
-    ensure_path_allowed_for_session(context, &destination)?;
+    let source = resolve_session_tool_target(context, raw_source)?.resolved_path;
+    let destination = resolve_session_tool_target(context, raw_destination)?.resolved_path;
     ensure_replace_text_path_allowed(&source, policy)?;
     ensure_replace_text_path_allowed(&destination, policy)?;
     if source == destination {
@@ -881,10 +986,18 @@ pub(crate) async fn handle_copy_path(
     } else {
         copy_dir_recursive(&source, &destination)?;
     }
-    eprintln!(
-        "bear-armature: copy_path session_id={} source={} destination={} kind={} bytes={} entries={} duration_ms={}",
-        session_id, source.display(), destination.display(), kind, total_bytes, entries.len(), started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: copy_path session_id={} source={} destination={} kind={} bytes={} entries={} duration_ms={}",
+            session_id,
+            source.display(),
+            destination.display(),
+            kind,
+            total_bytes,
+            entries.len(),
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "source_path": source.to_string_lossy(),
@@ -942,7 +1055,7 @@ pub(crate) async fn handle_apply_patch(
     let base = args
         .get("base_path")
         .and_then(Value::as_str)
-        .map(normalize_requested_tool_path)
+        .map(|path| resolve_requested_tool_path(context, path))
         .transpose()?
         .unwrap_or_else(|| session_workspace_roots(context)[0].clone());
     ensure_path_allowed_for_session(context, &base)?;
@@ -994,12 +1107,14 @@ pub(crate) async fn handle_apply_patch(
         }
         changed.push(path.to_string_lossy().to_string());
     }
-    eprintln!(
-        "bear-armature: apply_patch session_id={} files={} dry_run={}",
-        session_id,
-        changed.len(),
-        dry_run,
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: apply_patch session_id={} files={} dry_run={}",
+            session_id,
+            changed.len(),
+            dry_run,
+        );
+    }
     Ok(json!({
         "ok": true,
         "dry_run": dry_run,
@@ -1034,8 +1149,7 @@ pub(crate) async fn handle_delete_path(
         .and_then(Value::as_str)
         .unwrap_or("any");
     let max_entries = policy.max_entries.unwrap_or(100).clamp(1, 1_000);
-    let path = normalize_requested_tool_path(raw_path)?;
-    ensure_path_allowed_for_session(context, &path)?;
+    let path = resolve_session_tool_target(context, raw_path)?.resolved_path;
     ensure_delete_path_allowed(context, &path, policy)?;
     let started = std::time::Instant::now();
     let metadata = match fs::metadata(&path) {
@@ -1098,15 +1212,17 @@ pub(crate) async fn handle_delete_path(
             String::new()
         }
     );
-    eprintln!(
-        "bear-armature: delete_path session_id={} path={} kind={} recursive={} entries={} duration_ms={}",
-        session_id,
-        path.display(),
-        kind,
-        recursive,
-        entries.len(),
-        started.elapsed().as_millis(),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: delete_path session_id={} path={} kind={} recursive={} entries={} duration_ms={}",
+            session_id,
+            path.display(),
+            kind,
+            recursive,
+            entries.len(),
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path.to_string_lossy(),
@@ -1218,8 +1334,7 @@ impl ReplaceTextPlan {
         let policy_max_replacements = policy.max_replacements.unwrap_or(1).clamp(1, 100);
         let policy_create_files = policy.create_files.unwrap_or(false);
         let policy_allow_multiple = policy.allow_multiple.unwrap_or(false);
-        let path = normalize_requested_tool_path(&args.path)?;
-        ensure_path_allowed_for_session(context, &path)?;
+        let path = resolve_session_tool_target(context, &args.path)?.resolved_path;
         ensure_replace_text_path_allowed(&path, policy)?;
         let raw = read_replace_text_input(&path, policy_max_bytes)?;
         let replacements = raw.matches(&args.old_text).count();
@@ -1374,6 +1489,27 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
         out.push_str("...");
         out
     }
+}
+
+fn read_path_is_sensitive_controlled(path: &Path, policy: &ToolPolicy) -> bool {
+    matches!(
+        policy.sensitive_path_policy.as_deref(),
+        Some("deny_sensitive_paths" | "filter_results")
+    ) && is_sensitive_path(path)
+}
+
+fn should_skip_read_path(path: &Path, policy: &ToolPolicy) -> bool {
+    read_path_is_sensitive_controlled(path, policy)
+}
+
+fn ensure_read_path_allowed(tool_name: &str, path: &Path, policy: &ToolPolicy) -> Result<()> {
+    if read_path_is_sensitive_controlled(path, policy) {
+        return Err(anyhow!(
+            "{tool_name} denied sensitive path {}",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn ensure_delete_path_allowed(
@@ -1599,6 +1735,7 @@ struct FindPathsState<'a> {
     skipped_by_filter: &'a mut usize,
     truncated: &'a mut bool,
     out: &'a mut Vec<PathBuf>,
+    policy: &'a ToolPolicy,
 }
 
 fn collect_find_paths(
@@ -1614,6 +1751,9 @@ fn collect_find_paths(
         return Ok(());
     }
     if !include_hidden && is_hidden_path_component(path, root) {
+        return Ok(());
+    }
+    if path != root && should_skip_read_path(path, state.policy) {
         return Ok(());
     }
     ensure_path_allowed_for_session(context, path)?;
@@ -1663,6 +1803,7 @@ struct SearchFilesState<'a> {
     truncated: &'a mut bool,
     skipped_by_filter: &'a mut usize,
     out: &'a mut Vec<PathBuf>,
+    policy: &'a ToolPolicy,
 }
 
 fn collect_search_files(
@@ -1678,6 +1819,9 @@ fn collect_search_files(
         return Ok(());
     }
     if !include_hidden && is_hidden_path_component(path, root) {
+        return Ok(());
+    }
+    if path != root && should_skip_read_path(path, state.policy) {
         return Ok(());
     }
     ensure_path_allowed_for_session(context, path)?;
@@ -1717,30 +1861,21 @@ fn collect_search_files(
     Ok(())
 }
 
-fn search_filters_from_args(args: &Value) -> Result<SearchFilters> {
-    let case_sensitive = args
-        .get("case_sensitive")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
+fn search_filters_from_typed_args(args: &SearchFilesArgs) -> Result<SearchFilters> {
+    let case_sensitive = args.case_sensitive.unwrap_or(true);
     let pattern = args
-        .get("pattern")
-        .and_then(Value::as_str)
+        .pattern
+        .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     let extensions = args
-        .get("extensions")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(normalize_extension)
-                .filter(|s| !s.is_empty())
-                .take(10)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+        .extensions
+        .iter()
+        .map(|value| normalize_extension(value))
+        .filter(|s| !s.is_empty())
+        .take(10)
+        .collect::<Vec<_>>();
     Ok(SearchFilters {
         case_sensitive,
         pattern,
@@ -1906,5 +2041,32 @@ mod tests {
         assert!(glob_match("**/*.rs", "services/den/src/lib.rs"));
         assert!(glob_match("src/**", "src/nested/lib.rs"));
         assert!(glob_match("**/Cargo.toml", "services/den/Cargo.toml"));
+    }
+
+    #[test]
+    fn parse_read_text_file_args_requires_path() {
+        let args = parse_fs_args::<ReadTextFileArgs>(&json!({ "path": "/workspace/README.md" }))
+            .expect("valid args");
+        assert_eq!(args.path, "/workspace/README.md");
+
+        assert!(parse_fs_args::<ReadTextFileArgs>(&json!({ "line": 1 })).is_err());
+    }
+
+    #[test]
+    fn search_filters_from_typed_args_normalizes_extensions() {
+        let args = SearchFilesArgs {
+            path: "/workspace".to_string(),
+            query: Some("needle".to_string()),
+            limit: None,
+            max_bytes: None,
+            include_hidden: None,
+            case_sensitive: Some(false),
+            pattern: Some("src/**/*.rs".to_string()),
+            extensions: vec![".RS".to_string(), " md ".to_string()],
+        };
+        let filters = search_filters_from_typed_args(&args).expect("filters");
+        assert_eq!(filters.case_sensitive, false);
+        assert_eq!(filters.pattern.as_deref(), Some("src/**/*.rs"));
+        assert_eq!(filters.extensions, vec!["rs".to_string(), "md".to_string()]);
     }
 }

@@ -1,3 +1,6 @@
+use den_service::conversation::persistence::{
+    PersistedToolRequestPayload, PersistedToolResultPayload,
+};
 use serde_json::Value;
 
 use crate::runtime_conversations::{RuntimeSemanticGroup, RuntimeSemanticGroupKind};
@@ -97,28 +100,24 @@ fn row_counts_toward_grouping(row: &TranscriptGroupingRow) -> bool {
 
 fn is_tool_call_request(row: &TranscriptGroupingRow) -> bool {
     row.message_type == "tool_call"
-        && row
-            .content_json
-            .get("event")
-            .and_then(Value::as_str)
-            == Some("tool_request")
+        && PersistedToolRequestPayload::try_from(&row.content_json).is_ok()
 }
 
 fn is_tool_result_row(row: &TranscriptGroupingRow) -> bool {
     row.message_type == "tool_result"
-        && row
-            .content_json
-            .get("event")
-            .and_then(Value::as_str)
-            == Some("tool_result")
+        && PersistedToolResultPayload::try_from(&row.content_json).is_ok()
 }
 
 fn tool_call_id_from_row(row: &TranscriptGroupingRow) -> Option<String> {
     row.tool_call_id.clone().or_else(|| {
-        row.content_json
-            .get("tool_call_id")
-            .and_then(Value::as_str)
-            .map(str::to_string)
+        PersistedToolRequestPayload::try_from(&row.content_json)
+            .map(|payload| payload.tool_call_id)
+            .or_else(|_| {
+                PersistedToolResultPayload::try_from(&row.content_json)
+                    .map(|payload| payload.tool_call_id.unwrap_or_default())
+            })
+            .ok()
+            .filter(|value| !value.is_empty())
     })
 }
 
@@ -130,22 +129,25 @@ fn row_identity(row: &TranscriptGroupingRow) -> Option<String> {
 }
 
 fn is_incomplete_tool_result(row: &TranscriptGroupingRow) -> bool {
-    row.content_json
-        .get("status")
-        .and_then(Value::as_str)
-        == Some("incomplete")
+    PersistedToolResultPayload::try_from(&row.content_json)
+        .map(|payload| {
+            payload.status == den_core::tools::result_compaction::ToolResultStatus::Incomplete
+        })
+        .unwrap_or(false)
 }
 
 fn is_approval_interaction_row(row: &TranscriptGroupingRow) -> bool {
-    if row
-        .content_json
-        .get("approval_request_id")
-        .and_then(Value::as_str)
+    if PersistedToolRequestPayload::try_from(&row.content_json)
+        .ok()
+        .and_then(|payload| payload.approval_request_id)
         .is_some_and(|value| !value.trim().is_empty())
     {
         return true;
     }
-    if row.content_json.get("approval_required").and_then(Value::as_bool) == Some(true) {
+    if PersistedToolRequestPayload::try_from(&row.content_json)
+        .map(|payload| payload.approval_required)
+        .unwrap_or(false)
+    {
         return true;
     }
     if row

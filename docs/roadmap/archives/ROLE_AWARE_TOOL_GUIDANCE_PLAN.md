@@ -1,6 +1,6 @@
 # Role-Aware Tool Guidance Plan
 
-For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../../architecture/bear-stances.md).
 This plan centralizes BEARS agent tool guidance so prompts, tool descriptors, tool results, ACP projection, and operator UI all use one Den-owned source of truth.
 
 ## Problem
@@ -11,7 +11,7 @@ Tool guidance is currently scattered across several layers:
 - Built-in Den tool descriptors in `services/den/src/core/den_tools.rs`.
 - Situational tool-result guidance in individual Den tool handlers.
 - Session information guidance in `den.session.info` / provider `session_info`.
-- ACP adapter behavior and labels in `tools/bears-acp-adapter/src/main.rs`.
+- ACP armature behavior and labels in `tools/bear-armature/src/main.rs`.
 - Operator-facing Bear detail UI shows role health and tool counts, but not a clear role-specific view of available tools and guidance.
 
 This creates drift risk. For example, a tool name or behavior can change in Den descriptors while prompt guidance or UI copy remains stale.

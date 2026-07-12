@@ -4,28 +4,34 @@ version.workspace = true
 edition = "2021"
 
 # den-bearwire: BearWire v1 HTTP/SSE edge for trusted armatures. This is the
-# future Den ↔ armature protocol boundary; ACP-specific translation stays in the
-# armature and legacy `den-acp` during migration.
+# Den ↔ armature protocol boundary.
 
 [lints]
 workspace = true
 
 [features]
-production = ["den-core/production", "den-runtime/production", "den-http/production"]
+production = ["den-core/production", "den-protocol/production", "den-service/production", "den-runtime/production", "den-http/production"]
 
 [dependencies]
 den-core = { path = "../den-core" }
+den-docket = { path = "../den-docket" }
+bearwire-protocol = { path = "../bearwire-protocol" }
+den-protocol = { path = "../den-protocol" }
+den-service = { path = "../den-service" }
+den-llm = { path = "../den-llm" }
 den-http = { path = "../den-http" }
 den-runtime = { path = "../den-runtime" }
-axum = { version = "0.8", default-features = false, features = ["json", "http1", "matched-path", "tokio", "macros", "query"] }
-bytes = "1"
-futures = "0.3"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1.0.138"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
-tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread"] }
-tracing = "0.1.41"
-uuid = { version = "1", features = ["serde", "v4"] }
+axum = { workspace = true, features = ["json", "query"] }
+bytes.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-util.workspace = true
+tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 den-core = { path = "../den-core", features = ["test-util"] }
+den-memory = { path = "../den-memory" }

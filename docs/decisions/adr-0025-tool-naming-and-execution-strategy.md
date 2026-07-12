@@ -217,16 +217,18 @@ adapter
 
 ### Process
 
-Provider name:
+Current provider names:
 
 ```text
 process_run
+terminal_run_command
 ```
 
-Canonical name:
+Current canonical names:
 
 ```text
 acp.process.run
+acp.terminal.run_command
 ```
 
 Execution:
@@ -234,6 +236,61 @@ Execution:
 ```text
 adapter
 ```
+
+### Command execution direction
+
+The preferred long-term model-facing command tool is a single legible provider name:
+
+```text
+run_command
+```
+
+with a stable canonical identity such as:
+
+```text
+acp.command.run
+```
+
+The split between `process_run` and `terminal_run_command` should be treated as an execution detail below that model-facing abstraction.
+
+#### Intended routing order for `run_command`
+
+1. **Dedicated-tool redirect**
+   - If the request is clearly better handled by an existing dedicated tool, do not execute the command.
+   - Return a structured redirect with the preferred tool and suggested arguments.
+
+2. **Known structured command -> `process_run`**
+   - Use `process_run` for short, bounded, machine-readable, or quiet commands.
+
+3. **Known high-output or long-running command -> `terminal_run_command`**
+   - Use `terminal_run_command` when the user benefits from live output or the command commonly runs long.
+
+4. **Unknown command default**
+   - In interactive armature flows, default unknown commands to `terminal_run_command` rather than silent process execution.
+
+5. **Stance/policy exception**
+   - In non-interactive execution contexts, unknown commands may use `process_run` only when stance policy and task policy explicitly allow it.
+
+#### Soft wall
+
+The dedicated-tool redirect should be a **soft wall**:
+
+- first request: return a structured `prefer_dedicated_tool` result without executing;
+- second request: allow execution only when the caller sets an explicit override flag such as `bypass_tool_redirect=true`.
+
+Examples of soft-walled shell commands that should steer to dedicated tools when they clearly fit:
+
+- `git status`, `git diff`, `git log`, `git show`, `git add`, `git restore`, `git commit`, `git stash` -> dedicated git tools
+- `rg` / `grep` workspace searches -> `fs_search_files`
+- clearly targeted `sed` replacement invocations -> `fs_replace_text`
+
+The model-facing direct-tool capability context should reinforce these mappings with short descriptor hints so the model sees `fs_search_files` and `fs_replace_text` as the primary affordances before falling back to shell commands.
+
+#### Maintenance obligation
+
+When BEARS adds a new dedicated tool for an operation that models commonly attempt through command execution, the `run_command` router and soft-wall policy must be updated in the same change.
+
+Tool-surface changes and command-routing changes are coupled by design.
 
 ### Web
 
@@ -607,6 +664,8 @@ Examples:
 5. Add Den-side URL/host approval flow for unapproved fetches.
 6. Update prompt guidance to prefer `web_fetch`, not `den_web_fetch`.
 7. Migrate memory/situation provider names away from `den_*` prefixes: `session_info`, `memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, and `memory_search`.
+
+- Model-facing direct-tool capability context and descriptor hints should be treated as one projection of the broader Capability Catalog. As the catalog matures, new tools should be discoverable through capability discovery before they are added to always-visible prompt surfaces; see [ADR-0054: Capability Discovery and Code Mode](adr-0054-capability-discovery-and-code-mode.md).
 
 ---
 

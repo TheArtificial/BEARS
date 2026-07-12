@@ -1,145 +1,157 @@
-{% extends "base.html" %} {% block title %}Bear · {{ bear.slug }}{% endblock %}
-{% block content %} {% include "bear/settings/_bear_nav.html" %}
+{% extends "bear/_manage.html" %}
+{% block title %}{{ bear.name }} · Overview{% endblock %}
+{% block manage %}
 <div class="box">
     <h2>{{ bear.name }}</h2>
-    <p><code>{{ bear.slug }}</code> · <code>{{ bear.id }}</code></p>
+    <p>
+        <code>{{ bear.slug }}</code>
+        {% if bear.description %} · {{ bear.description | e }}{% endif %}
+    </p>
 
     {% if message %}
     <p><strong>{{ message | e }}</strong></p>
     {% endif %}
 
-    <p class="form-hint">
-        A Bear is a persistent agent identity. Den stores its identity, prompt
-        architecture, profile runtimes, access policy, conversations, and
-        canonical SQLite memory.
-    </p>
-
-    {% if can_manage_bear %}
-    <p class="button-row">
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/edit/overview"
-            >Edit basic details</a
-        >
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/edit/prompt"
-            >Edit prompts</a
-        >
-        <a class="button-link" href="/bear/{{ bear.slug | e }}/access"
-            >Manage access</a
+    {% if pending_reviews > 0 %}
+    <p>
+        <a class="button-link" href="/bear/{{ bear.slug | e }}/memory"
+            >{{ pending_reviews }} memor{% if pending_reviews == 1 %}y{% else
+            %}ies{% endif %} awaiting your review</a
         >
     </p>
     {% endif %}
 
-    <div
-        style="
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
-            gap: 1rem;
-            margin-top: 1.5rem;
-        "
-    >
-        <section class="box" style="margin: 0">
-            <h4>
-                <a href="/bear/{{ bear.slug | e }}/edit/overview">Identity</a>
-            </h4>
-            <p class="form-hint">
-                Human-facing Bear identity and default model.
-            </p>
-            <p>
-                {% if bear.description %}{{ bear.description | e }}{% else %}<em
-                    >No description</em
-                >{% endif %}
-            </p>
-            <p>
-                Model: {% if bear.default_model %}{{ bear.default_model | e }}{%
-                else %}<em>none</em>{% endif %}
-            </p>
-        </section>
+    <h3>Health</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Stance</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in agent_health_rows %}
+            <tr>
+                <td>
+                    <a
+                        href="/bear/{{ bear.slug | e }}/stances/{{ row.profile | e }}"
+                        >{{ row.profile | e }}</a
+                    >
+                </td>
+                <td>
+                    {% if row.health_status == "ok" %}ok{% else %}<strong
+                        >{{ row.health_status | e }}</strong
+                    >{% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="form-hint">
+        {{ roles_ready }} stance{% if roles_ready != 1 %}s{% endif %} ready{%
+        if roles_error > 0 %} · {{ roles_error }} with errors{% endif %} ·
+        {{ member_count }} member{% if member_count != 1 %}s{% endif %} ·
+        {{ conversation_count }} conversation{% if conversation_count != 1
+        %}s{% endif %}
+    </p>
 
-        <section class="box" style="margin: 0">
-            <h4><a href="/bear/{{ bear.slug }}/persona">Prompts</a></h4>
-            <p class="form-hint">
-                Baseline system prompt plus profile-specific composed prompts.
-            </p>
-            <p>
-                {% if context_profile_enabled %}Profile-aware prompt
-                composition{% else %}Single legacy system prompt{% endif %}
-            </p>
-            {% if can_manage_bear %}
-            <p>
-                <a href="/bear/{{ bear.slug | e }}/edit/prompt">Edit prompts</a>
-            </p>
-            {% endif %}
-        </section>
+    <h3>Recent activity</h3>
+    {% if recent_conversations %}
+    <ul>
+        {% for conv in recent_conversations %}
+        <li>
+            <a
+                href="/bear/{{ bear.slug | e }}/conversations/{{ conv.id | e }}"
+                >{{ conv.title | e }}</a
+            >
+            <span class="form-hint">· {{ conv.updated_at | e }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    <p class="form-hint">
+        <a href="/bear/{{ bear.slug | e }}/activity">All activity</a>
+    </p>
+    {% else %}
+    <p class="form-hint">
+        No conversations yet.
+        <a href="/bear/{{ bear.slug | e }}">Start one</a>.
+    </p>
+    {% endif %}
+</div>
 
-        <section class="box" style="margin: 0">
-            <h4>
-                <a href="/bear/{{ bear.slug }}/profiles">Runtime profiles</a>
-            </h4>
-            <p class="form-hint">
-                Chat, pair, curate, work, and watch runtime surfaces.
-            </p>
-            <p>{{ roles_ready }}/{{ agent_health_rows | length }} ready</p>
-        </section>
-
-        <section class="box" style="margin: 0">
-            <h4><a href="/bear/{{ bear.slug }}/memory">Memory</a></h4>
-            <p class="form-hint">
-                Canonical SQLite memory, profile-local memory, derived entities,
-                and recall.
-            </p>
+{# Responsive disclosure: additive detail on wide viewports, CSS only. #}
+<div class="bear-manage-disclosed">
+    <div class="bear-manage-overview-wide">
+        <section class="box">
+            <h3>Memory</h3>
             {% if memory_stats %}
-            <p>
-                {{ memory_stats.record_count }} records · {{
-                memory_stats.distinct_paths }} paths
+            <table>
+                <tbody>
+                    <tr>
+                        <td>Records</td>
+                        <td>{{ memory_stats.record_count }}</td>
+                    </tr>
+                    <tr>
+                        <td>Shared scope</td>
+                        <td>{{ memory_stats.shared_count }}</td>
+                    </tr>
+                    <tr>
+                        <td>Stance-local</td>
+                        <td>{{ memory_stats.profile_local_count }}</td>
+                    </tr>
+                    <tr>
+                        <td>Distinct paths</td>
+                        <td>{{ memory_stats.distinct_paths }}</td>
+                    </tr>
+                    <tr>
+                        <td>Pending proposals</td>
+                        <td>{{ memory_stats.pending_proposals }}</td>
+                    </tr>
+                    <tr>
+                        <td>Pending observations</td>
+                        <td>{{ memory_stats.pending_observations }}</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p class="form-hint">
+                <a href="/bear/{{ bear.slug | e }}/memory">Open memory</a>
             </p>
             {% else %}
-            <p><em>Stats unavailable</em></p>
+            <p class="form-hint">Memory statistics unavailable.</p>
             {% endif %}
         </section>
 
-        <section class="box" style="margin: 0">
-            <h4><a href="/bear/{{ bear.slug }}/access">Access</a></h4>
-            <p class="form-hint">Who can use and administer this Bear.</p>
-            <p><strong>{{ member_count }}</strong> member(s)</p>
-        </section>
-
-        <section class="box" style="margin: 0">
-            <h4>
-                <a href="/bear/{{ bear.slug }}/conversations">Conversations</a>
-            </h4>
-            <p class="form-hint">Persisted web chat and ACP transcripts.</p>
-            <p>{{ conversation_count }} conversation(s)</p>
-        </section>
-
-        <section class="box" style="margin: 0">
-            <h4><a href="/bear/{{ bear.slug }}/context">Context</a></h4>
-            <p class="form-hint">
-                Prompt memory blocks and context inputs assembled into runtime
-                prompts.
-            </p>
-        </section>
-
-        <section class="box" style="margin: 0">
-            <h4>Bear bundle</h4>
-            <p class="form-hint">
-                <code>.bear</code> export includes <code>bear.yaml</code> and
-                <code>memory.sqlite</code>.
-            </p>
-            {% if can_manage_bear %}
-            <p>
-                <a href="/bear/{{ bear.slug | e }}/export.bear"
-                    >Download {{ bear.slug | e }}.bear</a
-                >
-            </p>
+        <section class="box">
+            <h3>Activity over time</h3>
+            {% if weekly_activity %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Week of</th>
+                        <th>Conversations</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in weekly_activity %}
+                    <tr>
+                        <td>{{ row.week | e }}</td>
+                        <td>{{ row.count }}</td>
+                        <td class="full-width">
+                            <span class="bear-manage-bar-track"
+                                ><span
+                                    class="bear-manage-bar bear-manage-bar-w{{ row.pct }}"
+                                ></span
+                            ></span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
             {% else %}
-            <p class="form-hint">Bear admin access required.</p>
+            <p class="form-hint">No activity in the last eight weeks.</p>
             {% endif %}
         </section>
     </div>
-
-    <p style="margin-top: 1.5rem" class="form-hint">
-        <a href="/bear/{{ bear.slug }}/policy">Web policy</a> ·
-        <a href="/bear/{{ bear.slug }}/advanced">Advanced diagnostics</a> ·
-        <a href="/bear/{{ bear.slug | e }}">Chat</a>
-    </p>
 </div>
 {% endblock %}

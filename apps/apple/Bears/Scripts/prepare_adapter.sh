@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WORKSPACE_ROOT="$(cd "${APP_ROOT}/../../.." && pwd)"
-ADAPTER_CRATE_DIR="${WORKSPACE_ROOT}/tools/bears-acp-adapter"
+ADAPTER_CRATE_DIR="${WORKSPACE_ROOT}/tools/bear-armature"
 ADAPTER_RESOURCE_DIR="${APP_ROOT}/BearsApp/Resources/Adapter"
 ADAPTER_RESOURCE_PATH="${ADAPTER_RESOURCE_DIR}/bears-acp-adapter"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${WORKSPACE_ROOT}/target}"
@@ -14,11 +14,11 @@ ADAPTER_BINARY="${ADAPTER_BINARY:-}"
 case "${PROFILE}" in
   debug)
     CARGO_ARGS=()
-    RELATIVE_BINARY_PATH="debug/bears-acp-adapter"
+    RELATIVE_BINARY_PATH="debug/bear-armature"
     ;;
   release)
     CARGO_ARGS=(--release)
-    RELATIVE_BINARY_PATH="release/bears-acp-adapter"
+    RELATIVE_BINARY_PATH="release/bear-armature"
     ;;
   *)
     echo "error: unsupported PROFILE='${PROFILE}'. Use 'debug' or 'release'." >&2
@@ -46,11 +46,11 @@ else
     echo "checked:" >&2
     echo "  - ${DEFAULT_ADAPTER_BINARY_PATH}" >&2
     echo "  - ${CRATE_LOCAL_ADAPTER_BINARY_PATH}" >&2
-    echo "hint: provide ADAPTER_BINARY=/path/to/bears-acp-adapter or build the adapter in an environment with Rust first." >&2
+    echo "hint: provide ADAPTER_BINARY=/path/to/bear-armature or build the adapter in an environment with Rust first." >&2
     exit 1
   fi
 
-  echo "==> Building bears-acp-adapter (${PROFILE})"
+  echo "==> Building bear-armature (${PROFILE})"
   if [[ ${#CARGO_ARGS[@]} -eq 0 ]]; then
     cargo build --manifest-path "${ADAPTER_CRATE_DIR}/Cargo.toml"
   else

@@ -1,0 +1,21 @@
+{
+  "name": "reasoning_delta",
+  "surface_events": [
+    {
+      "kind": "reasoning_delta",
+      "id": "reasoning-1",
+      "role": "assistant",
+      "text": "I should inspect the previous result before answering.",
+      "source": "provider_reasoning",
+      "replay_policy": "thought",
+      "created_at": "2026-07-07T00:04:00Z"
+    },
+    {
+      "kind": "message",
+      "id": "assistant-1",
+      "role": "assistant",
+      "text": "The relevant tool result is available.",
+      "created_at": "2026-07-07T00:04:01Z"
+    }
+  ]
+}

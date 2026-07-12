@@ -5,13 +5,13 @@ fn pair_context() -> DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(den_runtime::bears::BearProfile::Pair),
+        profile: Some(den_service::bears::BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("acp-test".to_string()),
+        client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
@@ -19,6 +19,8 @@ fn pair_context() -> DenToolInvocationContext {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: None,
         channel: Default::default(),
     }
@@ -31,17 +33,14 @@ use crate::core::{
         },
         descriptor::builtin_den_tool_descriptor_for_provider_name,
         memory_write::MemoryWriteEntryArguments,
-        session::{invoke_den_tool, DenToolInvocationContext},
+        session::{DenToolInvocationContext, invoke_den_tool},
         support::validate_memory_write_entry_semantics,
     },
-    work_plans::{WorkPlanItem, WorkPlanItemStatus, WorkPlanProjection},
 };
-use den_acp::acp::client_tool_advertisement::client_tool_descriptor;
-use den_runtime::{
-    plan_mode::PlanModeSessionRow,
-    client_tools::ClientToolName,
-};
-use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
+use den_core::client_tools::{ClientToolName, provider_tool_descriptor};
+use den_core::tools::preflight::{ToolSemanticWarning, tool_warning_payload};
+use den_docket::{TaskListUpdateItem, TaskListItemStatus, TaskListLocalProjection};
+use den_runtime::{plan_mode::PlanModeSessionRow};
 
 #[test]
 fn descriptor_exposes_turn_state_domain_metadata() {
@@ -49,7 +48,7 @@ fn descriptor_exposes_turn_state_domain_metadata() {
     assert_eq!(descriptor.domain, "workplan");
     assert_eq!(descriptor.content_class, Some("workplan_artifact"));
 
-    let descriptor = builtin_den_tool_descriptor_for_provider_name("update_plan").unwrap();
+    let descriptor = builtin_den_tool_descriptor_for_provider_name("update_task_list").unwrap();
     assert_eq!(descriptor.domain, "activity");
     assert_eq!(descriptor.content_class, Some("activity_status"));
 
@@ -59,10 +58,10 @@ fn descriptor_exposes_turn_state_domain_metadata() {
 }
 
 #[test]
-fn acp_client_descriptors_expose_execution_domain_metadata() {
-    let descriptor = client_tool_descriptor(ClientToolName::ReadTextFile);
-    assert_eq!(descriptor["x-bears-domain"], "execution");
-    assert_eq!(descriptor["x-bears-content-class"], "read_files");
+fn armature_client_descriptors_expose_execution_domain_metadata() {
+    let descriptor = provider_tool_descriptor(ClientToolName::ReadTextFile);
+    assert_eq!(descriptor["name"], "fs_read_text_file");
+    assert!(descriptor["description"].as_str().is_some_and(|text| text.contains("armature.fs.read_text_file")));
 }
 
 #[test]
@@ -73,7 +72,7 @@ fn plan_mode_payload_is_workplan_native() {
         user_id: 1,
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
-        acp_session_id: "acp-test".to_string(),
+        client_session_id: "client-test".to_string(),
         state: "submitted".to_string(),
         reason: "test".to_string(),
         requested_by: "pair".to_string(),
@@ -104,15 +103,15 @@ fn plan_mode_payload_is_workplan_native() {
 #[test]
 fn work_plan_payload_is_activity_native() {
     let now = time::OffsetDateTime::UNIX_EPOCH;
-    let item = WorkPlanItem {
+    let item = TaskListUpdateItem {
         id: "item-1".to_string(),
         title: "Implement".to_string(),
         summary: None,
-        status: WorkPlanItemStatus::InProgress,
+        status: TaskListItemStatus::InProgress,
         blocked_reason: None,
         source_refs: Vec::new(),
     };
-    let plan = WorkPlanProjection {
+    let plan = TaskListLocalProjection {
         id: uuid::Uuid::nil(),
         bear_id: uuid::Uuid::nil(),
         title: "Activity".to_string(),
@@ -124,7 +123,7 @@ fn work_plan_payload_is_activity_native() {
         items: vec![item.clone()],
         current_item: Some(item),
         source_conversation_id: Some("conv".to_string()),
-        source_acp_session_id: Some("acp".to_string()),
+        source_client_session_id: Some("armature".to_string()),
         handoff_intent_path: None,
         handoff_task_id: None,
         created_at: now,
@@ -166,7 +165,7 @@ fn memory_write_entry_semantics_reject_activity_domain_before_db_access() {
     let err = validate_memory_write_entry_semantics(&args, &pair_context())
         .unwrap_err()
         .to_string();
-    assert!(err.contains("activity") || err.contains("update_plan"));
+    assert!(err.contains("activity") || err.contains("update_task_list"));
 }
 
 #[test]
@@ -242,7 +241,7 @@ fn memory_write_entry_semantics_allows_plain_semantic_memory() {
 async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memory() {
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_memory::MemoryStoreManager::new(&config);
     let result = invoke_den_tool(
         &pool,
         &config,
@@ -292,13 +291,13 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(den_runtime::bears::BearProfile::Pair),
+        profile: Some(den_service::bears::BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("acp-test".to_string()),
+        client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: Vec::new(),
@@ -306,13 +305,15 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: None,
         channel: Default::default(),
     };
 
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_memory::MemoryStoreManager::new(&config);
     let result = invoke_den_tool(
         &pool,
         &config,
@@ -345,7 +346,7 @@ fn memory_write_entry_semantics_reject_activity_content_class_before_db_access()
     let err = validate_memory_write_entry_semantics(&args, &pair_context())
         .unwrap_err()
         .to_string();
-    assert!(err.contains("activity") || err.contains("update_plan"));
+    assert!(err.contains("activity") || err.contains("update_task_list"));
 }
 
 #[tokio::test]
@@ -354,13 +355,13 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
         bear_id: uuid::Uuid::nil(),
         bear_slug: "test".to_string(),
         binding_id: "agent".to_string(),
-        profile: Some(den_runtime::bears::BearProfile::Pair),
+        profile: Some(den_service::bears::BearProfile::Pair),
         user_id: 1,
         username: Some("tester".to_string()),
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("acp-test".to_string()),
+        client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: Vec::new(),
@@ -368,13 +369,15 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: None,
         channel: Default::default(),
     };
 
     let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
     let config = crate::config::Config::test_stub();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_memory::MemoryStoreManager::new(&config);
     let result = invoke_den_tool(
         &pool,
         &config,
@@ -391,5 +394,5 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
     .await;
 
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("activity") || err.contains("update_plan"));
+    assert!(err.contains("activity") || err.contains("update_task_list"));
 }

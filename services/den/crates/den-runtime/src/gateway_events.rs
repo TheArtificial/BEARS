@@ -4,22 +4,24 @@ use bytes::Bytes;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::{
-    tool_turns::ToolResultRequest,
-    client_tools::{
-        diag_phase, client_tool_display_for_provider, client_tool_policy_json_for_provider,
-        supported_provider_tool_names, ClientToolName,
-    },
+use den_service::tool_turns::ToolResultRequest;
+
+use den_core::client_tools::{
+    client_tool_display_for_provider, client_tool_policy_json_for_provider, diag_phase,
+    supported_provider_tool_names, ClientToolName,
 };
-use den_docket::{WorkPlanItemStatus, WorkPlanProjection};
 use den_core::tools::descriptor::{
     builtin_den_tool_descriptor_for_provider_name, builtin_den_tool_descriptors,
     den_tool_display_json_for_provider, den_tool_policy_json_for_provider,
 };
+use den_docket::{TaskListItemStatus, TaskListLocalProjection};
 
 #[derive(Debug)]
 pub enum GatewayEvent {
     AssistantTextDelta {
+        text: String,
+    },
+    ReasoningTextDelta {
         text: String,
     },
     StatusText {
@@ -67,7 +69,7 @@ pub enum GatewayEvent {
         target: serde_json::Value,
         options: Vec<String>,
     },
-    PlanUpdate(WorkPlanProjection),
+    PlanUpdate(TaskListLocalProjection),
     PlanUpdateJson {
         entries: Vec<serde_json::Value>,
     },
@@ -141,7 +143,7 @@ pub fn map_provider_stream_event_to_gateway_event(
                     message: format!(
                         "Model emitted textual pseudo tool call for {tool_name} instead of a native tool call."
                     ),
-                    detail: Some("The tool was advertised, but the model emitted text instead of a native tool call. This can happen when the continuation tool surface is too large, tool schema handling drifted inside Letta/model provider, or the run hit a continuation budget. Check `Posting Letta ACP tool return continuation` for client_tools_count/client_tools_bytes/max_steps.".to_string()),
+                    detail: Some("The tool was advertised, but the model emitted text instead of a native tool call. This can happen when the continuation tool surface is too large, tool schema handling drifted inside model provider, or the run hit a continuation budget. Check `Posting provider armature tool return continuation` for client_tools_count/client_tools_bytes/max_steps.".to_string()),
                     error_type: Some("pseudo_tool_call_text".to_string()),
                     request_id: None,
                     context: Some(serde_json::json!({
@@ -153,7 +155,7 @@ pub fn map_provider_stream_event_to_gateway_event(
                 Some(GatewayEvent::AssistantTextDelta { text })
             }
         }
-        "reasoning_message" => Some(GatewayEvent::StatusText {
+        "reasoning_message" => Some(GatewayEvent::ReasoningTextDelta {
             text: inner
                 .get("reasoning")
                 .and_then(|v| v.as_str())
@@ -203,7 +205,7 @@ pub fn map_provider_stream_event_to_gateway_event(
             } else {
                 Some(GatewayEvent::Error {
                     message: format!(
-                        "Letta stopped before producing assistant output: {stop_reason}"
+                        "Runtime stopped before producing assistant output: {stop_reason}"
                     ),
                     detail: None,
                     error_type: Some(stop_reason.to_string()),
@@ -213,33 +215,44 @@ pub fn map_provider_stream_event_to_gateway_event(
             }
         }
         "tool_call_message" | "approval_request_message" | "function_call" => {
-            native_letta_tool_request_event(
+            native_provider_tool_request_event(
                 event,
                 inner,
                 message_type == "approval_request_message",
             )
         }
         "tool_return_message" => None,
-        _ => conversation_resolved_gateway_event(event)
-            .or_else(|| extract_stream_text_delta(event)),
+        _ => {
+            conversation_resolved_gateway_event(event).or_else(|| extract_stream_text_delta(event))
+        }
     }
 }
 
 fn extract_stream_text_delta(event: &serde_json::Value) -> Option<GatewayEvent> {
     let kind = stream_text_delta_kind(event);
+    let reasoning_text = stream_reasoning_delta_text(event);
+    let assistant_text = stream_assistant_delta_text(event);
     let (kind, text) = match kind {
         Some(StreamTextDeltaKind::Assistant) => (
-            StreamTextDeltaKind::Assistant,
-            stream_assistant_delta_text(event).or_else(|| stream_text_delta_text(event))?,
+            // ponytail: providers sometimes label every stream item as a message_delta;
+            // an explicit reasoning field is still reasoning unless there is separate
+            // assistant content in the same event. If providers start sending both in one
+            // item, split the event upstream instead of guessing here.
+            if reasoning_text.is_some() && assistant_text.is_none() {
+                StreamTextDeltaKind::Reasoning
+            } else {
+                StreamTextDeltaKind::Assistant
+            },
+            assistant_text.or_else(|| reasoning_text.clone())?,
         ),
         Some(StreamTextDeltaKind::Reasoning) => (
             StreamTextDeltaKind::Reasoning,
-            stream_reasoning_delta_text(event).or_else(|| stream_text_delta_text(event))?,
+            reasoning_text.or_else(|| assistant_text.clone())?,
         ),
         None => {
-            if let Some(text) = stream_reasoning_delta_text(event) {
+            if let Some(text) = reasoning_text {
                 (StreamTextDeltaKind::Reasoning, text)
-            } else if let Some(text) = stream_assistant_delta_text(event) {
+            } else if let Some(text) = assistant_text {
                 (StreamTextDeltaKind::Assistant, text)
             } else {
                 return None;
@@ -251,7 +264,7 @@ fn extract_stream_text_delta(event: &serde_json::Value) -> Option<GatewayEvent> 
     }
     match kind {
         StreamTextDeltaKind::Assistant => Some(GatewayEvent::AssistantTextDelta { text }),
-        StreamTextDeltaKind::Reasoning => Some(GatewayEvent::StatusText { text }),
+        StreamTextDeltaKind::Reasoning => Some(GatewayEvent::ReasoningTextDelta { text }),
     }
 }
 
@@ -332,10 +345,6 @@ fn stream_reasoning_delta_text(event: &serde_json::Value) -> Option<String> {
     None
 }
 
-fn stream_text_delta_text(event: &serde_json::Value) -> Option<String> {
-    stream_reasoning_delta_text(event).or_else(|| stream_assistant_delta_text(event))
-}
-
 fn pseudo_tool_call_name(text: &str) -> Option<String> {
     for name in supported_provider_tool_names() {
         if text.contains(&format!("to=functions.{name}"))
@@ -348,26 +357,31 @@ fn pseudo_tool_call_name(text: &str) -> Option<String> {
     None
 }
 
-fn native_letta_tool_request_event(
+fn native_provider_tool_request_event(
     event: &serde_json::Value,
     inner: &serde_json::Value,
-    has_letta_approval_request: bool,
+    has_provider_approval_request: bool,
 ) -> Option<GatewayEvent> {
-    native_letta_tool_request_event_with_args(event, inner, has_letta_approval_request, None, None)
+    native_provider_tool_request_event_with_args(
+        event,
+        inner,
+        has_provider_approval_request,
+        None,
+        None,
+    )
 }
 
-fn native_letta_tool_request_event_with_args(
+fn native_provider_tool_request_event_with_args(
     event: &serde_json::Value,
     inner: &serde_json::Value,
-    has_letta_approval_request: bool,
+    has_provider_approval_request: bool,
     args_override: Option<serde_json::Value>,
     tool_name_override: Option<&str>,
 ) -> Option<GatewayEvent> {
     let tool_call = tool_call_value(inner, event);
     let tool_name = tool_name_override.or_else(|| tool_call_name(tool_call, inner, event))?;
     let client_tool = ClientToolName::from_provider_alias(tool_name);
-    let den_server_tool =
-        builtin_den_tool_descriptor_for_provider_name(tool_name).is_some();
+    let den_server_tool = builtin_den_tool_descriptor_for_provider_name(tool_name).is_some();
     let unsupported_tool_detail = if client_tool.is_none() && !den_server_tool {
         let mut supported = supported_provider_tool_names()
             .into_iter()
@@ -383,7 +397,7 @@ fn native_letta_tool_request_event_with_args(
             );
         }
         Some(format!(
-            "Unsupported ACP/Den tool: {tool_name}. Supported ACP/Den tools: {}.",
+            "Unsupported client/Den tool: {tool_name}. Supported client/Den tools: {}.",
             supported.join(", ")
         ))
     } else {
@@ -415,7 +429,7 @@ fn native_letta_tool_request_event_with_args(
             }
             return Some(GatewayEvent::Error {
                 message: format!(
-                    "Letta requested {} without a {missing} argument.",
+                    "Runtime requested {} without a {missing} argument.",
                     descriptor.provider_name
                 ),
                 detail: Some(format!(
@@ -440,9 +454,9 @@ fn native_letta_tool_request_event_with_args(
         tool_call_id(tool_call, inner, event).unwrap_or_else(|| format!("call-{}", Uuid::new_v4()));
     let adapter_approval_required =
         client_tool.is_some() && !den_server_tool && unsupported_tool_detail.is_none();
-    let letta_approval_request_id = has_letta_approval_request.then(|| {
+    let provider_approval_request_id = has_provider_approval_request.then(|| {
         // Prefer an explicit `approval_request_id` (carried by the runtime-parser seed
-        // value) before the raw Letta `id` field. Reading only `id` regenerated a fresh
+        // value) before the raw provider `id` field. Reading only `id` regenerated a fresh
         // UUID for the seed path, so the registered obligation's approval id no longer
         // matched the one the client echoes back, rejecting the result with a 400.
         event
@@ -462,16 +476,27 @@ fn native_letta_tool_request_event_with_args(
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let display = den_tool_display_json_for_provider(tool_name, &args)
+        .unwrap_or_else(|| client_tool_display_for_provider(tool_name, &args));
+    let title = display
+        .get("title")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            client_tool
+                .map(|tool| tool.descriptor().title.to_string())
+                .unwrap_or_else(|| tool_name.to_string())
+        });
     let (result_tx, result_rx) = oneshot::channel();
     Some(GatewayEvent::ToolRequest {
         request_id,
         turn_id,
         tool_call_id,
-        approval_request_id: letta_approval_request_id,
+        approval_request_id: provider_approval_request_id,
         tool_name: tool_name.to_string(),
-        title: client_tool
-            .map(|tool| tool.descriptor().title.to_string())
-            .unwrap_or_else(|| tool_name.to_string()),
+        title,
         kind: if unsupported_tool_detail.is_some() {
             "unsupported".to_string()
         } else {
@@ -488,18 +513,18 @@ fn native_letta_tool_request_event_with_args(
         },
         approval_required: adapter_approval_required,
         approval_reason: adapter_approval_required.then(|| {
-            "BEARS requires client approval before running this local ACP tool.".to_string()
+            "BEARS requires client approval before running this local armature tool.".to_string()
         }),
         result_tx: Some(result_tx),
         result_rx: Some(result_rx),
     })
 }
 
-/// Defensive compatibility layer for Letta tool-call streaming.
+/// Defensive compatibility layer for provider tool-call streaming.
 ///
-/// The preferred ACP path uses the conversation-scoped Letta messages endpoint with
+/// The preferred client adapter path uses the conversation-scoped provider messages endpoint with
 /// `streaming=true` and `stream_tokens=false`, which should normally yield coherent
-/// step-level tool events. Older/deployed Letta builds and some provider paths may
+/// step-level tool events. Older/deployed provider builds and some provider paths may
 /// still surface tool calls as repeated delta-like `approval_request_message` events:
 /// the tool name can appear in one event, arguments can arrive later as string
 /// fragments, and duplicate events for the same `tool_call_id` may be emitted.
@@ -551,7 +576,7 @@ impl ToolCallAccumulator {
         }
         let args = self.parse_args_fragment(&tool_call_id, tool_call, inner, event)?;
         let tool_name = self.names.get(&tool_call_id).map(String::as_str)?;
-        let mapped = native_letta_tool_request_event_with_args(
+        let mapped = native_provider_tool_request_event_with_args(
             event,
             inner,
             message_type == "approval_request_message",
@@ -576,8 +601,7 @@ impl ToolCallAccumulator {
             .map(openai_tool_call_index_key)
             .unwrap_or_else(|| "0".to_string());
         if let Some(id) = tool_call_id(Some(tool_call), &serde_json::Value::Null, event) {
-            self.openai_delta_index_ids
-                .insert(index_key.clone(), id);
+            self.openai_delta_index_ids.insert(index_key.clone(), id);
         }
         let tool_call_id = self.openai_delta_index_ids.get(&index_key)?.clone();
         if self.emitted.contains_key(&tool_call_id) {
@@ -601,7 +625,7 @@ impl ToolCallAccumulator {
                 "arguments": args,
             }
         });
-        let mapped = native_letta_tool_request_event_with_args(
+        let mapped = native_provider_tool_request_event_with_args(
             &synthetic,
             &synthetic,
             false,
@@ -760,9 +784,7 @@ pub fn map_provider_stream_event_to_gateway_event_with_accumulator(
     map_provider_stream_event_to_gateway_event(event)
 }
 
-pub fn conversation_resolved_gateway_event(
-    event: &serde_json::Value,
-) -> Option<GatewayEvent> {
+pub fn conversation_resolved_gateway_event(event: &serde_json::Value) -> Option<GatewayEvent> {
     let conversation_id = event
         .get("conversation_id")
         .or_else(|| event.get("conversationId"))
@@ -786,6 +808,7 @@ pub fn conversation_resolved_gateway_event(
 pub fn gateway_event_adapter_type(event: &GatewayEvent) -> &'static str {
     match event {
         GatewayEvent::AssistantTextDelta { .. } => "assistant_text_delta",
+        GatewayEvent::ReasoningTextDelta { .. } => "reasoning_text_delta",
         GatewayEvent::StatusText { .. } => "status_text",
         GatewayEvent::TurnComplete { .. } => "turn_complete",
         GatewayEvent::TurnResult { .. } => "turn_result",
@@ -806,6 +829,7 @@ pub fn gateway_event_has_visible_output(event: &GatewayEvent) -> bool {
         GatewayEvent::AssistantTextDelta { text } | GatewayEvent::StatusText { text } => {
             !text.is_empty()
         }
+        GatewayEvent::ReasoningTextDelta { .. } => false,
         GatewayEvent::Error { .. } => true,
         GatewayEvent::TurnComplete { .. }
         | GatewayEvent::TurnResult { .. }
@@ -824,6 +848,10 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
     let mapped = match event {
         GatewayEvent::AssistantTextDelta { text } => serde_json::json!({
             "type": "assistant_text_delta",
+            "text": text,
+        }),
+        GatewayEvent::ReasoningTextDelta { text } => serde_json::json!({
+            "type": "reasoning_text_delta",
             "text": text,
         }),
         GatewayEvent::StatusText { text } => serde_json::json!({
@@ -905,8 +933,8 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                 "policy": den_tool_policy_json_for_provider(&tool_name)
                     .unwrap_or_else(|| client_tool_policy_json_for_provider(&tool_name)),
                 "diagnostic": {
-                    "component": "den.acp",
-                    "phase": diag_phase::LETTA_TOOL_CALL_MAPPED,
+                    "component": "den.armature",
+                    "phase": diag_phase::RUNTIME_TOOL_CALL_MAPPED,
                     "transport_version": 4,
                 },
             })
@@ -931,7 +959,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
             "target": target,
             "options": options,
             "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "permission_request_mapped",
                 "transport_version": 3,
             }
@@ -946,7 +974,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                 "title": title,
                 "updated_at": updated_at,
                 "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                     "phase": "session_info_update"
                 }
             });
@@ -964,18 +992,18 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                 let blocked_reason = item.blocked_reason.as_deref().unwrap_or("").trim();
                 let summary = item.summary.as_deref().unwrap_or("").trim();
                 let content = match item.status {
-                    WorkPlanItemStatus::Blocked if !blocked_reason.is_empty() => format!("Blocked: {} — {}", item.title, blocked_reason),
-                    WorkPlanItemStatus::Blocked => format!("Blocked: {}", item.title),
-                    WorkPlanItemStatus::Cancelled => format!("Cancelled: {}", item.title),
+                    TaskListItemStatus::Blocked if !blocked_reason.is_empty() => format!("Blocked: {} — {}", item.title, blocked_reason),
+                    TaskListItemStatus::Blocked => format!("Blocked: {}", item.title),
+                    TaskListItemStatus::Cancelled => format!("Cancelled: {}", item.title),
                     _ if !summary.is_empty() => format!("{} — {}", item.title, summary),
                     _ => item.title.clone(),
                 };
                 let status = match item.status {
-                    WorkPlanItemStatus::InProgress => "in_progress",
-                    WorkPlanItemStatus::Completed | WorkPlanItemStatus::Cancelled => "completed",
+                    TaskListItemStatus::InProgress => "in_progress",
+                    TaskListItemStatus::Completed | TaskListItemStatus::Cancelled => "completed",
                     _ => "pending",
                 };
-                let priority = if item.status == WorkPlanItemStatus::InProgress { "high" } else { "medium" };
+                let priority = if item.status == TaskListItemStatus::InProgress { "high" } else { "medium" };
                 serde_json::json!({
                     "content": content,
                     "priority": priority,
@@ -991,7 +1019,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                 })
             }).collect::<Vec<_>>(),
             "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "plan_update_mapped",
                 "transport_version": 3,
             }
@@ -1000,7 +1028,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
             "type": "plan_update",
             "entries": entries,
             "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "plan_update_mapped",
                 "transport_version": 3,
             }
@@ -1039,7 +1067,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
                 "approval_status": approval_status,
             },
             "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "plan_approval_fallback_mapped",
                 "transport_version": 3,
             }
@@ -1048,7 +1076,7 @@ pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {
             "type": "mode_update",
             "mode": mode,
             "diagnostic": {
-                "component": "den.acp",
+                "component": "den.armature",
                 "phase": "mode_update_mapped",
                 "transport_version": 3,
             }
@@ -1065,7 +1093,12 @@ fn preview_str_truncated(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}...", &s[..max])
+        // Back off to a UTF-8 char boundary so multi-byte input can't panic.
+        let mut end = max;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &s[..end])
     }
 }
 
@@ -1082,6 +1115,77 @@ mod tests {
                 "arguments": args.to_string(),
             }
         })
+    }
+
+    fn tool_card_payload_from_mock_provider(
+        name: &str,
+        args: serde_json::Value,
+    ) -> serde_json::Value {
+        let event = tool_call_event(name, args);
+        let mapped = map_provider_stream_event_to_gateway_event(&event).expect("mapped event");
+        let bytes = gateway_event_to_adapter_sse(mapped);
+        let text = std::str::from_utf8(bytes.as_ref()).expect("valid utf8 sse");
+        let json = text.trim().strip_prefix("data: ").expect("sse data frame");
+        serde_json::from_str(json).expect("json payload")
+    }
+
+    #[test]
+    fn mock_provider_to_client_card_includes_conversation_title_target() {
+        let payload = tool_card_payload_from_mock_provider(
+            "set_conversation_title",
+            serde_json::json!({ "title": "Real Title Value" }),
+        );
+
+        assert_eq!(payload["type"], "tool_request");
+        let title = payload["title"].as_str().expect("title string");
+        assert!(title.contains("Real Title Value"), "{payload}");
+        assert!(!title.ends_with(": conversation"), "{payload}");
+        assert_eq!(payload["display"]["subtitle"], "Real Title Value");
+    }
+
+    #[test]
+    fn mock_provider_to_client_card_includes_run_command_args() {
+        let payload = tool_card_payload_from_mock_provider(
+            "run_command",
+            serde_json::json!({
+                "command": "git",
+                "args": ["status", "--short"],
+                "cwd": "/workspace/services/den"
+            }),
+        );
+
+        assert_eq!(payload["type"], "tool_request");
+        let title = payload["title"].as_str().expect("title string");
+        assert!(title.contains("git status --short"), "{payload}");
+        assert_ne!(title, "Run command", "{payload}");
+        assert_eq!(
+            payload["display"]["subtitle"],
+            "git status --short → …/workspace/services/den"
+        );
+    }
+
+    #[test]
+    fn mock_provider_to_client_card_includes_create_job_goal_without_branding() {
+        let payload = tool_card_payload_from_mock_provider(
+            "create_job",
+            serde_json::json!({
+                "goal": "Fix ACP tool-card display summaries",
+                "tasks": []
+            }),
+        );
+
+        assert_eq!(payload["type"], "tool_request");
+        let title = payload["title"].as_str().expect("title string");
+        assert!(
+            title.contains("Fix ACP tool-card display summaries"),
+            "{payload}"
+        );
+        assert!(title.contains("job"), "{payload}");
+        assert!(!title.contains("Docket"), "{payload}");
+        assert_eq!(
+            payload["display"]["subtitle"],
+            "Fix ACP tool-card display summaries"
+        );
     }
 
     #[test]
@@ -1130,7 +1234,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_call_message_requires_adapter_approval_without_letta_approval_id() {
+    fn tool_call_message_requires_adapter_approval_without_provider_approval_id() {
         let event = tool_call_event(
             "fs_edit_file",
             serde_json::json!({
@@ -1188,7 +1292,7 @@ mod tests {
 
     #[test]
     fn raw_path_approval_request_id_falls_back_to_id() {
-        // Compatibility: the raw Letta SSE nests identity under `tool_call` and carries the
+        // Compatibility: the raw provider SSE nests identity under `tool_call` and carries the
         // approval id in top-level `id`.
         let event = serde_json::json!({
             "id": "approval-raw",
@@ -1316,7 +1420,7 @@ mod tests {
             "delta": { "text": "thinking" }
         });
         match map_provider_stream_event_to_gateway_event(&event) {
-            Some(GatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
+            Some(GatewayEvent::ReasoningTextDelta { text }) => assert_eq!(text, "thinking"),
             other => panic!("unexpected event: {other:?}"),
         }
     }
@@ -1328,7 +1432,19 @@ mod tests {
             "choices": [{ "delta": { "reasoning_content": "thinking" } }]
         });
         match map_provider_stream_event_to_gateway_event(&event) {
-            Some(GatewayEvent::StatusText { text }) => assert_eq!(text, "thinking"),
+            Some(GatewayEvent::ReasoningTextDelta { text }) => assert_eq!(text, "thinking"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn explicit_reasoning_field_beats_generic_message_delta_kind() {
+        let event = serde_json::json!({
+            "type": "message_delta",
+            "delta": { "reasoning_content": "thinking" }
+        });
+        match map_provider_stream_event_to_gateway_event(&event) {
+            Some(GatewayEvent::ReasoningTextDelta { text }) => assert_eq!(text, "thinking"),
             other => panic!("unexpected event: {other:?}"),
         }
     }
@@ -1437,7 +1553,7 @@ mod tests {
         assert!(raw.contains("\"tool_name\":\"fs_edit_file\""));
         assert!(raw.contains("\"required\":true"));
         assert!(raw.contains("\"risk\":\"writes_workspace\""));
-        assert!(raw.contains("\"phase\":\"letta_tool_call_mapped\""));
+        assert!(raw.contains("\"phase\":\"runtime_tool_call_mapped\""));
     }
 
     #[test]

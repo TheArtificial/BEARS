@@ -2,7 +2,7 @@
 
 `bear-armature` is the local stdio edge for Agent Client Protocol clients such as Zed.
 
-It speaks ACP JSON-RPC over stdin/stdout and calls the remote Den API ACP gateway over HTTPS/SSE.
+It speaks ACP JSON-RPC over stdin/stdout and talks to Den over BearWire by default. The legacy Den `/acp/**` HTTP path remains available temporarily as an explicit fallback.
 
 The legacy binary name `bears-acp-adapter` remains available as a symlink for existing editor configurations.
 
@@ -18,7 +18,7 @@ Implemented:
 - `session/prompt`
 - `session/cancel`
 - `session/close`
-- Den SSE -> ACP `session/update` text/thought chunks
+- BearWire -> ACP `session/update` projection for assistant text/thought chunks, tool cards/status, and structured session state
 - ACP client-tool relay for editor file-system tools:
   - `fs/read_text_file`
   - `fs/write_text_file`
@@ -27,9 +27,11 @@ Implemented:
 
 Session setup requires an absolute local `cwd`. The adapter prefers explicit `params.cwd`, then known client workspace URI/folder fallbacks if they normalize to an absolute local path. Relative or missing `cwd` values are rejected with a JSON-RPC validation error so Den only persists resumable sessions with a truthful filesystem context.
 
-ACP-provided `mcpServers` are intentionally rejected when non-empty. BEARS currently exposes Den/Codepool tools plus ACP client filesystem bridges, and does not own stdio MCP subprocess lifecycle. The adapter also reports `mcpCapabilities.http = false` and `mcpCapabilities.sse = false` until real MCP support exists.
+ACP-provided `mcpServers` are intentionally rejected when non-empty. BEARS currently exposes Den tools plus ACP client filesystem bridges, and does not own stdio MCP subprocess lifecycle. The adapter also reports `mcpCapabilities.http = false` and `mcpCapabilities.sse = false` until real MCP support exists.
 
-`session/load` replays persisted history as user/assistant text-only `session/update` notifications. Tool calls/results, status/reasoning chunks, errors, images/audio, and richer Letta/Codepool event history are not reconstructed unless Den exposes faithful historical event data in a future version.
+Live BearWire projection keeps execution ownership explicit: Den-hosted tool events are rendered as display-only tool cards and must not produce `client.tool.result` responses from the armature, while armature-local tool calls are executed through the trusted local boundary. Tool-card states are monotonic for the live surface; once a card reaches `completed` or `failed`, later stale `pending`/`in_progress` updates for the same tool call are suppressed.
+
+`session/load` replays persisted conversation history and typed surface records as ACP `session/update` notifications where Den has enough structured history to reconstruct them. This can include user/assistant text, reasoning/thought chunks, and completed tool records; richer upstream runtime event history is still limited to what Den persisted as replayable surface state.
 
 `session/list` lists persisted/resumable Den ACP sessions only. Newly-created adapter-local sessions are transient until the first prompt causes Den to persist them, and they are not listed after adapter restart.
 
@@ -72,13 +74,31 @@ tools/bear-armature/target/debug/bear-armature
 
 ## Required environment
 
-The adapter needs a Den API URL, bear slug, and bearer token with `acp:chat` scope. Local editor file tools are not currently relayed through this adapter/Codepool path.
+The adapter needs a Den API URL, bear slug, and bearer token with `acp:chat` scope. BearWire is the default Den ↔ armature transport.
 
 ```bash
 export DEN_API_URL="https://api.bears.[domain]" # or another public API origin, e.g. https://bears.[domain]:3001
 export BEAR_SLUG="test-bear"
 export DEN_TOKEN="..."
 ```
+
+Transport controls:
+
+```bash
+# Default: BearWire auto/probe mode. Usually leave unset.
+# export BEARS_BEARWIRE=auto
+
+# Require BearWire and fail instead of falling back if Den does not support it.
+export BEARS_BEARWIRE_REQUIRED=1
+
+# Temporary Phase-4 escape hatch: force legacy /acp HTTP.
+export BEARS_LEGACY_ACP_HTTP=1
+
+# Disable BearWire without forcing the legacy marker explicitly.
+export BEARS_BEARWIRE=off
+```
+
+Prefer `BEARS_LEGACY_ACP_HTTP=1` over `BEARS_BEARWIRE=off` when deliberately testing or recovering the legacy path, because `/status` and `/doctor` report the legacy-forced mode clearly.
 
 Use any Den API origin reachable from the process running the adapter. For Zed on macOS, this normally means a host-reachable HTTPS URL, a separate API hostname, or a published API port on the web host. `DEN_API_URL` must be the API origin only, not the full `/acp/bears/.../prompt` endpoint.
 
@@ -221,4 +241,4 @@ Production distribution should add Developer ID signing and Apple notarization b
 - HTTP failures include targeted hints for common cases: bad token (`401`), missing scope or membership (`403`), wrong API URL or disabled ACP gateway (`404`), wrong web/API origin (`405`), rate limits (`429`), and Den server errors (`5xx`).
 - Prompt failures that successfully reached Den include Den `/version` metadata in the JSON-RPC error data when it can be fetched, which helps confirm the deployed server build while debugging.
 - ACP `sessionId` values identify the client-side ACP session. The adapter lets Den bind a new session to a BEARS conversation, stores Den `conversation_resolved` events, and sends the resolved `conv-...` id on future prompts when available.
-- Local editor file-system tool relay through Letta Code was removed. Future ACP tool support should be implemented in a dedicated ACP runtime rather than this adapter/Codepool path.
+- Local editor file-system tool relay through the old external harness was removed. Future ACP tool support should be implemented in a dedicated ACP runtime rather than this adapter path.

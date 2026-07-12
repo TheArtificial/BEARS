@@ -1,12 +1,24 @@
 use crate::{
-    client_supports_terminal, paths::ensure_path_allowed_for_session,
-    send_terminal_tool_call_update, AdapterState, CreateTerminalRequest, CreateTerminalResponse,
-    EnvVariable, ReleaseTerminalRequest, Result, SessionContext, TerminalOutputRequest,
-    TerminalOutputResponse, ToolPolicy, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    client_supports_terminal,
+    paths::ensure_path_allowed_for_session,
+    send_terminal_tool_call_update,
+    tools::{
+        command_policy::{rtk_wrap_allowed, terminal_command_allowed},
+        rtk::{reduce_with_rtk_summary, ReducerMode, RtkReduction},
+    },
+    AdapterState, CreateTerminalRequest, CreateTerminalResponse, EnvVariable,
+    ReleaseTerminalRequest, Result, SessionContext, TerminalOutputRequest, TerminalOutputResponse,
+    ToolPolicy, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, Context};
 use serde_json::{json, Value};
 use std::{fmt, time::Duration};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerminalCommandValidation {
+    Allowlisted,
+    Generic,
+}
 
 pub(crate) fn command_line(command: &str, args: &[String]) -> String {
     if args.is_empty() {
@@ -75,6 +87,44 @@ fn terminal_result_content(
     )
 }
 
+async fn reduce_terminal_output_with_rtk(
+    reducer_mode: ReducerMode,
+    executed_via_rtk: bool,
+    command: &str,
+    args: &[String],
+    cwd: &str,
+    exit_code: Option<i64>,
+    signal: Option<&str>,
+    timed_out: bool,
+    output: &str,
+) -> Option<RtkReduction> {
+    if reducer_mode == ReducerMode::None || executed_via_rtk {
+        return None;
+    }
+    if output.trim().is_empty() {
+        return None;
+    }
+    let raw = format!(
+        "terminal_command: {}\ncwd: {cwd}\nexit_code: {}\nsignal: {}\ntimed_out: {timed_out}\n\nOUTPUT:\n{output}\n",
+        command_line(command, args),
+        exit_code.map(|code| code.to_string()).unwrap_or_else(|| "null".to_string()),
+        signal.unwrap_or("null"),
+    );
+    reduce_with_rtk_summary("BEARS_TERMINAL_RUN_RTK", raw).await
+}
+
+async fn rtk_available() -> bool {
+    tokio::process::Command::new("rtk")
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
+}
+
 pub(crate) async fn handle_terminal_run_command(
     adapter_state: &mut AdapterState,
     context: &SessionContext,
@@ -83,6 +133,7 @@ pub(crate) async fn handle_terminal_run_command(
     tool_title: Option<String>,
     args: &Value,
     policy: &ToolPolicy,
+    validation: TerminalCommandValidation,
 ) -> Result<Value> {
     if !client_supports_terminal(adapter_state) {
         return Err(anyhow!(
@@ -96,7 +147,7 @@ pub(crate) async fn handle_terminal_run_command(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("terminal_run_command args missing command"))?;
-    validate_build_command(command)?;
+    validate_terminal_command(command, validation)?;
 
     let cwd_raw = args
         .get("cwd")
@@ -111,14 +162,27 @@ pub(crate) async fn handle_terminal_run_command(
     }
 
     let command_args = command_args(args)?;
-    validate_build_command_args(command, &command_args)?;
+    validate_terminal_command_args(command, &command_args, validation)?;
     let env = terminal_env(args)?;
     let timeout_ms = terminal_timeout_ms(args, policy);
     let output_byte_limit = terminal_output_byte_limit(args, policy);
+    let reducer_mode = ReducerMode::from_args(args);
+    let rtk_wrap_allowed = rtk_wrap_allowed(command, &command_args);
+    let rtk_execute =
+        reducer_mode == ReducerMode::ExecuteViaRtk && rtk_wrap_allowed && rtk_available().await;
+    let effective_command = if rtk_execute { "rtk" } else { command };
+    let effective_args = if rtk_execute {
+        let mut args = Vec::with_capacity(command_args.len() + 1);
+        args.push(command.to_string());
+        args.extend(command_args.clone());
+        args
+    } else {
+        command_args.clone()
+    };
 
     let started = std::time::Instant::now();
-    let create = CreateTerminalRequest::new(session_id.to_string(), command.to_string())
-        .args(command_args.clone())
+    let create = CreateTerminalRequest::new(session_id.to_string(), effective_command.to_string())
+        .args(effective_args.clone())
         .env(env)
         .cwd(Some(cwd.clone()))
         .output_byte_limit(Some(output_byte_limit));
@@ -144,7 +208,7 @@ pub(crate) async fn handle_terminal_run_command(
         let title = tool_title.unwrap_or_else(|| {
             format!(
                 "Run terminal command: {}",
-                command_line(command, &command_args)
+                command_line(effective_command, &effective_args)
             )
         });
         let _ = send_terminal_tool_call_update(
@@ -154,7 +218,7 @@ pub(crate) async fn handle_terminal_run_command(
             title,
             format!(
                 "Running `{}` in `{}`. Live terminal output is attached below.",
-                command_line(command, &command_args),
+                command_line(effective_command, &effective_args),
                 cwd.display()
             ),
             terminal_id.clone(),
@@ -197,12 +261,28 @@ pub(crate) async fn handle_terminal_run_command(
                 .get("truncated")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let reduced = reduce_terminal_output_with_rtk(
+                reducer_mode,
+                rtk_execute,
+                command,
+                &command_args,
+                &cwd.to_string_lossy(),
+                None,
+                None,
+                true,
+                output_text,
+            )
+            .await;
+            let display_output = reduced
+                .as_ref()
+                .map(|r| r.output.as_str())
+                .unwrap_or(output_text);
             let result = TerminalResult {
                 exit_code: None,
                 signal: None,
                 timed_out: true,
                 elapsed_ms: started.elapsed().as_millis(),
-                output: output_text,
+                output: display_output,
                 truncated,
                 timeout_ms: Some(timeout_ms),
             };
@@ -222,6 +302,12 @@ pub(crate) async fn handle_terminal_run_command(
                 "output": output.get("output").cloned().unwrap_or_else(|| json!("")),
                 "truncated": truncated,
                 "content": content,
+                "reduction": reduced.map(|r| r.to_json()),
+                "effective_command": effective_command,
+                "effective_args": effective_args,
+                "execution_wrapper": if rtk_execute { json!("rtk") } else { Value::Null },
+                "reducer_mode": reducer_mode.as_str(),
+                "rtk_wrap_allowed": rtk_wrap_allowed,
                 "policy": { "timeout_ms": timeout_ms, "max_output_bytes": output_byte_limit }
             }));
         }
@@ -235,12 +321,28 @@ pub(crate) async fn handle_terminal_run_command(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let output_text = output.get("output").and_then(Value::as_str).unwrap_or("");
+    let reduced = reduce_terminal_output_with_rtk(
+        reducer_mode,
+        rtk_execute,
+        command,
+        &command_args,
+        &cwd.to_string_lossy(),
+        exit_code,
+        signal.as_deref(),
+        false,
+        output_text,
+    )
+    .await;
+    let display_output = reduced
+        .as_ref()
+        .map(|r| r.output.as_str())
+        .unwrap_or(output_text);
     let result = TerminalResult {
         exit_code,
         signal: signal.as_deref(),
         timed_out: false,
         elapsed_ms: started.elapsed().as_millis(),
-        output: output_text,
+        output: display_output,
         truncated,
         timeout_ms: None,
     };
@@ -259,6 +361,12 @@ pub(crate) async fn handle_terminal_run_command(
         "output": output.get("output").cloned().unwrap_or_else(|| json!("")),
         "truncated": truncated,
         "content": content,
+        "reduction": reduced.map(|r| r.to_json()),
+        "effective_command": effective_command,
+        "effective_args": effective_args,
+        "execution_wrapper": if rtk_execute { json!("rtk") } else { Value::Null },
+        "reducer_mode": reducer_mode.as_str(),
+        "rtk_wrap_allowed": rtk_wrap_allowed,
         "policy": { "timeout_ms": timeout_ms, "max_output_bytes": output_byte_limit }
     }))
 }
@@ -372,7 +480,7 @@ fn terminal_output_byte_limit(args: &Value, policy: &ToolPolicy) -> u64 {
         .clamp(1, policy_max_output)
 }
 
-fn validate_build_command(command: &str) -> Result<()> {
+fn validate_terminal_command(command: &str, validation: TerminalCommandValidation) -> Result<()> {
     if command.contains('\0')
         || command.contains('/')
         || command.contains(' ')
@@ -383,18 +491,24 @@ fn validate_build_command(command: &str) -> Result<()> {
             "terminal_run_command command must be an executable name, not a shell string or path"
         ));
     }
-    let allowed = [
-        "cargo", "npm", "pnpm", "yarn", "pytest", "python", "python3",
-    ];
-    if !allowed.contains(&command) {
-        return Err(anyhow!(
-            "terminal_run_command command {command:?} is not in the build/test allowlist"
-        ));
+    if validation == TerminalCommandValidation::Allowlisted {
+        let allowed_executables = [
+            "cargo", "npm", "pnpm", "yarn", "pytest", "python", "python3",
+        ];
+        if !allowed_executables.contains(&command) {
+            return Err(anyhow!(
+                "terminal_run_command command {command:?} is not in the build/test allowlist"
+            ));
+        }
     }
     Ok(())
 }
 
-fn validate_build_command_args(command: &str, args: &[String]) -> Result<()> {
+fn validate_terminal_command_args(
+    command: &str,
+    args: &[String],
+    validation: TerminalCommandValidation,
+) -> Result<()> {
     for arg in args {
         if arg.contains('\0') {
             return Err(anyhow!(
@@ -402,42 +516,18 @@ fn validate_build_command_args(command: &str, args: &[String]) -> Result<()> {
             ));
         }
     }
-    match command {
-        "cargo" => validate_first_arg(args, &["check", "test", "build", "clippy", "fmt"]),
-        "npm" => validate_first_arg(args, &["test", "run", "exec"]),
-        "pnpm" | "yarn" => validate_first_arg(args, &["test", "run", "exec"]),
-        "pytest" => Ok(()),
-        "python" | "python3" => {
-            if args.first().is_some_and(|arg| arg == "-m") {
-                match args.get(1).map(String::as_str) {
-                    Some("pytest") => Ok(()),
-                    _ => Err(anyhow!(
-                        "terminal_run_command python -m is limited to pytest"
-                    )),
-                }
-            } else {
-                Err(anyhow!(
-                    "terminal_run_command python is limited to `python -m pytest`"
-                ))
-            }
-        }
-        _ => Err(anyhow!(
-            "terminal_run_command command {command:?} is not allowed"
-        )),
-    }
-}
-
-fn validate_first_arg(args: &[String], allowed: &[&str]) -> Result<()> {
-    let Some(first) = args.first().map(String::as_str) else {
-        return Err(anyhow!(
-            "terminal_run_command requires a subcommand argument"
-        ));
-    };
-    if allowed.contains(&first) {
-        Ok(())
-    } else {
+    if validation == TerminalCommandValidation::Allowlisted
+        && !terminal_command_allowed(command, args)
+    {
         Err(anyhow!(
-            "terminal_run_command subcommand {first:?} is not in the allowlist"
+            "terminal_run_command command `{}` is not allowed by command policy",
+            if args.is_empty() {
+                command.to_string()
+            } else {
+                format!("{} {}", command, args.join(" "))
+            }
         ))
+    } else {
+        Ok(())
     }
 }

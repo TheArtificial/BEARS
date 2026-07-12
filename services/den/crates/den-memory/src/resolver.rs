@@ -56,7 +56,7 @@ pub enum Resolution {
     ConflictNeedsReview { entity_ids: Vec<String> },
 }
 
-/// Whether the identity was asserted by an authoritative source (session/ACP token, etc.).
+/// Whether the identity was asserted by an authoritative source (session/Armature token, etc.).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assertion {
     /// Authoritative-by-construction (session human, calendar id): enter at `confirmed`/asserted.
@@ -336,7 +336,10 @@ mod tests {
             Resolution::Resolved(e) => e.entity_id,
             other => panic!("expected Resolved, got {other:?}"),
         };
-        assert_ne!(slack_id, email_id, "different strong identities must stay separate");
+        assert_ne!(
+            slack_id, email_id,
+            "different strong identities must stay separate"
+        );
 
         // A signal claiming both are one ⇒ conflict for curate, never automatic.
         let conflict = resolve(

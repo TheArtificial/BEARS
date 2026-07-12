@@ -1,7 +1,7 @@
 # ADR-0038 — Platform Embedding Standard and Derived Recall Index
 
 **Status:** Accepted (2026-06-09)  
-**Related:** [ADR-0031 — SQLite-first canonical store](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [ADR-0008 — Cabinet reading pipeline](adr-0008-cabinet-reading-pipeline.md), [ADR-0033 — Model tasks layer](adr-0033-model-tasks-layer.md), [Den archival memory contract](../architecture/den-archival-memory-and-ingestion-contract.md), [Den-native runtime](../architecture/den-native-runtime.md)
+**Related:** [ADR-0031 — SQLite-first canonical store](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [ADR-0008 — Cabinet reading pipeline](adr-0008-cabinet-reading-pipeline.md), [ADR-0033 — Model tasks layer](adr-0033-model-tasks-layer.md), [Den archival memory contract](../architecture/den-archival-memory-and-ingestion-contract.md), [Den runtime](../architecture/den-runtime.md)
 
 ## Context
 
@@ -12,7 +12,7 @@ Requirements:
 - **Canonical sources stay canonical** — per-Bear SQLite memory ([ADR-0031](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) and Cabinet source stores are source of truth; vectors are derived.
 - **Cross-corpus alignment** — a Bear should find semantically related **Bear memory** when reading or retrieving **Cabinet** material (and vice versa) when policy allows.
 - **Long-lived embedding contract** — Cabinet will grow large; re-embedding is costly. Model choice is a **platform decision**, not a per-feature knob.
-- **Complement path projection** — [key memory projection](../architecture/den-native-runtime.md#layer-2--key-memory-projection-sqlite) covers stable anchors; semantic recall covers fuzzy/broad knowledge not at fixed logical paths.
+- **Complement path projection** — [key memory projection](../architecture/den-runtime.md#layer-2--key-memory-projection-sqlite) covers stable anchors; semantic recall covers fuzzy/broad knowledge not at fixed logical paths.
 - **Den Postgres is control plane** — conversation state, Docket, `bear_compiled_configs`, prompt-memory blocks. Vector payloads must not live in Den Postgres at scale.
 
 Earlier docs deferred a “general-purpose vector store.” This ADR narrows the scope: **one platform embedding standard** and **one derived recall engine (Qdrant)** for approved source classes — not a second memory system.
@@ -89,7 +89,7 @@ Vectors live in Qdrant. Registry enables idempotent upsert, delete-on-supersede,
 
 ### 5. Retrieval semantics
 
-Three context lanes (see [den-native-runtime](../architecture/den-native-runtime.md#turn-context-assembly)):
+Three context lanes (see [den-runtime](../architecture/den-runtime.md#turn-context-assembly)):
 
 | Lane | Mechanism |
 |------|-----------|
@@ -143,7 +143,7 @@ Three context lanes (see [den-native-runtime](../architecture/den-native-runtime
 
 **Supersedes / amends**
 
-- Softens “no general-purpose vector store” language in [den-native-runtime](../architecture/den-native-runtime.md) and [memory-model](../architecture/memory-model.md): Den **does** operate a **derived** Qdrant recall index — not a second canonical memory store.
+- Softens “no general-purpose vector store” language in [den-runtime](../architecture/den-runtime.md) and [memory-model](../architecture/memory-model.md): Den **does** operate a **derived** Qdrant recall index — not a second canonical memory store.
 - Letta Archives and Letta pgvector are not the target; this ADR is the replacement.
 
 ## Related implementation

@@ -1,145 +1,103 @@
 # Tasks and Autonomy
 
-> **Direction changed (2026-06).** Human-initiated work is Docket-canonical in Den Postgres ([ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md)); the MemFS task pipeline (`chat/tasks` -> `core/tasks` -> `work/results`) is superseded for that path. Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+Tasks are how Bear Den turns a request, observation, or plan into approved work that can execute outside the immediate interactive turn.
 
-> **Scope:** This document describes the unattended, `review`-gated autonomy pipeline (intent → approved task → result). Human-initiated, goal-directed work is modeled separately as **jobs and tasks** in [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md), which is the canonical spec for that surface.
-
-Tasks are how a Bear turns a user's request or an external observation into reviewed background work. Autonomy flows through intent, review, policy, execution, and result promotion.
-
-For the canonical role model and role names, see [bear roles](bear-roles.md). This document focuses on task and autonomy flow rather than restating the full role architecture.
+In the current architecture, work management is **Docket-canonical in Den Postgres**. Tasks are infrastructure the Bear uses, not part of canonical Bear cognition.
 
 ## Summary
 
-- `chat` and `pair` capture requests for external or background work as task intents or handoff requests.
-- `review` reviews task intents before they become approved tasks.
-- Den enforces policy, generates durable artifact paths, stores task state, schedules runs, and dispatches work.
-- `work` executes approved tasks within a scoped run context.
-- Future Docket functionality may own the richer task/project lifecycle, while Den remains the Bear control plane.
-- Results are reviewed before durable learnings return to shared memory.
+- interactive roles may propose or request broader work;
+- Den records and manages that work through Docket;
+- `work` executes approved background work within scoped policy;
+- `review`/curation and operators can gate or interpret higher-risk work;
+- results can later feed memory, plans, or follow-up tasks.
 
 ## Why tasks exist
 
-Some requests should not run immediately inside a conversation.
+Some requests should not execute immediately inside a chat or pair turn.
 
 Examples:
 
-- “Check this status every morning.”
-- “Post a summary to Slack after standup.”
-- “Watch for new issues and draft a response.”
-- “Run this report every Friday.”
+- recurring status checks
+- longer research or synthesis
+- scoped external actions
+- work that should be auditable and resumable
+- work that needs sandboxed execution
 
-These requests imply background work, external effects, recurrence, or delayed execution. They become tasks instead of direct chat side effects.
+These become Docket work rather than ad hoc side effects.
 
-## Task intent
+## Core lifecycle
 
-A task intent is a proposed task.
-
-It captures what the user or system wants, but it is not yet approved for execution. `chat` and `pair` write task intents, or request handoff from a workboard plan into a task intent, when a synchronous interaction produces a request for background or external work.
-
-A task intent should describe:
-
-- the requested outcome,
-- the source of the request,
-- relevant scope,
-- schedule or trigger,
-- likely tools or integrations,
-- work-surface or artifact references when relevant,
-- and any risk or approval context.
-
-For schema-owned durable artifacts such as task intents, agents provide semantic fields; Den chooses the path.
-
-## Approved task
-
-An approved task is a task intent that has passed review.
-
-`review` reviews task intents and decides whether to approve, reject, or refine them. Den performs the controlled state transition and stores the approved task in the canonical task area.
-
-Approval does not mean unlimited authority. Approved tasks still run under policy, scope, allowed tools, and audit requirements.
-
-## Task run
-
-A task run is one execution of an approved task.
-
-A recurring task may have many runs. A one-off task may have one run. Each run should have:
-
-- a task id,
-- a run id,
-- a role and channel context,
-- a work-surface reference,
-- an execution context,
-- allowed tools and scope,
-- logs or notes,
-- and a result.
-
-High-risk runs may require additional human approval before execution.
-
-For checkout-oriented work, the run may materialize a fresh checkout in a new runtime. That new checkout should be recorded as an observed anchor on the same work surface rather than treated as unrelated work.
+1. A human, stance, or event produces a work request.
+2. Den records that request in work-management state.
+3. Review/policy/human controls approve, refine, reject, or schedule it as needed.
+4. Den dispatches approved work to `work`.
+5. `work` executes within scoped tools, approvals, and runtime context.
+6. Results are stored durably and may later feed memory promotion, summaries, or follow-up work.
 
 ## Role responsibilities
 
 | Role/System | Responsibility |
 |-------------|----------------|
-| `chat` | Capture chat-originated task intents. |
-| `pair` | Capture client/tool-originated task intents. |
-| `review` | Review intents, approve or reject work, and later review results. |
-| Den | Enforce policy, generate durable artifact paths, schedule tasks, dispatch runs, audit transitions. |
-| `work` | Execute approved runs within the Den-issued scope. |
-| `watch` | Produce observations that may lead to derived task intents. |
+| `chat` | capture user-facing requests that should become background work |
+| `pair` | create or request handoff from active collaboration into broader work |
+| `review` / `curate` | review, approve, reject, or refine work where policy requires it |
+| Den | canonical work-management state, scheduling, policy, audit, dispatch |
+| `work` | execute approved work within scoped runtime/tool boundaries |
+| `watch` | produce observations that may trigger or motivate later work |
 
-## What autonomy is not
+## What autonomy means
 
-Autonomy is not a chat agent secretly doing arbitrary work.
+Autonomy in Bear Den is not unconstrained agent freedom.
 
-A Bear's autonomous work should be:
+It means work that is:
 
-- requested or event-derived,
-- reviewed,
-- scoped,
-- auditable,
-- policy-bound,
-- and executed by the `work` role rather than by every role.
+- requested, derived, or scheduled through a control path;
+- bounded by stance and tool policy;
+- auditable;
+- resumable;
+- and separate from the immediate interactive turn.
 
-## Results
+## Work surface continuity
 
-`work` writes results for each run. `review` reviews those results and promotes durable learnings or summaries into `core/` when appropriate.
+Task and job records should attach to durable work surfaces when possible.
 
-This lets users later ask what happened without giving conversational roles raw access to every execution detail.
+That allows:
 
-## Work-surface continuity across roles
+- `pair` to create a handoff from a local repo or project context
+- `work` to re-materialize that same ongoing work later
+- results, plans, and memory to stay connected to the same work identity
 
-A common first use case is:
+## Results and learning
 
-1. a Bear in `pair` works in a local checkout,
-2. creates a long-term plan or task intent,
-3. and later a Bear in `work` checks out the same repo in a different runtime and executes against it.
+Task results do not automatically become shared Bear knowledge.
 
-To support that flow, plans, task intents, approved tasks, and runs should attach to the durable **work surface id**. Local checkouts and runtime checkouts should be stored as observed anchors for that work surface. When a more portable anchor such as a normalized Git remote is available, Den should use it to canonicalize the work surface early so later runs can re-materialize the same ongoing work in a new context.
+Typical flow:
+
+1. work completes or updates the task
+2. Den stores result/progress state
+3. review/curation may summarize or promote durable learnings
+4. shared Bear memory is updated only when appropriate
 
 ## Product language
 
 Prefer:
 
-- “The Bear can perform approved background work.”
-- “Requests for external action become task intents or reviewed handoffs.”
-- “`review` reviews work before Den dispatches it.”
-- “`work` executes within an approved scope.”
+- “approved background work”
+- “scoped autonomous execution”
+- “the Bear requested a handoff into Docket work”
+- “`work` executed within an approved scope”
 
 Avoid:
 
-- “The chat agent can do anything later.”
-- “Autonomy bypasses review.”
-- “A subscription directly triggers outbound action.”
-- “Approval is the same as unlimited access.”
+- “the chat stance can just do it later”
+- “autonomy bypasses review or policy”
+- “tasks are the Bear's memory”
 
 ## Related docs
 
-- [bear roles](bear-roles.md)
-- [Bear Den and Den](bears-and-den.md)
-- [Memory model](memory-model.md)
-- [Observations and subscriptions](observations-and-subscriptions.md)
-- [Capabilities and skills](capabilities-and-skills.md)
-- [Planning in Bear Den](planning.md)
-- [Schema-first path strategy ADR](../architecture/adr/schema-first-path-strategy.md)
-- [Bear Workplaces ADR](../architecture/adr/bear-workplaces.md)
-- [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
-- [Den Bear spec](den-bear-spec.md)
+- [planning](planning.md)
+- [task schema](task-schema.md)
+- [memory model](memory-model.md)
+- [bears and den](bears-and-den.md)
+- [ADR-0034: jobs and tasks work-management](../decisions/adr-0034-jobs-and-tasks-work-management.md)

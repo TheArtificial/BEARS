@@ -1,59 +1,16 @@
 use den_core::{config::Config, DenError};
 use serde_json::Value;
 
-use crate::{
-    bears::BearProfile,
-    llm::LlmToolDefinition,
-};
+use crate::llm::LlmToolDefinition;
 use den_core::tools::descriptor::{
     builtin_den_tool_descriptors_for_pair_acp_surface, builtin_den_tool_descriptors_for_profile,
     DenToolDescriptor,
 };
+use den_service::bears::BearProfile;
 
-use super::memfs::{filter_client_tools_for_native_runtime, is_memfs_client_tool_name};
-
-/// Pair turns omit adapter workspace/MCP tools unless the prompt suggests repo/file work.
-pub fn pair_turn_needs_workspace_client_tools(prompt: Option<&str>) -> bool {
-    let Some(prompt) = prompt.map(str::trim).filter(|s| !s.is_empty()) else {
-        return false;
-    };
-    let lower = prompt.to_ascii_lowercase();
-    const KEYWORDS: &[&str] = &[
-        "file",
-        "edit",
-        "refactor",
-        "implement",
-        "fix ",
-        "code",
-        "function",
-        "class",
-        "test ",
-        "compile",
-        "build ",
-        "terminal",
-        "grep",
-        "codebase",
-        "in the repo",
-        "workspace",
-        "create a ",
-        "add a ",
-        "delete ",
-        "rename ",
-        "move ",
-        "patch",
-        "diff",
-        "git ",
-        "cargo ",
-        "npm ",
-        "docker",
-        "directory",
-        "folder",
-        "read ",
-        "write ",
-        "search replace",
-    ];
-    KEYWORDS.iter().any(|keyword| lower.contains(keyword))
-}
+use super::legacy_memory_tools::{
+    filter_client_tools_for_native_runtime, is_legacy_memory_client_tool_name,
+};
 
 fn den_tool_to_llm_definition(descriptor: &DenToolDescriptor, compact: bool) -> LlmToolDefinition {
     LlmToolDefinition {
@@ -98,7 +55,12 @@ fn compact_client_tool_description(description: Option<&str>) -> Option<String> 
         .map(|(head, _)| head)
         .unwrap_or(description);
     let compact = if first_sentence.len() > 96 {
-        format!("{}…", &first_sentence[..96])
+        // Back off to a UTF-8 char boundary so multi-byte input can't panic.
+        let mut end = 96;
+        while end > 0 && !first_sentence.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &first_sentence[..end])
     } else {
         first_sentence.to_string()
     };
@@ -112,9 +74,6 @@ pub fn chat_turn_needs_full_tool_surface(prompt: Option<&str>) -> bool {
     };
     if chat_turn_is_capabilities_meta_query(prompt) {
         return false;
-    }
-    if pair_turn_needs_workspace_client_tools(Some(prompt)) {
-        return true;
     }
     let lower = prompt.to_ascii_lowercase();
     const KEYWORDS: &[&str] = &[
@@ -142,6 +101,9 @@ pub fn chat_turn_needs_full_tool_surface(prompt: Option<&str>) -> bool {
         "save ",
         "update ",
         "plan mode",
+        "file",
+        "code",
+        "workspace",
     ];
     KEYWORDS.iter().any(|keyword| lower.contains(keyword))
 }
@@ -175,30 +137,18 @@ pub fn merge_den_and_client_tools(
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
 ) -> Result<Vec<LlmToolDefinition>, DenError> {
-    let mut merged = if role == BearProfile::Chat {
-        if chat_turn_needs_full_tool_surface(pair_turn_prompt) {
-            den_tools_for_profile(config, role)
-        } else {
-            tracing::info!(
-                role = %role.as_str(),
-                "native chat turn using empty tool surface (informational prompt; tool list is in system context)"
-            );
-            Vec::new()
-        }
+    let mut merged = if role == BearProfile::Chat
+        && !chat_turn_needs_full_tool_surface(pair_turn_prompt)
+    {
+        tracing::info!(
+            role = %role.as_str(),
+            "native chat turn using empty tool surface (informational prompt; tool list is in system context)"
+        );
+        Vec::new()
     } else {
         den_tools_for_profile(config, role)
     };
-    let include_client_tools = if role == BearProfile::Pair {
-        pair_turn_needs_workspace_client_tools(pair_turn_prompt)
-    } else {
-        role != BearProfile::Chat
-    };
-    if !include_client_tools {
-        tracing::info!(
-            role = %role.as_str(),
-            den_tool_count = merged.len(),
-            "native pair turn using Den-only tool surface (workspace client tools deferred)"
-        );
+    if role == BearProfile::Chat {
         return Ok(merged);
     }
     let filtered_client_tools = filter_client_tools_for_native_runtime(client_tools);
@@ -221,7 +171,7 @@ pub fn merge_den_and_client_tools(
         let Some(name) = name else {
             continue;
         };
-        if is_memfs_client_tool_name(name) {
+        if is_legacy_memory_client_tool_name(name) {
             continue;
         }
         if let Some(action) = mcp_client_tool_dedup_key(name) {
@@ -293,17 +243,18 @@ mod tests {
             &config,
             BearProfile::Pair,
             Some(&client_tools),
-            Some("edit the file main.rs"),
+            Some("click the browser page button"),
         )
         .unwrap();
         let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"mcp__chrome_devtools_mcp_zed__click"));
         assert!(!names.contains(&"mcp__chrome_devtools_custom__click"));
         assert!(names.contains(&"fs_read_text_file"));
+        assert!(names.contains(&"session_info"));
     }
 
     #[test]
-    fn pair_memory_question_omits_workspace_client_tools() {
+    fn pair_memory_question_keeps_stable_den_and_client_tool_surface() {
         let config = native_test_config();
         let client_tools = serde_json::json!([
             {"name": "fs_read_text_file", "parameters": {"type": "object"}},
@@ -318,16 +269,42 @@ mod tests {
         .unwrap();
         let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"session_info"));
-        assert!(!names.contains(&"fs_read_text_file"));
-        assert!(!names.iter().any(|name| name.starts_with("mcp__")));
-        assert!(merged.len() <= 20);
+        assert!(names.contains(&"fs_read_text_file"));
+        assert!(names.iter().any(|name| name.starts_with("mcp__")));
     }
 
     #[test]
-    fn pair_workspace_prompt_includes_client_tools() {
+    fn pair_read_prompt_keeps_stable_den_and_client_tool_surface() {
         let config = native_test_config();
         let client_tools = serde_json::json!([
             {"name": "fs_read_text_file", "parameters": {"type": "object"}},
+            {"name": "fs_find_paths", "parameters": {"type": "object"}},
+            {"name": "fs_edit_file", "parameters": {"type": "object"}},
+            {"name": "terminal_run_command", "parameters": {"type": "object"}},
+            {"name": "mcp__chrome_devtools_mcp_zed__click", "parameters": {"type": "object"}}
+        ]);
+        let merged = merge_den_and_client_tools(
+            &config,
+            BearProfile::Pair,
+            Some(&client_tools),
+            Some("please read README.md"),
+        )
+        .unwrap();
+        let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"fs_read_text_file"));
+        assert!(names.contains(&"fs_find_paths"));
+        assert!(names.contains(&"fs_edit_file"));
+        assert!(names.contains(&"terminal_run_command"));
+        assert!(names.iter().any(|name| name.starts_with("mcp__")));
+        assert!(names.contains(&"session_info"));
+    }
+
+    #[test]
+    fn pair_workspace_edit_prompt_includes_write_client_tools() {
+        let config = native_test_config();
+        let client_tools = serde_json::json!([
+            {"name": "fs_read_text_file", "parameters": {"type": "object"}},
+            {"name": "fs_edit_file", "parameters": {"type": "object"}},
         ]);
         let merged = merge_den_and_client_tools(
             &config,
@@ -338,6 +315,32 @@ mod tests {
         .unwrap();
         let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"fs_read_text_file"));
+        assert!(names.contains(&"fs_edit_file"));
+        assert!(names.contains(&"session_info"));
+    }
+
+    #[test]
+    fn pair_workspace_build_prompt_includes_terminal_client_and_den_tools() {
+        let config = native_test_config();
+        let client_tools = serde_json::json!([
+            {"name": "fs_read_text_file", "parameters": {"type": "object"}},
+            {"name": "terminal_run_command", "parameters": {"type": "object"}},
+            {"name": "process_run", "parameters": {"type": "object"}},
+            {"name": "mcp__chrome_devtools_mcp_zed__click", "parameters": {"type": "object"}}
+        ]);
+        let merged = merge_den_and_client_tools(
+            &config,
+            BearProfile::Pair,
+            Some(&client_tools),
+            Some("please build the project and inspect errors"),
+        )
+        .unwrap();
+        let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"terminal_run_command"));
+        assert!(names.contains(&"process_run"));
+        assert!(names.contains(&"fs_read_text_file"));
+        assert!(names.contains(&"session_info"));
+        assert!(names.iter().any(|name| name.starts_with("mcp__")));
     }
 
     #[test]
@@ -396,7 +399,11 @@ mod tests {
     #[test]
     fn chat_turn_is_capabilities_meta_query_matches_common_phrases() {
         assert!(chat_turn_is_capabilities_meta_query("list your tools"));
-        assert!(chat_turn_is_capabilities_meta_query("What capabilities do you have?"));
-        assert!(!chat_turn_is_capabilities_meta_query("search memory for onboarding"));
+        assert!(chat_turn_is_capabilities_meta_query(
+            "What capabilities do you have?"
+        ));
+        assert!(!chat_turn_is_capabilities_meta_query(
+            "search memory for onboarding"
+        ));
     }
 }

@@ -8,10 +8,10 @@
 //! `run_native_profile_turn_collect_assistant_text` can add an LLM briefing turn projected into the
 //! memory_curate conversation.
 
+pub mod legacy_memory_tools;
 mod openai_stream;
 #[cfg(test)]
 mod openai_stream_tests;
-pub mod memfs;
 mod profile;
 mod profile_briefing;
 pub mod tool_invoker;
@@ -21,15 +21,17 @@ mod web_chat_loop;
 
 pub use tool_invoker::{set_tool_invoker, tool_invoker, RuntimeToolInvoker};
 
-pub use openai_stream::openai_byte_stream_to_event_stream;
+pub use openai_stream::{
+    openai_byte_stream_to_event_stream, openai_byte_stream_to_event_stream_with_telemetry,
+    responses_byte_stream_to_event_stream, responses_byte_stream_to_event_stream_with_telemetry,
+};
 pub use profile::{is_native_api_direct_role, NativeCapabilityProfile};
 pub use profile_briefing::compose_curate_briefing_prompt;
-pub use tools::{
-    chat_turn_is_capabilities_meta_query, merge_den_and_client_tools,
-};
+pub use tools::{chat_turn_is_capabilities_meta_query, merge_den_and_client_tools};
 pub use turn::{
-    continue_native_acp_turn_event_stream, continue_native_profile_turn_event_stream,
-    run_native_profile_turn_collect_assistant_text, start_native_acp_turn_event_stream,
+    continue_native_client_turn_event_stream, continue_native_profile_turn_event_stream,
+    native_client_session_exists, record_native_client_tool_result,
+    run_native_profile_turn_collect_assistant_text, start_native_client_turn_event_stream,
     start_native_profile_turn_event_stream, start_native_web_chat_turn_event_stream,
     take_session_overflow_compaction_recovered, NativeRuntimeConversationBackend,
     NativeRuntimeDeps, NativeWebChatTurnParams,

@@ -3,7 +3,7 @@
 //!
 //! Runtime-agnostic: depends only on [`RoleMemoryStore`] (and, for the status
 //! diagnostic, [`PromptMemoryStore`]) plus `den-core` types. The `den` crate
-//! provides the concrete store (native SQLite + legacy MemFS branch) and thin
+//! provides the concrete SQLite store and thin
 //! `CustomError`-mapping wrappers.
 
 pub mod store;
@@ -59,8 +59,8 @@ pub struct MemoryWriteEntryArguments {
 
 /// A fully-prepared role-memory entry handed to [`RoleMemoryStore::write_entry`].
 ///
-/// Carries every field both the native SQLite path and the legacy MemFS request
-/// need; the executor populates it after validation + source merging.
+/// Carries the validated fields the native SQLite write path needs; the executor
+/// populates it after validation + source merging.
 #[derive(Debug, Clone)]
 pub struct RoleMemoryEntryWrite {
     pub kind: String,
@@ -73,7 +73,7 @@ pub struct RoleMemoryEntryWrite {
     pub author: Option<String>,
     pub conversation_id: Option<String>,
     pub session_id: Option<String>,
-    pub acp_session_id: Option<String>,
+    pub client_session_id: Option<String>,
     pub conversation_selection: Option<String>,
     pub runtime_target: Option<String>,
     pub binding_id: Option<String>,
@@ -100,7 +100,7 @@ pub fn merge_memory_entry_source_with_human(
             "username": author_username.or_else(|| context.username.clone()),
             "display_name": display_name,
             "membership_role": context.membership_role,
-            "authenticated_by": "acp_token"
+            "authenticated_by": "client_token"
         }),
     );
     source_obj.insert(
@@ -108,7 +108,7 @@ pub fn merge_memory_entry_source_with_human(
         json!({
             "conversation_id": clean_optional(&context.conversation_id),
             "session_id": clean_optional(&context.session_id),
-            "acp_session_id": context.acp_session_id,
+            "client_session_id": context.client_session_id,
             "conversation_selection": context.conversation_selection,
             "runtime_target": context.runtime_target,
             "request_id": context.request_id,
@@ -117,17 +117,17 @@ pub fn merge_memory_entry_source_with_human(
     Some(Value::Object(source_obj))
 }
 
-/// The ACP session id, when the invocation arrived over an ACP channel.
-pub fn source_acp_session_id(context: &DenToolInvocationContext) -> Option<String> {
-    let is_acp = [
+/// The client session id, when the invocation arrived over a stateful client channel.
+pub fn source_client_session_id(context: &DenToolInvocationContext) -> Option<String> {
+    let has_stateful_client = [
         context.channel.family.as_deref(),
         context.channel.client.as_deref(),
         context.channel.protocol.as_deref(),
     ]
     .into_iter()
     .flatten()
-    .any(|value| value.to_ascii_lowercase().contains("acp"));
-    if is_acp {
+    .any(|value| matches!(value.to_ascii_lowercase().as_str(), "armature" | "bearwire"));
+    if has_stateful_client {
         clean_optional(&context.session_id)
     } else {
         None
@@ -172,11 +172,12 @@ pub async fn write_memory_entry(
         source,
         author,
         conversation_id: clean_optional(&context.conversation_id),
-        session_id: source_acp_session_id(context).or_else(|| clean_optional(&context.session_id)),
-        acp_session_id: context
-            .acp_session_id
+        session_id: source_client_session_id(context)
+            .or_else(|| clean_optional(&context.session_id)),
+        client_session_id: context
+            .client_session_id
             .clone()
-            .or_else(|| source_acp_session_id(context)),
+            .or_else(|| source_client_session_id(context)),
         conversation_selection: context.conversation_selection.clone(),
         runtime_target: context.runtime_target.clone(),
         binding_id: Some(context.binding_id.clone()),
@@ -267,7 +268,9 @@ pub async fn memory_read(
     let args: MemoryReadArguments = serde_json::from_value(arguments)?;
     let path = args.path.trim();
     if path.is_empty() {
-        return Err(DenError::ValidationError("path must not be empty".to_string()));
+        return Err(DenError::ValidationError(
+            "path must not be empty".to_string(),
+        ));
     }
     memory.read(bear_id, role, path).await
 }
@@ -281,78 +284,13 @@ pub async fn memory_search(
     let args: MemorySearchArguments = serde_json::from_value(arguments)?;
     let query = args.query.trim();
     if query.is_empty() {
-        return Err(DenError::ValidationError("query must not be empty".to_string()));
+        return Err(DenError::ValidationError(
+            "query must not be empty".to_string(),
+        ));
     }
     let limit = args.limit.map(|n| n.clamp(1, 50) as i64).unwrap_or(10);
     memory.search(bear_id, role, query, limit).await
 }
 
 #[cfg(test)]
-mod tests {
-    use super::merge_memory_entry_source_with_human;
-    use crate::tools::arguments::DenToolChannelContext;
-    use crate::tools::context::DenToolInvocationContext;
-    use crate::BearProfile;
-    use serde_json::json;
-
-    fn sample_context() -> DenToolInvocationContext {
-        DenToolInvocationContext {
-            bear_id: uuid::Uuid::nil(),
-            bear_slug: "meta".to_string(),
-            binding_id: "agent-123".to_string(),
-            profile: Some(BearProfile::Pair),
-            user_id: 7,
-            username: Some("context-user".to_string()),
-            membership_role: Some("admin".to_string()),
-            conversation_id: "conv-1".to_string(),
-            session_id: "session-1".to_string(),
-            acp_session_id: Some("acp-1".to_string()),
-            conversation_selection: Some("conv-1".to_string()),
-            runtime_target: Some("conv-1".to_string()),
-            workspace_roots: vec![],
-            session_policy: None,
-            activity: None,
-            runtime: None,
-            context_budget: None,
-            request_id: Some("req-1".to_string()),
-            channel: DenToolChannelContext::default(),
-        }
-    }
-
-    #[test]
-    fn merge_memory_entry_source_prefers_authenticated_user_username() {
-        let context = sample_context();
-
-        let merged = merge_memory_entry_source_with_human(
-            None,
-            &context,
-            Some("gerwitz".to_string()),
-            Some("Hans Gerwitz".to_string()),
-        )
-        .unwrap();
-
-        assert_eq!(merged["human"]["user_id"], 7);
-        assert_eq!(merged["human"]["username"], "gerwitz");
-        assert_eq!(merged["human"]["display_name"], "Hans Gerwitz");
-        assert_eq!(merged["human"]["membership_role"], "admin");
-        assert_eq!(merged["session"]["conversation_id"], "conv-1");
-        assert_eq!(merged["session"]["request_id"], "req-1");
-    }
-
-    #[test]
-    fn merge_memory_entry_source_falls_back_to_context_username() {
-        let context = sample_context();
-
-        let merged = merge_memory_entry_source_with_human(
-            Some(json!({"origin": "test"})),
-            &context,
-            None,
-            None,
-        )
-        .unwrap();
-
-        assert_eq!(merged["origin"], "test");
-        assert_eq!(merged["human"]["username"], "context-user");
-        assert_eq!(merged["human"]["authenticated_by"], "acp_token");
-    }
-}
+mod tests;

@@ -1,5 +1,6 @@
 mod approvals;
 mod bearwire;
+mod headless;
 mod json_rpc;
 mod paths;
 mod tool_tasks;
@@ -22,6 +23,7 @@ use agent_client_protocol::schema::{
     ToolKind, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use anyhow::{anyhow, bail, Context, Result};
+use bearwire_protocol::surface::SurfaceHistoryEvent;
 
 use approvals::{
     approval_url_host_scope, parse_permission_decision, permission_class_for_tool,
@@ -29,11 +31,16 @@ use approvals::{
     PermissionDecision,
 };
 use axum::{extract::State, response::IntoResponse};
-use futures_util::StreamExt;
+
 use http::StatusCode;
+#[cfg(test)]
+use json_rpc::capture_json_output_for_test;
 use json_rpc::{id_key, write_json, JsonRpcTransport};
-use paths::{file_uri_or_path_to_path, is_absolute_local_path, normalize_requested_tool_path};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use paths::{
+    ensure_path_allowed_for_session, file_uri_or_path_to_path, is_absolute_local_path,
+    normalize_requested_tool_path, resolve_requested_tool_path,
+};
+
 use reqwest::Url;
 use rmcp::{
     handler::server::{
@@ -62,7 +69,7 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
+    sync::{Arc, OnceLock, RwLock},
 };
 use tokio::{
     io::{self, AsyncBufReadExt, BufReader},
@@ -95,7 +102,7 @@ use tools::mcp::{
     summarize_acp_mcp_servers_param, McpRegistry, McpSourceConfig,
 };
 use tools::process::handle_process_run;
-use tools::terminal::handle_terminal_run_command;
+use tools::terminal::{handle_terminal_run_command, TerminalCommandValidation};
 use tools::web::handle_local_web_fetch;
 use update::{run_update_command, update_doctor_line, UpdateCommand, UpdateOptions};
 
@@ -115,6 +122,7 @@ struct RuntimeConfig {
     diagnostics: Vec<String>,
     check_server: bool,
     doctor: bool,
+    headless: bool,
     update_command: Option<UpdateCommand>,
     browser_bridge: Option<BrowserBridgeConfig>,
     api_url: String,
@@ -164,6 +172,7 @@ struct ActivePromptTurn {
     conversation_id: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Default)]
 struct SseFrameOutcome {
     saw_visible_output: bool,
@@ -187,6 +196,98 @@ fn env_bool(name: &str) -> bool {
     })
 }
 
+fn init_armature_tracing() {
+    if !env_bool("BEARS_ARMATURE_TRACE") {
+        return;
+    }
+    let filter = env::var("BEARS_ARMATURE_TRACE_FILTER")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "bear_armature::lifecycle=debug".to_string());
+    let Ok(filter) = tracing_subscriber::EnvFilter::try_new(filter.clone()) else {
+        eprintln!(
+            "bear-armature: invalid BEARS_ARMATURE_TRACE_FILTER={filter:?}; tracing disabled"
+        );
+        return;
+    };
+    let _ = tracing_subscriber::fmt()
+        .compact()
+        .with_ansi(false)
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_target(true)
+        .without_time()
+        .try_init();
+    tracing::info!(
+        target: "bear_armature::lifecycle",
+        "armature lifecycle tracing enabled"
+    );
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BearDebugMode {
+    Off,
+    On,
+    Verbose,
+}
+
+impl BearDebugMode {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "0" | "false" | "no" | "off" => Some(Self::Off),
+            "1" | "true" | "yes" | "on" => Some(Self::On),
+            "verbose" | "debug" | "trace" => Some(Self::Verbose),
+            _ => None,
+        }
+    }
+
+    fn from_env() -> Self {
+        env::var("BEAR_DEBUG")
+            .ok()
+            .and_then(|value| Self::parse(&value))
+            .unwrap_or(Self::Off)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::On => "on",
+            Self::Verbose => "verbose",
+        }
+    }
+
+    fn shows_thoughts(self) -> bool {
+        matches!(self, Self::On | Self::Verbose)
+    }
+
+    fn is_verbose(self) -> bool {
+        matches!(self, Self::Verbose)
+    }
+}
+
+static BEAR_DEBUG_MODE: OnceLock<RwLock<BearDebugMode>> = OnceLock::new();
+
+fn bear_debug_lock() -> &'static RwLock<BearDebugMode> {
+    BEAR_DEBUG_MODE.get_or_init(|| RwLock::new(BearDebugMode::from_env()))
+}
+
+fn bear_debug_mode() -> BearDebugMode {
+    bear_debug_lock()
+        .read()
+        .map(|guard| *guard)
+        .unwrap_or_else(|_| BearDebugMode::from_env())
+}
+
+fn set_bear_debug_mode(mode: BearDebugMode) {
+    if let Ok(mut guard) = bear_debug_lock().write() {
+        *guard = mode;
+    }
+}
+
+pub(crate) fn bear_debug_verbose() -> bool {
+    bear_debug_mode().is_verbose()
+}
+
 #[derive(Clone, Debug, Default)]
 struct SessionContext {
     cwd: String,
@@ -207,7 +308,10 @@ struct ToolPolicy {
     max_bytes: Option<u64>,
     recursive_default: Option<bool>,
     include_hidden_default: Option<bool>,
+    execution_target: Option<String>,
+    approval_policy: Option<String>,
     sensitive_path_policy: Option<String>,
+    target_policy: Option<Value>,
     max_replacements: Option<usize>,
     create_files: Option<bool>,
     allow_multiple: Option<bool>,
@@ -229,10 +333,11 @@ pub(crate) fn adapter_version() -> &'static str {
 
 impl ToolPolicy {
     fn risk(&self) -> &str {
+        let _execution_target = self.execution_target.as_deref().unwrap_or("armature_local");
+        let _approval_policy = self.approval_policy.as_deref().unwrap_or("required");
         if self.create_files.is_some()
             || self.allow_multiple.is_some()
             || self.max_replacements.is_some()
-            || self.sensitive_path_policy.as_deref() == Some("deny_sensitive_paths")
         {
             "writes_workspace"
         } else {
@@ -274,7 +379,12 @@ struct LocalToolError {
 
 fn session_config_options_for_mode(mode: &str) -> Vec<SessionConfigOption> {
     let mode = normalize_mode(mode);
-    vec![SessionConfigOption::select(
+    vec![mode_config_option(mode)]
+}
+
+fn mode_config_option(mode: &str) -> SessionConfigOption {
+    let mode = normalize_mode(mode);
+    SessionConfigOption::select(
         "mode",
         "Session Mode",
         mode,
@@ -290,7 +400,64 @@ fn session_config_options_for_mode(mode: &str) -> Vec<SessionConfigOption> {
         ],
     )
     .description("Reflects trusted Den session policy for mutation-gate state.")
-    .category(SessionConfigOptionCategory::Mode)]
+    .category(SessionConfigOptionCategory::Mode)
+}
+
+fn model_config_option(model_state: &Value) -> Option<SessionConfigOption> {
+    let effective = model_state
+        .get("effective_model")
+        .and_then(Value::as_str)
+        .unwrap_or("default");
+    let selected = if model_state.get("selection_mode").and_then(Value::as_str) == Some("explicit")
+    {
+        model_state
+            .get("selected_model")
+            .or_else(|| model_state.get("requested_model"))
+            .and_then(Value::as_str)
+            .unwrap_or("auto")
+            .to_string()
+    } else {
+        "auto".to_string()
+    };
+    let mut options = vec![SessionConfigSelectOption::new(
+        "auto",
+        "Default",
+    )
+    .description(format!(
+        "Use the current stance/Bear default model for this ACP conversation. Current effective model: {effective}."
+    ))];
+    if let Some(items) = model_state.get("model_options").and_then(Value::as_array) {
+        for item in items {
+            let Some(handle) = item.get("handle").and_then(Value::as_str) else {
+                continue;
+            };
+            let label = item.get("label").and_then(Value::as_str).unwrap_or(handle);
+            options.push(SessionConfigSelectOption::new(
+                handle.to_string(),
+                label.to_string(),
+            ));
+        }
+    }
+    Some(
+        SessionConfigOption::select("model", "Model", selected, options)
+            .description(
+                "Conversation-scoped model selection. Auto inherits the stance/Bear default.",
+            )
+            .category(SessionConfigOptionCategory::Mode),
+    )
+}
+
+fn session_config_options_for_context(
+    context: Option<&SessionContext>,
+    mode: &str,
+) -> Vec<SessionConfigOption> {
+    let mut options = vec![mode_config_option(mode)];
+    if let Some(model_state) = context.and_then(|ctx| ctx.raw.get("model_selection")) {
+        if let Some(option) = model_config_option(model_state) {
+            options.push(option);
+        }
+    }
+    options
 }
 
 fn normalize_mode(mode: &str) -> &'static str {
@@ -379,6 +546,19 @@ fn session_id_from_config_params(params: &Value) -> Result<&str> {
         .ok_or_else(|| anyhow!("session config params missing sessionId"))
 }
 
+fn config_value_from_params(params: &Value) -> Result<&str> {
+    params
+        .get("value")
+        .and_then(|value| {
+            if let Some(raw) = value.as_str() {
+                Some(raw)
+            } else {
+                value.get("value").and_then(Value::as_str)
+            }
+        })
+        .ok_or_else(|| anyhow!("session config params missing value"))
+}
+
 fn mode_value_from_config_params(params: &Value) -> Result<&str> {
     params
         .get("value")
@@ -457,7 +637,7 @@ fn plan_entry_from_acp_plan_item(item: &Value) -> Option<PlanEntry> {
     Some(PlanEntry::new(content, priority, status))
 }
 
-fn plan_entries_from_plan_update_event(event: &Value) -> Vec<PlanEntry> {
+pub(crate) fn plan_entries_from_plan_update_event(event: &Value) -> Vec<PlanEntry> {
     event
         .get("entries")
         .and_then(Value::as_array)
@@ -648,10 +828,12 @@ fn spawn_adapter_environment_publish(
         )
         .await
         {
-            eprintln!(
-                "bear-armature: failed to publish adapter environment session_id={} error={err:#}",
-                session_id
-            );
+            if bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: failed to publish adapter environment session_id={} error={err:#}",
+                    session_id
+                );
+            }
         }
     });
 }
@@ -661,6 +843,18 @@ async fn send_session_info_update(
     title: Option<String>,
     updated_at: Option<String>,
 ) -> Result<()> {
+    write_notification(
+        "session/update",
+        acp_session_info_update_payload(session_id, title, updated_at)?,
+    )
+    .await
+}
+
+fn acp_session_info_update_payload(
+    session_id: &str,
+    title: Option<String>,
+    updated_at: Option<String>,
+) -> Result<Value> {
     let mut update = SessionInfoUpdate::new();
     if let Some(title) = title {
         update = update.title(title);
@@ -668,17 +862,13 @@ async fn send_session_info_update(
     if let Some(updated_at) = updated_at {
         update = update.updated_at(updated_at);
     }
-    write_notification(
-        "session/update",
-        json!({
-            "sessionId": session_id,
-            "update": serde_json::to_value(SessionUpdate::SessionInfoUpdate(update))?,
-        }),
-    )
-    .await
+    Ok(json!({
+        "sessionId": session_id,
+        "update": serde_json::to_value(SessionUpdate::SessionInfoUpdate(update))?,
+    }))
 }
 
-async fn send_DEN_runtime_session_info_update(
+async fn send_den_runtime_session_info_update(
     session_id: &str,
     runtime: Option<Value>,
     context_budget: Option<Value>,
@@ -708,6 +898,43 @@ async fn send_DEN_runtime_session_info_update(
     .await
 }
 
+fn context_budget_token_count(context_budget: &Value, key: &str) -> Option<u64> {
+    context_budget.get(key).and_then(|value| {
+        value
+            .as_u64()
+            .or_else(|| value.as_i64().and_then(|count| u64::try_from(count).ok()))
+    })
+}
+
+fn acp_usage_update_payload(session_id: &str, context_budget: Value) -> Option<Value> {
+    let used = context_budget_token_count(&context_budget, "estimated_total_tokens")
+        .or_else(|| context_budget_token_count(&context_budget, "estimated_input_tokens"))?;
+    let size = context_budget_token_count(&context_budget, "context_window")?;
+    if size == 0 {
+        return None;
+    }
+    Some(json!({
+        "sessionId": session_id,
+        "update": {
+            "sessionUpdate": "usage_update",
+            "used": used,
+            "size": size,
+            "_meta": {
+                "bears": {
+                    "context_budget": context_budget,
+                }
+            }
+        }
+    }))
+}
+
+async fn send_context_budget_usage_update(session_id: &str, context_budget: Value) -> Result<()> {
+    let Some(payload) = acp_usage_update_payload(session_id, context_budget) else {
+        return Ok(());
+    };
+    write_notification("session/update", payload).await
+}
+
 fn acp_plan_update_payload(session_id: &str, entries: Vec<PlanEntry>) -> Result<Value> {
     Ok(json!({
         "sessionId": session_id,
@@ -728,13 +955,84 @@ async fn send_plan_update(session_id: &str, entries: Vec<PlanEntry>) -> Result<(
         acp_plan_update_payload(session_id, entries)?,
     )
     .await?;
-    if env_bool("DEN_ACP_DEBUG_UI") {
+    if bear_debug_verbose() {
         eprintln!(
-            "bear-armature: debug ui sent ACP plan update session_id={} entry_count={}",
+            "bear-armature: debug sent ACP plan update session_id={} entry_count={}",
             session_id, entry_count
         );
     }
     Ok(())
+}
+
+async fn remember_session_model(
+    shared_state: &AdapterSharedState,
+    adapter_state: &mut AdapterState,
+    session_id: &str,
+    model_state: Value,
+) {
+    if let Some(context) = adapter_state.session_contexts.get_mut(session_id) {
+        context.raw["model_selection"] = model_state.clone();
+    }
+    if let Some(context) = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get_mut(session_id)
+    {
+        context.raw["model_selection"] = model_state;
+    }
+}
+
+async fn notify_config_options_for_session(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> Result<()> {
+    let context = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get(session_id)
+        .cloned();
+    let mode = context
+        .as_ref()
+        .and_then(|ctx| ctx.current_mode.as_deref())
+        .map(normalize_mode)
+        .unwrap_or(MODE_ASK);
+    write_notification(
+        "session/update",
+        json!({
+            "sessionId": session_id,
+            "update": serde_json::to_value(SessionUpdate::ConfigOptionUpdate(
+                ConfigOptionUpdate::new(session_config_options_for_context(context.as_ref(), mode))
+            ))?,
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn sync_session_model_from_den(
+    http: &reqwest::Client,
+    config: Option<&Config>,
+    shared_state: &AdapterSharedState,
+    adapter_state: &mut AdapterState,
+    session_id: &str,
+) -> Result<Option<Value>> {
+    let Some(config) = config else {
+        return Ok(None);
+    };
+    let result = bearwire::rpc_call(
+        http,
+        config,
+        "session.model.get",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+        }),
+    )
+    .await?;
+    remember_session_model(shared_state, adapter_state, session_id, result.clone()).await;
+    notify_config_options_for_session(shared_state, session_id).await?;
+    Ok(Some(result))
 }
 
 async fn notify_mode_state(session_id: &str, mode: &str) -> Result<()> {
@@ -907,6 +1205,8 @@ fn summarize_mcp_for_log(mcp: Option<&Value>) -> Value {
 struct SseStreamDiagnostics {
     frames: usize,
     events: usize,
+    fetch_errors: usize,
+    event_errors: usize,
     event_types: HashMap<String, usize>,
     unknown_event_samples: Vec<String>,
     saw_turn_complete: bool,
@@ -935,9 +1235,11 @@ impl SseStreamDiagnostics {
 
     fn summary(&self) -> String {
         format!(
-            "frames={}, events={}, event_types={:?}, unknown_samples={:?}, saw_turn_complete={}, saw_visible_output={}, saw_tool_activity={}, saw_error={}",
+            "frames={}, events={}, fetch_errors={}, event_errors={}, event_types={:?}, unknown_samples={:?}, saw_turn_complete={}, saw_visible_output={}, saw_tool_activity={}, saw_error={}",
             self.frames,
             self.events,
+            self.fetch_errors,
+            self.event_errors,
             self.event_types,
             self.unknown_event_samples,
             self.saw_turn_complete,
@@ -1250,6 +1552,7 @@ async fn main() {
 }
 
 async fn run() -> Result<()> {
+    init_armature_tracing();
     let mut runtime = RuntimeConfig::from_env_and_args()?;
     eprintln!(
         "bear-armature: starting version={} build_git_sha={} built_at_utc={} local_head_sha={} ACP sessions=list/resume/load supported direct_tools={}",
@@ -1303,6 +1606,10 @@ async fn run() -> Result<()> {
         return Ok(());
     }
 
+    if runtime.headless {
+        return headless::run_headless(&http, &runtime).await;
+    }
+
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<InboundMessage>(128);
     let mut adapter_state = AdapterState::default();
     let approval_cache = ApprovalCache::load_for_runtime(&runtime).await;
@@ -1327,10 +1634,40 @@ async fn run() -> Result<()> {
         let value = match message {
             InboundMessage::Request(value) => value,
             InboundMessage::Response { id, value } => {
-                if !adapter_state.transport.route_response(&id, value).await {
+                if !adapter_state
+                    .transport
+                    .route_response(&id, value.clone())
+                    .await
+                {
+                    let diagnostics = adapter_state.transport.diagnostics().await;
+                    let pending = diagnostics
+                        .pending
+                        .iter()
+                        .map(|p| {
+                            format!(
+                                "{}:{} elapsed_ms={} timeout_ms={}",
+                                p.id, p.method, p.elapsed_ms, p.timeout_ms
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let recent_timeouts = diagnostics
+                        .recent_timeouts
+                        .iter()
+                        .map(|t| {
+                            format!(
+                                "{}:{} elapsed_ms={} timeout_ms={}",
+                                t.id, t.method, t.elapsed_ms, t.timeout_ms
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     eprintln!(
-                        "bear-armature: unmatched JSON-RPC response id={}",
-                        id_key(&id)
+                        "bear-armature: unmatched JSON-RPC response id={} value={} pending=[{}] recent_timeouts=[{}]",
+                        id_key(&id),
+                        truncate_for_log(&value.to_string(), 1200),
+                        pending,
+                        recent_timeouts,
                     );
                 }
                 continue;
@@ -1391,12 +1728,16 @@ impl BrowserBridgeConfig {
                 "--bind" => bind = require_arg_value("--bind", args.next())?,
                 "--token" => token = require_arg_value("--token", args.next())?,
                 "--path" => path = require_arg_value("--path", args.next())?,
-                "--allow-origin" => allowed_origins.push(require_arg_value("--allow-origin", args.next())?),
+                "--allow-origin" => {
+                    allowed_origins.push(require_arg_value("--allow-origin", args.next())?)
+                }
                 "--help" | "-h" => {
                     print_browser_bridge_help_to_stderr();
                     std::process::exit(0);
                 }
-                unknown => bail!("unknown browser-bridge argument {unknown:?}; use `bear-armature browser-bridge --help`"),
+                unknown => bail!(
+                    "unknown browser-bridge argument {unknown:?}; use `bear-armature browser-bridge --help`"
+                ),
             }
         }
 
@@ -1406,7 +1747,9 @@ impl BrowserBridgeConfig {
             bail!("browser-bridge requires a non-empty bind address; pass --bind <host:port>");
         }
         if token.is_empty() {
-            bail!("browser-bridge requires a bearer token; set DEN_HOST_BROWSER_MCP_TOKEN or pass --token <token>");
+            bail!(
+                "browser-bridge requires a bearer token; set DEN_HOST_BROWSER_MCP_TOKEN or pass --token <token>"
+            );
         }
         path = normalize_browser_bridge_path(&path);
         allowed_origins.retain(|origin| !origin.trim().is_empty());
@@ -1493,7 +1836,7 @@ fn parse_acp_connection_args(mut args: impl Iterator<Item = String>) -> Result<A
             unknown => {
                 return Err(anyhow!(
                     "unknown ACP argument {unknown:?}; use `bear-armature acp --help`"
-                ))
+                ));
             }
         }
     }
@@ -1512,7 +1855,7 @@ fn parse_acp_connection_args(mut args: impl Iterator<Item = String>) -> Result<A
 
 impl RuntimeConfig {
     fn from_env_and_args() -> Result<Self> {
-        let mut args: Vec<String> = env::args().skip(1).collect();
+        let args: Vec<String> = env::args().skip(1).collect();
         let mut update_command: Option<UpdateCommand> = None;
         let mut browser_bridge: Option<BrowserBridgeConfig> = None;
 
@@ -1531,6 +1874,7 @@ impl RuntimeConfig {
         }
 
         let first = args.first().cloned();
+        let mut headless = false;
         let acp_args = match first.as_deref() {
             Some("browser-bridge") => {
                 browser_bridge = Some(BrowserBridgeConfig::from_args(args.into_iter().skip(1))?);
@@ -1550,6 +1894,10 @@ impl RuntimeConfig {
             }
             Some("doctor") | Some("--doctor") => Vec::new(),
             Some("acp") => args.into_iter().skip(1).collect(),
+            Some("headless") => {
+                headless = true;
+                args.into_iter().skip(1).collect()
+            }
             Some(_) if args_look_like_legacy_acp(&args) => args,
             Some(unknown) => {
                 return Err(anyhow!(
@@ -1567,7 +1915,7 @@ impl RuntimeConfig {
             mut api_url,
             mut bear,
             mut token,
-            mut token_env,
+            token_env,
             mut client,
             check_config,
             check_server,
@@ -1620,7 +1968,7 @@ impl RuntimeConfig {
         }
         if token.is_empty() {
             diagnostics.push(
-                "Missing Den bearer token. Set DEN_TOKEN, set DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. Den ACP tokens include the acp:chat scope."
+                "Missing Den bearer token. Set DEN_TOKEN, set DEN_TOKEN_ENV to the name of an environment variable containing the token, pass --token <token>, or pass --token-env <env-var>. Den armature tokens include the armature:chat scope."
                     .to_string(),
             );
         }
@@ -1641,6 +1989,7 @@ impl RuntimeConfig {
             diagnostics,
             check_server,
             doctor,
+            headless,
             update_command: update_command.clone(),
             browser_bridge: browser_bridge.clone(),
             api_url,
@@ -1779,17 +2128,30 @@ fn print_browser_bridge_help_to_stderr() {
 fn print_acp_help_to_stderr() {
     eprintln!(
         "bear-armature acp\n\nUsage: bear-armature acp --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n\n\
-Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den ACP token with acp:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
+Options:\n  --api-url <url>        Den API origin, for example https://api.bears.example\n  --bear <slug>          Bear slug to chat with\n  --token <token>        Den armature token with armature:chat scope\n  --token-env <env-var>  Read the Den bearer token from this environment variable\n  --client <name>        Client label: zed, opencode, or acp_adapter\n  --check-config         Validate configuration and exit without starting ACP stdio\n  --check-server         Fetch Den /version and exit without starting ACP stdio\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
 Environment fallbacks:\n  DEN_API_URL\n  BEAR_SLUG\n  DEN_TOKEN\n  DEN_TOKEN_ENV\n  DEN_ACP_CLIENT\n\n\
 Legacy editors may still invoke `bear-armature --api-url ... --bear ...` without the `acp` subcommand.\n\
 DEN_API_URL should be the API origin only, not the full /acp/bears/... endpoint."
     );
 }
 
+static HEADLESS_MODE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Marks this process as a headless sandbox run (no ACP client on stdin).
+/// Permission requests are then auto-decided by the headless policy instead
+/// of an editor round-trip.
+pub(crate) fn set_headless_mode() {
+    let _ = HEADLESS_MODE.set(true);
+}
+
+pub(crate) fn headless_mode() -> bool {
+    *HEADLESS_MODE.get().unwrap_or(&false)
+}
+
 fn print_help_to_stderr() {
     eprintln!(
         "bear-armature {}\nBuild git SHA: {}\nLocal HEAD SHA: {}\nACP sessions: list/resume/load; conversations bound via Den\n\n\
-Subcommands:\n  acp                    Run ACP stdio mode (explicit)\n  doctor                 Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n\n\
+Subcommands:\n  acp                    Run ACP stdio mode (explicit)\n  headless               Execute one Den work order in a sandbox (no editor; env-driven)\n  doctor                 Run user-friendly setup checks and exit\n  update-check           Check for a newer signed macOS package\n  update                 Download, verify, and install/open a newer macOS package\n  browser-bridge         Serve browser-only MCP tools over local Streamable HTTP\n\n\
 Usage: bear-armature acp --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n       bear-armature doctor\n       bear-armature update-check [--channel stable]\n       bear-armature update [--open|--install|--download-only] [--yes]\n       bear-armature browser-bridge [--bind 127.0.0.1:3766] [--path /mcp] [--token <token>]\n\n\
 Legacy usage (still supported):\n  bear-armature --api-url <url> --bear <slug> [--client zed] [--token-env DEN_TOKEN]\n\n\
 Global options:\n  --version              Show version/build behavior and exit\n  --help                 Show this help\n\n\
@@ -1958,18 +2320,47 @@ async fn handle_request(
                 let mut context = context;
                 context.raw["mcp"] = mcp_context;
                 ensure_session_context_capabilities(&mut context);
-                eprintln!(
-                    "bear-armature: session/new session_id={} cwd={} roots={} direct_tools={} mcp={}",
-                    session_id,
-                    context.cwd,
-                    context.roots.join(","),
-                    context
-                        .raw
-                        .get("direct_tools")
-                        .cloned()
-                        .unwrap_or(Value::Null),
-                    summarize_mcp_for_log(context.raw.get("mcp"))
-                );
+                if bear_debug_verbose() {
+                    eprintln!(
+                        "bear-armature: session/new session_id={} cwd={} roots={} direct_tools={} mcp={}",
+                        session_id,
+                        context.cwd,
+                        context.roots.join(","),
+                        context
+                            .raw
+                            .get("direct_tools")
+                            .cloned()
+                            .unwrap_or(Value::Null),
+                        summarize_mcp_for_log(context.raw.get("mcp"))
+                    );
+                }
+                let mode = MODE_ASK;
+                let conversation_id = prompt_conversation_id_from_params(&request.params);
+                if let Some(config) = runtime.config.as_ref() {
+                    if bearwire::enabled() {
+                        if let Err(err) = bearwire::post_session_open(
+                            http,
+                            config,
+                            &session_id,
+                            context.raw.clone(),
+                            conversation_id.as_deref(),
+                            mode,
+                        )
+                        .await
+                        {
+                            write_response(
+                                id,
+                                Err(json_rpc_error(
+                                    -32003,
+                                    "BEARS session creation failed",
+                                    Some(json!({ "message": format!("{err:#}") })),
+                                )),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    }
+                }
                 shared_state
                     .session_contexts
                     .lock()
@@ -1978,7 +2369,6 @@ async fn handle_request(
                 adapter_state
                     .session_contexts
                     .insert(session_id.clone(), context);
-                send_available_commands_update(&session_id).await?;
                 if let Some(config) = runtime.config.as_ref() {
                     spawn_adapter_environment_publish(
                         config.clone(),
@@ -1987,7 +2377,6 @@ async fn handle_request(
                         None,
                     );
                 }
-                let mode = MODE_ASK;
                 let response = NewSessionResponse::new(session_id.clone())
                     .config_options(session_config_options_for_mode(mode))
                     .modes(session_modes_for_mode(mode))
@@ -2000,7 +2389,6 @@ async fn handle_request(
                         }),
                     )])));
                 write_response(id, Ok(serde_json::to_value(response)?)).await?;
-                notify_mode_state(&session_id, mode).await?;
             }
         }
         "session/set_config_option" => {
@@ -2010,7 +2398,7 @@ async fn handle_request(
                     .get("configId")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                if config_id != "mode" {
+                if config_id != "mode" && config_id != "model" {
                     write_response(
                         id,
                         Err(json_rpc_error(
@@ -2037,6 +2425,79 @@ async fn handle_request(
                         return Ok(());
                     }
                 };
+                if config_id == "model" {
+                    let requested_model = match config_value_from_params(&request.params) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            write_response(
+                                id,
+                                Err(json_rpc_error(
+                                    -32602,
+                                    "Invalid session config params",
+                                    Some(json!({ "message": format!("{err:#}") })),
+                                )),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    };
+                    let config = match runtime.config.as_ref() {
+                        Some(config) => config,
+                        None => {
+                            write_response(
+                                id,
+                                Err(json_rpc_error(-32002, "Den is not configured", None)),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    };
+                    let selection_mode = if requested_model == "auto" {
+                        "auto"
+                    } else {
+                        "explicit"
+                    };
+                    let den_response = bearwire::rpc_call(
+                        http,
+                        config,
+                        "session.model.set",
+                        json!({
+                            "bear_slug": config.bear,
+                            "session_id": session_id,
+                            "selection_mode": selection_mode,
+                            "model": if requested_model == "auto" { Value::Null } else { json!(requested_model) },
+                        }),
+                    )
+                    .await?;
+                    remember_session_model(
+                        shared_state,
+                        adapter_state,
+                        session_id,
+                        den_response.clone(),
+                    )
+                    .await;
+                    notify_config_options_for_session(shared_state, session_id).await?;
+                    let context = shared_state
+                        .session_contexts
+                        .lock()
+                        .await
+                        .get(session_id)
+                        .cloned();
+                    let mode = context
+                        .as_ref()
+                        .and_then(|ctx| ctx.current_mode.as_deref())
+                        .unwrap_or(MODE_ASK);
+                    write_response(
+                        id,
+                        Ok(json!({
+                            "configOptions": session_config_options_for_context(context.as_ref(), mode),
+                            "_meta": { "bears": { "model": den_response } }
+                        })),
+                    )
+                    .await?;
+                    return Ok(());
+                }
+
                 let requested_mode = match mode_value_from_config_params(&request.params) {
                     Ok(MODE_ASK | MODE_PLAN | MODE_WRITE) => {
                         mode_value_from_config_params(&request.params)?
@@ -2090,16 +2551,18 @@ async fn handle_request(
                     pending_den_sync,
                 )
                 .await;
-                eprintln!(
-                    "bear-armature: session/set_config_option mode request session_id={} requested_mode={} effective_mode={} den_message={}",
-                    session_id,
-                    requested_mode,
-                    mode,
-                    den_response
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("<none>")
-                );
+                if bear_debug_verbose() {
+                    eprintln!(
+                        "bear-armature: session/set_config_option mode request session_id={} requested_mode={} effective_mode={} den_message={}",
+                        session_id,
+                        requested_mode,
+                        mode,
+                        den_response
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<none>")
+                    );
+                }
                 if requested_mode != mode {
                     eprintln!(
                         "bear-armature: Den adjusted client-requested mode={} for session_id={} to effective mode={}",
@@ -2189,16 +2652,18 @@ async fn handle_request(
                     pending_den_sync,
                 )
                 .await;
-                eprintln!(
-                    "bear-armature: session/set_mode request session_id={} requested_mode={} effective_mode={} den_message={}",
-                    session_id,
-                    requested_mode,
-                    mode,
-                    den_response
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("<none>")
-                );
+                if bear_debug_verbose() {
+                    eprintln!(
+                        "bear-armature: session/set_mode request session_id={} requested_mode={} effective_mode={} den_message={}",
+                        session_id,
+                        requested_mode,
+                        mode,
+                        den_response
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("<none>")
+                    );
+                }
                 if requested_mode != mode {
                     eprintln!(
                         "bear-armature: Den adjusted client-requested legacy mode={} for session_id={} to effective mode={}",
@@ -2317,11 +2782,23 @@ async fn handle_request(
                 )
                 .await
                 {
-                    Ok(mode) => {
+                    Ok((mode, context_budget)) => {
                         let response = ResumeSessionResponse::new()
                             .config_options(session_config_options_for_mode(mode))
                             .modes(session_modes_for_mode(mode));
-                        write_response(id, Ok(serde_json::to_value(response)?)).await?
+                        write_response(id, Ok(serde_json::to_value(response)?)).await?;
+                        let session_id = request
+                            .params
+                            .get("sessionId")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if !session_id.is_empty() {
+                            send_available_commands_update(session_id).await?;
+                            if let Some(context_budget) = context_budget {
+                                send_context_budget_usage_update(session_id, context_budget)
+                                    .await?;
+                            }
+                        }
                     }
                     Err(err) => {
                         write_response(
@@ -2439,7 +2916,7 @@ async fn handle_request(
                         id,
                         Err(auth_check_json_rpc_error(
                             &err,
-                            Some("Generate a fresh Den Code token for this bear. Code tokens must include acp:chat."),
+                            Some("Generate a fresh Den armature token for this bear. Tokens must include armature:chat."),
                         )),
                     )
                     .await?;
@@ -2485,7 +2962,11 @@ async fn handle_request(
                     } else {
                         eprintln!(
                             "bear-armature: overlapping prompt for different conversation session_id={} previous_turn={} new_turn={} previous_conversation={:?} new_conversation={:?}; keeping previous runtime alive and gating stale UI updates",
-                            session_id, previous.token, turn_token, previous.conversation_id, conversation_id_for_turn
+                            session_id,
+                            previous.token,
+                            turn_token,
+                            previous.conversation_id,
+                            conversation_id_for_turn
                         );
                     }
                 }
@@ -2522,11 +3003,8 @@ async fn handle_request(
                                 id,
                                 Err(json_rpc_error(
                                     -32003,
-                                    "BEARS prompt failed",
-                                    Some(json!({
-                                        "message": message,
-                                        "server_version": server_version.map(server_version_json),
-                                    })),
+                                    &format!("BEARS prompt failed: {message}"),
+                                    None,
                                 )),
                             )
                             .await;
@@ -2660,34 +3138,36 @@ fn adapter_capabilities_context_with_client_mcp(has_client_mcp_tools: bool) -> V
         "built_at_utc": env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
         "api_contract": adapter_contract_context(),
         "direct_tools": {
-            "fs_read_text_file": { "supported": true, "version": 1 },
-            "fs_list_directory": { "supported": true, "version": 1 },
-            "fs_find_paths": { "supported": true, "version": 1 },
-            "fs_search_files": { "supported": true, "version": 1 },
-            "fs_stat": { "supported": true, "version": 1 },
-            "git_status": { "supported": true, "version": 1 },
-            "git_diff": { "supported": true, "version": 1 },
-            "git_log": { "supported": true, "version": 1 },
-            "git_show": { "supported": true, "version": 1 },
-            "git_add": { "supported": true, "version": 1 },
-            "git_restore": { "supported": true, "version": 1 },
-            "git_commit": { "supported": true, "version": 1 },
-            "git_stash": { "supported": true, "version": 1 },
-            "process_run": { "supported": true, "version": 1 },
-            "terminal_run_command": { "supported": true, "version": 1 },
-            "bear_environment": { "supported": true, "version": 1 },
-            "chrome_open": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
-            "chrome_snapshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
-            "chrome_console_messages": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
-            "chrome_network_requests": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
-            "chrome_screenshot": { "supported": chrome_supported, "version": 1, "fallback_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" } },
-            "fs_edit_file": { "supported": true, "version": 1 },
-            "fs_create_text_file": { "supported": true, "version": 1 },
-            "fs_create_directory": { "supported": true, "version": 1 },
-            "fs_move_path": { "supported": true, "version": 1 },
-            "fs_copy_path": { "supported": true, "version": 1 },
-            "fs_apply_patch": { "supported": true, "version": 1 },
-            "fs_delete_path": { "supported": true, "version": 1 }
+            "fs_read_text_file": direct_tool_descriptor(true, "Read a text file from the workspace.", &["cat", "head", "tail", "sed -n"]),
+            "fs_list_directory": direct_tool_descriptor(true, "List files and directories under a workspace path.", &["ls"]),
+            "fs_find_paths": direct_tool_descriptor(true, "Find workspace paths by glob pattern.", &["find"]),
+            "fs_search_files": direct_tool_descriptor(true, "Search workspace files by text query or pattern. Prefer this over shell search commands for repo text search.", &["rg", "grep"]),
+            "fs_stat": direct_tool_descriptor(true, "Inspect a workspace path's type, size, and metadata.", &["stat"]),
+            "git_status": direct_tool_descriptor(true, "Show repository status.", &["git status"]),
+            "git_diff": direct_tool_descriptor(true, "Show repository diff.", &["git diff"]),
+            "git_log": direct_tool_descriptor(true, "Show repository history.", &["git log"]),
+            "git_show": direct_tool_descriptor(true, "Show a git object or revision.", &["git show"]),
+            "git_add": direct_tool_descriptor(true, "Stage tracked changes in a repository.", &["git add"]),
+            "git_restore": direct_tool_descriptor(true, "Restore files in a repository.", &["git restore"]),
+            "git_commit": direct_tool_descriptor(true, "Create a git commit.", &["git commit"]),
+            "git_stash": direct_tool_descriptor(true, "Stash repository changes.", &["git stash"]),
+            "run_command": direct_tool_descriptor(true, "Run a local command in terminal view by default when the ACP client supports terminals; use process_run for short captured output.", &[]),
+            "process_run": direct_tool_descriptor(true, "Run a short, bounded local command and capture its result.", &[]),
+            "terminal_run_command": direct_tool_descriptor(true, "Run a local terminal command with live output for interactive or long-running work.", &[]),
+            "bear_environment": direct_tool_descriptor(true, "Inspect BEARS adapter and environment diagnostics.", &[]),
+            "chrome_open": direct_tool_descriptor(chrome_supported, "Open a URL in Chrome.", &[]),
+            "chrome_snapshot": direct_tool_descriptor(chrome_supported, "Capture a Chrome page snapshot.", &[]),
+            "chrome_console_messages": direct_tool_descriptor(chrome_supported, "Read Chrome console messages.", &[]),
+            "chrome_network_requests": direct_tool_descriptor(chrome_supported, "Read Chrome network requests.", &[]),
+            "chrome_screenshot": direct_tool_descriptor(chrome_supported, "Capture a Chrome screenshot.", &[]),
+            "fs_edit_file": direct_tool_descriptor(true, "Edit a workspace file directly.", &[]),
+            "fs_replace_text": direct_tool_descriptor(true, "Replace exact text in a workspace file. Prefer this over `sed` when the edit is a targeted replacement.", &["sed"]),
+            "fs_create_text_file": direct_tool_descriptor(true, "Create a new workspace text file.", &[]),
+            "fs_create_directory": direct_tool_descriptor(true, "Create a new workspace directory.", &[]),
+            "fs_move_path": direct_tool_descriptor(true, "Move or rename a workspace path.", &[]),
+            "fs_copy_path": direct_tool_descriptor(true, "Copy a workspace path.", &[]),
+            "fs_apply_patch": direct_tool_descriptor(true, "Apply a patch to workspace files.", &[]),
+            "fs_delete_path": direct_tool_descriptor(true, "Delete a workspace path.", &[])
         }
     })
 }
@@ -2696,39 +3176,53 @@ fn direct_tools_context() -> Value {
     direct_tools_context_with_client_mcp(false)
 }
 
+fn direct_tool_descriptor(
+    supported: bool,
+    description: &'static str,
+    prefer_instead_of_shell: &[&'static str],
+) -> Value {
+    json!({
+        "supported": supported,
+        "description": description,
+        "prefer_instead_of_shell": prefer_instead_of_shell,
+    })
+}
+
 fn direct_tools_context_with_client_mcp(has_client_mcp_tools: bool) -> Value {
     let chrome_available = chrome_tools_available() && !has_client_mcp_tools;
     json!({
-        "fs_read_text_file": true,
-        "fs_list_directory": true,
-        "fs_find_paths": true,
-        "fs_search_files": true,
-        "fs_stat": true,
-        "git_status": true,
-        "git_diff": true,
-        "git_log": true,
-        "git_show": true,
-        "git_add": true,
-        "git_restore": true,
-        "git_commit": true,
-        "git_stash": true,
-        "process_run": true,
-        "terminal_run_command": true,
-        "bear_environment": true,
-        "chrome_open": chrome_available,
-        "chrome_snapshot": chrome_available,
-        "chrome_console_messages": chrome_available,
-        "chrome_network_requests": chrome_available,
-        "chrome_screenshot": chrome_available,
+        "fs_read_text_file": direct_tool_descriptor(true, "Read a text file from the workspace.", &["cat", "head", "tail", "sed -n"]),
+        "fs_list_directory": direct_tool_descriptor(true, "List files and directories under a workspace path.", &["ls"]),
+        "fs_find_paths": direct_tool_descriptor(true, "Find workspace paths by glob pattern.", &["find"]),
+        "fs_search_files": direct_tool_descriptor(true, "Search workspace files by text query or pattern. Prefer this over shell search commands for repo text search.", &["rg", "grep"]),
+        "fs_stat": direct_tool_descriptor(true, "Inspect a workspace path's type, size, and metadata.", &["stat"]),
+        "git_status": direct_tool_descriptor(true, "Show repository status.", &["git status"]),
+        "git_diff": direct_tool_descriptor(true, "Show repository diff.", &["git diff"]),
+        "git_log": direct_tool_descriptor(true, "Show repository history.", &["git log"]),
+        "git_show": direct_tool_descriptor(true, "Show a git object or revision.", &["git show"]),
+        "git_add": direct_tool_descriptor(true, "Stage tracked changes in a repository.", &["git add"]),
+        "git_restore": direct_tool_descriptor(true, "Restore files in a repository.", &["git restore"]),
+        "git_commit": direct_tool_descriptor(true, "Create a git commit.", &["git commit"]),
+        "git_stash": direct_tool_descriptor(true, "Stash repository changes.", &["git stash"]),
+        "run_command": direct_tool_descriptor(true, "Run a local command in terminal view by default when the ACP client supports terminals; use process_run for short captured output.", &[]),
+        "process_run": direct_tool_descriptor(true, "Run a short, bounded local command and capture its result.", &[]),
+        "terminal_run_command": direct_tool_descriptor(true, "Run a local terminal command with live output for interactive or long-running work.", &[]),
+        "bear_environment": direct_tool_descriptor(true, "Inspect BEARS adapter and environment diagnostics.", &[]),
+        "chrome_open": direct_tool_descriptor(chrome_available, "Open a URL in Chrome.", &[]),
+        "chrome_snapshot": direct_tool_descriptor(chrome_available, "Capture a Chrome page snapshot.", &[]),
+        "chrome_console_messages": direct_tool_descriptor(chrome_available, "Read Chrome console messages.", &[]),
+        "chrome_network_requests": direct_tool_descriptor(chrome_available, "Read Chrome network requests.", &[]),
+        "chrome_screenshot": direct_tool_descriptor(chrome_available, "Capture a Chrome screenshot.", &[]),
         "client_mcp_tools_present": has_client_mcp_tools,
         "chrome_tools_disabled_reason": if has_client_mcp_tools { "external_browser_mcp_tools_present" } else { "" },
-        "fs_edit_file": true,
-        "fs_create_text_file": true,
-        "fs_create_directory": true,
-        "fs_move_path": true,
-        "fs_copy_path": true,
-        "fs_apply_patch": true,
-        "fs_delete_path": true,
+        "fs_edit_file": direct_tool_descriptor(true, "Edit a workspace file directly.", &[]),
+        "fs_replace_text": direct_tool_descriptor(true, "Replace exact text in a workspace file. Prefer this over `sed` when the edit is a targeted replacement.", &["sed"]),
+        "fs_create_text_file": direct_tool_descriptor(true, "Create a new workspace text file.", &[]),
+        "fs_create_directory": direct_tool_descriptor(true, "Create a new workspace directory.", &[]),
+        "fs_move_path": direct_tool_descriptor(true, "Move or rename a workspace path.", &[]),
+        "fs_copy_path": direct_tool_descriptor(true, "Copy a workspace path.", &[]),
+        "fs_apply_patch": direct_tool_descriptor(true, "Apply a patch to workspace files.", &[]),
+        "fs_delete_path": direct_tool_descriptor(true, "Delete a workspace path.", &[]),
     })
 }
 
@@ -2780,11 +3274,23 @@ fn ensure_session_context_capabilities(context: &mut SessionContext) {
     }
 }
 
+fn run_command_prefers_terminal(args: &Value) -> bool {
+    let command = args.get("command").and_then(Value::as_str).map(str::trim);
+    let Some(_command) = command.filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    // ponytail: terminal support is the coarse gate; keep process_run as the explicit
+    // simple-process escape hatch instead of maintaining a second command classifier.
+    true
+}
+
 fn session_context_from_params(params: &Value) -> Result<SessionContext> {
-    eprintln!(
-        "bear-armature: session_context_from_params mcp_summary={}",
-        summarize_acp_mcp_servers_param(params)
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session_context_from_params mcp_summary={}",
+            summarize_acp_mcp_servers_param(params)
+        );
+    }
     let mut mcp_sources = parse_acp_mcp_servers(params)?;
     if let Some(host_browser_bridge) = host_browser_bridge_config_from_env() {
         mcp_sources.push(host_browser_bridge);
@@ -2794,12 +3300,17 @@ fn session_context_from_params(params: &Value) -> Result<SessionContext> {
         .transpose()?
         .or_else(|| fallback_cwd_from_params(params))
         .or_else(|| roots.first().cloned())
-        .ok_or_else(|| anyhow!("ACP session requires an absolute cwd; provide params.cwd as an absolute local path"))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "ACP session requires an absolute cwd; provide params.cwd as an absolute local path"
+            )
+        })?;
     if !is_absolute_local_path(&cwd) {
         return Err(anyhow!(
             "ACP session cwd must be an absolute local path; got {cwd:?}"
         ));
     }
+    let roots = roots_or_cwd(roots, &cwd);
     let raw = json!({
         "cwd": cwd,
         "workspace_roots": roots,
@@ -2938,7 +3449,9 @@ fn runtime_config_from_current_env(runtime: &RuntimeConfig) -> Result<Config> {
         ));
     }
     if token.is_empty() {
-        return Err(anyhow!("Missing DEN_TOKEN. Paste a Den Code token when prompted, or configure DEN_TOKEN in Zed."));
+        return Err(anyhow!(
+            "Missing DEN_TOKEN. Paste a Den Code token when prompted, or configure DEN_TOKEN in Zed."
+        ));
     }
     Ok(Config {
         api_url,
@@ -2950,35 +3463,11 @@ fn runtime_config_from_current_env(runtime: &RuntimeConfig) -> Result<Config> {
 
 async fn validate_den_code_token(http: &reqwest::Client, config: &Config) -> Result<()> {
     if bearwire::enabled() {
-        match bearwire::validate_code_token(http, config).await {
-            Ok(()) => return Ok(()),
-            Err(err) if bearwire::required() => return Err(err),
-            Err(err) => eprintln!(
-                "bear-armature: BearWire auth validation failed; falling back to legacy ACP auth-check error={err:#}"
-            ),
-        }
+        return bearwire::validate_code_token(http, config).await;
     }
-
-    let url = format!(
-        "{}/acp/bears/{}/auth-check",
-        config.api_url,
-        urlencoding::encode(&config.bear)
-    );
-    let response = http
-        .get(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .send()
-        .await
-        .with_context(|| format!("validate BEARS Code token with Den at {url}"))?;
-    if response.status().is_success() {
-        return Ok(());
-    }
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    Err(anyhow!(DenHttpError { status, body }))
+    Err(anyhow!(
+        "BearWire is disabled in this adapter process; legacy /acp auth-check is retired. Enable BearWire by setting BEARS_BEARWIRE=auto or true."
+    ))
 }
 
 async fn validate_den_code_token_for_diagnostics(
@@ -3015,6 +3504,24 @@ fn client_supports_terminal(adapter_state: &AdapterState) -> bool {
         .unwrap_or(false)
 }
 
+fn client_read_text_file_request_path(context: &SessionContext, raw_path: &str) -> Result<PathBuf> {
+    let resolved_path = resolve_requested_tool_path(context, raw_path)?;
+    ensure_path_allowed_for_session(context, &resolved_path)?;
+    Ok(resolved_path)
+}
+
+fn read_text_file_requires_client_surface(args: &Value) -> bool {
+    args.get("source")
+        .or_else(|| args.pointer("/_meta/source"))
+        .and_then(Value::as_str)
+        .is_some_and(|source| matches!(source, "editor_buffer" | "client_surface"))
+        || args
+            .get("prefer_client")
+            .or_else(|| args.pointer("/_meta/prefer_client"))
+            .and_then(Value::as_bool)
+            == Some(true)
+}
+
 async fn handle_client_read_text_file(
     adapter_state: &mut AdapterState,
     session_id: &str,
@@ -3024,7 +3531,10 @@ async fn handle_client_read_text_file(
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("fs_read_text_file args missing path"))?;
-    let mut request = ReadTextFileRequest::new(session_id.to_string(), PathBuf::from(path));
+    let context = session_context(adapter_state, session_id)?;
+    let resolved_path = client_read_text_file_request_path(context, path)?;
+    preflight_client_read_text_file_target(&resolved_path).await?;
+    let mut request = ReadTextFileRequest::new(session_id.to_string(), resolved_path.clone());
     if let Some(line) = args.get("line").and_then(Value::as_u64) {
         request = request.line(Some(line.clamp(1, u32::MAX as u64) as u32));
     }
@@ -3052,12 +3562,16 @@ async fn handle_client_read_text_file(
         )
     })?;
     let content = parsed.content;
-    eprintln!(
-        "bear-armature: client fs/read_text_file path={} bytes={} duration_ms={}",
-        path,
-        content.len(),
-        started.elapsed().as_millis(),
-    );
+    verify_client_read_text_file_response(&resolved_path, &content).await?;
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: client fs/read_text_file requested_path={} resolved_path={} bytes={} duration_ms={}",
+            path,
+            resolved_path.display(),
+            content.len(),
+            started.elapsed().as_millis(),
+        );
+    }
     Ok(json!({
         "ok": true,
         "path": path,
@@ -3066,6 +3580,50 @@ async fn handle_client_read_text_file(
         "raw_result": result,
         "bytes": content.len(),
     }))
+}
+
+async fn preflight_client_read_text_file_target(
+    path: &std::path::Path,
+) -> Result<std::fs::Metadata> {
+    match tokio::fs::metadata(path).await {
+        Ok(metadata) if metadata.is_file() => Ok(metadata),
+        Ok(_) => bail!(
+            "client fs/read_text_file target is not a file before ACP request: {}",
+            path.display()
+        ),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => bail!(
+            "client fs/read_text_file target does not exist before ACP request: {}",
+            path.display()
+        ),
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "client fs/read_text_file local metadata preflight failed for {}",
+                path.display()
+            )
+        }),
+    }
+}
+
+async fn verify_client_read_text_file_response(
+    path: &std::path::Path,
+    content: &str,
+) -> Result<()> {
+    let metadata = preflight_client_read_text_file_target(path)
+        .await
+        .with_context(|| {
+            format!(
+                "client fs/read_text_file local verification failed for {}",
+                path.display()
+            )
+        })?;
+    if content.is_empty() && metadata.len() > 0 {
+        bail!(
+            "client fs/read_text_file returned empty content for non-empty file: {} ({} bytes)",
+            path.display(),
+            metadata.len()
+        );
+    }
+    Ok(())
 }
 
 async fn handle_direct_read_text_file(
@@ -3079,11 +3637,19 @@ async fn handle_direct_read_text_file(
         .ok_or_else(|| anyhow!("bears/read_text_file params missing sessionId"))?
         .to_string();
     let context = session_context(adapter_state, &session_id)?;
-    handle_read_text_file(context, &session_id, params, policy).await
+    let mut args = params;
+    if let Some(object) = args.as_object_mut() {
+        object.remove("sessionId");
+    }
+    handle_read_text_file(context, &session_id, args, policy).await
 }
 
 fn policy_from_event(event: &Value) -> ToolPolicy {
-    let policy = event.get("policy").unwrap_or(&Value::Null);
+    let policy = event
+        .get("policy")
+        .or_else(|| event.pointer("/data/tool_call/policy"))
+        .or_else(|| event.pointer("/data/policy"))
+        .unwrap_or(&Value::Null);
     ToolPolicy {
         max_lines: policy
             .get("max_lines")
@@ -3105,10 +3671,19 @@ fn policy_from_event(event: &Value) -> ToolPolicy {
         include_hidden_default: policy
             .get("include_hidden_default")
             .and_then(Value::as_bool),
+        execution_target: policy
+            .get("execution_target")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        approval_policy: policy
+            .get("approval_policy")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         sensitive_path_policy: policy
             .get("sensitive_path_policy")
             .and_then(Value::as_str)
             .map(str::to_string),
+        target_policy: policy.get("target_policy").cloned(),
         max_replacements: policy
             .get("max_replacements")
             .and_then(Value::as_u64)
@@ -3134,12 +3709,15 @@ async fn execute_local_tool(
 ) -> Result<Value> {
     match tool_name {
         "fs_read_text_file" | "fs.read_text_file" => {
-            if client_supports_read_text_file(adapter_state) {
-                handle_client_read_text_file(adapter_state, session_id, &args).await
+            if read_text_file_requires_client_surface(&args) {
+                if client_supports_read_text_file(adapter_state) {
+                    handle_client_read_text_file(adapter_state, session_id, &args).await
+                } else {
+                    Err(anyhow!(
+                        "fs_read_text_file requested ACP client/editor-buffer semantics, but the client did not advertise fs.readTextFile"
+                    ))
+                }
             } else {
-                eprintln!(
-                    "bear-armature: client did not advertise fs/read_text_file; using adapter-local fallback"
-                );
                 let mut params = args;
                 params["sessionId"] = json!(session_id);
                 handle_direct_read_text_file(adapter_state, params, policy).await
@@ -3189,6 +3767,24 @@ async fn execute_local_tool(
             let context = session_context(adapter_state, session_id)?;
             handle_process_run(context, session_id, &args, policy).await
         }
+        "run_command" => {
+            let context = session_context(adapter_state, session_id)?.clone();
+            if client_supports_terminal(adapter_state) && run_command_prefers_terminal(&args) {
+                handle_terminal_run_command(
+                    adapter_state,
+                    &context,
+                    session_id,
+                    None,
+                    None,
+                    &args,
+                    policy,
+                    TerminalCommandValidation::Generic,
+                )
+                .await
+            } else {
+                handle_process_run(&context, session_id, &args, policy).await
+            }
+        }
         "terminal_run_command" => {
             let context = session_context(adapter_state, session_id)?.clone();
             handle_terminal_run_command(
@@ -3199,6 +3795,7 @@ async fn execute_local_tool(
                 None,
                 &args,
                 policy,
+                TerminalCommandValidation::Allowlisted,
             )
             .await
         }
@@ -3349,8 +3946,7 @@ async fn handle_direct_delete_path(
 
 fn create_text_file_diff_content(event: &Value) -> Option<ToolCallContent> {
     let path = tool_path(event)?;
-    let content = event
-        .get("args")
+    let content = tool_args_from_event(event)
         .and_then(|v| v.get("content"))
         .and_then(Value::as_str)?;
     Some(ToolCallContent::from(Diff::new(
@@ -3427,6 +4023,16 @@ fn initialize_result(runtime: &RuntimeConfig) -> Result<Value> {
     )?)
 }
 
+fn den_session_display_title(session: &Value) -> Option<String> {
+    session
+        .get("conversation_title")
+        .or_else(|| session.get("title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+}
+
 fn map_den_sessions_list_to_acp(den: &Value) -> Result<Value> {
     let sessions_in = den
         .get("sessions")
@@ -3448,11 +4054,7 @@ fn map_den_sessions_list_to_acp(den: &Value) -> Result<Value> {
         if session_id.is_empty() || cwd.is_empty() {
             continue;
         }
-        let title = s
-            .get("title")
-            .and_then(Value::as_str)
-            .filter(|t| !t.is_empty())
-            .map(str::to_string)
+        let title = den_session_display_title(&s)
             .or_else(|| {
                 s.get("resolved_conversation_id")
                     .and_then(Value::as_str)
@@ -3479,13 +4081,17 @@ fn map_den_sessions_list_to_acp(den: &Value) -> Result<Value> {
 }
 
 fn conversation_id_for_history(den_session: &Value) -> Option<String> {
+    fn is_history_conversation_id(value: &str) -> bool {
+        value == "default" || value.starts_with("conv-") || value.starts_with("den-conv-")
+    }
+
     if let Some(r) = den_session
         .get("resolved_conversation_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if r.starts_with("conv-") || r == "default" {
+        if is_history_conversation_id(r) {
             return Some(r.to_string());
         }
     }
@@ -3495,7 +4101,7 @@ fn conversation_id_for_history(den_session: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if c.starts_with("conv-") || c == "default" {
+        if is_history_conversation_id(c) {
             return Some(c.to_string());
         }
     }
@@ -3568,10 +4174,12 @@ fn session_params_have_cwd_hint(params: &Value) -> bool {
 }
 
 fn session_context_from_den_session(params: &Value, den_session: &Value) -> Result<SessionContext> {
-    eprintln!(
-        "bear-armature: session_context_from_den_session mcp_summary={}",
-        summarize_acp_mcp_servers_param(params)
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session_context_from_den_session mcp_summary={}",
+            summarize_acp_mcp_servers_param(params)
+        );
+    }
     let mut mcp_sources = parse_acp_mcp_servers(params)?;
     if let Some(host_browser_bridge) = host_browser_bridge_config_from_env() {
         mcp_sources.push(host_browser_bridge);
@@ -3595,6 +4203,7 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
             "ACP session cwd must be an absolute local path; got {cwd:?}"
         ));
     }
+    let roots = roots_or_cwd(roots, &cwd);
     let mut ctx = SessionContext {
         cwd,
         roots,
@@ -3608,12 +4217,7 @@ fn session_context_from_den_session(params: &Value, den_session: &Value) -> Resu
             .get("resolved_conversation_id")
             .and_then(Value::as_str)
             .map(str::to_string),
-        thread_title: den_session
-            .get("title")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
+        thread_title: den_session_display_title(den_session),
         current_mode: Some(infer_mode_from_den_session(den_session).to_string()),
     };
     ctx.raw = json!({
@@ -3639,58 +4243,29 @@ async fn den_list_acp_sessions(
     config: &Config,
     params: &Value,
 ) -> Result<Value> {
-    let mut url = format!(
-        "{}/acp/bears/{}/sessions",
-        config.api_url,
-        urlencoding::encode(&config.bear)
-    );
-    let mut qs = Vec::new();
-    if let Some(cwd) = params
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        qs.push(format!("cwd={}", urlencoding::encode(cwd)));
-    }
-    if let Some(cursor) = params
-        .get("cursor")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        qs.push(format!("cursor={}", urlencoding::encode(cursor)));
-    }
-    if params
+    let include_closed = params
         .get("includeClosed")
         .or_else(|| params.get("include_closed"))
         .and_then(Value::as_bool)
-        == Some(true)
-    {
-        qs.push("include_closed=true".to_string());
-    }
-    if !qs.is_empty() {
-        url.push('?');
-        url.push_str(&qs.join("&"));
-    }
-    let response = http
-        .get(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .send()
-        .await
-        .with_context(|| format!("list ACP sessions at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(
-            "Den session list returned HTTP {status}: {}",
-            body.trim()
-        ));
-    }
-    serde_json::from_str(&body).with_context(|| "parse Den session list JSON")
+        .unwrap_or(false);
+    let limit = params
+        .get("limit")
+        .and_then(Value::as_i64)
+        .unwrap_or(50)
+        .clamp(1, 100);
+    let value = bearwire::rpc_call(
+        http,
+        config,
+        "session.state",
+        json!({
+            "bear_slug": config.bear,
+            "include_closed": include_closed,
+            "limit": limit,
+        }),
+    )
+    .await
+    .context("list BearWire sessions via session.state")?;
+    Ok(value)
 }
 
 #[derive(Debug)]
@@ -3721,81 +4296,24 @@ fn den_session_error_allows_local_fallback(err: &anyhow::Error) -> bool {
 }
 
 async fn request_den_session_mode(
-    http: &reqwest::Client,
+    _http: &reqwest::Client,
     config: Option<&Config>,
     session_id: &str,
     requested_mode: &str,
 ) -> Result<(&'static str, Value)> {
-    let Some(config) = config else {
-        return Ok((MODE_ASK, json!({ "message": "adapter is not configured" })));
-    };
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/mode",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-    );
-    let payload = with_adapter_contract(json!({
-        "mode": requested_mode,
-        "reason": "User selected ACP session mode"
-    }));
-    let response = http
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("post ACP session mode to Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        if status == reqwest::StatusCode::NOT_FOUND && body.contains("ACP session not found") {
-            eprintln!(
-                "bear-armature: Den session mode deferred because session is not known yet session_id={} requested_mode={} status={} body={}",
-                session_id,
-                requested_mode,
-                status,
-                truncate_for_log(body.trim(), 240)
-            );
-            let pending_mode = normalize_mode(requested_mode);
-            return Ok((
-                pending_mode,
-                json!({
-                    "message": "Den session is not created yet; keeping the client-selected mode locally and applying it when the first prompt binds the session.",
-                    "deferred": true,
-                    "status": status.as_u16(),
-                    "source": "adapter.den_session_mode_not_found",
-                    "pending_mode": pending_mode,
-                }),
-            ));
-        }
-        return Err(anyhow!(
-            "Den session mode endpoint returned HTTP {status}: {}",
-            body.trim()
-        ));
-    }
-    let value = serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body }));
-    eprintln!(
-        "bear-armature: Den mode response session_id={} requested_mode={} response={}",
-        session_id,
-        requested_mode,
-        serde_json::to_string(&value).unwrap_or_else(|_| "<unserializable>".to_string())
-    );
-    let effective = value
-        .get("effective_mode")
-        .and_then(Value::as_str)
-        .and_then(|mode| match mode {
-            MODE_ASK => Some(MODE_ASK),
-            MODE_PLAN => Some(MODE_PLAN),
-            MODE_WRITE => Some(MODE_WRITE),
-            _ => None,
-        })
-        .unwrap_or(MODE_ASK);
-    Ok((effective, value))
+    let pending_mode = normalize_mode(requested_mode);
+    let configured = config.is_some();
+    Ok((
+        pending_mode,
+        json!({
+            "message": "BearWire has no standalone session mode endpoint; keeping the client-selected mode locally and applying it on the next session.open/run.start.",
+            "deferred": true,
+            "source": "adapter.bearwire_local_mode_until_next_prompt",
+            "pending_mode": pending_mode,
+            "session_id": session_id,
+            "configured": configured,
+        }),
+    ))
 }
 
 fn infer_mode_from_den_session(den: &Value) -> &'static str {
@@ -3837,34 +4355,61 @@ async fn den_get_acp_session(
     config: &Config,
     session_id: &str,
 ) -> Result<Value> {
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-    );
-    let response = http
-        .get(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .send()
-        .await
-        .with_context(|| format!("get ACP session at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(DenHttpError { status, body }));
+    let value = bearwire::rpc_call(
+        http,
+        config,
+        "session.state",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+        }),
+    )
+    .await
+    .with_context(|| format!("get BearWire session.state for session {session_id}"))?;
+    match value.get("session") {
+        Some(Value::Null) | None => Err(anyhow!(DenHttpError {
+            status: reqwest::StatusCode::NOT_FOUND,
+            body: format!("BearWire session {session_id} not found"),
+        })),
+        Some(session) => Ok(session.clone()),
     }
-    serde_json::from_str(&body).with_context(|| "parse Den get session JSON")
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReloadHistoryMessage {
     id: Option<String>,
+    kind: String,
     role: String,
     text: String,
+    tool_call_id: Option<String>,
+    tool_name: Option<String>,
+    status: Option<String>,
+    arguments: Value,
+    raw_output: Value,
+    title: Option<String>,
+    title_updated_at: Option<String>,
+    replay_policy: Option<String>,
+}
+
+#[allow(dead_code)]
+impl ReloadHistoryMessage {
+    fn text(id: &str, role: &str, text: &str) -> Self {
+        Self {
+            id: Some(id.to_string()),
+            kind: "message".to_string(),
+            role: role.to_string(),
+            text: text.to_string(),
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            arguments: Value::Null,
+            raw_output: Value::Null,
+            title: None,
+            title_updated_at: None,
+            replay_policy: None,
+        }
+    }
 }
 
 fn flatten_history_pages_chronological(
@@ -3873,7 +4418,166 @@ fn flatten_history_pages_chronological(
     pages_newest_first.into_iter().rev().flatten().collect()
 }
 
-async fn fetch_conversation_history_chronological(
+fn history_replay_chunks_with_boundaries(
+    messages: Vec<ReloadHistoryMessage>,
+) -> Vec<ReloadHistoryMessage> {
+    let mut previous_role: Option<String> = None;
+    messages
+        .into_iter()
+        .map(|mut message| {
+            if message.kind == "message"
+                && previous_role.as_deref() == Some(message.role.as_str())
+                && matches!(message.role.as_str(), "user" | "assistant")
+                && !message.text.starts_with("\n")
+            {
+                message.text = format!("\n\n{}", message.text);
+            }
+            previous_role = Some(message.role.clone());
+            message
+        })
+        .collect()
+}
+
+fn history_replay_text_update_kind(message: &ReloadHistoryMessage) -> Option<&'static str> {
+    if message.kind != "message" {
+        return None;
+    }
+    match message.role.as_str() {
+        "user" => Some("user"),
+        "assistant" => Some("agent"),
+        _ => None,
+    }
+}
+
+fn reload_history_message_from_value(mut m: Value) -> Result<Option<ReloadHistoryMessage>> {
+    if m.get("kind").is_none() {
+        m["kind"] = json!("message");
+    }
+    let kind = m.get("kind").and_then(Value::as_str).unwrap_or("message");
+    if matches!(kind, "message" | "") {
+        let text = m.get("text").and_then(Value::as_str).unwrap_or("");
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
+    }
+    if matches!(kind, "reasoning_delta" | "reasoning")
+        && m.get("text").is_none()
+        && m.get("delta").is_some()
+    {
+        m["text"] = m.get("delta").cloned().unwrap_or(Value::Null);
+    }
+
+    let event: SurfaceHistoryEvent = serde_json::from_value(m)
+        .context("decode BearWire surface history record as shared SurfaceHistoryEvent")?;
+    event
+        .validate_replay_record()
+        .map_err(|message| anyhow!("BearWire surface history {message}"))?;
+
+    let message = match event {
+        SurfaceHistoryEvent::Message { id, role, text, .. } => ReloadHistoryMessage {
+            id,
+            kind: "message".to_string(),
+            role,
+            text,
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            arguments: Value::Null,
+            raw_output: Value::Null,
+            title: None,
+            title_updated_at: None,
+            replay_policy: None,
+        },
+        SurfaceHistoryEvent::ToolCall {
+            id,
+            role,
+            tool_call_id,
+            tool_name,
+            status,
+            arguments,
+            ..
+        } => ReloadHistoryMessage {
+            id,
+            kind: "tool_call".to_string(),
+            role: role.unwrap_or_else(|| "assistant".to_string()),
+            text: String::new(),
+            tool_call_id: Some(tool_call_id),
+            tool_name: Some(tool_name),
+            status: Some(status),
+            arguments,
+            raw_output: Value::Null,
+            title: None,
+            title_updated_at: None,
+            replay_policy: None,
+        },
+        SurfaceHistoryEvent::ToolResult {
+            id,
+            role,
+            tool_call_id,
+            tool_name,
+            status,
+            text,
+            raw_output,
+            ..
+        } => ReloadHistoryMessage {
+            id,
+            kind: "tool_result".to_string(),
+            role: role.unwrap_or_else(|| "tool".to_string()),
+            text: text.unwrap_or_default(),
+            tool_call_id: Some(tool_call_id),
+            tool_name: Some(tool_name),
+            status: Some(status),
+            arguments: Value::Null,
+            raw_output,
+            title: None,
+            title_updated_at: None,
+            replay_policy: None,
+        },
+        SurfaceHistoryEvent::ReasoningDelta {
+            id,
+            role,
+            text,
+            replay_policy,
+            ..
+        } => ReloadHistoryMessage {
+            id,
+            kind: "reasoning_delta".to_string(),
+            role: role.unwrap_or_else(|| "assistant".to_string()),
+            text,
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            arguments: Value::Null,
+            raw_output: Value::Null,
+            title: None,
+            title_updated_at: None,
+            replay_policy,
+        },
+        SurfaceHistoryEvent::SessionInfoUpdate {
+            id,
+            role,
+            title,
+            title_updated_at,
+            ..
+        } => ReloadHistoryMessage {
+            id,
+            kind: "session_info_update".to_string(),
+            role: role.unwrap_or_else(|| "system".to_string()),
+            text: String::new(),
+            tool_call_id: None,
+            tool_name: None,
+            status: None,
+            arguments: Value::Null,
+            raw_output: Value::Null,
+            title,
+            title_updated_at,
+            replay_policy: None,
+        },
+    };
+    Ok(Some(message))
+}
+
+async fn fetch_conversation_surface_history_chronological(
     http: &reqwest::Client,
     config: &Config,
     conversation_id: &str,
@@ -3881,95 +4585,54 @@ async fn fetch_conversation_history_chronological(
     let mut pages_newest_first: Vec<Vec<ReloadHistoryMessage>> = Vec::new();
     let mut before: Option<String> = None;
     let mut seen_cursors = std::collections::HashSet::new();
-    let mut page_idx = 0usize;
     loop {
-        let mut url = format!(
-            "{}/acp/bears/{}/conversations/{}/history?limit=50",
-            config.api_url,
-            urlencoding::encode(&config.bear),
-            urlencoding::encode(conversation_id),
-        );
-        if let Some(b) = before.as_ref() {
-            url.push_str("&before=");
-            url.push_str(&urlencoding::encode(b));
+        let mut params = json!({
+            "bear_slug": config.bear,
+            "conversation_id": conversation_id,
+            "limit": 50,
+        });
+        if let Some(before) = before.as_deref() {
+            params["before"] = json!(before);
         }
-        let response = http
-            .get(&url)
-            .header(
-                AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-            )
-            .send()
+        let body = bearwire::rpc_call(http, config, "conversation.surface_history", params)
             .await
-            .with_context(|| format!("get conversation history at {url}"))?;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(anyhow!(
-                "Den history returned HTTP {status}: {}",
-                body.trim()
-            ));
-        }
-        let body: Value = serde_json::from_str(&body).context("parse history JSON")?;
-        let messages = body
-            .get("messages")
-            .and_then(|m| m.as_array())
+            .with_context(|| {
+                format!("get BearWire conversation surface history for {conversation_id}")
+            })?;
+        let records = body
+            .get("surface_events")
+            .or_else(|| body.get("messages"))
+            .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
         let mut page = Vec::new();
-        for m in messages {
-            let role = m.get("role").and_then(Value::as_str).unwrap_or("");
-            let text = m.get("text").and_then(Value::as_str).unwrap_or("");
-            if text.trim().is_empty() {
-                continue;
+        for m in records {
+            if let Some(message) = reload_history_message_from_value(m)? {
+                page.push(message);
             }
-            page.push(ReloadHistoryMessage {
-                id: m.get("id").and_then(Value::as_str).map(str::to_string),
-                role: role.to_string(),
-                text: text.to_string(),
-            });
         }
-        let first_id = page
-            .first()
-            .and_then(|m| m.id.as_deref())
-            .unwrap_or("<none>")
-            .to_string();
-        let last_id = page
-            .last()
-            .and_then(|m| m.id.as_deref())
-            .unwrap_or("<none>")
-            .to_string();
-        eprintln!(
-            "bear-armature: history_page conversation_id={} page={} before={:?} messages={} first_id={} last_id={}",
-            conversation_id,
-            page_idx,
-            before,
-            page.len(),
-            first_id,
-            last_id
-        );
         pages_newest_first.push(page);
         let has_more = body
             .get("has_more")
-            .and_then(|v| v.as_bool())
+            .and_then(Value::as_bool)
             .unwrap_or(false);
-        let next_before = body
-            .get("next_before")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
         if !has_more {
             break;
         }
-        let Some(next_before) = next_before.filter(|s| !s.is_empty()) else {
+        let Some(next_before) = body
+            .get("next_before")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .filter(|value| !value.is_empty())
+        else {
             break;
         };
         if !seen_cursors.insert(next_before.clone()) {
             return Err(anyhow!(
-                "Den history pagination repeated cursor {next_before:?} for conversation {conversation_id}"
+                "BearWire history pagination repeated cursor {next_before:?} for conversation {conversation_id}"
             ));
         }
         before = Some(next_before);
-        page_idx += 1;
     }
     Ok(flatten_history_pages_chronological(pages_newest_first))
 }
@@ -3982,36 +4645,95 @@ async fn replay_history_for_den_session(
     lifecycle_method: &str,
 ) -> Result<()> {
     if let Some(conv) = conversation_id_for_history(den) {
-        let messages = fetch_conversation_history_chronological(http, config, &conv).await?;
-        eprintln!(
-            "bear-armature: {} session_id={} replaying {} history messages for conversation_id={}",
-            lifecycle_method,
-            session_id,
-            messages.len(),
-            conv
-        );
-        eprintln!(
-            "bear-armature: {} session_id={} history_ids={:?}",
-            lifecycle_method,
-            session_id,
-            messages
-                .iter()
-                .map(|m| m.id.as_deref().unwrap_or("<none>").to_string())
-                .collect::<Vec<_>>()
-        );
-        for message in messages {
-            match message.role.as_str() {
-                "user" => send_user_message_chunk(session_id, &message.text).await?,
-                "assistant" => send_agent_message_chunk(session_id, &message.text).await?,
-                _ => {}
+        let messages =
+            fetch_conversation_surface_history_chronological(http, config, &conv).await?;
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: {} session_id={} replaying {} history messages for conversation_id={}",
+                lifecycle_method,
+                session_id,
+                messages.len(),
+                conv
+            );
+        }
+        for message in history_replay_chunks_with_boundaries(messages) {
+            match message.kind.as_str() {
+                "tool_call" | "tool_result" => {
+                    let Some(tool_call_id) =
+                        message.tool_call_id.as_deref().or(message.id.as_deref())
+                    else {
+                        continue;
+                    };
+                    let Some(tool_name) = message.tool_name.as_deref() else {
+                        continue;
+                    };
+                    let event = json!({
+                        "type": if message.kind == "tool_call" { "tool_call.requested" } else { "tool_call.completed" },
+                        "data": {
+                            "tool_call": {
+                                "id": tool_call_id,
+                                "name": tool_name,
+                                "arguments": message.arguments,
+                            },
+                            "summary": message.text,
+                        },
+                    });
+                    send_tool_call_update(
+                        session_id,
+                        tool_call_id,
+                        tool_name,
+                        ToolCallUpdatePayload {
+                            status: message.status.as_deref().unwrap_or(
+                                if message.kind == "tool_call" {
+                                    "pending"
+                                } else {
+                                    "ok"
+                                },
+                            ),
+                            text: &message.text,
+                            event: Some(&event),
+                            raw_output: if message.raw_output.is_null() {
+                                None
+                            } else {
+                                Some(message.raw_output.clone())
+                            },
+                            extra_content: Vec::new(),
+                        },
+                    )
+                    .await?;
+                }
+                "session_info_update" => {
+                    if message.title.is_some() || message.title_updated_at.is_some() {
+                        send_session_info_update(
+                            session_id,
+                            message.title.clone(),
+                            message.title_updated_at.clone(),
+                        )
+                        .await?;
+                    }
+                }
+                "reasoning_delta" | "reasoning" => {
+                    if !matches!(message.replay_policy.as_deref(), Some("none")) {
+                        send_agent_thought_chunk(session_id, &message.text).await?;
+                    }
+                }
+                _ => match history_replay_text_update_kind(&message) {
+                    // ACP session/load replays the visible transcript to the client. This is
+                    // client-side rendering only; Den owns model-context replay from canonical
+                    // conversation storage, so these chunks are not sent back to the model.
+                    Some("user") => send_user_message_chunk(session_id, &message.text).await?,
+                    Some("agent") => send_agent_message_chunk(session_id, &message.text).await?,
+                    _ => {}
+                },
             }
         }
     } else {
-        eprintln!(
-            "bear-armature: {} session_id={} has no conv-/default history yet (pending new- thread); skipping replay",
-            lifecycle_method,
-            session_id
-        );
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: {} session_id={} has no conv-/den-conv-/default history yet (pending new- thread); skipping replay",
+                lifecycle_method, session_id
+            );
+        }
     }
     Ok(())
 }
@@ -4022,7 +4744,7 @@ async fn restore_session_from_den(
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     params: &Value,
-) -> Result<&'static str> {
+) -> Result<(&'static str, Option<Value>)> {
     let session_id = params
         .get("sessionId")
         .and_then(Value::as_str)
@@ -4051,18 +4773,20 @@ async fn restore_session_from_den(
     let mut context = context;
     context.raw["mcp"] = mcp_context;
     ensure_session_context_capabilities(&mut context);
-    eprintln!(
-        "bear-armature: session/resume session_id={} cwd={} roots={} direct_tools={} mcp={}",
-        session_id,
-        context.cwd,
-        context.roots.join(","),
-        context
-            .raw
-            .get("direct_tools")
-            .cloned()
-            .unwrap_or(Value::Null),
-        summarize_mcp_for_log(context.raw.get("mcp"))
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session/resume session_id={} cwd={} roots={} direct_tools={} mcp={}",
+            session_id,
+            context.cwd,
+            context.roots.join(","),
+            context
+                .raw
+                .get("direct_tools")
+                .cloned()
+                .unwrap_or(Value::Null),
+            summarize_mcp_for_log(context.raw.get("mcp"))
+        );
+    }
     shared_state
         .session_contexts
         .lock()
@@ -4071,21 +4795,25 @@ async fn restore_session_from_den(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
-    send_available_commands_update(session_id).await?;
     spawn_adapter_environment_publish(
         config.clone(),
         session_id.to_string(),
         adapter_state.clone(),
         None,
     );
-    if let Some(den) = den.as_ref() {
-        replay_history_for_den_session(http, config, session_id, den, "session/resume").await?;
-        surface_submitted_plan_fallback(session_id, den).await?;
+    if bear_debug_verbose() && den.is_some() {
+        eprintln!(
+            "bear-armature: session/resume session_id={} restored without history replay per ACP resume semantics",
+            session_id
+        );
     }
-    Ok(den
-        .as_ref()
-        .map(infer_mode_from_den_session)
-        .unwrap_or(MODE_ASK))
+    Ok((
+        den.as_ref()
+            .map(infer_mode_from_den_session)
+            .unwrap_or(MODE_ASK),
+        den.as_ref()
+            .and_then(|session| session.get("context_budget").cloned()),
+    ))
 }
 
 async fn handle_session_load(
@@ -4124,18 +4852,20 @@ async fn handle_session_load(
     let mut context = context;
     context.raw["mcp"] = mcp_context;
     ensure_session_context_capabilities(&mut context);
-    eprintln!(
-        "bear-armature: session/load session_id={} cwd={} roots={} direct_tools={} mcp={}",
-        session_id,
-        context.cwd,
-        context.roots.join(","),
-        context
-            .raw
-            .get("direct_tools")
-            .cloned()
-            .unwrap_or(Value::Null),
-        summarize_mcp_for_log(context.raw.get("mcp"))
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session/load session_id={} cwd={} roots={} direct_tools={} mcp={}",
+            session_id,
+            context.cwd,
+            context.roots.join(","),
+            context
+                .raw
+                .get("direct_tools")
+                .cloned()
+                .unwrap_or(Value::Null),
+            summarize_mcp_for_log(context.raw.get("mcp"))
+        );
+    }
     shared_state
         .session_contexts
         .lock()
@@ -4144,7 +4874,6 @@ async fn handle_session_load(
     adapter_state
         .session_contexts
         .insert(session_id.to_string(), context);
-    send_available_commands_update(session_id).await?;
     spawn_adapter_environment_publish(
         config.clone(),
         session_id.to_string(),
@@ -4161,6 +4890,10 @@ async fn handle_session_load(
         .map(infer_mode_from_den_session)
         .unwrap_or(MODE_ASK);
     write_response(response_id, Ok(session_lifecycle_result(mode)?)).await?;
+    send_available_commands_update(session_id).await?;
+    if let Some(context_budget) = den.and_then(|session| session.get("context_budget").cloned()) {
+        send_context_budget_usage_update(session_id, context_budget).await?;
+    }
     Ok(())
 }
 
@@ -4246,82 +4979,43 @@ async fn post_session_lifecycle_action(
 }
 
 async fn post_session_lifecycle_action_with_payload(
-    http: &reqwest::Client,
+    _http: &reqwest::Client,
     config: &Config,
     session_id: &str,
     action: &str,
-    payload: Value,
+    _payload: Value,
 ) -> Result<()> {
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-        action,
-    );
-    let response = http
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("post ACP session {action} to Den at {url}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
+    if !bearwire::enabled() {
         return Err(anyhow!(
-            "Den session {action} endpoint returned HTTP {status}: {}",
-            body.trim()
+            "BearWire is disabled in this adapter process, and legacy ACP HTTP is retired. Enable BearWire by setting BEARS_BEARWIRE=auto or true."
         ));
+    }
+    let result = match action {
+        "close" => bearwire::post_session_close(config, session_id).await,
+        "cancel" => bearwire::post_run_cancel(config, session_id).await,
+        other => {
+            return Err(anyhow!(
+                "unsupported BearWire session lifecycle action: {other}"
+            ))
+        }
+    }?;
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: posted BearWire session lifecycle action={} session_id={} response={}",
+            action,
+            session_id,
+            truncate_for_log(&result.to_string(), 360)
+        );
     }
     Ok(())
 }
 
-async fn post_session_lifecycle_action_json(
-    http: &reqwest::Client,
-    config: &Config,
-    session_id: &str,
-    action: &str,
-) -> Result<Value> {
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-        action,
-    );
-    let response = http
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&json!({ "adapter_contract": adapter_contract_context() }))
-        .send()
-        .await
-        .with_context(|| format!("post ACP session {action} to Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(
-            "Den session {action} endpoint returned HTTP {status}: {}",
-            body.trim()
-        ));
-    }
-    Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
-}
-
 async fn compact_session_conversation(
-    http: &reqwest::Client,
+    _http: &reqwest::Client,
     config: &Config,
     session_id: &str,
 ) -> Result<Value> {
-    post_session_lifecycle_action_json(http, config, session_id, "compact").await
+    bearwire::post_session_compact(config, session_id).await
 }
 
 fn render_compact_recovery_result(result: &Value) -> String {
@@ -4384,17 +5078,21 @@ async fn handle_local_slash_prompt(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("session/prompt params missing sessionId"))?;
     let prompt = prompt_text_from_params(&params)?;
-    let display_prompt = prompt_display_text_from_params(&params).unwrap_or(prompt);
+    let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
     send_user_message_chunk(session_id, &display_prompt).await?;
-    let report = handle_local_slash_command(
-        http,
-        config,
-        adapter_state,
-        shared_state,
-        session_id,
-        command,
-    )
-    .await;
+    let report = if command == LocalSlashCommand::Debug {
+        debug_report(debug_argument_from_prompt(&prompt))
+    } else {
+        handle_local_slash_command(
+            http,
+            config,
+            adapter_state,
+            shared_state,
+            session_id,
+            command,
+        )
+        .await
+    };
     send_agent_message_chunk(session_id, &report).await?;
     write_prompt_end_turn_response(response_id).await
 }
@@ -4422,7 +5120,6 @@ async fn handle_prompt(
             response_id,
             params,
             turn_token,
-            allow_recovery_retry: true,
         },
     )
     .await;
@@ -4440,7 +5137,6 @@ struct PromptRetryContext {
     response_id: Value,
     params: Value,
     turn_token: Uuid,
-    allow_recovery_retry: bool,
 }
 
 async fn handle_prompt_with_retry(
@@ -4454,7 +5150,6 @@ async fn handle_prompt_with_retry(
         response_id,
         params,
         turn_token,
-        allow_recovery_retry,
     } = retry;
     let session_id = params
         .get("sessionId")
@@ -4463,33 +5158,35 @@ async fn handle_prompt_with_retry(
     let prompt_shape = prompt_block_shape(&params);
     let prompt_context = prompt_context_from_params(&params)?;
     let prompt = require_human_prompt_text(prompt_context.human_message.clone())?;
-    let den_prompt = prompt_den_message_from_context(&prompt_context)?;
+    let prompt_context_json = bearwire_prompt_context_from_context(&prompt_context);
     let display_prompt = prompt_display_text_from_params(&params).unwrap_or_else(|| prompt.clone());
-    eprintln!(
-        "bear-armature: session/prompt session_id={} prompt_len={} den_prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} prompt_provenance={{human_text:{}, human_pasted_debug_text:{}, client_resource:{}, client_synthetic_context:{}, unsupported:{}}} prompt_context={{references:{}, synthetic_omitted:{}, resource_bodies_not_in_human_message:{}}} prompt_has_trusted_mode_suffix={} den_prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} den_prompt_has_system_reminder={} display_has_system_reminder={}",
-        session_id,
-        prompt.len(),
-        den_prompt.len(),
-        display_prompt.len(),
-        prompt_shape.text,
-        prompt_shape.resource,
-        prompt_shape.resource_link,
-        prompt_shape.other,
-        prompt_shape.human_text,
-        prompt_shape.human_pasted_debug_text,
-        prompt_shape.client_resource,
-        prompt_shape.client_synthetic_context,
-        prompt_shape.unsupported,
-        prompt_context.resource_references.len(),
-        prompt_context.diagnostics.synthetic_context_omitted,
-        prompt_context.diagnostics.resource_bodies_not_in_human_message,
-        prompt.contains("Trusted ACP session mode this turn:"),
-        den_prompt.contains("Trusted ACP session mode this turn:"),
-        display_prompt.contains("Trusted ACP session mode this turn:"),
-        prompt.contains("<system-reminder>"),
-        den_prompt.contains("<system-reminder>"),
-        display_prompt.contains("<system-reminder>"),
-    );
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session/prompt session_id={} prompt_len={} display_prompt_len={} prompt_blocks={{text:{}, resource:{}, resource_link:{}, other:{}}} prompt_provenance={{human_text:{}, human_pasted_debug_text:{}, client_resource:{}, client_synthetic_context:{}, unsupported:{}}} prompt_context={{references:{}, synthetic_omitted:{}, resource_bodies_not_in_human_message:{}, sent:{}}} prompt_has_trusted_mode_suffix={} display_has_trusted_mode_suffix={} prompt_has_system_reminder={} display_has_system_reminder={}",
+            session_id,
+            prompt.len(),
+            display_prompt.len(),
+            prompt_shape.text,
+            prompt_shape.resource,
+            prompt_shape.resource_link,
+            prompt_shape.other,
+            prompt_shape.human_text,
+            prompt_shape.human_pasted_debug_text,
+            prompt_shape.client_resource,
+            prompt_shape.client_synthetic_context,
+            prompt_shape.unsupported,
+            prompt_context.resource_references.len(),
+            prompt_context.diagnostics.synthetic_context_omitted,
+            prompt_context
+                .diagnostics
+                .resource_bodies_not_in_human_message,
+            !prompt_context_json.is_null(),
+            prompt.contains("Trusted ACP session mode this turn:"),
+            display_prompt.contains("Trusted ACP session mode this turn:"),
+            prompt.contains("<system-reminder>"),
+            display_prompt.contains("<system-reminder>"),
+        );
+    }
     if let Some(command) = parse_local_slash_command(&prompt) {
         send_user_message_chunk(session_id, &display_prompt).await?;
         let report = handle_local_slash_command(
@@ -4544,35 +5241,27 @@ async fn handle_prompt_with_retry(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    eprintln!(
-        "bear-armature: session/prompt session_id={} bear={} conversation_id={} client={} direct_tools={} mcp_servers={} mcp_tool_count={} mcp_tool_names={:?}",
-        session_id,
-        config.bear,
-        conversation_log,
-        config.client,
-        client_context.raw.get("direct_tools").cloned().unwrap_or(Value::Null),
-        client_context.raw.pointer("/mcp/servers").cloned().unwrap_or(Value::Null),
-        prompt_mcp_tool_names.len(),
-        prompt_mcp_tool_names
-    );
-
-    if should_echo_user_message_chunk(&prompt_context) {
-        send_user_message_chunk(session_id, &display_prompt).await?;
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: session/prompt session_id={} bear={} conversation_id={} client={} direct_tools={} mcp_servers={} mcp_tool_count={} mcp_tool_names={:?}",
+            session_id,
+            config.bear,
+            conversation_log,
+            config.client,
+            client_context
+                .raw
+                .get("direct_tools")
+                .cloned()
+                .unwrap_or(Value::Null),
+            client_context
+                .raw
+                .pointer("/mcp/servers")
+                .cloned()
+                .unwrap_or(Value::Null),
+            prompt_mcp_tool_names.len(),
+            prompt_mcp_tool_names
+        );
     }
-
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/prompt",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id)
-    );
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-    );
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     let requested_mode = client_context
         .current_mode
@@ -4580,7 +5269,8 @@ async fn handle_prompt_with_retry(
         .map(normalize_mode)
         .unwrap_or(MODE_ASK);
     let mut den_payload = json!({
-        "message": den_prompt,
+        "message": prompt,
+        "prompt_context": prompt_context_json,
         "client": config.client,
         "client_capabilities": shared_state.client_capabilities.lock().await.clone(),
         "client_context": client_context.raw,
@@ -4591,14 +5281,18 @@ async fn handle_prompt_with_retry(
         den_payload["conversation_id"] = json!(conversation_id);
     }
 
-    if bearwire::try_handle_prompt(
+    bearwire::try_handle_prompt(
         http,
         config,
         adapter_state,
         shared_state,
         response_id.clone(),
         session_id,
-        &den_prompt,
+        &prompt,
+        den_payload
+            .get("prompt_context")
+            .cloned()
+            .unwrap_or(Value::Null),
         den_payload
             .get("client_context")
             .cloned()
@@ -4607,220 +5301,8 @@ async fn handle_prompt_with_retry(
         requested_mode,
         turn_token,
     )
-    .await?
-    {
-        return Ok(());
-    }
-
-    let response = http
-        .post(&url)
-        .headers(headers)
-        .json(&den_payload)
-        .send()
-        .await
-        .with_context(|| den_request_context(&url))?;
-
-    let status = response.status();
-    eprintln!(
-        "bear-armature: session/prompt Den response session_id={} status={}",
-        session_id, status
-    );
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_else(|_| "".to_string());
-        let message = den_status_error_message(status, text.trim());
-        eprintln!(
-            "bear-armature: Den prompt returned non-success status session_id={} status={} message={}",
-            session_id, status, message
-        );
-        send_agent_message_chunk_for_turn(
-            shared_state,
-            session_id,
-            turn_token,
-            &format!(
-                "BEARS could not complete this turn because Den/Letta returned an error. The ACP session is still alive, so you can use `/compact` or `/collapse` to try recovery.\n\n{message}"
-            ),
-        )
-        .await?;
-        write_prompt_end_turn_response(response_id).await?;
-        return Ok(());
-    }
-
-    let mut stream_diagnostics = SseStreamDiagnostics::default();
-    let mut saw_done = false;
-    let mut saw_visible_output = false;
-    let mut saw_tool_activity = false;
-    let mut saw_error = false;
-    let mut recover_and_retry = false;
-    let mut saw_cancellation_error = false;
-    let mut terminal_outcome: Option<String> = None;
-    let mut recovery_hint: Option<String> = None;
-    let mut terminal_user_message: Option<String> = None;
-    let mut upstream_errors = Vec::new();
-    let mut buffer = Vec::<u8>::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk_result) = stream.next().await {
-        let chunk = match chunk_result {
-            Ok(chunk) => chunk,
-            Err(err)
-                if stream_has_successful_terminal_condition(
-                    saw_visible_output,
-                    saw_error,
-                    saw_done,
-                    saw_tool_activity,
-                ) =>
-            {
-                eprintln!(
-                    "bear-armature: Den SSE stream ended with recoverable read error after terminal/progress events session_id={} error={err:#}",
-                    session_id
-                );
-                break;
-            }
-            Err(err) => return Err(err).context("read Den SSE chunk"),
-        };
-        buffer.extend_from_slice(&chunk);
-        while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
-            let frame: Vec<u8> = buffer.drain(..pos + 2).collect();
-            let outcome = handle_sse_frame(
-                config,
-                adapter_state,
-                shared_state,
-                session_id,
-                &frame,
-                &mut stream_diagnostics,
-                turn_token,
-            )
-            .await?;
-            saw_done |= outcome.saw_done;
-            saw_visible_output |= outcome.saw_visible_output;
-            saw_tool_activity |= outcome.saw_tool_activity;
-            saw_error |= outcome.saw_error;
-            recover_and_retry |= outcome.recover_and_retry;
-            saw_cancellation_error |= outcome.saw_cancellation_error;
-            if terminal_outcome.is_none() {
-                terminal_outcome = outcome.terminal_outcome;
-            }
-            if recovery_hint.is_none() {
-                recovery_hint = outcome.recovery_hint;
-            }
-            if terminal_user_message.is_none() {
-                terminal_user_message = outcome.terminal_user_message;
-            }
-            upstream_errors.extend(outcome.upstream_errors);
-            if saw_done {
-                eprintln!(
-                    "bear-armature: session/prompt terminal Den event received; ending read loop early session_id={} saw_tool_activity={}",
-                    session_id, saw_tool_activity
-                );
-                break;
-            }
-        }
-    }
-    if !buffer.is_empty() {
-        let frame = std::mem::take(&mut buffer);
-        let outcome = handle_sse_frame(
-            config,
-            adapter_state,
-            shared_state,
-            session_id,
-            &frame,
-            &mut stream_diagnostics,
-            turn_token,
-        )
-        .await?;
-        saw_done |= outcome.saw_done;
-        saw_visible_output |= outcome.saw_visible_output;
-        saw_tool_activity |= outcome.saw_tool_activity;
-        saw_error |= outcome.saw_error;
-        recover_and_retry |= outcome.recover_and_retry;
-        saw_cancellation_error |= outcome.saw_cancellation_error;
-        if terminal_outcome.is_none() {
-            terminal_outcome = outcome.terminal_outcome;
-        }
-        if recovery_hint.is_none() {
-            recovery_hint = outcome.recovery_hint;
-        }
-        if terminal_user_message.is_none() {
-            terminal_user_message = outcome.terminal_user_message;
-        }
-        upstream_errors.extend(outcome.upstream_errors);
-    }
-
-    if recover_and_retry && !saw_visible_output && !saw_tool_activity {
-        eprintln!(
-            "bear-armature: stale approval recovery requested by Den stream, but automatic compaction recovery is disabled session_id={} allow_recovery_retry={} errors={}",
-            session_id,
-            allow_recovery_retry,
-            upstream_errors.join("; ")
-        );
-    }
-
-    if !upstream_errors.is_empty() {
-        if saw_visible_output {
-            eprintln!(
-                "bear-armature: ignoring upstream error after visible output: {}",
-                upstream_errors.join("; ")
-            );
-        } else if saw_cancellation_error || terminal_outcome.as_deref() == Some("cancelled") {
-            eprintln!(
-                "bear-armature: suppressing recovery hint for cancellation session_id={} errors={}",
-                session_id,
-                upstream_errors.join("; ")
-            );
-            let message = terminal_user_message
-                .as_deref()
-                .unwrap_or("BEARS request was cancelled.");
-            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, message)
-                .await?;
-            saw_visible_output = true;
-            upstream_errors.clear();
-        } else {
-            let message = format!(
-                "BEARS upstream stream reported error: {}",
-                upstream_errors.join("; ")
-            );
-            let rendered = match recovery_hint.as_deref() {
-                Some("compact_and_retry") => terminal_user_message.clone().unwrap_or_else(|| {
-                    format!(
-                        "{message}\n\nAutomatic stale-approval recovery by compaction is disabled because compaction does not resolve unresolved Letta approvals. Retry after any active turn finishes; if the conversation remains wedged, use an operator recovery path that denies pending approvals rather than compacting."
-                    )
-                }),
-                Some("check_upstream_logs") => terminal_user_message.clone().unwrap_or_else(|| {
-                    format!(
-                        "{message}\n\nBEARS recommends checking Codepool/Letta logs before retrying."
-                    )
-                }),
-                _ => terminal_user_message.clone().unwrap_or(message.clone()),
-            };
-            eprintln!(
-                "bear-armature: converting upstream stream error into terminal ACP turn session_id={} message={}",
-                session_id, rendered
-            );
-            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &rendered)
-                .await?;
-            saw_visible_output = true;
-            upstream_errors.clear();
-        }
-    }
-
-    eprintln!(
-        "bear-armature: Den stream summary session_id={} {}",
-        session_id,
-        stream_diagnostics.summary()
-    );
-    if !stream_has_successful_terminal_condition(
-        saw_visible_output,
-        saw_error,
-        saw_done,
-        saw_tool_activity,
-    ) {
-        return Err(anyhow!(
-            "BEARS ACP stream completed without visible output, tool activity, or an error. Diagnostics: {}",
-            stream_diagnostics.summary()
-        ));
-    }
-
-    write_prompt_end_turn_response(response_id).await?;
-    Ok(())
+    .await?;
+    return Ok(());
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4832,7 +5314,7 @@ enum LocalSlashCommand {
     Runtime,
     Status,
     Version,
-    DebugUi,
+    Debug,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4855,14 +5337,14 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
     LocalSlashCommandDescriptor {
         name: "compact",
         aliases: &["collapse"],
-        description: "Ask Den to compact the conversation transcript. Compaction does not repair stale Letta approval state.",
+        description: "Ask Den to compact the conversation transcript. Compaction does not repair stale runtime approval state.",
         command: LocalSlashCommand::Compact,
         den_required: true,
     },
     LocalSlashCommandDescriptor {
         name: "conversation",
         aliases: &[],
-        description: "Show the current ACP session and Letta conversation binding.",
+        description: "Show the current ACP session and runtime conversation binding.",
         command: LocalSlashCommand::Conversation,
         den_required: false,
     },
@@ -4895,10 +5377,10 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
         den_required: false,
     },
     LocalSlashCommandDescriptor {
-        name: "debug-ui",
-        aliases: &[],
-        description: "Show BEARS ACP debug UI environment status.",
-        command: LocalSlashCommand::DebugUi,
+        name: "debug",
+        aliases: &["debug-ui"],
+        description: "Show or set BEARS debug thought visibility: /debug off|on|verbose.",
+        command: LocalSlashCommand::Debug,
         den_required: false,
     },
 ];
@@ -4983,7 +5465,7 @@ async fn handle_local_slash_command(
             status_report(http, config, adapter_state, shared_state, session_id).await
         }
         LocalSlashCommand::Version => version_report(http, config).await,
-        LocalSlashCommand::DebugUi => debug_ui_report(),
+        LocalSlashCommand::Debug => debug_report(None),
     }
 }
 
@@ -5015,9 +5497,16 @@ fn conversation_report(adapter_state: &AdapterState, session_id: &str) -> String
     format!(
         "BEARS ACP conversation\n\n- ACP session: {session_id}\n- cwd: {}\n- roots: {}\n- conversation_id: {}\n- resolved_conversation_id: {}",
         context.cwd,
-        if context.roots.is_empty() { "<none>".to_string() } else { context.roots.join(", ") },
+        if context.roots.is_empty() {
+            "<none>".to_string()
+        } else {
+            context.roots.join(", ")
+        },
         context.conversation_id.as_deref().unwrap_or("<none>"),
-        context.resolved_conversation_id.as_deref().unwrap_or("<none>"),
+        context
+            .resolved_conversation_id
+            .as_deref()
+            .unwrap_or("<none>"),
     )
 }
 
@@ -5213,7 +5702,17 @@ async fn status_report(
         }),
     };
     let tasks = shared_state.tool_tasks.list_for_session(session_id).await;
-    render_status_report(&environment, &tasks)
+    let mut report = render_status_report(&environment, &tasks);
+    report.push_str("\n- Debug: ");
+    report.push_str(bear_debug_mode().as_str());
+    let bearwire_status = if let (Some(http), Some(config)) = (http, config) {
+        bearwire::protocol_status(http, config).await
+    } else {
+        format!("not configured; {}", bearwire::mode_summary())
+    };
+    report.push_str("\n- BearWire: ");
+    report.push_str(&bearwire_status);
+    report
 }
 
 fn compact_json_for_status(value: &Value) -> String {
@@ -5320,16 +5819,45 @@ async fn version_report(http: Option<&reqwest::Client>, config: Option<&Config>)
     )
 }
 
-fn debug_ui_report() -> String {
-    let enabled = env_bool("DEN_ACP_DEBUG_UI");
-    let stream_tokens = env::var("DEN_ACP_STREAM_TOKENS").unwrap_or_else(|_| "<unset>".to_string());
-    let chunk_chars =
-        env::var("DEN_ACP_TEXT_CHUNK_CHARS").unwrap_or_else(|_| "<unset>".to_string());
+fn debug_argument_from_prompt(prompt: &str) -> Option<&str> {
+    prompt.split_whitespace().nth(1)
+}
+
+fn debug_report(arg: Option<&str>) -> String {
+    let previous = bear_debug_mode();
+    let mut message = String::new();
+    if let Some(arg) = arg.map(str::trim).filter(|value| !value.is_empty()) {
+        match BearDebugMode::parse(arg) {
+            Some(mode) => {
+                set_bear_debug_mode(mode);
+                message = format!(
+                    "Updated BEARS debug mode: {} → {}\n\n",
+                    previous.as_str(),
+                    mode.as_str()
+                );
+            }
+            None => {
+                message = format!(
+                    "Unsupported debug mode `{arg}`. Use `/debug off`, `/debug on`, or `/debug verbose`.\n\n"
+                );
+            }
+        }
+    }
+    let current = bear_debug_mode();
     format!(
-        "BEARS ACP debug UI\n\n- DEN_ACP_DEBUG_UI: {}\n- DEN_ACP_STREAM_TOKENS: {}\n- DEN_ACP_TEXT_CHUNK_CHARS: {}",
-        if enabled { "enabled" } else { "disabled" },
-        stream_tokens,
-        chunk_chars,
+        "{message}BEARS debug\n\n- BEAR_DEBUG env default: {}\n- current mode: {}\n- thought messages: {}\n- verbose adapter logs: {}\n\nUse `/debug off`, `/debug on`, or `/debug verbose`.",
+        env::var("BEAR_DEBUG").unwrap_or_else(|_| "<unset>".to_string()),
+        current.as_str(),
+        if current.shows_thoughts() {
+            "shown"
+        } else {
+            "hidden"
+        },
+        if current.is_verbose() {
+            "enabled"
+        } else {
+            "disabled"
+        },
     )
 }
 
@@ -5339,7 +5867,7 @@ async fn acp_doctor_report(
     adapter_state: &AdapterState,
     context: &SessionContext,
 ) -> String {
-    let (api_url, bear, den_status, token_status) =
+    let (api_url, bear, den_status, token_status, bearwire_status) =
         if let (Some(http), Some(config)) = (http, config) {
             let den_status = match fetch_server_version_for_diagnostics(http, config).await {
                 Ok(version) => version.summary(),
@@ -5349,11 +5877,13 @@ async fn acp_doctor_report(
                 Ok(()) => "valid for this Bear".to_string(),
                 Err(err) => format!("not validated: {err:#}"),
             };
+            let bearwire_status = bearwire::protocol_status(http, config).await;
             (
                 config.api_url.clone(),
                 config.bear.clone(),
                 den_status,
                 token_status,
+                bearwire_status,
             )
         } else {
             (
@@ -5361,10 +5891,11 @@ async fn acp_doctor_report(
                 "<not configured>".to_string(),
                 "Den not configured in this adapter process".to_string(),
                 "not validated: Den not configured".to_string(),
+                format!("not configured; {}", bearwire::mode_summary()),
             )
         };
     format!(
-        "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- built_at_utc: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}\n\nBrowser tool source:\n{}\n\nHost browser bridge env:\n{}\n\nSession MCP state:\n{}",
+        "BEARS ACP doctor\n\nAdapter:\n- version: {}\n- git_sha: {}\n- built_at_utc: {}\n- contract: {} v{}\n\nDen:\n- api_url: {}\n- bear: {}\n- server: {}\n- token: {}\n- BearWire: {}\n\nClient capabilities:\n{}\n\nSession:\n- cwd: {}\n- roots: {}\n- resolved_conversation_id: {}\n\nDirect tools: {}\n\nBrowser tool source:\n{}\n\nHost browser bridge env:\n{}\n\nSession MCP state:\n{}",
         adapter_version(),
         env!("DEN_ACP_ADAPTER_GIT_SHA"),
         env!("DEN_ACP_ADAPTER_BUILT_AT_UTC"),
@@ -5374,10 +5905,19 @@ async fn acp_doctor_report(
         bear,
         den_status,
         token_status,
-        serde_json::to_string_pretty(&adapter_state.client_capabilities).unwrap_or_else(|_| adapter_state.client_capabilities.to_string()),
+        bearwire_status,
+        serde_json::to_string_pretty(&adapter_state.client_capabilities)
+            .unwrap_or_else(|_| adapter_state.client_capabilities.to_string()),
         context.cwd,
-        if context.roots.is_empty() { "<none>".to_string() } else { context.roots.join(", ") },
-        context.resolved_conversation_id.as_deref().unwrap_or("<none>"),
+        if context.roots.is_empty() {
+            "<none>".to_string()
+        } else {
+            context.roots.join(", ")
+        },
+        context
+            .resolved_conversation_id
+            .as_deref()
+            .unwrap_or("<none>"),
         serde_json::to_string_pretty(&direct_tools_context())
             .unwrap_or_else(|_| direct_tools_context().to_string()),
         serde_json::to_string_pretty(&browser_tool_source_summary(context))
@@ -5458,7 +5998,9 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
     }
 
     if runtime.client.trim().is_empty() {
-        eprintln!("• Client label is empty; ACP protocol still works, but set DEN_ACP_CLIENT if you want labeled requests");
+        eprintln!(
+            "• Client label is empty; ACP protocol still works, but set DEN_ACP_CLIENT if you want labeled requests"
+        );
     } else {
         eprintln!("✓ Client label: {}", runtime.client);
     }
@@ -5489,8 +6031,13 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
                 eprintln!("  {err:#}");
             }
         }
+        eprintln!(
+            "  BearWire: {}",
+            bearwire::protocol_status(http, config).await
+        );
     } else {
         eprintln!("• Skipping server reachability check until configuration is fixed");
+        eprintln!("  BearWire: not configured; {}", bearwire::mode_summary());
     }
     eprintln!();
 
@@ -5519,7 +6066,9 @@ async fn run_doctor(http: &reqwest::Client, runtime: &RuntimeConfig) -> Result<(
     eprintln!();
 
     if failed {
-        eprintln!("Doctor found setup problems. Fix the items marked ✗ above, then run `bear-armature doctor` again.");
+        eprintln!(
+            "Doctor found setup problems. Fix the items marked ✗ above, then run `bear-armature doctor` again."
+        );
         std::process::exit(2);
     }
 
@@ -5610,33 +6159,37 @@ fn server_version_from_json(value: &Value) -> ServerVersion {
     }
 }
 
-fn server_version_json(server_version: ServerVersion) -> Value {
-    json!({
-        "service": server_version.service,
-        "version": server_version.version,
-        "git_sha": server_version.git_sha,
-        "built_at_utc": server_version.built_at_utc,
-    })
-}
-
 fn den_request_context(url: &str) -> String {
     format!(
-        "could not connect to the BEARS Den API at {url}. Check that DEN_API_URL is the Den API origin reachable from this editor process, that the API service is running with ACP_GATEWAY_ENABLED=true, and that the network/VPN/firewall permits the connection"
+        "could not connect to the BEARS Den API at {url}. Check that DEN_API_URL is the Den API origin reachable from this editor process, that the API service is running with BearWire routes enabled, and that the network/VPN/firewall permits the connection"
     )
 }
 
+#[allow(dead_code)]
 fn den_status_error_message(status: reqwest::StatusCode, body: &str) -> String {
     if let Some(message) = den_compatibility_status_message(body) {
         return message;
     }
     let hint = match status.as_u16() {
-        401 => "The bearer token was rejected. Check DEN_TOKEN or --token-env and make sure the token is an active Den Code token.",
-        403 => "The token authenticated but is not allowed to use this bear or ACP. Check bear membership and token scopes.",
-        404 => "The ACP gateway endpoint was not found. Check DEN_API_URL, BEAR_SLUG, and that Den is running with ACP_GATEWAY_ENABLED=true on the API service.",
-        405 => "The server exists but did not accept the ACP prompt method. Check that DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions.",
+        401 => {
+            "The bearer token was rejected. Check DEN_TOKEN or --token-env and make sure the token is an active Den Code token."
+        }
+        403 => {
+            "The token authenticated but is not allowed to use this bear or armature access. Check bear membership and token scopes."
+        }
+        404 => {
+            "The BearWire endpoint was not found. Check DEN_API_URL, BEAR_SLUG, and that Den is running with RUN_API=true."
+        }
+        405 => {
+            "The server exists but did not accept the BearWire request. Check that DEN_API_URL points to the Den API origin, not the web UI origin or a proxy route with method restrictions."
+        }
         429 => "The Den API rate limited this request. Wait and retry, or check service limits.",
-        500..=599 => "The Den API returned a server error. Check Den service logs for the request failure.",
-        _ => "The Den API rejected the prompt request. Check the response body and Den logs for details.",
+        500..=599 => {
+            "The Den API returned a server error. Check Den service logs for the request failure."
+        }
+        _ => {
+            "The Den API rejected the prompt request. Check the response body and Den logs for details."
+        }
     };
 
     if body.is_empty() {
@@ -5886,90 +6439,53 @@ fn require_human_prompt_text(text: String) -> Result<String> {
     }
 }
 
-fn should_echo_user_message_chunk(context: &AcpPromptContextBundle) -> bool {
-    !context
+fn bearwire_prompt_context_from_context(context: &AcpPromptContextBundle) -> Value {
+    let references = context
         .resource_references
-        .iter()
-        .any(|reference| reference.delivery_policy == AcpPromptContextDeliveryPolicy::ReferenceOnly)
-}
-
-fn prompt_den_message_from_context(context: &AcpPromptContextBundle) -> Result<String> {
-    let human_message = require_human_prompt_text(context.human_message.clone())?;
-    let Some(host_context) = render_reference_only_host_context(&context.resource_references)
-    else {
-        return Ok(human_message);
-    };
-    Ok(format!(
-        "{host_context}\n\n<user_message>\n{human_message}\n</user_message>"
-    ))
-}
-
-const MAX_PROMPT_RESOURCE_REFERENCES: usize = 20;
-
-fn render_reference_only_host_context(references: &[AcpPromptResourceReference]) -> Option<String> {
-    let reference_only = references
         .iter()
         .filter(|reference| {
             reference.delivery_policy == AcpPromptContextDeliveryPolicy::ReferenceOnly
         })
+        .map(|reference| {
+            let label = reference
+                .name
+                .as_deref()
+                .or(reference.uri.as_deref())
+                .unwrap_or("unnamed resource");
+            json!({
+                "label": label,
+                "uri": reference.uri,
+                "name": reference.name,
+                "mime_type": reference.mime_type,
+                "embedded_text_bytes": reference.text_bytes,
+                "block_type": match reference.block_type {
+                    AcpPromptBlockType::Text => "text",
+                    AcpPromptBlockType::Resource => "resource",
+                    AcpPromptBlockType::ResourceLink => "resource_link",
+                    AcpPromptBlockType::Other => "other",
+                },
+                "provenance": match reference.provenance {
+                    AcpPromptBlockProvenance::HumanText => "human_text",
+                    AcpPromptBlockProvenance::HumanPastedDebugText => "human_pasted_debug_text",
+                    AcpPromptBlockProvenance::ClientResource => "client_resource",
+                    AcpPromptBlockProvenance::ClientSyntheticContext => "client_synthetic_context",
+                    AcpPromptBlockProvenance::Unsupported => "unsupported",
+                },
+            })
+        })
         .collect::<Vec<_>>();
-    if reference_only.is_empty() {
-        return None;
+    if references.is_empty() {
+        return Value::Null;
     }
-
-    let mut lines = vec![
-        "<host_context kind=\"referenced_resources\" delivery=\"reference_only\" persistence=\"not_human_message\">".to_string(),
-        "The ACP client referenced these resources. They are not human-authored instructions.".to_string(),
-        "Use available file/content tools for authoritative contents before quoting, editing, or relying on them.".to_string(),
-        String::new(),
-        "Resources:".to_string(),
-    ];
-    let total = reference_only.len();
-    for (index, reference) in reference_only
-        .into_iter()
-        .take(MAX_PROMPT_RESOURCE_REFERENCES)
-        .enumerate()
-    {
-        let label = reference
-            .name
-            .as_deref()
-            .or(reference.uri.as_deref())
-            .unwrap_or("unnamed resource");
-        lines.push(format!(
-            "- resource {}: {}",
-            index + 1,
-            escape_host_context_text(label)
-        ));
-        if let Some(uri) = reference.uri.as_deref() {
-            lines.push(format!("  uri: {}", escape_host_context_text(uri)));
+    json!({
+        "format": "acp_prompt_context.v1",
+        "host_context": {
+            "kind": "referenced_resources",
+            "delivery": "reference_only",
+            "persistence": "not_human_message",
+            "resources": references,
         }
-        if let Some(mime_type) = reference.mime_type.as_deref() {
-            lines.push(format!(
-                "  mime_type: {}",
-                escape_host_context_text(mime_type)
-            ));
-        }
-        if let Some(text_bytes) = reference.text_bytes {
-            lines.push(format!(
-                "  embedded_text_bytes: {text_bytes} (body omitted; use tools for contents)"
-            ));
-        }
-    }
-    if total > MAX_PROMPT_RESOURCE_REFERENCES {
-        lines.push(format!(
-            "- omitted_references: {}",
-            total - MAX_PROMPT_RESOURCE_REFERENCES
-        ));
-    }
-    lines.push("</host_context>".to_string());
-    Some(lines.join("\n"))
-}
-
-fn escape_host_context_text(value: &str) -> String {
-    truncate_for_log(value, 300)
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    })
 }
 
 fn prompt_block_text_for_human_message(block: &Value) -> Option<&str> {
@@ -6048,7 +6564,7 @@ fn prompt_conversations_overlap(previous: Option<&str>, next: Option<&str>) -> b
         (Some(previous), Some(next)) => previous == next,
         (None, None) => true,
         // If either side lacks a conversation id, be conservative: the Den session binding may
-        // resolve both to the same Letta conversation.
+        // resolve both to the same runtime conversation.
         _ => true,
     }
 }
@@ -6160,13 +6676,34 @@ fn capability_value_bool(value: &Value) -> bool {
 fn workspace_roots_from_params(params: &Value) -> Vec<String> {
     let mut roots = Vec::new();
     push_path_value(&mut roots, params.get("workspaceUri"));
+    push_path_value(&mut roots, params.get("rootUri"));
+    push_path_value(&mut roots, params.get("root_uri"));
+    push_path_value(&mut roots, params.get("workspaceRoot"));
+    push_path_value(&mut roots, params.get("workspace_root"));
     push_path_value(&mut roots, params.pointer("/workspace/currentDirectory"));
     push_path_value(&mut roots, params.pointer("/workspace/cwd"));
     push_path_value(&mut roots, params.pointer("/workspace/root"));
+    push_path_value(&mut roots, params.pointer("/workspace/rootUri"));
+    push_path_value(&mut roots, params.pointer("/workspace/root_uri"));
     push_folder_array(&mut roots, params.get("workspaceFolders"));
+    push_folder_array(&mut roots, params.get("workspace_folders"));
+    push_folder_array(&mut roots, params.get("workspaceRoots"));
+    push_folder_array(&mut roots, params.get("workspace_roots"));
     push_folder_array(&mut roots, params.pointer("/workspace/folders"));
+    push_folder_array(&mut roots, params.pointer("/workspace/workspaceFolders"));
+    push_folder_array(&mut roots, params.pointer("/workspace/workspace_folders"));
+    push_folder_array(&mut roots, params.pointer("/workspace/roots"));
+    push_folder_array(&mut roots, params.pointer("/workspace/workspaceRoots"));
+    push_folder_array(&mut roots, params.pointer("/workspace/workspace_roots"));
     roots.sort();
     roots.dedup();
+    roots
+}
+
+fn roots_or_cwd(mut roots: Vec<String>, cwd: &str) -> Vec<String> {
+    if roots.is_empty() && is_absolute_local_path(cwd) {
+        roots.push(cwd.to_string());
+    }
     roots
 }
 
@@ -6175,7 +6712,11 @@ fn push_folder_array(roots: &mut Vec<String>, value: Option<&Value>) {
         return;
     };
     for item in items {
-        push_path_value(roots, item.get("path").or_else(|| item.get("uri")));
+        if let Some(object) = item.as_object() {
+            for key in ["path", "uri", "rootUri", "root_uri", "root", "cwd"] {
+                push_path_value(roots, object.get(key));
+            }
+        }
         if item.as_str().is_some() {
             push_path_value(roots, Some(item));
         }
@@ -6238,210 +6779,6 @@ fn prompt_text_for_display_from_params(params: &Value) -> Result<String> {
     } else {
         Ok(text)
     }
-}
-
-async fn handle_sse_frame(
-    config: &Config,
-    adapter_state: &mut AdapterState,
-    shared_state: &AdapterSharedState,
-    session_id: &str,
-    frame: &[u8],
-    diagnostics: &mut SseStreamDiagnostics,
-    turn_token: Uuid,
-) -> Result<SseFrameOutcome> {
-    diagnostics.frames += 1;
-    let text = String::from_utf8_lossy(frame);
-    let mut outcome = SseFrameOutcome::default();
-    for line in text.lines() {
-        let Some(data) = line.strip_prefix("data:") else {
-            continue;
-        };
-        let data = data.trim();
-        if data.is_empty() || data == "[DONE]" {
-            continue;
-        }
-        let event: Value = serde_json::from_str(data).context("parse Den SSE event JSON")?;
-        diagnostics.observe_event(&event);
-        let ty = event.get("type").and_then(Value::as_str).unwrap_or("");
-        if ty == "assistant_text_delta" || ty == "status_text" {
-            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
-            outcome.saw_visible_output |= !text.is_empty();
-        } else if den_event_type_is_tool_activity(ty) {
-            outcome.saw_tool_activity = true;
-            diagnostics.saw_tool_activity = true;
-            if ty == "permission_request" {
-                // Permission requests are visible ACP client activity. Some Den-side
-                // permission workflows settle via the permission result endpoint rather
-                // than a later streamed terminal event, so a stream containing only a
-                // permission request is not an empty/failed turn.
-                outcome.saw_visible_output = true;
-                diagnostics.saw_visible_output = true;
-            }
-        } else if ty == "error" {
-            outcome.saw_error = true;
-            diagnostics.saw_error = true;
-            if let Some(terminal) = event.get("terminal") {
-                if let Some(value) = terminal.get("outcome") {
-                    outcome.terminal_outcome = value.as_str().map(str::to_string);
-                }
-                if let Some(value) = terminal.get("recovery_hint") {
-                    outcome.recovery_hint = value.as_str().map(str::to_string);
-                }
-                if let Some(value) = terminal.get("user_message") {
-                    outcome.terminal_user_message = value.as_str().map(str::to_string);
-                }
-            }
-            let formatted = format_den_event_error(&event);
-            if looks_like_waiting_for_approval_error(&formatted) {
-                outcome.recover_and_retry = true;
-                outcome.upstream_errors.push(
-                    "Letta reported unresolved approval state. Automatic compaction recovery is disabled because compaction does not unpoison unresolved approvals; Den-side recovery must settle or deny pending approvals directly."
-                        .to_string(),
-                );
-            } else {
-                outcome.saw_cancellation_error = outcome.terminal_outcome.as_deref()
-                    == Some("cancelled")
-                    || outcome.recovery_hint.as_deref() == Some("none")
-                        && event
-                            .get("terminal")
-                            .and_then(|terminal| terminal.get("outcome"))
-                            .and_then(Value::as_str)
-                            == Some("cancelled")
-                    || looks_like_cancellation_error(&formatted);
-                outcome.upstream_errors.push(formatted);
-            }
-        }
-        if outcome.recover_and_retry {
-            continue;
-        }
-        let handled = handle_den_event(
-            config,
-            adapter_state,
-            shared_state,
-            session_id,
-            &event,
-            turn_token,
-        )
-        .await?;
-        if ty == "turn_result" {
-            if let Some(value) = event.get("status").and_then(Value::as_str) {
-                outcome.terminal_outcome = Some(value.to_string());
-                if matches!(value, "failed" | "cancelled" | "needs_new_session") {
-                    outcome.saw_error = true;
-                    diagnostics.saw_error = true;
-                }
-            } else if let Some(value) = event.get("outcome").and_then(Value::as_str) {
-                outcome.terminal_outcome = Some(value.to_string());
-            }
-        } else if ty == "turn_complete" || ty == "done" {
-            if let Some(value) = event.get("outcome").and_then(Value::as_str) {
-                outcome.terminal_outcome = Some(value.to_string());
-            }
-            if let Some(value) = event.get("recovery_hint").and_then(Value::as_str) {
-                outcome.recovery_hint = Some(value.to_string());
-            }
-            if let Some(value) = event.get("user_message").and_then(Value::as_str) {
-                outcome.terminal_user_message = Some(value.to_string());
-            }
-        }
-        outcome.saw_done |= handled;
-        diagnostics.saw_turn_complete |= handled;
-        diagnostics.saw_visible_output |= outcome.saw_visible_output;
-        if !matches!(
-            ty,
-            "assistant_text_delta"
-                | "status_text"
-                | "error"
-                | "tool_request"
-                | "permission_request"
-                | "session_info_update"
-                | "plan_update"
-                | "mode_update"
-                | "conversation_resolved"
-                | "turn_complete"
-                | "turn_result"
-                | "done"
-        ) {
-            diagnostics.observe_unknown(&event);
-            eprintln!(
-                "bear-armature: unknown Den ACP event type {:?}; sample={}",
-                ty,
-                truncate_for_log(&event.to_string(), 240)
-            );
-        }
-    }
-    Ok(outcome)
-}
-
-fn den_event_type_is_tool_activity(ty: &str) -> bool {
-    matches!(ty, "tool_request" | "permission_request")
-}
-
-fn looks_like_waiting_for_approval_error(message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    message.contains("waiting for approval") || message.contains("please approve or deny")
-}
-
-fn looks_like_cancellation_error(message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    message.contains("stop_reason: cancelled")
-        || message.contains("stop_reason=cancelled")
-        || message.contains("stop_reason: canceled")
-        || message.contains("stop_reason=canceled")
-        || message.contains("producing assistant output: cancelled")
-        || message.contains("producing assistant output: canceled")
-        || message == "cancelled"
-        || message == "canceled"
-        || message.ends_with(": cancelled")
-        || message.ends_with(": canceled")
-}
-
-fn format_den_event_error(event: &Value) -> String {
-    let message = event
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or("BEARS upstream error");
-    let mut out = match event.get("detail").and_then(Value::as_str) {
-        Some(detail) if !detail.trim().is_empty() => format!("{message}: {detail}"),
-        _ => message.to_string(),
-    };
-    if let Some(context) = event.get("context") {
-        out.push_str("\nContext: ");
-        out.push_str(&format_error_context_for_display(context));
-    }
-    if let Some(request_id) = event.get("request_id").and_then(Value::as_str) {
-        out.push_str("\nDen request_id: ");
-        out.push_str(request_id);
-    }
-    out
-}
-
-fn format_error_context_for_display(context: &Value) -> String {
-    let Some(object) = context.as_object() else {
-        return context.to_string();
-    };
-    if object.get("preview").and_then(Value::as_str).is_some() {
-        let mut compact = serde_json::Map::new();
-        for key in [
-            "tool_name",
-            "available_client_tools",
-            "client_tools_count",
-            "client_tools_bytes",
-        ] {
-            if let Some(value) = object.get(key) {
-                compact.insert(key.to_string(), value.clone());
-            }
-        }
-        compact.insert(
-            "preview".to_string(),
-            json!({
-                "redacted": true,
-                "reason": "assistant text preview omitted from ACP display; see Den request logs for details"
-            }),
-        );
-        return Value::Object(compact).to_string();
-    }
-    context.to_string()
 }
 
 fn cancellation_matches_turn(
@@ -6518,7 +6855,7 @@ where
     }
 }
 
-fn spawn_tool_request_task(
+pub(crate) fn spawn_tool_request_task(
     config: Config,
     shared_state: AdapterSharedState,
     session_id: String,
@@ -6526,20 +6863,91 @@ fn spawn_tool_request_task(
     turn_token: Uuid,
 ) {
     tokio::spawn(async move {
-        let tool_call_id = event
-            .get("tool_call_id")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
-        let tool_name = event
-            .get("tool_name")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string();
-        shared_state
+        let canonical = match BearWireToolCallRequestData::parse(&event) {
+            Ok(canonical) => canonical,
+            Err(err) => {
+                eprintln!(
+                    "bear-armature: malformed canonical tool request session_id={} error={err:#} event={}",
+                    session_id,
+                    truncate_for_log(&event.to_string(), 400)
+                );
+                let run_id = event
+                    .get("run_id")
+                    .or_else(|| event.pointer("/data/run_id"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let tool_call_id = event
+                    .pointer("/data/tool_call/id")
+                    .or_else(|| event.pointer("/data/tool_call_id"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if let (Some(run_id), Some(tool_call_id)) = (run_id, tool_call_id) {
+                    let tool_name = event
+                        .pointer("/data/tool_call/name")
+                        .or_else(|| event.pointer("/data/tool_name"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("malformed_tool_request");
+                    let payload = json!({
+                        "status": "error",
+                        "tool_name": tool_name,
+                        "content": "Malformed BearWire tool request could not be executed by the armature.",
+                        "diagnostic": {
+                            "category": "malformed_tool_request",
+                            "message": err.to_string(),
+                            "event_sample": truncate_for_log(&event.to_string(), 1000),
+                        }
+                    });
+                    if let Err(post_err) = crate::bearwire::post_tool_result(
+                        &config,
+                        &session_id,
+                        run_id,
+                        tool_call_id,
+                        payload,
+                    )
+                    .await
+                    {
+                        eprintln!(
+                            "bear-armature: failed to post malformed tool request error result session_id={} run_id={} tool_call_id={} error={post_err:#}",
+                            session_id,
+                            run_id,
+                            tool_call_id,
+                        );
+                    }
+                }
+                return;
+            }
+        };
+        let tool_call_id = canonical.tool_call.id.clone();
+        let tool_name = canonical.tool_call.name.clone();
+        if !shared_state
             .tool_tasks
-            .register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
-            .await;
+            .try_register(&session_id, &tool_call_id, &tool_name, Some(turn_token))
+            .await
+        {
+            tracing::debug!(
+                target: "bear_armature::lifecycle",
+                session_id = session_id.as_str(),
+                tool_call_id = tool_call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+                "duplicate local tool task ignored"
+            );
+            return;
+        }
+        let den_owned_display_only = is_den_server_tool_request(&event);
+        tracing::info!(
+            target: "bear_armature::lifecycle",
+            session_id = session_id.as_str(),
+            tool_call_id = tool_call_id.as_str(),
+            tool_name = tool_name.as_str(),
+            run_id = event.get("run_id").and_then(|value| value.as_str()).unwrap_or("<unknown>"),
+            den_owned_display_only,
+            "local tool task spawned"
+        );
         let mut task_state = AdapterState {
             client_capabilities: shared_state.client_capabilities.lock().await.clone(),
             session_contexts: shared_state.session_contexts.lock().await.clone(),
@@ -6548,11 +6956,13 @@ fn spawn_tool_request_task(
         let tool_future = handle_tool_request_event(
             &config,
             &mut task_state,
+            &shared_state,
             &shared_state.tool_tasks,
             &shared_state.mcp_registry,
             &shared_state.approval_cache,
             &session_id,
             &event,
+            turn_token,
         );
         let result = match wait_for_tool_future_or_matching_cancellation(
             &shared_state,
@@ -6593,6 +7003,13 @@ fn spawn_tool_request_task(
                     std::time::Instant::now(),
                 )
                 .await;
+                tracing::info!(
+                    target: "bear_armature::lifecycle",
+                    session_id = session_id.as_str(),
+                    tool_call_id = tool_call_id.as_str(),
+                    tool_name = tool_name.as_str(),
+                    "local tool task cancelled"
+                );
                 let _ = shared_state
                     .tool_tasks
                     .remove(&session_id, &tool_call_id)
@@ -6605,6 +7022,14 @@ fn spawn_tool_request_task(
                 "bear-armature: local tool task failed session_id={} tool_call_id={} tool_name={} error={err:#}",
                 session_id, tool_call_id, tool_name
             );
+            tracing::warn!(
+                target: "bear_armature::lifecycle",
+                session_id = session_id.as_str(),
+                tool_call_id = tool_call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                error = %err,
+                "local tool task failed"
+            );
             let local_err = LocalToolError::error(format!("local tool task failed: {err:#}"));
             let _ = post_local_tool_error_result(
                 &config,
@@ -6616,78 +7041,181 @@ fn spawn_tool_request_task(
                 std::time::Instant::now(),
             )
             .await;
+            let _ = shared_state
+                .tool_tasks
+                .remove(&session_id, &tool_call_id)
+                .await;
+        } else if den_owned_display_only {
+            tracing::info!(
+                target: "bear_armature::lifecycle",
+                session_id = session_id.as_str(),
+                tool_call_id = tool_call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                "den-owned display-only tool task finished without posting client result"
+            );
+            shared_state
+                .tool_tasks
+                .set_phase(
+                    &session_id,
+                    &tool_call_id,
+                    &tool_name,
+                    ToolTaskPhase::ResultPosted,
+                )
+                .await;
+            let _ = shared_state
+                .tool_tasks
+                .remove(&session_id, &tool_call_id)
+                .await;
+        } else {
+            tracing::info!(
+                target: "bear_armature::lifecycle",
+                session_id = session_id.as_str(),
+                tool_call_id = tool_call_id.as_str(),
+                tool_name = tool_name.as_str(),
+                "local tool task finished"
+            );
+            let _ = shared_state
+                .tool_tasks
+                .remove(&session_id, &tool_call_id)
+                .await;
         }
-        let _ = shared_state
-            .tool_tasks
-            .remove(&session_id, &tool_call_id)
-            .await;
     });
+}
+
+pub(crate) async fn project_den_owned_tool_request(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    event: &Value,
+    turn_token: Uuid,
+) -> Result<()> {
+    let canonical = BearWireToolCallRequestData::parse(event)?;
+    let tool_call_id = canonical.tool_call.id.as_str();
+    let tool_name = canonical.tool_call.name.as_str();
+    if current_surface_tool_status(session_id, tool_call_id)
+        .await
+        .is_some_and(SurfaceToolStatus::is_terminal)
+    {
+        tracing::debug!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            tool_call_id,
+            tool_name,
+            "skipping Den-owned display-only tool projection because surface is already terminal"
+        );
+        return Ok(());
+    }
+    if !is_current_prompt_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        "den_owned_tool_projection",
+    )
+    .await
+    {
+        return Ok(());
+    }
+    if shared_state
+        .tool_tasks
+        .try_register(session_id, tool_call_id, tool_name, Some(turn_token))
+        .await
+    {
+        shared_state
+            .tool_tasks
+            .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
+            .await;
+        log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
+        shared_state
+            .tool_tasks
+            .remember_input(
+                session_id,
+                tool_call_id,
+                tool_name,
+                canonical.tool_call.arguments.clone(),
+            )
+            .await;
+    }
+    let preparing = friendly_tool_status(tool_name, event, "preparing");
+    send_tool_call_update_for_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        tool_call_id,
+        tool_name,
+        ToolCallUpdatePayload {
+            status: "pending",
+            text: &preparing,
+            event: Some(event),
+            raw_output: None,
+            extra_content: Vec::new(),
+        },
+    )
+    .await?;
+    let running = friendly_tool_status(tool_name, event, "running");
+    send_tool_call_update_for_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        tool_call_id,
+        tool_name,
+        ToolCallUpdatePayload {
+            status: "in_progress",
+            text: &running,
+            event: Some(event),
+            raw_output: None,
+            extra_content: Vec::new(),
+        },
+    )
+    .await?;
+    shared_state
+        .tool_tasks
+        .set_phase(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolTaskPhase::ExecutionStarted,
+        )
+        .await;
+    log_tool_task_phase(
+        session_id,
+        tool_call_id,
+        tool_name,
+        ToolTaskPhase::ExecutionStarted,
+    );
+    Ok(())
 }
 
 async fn handle_tool_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     task_registry: &ToolTaskRegistry,
     mcp_registry: &McpRegistry,
     approval_cache: &ApprovalCache,
     session_id: &str,
     event: &Value,
+    turn_token: Uuid,
 ) -> Result<()> {
-    let tool_call_id = event
-        .get("tool_call_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("tool_request missing tool_call_id"))?;
-    let tool_name = event
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("tool_request missing tool_name"))?;
+    let canonical = BearWireToolCallRequestData::parse(event)?;
+    let tool_call_id = canonical.tool_call.id.as_str();
+    let tool_name = canonical.tool_call.name.as_str();
     task_registry
         .set_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received)
         .await;
     log_tool_task_phase(session_id, tool_call_id, tool_name, ToolTaskPhase::Received);
+    let args = canonical.tool_call.arguments.clone();
+    task_registry
+        .remember_input(session_id, tool_call_id, tool_name, args.clone())
+        .await;
     if is_den_server_tool_request(event) {
-        let preparing = friendly_tool_status(tool_name, event, "preparing");
-        send_tool_call_update(
-            session_id,
-            tool_call_id,
-            tool_name,
-            ToolCallUpdatePayload {
-                status: "pending",
-                text: &preparing,
-                event: Some(event),
-                raw_output: None,
-                extra_content: Vec::new(),
-            },
-        )
-        .await?;
-        let running = friendly_tool_status(tool_name, event, "running");
-        send_tool_call_update(
-            session_id,
-            tool_call_id,
-            tool_name,
-            ToolCallUpdatePayload {
-                status: "in_progress",
-                text: &running,
-                event: Some(event),
-                raw_output: None,
-                extra_content: Vec::new(),
-            },
-        )
-        .await?;
+        project_den_owned_tool_request(shared_state, session_id, event, turn_token).await?;
         task_registry
             .set_phase(
                 session_id,
                 tool_call_id,
                 tool_name,
-                ToolTaskPhase::ExecutionStarted,
+                ToolTaskPhase::ResultPosted,
             )
             .await;
-        log_tool_task_phase(
-            session_id,
-            tool_call_id,
-            tool_name,
-            ToolTaskPhase::ExecutionStarted,
-        );
         return Ok(());
     }
     let preparing = friendly_tool_status(tool_name, event, "preparing");
@@ -6704,7 +7232,6 @@ async fn handle_tool_request_event(
         },
     )
     .await?;
-    let args = event.get("args").cloned().unwrap_or_else(|| json!({}));
     let policy = policy_from_event(event);
     let replace_plan = if tool_name == "fs_edit_file" || tool_name == "fs_replace_text" {
         let context = session_context(adapter_state, session_id)?;
@@ -6717,8 +7244,17 @@ async fn handle_tool_request_event(
         None
     };
     let context_for_approval = session_context(adapter_state, session_id).ok().cloned();
-    let target_path_for_approval =
-        tool_path(event).and_then(|path| normalize_requested_tool_path(path).ok());
+    let target_path_for_approval = context_for_approval
+        .as_ref()
+        .and_then(|context| policy_target_path(context, &args, &policy))
+        .or_else(|| {
+            tool_path(event).and_then(|path| {
+                context_for_approval
+                    .as_ref()
+                    .and_then(|context| resolve_requested_tool_path(context, path).ok())
+                    .or_else(|| normalize_requested_tool_path(path).ok())
+            })
+        });
     let target_url_for_approval = tool_url(event).map(str::to_string);
     let target_command_for_approval = tool_command(event).map(str::to_string);
     let approval_reused = if let Some(context) = context_for_approval.as_ref() {
@@ -6734,21 +7270,20 @@ async fn handle_tool_request_event(
     } else {
         false
     };
-    if approval_reused {
+    if approval_reused && bear_debug_verbose() {
+        let target_label = target_path_for_approval
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .or_else(|| target_url_for_approval.clone())
+            .or_else(|| target_command_for_approval.clone())
+            .or_else(|| tool_path(event).map(str::to_string))
+            .unwrap_or_else(|| "<unknown>".to_string());
         eprintln!(
-            "bear-armature: approval_reused session_id={} tool_name={} path={}",
-            session_id,
-            tool_name,
-            tool_path(event).unwrap_or("<unknown>")
+            "bear-armature: approval_reused session_id={} tool_name={} target={}",
+            session_id, tool_name, target_label
         );
     }
-    if !approval_reused
-        && event
-            .get("approval")
-            .and_then(|v| v.get("required"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    {
+    if !approval_reused && approval_required_from_event(event) {
         task_registry
             .set_phase(
                 session_id,
@@ -6961,10 +7496,7 @@ async fn handle_tool_request_event(
             if is_turn_missing_error(&err) {
                 eprintln!(
                     "bear-armature: late unexpected server-tool result ignored because Den turn is gone session_id={} tool_call_id={} tool_name={} error={:#}",
-                    session_id,
-                    tool_call_id,
-                    tool_name,
-                    err
+                    session_id, tool_call_id, tool_name, err
                 );
                 return Ok(());
             }
@@ -7000,8 +7532,26 @@ async fn handle_tool_request_event(
             Some(tool_call_title(tool_name, event)),
             &args,
             &policy,
+            TerminalCommandValidation::Allowlisted,
         )
         .await
+    } else if tool_name == "run_command" {
+        let context = session_context(adapter_state, session_id)?.clone();
+        if client_supports_terminal(adapter_state) && run_command_prefers_terminal(&args) {
+            handle_terminal_run_command(
+                adapter_state,
+                &context,
+                session_id,
+                Some(tool_call_id),
+                Some(tool_call_title(tool_name, event)),
+                &args,
+                &policy,
+                TerminalCommandValidation::Generic,
+            )
+            .await
+        } else {
+            handle_process_run(&context, session_id, &args, &policy).await
+        }
     } else {
         execute_local_tool(
             adapter_state,
@@ -7014,6 +7564,7 @@ async fn handle_tool_request_event(
         .await
     };
     let status;
+    let deferred_ui_update: Option<(String, String, Option<Value>, Vec<ToolCallContent>)>;
     let mut payload = json!({
         "turn_id": event.get("turn_id").and_then(Value::as_str),
         "request_id": event.get("request_id").and_then(Value::as_str),
@@ -7034,7 +7585,7 @@ async fn handle_tool_request_event(
     match result {
         Ok(value) => {
             status = "ok";
-            if tool_name == "update_plan" {
+            if matches!(tool_name, "update_task_list" | "update_plan") {
                 let entries = value
                     .get("plan")
                     .map(plan_entries_from_work_plan_args)
@@ -7072,19 +7623,12 @@ async fn handle_tool_request_event(
                 Vec::new()
             };
             payload["structured_content"] = value;
-            send_tool_call_update(
-                session_id,
-                tool_call_id,
-                tool_name,
-                ToolCallUpdatePayload {
-                    status: "completed",
-                    text: &preview,
-                    event: Some(event),
-                    raw_output: Some(raw_output),
-                    extra_content,
-                },
-            )
-            .await?;
+            deferred_ui_update = Some((
+                "completed".to_string(),
+                preview,
+                Some(raw_output),
+                extra_content,
+            ));
         }
         Err(err) => {
             let local_err = LocalToolError::from(err);
@@ -7103,33 +7647,19 @@ async fn handle_tool_request_event(
                 tool_name,
                 ToolTaskPhase::ExecutionFailed,
             );
+            let message = local_err.message.clone();
             payload["status"] = json!(status);
-            payload["content"] = json!(local_err.message);
+            payload["content"] = json!(message.clone());
             payload["diagnostic"]["phase"] = json!("adapter_execution_failed");
             merge_diagnostic(&mut payload["diagnostic"], local_err.diagnostic);
-            send_tool_call_update(
-                session_id,
-                tool_call_id,
-                tool_name,
-                ToolCallUpdatePayload {
-                    status: "failed",
-                    text: payload["content"].as_str().unwrap_or("Local tool failed"),
-                    event: Some(event),
-                    raw_output: None,
-                    extra_content: Vec::new(),
-                },
-            )
-            .await?;
+            deferred_ui_update = Some(("failed".to_string(), message, None, Vec::new()));
         }
     }
     if let Err(err) = post_tool_result(config, session_id, tool_call_id, payload).await {
         if is_turn_missing_error(&err) {
             eprintln!(
                 "bear-armature: late local tool result ignored because Den turn is gone session_id={} tool_call_id={} tool_name={} error={:#}",
-                session_id,
-                tool_call_id,
-                tool_name,
-                err
+                session_id, tool_call_id, tool_name, err
             );
             return Ok(());
         }
@@ -7181,6 +7711,30 @@ async fn handle_tool_request_event(
         tool_name,
         ToolTaskPhase::ResultPosted,
     );
+    if let Some((status, text, raw_output, extra_content)) = deferred_ui_update {
+        if let Err(err) = send_tool_call_update(
+            session_id,
+            tool_call_id,
+            tool_name,
+            ToolCallUpdatePayload {
+                status: &status,
+                text: &text,
+                event: Some(event),
+                raw_output,
+                extra_content,
+            },
+        )
+        .await
+        {
+            eprintln!(
+                "bear-armature: ACP tool-card update failed after Den accepted result session_id={} tool_call_id={} tool_name={} error={:#}",
+                session_id,
+                tool_call_id,
+                tool_name,
+                err
+            );
+        }
+    }
     Ok(())
 }
 
@@ -7201,11 +7755,203 @@ fn command_line_from_value(value: &Value) -> Option<String> {
     })
 }
 
-fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
+#[derive(Debug, Clone, Deserialize)]
+struct BearWireToolCallRequestCard {
+    id: String,
+    name: String,
+    arguments: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BearWireToolCallRequestData {
+    tool_call: BearWireToolCallRequestCard,
+}
+
+impl BearWireToolCallRequestData {
+    fn parse(event: &Value) -> Result<Self> {
+        let data = event
+            .get("data")
+            .cloned()
+            .ok_or_else(|| anyhow!("BearWire tool request missing data"))?;
+        serde_json::from_value(data).context("parse canonical BearWire tool request data")
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BearWirePermissionInfo {
+    id: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    target: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BearWireClientWaitingData {
+    expected_client_method: String,
+    obligation_id: String,
+    permission: BearWirePermissionInfo,
+    tool_call: BearWireToolCallRequestCard,
+}
+
+impl BearWireClientWaitingData {
+    fn parse(event: &Value) -> Result<Self> {
+        let data = event
+            .get("data")
+            .cloned()
+            .ok_or_else(|| anyhow!("BearWire client.waiting missing data"))?;
+        let parsed: Self =
+            serde_json::from_value(data).context("parse canonical BearWire client.waiting data")?;
+        if parsed.expected_client_method.trim() != "client.permission.result" {
+            bail!("BearWire client.waiting has unsupported expected_client_method");
+        }
+        if parsed.obligation_id.trim().is_empty() {
+            bail!("BearWire client.waiting missing obligation_id");
+        }
+        if parsed.permission.id.trim().is_empty() {
+            bail!("BearWire client.waiting missing permission.id");
+        }
+        if parsed.tool_call.id.trim().is_empty() {
+            bail!("BearWire client.waiting missing tool_call.id");
+        }
+        if parsed.tool_call.name.trim().is_empty() {
+            bail!("BearWire client.waiting missing tool_call.name");
+        }
+        Ok(parsed)
+    }
+}
+
+fn tool_args_from_event(event: &Value) -> Option<&Value> {
+    event
+        .pointer("/data/tool_call/arguments")
+        .or_else(|| event.pointer("/data/tool_call/input"))
+        .or_else(|| event.pointer("/data/tool_call/raw_input"))
+        .or_else(|| event.get("args"))
+        .or_else(|| event.get("arguments"))
+        .or_else(|| event.get("input"))
+        .or_else(|| event.get("raw_input"))
+        .or_else(|| event.pointer("/data/arguments"))
+        .or_else(|| event.pointer("/data/input"))
+        .or_else(|| event.pointer("/data/raw_input"))
+}
+
+fn event_display_from_event(event: &Value) -> Option<&Value> {
+    event
+        .pointer("/data/tool_call/display")
+        .or_else(|| event.get("display"))
+        .or_else(|| event.pointer("/data/display"))
+}
+
+fn approval_required_from_event(event: &Value) -> bool {
+    event
+        .get("approval")
+        .and_then(|approval| approval.get("required"))
+        .or_else(|| event.pointer("/data/approval/required"))
+        .or_else(|| event.pointer("/data/approval_required"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn policy_target_path(
+    context: &SessionContext,
+    args: &Value,
+    policy: &ToolPolicy,
+) -> Option<PathBuf> {
+    let target_policy = policy.target_policy.as_ref()?;
+    let kind = target_policy.get("kind").and_then(Value::as_str)?;
+    let raw_path = match kind {
+        "workspace_path" => target_policy
+            .get("arg")
+            .and_then(Value::as_str)
+            .and_then(|arg| args.get(arg))
+            .and_then(Value::as_str),
+        "workspace_root_or_path" => target_policy
+            .get("arg")
+            .and_then(Value::as_str)
+            .and_then(|arg| args.get(arg))
+            .and_then(Value::as_str)
+            .or_else(|| {
+                target_policy
+                    .get("default_to_workspace_root")
+                    .and_then(Value::as_bool)
+                    .filter(|default| *default)
+                    .and_then(|_| {
+                        context
+                            .roots
+                            .first()
+                            .map(String::as_str)
+                            .or(Some(context.cwd.as_str()))
+                    })
+            }),
+        "source_destination" => target_policy
+            .get("source_arg")
+            .and_then(Value::as_str)
+            .and_then(|arg| args.get(arg))
+            .and_then(Value::as_str),
+        "command" => target_policy
+            .get("cwd_arg")
+            .and_then(Value::as_str)
+            .and_then(|arg| args.get(arg))
+            .and_then(Value::as_str),
+        _ => None,
+    }?;
+    resolve_requested_tool_path(context, raw_path)
+        .ok()
+        .filter(|path| ensure_path_allowed_for_session(context, path).is_ok())
+}
+
+fn approval_reason_from_event(event: &Value) -> Option<&str> {
+    event
+        .pointer("/data/permission/reason")
+        .or_else(|| event.get("reason"))
+        .or_else(|| event.pointer("/data/reason"))
+        .or_else(|| event.pointer("/data/approval/reason"))
+        .or_else(|| event.pointer("/approval/reason"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+const ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS: usize = 4 * 1024;
+const TOOL_RESULT_POST_SLOW_MS: u128 = 2_000;
+const TOOL_RESULT_POST_TIMEOUT_SECS: u64 = 120;
+
+fn compact_tool_card_json_value(value: Value) -> Value {
+    Value::String(compact_tool_json_detail(
+        &value,
+        ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS,
+    ))
+}
+
+pub(crate) fn compact_tool_json_detail(value: &Value, max_chars: usize) -> String {
+    let mut text = serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string());
+    if text.chars().count() > max_chars {
+        text = text.chars().take(max_chars).collect::<String>();
+        text.push_str("... truncated");
+    }
+    text
+}
+
+pub(crate) fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
     if matches!(tool_name, "fs_read_text_file" | "fs.read_text_file") {
         return read_text_file_completion_preview(value);
     }
-    if matches!(tool_name, "process_run" | "terminal_run_command") {
+    if matches!(tool_name, "set_conversation_title") {
+        if let Some(title) = value
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            return format!("Conversation title set to {}.", markdown_inline_code(title));
+        }
+    }
+    if matches!(
+        tool_name,
+        "run_command" | "process_run" | "terminal_run_command"
+    ) {
         let command = command_line_from_value(value).unwrap_or_else(|| "command".to_string());
         let cwd = value
             .get("cwd")
@@ -7239,8 +7985,52 @@ fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
         return text;
     }
 
-    if matches!(tool_name, "update_plan" | "request_work_handoff") {
+    if matches!(
+        tool_name,
+        "request_task_list_handoff" | "request_work_handoff"
+    ) {
         return String::new();
+    }
+    if matches!(tool_name, "update_task_list" | "update_plan") {
+        let entries = value
+            .get("plan")
+            .map(|plan| {
+                plan.get("items")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| {
+                                plan_entry_from_acp_plan_item(item)
+                                    .or_else(|| plan_entry_from_work_plan_item(item))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+        if entries.is_empty() {
+            return "Task list updated.".to_string();
+        }
+        let completed = entries
+            .iter()
+            .filter(|entry| entry.status == PlanEntryStatus::Completed)
+            .count();
+        let in_progress = entries
+            .iter()
+            .filter(|entry| entry.status == PlanEntryStatus::InProgress)
+            .count();
+        let pending = entries
+            .iter()
+            .filter(|entry| entry.status == PlanEntryStatus::Pending)
+            .count();
+        return format!(
+            "Task list updated: {} total, {} in progress, {} pending, {} completed.",
+            entries.len(),
+            in_progress,
+            pending,
+            completed
+        );
     }
 
     let content = value
@@ -7249,7 +8039,14 @@ fn tool_completion_preview(tool_name: &str, value: &Value) -> String {
         .unwrap_or("")
         .trim();
     let mut text = if content.is_empty() {
-        String::new()
+        if is_placeholder_tool_name(tool_name) && !value.is_null() {
+            format!(
+                "Tool call completed. Result: `{}`",
+                compact_tool_json_detail(value, 1_200)
+            )
+        } else {
+            String::new()
+        }
     } else {
         content.to_string()
     };
@@ -7412,8 +8209,7 @@ async fn request_tool_permission(
         target_url,
         target_command,
     } = request_context;
-    let path = event
-        .get("args")
+    let path = tool_args_from_event(event)
         .and_then(|v| v.get("path"))
         .and_then(Value::as_str)
         .or(target_url)
@@ -7421,11 +8217,8 @@ async fn request_tool_permission(
         .unwrap_or("the requested target");
     let display = ToolDisplay::from_event(tool_name, event);
     let title = display.title.clone();
-    let reason = event
-        .get("approval")
-        .and_then(|v| v.get("reason"))
-        .and_then(Value::as_str)
-        .unwrap_or("Letta requested approval before running this local ACP tool.");
+    let reason = approval_reason_from_event(event)
+        .unwrap_or("Runtime requested approval before running this local ACP tool.");
     eprintln!(
         "bear-armature: requesting permission session_id={} tool_call_id={} tool_name={} path={}",
         session_id, tool_call_id, tool_name, path
@@ -7445,7 +8238,7 @@ async fn request_tool_permission(
     if let Some(locations) = tool_locations_from_event(tool_name, event) {
         fields = fields.locations(Some(locations));
     }
-    if let Some(args) = event.get("args") {
+    if let Some(args) = tool_args_from_event(event) {
         fields = fields.raw_input(Some(args.clone()));
     }
     let mut meta = serde_json::Map::new();
@@ -7484,12 +8277,31 @@ async fn request_tool_permission(
     );
     let request =
         RequestPermissionRequest::new(session_id.to_string(), tool_call, options).meta(Some(meta));
+    let permission_timeout_ms = policy.permission_timeout_ms.unwrap_or(120_000);
+    tracing::info!(
+        target: "bear_armature::lifecycle",
+        session_id,
+        tool_call_id,
+        tool_name,
+        timeout_ms = permission_timeout_ms,
+        "ACP permission request sending"
+    );
     let decision = send_permission_request(
         adapter_state,
         request,
-        std::time::Duration::from_millis(policy.permission_timeout_ms.unwrap_or(120_000)),
+        std::time::Duration::from_millis(permission_timeout_ms),
     )
     .await?;
+    tracing::info!(
+        target: "bear_armature::lifecycle",
+        session_id,
+        tool_call_id,
+        tool_name,
+        approved = decision.approved,
+        remember = decision.remember,
+        scope = decision.scope.as_str(),
+        "ACP permission response received"
+    );
     if decision.approved {
         Ok(decision)
     } else {
@@ -7502,6 +8314,9 @@ async fn send_permission_request(
     request: RequestPermissionRequest,
     timeout: std::time::Duration,
 ) -> Result<PermissionDecision> {
+    if headless_mode() {
+        return headless::decide_permission_headless(&request);
+    }
     let response = adapter_state
         .transport
         .request(
@@ -7524,6 +8339,13 @@ async fn post_permission_result(
     payload: Value,
 ) -> Result<Value> {
     if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
+        tracing::info!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            permission_id,
+            "posting BearWire permission result"
+        );
         let result = bearwire::post_permission_result(
             config,
             session_id,
@@ -7532,41 +8354,29 @@ async fn post_permission_result(
             payload.clone(),
         )
         .await?;
-        eprintln!(
-            "bear-armature: posted BearWire permission result session_id={} run_id={} permission_id={} response={}",
+        tracing::info!(
+            target: "bear_armature::lifecycle",
             session_id,
             run_id,
             permission_id,
-            truncate_for_log(&result.to_string(), 360)
+            response = %truncate_for_log(&result.to_string(), 360),
+            "posted BearWire permission result"
         );
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: posted BearWire permission result session_id={} run_id={} permission_id={} response={}",
+                session_id,
+                run_id,
+                permission_id,
+                truncate_for_log(&result.to_string(), 360)
+            );
+        }
         return Ok(result);
     }
 
-    let payload = with_adapter_contract(payload);
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/permissions/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-        urlencoding::encode(permission_id),
-    );
-    let response = reqwest::Client::new()
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("post ACP permission decision to Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(den_status_error_message(status, body.trim())));
-    }
-    Ok(serde_json::from_str(&body).unwrap_or_else(|_| json!({ "raw": body })))
+    Err(anyhow!(
+        "BearWire permission result payload missing run_id; legacy ACP permission endpoint is retired"
+    ))
 }
 
 fn is_turn_missing_error(err: &anyhow::Error) -> bool {
@@ -7580,36 +8390,27 @@ async fn post_adapter_environment(
     environment: Value,
     conversation_title: Option<&str>,
 ) -> Result<()> {
+    let resource = adapter_environment_resource(environment, conversation_title);
+    let value = bearwire::post_resource_update(config, session_id, resource).await?;
+    if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: posted BearWire resource.update session_id={} response={}",
+            session_id,
+            truncate_for_log(&value.to_string(), 360)
+        );
+    }
+    Ok(())
+}
+
+fn adapter_environment_resource(environment: Value, conversation_title: Option<&str>) -> Value {
     let title = conversation_title
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let payload = with_adapter_contract(json!({
+    json!({
+        "kind": "acp_adapter",
         "environment": environment,
         "conversation_title": title,
-    }));
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/adapter-environment",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-    );
-    let response = reqwest::Client::new()
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
-        )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("post ACP adapter environment to Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(den_status_error_message(status, body.trim())));
-    }
-    Ok(())
+    })
 }
 
 async fn post_tool_result(
@@ -7619,299 +8420,427 @@ async fn post_tool_result(
     payload: Value,
 ) -> Result<()> {
     if let Some(run_id) = payload.get("run_id").and_then(Value::as_str) {
-        let result =
-            bearwire::post_tool_result(config, session_id, run_id, tool_call_id, payload.clone())
-                .await?;
-        eprintln!(
-            "bear-armature: posted BearWire tool result session_id={} run_id={} tool_call_id={} response={}",
+        let started = std::time::Instant::now();
+        tracing::info!(
+            target: "bear_armature::lifecycle",
             session_id,
             run_id,
             tool_call_id,
-            truncate_for_log(&result.to_string(), 360)
+            payload_bytes = payload.to_string().len(),
+            "posting BearWire tool result"
         );
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: posting BearWire tool result session_id={} run_id={} tool_call_id={} payload_bytes={}",
+                session_id,
+                run_id,
+                tool_call_id,
+                payload.to_string().len()
+            );
+        }
+        let result = timeout(
+            Duration::from_secs(TOOL_RESULT_POST_TIMEOUT_SECS),
+            bearwire::post_tool_result(config, session_id, run_id, tool_call_id, payload.clone()),
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "timed out after {}s posting BearWire tool result session_id={} run_id={} tool_call_id={}",
+                TOOL_RESULT_POST_TIMEOUT_SECS,
+                session_id,
+                run_id,
+                tool_call_id
+            )
+        })??;
+        let duration_ms = started.elapsed().as_millis();
+        if duration_ms >= TOOL_RESULT_POST_SLOW_MS {
+            eprintln!(
+                "bear-armature: slow BearWire tool result post session_id={} run_id={} tool_call_id={} duration_ms={}",
+                session_id,
+                run_id,
+                tool_call_id,
+                duration_ms
+            );
+        }
+        tracing::info!(
+            target: "bear_armature::lifecycle",
+            session_id,
+            run_id,
+            tool_call_id,
+            duration_ms,
+            response = %truncate_for_log(&result.to_string(), 720),
+            "posted BearWire tool result"
+        );
+        log_bearwire_tool_result_response(session_id, run_id, tool_call_id, &result, duration_ms);
         return Ok(());
     }
 
-    let payload = with_adapter_contract(payload);
-    let url = format!(
-        "{}/acp/bears/{}/sessions/{}/tool-results/{}",
-        config.api_url,
-        urlencoding::encode(&config.bear),
-        urlencoding::encode(session_id),
-        urlencoding::encode(tool_call_id),
-    );
-    let response = reqwest::Client::new()
-        .post(&url)
-        .header(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", config.token))?,
+    Err(anyhow!(
+        "BearWire tool result payload missing run_id for tool_call_id={tool_call_id}; legacy ACP tool-results endpoint is retired"
+    ))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BearWireToolResultResponseClass {
+    Continued,
+    WaitingForMore,
+    Duplicate,
+    LateIgnored,
+    ContinuationUnavailable,
+    Error,
+    Unknown,
+}
+
+impl BearWireToolResultResponseClass {
+    fn needs_attention(self) -> bool {
+        matches!(
+            self,
+            Self::LateIgnored | Self::ContinuationUnavailable | Self::Error | Self::Unknown
         )
-        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-        .json(&payload)
-        .send()
-        .await
-        .with_context(|| format!("post ACP tool result to Den at {url}"))?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!(den_status_error_message(status, body.trim())));
     }
-    eprintln!(
-        "bear-armature: posted tool result session_id={} tool_call_id={} response={}",
-        session_id,
-        tool_call_id,
-        body.trim()
-    );
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Continued => "continued",
+            Self::WaitingForMore => "waiting_for_more",
+            Self::Duplicate => "duplicate",
+            Self::LateIgnored => "late_ignored",
+            Self::ContinuationUnavailable => "continuation_unavailable",
+            Self::Error => "error",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+fn classify_bearwire_tool_result_response(result: &Value) -> BearWireToolResultResponseClass {
+    if result.get("ok").and_then(Value::as_bool) == Some(false) {
+        return match result.get("status").and_then(Value::as_str) {
+            Some("late_result_ignored") => BearWireToolResultResponseClass::LateIgnored,
+            Some("continuation_unavailable") => {
+                BearWireToolResultResponseClass::ContinuationUnavailable
+            }
+            _ => BearWireToolResultResponseClass::Error,
+        };
+    }
+    if result.get("duplicate").and_then(Value::as_bool) == Some(true) {
+        return BearWireToolResultResponseClass::Duplicate;
+    }
+    match result.get("continuation").and_then(Value::as_str) {
+        Some("started") => BearWireToolResultResponseClass::Continued,
+        Some("waiting_for_more_client_results") => BearWireToolResultResponseClass::WaitingForMore,
+        Some("continuation_unavailable") => {
+            BearWireToolResultResponseClass::ContinuationUnavailable
+        }
+        Some(_) => BearWireToolResultResponseClass::Unknown,
+        None => BearWireToolResultResponseClass::Unknown,
+    }
+}
+
+fn log_bearwire_tool_result_response(
+    session_id: &str,
+    run_id: &str,
+    tool_call_id: &str,
+    result: &Value,
+    duration_ms: u128,
+) {
+    let class = classify_bearwire_tool_result_response(result);
+    if bear_debug_verbose() || class.needs_attention() {
+        let level = if class.needs_attention() {
+            "warning"
+        } else {
+            "debug"
+        };
+        eprintln!(
+            "bear-armature: BearWire tool result response {level} class={} session_id={} run_id={} tool_call_id={} duration_ms={} response={}",
+            class.as_str(),
+            session_id,
+            run_id,
+            tool_call_id,
+            duration_ms,
+            truncate_for_log(&result.to_string(), 720)
+        );
+    }
+}
+
+pub(crate) async fn handle_status_text_for_turn(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    text: &str,
+) -> Result<()> {
+    if !text.is_empty() && bear_debug_mode().shows_thoughts() {
+        send_agent_thought_chunk_for_turn(
+            shared_state,
+            session_id,
+            turn_token,
+            normalize_thought_chunk_text(text).as_ref(),
+        )
+        .await?;
+    } else if !text.is_empty() && bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: suppressed thought chunk session_id={} text={}",
+            session_id,
+            truncate_for_log(text, 240)
+        );
+    }
     Ok(())
 }
 
-async fn handle_den_event(
+pub(crate) async fn handle_session_info_projection(
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    title: Option<String>,
+    updated_at: Option<String>,
+    context_budget: Option<Value>,
+    runtime: Option<Value>,
+) -> Result<()> {
+    apply_session_title_projection_state(adapter_state, shared_state, session_id, title.clone())
+        .await;
+    send_session_info_update(session_id, title, updated_at).await?;
+    if let Some(context_budget) = context_budget.clone() {
+        send_context_budget_usage_update(session_id, context_budget).await?;
+    }
+    if env_bool("BEAR_ARMATURE_SEND_RUNTIME_SESSION_META") {
+        send_den_runtime_session_info_update(session_id, runtime, context_budget).await?;
+    }
+    Ok(())
+}
+
+async fn apply_session_title_projection_state(
+    adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    title: Option<String>,
+) {
+    if let Some(context) = adapter_state.session_contexts.get_mut(session_id) {
+        context.thread_title = title.clone();
+    }
+    if let Some(context) = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get_mut(session_id)
+    {
+        context.thread_title = title;
+    }
+}
+
+pub(crate) async fn handle_plan_update_projection(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    entries: Vec<PlanEntry>,
+    approval_fallback: Option<&Value>,
+) -> Result<()> {
+    if let Some(fallback) = approval_fallback {
+        if let Some(message) = plan_approval_fallback_message(fallback) {
+            send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &message)
+                .await?;
+        }
+    }
+    if entries.is_empty() {
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: received empty plan update for session_id={}; not sending ACP plan UI update",
+                session_id
+            );
+        }
+    } else if should_send_plan_update(shared_state, session_id, &entries).await? {
+        if is_current_prompt_turn(shared_state, session_id, turn_token, "plan_update").await {
+            send_plan_update(session_id, entries).await?;
+        }
+    } else if bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: skipped unchanged plan update for session_id={}",
+            session_id
+        );
+    }
+    Ok(())
+}
+
+pub(crate) async fn handle_conversation_resolved_projection(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
-    event: &Value,
-    turn_token: Uuid,
-) -> Result<bool> {
-    match event.get("type").and_then(Value::as_str).unwrap_or("") {
-        "assistant_text_delta" => {
-            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
-            if !text.is_empty() {
-                send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, text)
-                    .await?;
-            }
-            Ok(false)
+    conversation_id: &str,
+) -> Result<()> {
+    let conversation_id = conversation_id.trim();
+    if !conversation_id.starts_with("conv-") {
+        return Ok(());
+    }
+    let context = adapter_state
+        .session_contexts
+        .entry(session_id.to_string())
+        .or_default();
+    context.resolved_conversation_id = Some(conversation_id.to_string());
+    let thread_title = context.thread_title.clone();
+    {
+        let mut shared_contexts = shared_state.session_contexts.lock().await;
+        let shared = shared_contexts.entry(session_id.to_string()).or_default();
+        shared.resolved_conversation_id = Some(conversation_id.to_string());
+        if thread_title.is_some() {
+            shared.thread_title = thread_title.clone();
         }
-        "status_text" => {
-            let text = event.get("text").and_then(Value::as_str).unwrap_or("");
-            if !text.is_empty() {
-                send_agent_thought_chunk_for_turn(
-                    shared_state,
-                    session_id,
-                    turn_token,
-                    normalize_thought_chunk_text(text).as_ref(),
-                )
-                .await?;
-            }
-            Ok(false)
-        }
-        "error" => Ok(false),
-        "tool_request" => {
-            let has_tool_name = event.get("tool_name").and_then(Value::as_str).is_some();
-            let has_tool_call_id = event.get("tool_call_id").and_then(Value::as_str).is_some();
-            if has_tool_name && has_tool_call_id {
-                spawn_tool_request_task(
-                    config.clone(),
-                    shared_state.clone(),
-                    session_id.to_string(),
-                    event.clone(),
-                    turn_token,
-                );
-            } else {
-                eprintln!(
-                    "bear-armature: ignoring malformed Den tool_request event session_id={} event={}",
-                    session_id,
-                    truncate_for_log(&event.to_string(), 400)
-                );
-            }
-            Ok(false)
-        }
-        "permission_request" => {
-            handle_permission_request_event(
-                config,
-                adapter_state,
-                &shared_state.mcp_registry,
-                session_id,
-                event,
-            )
-            .await?;
-            Ok(false)
-        }
-        "session_info_update" => {
-            let title = event
-                .get("title")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
-            if let Some(context) = adapter_state.session_contexts.get_mut(session_id) {
-                context.thread_title = title.clone();
-            }
-            if let Some(context) = shared_state
-                .session_contexts
-                .lock()
-                .await
-                .get_mut(session_id)
+    }
+    if let Some(title) = thread_title.as_deref() {
+        if let Ok(snapshot) = collect_bear_environment(
+            adapter_state,
+            session_id,
+            Some(config),
+            None,
+            &json!({
+                "include_session_mcp": true,
+                "include_client_capabilities": true,
+                "include_raw_context": true,
+                "inspect_den": false,
+            }),
+        )
+        .await
+        {
+            if let Err(err) =
+                post_adapter_environment(config, session_id, snapshot, Some(title)).await
             {
-                context.thread_title = title.clone();
-            }
-            let updated_at = event
-                .get("updated_at")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            send_session_info_update(session_id, title, updated_at).await?;
-            let runtime = event
-                .pointer("/meta/bears/runtime")
-                .cloned()
-                .or_else(|| event.pointer("/_meta/bears/runtime").cloned())
-                .or_else(|| event.get("runtime").cloned());
-            let context_budget = event
-                .pointer("/meta/bears/context_budget")
-                .cloned()
-                .or_else(|| event.pointer("/_meta/bears/context_budget").cloned())
-                .or_else(|| event.get("context_budget").cloned());
-            send_DEN_runtime_session_info_update(session_id, runtime, context_budget).await?;
-            Ok(false)
-        }
-        "plan_update" => {
-            if let Some(fallback) = event.get("approval_fallback") {
-                if let Some(message) = plan_approval_fallback_message(fallback) {
-                    send_agent_message_chunk_for_turn(
-                        shared_state,
-                        session_id,
-                        turn_token,
-                        &message,
-                    )
-                    .await?;
-                }
-            }
-            let entries = plan_entries_from_plan_update_event(event);
-            if entries.is_empty() {
-                if env_bool("DEN_ACP_DEBUG_UI") {
-                    eprintln!(
-                        "bear-armature: received empty plan update for session_id={}; not sending ACP plan UI update",
-                        session_id
-                    );
-                }
-            } else if should_send_plan_update(shared_state, session_id, &entries).await? {
-                if is_current_prompt_turn(shared_state, session_id, turn_token, "plan_update").await
-                {
-                    send_plan_update(session_id, entries).await?;
-                }
-            } else if env_bool("DEN_ACP_DEBUG_UI") {
                 eprintln!(
-                    "bear-armature: skipped unchanged plan update for session_id={}",
+                    "bear-armature: failed to publish adapter environment after conversation_resolved session_id={} error={err:#}",
                     session_id
                 );
             }
-            Ok(false)
         }
-        "mode_update" => {
-            if let Some(mode) = event.get("mode").and_then(Value::as_str) {
-                if matches!(mode, MODE_ASK | MODE_PLAN | MODE_WRITE) {
-                    notify_mode_state(session_id, mode).await?;
-                }
-            }
-            Ok(false)
-        }
-        "conversation_resolved" => {
-            if let Some(conversation_id) = event
-                .get("conversation_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| s.starts_with("conv-"))
-            {
-                let context = adapter_state
-                    .session_contexts
-                    .entry(session_id.to_string())
-                    .or_default();
-                context.resolved_conversation_id = Some(conversation_id.to_string());
-                let thread_title = context.thread_title.clone();
-                {
-                    let mut shared_contexts = shared_state.session_contexts.lock().await;
-                    let shared = shared_contexts.entry(session_id.to_string()).or_default();
-                    shared.resolved_conversation_id = Some(conversation_id.to_string());
-                    if thread_title.is_some() {
-                        shared.thread_title = thread_title.clone();
-                    }
-                }
-                if let Some(title) = thread_title.as_deref() {
-                    if let Ok(snapshot) = collect_bear_environment(
-                        adapter_state,
-                        session_id,
-                        Some(config),
-                        None,
-                        &json!({
-                            "include_session_mcp": true,
-                            "include_client_capabilities": true,
-                            "include_raw_context": true,
-                            "inspect_den": false,
-                        }),
-                    )
-                    .await
-                    {
-                        if let Err(err) =
-                            post_adapter_environment(config, session_id, snapshot, Some(title))
-                                .await
-                        {
-                            eprintln!(
-                                "bear-armature: failed to publish adapter environment after conversation_resolved session_id={} error={err:#}",
-                                session_id
-                            );
-                        }
-                    }
-                }
-                eprintln!(
-                    "bear-armature: session_id={} resolved conversation_id={}",
-                    session_id, conversation_id
-                );
-            }
-            Ok(false)
-        }
-
-        "turn_result" => Ok(true),
-        "turn_complete" => Ok(true),
-        "done" => Ok(true),
-        _ => Ok(false),
     }
+    eprintln!(
+        "bear-armature: session_id={} resolved conversation_id={}",
+        session_id, conversation_id
+    );
+    Ok(())
 }
 
-async fn handle_permission_request_event(
+pub(crate) async fn handle_permission_request_event(
     config: &Config,
     adapter_state: &mut AdapterState,
+    shared_state: &AdapterSharedState,
     mcp_registry: &McpRegistry,
     session_id: &str,
     event: &Value,
 ) -> Result<()> {
-    let permission_id = event
-        .get("permission_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("permission_request missing permission_id"))?;
-    let tool_call_id = event
-        .get("tool_call_id")
-        .and_then(Value::as_str)
-        .unwrap_or(permission_id);
-    let tool_name = event
-        .get("tool_name")
-        .and_then(Value::as_str)
-        .unwrap_or("web_fetch");
-    let title = event
-        .get("title")
-        .and_then(Value::as_str)
+    let canonical = BearWireClientWaitingData::parse(event)?;
+    let permission_id = canonical.permission.id.trim();
+    let obligation_id = Some(canonical.obligation_id.trim());
+    let tool_call_id = canonical.tool_call.id.trim();
+    let tool_name = canonical.tool_call.name.trim();
+    if tool_request_execution_target(event) == Some("den") {
+        eprintln!(
+            "bear-armature: BearWire invariant violation: Den-owned tool arrived as client.waiting session_id={} tool_call_id={} tool_name={} permission_id={}",
+            session_id,
+            tool_call_id,
+            tool_name,
+            permission_id
+        );
+    }
+    let title = canonical
+        .permission
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
         .unwrap_or("Permission request");
-    let reason = event
-        .get("reason")
-        .and_then(Value::as_str)
+    let reason = canonical
+        .permission
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
         .unwrap_or("BEARS requests permission.");
-    let target = event.get("target").cloned().unwrap_or_else(|| json!({}));
+    let target = canonical
+        .permission
+        .target
+        .clone()
+        .unwrap_or_else(|| canonical.tool_call.arguments.clone());
     let url = target.get("url").and_then(Value::as_str);
     let host = target.get("host").and_then(Value::as_str);
     let plan_mode_id = target.get("plan_mode_id").and_then(Value::as_str);
     let target_kind = target.get("kind").and_then(Value::as_str);
     let is_plan_mode = target_kind == Some("acp_plan_mode") || plan_mode_id.is_some();
+    let command = target.get("command").and_then(Value::as_str);
+    let command_args = target
+        .get("args")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    let cwd = target.get("cwd").and_then(Value::as_str);
+    let timeout_ms = target.get("timeout_ms").and_then(Value::as_u64);
+    let max_output_bytes = target.get("max_output_bytes").and_then(Value::as_u64);
+    let is_command_permission =
+        matches!(tool_name, "process_run" | "terminal_run_command") || command.is_some();
     let mut display = tool_display(tool_name);
     if is_plan_mode {
         display.title = "Approve implementation plan".to_string();
         display.kind = ToolKind::SwitchMode;
         display.verb = "Reviewing plan".to_string();
         display.permission_operation = "approve this implementation plan".to_string();
+    } else if is_command_permission {
+        display.title = "Approve command".to_string();
+        display.kind = ToolKind::Execute;
+        display.verb = "Reviewing command".to_string();
+        display.permission_operation = "run this command".to_string();
     }
     let plan_body = target.get("body").and_then(Value::as_str);
     let artifact_path = target.get("artifact_path").and_then(Value::as_str);
+    let command_line = command.map(|command| {
+        if command_args.is_empty() {
+            command.to_string()
+        } else {
+            format!("{command} {command_args}")
+        }
+    });
+    let site_account = url.and_then(crate::approvals::approval_url_site_account_scope);
+    let source_path = target.get("source_path").and_then(Value::as_str);
+    let destination_path = target.get("destination_path").and_then(Value::as_str);
+    let path = target
+        .get("path")
+        .or_else(|| target.get("file_path"))
+        .and_then(Value::as_str);
+    let policy = policy_from_event(event);
+    let context_for_approval = adapter_state
+        .session_contexts
+        .get(session_id)
+        .cloned()
+        .or_else(|| {
+            shared_state
+                .session_contexts
+                .try_lock()
+                .ok()?
+                .get(session_id)
+                .cloned()
+        });
+    let target_path_for_approval = context_for_approval
+        .as_ref()
+        .and_then(|context| policy_target_path(context, &canonical.tool_call.arguments, &policy))
+        .or_else(|| {
+            path.and_then(|path| {
+                context_for_approval
+                    .as_ref()
+                    .and_then(|context| resolve_requested_tool_path(context, path).ok())
+                    .or_else(|| normalize_requested_tool_path(path).ok())
+            })
+        });
     let target_label = if is_plan_mode {
         artifact_path
             .or(plan_mode_id)
             .unwrap_or("submitted plan artifact")
+    } else if let Some(command_line) = command_line.as_deref() {
+        command_line
+    } else if let Some(source_path) = source_path {
+        source_path
+    } else if let Some(path) = path {
+        path
     } else {
         url.or(host).unwrap_or("the requested target")
     };
@@ -7922,25 +8851,141 @@ async fn handle_permission_request_event(
             plan_body
                 .unwrap_or("Plan body is unavailable; use the artifact path for audit context.")
         )
+    } else if is_command_permission {
+        format!(
+            "{reason}\n\nTool: {tool_name}\nCommand: {}\nWorking directory: {}\nTimeout: {}\nMax output bytes: {}\n\nApprove only if this command matches the user's requested task.",
+            command_line.as_deref().unwrap_or("<missing command>"),
+            cwd.unwrap_or("<missing cwd>"),
+            timeout_ms.map(|value| format!("{value}ms")).unwrap_or_else(|| "default".to_string()),
+            max_output_bytes.map(|value| value.to_string()).unwrap_or_else(|| "default".to_string()),
+        )
+    } else if matches!(tool_name, "chrome_open" | "web_fetch" | "local_web_fetch") {
+        let mut body = format!(
+            "{reason}\n\nAction: {}\nURL: {}",
+            display.permission_operation,
+            url.unwrap_or("<missing url>")
+        );
+        if let Some(site_account) = site_account.as_deref() {
+            body.push_str(&format!("\nKnown site account: {site_account}"));
+        }
+        if let Some(host) = host {
+            body.push_str(&format!("\nHost: {host}"));
+        }
+        body
+    } else if matches!(
+        tool_name,
+        "chrome_snapshot"
+            | "chrome_console_messages"
+            | "chrome_network_requests"
+            | "chrome_screenshot"
+    ) {
+        let mut body = format!("{reason}\n\nAction: {}", display.permission_operation);
+        if let Some(url) = url {
+            body.push_str(&format!("\nURL: {url}"));
+        }
+        if let Some(site_account) = site_account.as_deref() {
+            body.push_str(&format!("\nKnown site account: {site_account}"));
+        }
+        if let Some(host) = host {
+            body.push_str(&format!("\nHost: {host}"));
+        }
+        body
+    } else if matches!(tool_name, "fs_delete_path") {
+        format!(
+            "{reason}\n\nAction: {}\nPath: {}",
+            display.permission_operation,
+            path.unwrap_or("<missing path>")
+        )
+    } else if matches!(tool_name, "fs_move_path" | "fs_copy_path") {
+        format!(
+            "{reason}\n\nAction: {}\nSource: {}\nDestination: {}",
+            display.permission_operation,
+            source_path.unwrap_or("<missing source>"),
+            destination_path.unwrap_or("<missing destination>")
+        )
+    } else if let Some(path) = path {
+        format!(
+            "{reason}\n\nAction: {}\nPath: {}",
+            display.permission_operation, path
+        )
     } else {
-        format!("{reason}\n\nTool: {tool_name}\nTarget: {target_label}")
+        format!(
+            "{reason}\n\nAction: {}\nTarget: {target_label}",
+            display.permission_operation
+        )
+    };
+    let request_title = if is_command_permission {
+        command_line
+            .as_deref()
+            .map(|command| format!("Run command: {command}"))
+            .unwrap_or_else(|| "Run command".to_string())
+    } else if matches!(tool_name, "chrome_open") {
+        url.map(|url| format!("Open: {}", truncate_title(url)))
+            .unwrap_or_else(|| display.title.clone())
+    } else if matches!(tool_name, "web_fetch" | "local_web_fetch") {
+        url.map(|url| format!("Fetch: {}", truncate_title(url)))
+            .unwrap_or_else(|| display.title.clone())
+    } else if matches!(
+        tool_name,
+        "chrome_snapshot"
+            | "chrome_console_messages"
+            | "chrome_network_requests"
+            | "chrome_screenshot"
+    ) {
+        if let Some(url) = url {
+            format!("{}: {}", display.title, truncate_title(url))
+        } else {
+            display.title.clone()
+        }
+    } else if matches!(tool_name, "fs_delete_path") {
+        path.map(|path| format!("Delete: {}", truncate_title(path)))
+            .unwrap_or_else(|| display.title.clone())
+    } else if matches!(tool_name, "fs_move_path" | "fs_copy_path") {
+        match (source_path, destination_path) {
+            (Some(source), Some(destination)) => format!(
+                "{}: {} -> {}",
+                display.title,
+                truncate_title(source),
+                truncate_title(destination)
+            ),
+            _ => display.title.clone(),
+        }
+    } else if let Some(path) = path {
+        format!("{}: {}", display.title, truncate_title(path))
+    } else {
+        title.to_string()
     };
     let mut content = vec![ToolCallContent::from(permission_body)];
     let fields = ToolCallUpdateFields::new()
         .kind(Some(display.kind))
         .status(Some(ToolCallStatus::Pending))
-        .title(Some(title.to_string()))
+        .title(Some(request_title))
         .content(Some(std::mem::take(&mut content)))
         .raw_input(Some(target.clone()));
     let tool_call = ToolCallUpdate::new(tool_call_id.to_string(), fields).meta(Some({
         let mut meta = serde_json::Map::new();
         meta.insert("toolName".to_string(), json!(tool_name));
         meta.insert("permissionId".to_string(), json!(permission_id));
+        if let Some(obligation_id) = obligation_id {
+            meta.insert("obligationId".to_string(), json!(obligation_id));
+        }
         if let Some(url) = url {
             meta.insert("targetUrl".to_string(), json!(url));
         }
         if let Some(host) = host {
             meta.insert("targetHost".to_string(), json!(host));
+        }
+        if let Some(site_account) = site_account.as_ref() {
+            meta.insert("siteAccount".to_string(), json!(site_account));
+        }
+        if let Some(command) = command {
+            meta.insert("targetCommand".to_string(), json!(command));
+        }
+        if !command_args.is_empty() {
+            meta.insert("targetCommandArgs".to_string(), json!(command_args));
+        }
+        if let Some(cwd) = cwd {
+            meta.insert("targetCwd".to_string(), json!(cwd));
         }
         if let Some(plan_mode_id) = plan_mode_id {
             meta.insert("planModeId".to_string(), json!(plan_mode_id));
@@ -7963,35 +9008,51 @@ async fn handle_permission_request_event(
                 agent_client_protocol::schema::PermissionOptionKind::RejectOnce,
             ),
         ]
+    } else if is_command_permission {
+        permission_options_for_context(
+            adapter_state.session_contexts.get(session_id),
+            None,
+            None,
+            command_line.as_deref(),
+            "commands",
+        )
     } else {
-        let mut options = vec![agent_client_protocol::schema::PermissionOption::new(
-            "allow_once",
-            "Allow this fetch once",
-            agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
-        )];
-        if url.is_some() {
-            options.push(agent_client_protocol::schema::PermissionOption::new(
-                "allow_url",
-                "Always allow this exact URL",
-                agent_client_protocol::schema::PermissionOptionKind::AllowAlways,
-            ));
-        }
-        if let Some(host) = host {
-            options.push(agent_client_protocol::schema::PermissionOption::new(
-                "allow_host",
-                format!("Always allow this host: {host}"),
-                agent_client_protocol::schema::PermissionOptionKind::AllowAlways,
-            ));
-        }
-        options.push(agent_client_protocol::schema::PermissionOption::new(
-            "reject_once",
-            "Deny this fetch",
-            agent_client_protocol::schema::PermissionOptionKind::RejectOnce,
-        ));
-        options
+        permission_options_for_context(
+            context_for_approval.as_ref(),
+            target_path_for_approval.as_deref(),
+            url,
+            None,
+            permission_family_label(tool_name),
+        )
     };
     let request = RequestPermissionRequest::new(session_id.to_string(), tool_call, options);
-    let decision =
+    let auto_allowed = if let Some(context) = context_for_approval.as_ref() {
+        shared_state
+            .approval_cache
+            .is_allowed_for_target(
+                context,
+                tool_name,
+                target_path_for_approval.as_deref(),
+                url,
+                command_line.as_deref(),
+            )
+            .await
+    } else {
+        false
+    };
+    let decision = if auto_allowed {
+        if bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: permission_auto_allowed session_id={} tool_name={} target={}",
+                session_id, tool_name, target_label
+            );
+        }
+        PermissionDecision {
+            approved: true,
+            remember: false,
+            scope: ApprovalScope::Workspace,
+        }
+    } else {
         match send_permission_request(adapter_state, request, std::time::Duration::from_secs(120))
             .await
         {
@@ -8004,6 +9065,7 @@ async fn handle_permission_request_event(
                     permission_id,
                     json!({
                         "decision": "timeout",
+                        "obligation_id": obligation_id,
                         "plan_mode_id": plan_mode_id,
                         "run_id": event.get("run_id").and_then(Value::as_str),
                     }),
@@ -8032,7 +9094,26 @@ async fn handle_permission_request_event(
                 .await;
                 return Ok(());
             }
-        };
+        }
+    };
+    if decision.approved && decision.remember {
+        if let Some(context) = context_for_approval.as_ref() {
+            shared_state
+                .approval_cache
+                .remember_for_target(
+                    context,
+                    tool_name,
+                    policy.risk(),
+                    decision.scope,
+                    ApprovalTarget {
+                        path: target_path_for_approval.as_deref(),
+                        url,
+                        command: command_line.as_deref(),
+                    },
+                )
+                .await;
+        }
+    }
     let decision_str = if is_plan_mode {
         if decision.approved {
             "approve"
@@ -8041,18 +9122,17 @@ async fn handle_permission_request_event(
         }
     } else {
         match decision.scope {
+            ApprovalScope::SiteAccount if decision.approved => "allow_site_account",
             ApprovalScope::Host if decision.approved => "allow_host",
             ApprovalScope::Workspace
             | ApprovalScope::Directory
             | ApprovalScope::Command
+            | ApprovalScope::CommandExactWorkspace
+            | ApprovalScope::CommandFamilyWorkspace
             | ApprovalScope::Global
                 if decision.approved =>
             {
-                if decision.remember && url.is_some() {
-                    "allow_url"
-                } else {
-                    "allow_once"
-                }
+                "allow_once"
             }
             _ => "reject_once",
         }
@@ -8063,6 +9143,7 @@ async fn handle_permission_request_event(
         permission_id,
         json!({
             "decision": decision_str,
+            "obligation_id": obligation_id,
             "plan_mode_id": plan_mode_id,
             "run_id": event.get("run_id").and_then(Value::as_str),
         }),
@@ -8108,20 +9189,38 @@ async fn handle_permission_request_event(
             .and_then(Value::as_str)
             .unwrap_or(tool_name);
         let args = local_tool.get("args").cloned().unwrap_or_else(|| json!({}));
+        if !shared_state
+            .tool_tasks
+            .try_register(session_id, tool_call_id, tool_name, None)
+            .await
+        {
+            tracing::debug!(
+                target: "bear_armature::lifecycle",
+                session_id,
+                tool_call_id,
+                tool_name,
+                "duplicate permission-local tool task ignored"
+            );
+            return Ok(());
+        }
+        shared_state
+            .tool_tasks
+            .remember_input(session_id, tool_call_id, tool_name, args.clone())
+            .await;
         let policy = policy_from_event(local_tool);
         let result = execute_local_tool(
             adapter_state,
             mcp_registry,
             session_id,
             tool_name,
-            args,
+            args.clone(),
             &policy,
         )
         .await;
         let started = std::time::Instant::now();
         match result {
             Ok(value) => {
-                if tool_name == "update_plan" {
+                if matches!(tool_name, "update_task_list" | "update_plan") {
                     let entries = value
                         .get("plan")
                         .map(plan_entries_from_work_plan_args)
@@ -8133,28 +9232,99 @@ async fn handle_permission_request_event(
                         notify_mode_state(session_id, mode).await?;
                     }
                 }
+                let preview = tool_completion_preview(tool_name, &value);
+                let local_event = json!({
+                    "run_id": event.get("run_id").and_then(Value::as_str),
+                    "data": {
+                        "tool_call": {
+                            "id": tool_call_id,
+                            "name": tool_name,
+                            "arguments": args,
+                        }
+                    }
+                });
                 let payload = json!({
                     "tool_call_id": tool_call_id,
                     "run_id": event.get("run_id").and_then(Value::as_str),
                     "tool_name": result_tool_name,
                     "status": "ok",
                     "content": "",
-                    "structured_content": value,
+                    "structured_content": value.clone(),
                     "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_completed", "duration_ms": started.elapsed().as_millis() }
                 });
                 post_tool_result(config, session_id, tool_call_id, payload).await?;
+                if let Err(err) = send_tool_call_update(
+                    session_id,
+                    tool_call_id,
+                    tool_name,
+                    ToolCallUpdatePayload {
+                        status: "completed",
+                        text: &preview,
+                        event: Some(&local_event),
+                        raw_output: Some(value.clone()),
+                        extra_content: Vec::new(),
+                    },
+                )
+                .await
+                {
+                    eprintln!(
+                        "bear-armature: ACP tool-card update failed after Den accepted permission-local result session_id={} tool_call_id={} tool_name={} error={:#}",
+                        session_id,
+                        tool_call_id,
+                        tool_name,
+                        err
+                    );
+                }
             }
             Err(err) => {
+                let message = format!("{err:#}");
+                let local_event = json!({
+                    "run_id": event.get("run_id").and_then(Value::as_str),
+                    "data": {
+                        "tool_call": {
+                            "id": tool_call_id,
+                            "name": tool_name,
+                            "arguments": args,
+                        }
+                    }
+                });
                 let payload = json!({
                     "tool_call_id": tool_call_id,
                     "run_id": event.get("run_id").and_then(Value::as_str),
                     "tool_name": result_tool_name,
                     "status": "error",
-                    "content": format!("{err:#}"),
+                    "content": message,
                     "structured_content": {},
                     "diagnostic": { "component": "bear-armature", "phase": "permission_local_tool_failed", "duration_ms": started.elapsed().as_millis() }
                 });
                 post_tool_result(config, session_id, tool_call_id, payload).await?;
+                if let Err(err) = send_tool_call_update(
+                    session_id,
+                    tool_call_id,
+                    tool_name,
+                    ToolCallUpdatePayload {
+                        status: "failed",
+                        text: &message,
+                        event: Some(&local_event),
+                        raw_output: Some(json!({
+                            "component": "bear-armature",
+                            "phase": "permission_local_tool_failed",
+                            "error": message,
+                            "duration_ms": started.elapsed().as_millis(),
+                        })),
+                        extra_content: Vec::new(),
+                    },
+                )
+                .await
+                {
+                    eprintln!(
+                        "bear-armature: ACP tool-card failure update failed after Den accepted permission-local result session_id={} tool_call_id={} tool_name={} error={:#}",
+                        session_id,
+                        tool_call_id,
+                        tool_name,
+                        err
+                    );
+                }
             }
         }
     }
@@ -8192,7 +9362,11 @@ impl ToolDisplay {
 
     fn from_event(tool_name: &str, event: &Value) -> Self {
         let mut display = tool_display(tool_name);
-        let Some(event_display) = event.get("display") else {
+        let Some(event_display) = event_display_from_event(event) else {
+            if is_placeholder_tool_name(tool_name) {
+                display.title = fallback_tool_title_from_event(event);
+                display.permission_operation = display.title.to_ascii_lowercase();
+            }
             return display;
         };
         if let Some(title) = event_display
@@ -8240,16 +9414,119 @@ impl ToolDisplay {
             .filter(|s| !s.is_empty())
             .map(str::to_string);
         display.arguments_summary = event_display.get("arguments_summary").cloned();
+        if is_placeholder_tool_name(tool_name) && display.title == "Tool call" {
+            display.title = fallback_tool_title_from_event(event);
+            display.permission_operation = display.title.to_ascii_lowercase();
+        }
         display
     }
 }
 
-fn is_den_server_tool_request(event: &Value) -> bool {
-    event
-        .get("policy")
-        .and_then(|policy| policy.get("execution_target"))
+fn fallback_tool_title_from_event(event: &Value) -> String {
+    let args = tool_args_from_event(event);
+    for key in ["path", "command", "url", "query", "glob", "cwd"] {
+        if let Some(value) = args
+            .and_then(|args| args.get(key))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return format!("Tool call: {}", truncate_title(value));
+        }
+    }
+    if let Some(keys) = args
+        .and_then(Value::as_object)
+        .map(|map| map.keys().take(4).cloned().collect::<Vec<_>>().join(", "))
+        .filter(|keys| !keys.is_empty())
+    {
+        return format!("Tool call with {keys}");
+    }
+    if let Some(tool_call_id) = event
+        .get("tool_call_id")
+        .or_else(|| event.pointer("/data/tool_call_id"))
+        .or_else(|| event.pointer("/data/tool_call/id"))
         .and_then(Value::as_str)
-        == Some("den")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return format!("Tool call: {}", truncate_title(tool_call_id));
+    }
+    "Tool call".to_string()
+}
+
+pub(crate) fn is_placeholder_tool_name(tool_name: &str) -> bool {
+    let trimmed = tool_name.trim();
+    trimmed.is_empty()
+        || matches!(
+            trimmed.to_ascii_lowercase().as_str(),
+            "tool" | "local_tool" | "local tool" | "unknown" | "unknown_tool"
+        )
+}
+
+fn fallback_tool_title(tool_name: &str) -> String {
+    let trimmed = tool_name.trim();
+    if is_placeholder_tool_name(trimmed) {
+        return "Tool call".to_string();
+    }
+    let words = trimmed
+        .split(|ch: char| matches!(ch, '_' | '-' | '.' | '/' | ':'))
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        return "Tool call".to_string();
+    }
+    let mut out = String::new();
+    for (index, word) in words.into_iter().enumerate() {
+        if index > 0 {
+            out.push(' ');
+        }
+        let mut chars = word.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
+        }
+    }
+    out
+}
+
+fn mcp_tool_title(provider_name: &str) -> String {
+    let Some(rest) = provider_name.strip_prefix("mcp__") else {
+        return fallback_tool_title(provider_name);
+    };
+    let mut parts = rest.split("__").collect::<Vec<_>>();
+    let tool = parts.pop().unwrap_or(rest);
+    let server = parts.join(" ");
+    let server_title = if server.contains("chrome") && server.contains("devtools") {
+        "Chrome DevTools".to_string()
+    } else if server.trim().is_empty() {
+        "MCP".to_string()
+    } else {
+        fallback_tool_title(&server)
+    };
+    format!("{server_title}: {}", fallback_tool_title(tool))
+}
+
+fn tool_request_execution_target(event: &Value) -> Option<&str> {
+    event
+        .get("execution_target")
+        .or_else(|| event.pointer("/data/execution_target"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            event
+                .get("policy")
+                .or_else(|| event.pointer("/data/policy"))
+                .or_else(|| event.pointer("/data/tool_call/policy"))
+                .and_then(|policy| policy.get("execution_target"))
+                .and_then(Value::as_str)
+        })
+}
+
+pub(crate) fn is_den_server_tool_request(event: &Value) -> bool {
+    tool_request_execution_target(event) == Some("den")
+}
+
+pub(crate) fn friendly_tool_title(tool_name: &str) -> String {
+    tool_display(tool_name).title
 }
 
 fn tool_display(tool_name: &str) -> ToolDisplay {
@@ -8329,9 +9606,81 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             "Creating git stash in",
             "create git stash",
         ),
-        "web_fetch" => {
+        "web_fetch" | "local_web_fetch" => {
             ToolDisplay::builtin("Fetch URL", ToolKind::Fetch, "Fetching", "fetch this URL")
         }
+        "web_search" => ToolDisplay::builtin(
+            "Search web",
+            ToolKind::Search,
+            "Searching web",
+            "search the web",
+        ),
+        "session_info" | "bear_environment" => ToolDisplay::builtin(
+            "Inspect session",
+            ToolKind::Read,
+            "Inspecting session",
+            "inspect session context",
+        ),
+        "memory_browse" => ToolDisplay::builtin(
+            "Browse memory",
+            ToolKind::Read,
+            "Browsing memory",
+            "browse memory",
+        ),
+        "memory_read" => ToolDisplay::builtin(
+            "Read memory",
+            ToolKind::Read,
+            "Reading memory",
+            "read memory",
+        ),
+        "memory_search" => ToolDisplay::builtin(
+            "Search memory",
+            ToolKind::Search,
+            "Searching memory",
+            "search memory",
+        ),
+        "memory_write_entry" => ToolDisplay::builtin(
+            "Write memory entry",
+            ToolKind::Edit,
+            "Writing memory",
+            "write memory",
+        ),
+        "memory_request_review" => ToolDisplay::builtin(
+            "Request memory review",
+            ToolKind::Think,
+            "Requesting memory review",
+            "request memory review",
+        ),
+        "list_task_lists" => ToolDisplay::builtin(
+            "List task lists",
+            ToolKind::Read,
+            "Listing task lists",
+            "list task lists",
+        ),
+        "get_task_list_status" => ToolDisplay::builtin(
+            "Get task list status",
+            ToolKind::Read,
+            "Reading task list status",
+            "read task list status",
+        ),
+        "update_task" => ToolDisplay::builtin(
+            "Update task",
+            ToolKind::Edit,
+            "Updating task",
+            "update task",
+        ),
+        "update_task_list" | "update_plan" => ToolDisplay::builtin(
+            "Update task list",
+            ToolKind::Edit,
+            "Updating task list",
+            "update task list",
+        ),
+        "request_task_list_handoff" | "request_work_handoff" => ToolDisplay::builtin(
+            "Request work handoff",
+            ToolKind::Think,
+            "Requesting work handoff",
+            "request work handoff",
+        ),
         "process_run" => ToolDisplay::builtin(
             "Run process",
             ToolKind::Execute,
@@ -8344,12 +9693,7 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             "Running terminal command in",
             "run this terminal command",
         ),
-        "bear_environment" => ToolDisplay::builtin(
-            "Inspect bear environment",
-            ToolKind::Read,
-            "Inspecting bear environment for",
-            "inspect the bear environment",
-        ),
+
         "chrome_open" => ToolDisplay::builtin(
             "Chrome open",
             ToolKind::Fetch,
@@ -8413,12 +9757,27 @@ fn tool_display(tool_name: &str) -> ToolDisplay {
             "Deleting",
             "delete this path",
         ),
-        _ => ToolDisplay::builtin(
-            "Local tool",
-            ToolKind::Read,
-            "Running",
-            "run this local tool",
-        ),
+        _ if tool_name.starts_with("mcp__") => {
+            let title = mcp_tool_title(tool_name);
+            ToolDisplay {
+                title: title.clone(),
+                kind: ToolKind::Other,
+                verb: "Running MCP tool".to_string(),
+                permission_operation: title.to_ascii_lowercase(),
+                subtitle: Some("MCP tool".to_string()),
+                category: Some("mcp".to_string()),
+                arguments_summary: None,
+            }
+        }
+        _ => ToolDisplay {
+            title: fallback_tool_title(tool_name),
+            kind: ToolKind::Other,
+            verb: "Running".to_string(),
+            permission_operation: format!("run `{tool_name}`"),
+            subtitle: None,
+            category: None,
+            arguments_summary: None,
+        },
     }
 }
 
@@ -8430,22 +9789,36 @@ fn permission_family_label(tool_name: &str) -> &'static str {
         "git_read" => "reading git status",
         "git_write" => "modifying git status",
         "command_run" => "running commands",
-        "network" => "network access",
-        "browser" => "browser use",
+        "network" | "browser" => "network access",
         _ => "similar local actions",
     }
 }
 
 fn tool_call_title(tool_name: &str, event: &Value) -> String {
-    if matches!(tool_name, "process_run" | "terminal_run_command") {
-        let command = event
-            .get("args")
+    if matches!(tool_name, "set_conversation_title") {
+        if let Some(title) = tool_args_from_event(event)
+            .and_then(|args| args.get("title"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            return format!("Set conversation title: {}", truncate_title(title));
+        }
+        // ponytail: if a future transport shape hides the title somewhere else, prefer a
+        // plain static label over pretending the requested title was `conversation`.
+        return "Set conversation title".to_string();
+    }
+    if matches!(
+        tool_name,
+        "run_command" | "process_run" | "terminal_run_command"
+    ) {
+        let command_args = tool_args_from_event(event);
+        let command = command_args
             .and_then(|args| args.get("command"))
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim();
-        let args = event
-            .get("args")
+        let args = command_args
             .and_then(|args| args.get("args"))
             .and_then(Value::as_array)
             .map(|items| {
@@ -8470,14 +9843,42 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
             };
             return if tool_name == "terminal_run_command" {
                 format!("Run terminal command: {rendered}")
+            } else if tool_name == "run_command" {
+                format!("Run command: {rendered}")
             } else {
                 format!("Run process: {rendered}")
             };
         }
     }
+    if matches!(tool_name, "update_task") {
+        let args = tool_args_from_event(event);
+        let subject = args
+            .and_then(|args| args.get("title"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                args.and_then(|args| args.get("task_id"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            });
+        let status = args
+            .and_then(|args| args.get("status"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        return match (subject, status) {
+            (Some(subject), Some(status)) => {
+                format!("Update task: {} → {}", truncate_title(subject), status)
+            }
+            (Some(subject), None) => format!("Update task: {}", truncate_title(subject)),
+            (None, Some(status)) => format!("Update task: {status}"),
+            (None, None) => "Update task".to_string(),
+        };
+    }
     if matches!(tool_name, "fs_search_files") {
-        let query = event
-            .get("args")
+        let query = tool_args_from_event(event)
             .and_then(|args| args.get("query"))
             .and_then(Value::as_str)
             .map(str::trim)
@@ -8486,8 +9887,7 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
         return format!("Search files: {}", truncate_title(query));
     }
     if matches!(tool_name, "fs_find_paths") {
-        let glob = event
-            .get("args")
+        let glob = tool_args_from_event(event)
             .and_then(|args| args.get("glob"))
             .and_then(Value::as_str)
             .map(str::trim)
@@ -8507,13 +9907,12 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
         );
     }
     if matches!(tool_name, "fs_move_path" | "fs_copy_path") {
-        let source = event
-            .get("args")
+        let args = tool_args_from_event(event);
+        let source = args
             .and_then(|a| a.get("source_path"))
             .and_then(Value::as_str)
             .unwrap_or("source");
-        let destination = event
-            .get("args")
+        let destination = args
             .and_then(|a| a.get("destination_path"))
             .and_then(Value::as_str)
             .unwrap_or("destination");
@@ -8528,9 +9927,37 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
         let path = tool_path(event).unwrap_or("path");
         return format!("Delete path: {}", truncate_title(path));
     }
+    if matches!(tool_name, "fs_read_text_file" | "fs.read_text_file") {
+        let path = tool_path(event).unwrap_or("file");
+        return format!("Read file: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_list_directory") {
+        let path = tool_path(event).unwrap_or("directory");
+        return format!("List directory: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_stat") {
+        let path = tool_path(event).unwrap_or("path");
+        return format!("Stat path: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_edit_file" | "fs_replace_text") {
+        let path = tool_path(event).unwrap_or("file");
+        return format!("Edit file: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_create_text_file") {
+        let path = tool_path(event).unwrap_or("file");
+        return format!("Create file: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_create_directory") {
+        let path = tool_path(event).unwrap_or("directory");
+        return format!("Create directory: {}", truncate_title(path));
+    }
+    if matches!(tool_name, "fs_apply_patch") {
+        let path = tool_path(event).unwrap_or("patch target");
+        return format!("Apply patch: {}", truncate_title(path));
+    }
     if matches!(tool_name, "chrome_open") {
         if let Some(url) = tool_url(event) {
-            return format!("Chrome open: {}", truncate_title(url));
+            return format!("Open page: {}", truncate_title(url));
         }
     }
     tool_display(tool_name).title
@@ -8584,8 +10011,7 @@ fn tool_target_kind(tool_name: &str) -> &'static str {
 }
 
 fn tool_path(event: &Value) -> Option<&str> {
-    event
-        .get("args")
+    tool_args_from_event(event)
         .and_then(|v| {
             v.get("path")
                 .or_else(|| v.get("source_path"))
@@ -8598,15 +10024,13 @@ fn tool_path(event: &Value) -> Option<&str> {
 }
 
 fn tool_url(event: &Value) -> Option<&str> {
-    event
-        .get("args")
+    tool_args_from_event(event)
         .and_then(|v| v.get("url"))
         .and_then(Value::as_str)
 }
 
 fn tool_command(event: &Value) -> Option<&str> {
-    event
-        .get("args")
+    tool_args_from_event(event)
         .and_then(|v| v.get("command"))
         .and_then(Value::as_str)
 }
@@ -8621,8 +10045,7 @@ fn tool_locations_from_event(tool_name: &str, event: &Value) -> Option<Vec<ToolC
         return None;
     }
     let mut location = ToolCallLocation::new(path_buf);
-    if let Some(line) = event
-        .get("args")
+    if let Some(line) = tool_args_from_event(event)
         .and_then(|v| v.get("line"))
         .and_then(Value::as_u64)
         .filter(|line| *line > 0)
@@ -8639,8 +10062,7 @@ fn tool_supports_input_location(tool_name: &str, event: &Value) -> bool {
         | "fs_edit_file"
         | "fs_replace_text"
         | "fs_create_text_file" => true,
-        "fs_delete_path" => event
-            .get("args")
+        "fs_delete_path" => tool_args_from_event(event)
             .and_then(|v| v.get("expected_kind"))
             .and_then(Value::as_str)
             .map(|kind| kind == "file")
@@ -8671,9 +10093,130 @@ fn tool_status_from_str(status: &str) -> ToolCallStatus {
     match status {
         "pending" => ToolCallStatus::Pending,
         "running" | "in_progress" => ToolCallStatus::InProgress,
-        "completed" => ToolCallStatus::Completed,
+        "completed" | "complete" | "ok" | "success" => ToolCallStatus::Completed,
         "failed" | "error" => ToolCallStatus::Failed,
+        "incomplete" => ToolCallStatus::InProgress,
         _ => ToolCallStatus::Pending,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SurfaceToolStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+}
+
+impl SurfaceToolStatus {
+    fn from_str(status: &str) -> Self {
+        match status {
+            "running" | "in_progress" | "incomplete" => Self::InProgress,
+            "completed" | "complete" | "ok" | "success" => Self::Completed,
+            "failed" | "error" => Self::Failed,
+            _ => Self::Pending,
+        }
+    }
+
+    fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed)
+    }
+
+    fn rank(self) -> u8 {
+        match self {
+            Self::Pending => 0,
+            Self::InProgress => 1,
+            Self::Completed | Self::Failed => 2,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::InProgress => "in_progress",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+fn should_emit_surface_tool_status(
+    previous: Option<SurfaceToolStatus>,
+    next: SurfaceToolStatus,
+) -> bool {
+    let Some(previous) = previous else {
+        return true;
+    };
+    if previous.is_terminal() {
+        return false;
+    }
+    next.rank() >= previous.rank()
+}
+
+static SURFACE_TOOL_STATUSES: OnceLock<TokioMutex<HashMap<String, SurfaceToolStatus>>> =
+    OnceLock::new();
+
+async fn current_surface_tool_status(
+    session_id: &str,
+    tool_call_id: &str,
+) -> Option<SurfaceToolStatus> {
+    let key = format!("{session_id}\n{tool_call_id}");
+    SURFACE_TOOL_STATUSES
+        .get_or_init(|| TokioMutex::new(HashMap::new()))
+        .lock()
+        .await
+        .get(&key)
+        .copied()
+}
+
+async fn record_surface_tool_status(
+    session_id: &str,
+    tool_call_id: &str,
+    next: SurfaceToolStatus,
+) -> bool {
+    let key = format!("{session_id}\n{tool_call_id}");
+    let mut statuses = SURFACE_TOOL_STATUSES
+        .get_or_init(|| TokioMutex::new(HashMap::new()))
+        .lock()
+        .await;
+    let previous = statuses.get(&key).copied();
+    if !should_emit_surface_tool_status(previous, next) {
+        if bear_debug_verbose()
+            && (previous.is_some_and(SurfaceToolStatus::is_terminal) || next.is_terminal())
+        {
+            eprintln!(
+                "bear-armature: suppressing duplicate/non-monotonic tool surface update session_id={} tool_call_id={} previous={} next={}",
+                session_id,
+                tool_call_id,
+                previous.map(SurfaceToolStatus::as_str).unwrap_or("none"),
+                next.as_str()
+            );
+        }
+        return false;
+    }
+    statuses.insert(key, next);
+    true
+}
+
+fn tool_card_title(tool_name: &str, event: Option<&Value>, display: &ToolDisplay) -> String {
+    if matches!(
+        tool_name,
+        "set_conversation_title"
+            | "run_command"
+            | "process_run"
+            | "terminal_run_command"
+            | "update_task"
+    ) {
+        return event
+            .map(|event| tool_call_title(tool_name, event))
+            .unwrap_or_else(|| display.title.clone());
+    }
+    if event.is_some_and(|event| event_display_from_event(event).is_some()) {
+        display.title.clone()
+    } else {
+        event
+            .map(|event| tool_call_title(tool_name, event))
+            .unwrap_or_else(|| display.title.clone())
     }
 }
 
@@ -8711,6 +10254,21 @@ struct ToolCallUpdatePayload<'a> {
     extra_content: Vec<ToolCallContent>,
 }
 
+pub(crate) async fn send_tool_call_update_for_turn(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    turn_token: Uuid,
+    tool_call_id: &str,
+    tool_name: &str,
+    payload: ToolCallUpdatePayload<'_>,
+) -> Result<()> {
+    if is_current_prompt_turn(shared_state, session_id, turn_token, "tool_call_update").await {
+        send_tool_call_update(session_id, tool_call_id, tool_name, payload).await
+    } else {
+        Ok(())
+    }
+}
+
 async fn send_tool_call_update(
     session_id: &str,
     tool_call_id: &str,
@@ -8724,6 +10282,10 @@ async fn send_tool_call_update(
         raw_output,
         extra_content,
     } = payload;
+    let surface_status = SurfaceToolStatus::from_str(status);
+    if !record_surface_tool_status(session_id, tool_call_id, surface_status).await {
+        return Ok(());
+    }
     let display = event
         .map(|event| ToolDisplay::from_event(tool_name, event))
         .unwrap_or_else(|| tool_display(tool_name));
@@ -8733,13 +10295,7 @@ async fn send_tool_call_update(
         content.push(ToolCallContent::from(trimmed_text.to_string()));
     }
     content.extend(extra_content);
-    let title = if event.is_some_and(|event| event.get("display").is_some()) {
-        display.title.clone()
-    } else {
-        event
-            .map(|event| tool_call_title(tool_name, event))
-            .unwrap_or_else(|| display.title.clone())
-    };
+    let title = tool_card_title(tool_name, event, &display);
     let mut tool_call = ToolCall::new(tool_call_id.to_string(), title)
         .kind(display.kind)
         .status(tool_status_from_str(status))
@@ -8748,12 +10304,12 @@ async fn send_tool_call_update(
         if let Some(locations) = tool_locations_from_event(tool_name, event) {
             tool_call = tool_call.locations(locations);
         }
-        if let Some(args) = event.get("args") {
-            tool_call = tool_call.raw_input(Some(args.clone()));
+        if let Some(args) = tool_args_from_event(event) {
+            tool_call = tool_call.raw_input(Some(compact_tool_card_json_value(args.clone())));
         }
     }
     if let Some(raw_output) = raw_output {
-        tool_call = tool_call.raw_output(Some(raw_output));
+        tool_call = tool_call.raw_output(Some(compact_tool_card_json_value(raw_output)));
     }
     write_notification(
         "session/update",
@@ -8854,7 +10410,7 @@ async fn send_agent_thought_chunk_for_turn(
     }
 }
 
-/// Adapter-local mirror of Den's `core::letta::normalize_display_status_text`.
+/// Adapter-local mirror of Den runtime status text normalization.
 ///
 /// Keep this aligned with Den's shared chat display helper. It is intentionally limited to
 /// adapter-/Den-owned operational status units before they become ACP thought chunks; never apply
@@ -8890,6 +10446,7 @@ async fn write_response(id: impl Into<Option<Value>>, result: Result<Value, Valu
     write_json(message).await
 }
 
+#[allow(dead_code)]
 fn with_adapter_contract(mut payload: Value) -> Value {
     if !payload.is_object() {
         payload = json!({ "value": payload });
@@ -8921,7 +10478,11 @@ fn auth_check_json_rpc_error(err: &anyhow::Error, token_hint: Option<&str>) -> V
     let mut data = json!({
         "message": format!("BEARS Code token authentication failed: {message}"),
     });
-    if let Some(hint) = token_hint {
+    if message.contains("diagnostics:") {
+        data["hint"] = json!(
+            "Den returned token diagnostics. Inspect token_found, bear_found, token_bound_to_bear, token_owner_is_bear_member, and required_scope_present to identify whether DEN_API_URL, BEAR_SLUG, token value, Bear grant, or membership is wrong."
+        );
+    } else if let Some(hint) = token_hint {
         data["hint"] = json!(hint);
     }
     token_validation_error(Some(data))
@@ -8953,7 +10514,16 @@ fn looks_like_den_connectivity_error(err: &anyhow::Error) -> bool {
                     | reqwest::StatusCode::GATEWAY_TIMEOUT
             ) || http_err.status.is_server_error();
         }
-        false
+        let message = cause.to_string();
+        (message.contains("BearWire RPC")
+            || message.contains("ACP auth-check")
+            || message.contains("Den server"))
+            && (message.contains("HTTP 502")
+                || message.contains("HTTP 503")
+                || message.contains("HTTP 504")
+                || message.contains("Gateway Timeout")
+                || message.contains("Bad Gateway")
+                || message.contains("Service Unavailable"))
     })
 }
 
@@ -8969,6 +10539,7 @@ fn den_connectivity_error(data: Option<Value>) -> Value {
     json_rpc_error(-32012, "BEARS Den server unreachable", data)
 }
 
+#[allow(dead_code)]
 fn den_compatibility_status_message(body: &str) -> Option<String> {
     let value = serde_json::from_str::<Value>(body).ok()?;
     match value.get("error_code").and_then(Value::as_str)? {
@@ -9008,7 +10579,307 @@ fn json_rpc_error(code: i64, message: &str, data: Option<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        body::{to_bytes, Body},
+        extract::State,
+        http::Request,
+        response::{IntoResponse, Response},
+        routing::any,
+        Json, Router,
+    };
+    use std::net::SocketAddr;
+    use std::sync::Mutex as StdMutex;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    #[derive(Clone)]
+    struct BearWireTestServerState {
+        fail_bearwire: bool,
+        paths: Arc<TokioMutex<Vec<String>>>,
+        rpc_methods: Arc<TokioMutex<Vec<String>>>,
+        events: Arc<TokioMutex<Vec<Value>>>,
+        history_messages: Arc<TokioMutex<Vec<Value>>>,
+        conversation_title: Arc<TokioMutex<Option<String>>>,
+    }
+
+    // ponytail: this is a narrow BearWire mock for ACP boundary tests, not a fake server.
+    // Keep these mocked methods in sync with `services/den/crates/den-bearwire/src/methods`;
+    // if a BearWire method contract changes, update this mock in the same change.
+    // Do not make tests generous by emitting downstream success projections directly; script
+    // the upstream BearWire cause first (for example tool_call.requested/completed before a
+    // session_info_update) so ACP tests fail when the bridge stops exposing the causal event.
+    async fn bearwire_test_handler(
+        State(state): State<BearWireTestServerState>,
+        request: Request<Body>,
+    ) -> Response {
+        let path = request.uri().path().to_string();
+        state.paths.lock().await.push(path.clone());
+        if path.starts_with("/bearwire/v1/sessions/") && path.ends_with("/events/page") {
+            let events = state.events.lock().await.clone();
+            let events = events
+                .into_iter()
+                .enumerate()
+                .map(|(index, event)| {
+                    json!({
+                        "sequence": index + 1,
+                        "event": event,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let next_after = events.len();
+            return Json(json!({
+                "ok": true,
+                "events": events,
+                "next_after": next_after,
+                "has_more": false,
+            }))
+            .into_response();
+        }
+        if path != "/bearwire/v1/rpc" {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                Json(json!({ "error": "not found" })),
+            )
+                .into_response();
+        }
+        if state.fail_bearwire {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "bearwire unavailable" })),
+            )
+                .into_response();
+        }
+
+        let body = to_bytes(request.into_body(), 1024 * 1024).await.unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        if let Some(method) = value.get("method").and_then(Value::as_str) {
+            state.rpc_methods.lock().await.push(method.to_string());
+        }
+        let id = value.get("id").cloned().unwrap_or(Value::Null);
+        let conversation_title = state.conversation_title.lock().await.clone();
+        let result = match value.get("method").and_then(Value::as_str) {
+            Some("initialize") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "protocol": "bearwire", "version": 1 }
+            }),
+            Some("session.open") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "ok": true,
+                    "session": {
+                        "client_session_id": value.pointer("/params/session_id").and_then(Value::as_str).unwrap_or("acp-test-session"),
+                        "conversation_id": value.pointer("/params/conversation_id").and_then(Value::as_str).unwrap_or("default"),
+                        "resolved_conversation_id": null,
+                        "cwd": value.pointer("/params/cwd").and_then(Value::as_str).unwrap_or("/workspace"),
+                        "current_mode": value.pointer("/params/mode").and_then(Value::as_str).unwrap_or("ask")
+                    }
+                }
+            }),
+            Some("session.state") => {
+                if let Some(session_id) =
+                    value.pointer("/params/session_id").and_then(Value::as_str)
+                {
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "kind": "single",
+                            "session": {
+                                "client_session_id": session_id,
+                                "conversation_id": "default",
+                                "resolved_conversation_id": "den-conv-test",
+                                "cwd": "/workspace",
+                                "current_mode": "ask",
+                                "conversation_title": conversation_title.clone(),
+                                "conversation_title_updated_at": conversation_title.as_ref().map(|_| "2026-07-07T00:00:00Z"),
+                                "context_budget": {
+                                    "model": "openai/test-model",
+                                    "context_window": 200000,
+                                    "max_output_tokens": 4096,
+                                    "reserved_output_tokens": 4096,
+                                    "estimated_input_tokens": 48904,
+                                    "estimated_total_tokens": 53000,
+                                    "estimate_precision": "approximate",
+                                    "near_budget": false,
+                                    "over_budget": false,
+                                    "components": []
+                                }
+                            }
+                        }
+                    })
+                } else {
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "kind": "session_state",
+                            "sessions": [{
+                                "acp_session_id": "session-1",
+                                "conversation_id": "default",
+                                "resolved_conversation_id": "den-conv-test",
+                                "cwd": "/workspace",
+                                "updated_at": "2026-07-07T00:00:00Z",
+                                "current_mode": "ask",
+                                "conversation_title": conversation_title.clone(),
+                                "conversation_title_updated_at": conversation_title.as_ref().map(|_| "2026-07-07T00:00:00Z")
+                            }]
+                        }
+                    })
+                }
+            }
+            Some("session.model.get") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "selection_mode": "auto",
+                    "model": null,
+                    "effective_model": "openai/test-model"
+                }
+            }),
+            Some("conversation.history") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "kind": "conversation_history",
+                    "conversation_id": value.pointer("/params/conversation_id").and_then(Value::as_str).unwrap_or("default"),
+                    "messages": state.history_messages.lock().await.clone(),
+                    "has_more": false,
+                    "next_before": null
+                }
+            }),
+            Some("conversation.surface_history") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "kind": "conversation_surface_history",
+                    "conversation_id": value.pointer("/params/conversation_id").and_then(Value::as_str).unwrap_or("default"),
+                    "surface_events": state.history_messages.lock().await.clone(),
+                    "has_more": false,
+                    "next_before": null
+                }
+            }),
+            Some("run.start") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "run_id": "run-test-title",
+                    "event_sequence": 1
+                }
+            }),
+            Some("resource.update") => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "ok": true }
+            }),
+            other => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32601, "message": format!("unknown method: {other:?}") }
+            }),
+        };
+        (axum::http::StatusCode::OK, Json(result)).into_response()
+    }
+
+    async fn start_bearwire_test_server(
+        fail_bearwire: bool,
+    ) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        start_bearwire_test_server_with_events(fail_bearwire, Vec::new()).await
+    }
+
+    async fn start_bearwire_test_server_with_events(
+        fail_bearwire: bool,
+        events: Vec<Value>,
+    ) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        let (api_url, paths, _rpc_methods) =
+            start_bearwire_test_server_with_events_and_methods(fail_bearwire, events).await;
+        (api_url, paths)
+    }
+
+    async fn start_bearwire_test_server_with_events_and_methods(
+        fail_bearwire: bool,
+        events: Vec<Value>,
+    ) -> (
+        String,
+        Arc<TokioMutex<Vec<String>>>,
+        Arc<TokioMutex<Vec<String>>>,
+    ) {
+        let paths = Arc::new(TokioMutex::new(Vec::new()));
+        let rpc_methods = Arc::new(TokioMutex::new(Vec::new()));
+        let state = BearWireTestServerState {
+            fail_bearwire,
+            paths: paths.clone(),
+            rpc_methods: rpc_methods.clone(),
+            events: Arc::new(TokioMutex::new(events)),
+            history_messages: Arc::new(TokioMutex::new(Vec::new())),
+            conversation_title: Arc::new(TokioMutex::new(None)),
+        };
+        let app = Router::new()
+            .route("/bearwire/v1/rpc", any(bearwire_test_handler))
+            .fallback(any(bearwire_test_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), paths, rpc_methods)
+    }
+
+    async fn start_bearwire_test_server_with_history(
+        history_messages: Vec<Value>,
+    ) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        start_bearwire_test_server_with_history_and_title(history_messages, None).await
+    }
+
+    async fn start_bearwire_test_server_with_history_and_title(
+        history_messages: Vec<Value>,
+        conversation_title: Option<&str>,
+    ) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        start_bearwire_test_server_with_events_history_and_title(
+            Vec::new(),
+            history_messages,
+            conversation_title,
+        )
+        .await
+    }
+
+    async fn start_bearwire_test_server_with_events_history_and_title(
+        events: Vec<Value>,
+        history_messages: Vec<Value>,
+        conversation_title: Option<&str>,
+    ) -> (String, Arc<TokioMutex<Vec<String>>>) {
+        let paths = Arc::new(TokioMutex::new(Vec::new()));
+        let state = BearWireTestServerState {
+            fail_bearwire: false,
+            paths: paths.clone(),
+            rpc_methods: Arc::new(TokioMutex::new(Vec::new())),
+            events: Arc::new(TokioMutex::new(events)),
+            history_messages: Arc::new(TokioMutex::new(history_messages)),
+            conversation_title: Arc::new(TokioMutex::new(conversation_title.map(str::to_string))),
+        };
+        let app = Router::new()
+            .route("/bearwire/v1/rpc", any(bearwire_test_handler))
+            .fallback(any(bearwire_test_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr: SocketAddr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), paths)
+    }
+
+    fn test_config(api_url: String) -> Config {
+        Config {
+            api_url,
+            bear: "test-bear".to_string(),
+            token: "bear_arm_test_token".to_string(),
+            client: "zed".to_string(),
+        }
+    }
 
     fn unique_test_dir(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -9033,6 +10904,33 @@ mod tests {
         state
     }
 
+    fn test_runtime_config(api_url: String) -> RuntimeConfig {
+        RuntimeConfig {
+            config: Some(test_config(api_url.clone())),
+            diagnostics: Vec::new(),
+            check_server: false,
+            doctor: false,
+            headless: false,
+            update_command: None,
+            browser_bridge: None,
+            api_url,
+            bear: "test-bear".to_string(),
+            token_env: "DEN_TOKEN".to_string(),
+            client: "zed".to_string(),
+        }
+    }
+
+    async fn run_acp_request_for_test(
+        http: &reqwest::Client,
+        runtime: &mut RuntimeConfig,
+        adapter_state: &mut AdapterState,
+        shared_state: &AdapterSharedState,
+        value: Value,
+    ) -> Result<()> {
+        let request = request_from_value(value)?;
+        handle_request(http, runtime, adapter_state, shared_state, request).await
+    }
+
     fn test_shared_state() -> AdapterSharedState {
         let (cancellation_tx, _) = broadcast::channel(8);
         AdapterSharedState {
@@ -9046,6 +10944,102 @@ mod tests {
             cancellation_tx,
             active_prompts: Arc::new(TokioMutex::new(HashMap::new())),
         }
+    }
+
+    #[tokio::test]
+    async fn validate_den_code_token_uses_bearwire() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("BEARS_LEGACY_ACP_HTTP");
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, paths) = start_bearwire_test_server(false).await;
+        let http = reqwest::Client::new();
+
+        validate_den_code_token(&http, &test_config(api_url))
+            .await
+            .expect("bearwire token validation");
+
+        let paths = paths.lock().await.clone();
+        assert_eq!(paths, vec!["/bearwire/v1/rpc", "/bearwire/v1/rpc"]);
+    }
+
+    #[tokio::test]
+    async fn den_get_session_uses_bearwire_session_state() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, paths) = start_bearwire_test_server(false).await;
+        let http = reqwest::Client::new();
+
+        let session = den_get_acp_session(&http, &test_config(api_url), "acp-test-session")
+            .await
+            .expect("load BearWire session state");
+
+        assert_eq!(session["client_session_id"], "acp-test-session");
+        assert_eq!(session["cwd"], "/workspace");
+        assert_eq!(session["resolved_conversation_id"], "den-conv-test");
+        assert_eq!(session["context_budget"]["estimated_total_tokens"], 53000);
+        let paths = paths.lock().await.clone();
+        assert_eq!(paths, vec!["/bearwire/v1/rpc"]);
+    }
+
+    #[tokio::test]
+    async fn validate_den_code_token_does_not_fallback_to_acp_auth_check() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("BEARS_LEGACY_ACP_HTTP");
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, paths) = start_bearwire_test_server(true).await;
+        let http = reqwest::Client::new();
+
+        let err = validate_den_code_token(&http, &test_config(api_url))
+            .await
+            .expect_err("bearwire validation should fail");
+        assert!(format!("{err:#}").contains("BearWire RPC initialize HTTP 502"));
+
+        let paths = paths.lock().await.clone();
+        assert_eq!(paths, vec!["/bearwire/v1/rpc"]);
+        assert!(!paths.iter().any(|path| path.contains("/acp/")));
+    }
+
+    #[test]
+    fn auth_check_error_hint_mentions_armature_scope() {
+        let err = anyhow!("token failed");
+        let value = auth_check_json_rpc_error(
+            &err,
+            Some("Generate a fresh Den armature token for this bear. Tokens must include armature:chat."),
+        );
+
+        let hint = value
+            .pointer("/data/hint")
+            .and_then(Value::as_str)
+            .expect("hint");
+        assert!(hint.contains("armature:chat"));
+        assert!(!hint.contains("acp:chat"));
+    }
+
+    #[test]
+    fn bearwire_initialize_gateway_timeout_is_connectivity_error_not_token_error() {
+        let err = anyhow!("BearWire RPC initialize HTTP 504 Gateway Timeout: Gateway Timeout");
+        let value = auth_check_json_rpc_error(
+            &err,
+            Some("Generate a fresh Den armature token for this bear. Tokens must include armature:chat."),
+        );
+
+        assert_eq!(value["message"], "BEARS Den server unreachable");
+        let data = value.get("data").expect("data");
+        let message = data
+            .get("message")
+            .and_then(Value::as_str)
+            .expect("message");
+        let hint = data.get("hint").and_then(Value::as_str).expect("hint");
+        assert!(message.contains("Could not reach the BEARS Den server"));
+        assert!(message.contains("BearWire RPC initialize HTTP 504"));
+        assert!(hint.contains("does not necessarily mean your token is invalid"));
+        assert!(!hint.contains("armature:chat"));
     }
 
     #[test]
@@ -9161,46 +11155,135 @@ mod tests {
     }
 
     #[test]
-    fn user_message_chunk_echo_is_suppressed_for_reference_resources() {
-        let params = json!({
-            "prompt": [
-                {"type": "text", "text": "Please read "},
-                {"type": "resource", "resource": {
-                    "uri": "file:///workspace/README.md",
-                    "name": "README.md",
-                    "text": "# README"
-                }},
-                {"type": "text", "text": " and respond simply with ✅"}
-            ]
-        });
-        let bundle = prompt_context_from_params(&params).unwrap();
+    fn history_replay_boundaries_separate_adjacent_user_messages() {
+        let messages = history_replay_chunks_with_boundaries(vec![
+            ReloadHistoryMessage::text("1", "user", "first prompt"),
+            ReloadHistoryMessage::text("2", "user", "second prompt after failed turn"),
+        ]);
 
-        assert!(!should_echo_user_message_chunk(&bundle));
-        assert_eq!(bundle.resource_references.len(), 1);
+        assert_eq!(messages[0].text, "first prompt");
+        assert_eq!(messages[1].text, "\n\nsecond prompt after failed turn");
+    }
+
+    #[test]
+    fn history_replay_boundaries_do_not_modify_alternating_roles() {
+        let messages = history_replay_chunks_with_boundaries(vec![
+            ReloadHistoryMessage::text("1", "user", "prompt"),
+            ReloadHistoryMessage::text("2", "assistant", "reply"),
+            ReloadHistoryMessage::text("3", "user", "follow-up"),
+        ]);
+
         assert_eq!(
-            bundle.resource_references[0].delivery_policy,
-            AcpPromptContextDeliveryPolicy::ReferenceOnly
+            messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            vec!["prompt", "reply", "follow-up"]
         );
     }
 
     #[test]
-    fn user_message_chunk_echo_is_kept_for_diagnostic_only_synthetic_resources() {
-        let params = json!({
-            "prompt": [
-                {"type": "text", "text": "Please continue."},
-                {"type": "resource", "resource": {
-                    "uri": "zed://system",
-                    "text": "{\"system_alert\":\"client synthetic summary from zed\"}"
-                }}
-            ]
-        });
-        let bundle = prompt_context_from_params(&params).unwrap();
-
-        assert!(should_echo_user_message_chunk(&bundle));
+    fn history_replay_includes_user_and_assistant_text_chunks() {
         assert_eq!(
-            bundle.resource_references[0].delivery_policy,
-            AcpPromptContextDeliveryPolicy::DiagnosticOnly
+            history_replay_text_update_kind(&ReloadHistoryMessage::text("1", "user", "prompt")),
+            Some("user")
         );
+        assert_eq!(
+            history_replay_text_update_kind(&ReloadHistoryMessage::text("2", "assistant", "reply")),
+            Some("agent")
+        );
+    }
+
+    #[test]
+    fn sparse_surface_tool_history_is_rejected_before_replay() {
+        let err = reload_history_message_from_value(json!({
+            "kind": "tool_result",
+            "tool_call_id": "call-1",
+            "status": "ok"
+        }))
+        .expect_err("structured tool history missing name should fail");
+
+        let message = format!("{err:#}");
+        assert!(message.contains("tool_name"), "unexpected error: {message}");
+    }
+
+    #[test]
+    fn structured_surface_tool_history_parses_when_complete() {
+        let message = reload_history_message_from_value(json!({
+            "kind": "tool_result",
+            "tool_call_id": "call-1",
+            "tool_name": "run_command",
+            "status": "ok",
+            "raw_output": {"content": "done"}
+        }))
+        .expect("complete structured tool history should parse")
+        .expect("tool history should not be filtered");
+
+        assert_eq!(message.kind, "tool_result");
+        assert_eq!(message.tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(message.tool_name.as_deref(), Some("run_command"));
+        assert_eq!(message.status.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn structured_surface_session_info_history_parses_title_update() {
+        let message = reload_history_message_from_value(json!({
+            "kind": "session_info_update",
+            "session_id": "session-1",
+            "title": "Loaded title",
+            "title_updated_at": "2026-01-02T03:04:05Z",
+            "current_mode": "write"
+        }))
+        .expect("session info surface event should parse")
+        .expect("session info surface event should not be filtered");
+
+        assert_eq!(message.kind, "session_info_update");
+        assert_eq!(message.title.as_deref(), Some("Loaded title"));
+        assert_eq!(
+            message.title_updated_at.as_deref(),
+            Some("2026-01-02T03:04:05Z")
+        );
+    }
+
+    #[test]
+    fn structured_surface_session_info_history_accepts_current_mode_only() {
+        let message = reload_history_message_from_value(json!({
+            "kind": "session_info_update",
+            "session_id": "session-1",
+            "current_mode": "ask"
+        }))
+        .expect("mode-only session info surface event should parse")
+        .expect("session info surface event should not be filtered");
+
+        assert_eq!(message.kind, "session_info_update");
+        assert_eq!(message.title, None);
+        assert_eq!(message.title_updated_at, None);
+    }
+
+    #[test]
+    fn structured_surface_reasoning_history_parses_delta_not_as_message() {
+        let message = reload_history_message_from_value(json!({
+            "kind": "reasoning_delta",
+            "delta": "private reasoning",
+            "source": "provider_reasoning",
+            "replay_policy": "thought"
+        }))
+        .expect("reasoning surface event should parse")
+        .expect("reasoning surface event should not be filtered");
+
+        assert_eq!(message.kind, "reasoning_delta");
+        assert_eq!(message.text, "private reasoning");
+        assert_eq!(message.replay_policy.as_deref(), Some("thought"));
+    }
+
+    #[test]
+    fn sparse_surface_reasoning_history_is_rejected_before_replay() {
+        let err = reload_history_message_from_value(json!({
+            "kind": "reasoning_delta",
+            "source": "provider_reasoning",
+            "replay_policy": "thought"
+        }))
+        .expect_err("structured reasoning history missing text should fail");
+
+        let message = format!("{err:#}");
+        assert!(message.contains("text"), "unexpected error: {message}");
     }
 
     #[test]
@@ -9209,11 +11292,9 @@ mod tests {
             "prompt": [{"type": "text", "text": "Please continue."}]
         });
         let bundle = prompt_context_from_params(&params).unwrap();
-        let den_prompt = prompt_den_message_from_context(&bundle).unwrap();
+        let prompt_context = bearwire_prompt_context_from_context(&bundle);
 
-        assert_eq!(den_prompt, "Please continue.");
-        assert!(!den_prompt.contains("host_context"));
-        assert!(!den_prompt.contains("<user_message>"));
+        assert!(prompt_context.is_null());
     }
 
     #[test]
@@ -9230,15 +11311,35 @@ mod tests {
             ]
         });
         let bundle = prompt_context_from_params(&params).unwrap();
-        let den_prompt = prompt_den_message_from_context(&bundle).unwrap();
+        let prompt_context = bearwire_prompt_context_from_context(&bundle);
 
-        assert!(den_prompt.contains("<host_context kind=\"referenced_resources\""));
-        assert!(den_prompt.contains("delivery=\"reference_only\""));
-        assert!(den_prompt.contains("file:///tmp/a"));
-        assert!(den_prompt.contains("a.txt"));
-        assert!(den_prompt.contains("embedded_text_bytes: 13 (body omitted"));
-        assert!(den_prompt.contains("<user_message>\nPlease inspect this.\n</user_message>"));
-        assert!(!den_prompt.contains("file contents"));
+        assert_eq!(prompt_context["format"], "acp_prompt_context.v1");
+        assert_eq!(
+            prompt_context["host_context"]["kind"],
+            "referenced_resources"
+        );
+        assert_eq!(prompt_context["host_context"]["delivery"], "reference_only");
+        assert_eq!(
+            prompt_context["host_context"]["persistence"],
+            "not_human_message"
+        );
+        assert_eq!(
+            prompt_context["host_context"]["resources"][0]["uri"],
+            "file:///tmp/a"
+        );
+        assert_eq!(
+            prompt_context["host_context"]["resources"][0]["name"],
+            "a.txt"
+        );
+        assert_eq!(
+            prompt_context["host_context"]["resources"][0]["embedded_text_bytes"],
+            13
+        );
+        assert_eq!(
+            prompt_context["host_context"]["resources"][0]["label"],
+            "a.txt"
+        );
+        assert_eq!(bundle.human_message, "Please inspect this.");
     }
 
     #[test]
@@ -9253,11 +11354,9 @@ mod tests {
             ]
         });
         let bundle = prompt_context_from_params(&params).unwrap();
-        let den_prompt = prompt_den_message_from_context(&bundle).unwrap();
+        let prompt_context = bearwire_prompt_context_from_context(&bundle);
 
-        assert_eq!(den_prompt, "Please continue.");
-        assert!(!den_prompt.contains("host_context"));
-        assert!(!den_prompt.contains("system_alert"));
+        assert!(prompt_context.is_null());
     }
 
     #[test]
@@ -9400,15 +11499,17 @@ mod tests {
                 conversation_id: Some("conv-1".to_string()),
             },
         );
-        shared
-            .tool_tasks
-            .register(
-                "acp-session",
-                "call-1",
-                "fs_read_text_file",
-                Some(turn_token),
-            )
-            .await;
+        assert!(
+            shared
+                .tool_tasks
+                .try_register(
+                    "acp-session",
+                    "call-1",
+                    "fs_read_text_file",
+                    Some(turn_token),
+                )
+                .await
+        );
         let mut cancel_rx = shared.cancellation_tx.subscribe();
         let http = reqwest::Client::new();
 
@@ -9478,6 +11579,7 @@ mod tests {
             diagnostics: Vec::new(),
             check_server: false,
             doctor: false,
+            headless: false,
             update_command: None,
             browser_bridge: None,
             api_url: String::new(),
@@ -9495,15 +11597,17 @@ mod tests {
                 conversation_id: Some("conv-1".to_string()),
             },
         );
-        shared
-            .tool_tasks
-            .register(
-                "acp-session",
-                "call-1",
-                "fs_read_text_file",
-                Some(turn_token),
-            )
-            .await;
+        assert!(
+            shared
+                .tool_tasks
+                .try_register(
+                    "acp-session",
+                    "call-1",
+                    "fs_read_text_file",
+                    Some(turn_token),
+                )
+                .await
+        );
         let mut cancel_rx = shared.cancellation_tx.subscribe();
         let http = reqwest::Client::new();
 
@@ -9523,7 +11627,7 @@ mod tests {
 
         let request_line = request_line.lock().await.clone().unwrap_or_default();
         assert!(
-            request_line.starts_with("POST /acp/bears/test-bear/sessions/acp-session/close "),
+            request_line.starts_with("POST /bearwire/v1/rpc "),
             "request_line={request_line:?}"
         );
         assert!(shared
@@ -9575,6 +11679,7 @@ mod tests {
             diagnostics: Vec::new(),
             check_server: false,
             doctor: false,
+            headless: false,
             update_command: None,
             browser_bridge: None,
             api_url: String::new(),
@@ -9592,15 +11697,17 @@ mod tests {
                 conversation_id: Some("conv-1".to_string()),
             },
         );
-        shared
-            .tool_tasks
-            .register(
-                "acp-session",
-                "call-1",
-                "fs_read_text_file",
-                Some(turn_token),
-            )
-            .await;
+        assert!(
+            shared
+                .tool_tasks
+                .try_register(
+                    "acp-session",
+                    "call-1",
+                    "fs_read_text_file",
+                    Some(turn_token),
+                )
+                .await
+        );
         let mut cancel_rx = shared.cancellation_tx.subscribe();
         let http = reqwest::Client::new();
 
@@ -9833,30 +11940,6 @@ mod tests {
         assert!(report.contains("Den:"));
     }
 
-    #[test]
-    fn waiting_for_approval_detection_is_case_insensitive() {
-        assert!(looks_like_waiting_for_approval_error(
-            "Letta stopped before producing assistant output: error; upstream is Waiting For Approval"
-        ));
-        assert!(looks_like_waiting_for_approval_error(
-            "Please Approve Or Deny this stale request"
-        ));
-    }
-
-    #[test]
-    fn cancellation_detection_matches_cancelled_and_canceled_errors() {
-        assert!(looks_like_cancellation_error(
-            "Letta stopped before producing assistant output: cancelled"
-        ));
-        assert!(looks_like_cancellation_error(
-            "Letta stopped before producing assistant output: canceled"
-        ));
-        assert!(looks_like_cancellation_error("cancelled"));
-        assert!(!looks_like_cancellation_error(
-            "Letta stopped before producing assistant output: max_steps"
-        ));
-    }
-
     #[tokio::test]
     async fn adapter_keeps_pending_mode_until_den_session_exists() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -9896,7 +11979,10 @@ mod tests {
 
         assert_eq!(mode, MODE_WRITE);
         assert_eq!(response["deferred"], true);
-        assert_eq!(response["source"], "adapter.den_session_mode_not_found");
+        assert_eq!(
+            response["source"],
+            "adapter.bearwire_local_mode_until_next_prompt"
+        );
         assert_eq!(response["pending_mode"], MODE_WRITE);
     }
 
@@ -9955,86 +12041,6 @@ mod tests {
         assert!(!rendered.contains("tool-call-secret"));
         assert!(!rendered.contains("message-secret"));
         assert!(!rendered.contains("raw upstream compaction response"));
-    }
-
-    #[tokio::test]
-    async fn stale_approval_event_does_not_request_compaction_recovery() {
-        let config = Config {
-            api_url: "http://example.invalid".to_string(),
-            bear: "test-bear".to_string(),
-            token: "token".to_string(),
-            client: "test".to_string(),
-        };
-        let root = unique_test_dir("stale-approval");
-        let mut adapter_state = test_adapter_state("session-1", &root);
-        let shared_state = test_shared_state();
-        let mut diagnostics = SseStreamDiagnostics::default();
-        let frame = br#"data: {"type":"error","message":"Letta stopped before producing assistant output: error","detail":"conversation is waiting for approval"}
-
-"#;
-
-        let outcome = handle_sse_frame(
-            &config,
-            &mut adapter_state,
-            &shared_state,
-            "session-1",
-            frame,
-            &mut diagnostics,
-            Uuid::new_v4(),
-        )
-        .await
-        .unwrap();
-
-        assert!(outcome.saw_error);
-        assert!(!outcome.saw_visible_output);
-        assert!(outcome.recover_and_retry);
-        assert_eq!(outcome.recovery_hint.as_deref(), None);
-        assert_eq!(outcome.upstream_errors.len(), 1);
-        assert!(outcome.upstream_errors[0].contains("compaction recovery is disabled"));
-        assert!(!outcome.upstream_errors[0].contains("compact if needed"));
-    }
-
-    #[tokio::test]
-    async fn typed_terminal_metadata_is_captured_from_error_and_done_events() {
-        let config = Config {
-            api_url: "http://example.invalid".to_string(),
-            bear: "test-bear".to_string(),
-            token: "token".to_string(),
-            client: "test".to_string(),
-        };
-        let root = unique_test_dir("typed-terminal");
-        let mut adapter_state = test_adapter_state("session-1", &root);
-        let shared_state = test_shared_state();
-        let mut diagnostics = SseStreamDiagnostics::default();
-        let frame = br#"data: {"type":"error","message":"No response from the assistant.","detail":"empty stream","terminal":{"outcome":"empty_fallback","recovery_hint":"check_upstream_logs","user_message":"Check Codepool/Letta logs and retry if appropriate."}}
-
-data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_logs","user_message":"Check Codepool/Letta logs and retry if appropriate."}
-
-"#;
-
-        let outcome = handle_sse_frame(
-            &config,
-            &mut adapter_state,
-            &shared_state,
-            "session-1",
-            frame,
-            &mut diagnostics,
-            Uuid::new_v4(),
-        )
-        .await
-        .unwrap();
-
-        assert!(outcome.saw_error);
-        assert!(outcome.saw_done);
-        assert_eq!(outcome.terminal_outcome.as_deref(), Some("empty_fallback"));
-        assert_eq!(
-            outcome.recovery_hint.as_deref(),
-            Some("check_upstream_logs")
-        );
-        assert_eq!(
-            outcome.terminal_user_message.as_deref(),
-            Some("Check Codepool/Letta logs and retry if appropriate.")
-        );
     }
 
     #[test]
@@ -10100,6 +12106,11 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
             .iter()
             .map(|m| ReloadHistoryMessage {
                 id: m.get("id").and_then(Value::as_str).map(str::to_string),
+                kind: m
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("message")
+                    .to_string(),
                 role: m
                     .get("role")
                     .and_then(Value::as_str)
@@ -10110,6 +12121,14 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string(),
+                tool_call_id: None,
+                tool_name: None,
+                status: None,
+                arguments: Value::Null,
+                raw_output: Value::Null,
+                title: None,
+                title_updated_at: None,
+                replay_policy: None,
             })
             .collect::<Vec<_>>();
         assert_eq!(page[0].id.as_deref(), Some("msg-1"));
@@ -10120,28 +12139,12 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     fn history_pages_flatten_oldest_to_newest_across_desc_pagination() {
         let pages = vec![
             vec![
-                ReloadHistoryMessage {
-                    id: Some("m3".to_string()),
-                    role: "user".to_string(),
-                    text: "ask 2".to_string(),
-                },
-                ReloadHistoryMessage {
-                    id: Some("m4".to_string()),
-                    role: "assistant".to_string(),
-                    text: "reply 2".to_string(),
-                },
+                ReloadHistoryMessage::text("m3", "user", "ask 2"),
+                ReloadHistoryMessage::text("m4", "assistant", "reply 2"),
             ],
             vec![
-                ReloadHistoryMessage {
-                    id: Some("m1".to_string()),
-                    role: "user".to_string(),
-                    text: "ask 1".to_string(),
-                },
-                ReloadHistoryMessage {
-                    id: Some("m2".to_string()),
-                    role: "assistant".to_string(),
-                    text: "reply 1".to_string(),
-                },
+                ReloadHistoryMessage::text("m1", "user", "ask 1"),
+                ReloadHistoryMessage::text("m2", "assistant", "reply 1"),
             ],
         ];
         let messages = flatten_history_pages_chronological(pages);
@@ -10220,6 +12223,44 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(payload["update"]["entries"][1]["status"], "in_progress");
     }
 
+    #[test]
+    fn acp_usage_update_payload_matches_prompt_turn_spec() {
+        let payload = acp_usage_update_payload(
+            "sess_abc123def456",
+            json!({
+                "model": "openai/test-model",
+                "context_window": 200000,
+                "estimated_input_tokens": 48904,
+                "estimated_total_tokens": 53000,
+                "estimate_precision": "approximate",
+                "near_budget": false,
+                "over_budget": false,
+                "components": []
+            }),
+        )
+        .expect("usage update payload");
+        assert_eq!(payload["sessionId"], "sess_abc123def456");
+        assert_eq!(payload["update"]["sessionUpdate"], "usage_update");
+        assert_eq!(payload["update"]["used"], 53000);
+        assert_eq!(payload["update"]["size"], 200000);
+        assert_eq!(
+            payload["update"]["_meta"]["bears"]["context_budget"]["estimate_precision"],
+            "approximate"
+        );
+    }
+
+    #[test]
+    fn acp_usage_update_payload_requires_context_window() {
+        let payload = acp_usage_update_payload(
+            "sess",
+            json!({
+                "estimated_total_tokens": 53000,
+                "components": []
+            }),
+        );
+        assert!(payload.is_none());
+    }
+
     #[tokio::test]
     async fn suppresses_duplicate_plan_updates_per_session() {
         let shared = test_shared_state();
@@ -10270,13 +12311,6 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
-    fn permission_request_counts_as_tool_activity() {
-        assert!(den_event_type_is_tool_activity("permission_request"));
-        assert!(den_event_type_is_tool_activity("tool_request"));
-        assert!(!den_event_type_is_tool_activity("conversation_resolved"));
-    }
-
-    #[test]
     fn permission_request_activity_is_successful_without_stream_terminal() {
         assert!(stream_has_successful_terminal_condition(
             true, false, false, true
@@ -10303,6 +12337,18 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
+    fn run_command_defaults_to_terminal_when_command_is_present() {
+        assert!(run_command_prefers_terminal(
+            &json!({ "command": "cargo", "args": ["check"] })
+        ));
+        assert!(run_command_prefers_terminal(
+            &json!({ "command": "docker", "args": ["build", "."] })
+        ));
+        assert!(run_command_prefers_terminal(&json!({ "command": "pwd" })));
+        assert!(!run_command_prefers_terminal(&json!({ "args": ["check"] })));
+    }
+
+    #[test]
     fn command_tool_titles_include_command_details() {
         let event = json!({ "args": { "command": "cargo", "args": ["test", "--manifest-path", "tools/bear-armature/Cargo.toml"] } });
         assert_eq!(
@@ -10316,11 +12362,261 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
+    fn canonical_bearwire_tool_request_parser_requires_nested_payload() {
+        let event = json!({
+            "type": "tool_call.requested",
+            "run_id": "run-1",
+            "data": {
+                "tool_call": {
+                    "id": "call-1",
+                    "name": "fs_read_text_file",
+                    "arguments": { "path": "/workspace/README.md", "line": 4 },
+                    "display": { "title": "Read workspace README", "progress": "Reading file" }
+                }
+            }
+        });
+
+        let parsed = BearWireToolCallRequestData::parse(&event).unwrap();
+        assert_eq!(parsed.tool_call.id, "call-1");
+        assert_eq!(parsed.tool_call.name, "fs_read_text_file");
+        assert_eq!(parsed.tool_call.arguments["path"], "/workspace/README.md");
+        assert_eq!(tool_path(&event), Some("/workspace/README.md"));
+        assert_eq!(
+            tool_call_title("fs_read_text_file", &event),
+            "Read file: /workspace/README.md"
+        );
+        assert_eq!(
+            ToolDisplay::from_event("fs_read_text_file", &event).title,
+            "Read workspace README"
+        );
+    }
+
+    #[test]
+    fn canonical_bearwire_client_waiting_parser_reads_permission_obligation() {
+        let event = json!({
+            "type": "client.waiting",
+            "run_id": "run-web-1",
+            "data": {
+                "expected_client_method": "client.permission.result",
+                "obligation_id": "obl-web-1",
+                "tool_call": {
+                    "id": "call-web-1",
+                    "name": "web_fetch",
+                    "title": "Fetch URL",
+                    "arguments": { "kind": "url", "url": "https://example.com/", "host": "example.com" }
+                },
+                "permission": {
+                    "id": "perm-web-1",
+                    "title": "Fetch URL",
+                    "reason": "BEARS wants to fetch https://example.com/.",
+                    "target": { "kind": "url", "url": "https://example.com/", "host": "example.com" }
+                }
+            }
+        });
+
+        let parsed = BearWireClientWaitingData::parse(&event).unwrap();
+        assert_eq!(parsed.permission.id, "perm-web-1");
+        assert_eq!(parsed.obligation_id, "obl-web-1");
+        assert_eq!(parsed.tool_call.id, "call-web-1");
+        assert_eq!(parsed.tool_call.name, "web_fetch");
+        assert_eq!(parsed.permission.title.as_deref(), Some("Fetch URL"));
+        assert_eq!(
+            parsed.permission.reason.as_deref(),
+            Some("BEARS wants to fetch https://example.com/.")
+        );
+        assert_eq!(
+            parsed.permission.target.unwrap()["url"],
+            "https://example.com/"
+        );
+    }
+
+    #[test]
     fn tool_display_uses_specific_titles() {
         assert_eq!(tool_display("fs_read_text_file").title, "Read file");
         assert_eq!(tool_display("fs_list_directory").title, "List directory");
         assert_eq!(tool_display("fs_search_files").title, "Search files");
         assert_eq!(tool_display("fs_edit_file").title, "Edit file");
+    }
+
+    #[test]
+    fn all_advertised_direct_tools_have_specific_titles() {
+        let direct = direct_tools_context_with_client_mcp(false);
+        let map = direct.as_object().expect("direct tools object");
+        for (tool, value) in map {
+            if !value
+                .get("supported")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                || tool.ends_with("_present")
+                || tool.ends_with("_reason")
+            {
+                continue;
+            }
+            let title = tool_display(tool).title;
+            assert_ne!(title, "Tool call", "{tool} should have a specific title");
+            assert_ne!(title, "Unknown tool", "{tool} should have a specific title");
+        }
+    }
+
+    #[test]
+    fn direct_tools_context_includes_search_and_replace_affordance_hints() {
+        let direct = direct_tools_context_with_client_mcp(false);
+        assert_eq!(
+            direct["fs_search_files"]["prefer_instead_of_shell"],
+            json!(["rg", "grep"])
+        );
+        assert!(direct["fs_search_files"]["description"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Prefer this over shell search commands"));
+        assert_eq!(
+            direct["fs_replace_text"]["prefer_instead_of_shell"],
+            json!(["sed"])
+        );
+    }
+
+    #[test]
+    fn adapter_capabilities_context_direct_tools_match_affordance_shape() {
+        let direct = adapter_capabilities_context_with_client_mcp(false)["direct_tools"].clone();
+        assert_eq!(
+            direct["fs_search_files"]["prefer_instead_of_shell"],
+            json!(["rg", "grep"])
+        );
+        assert_eq!(
+            direct["fs_replace_text"]["prefer_instead_of_shell"],
+            json!(["sed"])
+        );
+        assert!(direct["run_command"]["supported"]
+            .as_bool()
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn known_den_hosted_tools_have_specific_titles() {
+        for (tool, expected) in [
+            ("session_info", "Inspect session"),
+            ("memory_browse", "Browse memory"),
+            ("memory_read", "Read memory"),
+            ("memory_search", "Search memory"),
+            ("memory_write_entry", "Write memory entry"),
+            ("memory_request_review", "Request memory review"),
+            ("web_fetch", "Fetch URL"),
+            ("web_search", "Search web"),
+            ("list_task_lists", "List task lists"),
+            ("get_task_list_status", "Get task list status"),
+            ("update_task", "Update task"),
+            ("update_task_list", "Update task list"),
+            ("request_task_list_handoff", "Request work handoff"),
+        ] {
+            assert_eq!(tool_display(tool).title, expected, "{tool}");
+        }
+    }
+
+    #[test]
+    fn tool_call_title_includes_conversation_title_and_file_targets() {
+        assert_eq!(
+            tool_call_title(
+                "set_conversation_title",
+                &json!({ "args": { "title": "Runtime investigation" } })
+            ),
+            "Set conversation title: Runtime investigation"
+        );
+        assert_eq!(
+            tool_call_title(
+                "set_conversation_title",
+                &json!({ "arguments": { "title": "Direct ACP card title" } })
+            ),
+            "Set conversation title: Direct ACP card title"
+        );
+        assert_eq!(
+            tool_call_title(
+                "set_conversation_title",
+                &json!({ "data": { "tool_call": { "arguments": { "title": "Nested ACP card title" } } } })
+            ),
+            "Set conversation title: Nested ACP card title"
+        );
+        assert_eq!(
+            tool_call_title(
+                "set_conversation_title",
+                &json!({ "data": { "tool_call": { "input": { "title": "Nested ACP input title" } } } })
+            ),
+            "Set conversation title: Nested ACP input title"
+        );
+        assert_eq!(
+            tool_call_title("set_conversation_title", &json!({ "args": {} })),
+            "Set conversation title"
+        );
+        let stale_display_event = json!({
+            "display": { "title": "Set conversation title: conversation" },
+            "arguments": { "title": "Actual ACP card title" }
+        });
+        let display = ToolDisplay::from_event("set_conversation_title", &stale_display_event);
+        assert_eq!(
+            tool_card_title(
+                "set_conversation_title",
+                Some(&stale_display_event),
+                &display
+            ),
+            "Set conversation title: Actual ACP card title"
+        );
+        assert_eq!(
+            tool_args_from_event(&stale_display_event)
+                .and_then(|args| args.get("title"))
+                .and_then(Value::as_str),
+            Some("Actual ACP card title")
+        );
+        assert_eq!(
+            tool_call_title(
+                "fs_replace_text",
+                &json!({ "args": { "path": "/workspace/src/main.rs" } })
+            ),
+            "Edit file: /workspace/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn mcp_tools_have_human_friendly_titles() {
+        assert_eq!(
+            tool_display("mcp__chrome_devtools_custom__take_snapshot").title,
+            "Chrome DevTools: Take Snapshot"
+        );
+        assert_eq!(
+            tool_display("mcp__github__list_issues").title,
+            "Github: List Issues"
+        );
+    }
+
+    #[test]
+    fn tool_display_humanizes_unknown_tool_names() {
+        assert_eq!(
+            tool_display("custom_memory_read").title,
+            "Custom Memory Read"
+        );
+        assert_eq!(tool_display("custom.call_tool").title, "Custom Call Tool");
+    }
+
+    #[test]
+    fn tool_display_does_not_render_placeholder_tool_name_as_tool() {
+        assert_eq!(tool_display("tool").title, "Tool call");
+        assert_eq!(tool_display("").title, "Tool call");
+    }
+
+    #[test]
+    fn placeholder_tool_display_derives_title_from_event_details() {
+        let event = json!({
+            "tool_call_id": "call-1",
+            "args": { "path": "/workspace/README.md" }
+        });
+        assert_eq!(
+            ToolDisplay::from_event("tool", &event).title,
+            "Tool call: /workspace/README.md"
+        );
+
+        let only_id = json!({ "tool_call_id": "call-opaque" });
+        assert_eq!(
+            ToolDisplay::from_event("local_tool", &only_id).title,
+            "Tool call: call-opaque"
+        );
     }
 
     #[test]
@@ -10342,12 +12638,26 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
 
     #[test]
     fn den_server_tool_requests_are_detected() {
-        let event = json!({
+        let legacy_event = json!({
             "policy": { "execution_target": "den" },
             "tool_name": "memory_read"
         });
-        assert!(is_den_server_tool_request(&event));
-        let local = json!({ "policy": { "execution_target": "adapter" } });
+        assert!(is_den_server_tool_request(&legacy_event));
+
+        let canonical_event = json!({
+            "type": "tool_call.requested",
+            "data": {
+                "policy": { "execution_target": "den" },
+                "tool_call": {
+                    "id": "call-den",
+                    "name": "set_conversation_title",
+                    "arguments": { "title": "Loaded title" }
+                }
+            }
+        });
+        assert!(is_den_server_tool_request(&canonical_event));
+
+        let local = json!({ "data": { "policy": { "execution_target": "adapter" } } });
         assert!(!is_den_server_tool_request(&local));
     }
 
@@ -10380,6 +12690,24 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
+    fn compact_tool_card_json_value_keeps_nested_payloads_out_of_acp_cards() {
+        let compacted = compact_tool_card_json_value(json!({
+            "entries": (0..500).map(|idx| json!({
+                "path": format!("/workspace/file-{idx}.txt"),
+                "kind": "file"
+            })).collect::<Vec<_>>()
+        }));
+        let preview = compacted.as_str().expect("ACP raw values are JSON strings");
+        assert!(preview.contains("entries"));
+        assert!(preview.contains("... truncated"));
+        assert!(
+            preview.chars().count()
+                <= ACP_TOOL_CARD_RAW_OUTPUT_PREVIEW_CHARS + "... truncated".len()
+        );
+        assert!(compacted.get("entries").is_none());
+    }
+
+    #[test]
     fn tool_completion_preview_includes_content_and_truncates() {
         let value = json!({ "content": "abc" });
         assert_eq!(tool_completion_preview("fs_list_directory", &value), "abc");
@@ -10388,6 +12716,37 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert!(preview.starts_with("```\n"));
         assert!(preview.contains("... truncated"));
         assert!(preview.chars().count() < 4_050);
+    }
+
+    #[test]
+    fn client_read_text_file_request_path_resolves_relative_path_before_acp_call() {
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        let resolved = client_read_text_file_request_path(&context, "docs/roadmap/PLAN.md")
+            .expect("relative path resolves under workspace");
+        assert_eq!(resolved, PathBuf::from("/workspace/docs/roadmap/PLAN.md"));
+
+        let escaped = client_read_text_file_request_path(&context, "../etc/passwd")
+            .expect_err("path escaping workspace is denied");
+        assert!(format!("{escaped:#}").contains("outside the ACP session workspace roots"));
+    }
+
+    #[test]
+    fn read_text_file_uses_armature_local_execution_by_default() {
+        assert!(!read_text_file_requires_client_surface(&json!({
+            "path": "/workspace/README.md"
+        })));
+        assert!(read_text_file_requires_client_surface(&json!({
+            "path": "/workspace/README.md",
+            "source": "editor_buffer"
+        })));
+        assert!(read_text_file_requires_client_surface(&json!({
+            "path": "/workspace/README.md",
+            "_meta": { "prefer_client": true }
+        })));
     }
 
     #[test]
@@ -10440,15 +12799,1138 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
-    fn update_plan_completion_preview_is_suppressed() {
-        let value = json!({ "content": "Local tool update_plan completed." });
-        assert_eq!(tool_completion_preview("update_plan", &value), "");
+    fn run_command_title_and_preview_show_command() {
+        let event = json!({
+            "args": {
+                "command": "cargo",
+                "args": ["test", "--all"]
+            }
+        });
+        assert_eq!(
+            tool_call_title("run_command", &event),
+            "Run command: cargo test --all"
+        );
+        let display = ToolDisplay::from_event(
+            "run_command",
+            &json!({
+                "args": { "command": "cargo", "args": ["test", "--all"] },
+                "display": { "title": "Run Command" }
+            }),
+        );
+        assert_eq!(
+            tool_card_title(
+                "run_command",
+                Some(&json!({
+                    "args": { "command": "cargo", "args": ["test", "--all"] },
+                    "display": { "title": "Run Command" }
+                })),
+                &display
+            ),
+            "Run command: cargo test --all"
+        );
+
+        let value = json!({
+            "command": "cargo",
+            "args": ["test", "--all"],
+            "cwd": "/workspace/tools/bear-armature",
+            "exit_code": 0,
+            "timed_out": false,
+            "elapsed_ms": 1234,
+            "truncated": false
+        });
+        let preview = tool_completion_preview("run_command", &value);
+        assert!(preview.contains("`cargo test --all`"), "{preview}");
+        assert!(preview.contains("exit code 0"), "{preview}");
+    }
+
+    #[test]
+    fn run_command_title_reads_bearwire_argument_shape() {
+        let event = json!({
+            "data": {
+                "arguments": {
+                    "command": "git",
+                    "args": ["status", "--short"]
+                }
+            },
+            "display": { "title": "Run Command" }
+        });
+
+        assert_eq!(
+            tool_call_title("run_command", &event),
+            "Run command: git status --short"
+        );
+    }
+
+    #[test]
+    fn update_task_title_includes_useful_target_fields() {
+        let event = json!({
+            "data": {
+                "tool_call": {
+                    "input": {
+                        "task_id": "task-123",
+                        "title": "Patch live ACP card titles",
+                        "status": "done"
+                    }
+                }
+            },
+            "display": { "title": "Update Task" }
+        });
+        assert_eq!(
+            tool_call_title("update_task", &event),
+            "Update task: Patch live ACP card titles → done"
+        );
+        let display = ToolDisplay::from_event("update_task", &event);
+        assert_eq!(
+            tool_card_title("update_task", Some(&event), &display),
+            "Update task: Patch live ACP card titles → done"
+        );
+
+        let id_only = json!({ "arguments": { "task_id": "task-456" } });
+        assert_eq!(
+            tool_call_title("update_task", &id_only),
+            "Update task: task-456"
+        );
+    }
+
+    #[test]
+    fn update_task_list_completion_preview_summarizes_entries() {
+        let value = json!({
+            "plan": {
+                "items": [
+                    { "content": "Inspect logs", "status": "completed", "priority": "high" },
+                    { "content": "Patch parser", "status": "in_progress", "priority": "high" },
+                    { "content": "Run tests", "status": "pending", "priority": "medium" }
+                ]
+            }
+        });
+        let preview = tool_completion_preview("update_task_list", &value);
+        assert!(preview.contains("Task list updated: 3 total"), "{preview}");
+        assert!(preview.contains("1 in progress"), "{preview}");
+        assert!(preview.contains("1 pending"), "{preview}");
+        assert!(preview.contains("1 completed"), "{preview}");
+    }
+
+    #[test]
+    fn set_conversation_title_completion_preview_shows_new_title() {
+        let value = json!({ "title": "Investigate Bifrost stream framing" });
+        let preview = tool_completion_preview("set_conversation_title", &value);
+        assert!(preview.contains("Conversation title set to"), "{preview}");
+        assert!(
+            preview.contains("Investigate Bifrost stream framing"),
+            "{preview}"
+        );
+    }
+
+    fn set_conversation_title_tool_events(
+        call_id: &str,
+        title: &str,
+        updated_at: Option<&str>,
+    ) -> Vec<Value> {
+        let tool_call = json!({
+            "id": call_id,
+            "name": "set_conversation_title",
+            "arguments": { "title": title },
+            "display": { "title": format!("Set conversation title: {title}") }
+        });
+        let mut title_data = json!({ "title": title });
+        if let Some(updated_at) = updated_at {
+            title_data["updated_at"] = json!(updated_at);
+        }
+        vec![
+            json!({
+                "type": "tool_call.requested",
+                "run_id": "run-test-title",
+                "data": { "tool_call": tool_call.clone() },
+                "policy": { "execution_target": "den" }
+            }),
+            json!({
+                "type": "tool_call.completed",
+                "run_id": "run-test-title",
+                "data": {
+                    "tool_call": tool_call,
+                    "summary": format!("Conversation title set to {title}.")
+                }
+            }),
+            json!({
+                "type": "session_info_update",
+                "run_id": "run-test-title",
+                "data": title_data
+            }),
+        ]
+    }
+
+    #[tokio::test]
+    async fn set_conversation_title_acp_prompt_roundtrip_emits_update_before_result() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let title = "Retire legacy BearWire tool payload aliases";
+        let mut events =
+            set_conversation_title_tool_events("call-title-1", title, Some("2026-01-02T03:04:05Z"));
+        events.push(json!({
+            "type": "message.delta",
+            "run_id": "run-test-title",
+            "data": { "delta": "Done." }
+        }));
+        events.push(json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }));
+        let (api_url, paths) = start_bearwire_test_server_with_events(false, events).await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("title-acp-roundtrip-immediate");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        shared_state.session_contexts.lock().await.insert(
+            "session-1".to_string(),
+            state.session_contexts["session-1"].clone(),
+        );
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "prompt-1",
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "session-1",
+                        "prompt": [{ "type": "text", "text": "please set the conversation title" }]
+                    }
+                }),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let tool_index = output
+            .iter()
+            .position(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+                    && frame.to_string().contains("call-title-1")
+            })
+            .expect("set_conversation_title tool_call frame");
+        let update_index = output
+            .iter()
+            .position(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("session_info_update")
+            })
+            .expect("session_info_update frame");
+        let result_index = output
+            .iter()
+            .position(|frame| frame.get("id").and_then(Value::as_str) == Some("prompt-1"))
+            .expect("prompt result frame");
+        assert!(tool_index < update_index, "{output:#?}");
+        assert!(update_index < result_index, "{output:#?}");
+        assert_eq!(output[update_index]["jsonrpc"], "2.0");
+        assert_eq!(output[update_index]["params"]["sessionId"], "session-1");
+        assert_eq!(
+            output[update_index]["params"]["update"]["sessionUpdate"],
+            "session_info_update"
+        );
+        assert_eq!(output[update_index]["params"]["update"]["title"], title);
+        assert_eq!(
+            output[update_index]["params"]["update"]["updatedAt"],
+            "2026-01-02T03:04:05Z"
+        );
+        assert!(output[result_index].get("result").is_some(), "{output:#?}");
+        assert_eq!(
+            shared_state
+                .session_contexts
+                .lock()
+                .await
+                .get("session-1")
+                .and_then(|context| context.thread_title.as_deref()),
+            Some(title)
+        );
+        let paths = paths.lock().await.clone();
+        assert!(paths.iter().any(|path| path == "/bearwire/v1/rpc"));
+        assert!(paths
+            .iter()
+            .any(|path| path.starts_with("/bearwire/v1/sessions/session-1/events")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn set_conversation_title_acp_roundtrip_title_sticks_for_later_update_output() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let mut events = set_conversation_title_tool_events("call-title-old", "Old title", None);
+        events.extend(set_conversation_title_tool_events(
+            "call-title-new",
+            "New sticky title",
+            None,
+        ));
+        events.push(json!({
+            "type": "message.delta",
+            "run_id": "run-test-title",
+            "data": { "delta": "Done." }
+        }));
+        events.push(json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }));
+        let (api_url, _paths) = start_bearwire_test_server_with_events(false, events).await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("title-acp-roundtrip-sticky");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        shared_state.session_contexts.lock().await.insert(
+            "session-1".to_string(),
+            state.session_contexts["session-1"].clone(),
+        );
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "prompt-1",
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "session-1",
+                        "prompt": [{ "type": "text", "text": "please set the conversation title twice" }]
+                    }
+                }),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let sticky_title = shared_state
+                .session_contexts
+                .lock()
+                .await
+                .get("session-1")
+                .and_then(|context| context.thread_title.clone());
+            send_session_info_update("session-1", sticky_title, None).await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let tool_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            tool_frames
+                .iter()
+                .any(|frame| frame.contains("call-title-old")),
+            "{output:#?}"
+        );
+        assert!(
+            tool_frames
+                .iter()
+                .any(|frame| frame.contains("call-title-new")),
+            "{output:#?}"
+        );
+        let titles = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("session_info_update")
+            })
+            .filter_map(|frame| {
+                frame
+                    .pointer("/params/update/title")
+                    .and_then(Value::as_str)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            titles,
+            vec!["Old title", "New sticky title", "New sticky title"]
+        );
+        assert!(
+            output.iter().any(
+                |frame| frame.get("id").and_then(Value::as_str) == Some("prompt-1")
+                    && frame.get("result").is_some()
+            ),
+            "{output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn set_conversation_title_lifecycle_surfaces_live_list_and_load() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let title = "Full lifecycle conversation title";
+        let updated_at = "2026-07-07T00:00:00Z";
+        let mut events =
+            set_conversation_title_tool_events("call-title-lifecycle", title, Some(updated_at));
+        events.push(json!({
+            "type": "message.delta",
+            "run_id": "run-test-title",
+            "data": { "delta": "Done." }
+        }));
+        events.push(json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }));
+        let history = vec![
+            json!({
+                "kind": "tool_call",
+                "id": "call-title-lifecycle",
+                "role": "assistant",
+                "tool_call_id": "call-title-lifecycle",
+                "tool_name": "set_conversation_title",
+                "status": "pending",
+                "arguments": { "title": title },
+                "created_at": "2026-07-07T00:00:00Z"
+            }),
+            json!({
+                "kind": "tool_result",
+                "id": "call-title-lifecycle",
+                "role": "tool",
+                "tool_call_id": "call-title-lifecycle",
+                "tool_name": "set_conversation_title",
+                "status": "ok",
+                "text": "Conversation title set.",
+                "raw_output": { "title": title },
+                "created_at": "2026-07-07T00:00:01Z"
+            }),
+            json!({
+                "kind": "session_info_update",
+                "id": "session-info-title",
+                "role": "system",
+                "session_id": "session-1",
+                "title": title,
+                "title_updated_at": updated_at,
+                "current_mode": "ask",
+                "created_at": updated_at
+            }),
+        ];
+        let (api_url, _paths) =
+            start_bearwire_test_server_with_events_history_and_title(events, history, Some(title))
+                .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("title-lifecycle");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        shared_state.session_contexts.lock().await.insert(
+            "session-1".to_string(),
+            state.session_contexts["session-1"].clone(),
+        );
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "prompt-title-lifecycle",
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "session-1",
+                        "prompt": [{ "type": "text", "text": "set the title" }]
+                    }
+                }),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "list-title-lifecycle",
+                    "method": "session/list",
+                    "params": {}
+                }),
+            )
+            .await?;
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "load-title-lifecycle",
+                    "method": "session/load",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        assert!(
+            output.iter().any(|frame| {
+                frame
+                    .pointer("/params/update/sessionUpdate")
+                    .and_then(Value::as_str)
+                    == Some("session_info_update")
+                    && frame
+                        .pointer("/params/update/title")
+                        .and_then(Value::as_str)
+                        == Some(title)
+            }),
+            "live/load session_info_update title missing: {output:#?}"
+        );
+        assert!(
+            output.iter().any(|frame| {
+                frame.get("id").and_then(Value::as_str) == Some("list-title-lifecycle")
+                    && frame
+                        .pointer("/result/sessions/0/title")
+                        .and_then(Value::as_str)
+                        == Some(title)
+            }),
+            "session/list did not expose conversation_title: {output:#?}"
+        );
+        assert!(
+            output.iter().any(|frame| {
+                frame
+                    .pointer("/params/update/sessionUpdate")
+                    .and_then(Value::as_str)
+                    == Some("tool_call")
+                    && frame.to_string().contains("call-title-lifecycle")
+            }),
+            "load/prompt should surface title tool cards: {output:#?}"
+        );
+        assert_eq!(
+            shared_state
+                .session_contexts
+                .lock()
+                .await
+                .get("session-1")
+                .and_then(|context| context.thread_title.as_deref()),
+            Some(title)
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn den_owned_tool_start_renders_without_local_result_post() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths, rpc_methods) = start_bearwire_test_server_with_events_and_methods(
+            false,
+            vec![
+                json!({
+                    "type": "tool_call.requested",
+                    "run_id": "run-test-title",
+                    "data": {
+                        "policy": { "execution_target": "den" },
+                        "tool_call": {
+                            "id": "call-den-owned-title",
+                            "name": "set_conversation_title",
+                            "arguments": { "title": "Den owned title" },
+                            "display": { "title": "Set conversation title: Den owned title" }
+                        }
+                    }
+                }),
+                json!({
+                    "type": "tool_call.completed",
+                    "run_id": "run-test-title",
+                    "data": {
+                        "tool_call": {
+                            "id": "call-den-owned-title",
+                            "name": "set_conversation_title"
+                        },
+                        "summary": "Conversation title set."
+                    }
+                }),
+                json!({
+                    "type": "message.delta",
+                    "run_id": "run-test-title",
+                    "data": { "delta": "Done." }
+                }),
+                json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }),
+            ],
+        )
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("den-owned-tool-start");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        shared_state.session_contexts.lock().await.insert(
+            "session-1".to_string(),
+            state.session_contexts["session-1"].clone(),
+        );
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "prompt-den-owned",
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "session-1",
+                        "prompt": [{ "type": "text", "text": "set title" }]
+                    }
+                }),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let tool_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            tool_frames
+                .iter()
+                .any(|frame| frame.contains("call-den-owned-title")),
+            "{output:#?}"
+        );
+        assert!(
+            tool_frames
+                .iter()
+                .any(|frame| frame.contains("Set conversation title: Den owned title")),
+            "sparse Den-owned completion should use cached start arguments for the card title: {output:#?}"
+        );
+        let methods = rpc_methods.lock().await.clone();
+        assert!(
+            !methods.iter().any(|method| method == "client.tool.result"),
+            "Den-owned surfaced tool starts must not be executed locally: {methods:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn reasoning_bearwire_delta_roundtrips_to_acp_thought_not_agent_message() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_events(
+            false,
+            vec![
+                json!({
+                    "type": "message.reasoning.delta",
+                    "run_id": "run-test-title",
+                    "data": { "delta": "private reasoning" }
+                }),
+                json!({
+                    "type": "message.delta",
+                    "run_id": "run-test-title",
+                    "data": { "delta": "visible answer" }
+                }),
+                json!({ "type": "run.completed", "run_id": "run-test-title", "data": {} }),
+            ],
+        )
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("reasoning-acp-roundtrip");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+        shared_state.session_contexts.lock().await.insert(
+            "session-1".to_string(),
+            state.session_contexts["session-1"].clone(),
+        );
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "prompt-1",
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "session-1",
+                        "prompt": [{ "type": "text", "text": "think then answer" }]
+                    }
+                }),
+            )
+            .await?;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let reasoning_frames = output
+            .iter()
+            .filter(|frame| {
+                frame
+                    .pointer("/params/update/sessionUpdate")
+                    .and_then(Value::as_str)
+                    == Some("agent_thought_chunk")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(reasoning_frames.len(), 1, "{output:#?}");
+        assert!(
+            reasoning_frames[0]
+                .to_string()
+                .contains("private reasoning"),
+            "{output:#?}"
+        );
+
+        let agent_frames = output
+            .iter()
+            .filter(|frame| {
+                frame
+                    .pointer("/params/update/sessionUpdate")
+                    .and_then(Value::as_str)
+                    == Some("agent_message_chunk")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(agent_frames.len(), 1, "{output:#?}");
+        assert!(
+            agent_frames[0].to_string().contains("visible answer"),
+            "{output:#?}"
+        );
+        assert!(
+            !agent_frames
+                .iter()
+                .any(|frame| frame.to_string().contains("private reasoning")),
+            "reasoning leaked as agent message: {output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_load_replays_user_history_as_acp_user_chunks() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_history(vec![
+            json!({
+                "id": "old-user-prompt",
+                "kind": "message",
+                "role": "user",
+                "text": "old instruction that must not be replayed as fresh input"
+            }),
+            json!({
+                "id": "old-assistant-answer",
+                "kind": "message",
+                "role": "assistant",
+                "text": "old answer can be replayed as agent history"
+            }),
+        ])
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("history-user-not-fresh-input");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "load-1",
+                    "method": "session/load",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let user_chunks = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("user_message_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            user_chunks
+                .iter()
+                .any(|frame| frame
+                    .contains("old instruction that must not be replayed as fresh input")),
+            "session/load should replay historical user messages to the ACP client: {output:#?}"
+        );
+        let agent_chunks = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_message_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            agent_chunks
+                .iter()
+                .any(|chunk| chunk.contains("old answer can be replayed as agent history")),
+            "assistant history should still be replayed: {output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_load_replays_history_tool_records_as_acp_tool_updates_not_text() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_history(vec![
+            json!({
+                "id": "call-history",
+                "kind": "tool_call",
+                "role": "assistant",
+                "tool_call_id": "call-history",
+                "tool_name": "run_command",
+                "status": "pending",
+                "arguments": { "command": "true" }
+            }),
+            json!({
+                "id": "call-history",
+                "kind": "tool_result",
+                "role": "assistant",
+                "tool_call_id": "call-history",
+                "tool_name": "run_command",
+                "status": "ok",
+                "text": "Used run_command (ok)",
+                "raw_output": { "exit_code": 0 }
+            }),
+        ])
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("history-tool-replay");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "load-1",
+                    "method": "session/load",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let tool_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(tool_frames.len(), 2, "{output:#?}");
+        assert!(
+            tool_frames
+                .iter()
+                .all(|frame| frame.contains("call-history")),
+            "{output:#?}"
+        );
+        assert!(
+            tool_frames.iter().any(|frame| frame.contains("completed")),
+            "{output:#?}"
+        );
+        assert!(
+            tool_frames
+                .iter()
+                .all(|frame| !frame.contains("incomplete")),
+            "{output:#?}"
+        );
+        let agent_text = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_message_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!agent_text.contains("Used run_command"), "{output:#?}");
+        assert!(!agent_text.contains("incomplete"), "{output:#?}");
+        assert!(
+            output.iter().any(
+                |frame| frame.get("id").and_then(Value::as_str) == Some("load-1")
+                    && frame.get("result").is_some()
+            ),
+            "{output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_resume_does_not_replay_history_updates() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_history(vec![
+            json!({
+                "id": "call-resume-history",
+                "kind": "tool_call",
+                "role": "assistant",
+                "tool_call_id": "call-resume-history",
+                "tool_name": "run_command",
+                "status": "pending",
+                "arguments": { "command": "true" }
+            }),
+            json!({
+                "id": "call-resume-history",
+                "kind": "tool_result",
+                "role": "assistant",
+                "tool_call_id": "call-resume-history",
+                "tool_name": "run_command",
+                "status": "ok",
+                "text": "Used run_command (ok)",
+                "raw_output": { "exit_code": 0 }
+            }),
+        ])
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("resume-history-no-replay");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "resume-1",
+                    "method": "session/resume",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let tool_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            tool_frames.is_empty(),
+            "session/resume must not replay historical tool updates: {output:#?}"
+        );
+
+        let agent_text = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_message_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!agent_text.contains("Used run_command"), "{output:#?}");
+        assert!(
+            output.iter().any(
+                |frame| frame.get("id").and_then(Value::as_str) == Some("resume-1")
+                    && frame.get("result").is_some()
+            ),
+            "{output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn session_load_replays_surface_reasoning_as_thought_not_agent_message() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            std::env::set_var("BEARS_BEARWIRE", "true");
+        }
+        let (api_url, _paths) = start_bearwire_test_server_with_history(vec![
+            json!({
+                "id": "reasoning-1",
+                "kind": "reasoning_delta",
+                "delta": "private reasoning",
+                "source": "provider_reasoning",
+                "replay_policy": "thought"
+            }),
+            json!({
+                "id": "answer-1",
+                "kind": "message",
+                "role": "assistant",
+                "text": "visible answer"
+            }),
+        ])
+        .await;
+        let http = reqwest::Client::new();
+        let root = unique_test_dir("history-reasoning-replay");
+        let mut runtime = test_runtime_config(api_url);
+        let mut state = test_adapter_state("session-1", &root);
+        let shared_state = test_shared_state();
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            run_acp_request_for_test(
+                &http,
+                &mut runtime,
+                &mut state,
+                &shared_state,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "load-1",
+                    "method": "session/load",
+                    "params": { "sessionId": "session-1" }
+                }),
+            )
+            .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+
+        let thought_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_thought_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(thought_frames.len(), 1, "{output:#?}");
+        assert!(
+            thought_frames[0].contains("private reasoning"),
+            "{output:#?}"
+        );
+
+        let agent_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("agent_message_chunk")
+            })
+            .map(Value::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(agent_frames.len(), 1, "{output:#?}");
+        assert!(agent_frames[0].contains("visible answer"), "{output:#?}");
+        assert!(
+            !agent_frames
+                .iter()
+                .any(|frame| frame.contains("private reasoning")),
+            "reasoning leaked as agent message: {output:#?}"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn generic_empty_completion_preview_is_suppressed() {
         let value = json!({ "content": "" });
         assert_eq!(tool_completion_preview("fs_stat", &value), "");
+    }
+
+    #[test]
+    fn placeholder_tool_completion_preview_exposes_structured_result() {
+        let value = json!({ "content": "", "result": { "changed": true } });
+        let preview = tool_completion_preview("tool", &value);
+        assert!(preview.contains("Tool call completed"), "{preview}");
+        assert!(preview.contains("\"changed\":true"), "{preview}");
+        assert_ne!(preview, "Tool completed.");
     }
 
     #[test]
@@ -10493,6 +13975,25 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(LocalToolStatus::Timeout.as_str(), "timeout");
         assert_eq!(LocalToolStatus::Cancelled.as_str(), "cancelled");
         assert_eq!(LocalToolStatus::Unsupported.as_str(), "unsupported");
+    }
+
+    #[tokio::test]
+    async fn read_text_file_denies_sensitive_paths_when_policy_requires() {
+        let root = unique_test_dir("read-sensitive");
+        let secret = root.join("api-token.txt");
+        fs::write(&secret, "secret").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let denied = handle_direct_read_text_file(
+            &state,
+            json!({ "sessionId": "session-1", "path": secret.to_string_lossy() }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", denied.unwrap_err()).contains("denied sensitive path"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[tokio::test]
@@ -10560,6 +14061,20 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         .await
         .unwrap();
         assert_eq!(hidden["returned_matches"], 0);
+        fs::write(root.join("secret-token.txt"), "secret").unwrap();
+        let sensitive = handle_direct_find_paths(
+            &state,
+            "session-1",
+            &json!({ "root": root.to_string_lossy(), "glob": "*secret*", "include_hidden": true }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                include_hidden_default: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(sensitive["returned_matches"], 0);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -10632,6 +14147,19 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         .await;
         assert!(format!("{:#}", denied.unwrap_err())
             .contains("outside the ACP session workspace roots"));
+        let secret = root.join("token-secret.txt");
+        fs::write(&secret, "secret").unwrap();
+        let sensitive = handle_direct_stat(
+            &state,
+            "session-1",
+            &json!({ "path": secret.to_string_lossy() }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(format!("{:#}", sensitive.unwrap_err()).contains("denied sensitive path"));
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
@@ -10719,6 +14247,20 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(result["include_hidden"], true);
         assert_eq!(result["policy"]["max_results"], 1);
         assert_eq!(result["policy"]["applied_limit"], 1);
+        fs::write(root.join("secret-token.txt"), "needle secret").unwrap();
+        let sensitive = handle_direct_search_files(
+            &state,
+            "session-1",
+            &json!({ "path": root.to_string_lossy(), "query": "secret", "limit": 99 }),
+            &ToolPolicy {
+                sensitive_path_policy: Some("deny_sensitive_paths".to_string()),
+                include_hidden_default: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(sensitive["returned_matches"], 0);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -12041,7 +15583,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                 "command": "printf",
                 "args": ["hello"],
                 "cwd": root.to_string_lossy(),
-                "max_output_bytes": 10
+                "max_output_bytes": 10,
+                "reducer_mode": "none"
             }),
             &ToolPolicy {
                 max_bytes: Some(64),
@@ -12062,7 +15605,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                 "command": "printf",
                 "args": ["hello world"],
                 "cwd": root.to_string_lossy(),
-                "max_output_bytes": 5
+                "max_output_bytes": 5,
+                "reducer_mode": "none"
             }),
             &ToolPolicy {
                 max_bytes: Some(5),
@@ -12078,6 +15622,66 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[tokio::test]
+    async fn process_run_uses_optional_rtk_reducer() {
+        let root = unique_test_dir("process-run-rtk");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let rtk = bin.join("rtk");
+        fs::write(
+            &rtk,
+            "#!/bin/sh\nprintf 'RTK summary: compact failure context\\n'\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&rtk).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+            fs::set_permissions(&rtk, perms).unwrap();
+        }
+
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        let old_enabled = std::env::var("BEARS_PROCESS_RUN_RTK").ok();
+        std::env::set_var("PATH", format!("{}:{}", bin.display(), old_path));
+        std::env::set_var("BEARS_PROCESS_RUN_RTK", "1");
+
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+        let result = handle_process_run(
+            context,
+            "session-1",
+            &json!({
+                "command": "printf",
+                "args": ["very long noisy output"],
+                "cwd": root.to_string_lossy(),
+            }),
+            &ToolPolicy {
+                max_bytes: Some(1024),
+                total_timeout_ms: Some(10_000),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        std::env::set_var("PATH", old_path);
+        if let Some(value) = old_enabled {
+            std::env::set_var("BEARS_PROCESS_RUN_RTK", value);
+        } else {
+            std::env::remove_var("BEARS_PROCESS_RUN_RTK");
+        }
+
+        assert_eq!(result["execution_wrapper"], Value::Null);
+        assert_eq!(result["rtk_wrap_allowed"], false);
+        assert_eq!(result["reduction"]["reducer"], "rtk");
+        assert!(result["content"]
+            .as_str()
+            .unwrap()
+            .contains("RTK summary: compact failure context"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn process_run_reports_nonzero_timeout_and_rejects_unsafe_inputs() {
         let root = unique_test_dir("process-run-policy");
         let outside = unique_test_dir("process-run-outside");
@@ -12086,7 +15690,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let nonzero = handle_process_run(
             context,
             "session-1",
-            &json!({ "command": "sh", "args": ["-c", "exit 7"], "cwd": root.to_string_lossy() }),
+            &json!({ "command": "sh", "args": ["-c", "exit 7"], "cwd": root.to_string_lossy(), "reducer_mode": "none" }),
             &ToolPolicy {
                 max_bytes: Some(1024),
                 total_timeout_ms: Some(10_000),
@@ -12101,7 +15705,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let timed_out = handle_process_run(
             context,
             "session-1",
-            &json!({ "command": "sleep", "args": ["1"], "cwd": root.to_string_lossy(), "timeout_ms": 1 }),
+            &json!({ "command": "sleep", "args": ["1"], "cwd": root.to_string_lossy(), "timeout_ms": 1, "reducer_mode": "none" }),
             &ToolPolicy { max_bytes: Some(1024), total_timeout_ms: Some(100), ..Default::default() },
         )
         .await
@@ -12111,7 +15715,7 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let outside_cwd = handle_process_run(
             context,
             "session-1",
-            &json!({ "command": "printf", "args": ["x"], "cwd": outside.to_string_lossy() }),
+            &json!({ "command": "printf", "args": ["x"], "cwd": outside.to_string_lossy(), "reducer_mode": "none" }),
             &ToolPolicy::default(),
         )
         .await;
@@ -12139,6 +15743,63 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         let _ = fs::remove_dir_all(outside);
     }
 
+    #[tokio::test]
+    async fn process_run_redirects_git_commands_to_dedicated_tools_unless_overridden() {
+        let root = unique_test_dir("process-run-redirect");
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+
+        let redirected = handle_process_run(
+            context,
+            "session-1",
+            &json!({
+                "command": "git",
+                "args": ["diff", "--", "src/main.rs"],
+                "cwd": root.to_string_lossy(),
+            }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(redirected["ok"], false);
+        assert_eq!(redirected["kind"], "prefer_dedicated_tool");
+        assert_eq!(redirected["suggested_tool"], "git_diff");
+        assert_eq!(
+            redirected["suggested_args"]["repo_path"],
+            root.to_string_lossy().to_string()
+        );
+
+        let _ = std::process::Command::new("git")
+            .arg("init")
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        std::fs::write(root.join("file.txt"), "hello\n").unwrap();
+
+        let executed = handle_process_run(
+            context,
+            "session-1",
+            &json!({
+                "command": "git",
+                "args": ["diff"],
+                "cwd": root.to_string_lossy(),
+                "bypass_tool_redirect": true,
+                "reducer_mode": "none"
+            }),
+            &ToolPolicy {
+                max_bytes: Some(1024),
+                total_timeout_ms: Some(10_000),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(executed.get("kind").is_none());
+        assert_eq!(executed["command"], "git");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[ignore = "canonical web_fetch is Den-executed; adapter local fetch will be renamed if reintroduced"]
     #[tokio::test]
     async fn web_fetch_fetches_and_truncates_http_response() {
@@ -12153,7 +15814,8 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                 let body = "hello world";
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(), body
+                    body.len(),
+                    body
                 );
                 let _ = stream.write_all(response.as_bytes()).await;
             }
@@ -12173,6 +15835,72 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(result["body"], "hello");
         assert_eq!(result["truncated"], true);
         std::env::remove_var("DEN_ACP_ALLOW_LOCAL_WEB_FETCH_FOR_TESTS");
+    }
+
+    #[tokio::test]
+    async fn process_run_redirects_rg_and_grep_to_fs_search_files() {
+        let root = std::env::temp_dir().join(format!("bear-armature-rg-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+
+        for command in ["rg", "grep"] {
+            let redirected = handle_process_run(
+                context,
+                "session-1",
+                &json!({
+                    "command": command,
+                    "args": ["needle", "src"],
+                    "cwd": root.to_string_lossy(),
+                }),
+                &ToolPolicy::default(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(redirected["ok"], false, "{command}");
+            assert_eq!(redirected["kind"], "prefer_dedicated_tool", "{command}");
+            assert_eq!(redirected["suggested_tool"], "fs_search_files", "{command}");
+            assert_eq!(
+                redirected["suggested_args"]["path"],
+                root.to_string_lossy().to_string(),
+                "{command}"
+            );
+            assert_eq!(redirected["suggested_args"]["query"], "src", "{command}");
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn process_run_redirects_sed_to_fs_replace_text() {
+        let root = std::env::temp_dir().join(format!("bear-armature-sed-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("file.txt");
+        std::fs::write(&file, "hello\n").unwrap();
+        let state = test_adapter_state("session-1", &root);
+        let context = session_context(&state, "session-1").unwrap();
+
+        let redirected = handle_process_run(
+            context,
+            "session-1",
+            &json!({
+                "command": "sed",
+                "args": ["-i", "s/hello/hi/", file.to_string_lossy()],
+                "cwd": root.to_string_lossy(),
+            }),
+            &ToolPolicy::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(redirected["ok"], false);
+        assert_eq!(redirected["kind"], "prefer_dedicated_tool");
+        assert_eq!(redirected["suggested_tool"], "fs_replace_text");
+        assert_eq!(
+            redirected["suggested_args"]["path"],
+            file.to_string_lossy().to_string()
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[ignore = "canonical web_fetch is Den-executed; adapter local fetch will be renamed if reintroduced"]
@@ -12217,7 +15945,10 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
                 "allow_multiple": false,
                 "deny_hidden_paths": true,
                 "total_timeout_ms": 1234,
-                "sensitive_path_policy": "deny_sensitive_paths"
+                "execution_target": "armature_local",
+                "approval_policy": "never",
+                "sensitive_path_policy": "deny_sensitive_paths",
+                "target_policy": { "kind": "workspace_root_or_path", "arg": "root", "default_to_workspace_root": true, "required_kind": "directory" }
             }
         }));
         assert_eq!(policy.max_lines, Some(5));
@@ -12231,9 +15962,24 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(policy.allow_multiple, Some(false));
         assert_eq!(policy.deny_hidden_paths, Some(true));
         assert_eq!(policy.total_timeout_ms, Some(1234));
+        assert_eq!(policy.execution_target.as_deref(), Some("armature_local"));
+        assert_eq!(policy.approval_policy.as_deref(), Some("never"));
         assert_eq!(
             policy.sensitive_path_policy.as_deref(),
             Some("deny_sensitive_paths")
+        );
+        assert_eq!(
+            policy.target_policy.as_ref().unwrap()["kind"],
+            "workspace_root_or_path"
+        );
+        let context = SessionContext {
+            cwd: "/workspace".to_string(),
+            roots: vec!["/workspace".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            policy_target_path(&context, &json!({ "glob": "**/Cargo.toml" }), &policy),
+            Some(PathBuf::from("/workspace"))
         );
     }
 
@@ -12251,6 +15997,252 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         }))
         .unwrap();
         assert_eq!(response.content, "hello from file");
+    }
+
+    #[tokio::test]
+    async fn client_read_preflight_rejects_missing_and_non_file_targets() {
+        let root =
+            std::env::temp_dir().join(format!("bear-armature-read-preflight-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let existing = root.join("read-text-file-empty-ok.txt");
+        tokio::fs::write(&existing, "").await.unwrap();
+        let metadata = preflight_client_read_text_file_target(&existing)
+            .await
+            .unwrap();
+        assert_eq!(metadata.len(), 0);
+
+        let missing = root.join("read-text-file-missing.txt");
+        let err = preflight_client_read_text_file_target(&missing)
+            .await
+            .expect_err("missing file must fail before ACP client request");
+        assert!(err
+            .to_string()
+            .contains("does not exist before ACP request"));
+
+        let dir = root.join("directory-target");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let err = preflight_client_read_text_file_target(&dir)
+            .await
+            .expect_err("directory target must not be delegated to ACP client read");
+        assert!(err.to_string().contains("not a file before ACP request"));
+
+        tokio::fs::remove_dir_all(&root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn acp_client_read_response_conformance_rejects_invalid_empty_success() {
+        let root =
+            std::env::temp_dir().join(format!("bear-armature-empty-read-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let existing = root.join("read-text-file-empty-ok.txt");
+        tokio::fs::write(&existing, "").await.unwrap();
+        verify_client_read_text_file_response(&existing, "")
+            .await
+            .unwrap();
+        tokio::fs::remove_file(&existing).await.unwrap();
+
+        let non_empty = root.join("read-text-file-non-empty.txt");
+        tokio::fs::write(&non_empty, "not empty").await.unwrap();
+        verify_client_read_text_file_response(&non_empty, "not empty")
+            .await
+            .expect("non-empty client content is valid for a non-empty file");
+        let err = verify_client_read_text_file_response(&non_empty, "")
+            .await
+            .expect_err("empty client content must not pass for a non-empty file");
+        assert!(err.to_string().contains("empty content for non-empty file"));
+
+        let missing = root.join("read-text-file-missing.txt");
+        let err = verify_client_read_text_file_response(&missing, "")
+            .await
+            .expect_err("missing file must not look like successful empty read");
+        let err_chain = format!("{err:#}");
+        assert!(err_chain.contains("local verification failed"));
+        assert!(err_chain.contains("does not exist before ACP request"));
+
+        tokio::fs::remove_dir_all(&root).await.unwrap();
+    }
+
+    #[test]
+    fn bearwire_tool_result_response_classifier_flags_stalled_continuations() {
+        assert_eq!(
+            classify_bearwire_tool_result_response(&json!({
+                "ok": true,
+                "continuation": "started"
+            })),
+            BearWireToolResultResponseClass::Continued
+        );
+        assert_eq!(
+            classify_bearwire_tool_result_response(&json!({
+                "ok": true,
+                "continuation": "waiting_for_more_client_results"
+            })),
+            BearWireToolResultResponseClass::WaitingForMore
+        );
+        let unavailable = classify_bearwire_tool_result_response(&json!({
+            "ok": false,
+            "status": "continuation_unavailable",
+            "reason": "native_agent_loop_session_not_found"
+        }));
+        assert_eq!(
+            unavailable,
+            BearWireToolResultResponseClass::ContinuationUnavailable
+        );
+        assert!(unavailable.needs_attention());
+        let late = classify_bearwire_tool_result_response(&json!({
+            "ok": false,
+            "status": "late_result_ignored"
+        }));
+        assert_eq!(late, BearWireToolResultResponseClass::LateIgnored);
+        assert!(late.needs_attention());
+    }
+
+    #[test]
+    fn surface_tool_status_updates_are_monotonic_and_idempotent() {
+        assert!(should_emit_surface_tool_status(
+            None,
+            SurfaceToolStatus::Pending
+        ));
+        assert!(should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Pending),
+            SurfaceToolStatus::InProgress
+        ));
+        assert!(should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::InProgress),
+            SurfaceToolStatus::Failed
+        ));
+        assert!(!should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Failed),
+            SurfaceToolStatus::Failed
+        ));
+        assert!(!should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Completed),
+            SurfaceToolStatus::InProgress
+        ));
+        assert!(!should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Completed),
+            SurfaceToolStatus::Pending
+        ));
+        assert!(!should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Failed),
+            SurfaceToolStatus::InProgress
+        ));
+        assert!(!should_emit_surface_tool_status(
+            Some(SurfaceToolStatus::Completed),
+            SurfaceToolStatus::Completed
+        ));
+    }
+
+    #[tokio::test]
+    async fn den_owned_tool_projection_skips_after_terminal_surface() {
+        let shared = test_shared_state();
+        let session_id = format!("session-{}", Uuid::new_v4());
+        let tool_call_id = format!("call-{}", Uuid::new_v4());
+        let turn_token = Uuid::new_v4();
+        shared.active_prompts.lock().await.insert(
+            session_id.clone(),
+            ActivePromptTurn {
+                token: turn_token,
+                conversation_id: None,
+            },
+        );
+        let completed_event = json!({
+            "type": "tool_call.completed",
+            "run_id": "run-terminal-first",
+            "data": {
+                "tool_call": { "id": tool_call_id, "name": "checkpoint" },
+                "summary": "Checkpoint accepted."
+            }
+        });
+        let requested_event = json!({
+            "type": "tool_call.requested",
+            "run_id": "run-terminal-first",
+            "data": {
+                "policy": { "execution_target": "den" },
+                "tool_call": {
+                    "id": tool_call_id,
+                    "name": "checkpoint",
+                    "arguments": { "reason": "test" }
+                }
+            }
+        });
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            send_tool_call_update(
+                &session_id,
+                requested_event
+                    .pointer("/data/tool_call/id")
+                    .and_then(Value::as_str)
+                    .unwrap(),
+                "checkpoint",
+                ToolCallUpdatePayload {
+                    status: "completed",
+                    text: "Checkpoint accepted.",
+                    event: Some(&completed_event),
+                    raw_output: None,
+                    extra_content: Vec::new(),
+                },
+            )
+            .await?;
+            project_den_owned_tool_request(&shared, &session_id, &requested_event, turn_token)
+                .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+        let tool_frames = output
+            .iter()
+            .filter(|frame| {
+                frame.get("method").and_then(Value::as_str) == Some("session/update")
+                    && frame
+                        .pointer("/params/update/sessionUpdate")
+                        .and_then(Value::as_str)
+                        == Some("tool_call")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tool_frames.len(),
+            1,
+            "late Den-owned start regressed card: {output:#?}"
+        );
+        assert!(
+            tool_frames[0].to_string().contains("completed"),
+            "expected only terminal card: {output:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn den_owned_tool_projection_is_turn_gated() {
+        let shared = test_shared_state();
+        let session_id = format!("session-{}", Uuid::new_v4());
+        let requested_event = json!({
+            "type": "tool_call.requested",
+            "run_id": "run-stale-den-owned",
+            "data": {
+                "policy": { "execution_target": "den" },
+                "tool_call": {
+                    "id": format!("call-{}", Uuid::new_v4()),
+                    "name": "checkpoint",
+                    "arguments": { "reason": "stale" }
+                }
+            }
+        });
+
+        let (result, output) = capture_json_output_for_test(|| async {
+            project_den_owned_tool_request(&shared, &session_id, &requested_event, Uuid::new_v4())
+                .await?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await;
+        result.unwrap();
+        assert!(
+            output.iter().all(|frame| {
+                frame
+                    .pointer("/params/update/sessionUpdate")
+                    .and_then(Value::as_str)
+                    != Some("tool_call")
+            }),
+            "stale Den-owned projection emitted a tool card: {output:#?}"
+        );
     }
 
     #[test]
@@ -12278,6 +16270,58 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         .unwrap();
         assert_eq!(context.cwd, "/Users/bear/active");
         assert_eq!(context.roots, vec!["/Users/bear/project".to_string()]);
+    }
+
+    #[test]
+    fn session_context_uses_cwd_as_workspace_root_when_roots_are_absent() {
+        let context = session_context_from_params(&json!({
+            "cwd": "/Users/bear/project"
+        }))
+        .unwrap();
+        assert_eq!(context.cwd, "/Users/bear/project");
+        assert_eq!(context.roots, vec!["/Users/bear/project".to_string()]);
+        assert_eq!(
+            context.raw["workspace_roots"],
+            json!(["/Users/bear/project"])
+        );
+    }
+
+    #[test]
+    fn session_context_reads_nested_workspace_roots_shapes() {
+        let context = session_context_from_params(&json!({
+            "cwd": "/Users/bear/project-a",
+            "workspace": {
+                "roots": [
+                    { "rootUri": "file:///Users/bear/project-b" },
+                    "/Users/bear/project-a"
+                ]
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            context.roots,
+            vec![
+                "/Users/bear/project-a".to_string(),
+                "/Users/bear/project-b".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn session_context_reads_top_level_root_uri_and_workspace_roots() {
+        let context = session_context_from_params(&json!({
+            "rootUri": "file:///Users/bear/project-a",
+            "workspace_roots": [{ "uri": "file:///Users/bear/project-b" }]
+        }))
+        .unwrap();
+        assert_eq!(context.cwd, "/Users/bear/project-a");
+        assert_eq!(
+            context.roots,
+            vec![
+                "/Users/bear/project-a".to_string(),
+                "/Users/bear/project-b".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -12355,6 +16399,27 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
     }
 
     #[test]
+    fn conversation_id_for_history_accepts_native_den_conv_ids() {
+        let v = json!({
+            "conversation_id": "new-acp-zed-x",
+            "resolved_conversation_id": "den-conv-abc"
+        });
+        assert_eq!(
+            conversation_id_for_history(&v).as_deref(),
+            Some("den-conv-abc")
+        );
+
+        let fallback = json!({
+            "conversation_id": "den-conv-fallback",
+            "resolved_conversation_id": Value::Null
+        });
+        assert_eq!(
+            conversation_id_for_history(&fallback).as_deref(),
+            Some("den-conv-fallback")
+        );
+    }
+
+    #[test]
     fn map_den_sessions_list_maps_next_cursor() {
         let den = json!({
             "sessions": [{
@@ -12371,6 +16436,65 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert_eq!(m["nextCursor"], "abc");
         assert_eq!(m["sessions"][0]["sessionId"], "s1");
         assert_eq!(m["sessions"][0]["cwd"], "/tmp");
+    }
+
+    #[test]
+    fn map_den_sessions_list_prefers_conversation_title_over_legacy_title() {
+        let den = json!({
+            "sessions": [{
+                "acp_session_id": "s1",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "conversation_id": "conv-x",
+                "resolved_conversation_id": "den-conv-x",
+                "conversation_title": "Canonical title",
+                "title": "Legacy title",
+                "cwd": "/tmp"
+            }]
+        });
+        let m = map_den_sessions_list_to_acp(&den).unwrap();
+        assert_eq!(m["sessions"][0]["title"], "Canonical title");
+    }
+
+    #[test]
+    fn session_context_from_den_session_prefers_conversation_title() {
+        let context = session_context_from_den_session(
+            &json!({ "cwd": "/tmp" }),
+            &json!({
+                "cwd": "/tmp",
+                "conversation_id": "conv-x",
+                "conversation_title": "Canonical title",
+                "title": "Legacy title"
+            }),
+        )
+        .unwrap();
+        assert_eq!(context.thread_title.as_deref(), Some("Canonical title"));
+    }
+
+    #[test]
+    fn session_title_mapping_falls_back_to_legacy_title() {
+        let den = json!({
+            "sessions": [{
+                "acp_session_id": "s1",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "conversation_id": "conv-x",
+                "resolved_conversation_id": Value::Null,
+                "title": "Legacy title",
+                "cwd": "/tmp"
+            }]
+        });
+        let mapped = map_den_sessions_list_to_acp(&den).unwrap();
+        assert_eq!(mapped["sessions"][0]["title"], "Legacy title");
+
+        let context = session_context_from_den_session(
+            &json!({ "cwd": "/tmp" }),
+            &json!({
+                "cwd": "/tmp",
+                "conversation_id": "conv-x",
+                "title": "Legacy title"
+            }),
+        )
+        .unwrap();
+        assert_eq!(context.thread_title.as_deref(), Some("Legacy title"));
     }
 
     #[test]
@@ -12815,5 +16939,62 @@ data: {"type":"done","outcome":"empty_fallback","recovery_hint":"check_upstream_
         assert!(report.contains("Den:"));
         assert!(report.contains("unreachable"));
         assert!(report.contains("Warning: Den runtime is unreachable from the adapter"));
+    }
+}
+
+#[cfg(test)]
+mod bearwire_tool_request_parser_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_canonical_bearwire_tool_request_data() {
+        let event = json!({
+            "type": "tool_call.requested",
+            "data": {
+                "tool_call": {
+                    "id": "call-req-1",
+                    "name": "fs_read_text_file",
+                    "arguments": { "path": "README.md" }
+                }
+            }
+        });
+
+        let parsed = BearWireToolCallRequestData::parse(&event).unwrap();
+
+        assert_eq!(parsed.tool_call.id, "call-req-1");
+        assert_eq!(parsed.tool_call.name, "fs_read_text_file");
+        assert_eq!(parsed.tool_call.arguments["path"], "README.md");
+    }
+
+    #[test]
+    fn parses_canonical_bearwire_client_waiting_data() {
+        let event = json!({
+            "type": "client.waiting",
+            "data": {
+                "expected_client_method": "client.permission.result",
+                "obligation_id": "obligation-1",
+                "permission": {
+                    "id": "permission-1",
+                    "title": "Approve command",
+                    "reason": "Need to run the command.",
+                    "target": { "command": "cargo", "args": ["check"] }
+                },
+                "tool_call": {
+                    "id": "call-perm-1",
+                    "name": "process_run",
+                    "arguments": { "command": "cargo", "args": ["test"] },
+                    "display": { "title": "Run cargo" }
+                }
+            }
+        });
+
+        let parsed = BearWireClientWaitingData::parse(&event).unwrap();
+
+        assert_eq!(parsed.permission.id, "permission-1");
+        assert_eq!(parsed.obligation_id, "obligation-1");
+        assert_eq!(parsed.tool_call.id, "call-perm-1");
+        assert_eq!(parsed.tool_call.name, "process_run");
+        assert_eq!(parsed.permission.target.unwrap()["command"], "cargo");
     }
 }

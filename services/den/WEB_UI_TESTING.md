@@ -44,7 +44,6 @@ Primary docs:
 Primary code:
 
 - `src/web/data/mod.rs`
-- `src/web/data/letta.rs`
 - `src/web/data/memory.rs`
 - `src/web/data/chat_transport.rs`
 - `src/web/data/fixtures.rs`
@@ -70,7 +69,7 @@ Use this workflow when you want to iterate on:
 - chat UI/history loading
 - front-end behavior tied to the real JSON routes
 
-without depending on live Letta, MemFS Manager, or Codepool data.
+without depending on live external services beyond Den's configured database/runtime fixtures.
 
 ## Caveat
 

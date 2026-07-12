@@ -2,7 +2,7 @@
 
 How **durable Bear knowledge** is stored, what is *not* memory, and how Den **assembles context** each turn — for readers who know the stack but not agent-harness details.
 
-**Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [`memory-model.md`](../architecture/memory-model.md) (full model), [`den-native-runtime.md`](../architecture/den-native-runtime.md#turn-context-assembly) (turn assembly), [ADR-0038 — Derived recall](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [`bear-package.md`](bear-package.md) (export/import)
+**Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [`memory-model.md`](../architecture/memory-model.md) (full model), [`den-runtime.md`](../architecture/den-runtime.md#turn-context-assembly) (turn assembly), [ADR-0038 — Derived recall](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [ADR-0046 — file-backed prompt fragments](../decisions/adr-0046-file-backed-prompt-fragments-and-compiled-runtime-prompts.md), [`bear-package.md`](bear-package.md) (export/import)
 
 ## Canonical store
 
@@ -31,7 +31,7 @@ Den builds **Turn Context** in layers. The model does **not** receive the whole 
 
 | Layer | Mechanism | Role |
 |-------|-----------|------|
-| 1 | **Compiled profile prompt** | Identity and instructions from `bear_compiled_configs` |
+| 1 | **Compiled profile prompt** | Identity and instructions from `bear_compiled_configs`, compiled from repository-authored fragments plus Bear/runtime-authored compile-time prompt content |
 | 2 | **Key memory projection** | Small **path-based** slice of SQLite: shared anchors (`core/bear-overview.md`, …), work-surface docs when a surface is resolved, recent profile-local highlights, optional situation briefing |
 | 3 | **Derived recall** | When Qdrant is configured: semantic top passages from embedded chunks (and later Cabinet, same embedding standard) |
 | 4 | **Prompt memory blocks** | Editable standing context in Postgres (session, work surface, profile) |
@@ -41,7 +41,30 @@ Den builds **Turn Context** in layers. The model does **not** receive the whole 
 **Recall** = what is semantically near this turn (fuzzy / cross-topic).  
 **Tools** = fetch more when proactive context is not enough.
 
-See [Turn context assembly](../architecture/den-native-runtime.md#turn-context-assembly) and [v1 projection policy](../architecture/den-native-runtime.md#v1-selection-policy-locked) for path lists and char budgets.
+See [Turn context assembly](../architecture/den-runtime.md#turn-context-assembly), [Prompt Fragment Registry](../architecture/prompt-fragment-registry.md), and [v1 projection policy](../architecture/den-runtime.md#v1-selection-policy-locked) for path lists and char budgets.
+
+## Model experience
+
+The model's memory experience should be explicit enough to answer user questions like "what can you see?" without inventing hidden state.
+
+When a Bear reasons about memory, it should be able to distinguish:
+
+- **Conversation context** — recent messages and tool results currently in the model window.
+- **Projected memory** — selected durable-memory snippets injected into the prompt before the turn.
+- **Recalled memory** — search/embedding results retrieved for the current turn.
+- **Persistent memory** — the larger SQLite-backed store available through memory tools.
+- **Task/work state** — Docket/task-list state, not semantic memory.
+- **Runtime/tool surface** — tool schemas, environment diagnostics, and compaction metadata.
+
+Useful model-facing surfaces should therefore expose:
+
+- which layer supplied a fact;
+- whether that layer is durable, transient, or task-local;
+- why a memory was projected or recalled;
+- whether context was compacted, omitted, or unavailable;
+- what the model can inspect next with tools.
+
+The desired failure mode is also explicit: if Den cannot provide a field, surface `unknown`/`unavailable` rather than letting the model guess. Short chat answers can stay concise, but detailed diagnostics should be available when the user is debugging memory behavior.
 
 ## Work surfaces
 

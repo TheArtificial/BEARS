@@ -1,8 +1,8 @@
 # Pair Tool Discovery and Scope Policy
 
-> **Direction changed (2026-06).** The scope policy stands, but drop the Letta conversation/message persistence assumptions — the `pair` runtime is the Den-native loop with Den/Postgres transcript. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** The scope policy stands, but drop the Letta conversation/message persistence assumptions — the `pair` stance runs in the in-process Den loop with Den/Postgres transcript. Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 ## Status
 
 Initial implementation slice complete. `session_info` is the canonical orientation descriptor, its output includes policy/activity state for ACP pair turns, and memory/workplan/ACP local tool descriptors now include scope and orientation guidance. User testing confirms the agent uses tools naturally without prompt suffix injection.
@@ -31,16 +31,19 @@ The central problem is that Bear conversations contain layered context: platform
 3. **Prefer structured affordances**
    - Tool descriptors, tool availability, runtime-state tools, and tool returns are preferred over per-turn prompt prose.
 
-4. **Scope before recall**
+4. **Prefer dedicated tools over generic command execution**
+   - If a git, filesystem, web, browser, memory, or workflow operation already has a dedicated tool, the agent should use that tool before considering command execution.
+
+5. **Scope before recall**
    - When a request depends on local understanding, the agent should identify current Workplace and work surface before broad memory search.
 
-5. **Discovery state should be visible**
+6. **Discovery state should be visible**
    - Tool availability, MCP server summaries, mode/policy state, and work-surface confidence should be inspectable through `session_info`, `/status`, or equivalent ACP status UX. The user should not need to infer scope/tool state from failures.
 
-6. **Minimal workplace persona**
+7. **Minimal workplace persona**
    - Stable role prompts should define mission and boundaries, not rich personality. Workplace agents should remain capability/policy oriented.
 
-7. **Discovery should be purposeful**
+8. **Discovery should be purposeful**
    - Self-discovery is good when scope or capability is ambiguous. It should not be mandatory for simple direct user requests.
 
 ## Context layers and placements
@@ -78,6 +81,28 @@ A tool, memory entry, artifact, plan, or observation should carry enough provena
 Work-surface identification is a resolution process. The Bear should know whether the current work surface is `unresolved`, `candidate`, `ambiguous`, `resolved`, `confirmed`, or `rejected`, and it should be able to communicate that status to the user. When ambiguity affects memory or action, the Bear may ask the user to verify an assumption or choose among candidates. User confirmation can raise confidence for the current thread and should become provenance for later memory writes.
 
 ## Tool advertisement levels
+
+### Command execution direction
+
+`pair` should be designed around one legible model-facing command concept such as `run_command`, even if the adapter/runtime still uses both `process_run` and `terminal_run_command` internally.
+
+Expected routing:
+
+1. dedicated-tool redirect first when an operation is clearly covered by a dedicated tool;
+2. `process_run` for short, bounded, structured commands;
+3. `terminal_run_command` for high-output, long-running, or user-visible commands;
+4. unknown commands in interactive armature flows default to terminal-backed execution.
+
+The redirect should be a **soft wall**:
+
+- first request returns a structured `prefer_dedicated_tool` result with a suggested tool and suggested arguments;
+- a second request may force command execution only through an explicit override flag such as `bypass_tool_redirect=true`.
+
+Near-term soft-wall coverage should include common shell fallbacks for existing file tools, especially `rg`/`grep` for content search and clearly mappable `sed` replacements for structured text edits.
+
+That policy should be paired with stronger tool discoverability in the advertised direct-tool context so models learn the dedicated search/edit affordances instead of rediscovering them through failed command attempts.
+
+This keeps the model-facing surface simple while preserving transparency and an escape hatch.
 
 ### Level 0: Hidden Den/runtime mechanisms
 
@@ -199,6 +224,12 @@ Every model-facing tool descriptor should answer:
 7. Does it create durable memory, active work state, transient observations, or external effects?
 
 Descriptors should prefer compact, structured wording. Avoid repeating the whole role prompt in every tool.
+
+Temporary exception for ACP adapter-local direct tools:
+
+- Until compiled context owns canonical affordance hints for armature-local tools, the adapter may attach short model-facing guidance strings directly to `direct_tools` descriptor objects.
+- This exception is limited to compact discoverability hints such as "prefer `fs_search_files` over `rg`/`grep`" or "prefer `fs_replace_text` over targeted `sed` replacements".
+- Do not use this exception for broader behavioral prose, workflow policy, or stance guidance.
 
 Every user-visible tool must also provide descriptor-owned display metadata. Do not add scattered adapter/client `match` arms, hardcoded allowlists, or one-off UI labels when a descriptor resolver can own the messaging. The same logical tool should render consistently whether Den executes it directly or the ACP adapter executes it locally.
 

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}New work job{% endblock %}
+{% block content %}
+<p><a href="/work">← Work</a></p>
+<h1>New work job</h1>
+<p>
+    Creates a Docket job whose tasks run autonomously in the <code>work</code> stance.
+    With commit policy <code>per_task</code> or <code>per_job</code>, successful runs are
+    pushed to the job's work branch on the root's upstream.
+</p>
+
+<form method="post" action="/work/new">
+    <p>
+        <label>Bear<br>
+            <select name="bear_id" required>
+                {% for bear in bears %}
+                <option value="{{ bear[0] }}">{{ bear[1] }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </p>
+    <p>
+        <label>Goal<br>
+            <input type="text" name="goal" size="80" required
+                   placeholder="What this job should accomplish">
+        </label>
+    </p>
+    <p>
+        <label>Work surface<br>
+            {% if surfaces %}
+            <select name="surface_id">
+                <option value="">— none —</option>
+                {% for surface in surfaces %}
+                <option value="{{ surface.id }}">{{ surface.name }} (git: {{ surface.default_ref }})</option>
+                {% endfor %}
+            </select>
+            <small><a href="/work/surfaces">manage surfaces</a></small>
+            {% else %}
+            <small>No surfaces are assigned to your bears yet — <a href="/work/surfaces/new">create one</a>, or use the legacy root below.</small>
+            {% endif %}
+        </label>
+    </p>
+    <p>
+        <label>Legacy provider root <small>(advanced; ignored when a surface is selected)</small><br>
+            <input type="text" name="root" placeholder="root name on the sandbox provider">
+        </label>
+    </p>
+    <p>
+        <label>Commit policy<br>
+            <select name="commit_policy">
+                <option value="propose_only">propose_only — collect diffs, never push</option>
+                <option value="per_task">per_task — push each successful run to the work branch</option>
+                <option value="per_job">per_job — push runs to the shared job work branch</option>
+                <option value="none">none — no commits expected</option>
+            </select>
+        </label>
+    </p>
+    <p>
+        <label>Work branch <small>(optional; default <code>den/job-&lt;id&gt;</code>)</small><br>
+            <input type="text" name="work_branch" size="40" placeholder="den/job-…">
+        </label>
+    </p>
+
+    <h2>Tasks (assigned to work)</h2>
+    <table>
+        <thead>
+            <tr><th>Title</th><th>Completion criteria (semicolon-separated)</th></tr>
+        </thead>
+        <tbody>
+            {% for i in range(3) %}
+            <tr>
+                <td><input type="text" name="task_title" size="40"
+                           {% if loop.first %}required{% endif %}></td>
+                <td><input type="text" name="task_criteria" size="60"
+                           placeholder="criterion one; criterion two"></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p><button type="submit">Create job</button></p>
+</form>
+{% endblock %}

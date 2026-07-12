@@ -1,15 +1,39 @@
-<nav class="bear-admin-nav" style="margin-bottom: 1rem;">
-  <a href="/bear/{{ bear.slug | e }}/overview"{% if bear_nav_active == "overview" %} aria-current="page"{% endif %}>Overview</a> |
-  <a href="/bear/{{ bear.slug | e }}/access"{% if bear_nav_active == "access" %} aria-current="page"{% endif %}>Access</a> |
-  <a href="/bear/{{ bear.slug | e }}/persona"{% if bear_nav_active == "persona" %} aria-current="page"{% endif %}>Prompts</a> |
-  <a href="/bear/{{ bear.slug | e }}/profiles"{% if bear_nav_active == "profiles" %} aria-current="page"{% endif %}>Runtime profiles</a> |
-  <a href="/bear/{{ bear.slug | e }}/code-token"{% if bear_nav_active == "code-token" %} aria-current="page"{% endif %}>Code token</a> |
-  <a href="/bear/{{ bear.slug | e }}/memory"{% if bear_nav_active == "memory" %} aria-current="page"{% endif %}>Memory</a> |
-  <a href="/bear/{{ bear.slug | e }}/entities"{% if bear_nav_active == "entities" %} aria-current="page"{% endif %}>Entities</a> |
-  <a href="/bear/{{ bear.slug | e }}/conversations"{% if bear_nav_active == "conversations" %} aria-current="page"{% endif %}>Conversations</a> |
-  <a href="/bear/{{ bear.slug | e }}/context"{% if bear_nav_active == "context" %} aria-current="page"{% endif %}>Context</a> |
-  <a href="/bear/{{ bear.slug | e }}/policy"{% if bear_nav_active == "policy" %} aria-current="page"{% endif %}>Policy</a> |
-  <a href="/bear/{{ bear.slug | e }}/advanced"{% if bear_nav_active == "advanced" %} aria-current="page"{% endif %}>Advanced</a>
-  · <a href="/bear/{{ bear.slug | e }}">Chat</a>
-  · <a href="/">Dashboard</a>
+{% set nav_active = bear_nav_active | default("") %}
+<nav class="bear-manage-nav" aria-label="Bear management">
+  <p class="bear-manage-nav-title">
+    <strong>{{ bear.name }}</strong><br />
+    <a href="/bear/{{ bear.slug | e }}">Chat</a> · <a href="/">Dashboard</a>
+  </p>
+
+  <ul>
+    <li><a href="/bear/{{ bear.slug | e }}/overview"{% if nav_active == "overview" %} aria-current="page"{% endif %}>Overview</a></li>
+  </ul>
+
+  <p class="bear-manage-nav-group">Yours <span class="form-hint">travels with the Bear</span></p>
+  <ul>
+    <li><a href="/bear/{{ bear.slug | e }}/identity"{% if nav_active == "identity" %} aria-current="page"{% endif %}>Identity &amp; charter</a></li>
+    <li><a href="/bear/{{ bear.slug | e }}/memory"{% if nav_active == "memory" %} aria-current="page"{% endif %}>Memory</a></li>
+    <li><a href="/bear/{{ bear.slug | e }}/context"{% if nav_active == "context" %} aria-current="page"{% endif %}>Context</a></li>
+    <li><a href="/bear/{{ bear.slug | e }}/skills"{% if nav_active == "skills" %} aria-current="page"{% endif %}>Skills</a></li>
+  </ul>
+
+  <p class="bear-manage-nav-group">This Den <span class="form-hint">stays here for now</span></p>
+  <ul>
+    <li><a href="/bear/{{ bear.slug | e }}/tools"{% if nav_active == "tools" %} aria-current="page"{% endif %}>Tools</a></li>
+    <li><a href="/bear/{{ bear.slug | e }}/connections"{% if nav_active == "connections" %} aria-current="page"{% endif %}>Connections</a></li>
+    <li><a href="/bear/{{ bear.slug | e }}/resources"{% if nav_active == "resources" %} aria-current="page"{% endif %}>Resources</a></li>
+    <li><a href="/bear/{{ bear.slug | e }}/activity"{% if nav_active == "activity" %} aria-current="page"{% endif %}>Activity</a></li>
+    <li><a href="/bear/{{ bear.slug | e }}/people"{% if nav_active == "people" %} aria-current="page"{% endif %}>People</a></li>
+  </ul>
+
+  <ul>
+    <li><a href="/bear/{{ bear.slug | e }}/portability"{% if nav_active == "portability" %} aria-current="page"{% endif %}>Portability</a></li>
+  </ul>
+
+  <details class="bear-manage-nav-details"{% if nav_active in ["stances", "advanced"] %} open{% endif %}>
+    <summary>Internals</summary>
+    <ul>
+      <li><a href="/bear/{{ bear.slug | e }}/advanced"{% if nav_active == "advanced" %} aria-current="page"{% endif %}>Advanced</a></li>
+    </ul>
+  </details>
 </nav>

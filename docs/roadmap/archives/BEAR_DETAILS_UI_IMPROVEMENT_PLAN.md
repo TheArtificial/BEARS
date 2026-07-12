@@ -1,6 +1,6 @@
 # Bear Details UI Improvement Plan
 
-For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../../architecture/bear-stances.md).
 ## Summary
 
 The Bear details page should become the Bear's workspace home: a vanilla, progressive-enhancement UI that makes one coherent Bear legible while preserving the five-role internal architecture (`chat`, `pair`, `review`, `work`, `watch`).

@@ -2,12 +2,30 @@ use bytes::Bytes;
 
 pub mod wire;
 
-use crate::{
-    gateway_events::{gateway_event_to_adapter_sse, GatewayEvent},
-    runtime_contracts::{
-        RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
-    },
+use den_protocol::{
+    RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
 };
+
+use crate::gateway_events::{gateway_event_to_adapter_sse, GatewayEvent};
+
+#[derive(Debug)]
+pub enum RuntimeEventProjectionOutcome {
+    Events(Vec<GatewayEvent>),
+    Ignored { reason: &'static str },
+}
+
+pub fn project_runtime_event_lossy(event: RuntimeStreamEvent) -> RuntimeEventProjectionOutcome {
+    match event {
+        RuntimeStreamEvent::Semantic(event) => RuntimeEventProjectionOutcome::Events(
+            runtime_semantic_event_to_bearwire_gateway_events(event),
+        ),
+        RuntimeStreamEvent::UntranslatedProviderEvent { .. } => {
+            RuntimeEventProjectionOutcome::Ignored {
+                reason: "untranslated_provider_event",
+            }
+        }
+    }
+}
 
 pub fn runtime_semantic_event_to_bearwire_gateway_events(
     event: RuntimeSemanticEvent,
@@ -15,6 +33,9 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
     match event {
         RuntimeSemanticEvent::AssistantTextDelta { text } => {
             vec![GatewayEvent::AssistantTextDelta { text }]
+        }
+        RuntimeSemanticEvent::ReasoningTextDelta { text } => {
+            vec![GatewayEvent::ReasoningTextDelta { text }]
         }
         RuntimeSemanticEvent::StatusText { text } => vec![GatewayEvent::StatusText { text }],
         RuntimeSemanticEvent::ConversationResolved { conversation } => {
@@ -72,24 +93,26 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             context,
         }],
         RuntimeSemanticEvent::TurnFailed {
-            category,
-            message,
-            ..
+            category, message, ..
         } => vec![GatewayEvent::Error {
             message,
             detail: None,
-            error_type: Some(match category {
-                RuntimeErrorCategory::Unavailable => "runtime_unavailable",
-                RuntimeErrorCategory::Misconfigured => "runtime_misconfigured",
-                RuntimeErrorCategory::InvalidIdentity => "runtime_invalid_identity",
-                RuntimeErrorCategory::PermissionDenied => "runtime_permission_denied",
-                RuntimeErrorCategory::ConflictPendingApproval => "runtime_conflict_pending_approval",
-                RuntimeErrorCategory::Cancelled => "runtime_cancelled",
-                RuntimeErrorCategory::Timeout => "runtime_timeout",
-                RuntimeErrorCategory::BackendProtocol => "runtime_backend_protocol",
-                RuntimeErrorCategory::Internal => "runtime_internal",
-            }
-            .to_string()),
+            error_type: Some(
+                match category {
+                    RuntimeErrorCategory::Unavailable => "runtime_unavailable",
+                    RuntimeErrorCategory::Misconfigured => "runtime_misconfigured",
+                    RuntimeErrorCategory::InvalidIdentity => "runtime_invalid_identity",
+                    RuntimeErrorCategory::PermissionDenied => "runtime_permission_denied",
+                    RuntimeErrorCategory::ConflictPendingApproval => {
+                        "runtime_conflict_pending_approval"
+                    }
+                    RuntimeErrorCategory::Cancelled => "runtime_cancelled",
+                    RuntimeErrorCategory::Timeout => "runtime_timeout",
+                    RuntimeErrorCategory::BackendProtocol => "runtime_backend_protocol",
+                    RuntimeErrorCategory::Internal => "runtime_internal",
+                }
+                .to_string(),
+            ),
             request_id: None,
             context: None,
         }],
@@ -100,9 +123,40 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
             request_id: None,
             context: None,
         }],
-        RuntimeSemanticEvent::RunProgress { kind, text, .. } => vec![GatewayEvent::StatusText {
-            text: text.unwrap_or(kind),
-        }],
+        RuntimeSemanticEvent::RunProgress {
+            kind, text, detail, ..
+        } => {
+            if kind == "session_info_update" {
+                let title = detail
+                    .as_ref()
+                    .and_then(|value| value.get("title"))
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string);
+                let updated_at = detail
+                    .as_ref()
+                    .and_then(|value| value.get("updated_at"))
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string);
+                return vec![GatewayEvent::SessionInfoUpdate {
+                    title,
+                    updated_at,
+                    meta: None,
+                }];
+            }
+            if kind == "plan_update" {
+                if let Some(entries) = detail
+                    .as_ref()
+                    .and_then(|value| value.get("entries"))
+                    .and_then(|value| value.as_array())
+                    .cloned()
+                {
+                    return vec![GatewayEvent::PlanUpdateJson { entries }];
+                }
+            }
+            vec![GatewayEvent::StatusText {
+                text: text.unwrap_or(kind),
+            }]
+        }
         RuntimeSemanticEvent::ToolCallFinished {
             tool_name,
             status,
@@ -132,16 +186,18 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
 
 pub fn runtime_stream_event_to_bearwire_sse(event: RuntimeStreamEvent) -> Vec<Bytes> {
     match event {
-        RuntimeStreamEvent::Semantic(event) => runtime_semantic_event_to_bearwire_gateway_events(event)
-            .into_iter()
-            .map(gateway_event_to_adapter_sse)
-            .collect(),
+        RuntimeStreamEvent::Semantic(event) => {
+            runtime_semantic_event_to_bearwire_gateway_events(event)
+                .into_iter()
+                .map(gateway_event_to_adapter_sse)
+                .collect()
+        }
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
     }
 }
 
 #[cfg(test)]
-mod test;
+mod tests;
 
 #[cfg(test)]
 mod golden_traces_tests;

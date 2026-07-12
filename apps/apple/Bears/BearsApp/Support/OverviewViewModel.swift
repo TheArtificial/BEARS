@@ -27,6 +27,7 @@ final class OverviewViewModel: ObservableObject {
     @Published private(set) var statusCopied = false
     @Published private(set) var latestVersionCopied = false
     @Published private(set) var installedVersionCopied = false
+    @Published private(set) var operatorConsoleSnapshot = OperatorConsoleSnapshot.empty
 
     private let installManager: AdapterInstallManager
     private let pathProvider: BearsPathResolver
@@ -76,6 +77,14 @@ final class OverviewViewModel: ObservableObject {
             if let combinedError, lastError != nil {
                 fputs("[Bears][OverviewViewModel][refresh][visibleError] \(combinedError)\n", stderr)
             }
+            operatorConsoleSnapshot = OperatorConsoleOrdering.snapshot(
+                status: state.lastInstallStatus,
+                statusText: statusText,
+                latestVersion: latestVersion,
+                installedVersion: installedVersion,
+                isAwaitingInstallerCompletion: isAwaitingInstallerCompletion,
+                visibleError: visibleError
+            )
         } catch {
             statusText = "Error"
             canUpdate = false
@@ -84,6 +93,14 @@ final class OverviewViewModel: ObservableObject {
             latestVersion = "Unavailable"
             latestVersionDetails = "Unavailable"
             installedVersionDetails = "Unavailable"
+            operatorConsoleSnapshot = OperatorConsoleOrdering.snapshot(
+                status: .error,
+                statusText: statusText,
+                latestVersion: latestVersion,
+                installedVersion: installedVersion,
+                isAwaitingInstallerCompletion: false,
+                visibleError: lastError
+            )
             fputs("[Bears][refresh] \(error.localizedDescription)\n", stderr)
         }
     }
@@ -118,6 +135,14 @@ final class OverviewViewModel: ObservableObject {
             latestVersion = "Unavailable"
             latestVersionDetails = "Unavailable"
             installedVersionDetails = "Unavailable"
+            operatorConsoleSnapshot = OperatorConsoleOrdering.snapshot(
+                status: .error,
+                statusText: statusText,
+                latestVersion: latestVersion,
+                installedVersion: installedVersion,
+                isAwaitingInstallerCompletion: false,
+                visibleError: lastError
+            )
             fputs("[Bears][updateInstall] \(error.localizedDescription)\n", stderr)
         }
     }
@@ -191,7 +216,7 @@ final class OverviewViewModel: ObservableObject {
         if previous.version != current.version, let version = current.version {
             message = "Installed version updated to \(version)."
         } else if let version = current.version {
-            message = "Adapter reinstalled. Installed version remains \(version)."
+            message = "Armature reinstalled. Installed version remains \(version)."
         } else {
             message = "Installation detected."
         }

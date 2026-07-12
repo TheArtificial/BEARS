@@ -1,4 +1,4 @@
-use crate::conversation::events::*;
+use den_service::conversation::events::*;
 
 #[test]
 fn projection_workflow_content_json_is_derived_from_typed_event() {
@@ -9,7 +9,7 @@ fn projection_workflow_content_json_is_derived_from_typed_event() {
         },
         event: ProjectionEvent::PairReflectionCompleted(PairReflectionCompletedPayload {
             reflection_run_id: uuid::Uuid::nil(),
-            acp_session_id: "acp-session".to_string(),
+            client_session_id: "client-session".to_string(),
             trigger: "manual".to_string(),
             status: "completed".to_string(),
             summary_path: Some("pair/summary.md".to_string()),
@@ -103,7 +103,7 @@ fn projection_memory_review_requested_json_uses_typed_event_shape() {
     let projection = Projection {
         provenance: ProjectionProvenance {
             source: ProjectionSource::DenTools,
-            scope_id: "acp-session-1".to_string(),
+            scope_id: "client-session-1".to_string(),
         },
         event: ProjectionEvent::MemoryReviewRequested(MemoryReviewRequestedPayload {
             proposal_id: uuid::Uuid::nil(),
@@ -120,7 +120,7 @@ fn projection_memory_review_requested_json_uses_typed_event_shape() {
     let json = projection.workflow_content_json();
     assert_eq!(json["event"], "memory_review_requested");
     assert_eq!(json["source"], "den_core::tools");
-    assert_eq!(json["scope_id"], "acp-session-1");
+    assert_eq!(json["scope_id"], "client-session-1");
     assert_eq!(json["title"], "Promote note");
     assert_eq!(json["suggested_action"], "promote_to_core");
     assert_eq!(json["source_paths"], serde_json::json!(["pair/notes/test.md"]));

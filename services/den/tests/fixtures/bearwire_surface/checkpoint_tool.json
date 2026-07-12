@@ -1,0 +1,31 @@
+{
+  "name": "checkpoint_tool",
+  "surface_events": [
+    {
+      "kind": "tool_call",
+      "id": "call-checkpoint",
+      "role": "assistant",
+      "tool_call_id": "call-checkpoint",
+      "tool_name": "checkpoint",
+      "status": "pending",
+      "arguments": {
+        "checkpoint_id": "ckpt-1",
+        "active_objective": "finish surface replay hardening",
+        "summary": "Need to validate replay before continuing",
+        "next_action": "validate"
+      },
+      "created_at": "2026-07-07T00:01:00Z"
+    },
+    {
+      "kind": "tool_result",
+      "id": "call-checkpoint",
+      "role": "tool",
+      "tool_call_id": "call-checkpoint",
+      "tool_name": "checkpoint",
+      "status": "ok",
+      "text": "checkpoint recorded",
+      "raw_output": { "ok": true, "source": "den.runtime.checkpoint" },
+      "created_at": "2026-07-07T00:01:01Z"
+    }
+  ]
+}

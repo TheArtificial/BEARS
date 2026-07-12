@@ -1,17 +1,22 @@
 # Bifrost — Coolify deployment guide
 
-**Stack order:** This is **step 1** in [DEPLOYMENT.md](../../docs/deployment/DEPLOYMENT.md). Deploy **before** Letta.
+**Stack order:** Deploy before Den when Den will use this Bifrost instance for model calls.
 
 ## Overview
 
-[Bifrost](https://github.com/maximhq/bifrost) is the BEARS **model gateway**: OpenAI-compatible `/v1` API, multi-provider routing. **Letta** calls Bifrost using `LLM_API_URL` (see `[../letta/COOLIFY_DEPLOY.md](../letta/COOLIFY_DEPLOY.md)`).
+[Bifrost](https://github.com/maximhq/bifrost) is the BEARS **model gateway**: OpenAI-compatible `/v1` API, multi-provider routing. Den calls Bifrost using `LLM_API_URL`.
 
-This repository uses **file-based (GitOps) configuration**: `services/bifrost/config.json` is mounted read-only into the container. There is **no `config_store`** block in that file, so Bifrost’s **built-in admin UI stays off** and the process does not rely on SQLite for gateway config—see [Bifrost “Two Configuration Modes”](https://docs.getbifrost.ai/quickstart/gateway/setting-up).
+This repository uses **file-based (GitOps) configuration**: `services/bifrost/config.json` is baked into the configured Bifrost image and placed at `/app/data/config.json` at startup. The file sets `config_store.enabled: false`, so Bifrost treats `config.json` as the source of truth instead of reconciling through its SQLite/UI-backed config database. This prevents stale DB-backed provider/key rows from shadowing the checked-in provider configuration.
+
+Model availability is driven entirely by the **live provider catalog**: the OpenAI key uses a wildcard (`"models": ["*"]`), so `/v1/models` reflects whatever the provider exposes. There is **no BEARS metadata sidecar** — Den reads availability and capability metadata from `/v1/models` directly.
+
+The root compose stack also runs `bears-bifrost-valkey` (`valkey/valkey-bundle`) for Bifrost Redis/Valkey-compatible storage. Bifrost uses it as the `vector_store` for direct hash caching (`semantic_cache` with `dimension: 1`), and Den sends `x-bf-session-id`, `x-bf-cache-key`, and `x-bf-cache-type: direct` on LLM requests.
 
 ## Prerequisites
 
 - Coolify v4+
 - Provider API keys for every `env.*` reference in `services/bifrost/config.json` (the default file requires `**OPENAI_API_KEY`**)
+- `bears-bifrost-valkey` reachable on the compose network at `bears-bifrost-valkey:6379` for direct cache storage and session stickiness support
 - A **GitHub** (or other Git) remote for this repo—only required for the **Git + Docker Compose** path below
 
 ---
@@ -68,11 +73,11 @@ Edit `[docker-compose.yaml](docker-compose.yaml)` and replace `maximhq/bifrost:l
 
 ### 7. Deploy
 
-**Deploy** / **Redeploy**. On success, other services on the **same Coolify network** should resolve `**http://bears-bifrost:8080`** (the **service name** in `[docker-compose.yaml](docker-compose.yaml)`).
+**Deploy** / **Redeploy**. On success, other services on the **same Coolify network** should resolve `**http://bears-bifrost:${BIFROST_APP_PORT:-8080}`** by default. If multiple BEARS projects share a predefined Docker network, use distinct `BIFROST_APP_PORT` values per environment and let Den derive `BIFROST_ORIGIN` from that port.
 
-### 8. Connecting Letta across stacks (if needed)
+### 8. Connecting Den across stacks
 
-If Letta is a **separate** Coolify resource, it must share a **Docker network** with Bifrost (Coolify “**Connect to Predefined Network**” / shared network—see [Coolify compose networking](https://coolify.io/docs/knowledge-base/docker/compose)). If both services live in the **same** compose stack, they already share a network.
+If Den is a **separate** Coolify resource, it must share a **Docker network** with Bifrost (Coolify “Connect to Predefined Network” / shared network; see [Coolify compose networking](https://coolify.io/docs/knowledge-base/docker/compose)). If both services live in the same compose stack, they already share a network.
 
 ---
 
@@ -147,7 +152,8 @@ From a container on the **same Docker network** as `bears-bifrost` (or Coolify *
 ```bash
 curl -sS http://bears-bifrost:8080/health
 curl -sS http://bears-bifrost:8080/v1/models
-curl -sS http://bears-bifrost:8081/bears/models
+# Optional from the Valkey container:
+valkey-cli ping
 ```
 
 Optional smoke test:
@@ -155,12 +161,15 @@ Optional smoke test:
 ```bash
 curl -sS http://bears-bifrost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "x-bf-session-id: smoke-session" \
+  -H "x-bf-cache-key: smoke-session" \
+  -H "x-bf-cache-type: direct" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
 ```
 
-## Letta (next service)
+## Den (next service)
 
-Set `**LLM_API_URL=http://bears-bifrost:8080/v1**` on Letta (adjust host if you renamed the compose service). Keep `**OPENAI_API_KEY**` on Letta for **embeddings**. Details: `[../letta/COOLIFY_DEPLOY.md](../letta/COOLIFY_DEPLOY.md)`.
+Set `LLM_API_URL=http://bears-bifrost:8080/v1` on Den (adjust host if you renamed the compose service).
 
 ## Observability
 
@@ -177,7 +186,7 @@ Set `**LLM_API_URL=http://bears-bifrost:8080/v1**` on Letta (adjust host if you 
 | Logs: `read /app/data/config.json: is a directory` | Host path for the bind mount was missing, so Docker created a **directory** named `config.json`. Remove that bad path on the server, ensure the real file exists in the checkout, and match **Base Directory** to the compose path (see above). Repo compose sets **`create_host_path: false`** so this fails fast instead of creating a directory. |
 | Container exits on start                                  | **Logs** — invalid JSON, missing `env.`* variables in Coolify                                                                                |
 | **`bears-bifrost` unhealthy** (health check never passes) | **`GET /health`** returns **503** when config/log/vector store pings fail — set **`disable_db_pings_in_health`** in `client` (see repo `config.json`); ensure **`OPENAI_API_KEY`** is set if providers use `env.*`; allow a long **`start_period`** on ARM |
-| Letta cannot resolve `bears-bifrost`                     | Same **Docker network** (Option A §8), or use Coolify-generated hostname for the stack                                                       |
+| Den cannot resolve `bears-bifrost`                     | Same **Docker network** (Option A §8), or use Coolify-generated hostname for the stack                                                       |
 
 
 ## Reference

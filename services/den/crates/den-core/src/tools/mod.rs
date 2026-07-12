@@ -17,24 +17,27 @@
 
 pub mod aliases;
 pub mod arguments;
+pub mod capability_catalog;
 pub mod constants;
 pub mod context;
-pub mod descriptor;
-pub mod display;
-pub mod memory;
-pub mod preflight;
-pub mod prompt_memory;
 pub mod conversation;
+pub mod descriptor;
 pub mod dispatch;
+pub mod display;
+pub mod entity;
 pub mod environment;
 pub mod identity;
+pub mod memory;
 pub mod plan_mode;
+pub mod preflight;
+pub mod prompt_memory;
+pub mod result_compaction;
 pub mod review;
 pub mod support;
-pub mod work_surface;
-pub mod workflow;
 pub mod tool_descriptor_guidance;
 pub mod validation;
 pub mod web;
+pub mod work_surface;
+pub mod workflow;
 
 pub use display::ToolDisplayDescriptor;

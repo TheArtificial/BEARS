@@ -1,8 +1,12 @@
 # Implementation Plan: BEARS Multi-Role Runtime Architecture
 
-> **Direction changed (2026-06).** The five-role model stands, but the implementation path here (Letta provisioning + `letta_agent_id`, Codepool `bear_channel`, MemFS task pipeline, harness-backed vs API-direct split) is superseded by the Den-native runtime: one in-process loop, a Den-native role registry, per-Bear SQLite memory, and Docket tasks. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** The five-stance model stands, but the implementation path here (Letta provisioning + `letta_agent_id`, Codepool `bear_channel`, MemFS task pipeline, harness-backed vs API-direct split) is superseded by the in-process Den runtime: one in-process loop, a Den stance registry, per-Bear SQLite memory, and Docket tasks. Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
+>
+> **Salvaged native product/runtime concepts:** operator UI slices, stance/status visibility, HITL queues, watch/task/skill management, and risk mitigations have been consolidated into [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) where product-facing, [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) where skill-specific, and [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md) where runtime-specific.
+>
+> **Skills note.** Skill manifest/proposal/reconciliation concepts below are historical source material. The canonical native Skills plan is [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 This plan implements the architecture described in the `multi-role-runtime-architecture` ADR. The task-queue specifics referenced in phases 4–8 are detailed in `tasks-schema.md`. MemFS repo/view topology is specified by the [`memfs-sidecar-repo-views` ADR](../architecture/adr/memfs-sidecar-repo-views.md).
 
 Each phase has explicit acceptance criteria. Phases are ordered for safe incremental rollout. Phase 10 (migration) only runs after phases 1–9 have been validated on a test Bear.
@@ -20,7 +24,7 @@ As of the current Den slice:
 
 ## Runtime completion checklist
 
-This checklist translates the durable role model in [`../concepts/../architecture/bear-roles.md`](../concepts/../architecture/bear-roles.md) and the Den implementation spec in [`../../services/den/docs/bear-spec.md`](../../services/den/docs/bear-spec.md) into PR-sized remaining runtime work. The existing numbered phases below remain the broader rollout plan; this section is the current implementation queue for finishing the active multi-role runtime.
+This checklist translates the durable stance model in [`../concepts/../architecture/bear-stances.md`](../concepts/../architecture/bear-stances.md) and the Den implementation spec in [`../../services/den/docs/bear-spec.md`](../../services/den/docs/bear-spec.md) into PR-sized remaining runtime work. The existing numbered phases below remain the broader rollout plan; this section is the current implementation queue for finishing the active multi-stance runtime.
 
 ### A. Dropped single-agent cleanup — done
 
@@ -148,7 +152,7 @@ Tasks:
 Acceptance:
 
 - A new engineer can trace each role's runtime capabilities to tests.
-- No role can access tools or paths outside the trust model in [`../concepts/../architecture/bear-roles.md`](../concepts/../architecture/bear-roles.md).
+- No stance can access tools or paths outside the trust model in [`../concepts/../architecture/bear-stances.md`](../concepts/../architecture/bear-stances.md).
 - The full cooperation loop is covered by automated tests or documented smoke tests.
 
 ## Glossary (read first)

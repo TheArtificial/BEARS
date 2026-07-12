@@ -1,6 +1,6 @@
 # Pair Reflection and Work Memory Sharing Plan
 
-For the canonical role model and current role names, see [bear roles](../../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../../architecture/bear-stances.md).
 Status: architecture plan; ACP-close pair summaries now create memory proposals and queued `memory_curate` runs.
 
 This plan assumes BEARS will go all the way to a dedicated **pair reflection loop** for improving `pair` role-local memory, and then use `review` to share useful knowledge across spaces such as `core/`, Bear curated archives, Cabinet, and approved `work` task context.

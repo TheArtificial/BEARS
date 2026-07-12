@@ -4,12 +4,12 @@ use crate::core::{
             DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_MEMORY_READ_PROVIDER,
             DEN_MEMORY_SEARCH_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
             DEN_PLAN_MODE_ENTER_PROVIDER, DEN_SITUATION_GET_PROVIDER,
-            DEN_WEB_SEARCH_PROVIDER, DEN_WORK_PLAN_UPDATE_PROVIDER,
+            DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_WEB_SEARCH_PROVIDER,
         },
         descriptor::builtin_den_tool_descriptors_for_profile,
     },
 };
-use den_runtime::bears::BearProfile;
+use den_service::bears::BearProfile;
 
 #[test]
 fn pair_session_info_descriptor_is_canonical_orientation_tool() {
@@ -40,7 +40,7 @@ fn pair_memory_and_plan_descriptors_point_to_session_info_for_scope() {
         DEN_MEMORY_SEARCH_PROVIDER,
         DEN_PLAN_MODE_ENTER_PROVIDER,
         DEN_WEB_SEARCH_PROVIDER,
-        DEN_WORK_PLAN_UPDATE_PROVIDER,
+        DEN_TASK_LISTS_UPDATE_PROVIDER,
     ] {
         let descriptor = descriptors
             .iter()

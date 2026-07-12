@@ -1,12 +1,12 @@
 //! Shared guidance snippets for model-facing tool descriptors.
 //!
 //! The goal is to keep scope, side-effect, and orientation language consistent across Den tools,
-//! ACP-local tools, future pair channels, and agentic skills without moving runtime context into
+//! armature-local tools, future pair channels, and agentic skills without moving runtime context into
 //! persisted user messages.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolScopeKind {
-    AcpClientWorkspace,
+    ArmatureWorkspace,
     BearRoleMemory,
     BrowserSession,
     Conversation,
@@ -53,8 +53,8 @@ pub struct ToolDescriptorGuidance {
 
 pub fn render_tool_descriptor_guidance(guidance: ToolDescriptorGuidance) -> String {
     let scope = match guidance.scope {
-        ToolScopeKind::AcpClientWorkspace => {
-            "Scope: local files in the current ACP client workspace roots only."
+        ToolScopeKind::ArmatureWorkspace => {
+            "Scope: local files in the current armature workspace roots only."
         }
         ToolScopeKind::BearRoleMemory => {
             "Scope: Bear memory for the current role/Workplace and, when known, current work surface."

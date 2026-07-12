@@ -1,0 +1,40 @@
+{
+  "name": "loaded_session_tool_history",
+  "surface_events": [
+    {
+      "kind": "message",
+      "id": "msg-user-history",
+      "role": "user",
+      "text": "What changed?",
+      "created_at": "2026-07-07T00:05:00Z"
+    },
+    {
+      "kind": "tool_call",
+      "id": "call-history",
+      "role": "assistant",
+      "tool_call_id": "call-history",
+      "tool_name": "git_status",
+      "status": "pending",
+      "arguments": { "cwd": "/workspace" },
+      "created_at": "2026-07-07T00:05:01Z"
+    },
+    {
+      "kind": "tool_result",
+      "id": "call-history",
+      "role": "tool",
+      "tool_call_id": "call-history",
+      "tool_name": "git_status",
+      "status": "ok",
+      "text": "Checked git status.",
+      "raw_output": { "clean": true },
+      "created_at": "2026-07-07T00:05:02Z"
+    },
+    {
+      "kind": "message",
+      "id": "assistant-history",
+      "role": "assistant",
+      "text": "The worktree is clean.",
+      "created_at": "2026-07-07T00:05:03Z"
+    }
+  ]
+}

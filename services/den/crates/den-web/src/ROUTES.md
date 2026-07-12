@@ -13,7 +13,7 @@ real-page smoke testing in development.
 - `GET /health/ready` — readiness (DB ping)
 - `GET /metrics` — Prometheus text exposition (in-memory counters for chat send outcomes; scrape on the internal network; no auth — protect with firewall / reverse proxy as for other metrics endpoints)
 - `GET /status` — **BEARS stack** status page: aggregate health probes plus **deployed vs GHCR** when `GITHUB_PACKAGES_TOKEN` + `GHCR_PACKAGES_OWNER` are set
-- `GET /status.json` — combined JSON (`health`, `den_version`, `codepool_version`, optional `ghcr_*`) — **503** if any health check is `fail`
+- `GET /status.json` — combined JSON (`health`, `den_version`, optional `ghcr_*`) — **503** if any health check is `fail`
 - `GET /design` — CSS fixture page for text, forms, and two-column layout
 - `GET /design/chat` — static chat UI fixture for iterating on chat styling
 - `GET /manifest.json` — Web App Manifest (`APP_DISPLAY_NAME`, `APP_SLUG`, icons)
@@ -32,27 +32,29 @@ real-page smoke testing in development.
 
 ## Onboarding (`src/web/onboarding.rs`)
 
-- `GET|POST /onboarding/first-bear` — first Bear setup flow for verified users with no Bear memberships; creates a role-aware `context_profile`, provisions/syncs role agents, and redirects to chat
+- `GET|POST /onboarding/first-bear` — first Bear setup flow for verified users with no Bear memberships; creates a stance-aware `context_profile`, provisions native stance bindings, and redirects to chat
 
-## Bear settings (`src/web/bear_settings.rs`)
+## Bear management (`src/web/bear/settings.rs`, `src/web/bear/manage.rs`)
 
-Member-facing bear administration at `/bear/{slug}/…` (read for members, write for bear admins):
+Member-facing bear management at `/bear/{slug}/…` (read for members, write for bear admins), organized by ownership: **Yours** (identity, memory, skills — travels with the Bear) and **This Den** (tools, connections, resources, activity, people — stays here).
 
-- `GET /bear/{slug}/overview` — readiness summary and navigation hub
-- `GET /bear/{slug}/access` — membership list; bear admins grant/revoke via POST actions
-- `GET /bear/{slug}/persona` — compiled prompts and block bindings
-- `GET /bear/{slug}/profiles` — native profile binding table
-- `GET /bear/{slug}/profiles/{profile}` — profile detail for `chat`, `pair`, `curate`, `work`, or `watch`
-- `GET /bear/{slug}/conversations`, `GET /bear/{slug}/conversations/{conversation_id}` — conversation list and transcript
-- `GET /bear/{slug}/context` — prompt memory blocks
-- `GET /bear/{slug}/policy` — web sources, approvals, fetches, plan mode
-- `GET /bear/{slug}/advanced` — diagnostics and provision action
-- `POST /bear/{slug}/provision-missing-roles` — provision missing native profile bindings (redirects to `/profiles`)
+- `GET /bear/{slug}/overview` — health, pending-review call to action, recent activity; wide viewports disclose memory statistics and activity-over-time (CSS only)
+- `GET /bear/{slug}/identity` — identity & charter summary; links to edit forms and per-stance models
+- `GET /bear/{slug}/skills` — owned procedures (honest placeholder until Skills land)
+- `GET /bear/{slug}/tools` — tool matrix: one row per unique tool with origin (built-in / armature-local; MCP when it lands), stance availability as columns
+- `GET /bear/{slug}/connections` — editor (armature) code token; provider connections when they land
+- `GET /bear/{slug}/resources` — the web as a resource under policy (sources/approvals/fetches; POST actions as before), internal resources noted
+- `GET /bear/{slug}/activity` — activity hub: conversations stream (jobs and Cabinet when they land); `GET /bear/{slug}/conversations/{conversation_id}` — transcript detail
+- `GET /bear/{slug}/people` — membership; bear admins grant/revoke via POST actions
+- `GET /bear/{slug}/portability` — bundle export (`GET /bear/{slug}/export.bear`), import (`POST /bears/import`), what-moves/what-stays
+- `GET /bear/{slug}/context` — prompt assembly, layer by layer: compiled stance prompts, standing notes (durable prompt-memory blocks, humanized), projected memory, recall status, conversation window, tool surface
+- Internals (kept reachable): `GET /bear/{slug}/stances/{stance}` (stance detail + model POSTs; linked from identity/models), `GET|POST /bear/{slug}/models`, `GET /bear/{slug}/advanced` (diagnostics incl. stance-binding status, provision action)
+- Retired paths redirect: `/access` → `/people`, `/policy` → `/resources`, `/stances` (list) → `/advanced`, `/persona` → `/context`; `/conversations` remains as an alias of the activity stream
 
 ## Bear memory & entities (`src/bear_memory.rs`)
 
 - `GET /bear/{slug}/memory` — memory dashboard ("how much memory": counts by kind/role, recall coverage, entity summary, recent additions, governance)
-- `POST /bear/{slug}/memory/import-letta` — bear-admin multipart upload (`bundle`) that stages a Letta git bundle at `<BEAR_SQLITE_DATA_DIR>/imports/{bear_id}/`, imports current MemFS heads into per-Bear SQLite, and redirects back to the memory dashboard with success/error notices
+- `POST /bear/{slug}/memory/import-legacy` — legacy archived-bundle import route; stages a bundle at `<BEAR_SQLITE_DATA_DIR>/imports/{bear_id}/`, imports legacy memory heads into per-Bear SQLite, and redirects back to the memory dashboard with success/error notices
 - `GET /bear/{slug}/memory/recent` — recent additions feed (newest records across all roles)
 - `GET /bear/{slug}/memory/search?q=&mode=` — search (keyword always; `mode=semantic` uses the recall index when configured)
 - `GET|POST /bear/{slug}/memory/browse` — library of logical paths grouped by scope; POST deletes/requests review for selected paths (bear admins)
@@ -65,7 +67,7 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 
 - `GET|POST /bears/new` — create a bear; creator is granted `user_bear.role = admin`
 - `GET /bear/{slug}/details` — permanent redirect to `/bear/{slug}/overview`
-- `GET /bear/{slug}/details/{*rest}` — permanent redirects to canonical `/bear/{slug}/…` paths (legacy `roles/` → `profiles/`)
+- `GET /bear/{slug}/details/{*rest}` — permanent redirects to canonical `/bear/{slug}/…` paths (legacy `roles/` → `stances/`)
 - `GET /bear/{slug}/edit` — redirect to `/bear/{slug}/edit/overview`
 - `GET|POST /bear/{slug}/edit/overview` — edit slug, name, description; delete bear form
 - `GET|POST /bear/{slug}/edit/prompt` — edit system prompt (bear admins)
@@ -79,29 +81,59 @@ Member-facing bear administration at `/bear/{slug}/…` (read for members, write
 ## End-user chat (Phase 1 — same origin as web)
 
 - `GET /bear/{slug}` — Deep Chat view for a single bear the user may access (membership-checked; `src/web/templates/bear_chat.html`, handler in `src/web/bear_chat.rs`). Registered with trailing-slash redirect (`/bear/{slug}/` → `/bear/{slug}`) so links like `/bear/{slug}/?conversation_id=…` from the details UI resolve.
-- `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; includes `is_bear_admin`; no Letta ids exposed) (`src/web/v1/mod.rs`).
-- `GET /v1/chat/conversations` — query `bear_id` (required). Membership-checked; returns `{ "conversations": [ { "id", "title", "last_message_at" } ] }` for the bear’s **talk** role Letta agent (`default` = main thread + `conv-…` rows), sorted by most recent activity, excluding conversations that look archived in Letta JSON.
-- `PATCH /v1/chat/conversations/{conversation_id}` — JSON body `bear_id` plus optional `title` and/or `archived`; membership-checked wrapper for renaming or archiving non-default Letta conversations.
-- `GET /v1/chat/history` — query `bear_id` (required), optional `conversation_id` (`default` or `conv-…`; default when omitted), optional `before` (Letta message id cursor), optional `limit` (default 50, max 100). Membership-checked; proxies Letta `GET /v1/conversations/{id}/messages?order=desc` for the **talk** role (with `agent_id` when `conversation_id=default`) for Deep Chat `loadHistory`.
-- `POST /v1/chat/send` — JSON body `bear_id`, `message`, optional `conversation_id` (`default` or `conv-…`). Membership-checked; proxies the **talk** role through **Codepool** `bear_channel` (Letta Code SDK; **`CODEPOOL_BASE_URL`** required at startup when `RUN_WEB=true`). The trusted Codepool payload includes the talk role id plus role metadata. Each request gets a UUID **`X-Request-Id`** on the response (SSE success or JSON error). Failures return **`application/json`** `{ "error": "…", "request_id": "…" }` (not HTML). The browser parses `data:` lines and shows `reasoning_message` (HTML “Thinking” strip), `assistant_message` text, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
+- `GET /v1/bears` — JSON list of bears the signed-in user may use (membership-filtered; includes `is_bear_admin`) (`src/web/v1/mod.rs`).
+- `GET /v1/chat/conversations` — query `bear_id` (required). Membership-checked; returns `{ "conversations": [ { "id", "title", "last_message_at" } ] }` from Den-owned conversation persistence.
+- `PATCH /v1/chat/conversations/{conversation_id}` — JSON body `bear_id` plus optional `title` and/or `archived`; membership-checked wrapper for Den-owned conversation metadata.
+- `GET /v1/chat/history` — query `bear_id` (required), optional `conversation_id`, optional `before`, optional `limit` (default 50, max 100). Membership-checked; loads Den-owned conversation history for Deep Chat `loadHistory`.
+- `POST /v1/chat/send` — JSON body `bear_id`, `message`, optional `conversation_id`. Membership-checked; runs the Den-native chat loop through Bifrost. Each request gets a UUID **`X-Request-Id`** on the response (SSE success or JSON error). Failures return **`application/json`** `{ "error": "…", "request_id": "…" }` (not HTML). The browser parses `data:` lines and shows `reasoning_message`, `assistant_message`, and `error_message` payloads in Deep Chat (see `bear_chat.html`).
 
 `/v1/*` uses `login_required!(…)` (same session as the rest of the web app).
 
 ## Admin (`src/web/admin/mod.rs`)
 
-- `GET /admin/` — admin menu (includes Letta `/v1/health` and **Codepool** `/health` when configured)
+- `GET /admin/` — admin menu
 - `GET|POST /admin/users/*` — user management
-- `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields and role-agent provisioning defaults)
-- `GET /admin/bears/{id}` — operator bear registry detail; redirects to member-facing `/bear/{slug}/…`
-- `POST /admin/bears/{id}/provision-missing-profiles` (alias `/provision-missing-roles`) — provision missing Den-native profile bindings
-- `GET|POST /admin/bears/{id}/edit` — edit bear row (slug, prompt, model, role-agent provisioning defaults, tools JSON)
-- `POST /admin/bears/{id}/retry-letta` — reconcile Den-native profile bindings (legacy URL name)
+- `GET|POST /admin/bears/*` — bear registry (create bear with prompt/model fields and native stance provisioning defaults)
+- `GET /admin/bears/{id}` — redirects to member-facing `/bear/{slug}/…` profile/settings pages
+- `GET|POST /admin/bears/{id}/edit` — legacy redirects to member-facing edit pages
 - `GET|POST /admin/membership/*` — list and grant `user_bear` membership
 - `GET|POST /admin/api/*` — JSON admin API (bears, membership; operator session cookie)
 - `GET|POST /admin/oauth_clients/*` — OAuth client CRUD, PKCE test
+- `GET|POST /admin/models*` — Den model selector catalog CRUD (`model_selection_options`)
 - `GET|POST /admin/oauth_tokens/*` — token admin
 
+### Sandbox images (`src/admin/sandbox_images.rs`)
+
+- `GET /admin/sandbox` — Den-managed image catalog (editable even when the provider is down), engine image store + disk usage, recent operations, pull form, shipped-variant build buttons
+- `POST /admin/sandbox/pull` — background registry pull (redirects to the operation page)
+- `POST /admin/sandbox/build` — background build of a shipped variant (base/rust/node/godot; needs `SANDBOX_BUILD_CONTEXT_DIR` on the provider)
+- `POST /admin/sandbox/images/remove` — synchronous engine-store removal
+- `GET /admin/sandbox/operations/{id}` — operation state + log tail (auto-refreshes while running; ops don't survive provider restarts)
+- `POST /admin/sandbox/catalog` · `/{id}/update` · `/{id}/delete` · `/{id}/default` — catalog CRUD; each pushes the managed config to the provider best-effort
+
 All `/admin/*` routes use `permission_required!(…, "admin")`.
+
+## Work (`src/work/mod.rs`)
+
+- `GET /work` — jobs + active/past work runs overview (auto-refreshes while runs are active)
+- `GET /work/new` — job creation form (goal, sandbox root, commit policy, work branch, work tasks)
+- `POST /work/new` — create the Docket job (tasks assigned to the work stance; created_by_role `ui`)
+- `GET /work/jobs/{job_id}` — job detail: task tree with statuses, per-task dispatch (root/image selects from the provider catalog), run history with publish outcomes
+- `GET /work/runs/{run_id}` — run detail: state, sandbox type/strength, image, work surface, published branch/commit, changed files + diff, log tail, usage, cleanup status
+- `POST /work/tasks/{task_id}/dispatch` — enqueue a work-assigned task for sandbox execution (optional form fields: root, image, git_ref)
+- `POST /work/runs/{run_id}/cancel` — request cancellation (dispatch worker performs teardown)
+- `POST /work/runs/{run_id}/retry` — re-enqueue a terminal run as a new attempt
+
+### Work surfaces (`src/work/surfaces.rs`)
+
+- `GET /work/surfaces` — surfaces the user manages (admins: all) + surfaces available to their bears
+- `GET /work/surfaces/new` / `POST /work/surfaces/new` — create a managed surface (creator becomes owner; optional encrypted credential)
+- `GET /work/surfaces/{surface_id}` — manage page (managers/owners/site admins only; deny-as-404): settings, write-only credential, managers, assigned bears, sync, delete
+- `POST /work/surfaces/{surface_id}/update` · `/credential` · `/credential/clear` · `/managers/grant` · `/managers/revoke` · `/bears/assign` · `/bears/unassign` · `/delete` · `/sync`
+
+Mutations push the managed config (surfaces + image catalog) to the sandbox provider best-effort; the dispatch worker reconciles every 5 minutes.
+
+All `/work/*` routes use `login_required!(…)`; runs/jobs are scoped to bears the user is a member of, and surface management to the surface's managers (or site admins).
 
 ## API service (separate router)
 

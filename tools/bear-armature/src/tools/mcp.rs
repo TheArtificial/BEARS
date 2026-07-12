@@ -12,6 +12,7 @@ use rmcp::{
 use serde_json::{json, Map, Value};
 use std::{
     collections::{BTreeMap, HashMap},
+    process::Stdio,
     sync::Arc,
 };
 use tokio::sync::Mutex as TokioMutex;
@@ -191,7 +192,9 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfi
         .get("mcpServers")
         .or_else(|| params.get("mcp_servers"))
     else {
-        eprintln!("bear-armature: acp_mcp_params present=false count=0");
+        if crate::bear_debug_verbose() {
+            eprintln!("bear-armature: acp_mcp_params present=false count=0");
+        }
         return Ok(Vec::new());
     };
     let Some(items) = raw.as_array() else {
@@ -203,29 +206,37 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfi
             "ACP mcpServers are not supported in object form; mcpServers must be an array"
         ));
     };
-    eprintln!(
-        "bear-armature: acp_mcp_params summary={}",
-        summarize_acp_mcp_servers_param(params)
-    );
+    if crate::bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: acp_mcp_params summary={}",
+            summarize_acp_mcp_servers_param(params)
+        );
+    }
     let mut servers = Vec::new();
     for item in items {
         let transport_type = item.get("type").and_then(Value::as_str).unwrap_or("stdio");
         if transport_type != "stdio" {
             eprintln!(
                 "bear-armature: acp_mcp_parse unsupported_transport name={} transport={} summary={}",
-                item.get("name").and_then(Value::as_str).unwrap_or("<unnamed>"),
+                item.get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<unnamed>"),
                 transport_type,
                 summarize_mcp_server_param(item)
             );
             if transport_type == "sse" {
                 return Err(anyhow!(
                     "ACP MCP server {:?} uses unsupported transport {transport_type:?}; BEARS currently supports stdio and streamable HTTP MCP servers, but not SSE",
-                    item.get("name").and_then(Value::as_str).unwrap_or("<unnamed>")
+                    item.get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<unnamed>")
                 ));
             }
             return Err(anyhow!(
                 "ACP MCP server {:?} uses unsupported transport {transport_type:?}; BEARS currently supports stdio and streamable HTTP MCP servers forwarded by Zed",
-                item.get("name").and_then(Value::as_str).unwrap_or("<unnamed>")
+                item.get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<unnamed>")
             ));
         }
         let name = item
@@ -254,13 +265,15 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfi
             })
             .unwrap_or_default();
         let env = parse_env(item.get("env"))?;
-        eprintln!(
-            "bear-armature: acp_mcp_parse accepted_stdio source_kind=client_forwarded name={} command={} args_count={} env_names={:?}",
-            name,
-            command,
-            args.len(),
-            env.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>()
-        );
+        if crate::bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: acp_mcp_parse accepted_stdio source_kind=client_forwarded name={} command={} args_count={} env_names={:?}",
+                name,
+                command,
+                args.len(),
+                env.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>()
+            );
+        }
         servers.push(McpSourceConfig::ClientForwardedStdio {
             name,
             command,
@@ -268,10 +281,12 @@ pub(crate) fn parse_acp_mcp_servers(params: &Value) -> Result<Vec<McpSourceConfi
             env,
         });
     }
-    eprintln!(
-        "bear-armature: acp_mcp_parse complete accepted_count={}",
-        servers.len()
-    );
+    if crate::bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: acp_mcp_parse complete accepted_count={}",
+            servers.len()
+        );
+    }
     Ok(servers)
 }
 
@@ -390,11 +405,13 @@ impl McpRegistry {
         let mut tools = HashMap::new();
         let mut descriptors = Vec::new();
         let mut server_summaries = Vec::new();
-        eprintln!(
-            "bear-armature: acp_mcp_configure session_id={} source_count={}",
-            session_id,
-            sources.len()
-        );
+        if crate::bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: acp_mcp_configure session_id={} source_count={}",
+                session_id,
+                sources.len()
+            );
+        }
         for source in &sources {
             match source {
                 McpSourceConfig::ClientForwardedStdio {
@@ -403,24 +420,28 @@ impl McpRegistry {
                     args,
                     env,
                 } => {
-                    eprintln!(
-                        "bear-armature: acp_mcp_discovery_start session_id={} source_kind={} server={} command={} args_count={} env_count={}",
-                        session_id,
-                        source.source_kind(),
-                        name,
-                        command,
-                        args.len(),
-                        env.len()
-                    );
+                    if crate::bear_debug_verbose() {
+                        eprintln!(
+                            "bear-armature: acp_mcp_discovery_start session_id={} source_kind={} server={} command={} args_count={} env_count={}",
+                            session_id,
+                            source.source_kind(),
+                            name,
+                            command,
+                            args.len(),
+                            env.len()
+                        );
+                    }
                 }
                 McpSourceConfig::HostBrowserBridge { name, url, .. } => {
-                    eprintln!(
-                        "bear-armature: acp_mcp_discovery_start session_id={} source_kind={} server={} url={}",
-                        session_id,
-                        source.source_kind(),
-                        name,
-                        redact_url_for_log(url)
-                    );
+                    if crate::bear_debug_verbose() {
+                        eprintln!(
+                            "bear-armature: acp_mcp_discovery_start session_id={} source_kind={} server={} url={}",
+                            session_id,
+                            source.source_kind(),
+                            name,
+                            redact_url_for_log(url)
+                        );
+                    }
                 }
             }
             match discover_server_tools(source).await {
@@ -431,15 +452,17 @@ impl McpRegistry {
                             tool.get("name").and_then(Value::as_str).map(str::to_string)
                         })
                         .collect::<Vec<_>>();
-                    eprintln!(
-                        "bear-armature: acp_mcp_discovery_ok session_id={} source_kind={} server={} transport={} tool_count={} tool_names={:?}",
-                        session_id,
-                        source.source_kind(),
-                        source.name(),
-                        source.transport(),
-                        server_tools.len(),
-                        tool_names
-                    );
+                    if crate::bear_debug_verbose() {
+                        eprintln!(
+                            "bear-armature: acp_mcp_discovery_ok session_id={} source_kind={} server={} transport={} tool_count={} tool_names={:?}",
+                            session_id,
+                            source.source_kind(),
+                            source.name(),
+                            source.transport(),
+                            server_tools.len(),
+                            tool_names
+                        );
+                    }
                     server_summaries.push(match source {
                         McpSourceConfig::ClientForwardedStdio { name, command, .. } => json!({
                             "name": name,
@@ -517,15 +540,17 @@ impl McpRegistry {
         let browser_source = active_browser_source_from_descriptors(&descriptors);
         let browser_tool_count = count_browser_tools(&descriptors);
         sessions.insert(session_id.to_string(), McpSession { tools });
-        eprintln!(
-            "bear-armature: acp_mcp_configure_complete session_id={} dynamic_tool_count={} browser_tool_count={} source_counts={} active_browser_source={} dynamic_tool_names={:?}",
-            session_id,
-            tool_count,
-            browser_tool_count,
-            serde_json::to_string(&source_counts).unwrap_or_else(|_| source_counts.to_string()),
-            browser_source,
-            tool_names
-        );
+        if crate::bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: acp_mcp_configure_complete session_id={} dynamic_tool_count={} browser_tool_count={} source_counts={} active_browser_source={} dynamic_tool_names={:?}",
+                session_id,
+                tool_count,
+                browser_tool_count,
+                serde_json::to_string(&source_counts).unwrap_or_else(|_| source_counts.to_string()),
+                browser_source,
+                tool_names
+            );
+        }
         Ok(json!({
             "servers": server_summaries,
             "client_tools": descriptors,
@@ -572,16 +597,18 @@ async fn discover_server_tools(source: &McpSourceConfig) -> Result<Vec<Value>> {
 }
 
 async fn call_server_tool(source: &McpSourceConfig, tool_name: &str, args: Value) -> Result<Value> {
-    eprintln!(
-        "bear-armature: acp_mcp_call_start source_kind={} server={} transport={} tool={} args_keys={:?}",
-        source.source_kind(),
-        source.name(),
-        source.transport(),
-        tool_name,
-        args.as_object()
-            .map(|map| map.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default()
-    );
+    if crate::bear_debug_verbose() {
+        eprintln!(
+            "bear-armature: acp_mcp_call_start source_kind={} server={} transport={} tool={} args_keys={:?}",
+            source.source_kind(),
+            source.name(),
+            source.transport(),
+            tool_name,
+            args.as_object()
+                .map(|map| map.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default()
+        );
+    }
     with_server_client(source, |client| async move {
         let arguments = match args {
             Value::Object(map) => Some(map),
@@ -599,17 +626,19 @@ async fn call_server_tool(source: &McpSourceConfig, tool_name: &str, args: Value
         let result = client.peer().call_tool(params).await?;
         let structured = serde_json::to_value(&result)?;
         let content = mcp_tool_result_content(&structured);
-        eprintln!(
-            "bear-armature: acp_mcp_call_ok source_kind={} server={} transport={} tool={} is_error={:?} content_items={} structured={} content_preview={:?}",
-            source.source_kind(),
-            source.name(),
-            source.transport(),
-            tool_name,
-            result.is_error,
-            result.content.len(),
-            result.structured_content.is_some(),
-            truncate_for_mcp_log(&content, 500)
-        );
+        if crate::bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: acp_mcp_call_ok source_kind={} server={} transport={} tool={} is_error={:?} content_items={} structured={} content_preview={:?}",
+                source.source_kind(),
+                source.name(),
+                source.transport(),
+                tool_name,
+                result.is_error,
+                result.content.len(),
+                result.structured_content.is_some(),
+                truncate_for_mcp_log(&content, 500)
+            );
+        }
         Ok(json!({
             "ok": result.is_error != Some(true),
             "content": content,
@@ -640,12 +669,12 @@ fn stdio_safe_command_args(command: &str, args: &[String], server_name: &str) ->
     }
 
     if changed {
-        eprintln!(
-            "bear-armature: acp_mcp_spawn_rewrite server={} reason=remove_docker_tty_for_stdio_mcp original_args={:?} rewritten_args={:?}",
-            server_name,
-            args,
-            rewritten
-        );
+        if crate::bear_debug_verbose() {
+            eprintln!(
+                "bear-armature: acp_mcp_spawn_rewrite server={} reason=remove_docker_tty_for_stdio_mcp original_args={:?} rewritten_args={:?}",
+                server_name, args, rewritten
+            );
+        }
     }
 
     rewritten
@@ -669,30 +698,35 @@ where
             for (name, value) in env {
                 command_process.env(name, value);
             }
-            eprintln!(
-                "bear-armature: acp_mcp_spawn source_kind={} server={} command={} args={:?} env_names={:?}",
-                source.source_kind(),
-                name,
-                command,
-                args,
-                env.iter()
-                    .map(|(name, _)| name.clone())
-                    .collect::<Vec<_>>()
-            );
+            if crate::bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: acp_mcp_spawn source_kind={} server={} command={} args={:?} env_names={:?}",
+                    source.source_kind(),
+                    name,
+                    command,
+                    args,
+                    env.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>()
+                );
+            }
             let transport = TokioChildProcess::new(command_process.configure(|cmd| {
                 cmd.kill_on_drop(true);
+                if !crate::bear_debug_verbose() {
+                    cmd.stderr(Stdio::null());
+                }
             }))
             .with_context(|| format!("spawn MCP stdio server {name}"))?;
             let client = ().serve(transport).await?;
             f(client).await
         }
         McpSourceConfig::HostBrowserBridge { name, url, token } => {
-            eprintln!(
-                "bear-armature: acp_mcp_connect_http source_kind={} server={} url={} auth=bearer",
-                source.source_kind(),
-                name,
-                redact_url_for_log(url)
-            );
+            if crate::bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: acp_mcp_connect_http source_kind={} server={} url={} auth=bearer",
+                    source.source_kind(),
+                    name,
+                    redact_url_for_log(url)
+                );
+            }
             let headers = bearer_auth_headers(token)?;
             let transport = StreamableHttpClientTransport::from_config(
                 StreamableHttpClientTransportConfig::with_uri(url.clone())

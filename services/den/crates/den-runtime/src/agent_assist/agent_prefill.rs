@@ -10,8 +10,6 @@ pub struct AgentBearPrefill {
     pub description: String,
     pub system_prompt: String,
     pub default_model: String,
-    pub letta_agent_type: String,
-    pub letta_tool_ids: Vec<String>,
 }
 
 fn pick_str(v: &Value, keys: &[&str]) -> Option<String> {
@@ -37,24 +35,6 @@ fn model_field(v: &Value) -> Option<String> {
         return Some(m.to_string());
     }
     None
-}
-
-fn tool_ids_from_agent(v: &Value) -> Vec<String> {
-    let Some(arr) = v.get("tools").and_then(|x| x.as_array()) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for t in arr {
-        let id = t
-            .get("id")
-            .and_then(|x| x.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        if let Some(id) = id {
-            out.push(id.to_string());
-        }
-    }
-    out
 }
 
 fn suggest_slug(name: &str, agent_id: &str) -> String {
@@ -112,8 +92,6 @@ impl AgentBearPrefill {
             .to_string();
 
         let default_model = model_field(v).unwrap_or_default();
-        let letta_agent_type = pick_str(v, &["agent_type"]).unwrap_or_default();
-        let letta_tool_ids = tool_ids_from_agent(v);
         let suggested_slug = suggest_slug(&name, &id);
 
         Self {
@@ -122,8 +100,6 @@ impl AgentBearPrefill {
             description,
             system_prompt,
             default_model,
-            letta_agent_type,
-            letta_tool_ids,
         }
     }
 }
@@ -140,9 +116,7 @@ mod tests {
             "name": "My Bot",
             "description": "desc",
             "system": "You are helpful",
-            "agent_type": "memgpt_agent",
             "model": "openai/gpt-4o",
-            "tools": [{"id": "tool-1"}, {"id": "tool-2"}]
         });
         let p = AgentBearPrefill::from_agent_json(&v);
         assert_eq!(p.suggested_slug, "my-bot");
@@ -150,8 +124,6 @@ mod tests {
         assert_eq!(p.description, "desc");
         assert_eq!(p.system_prompt, "You are helpful");
         assert_eq!(p.default_model, "openai/gpt-4o");
-        assert_eq!(p.letta_agent_type, "memgpt_agent");
-        assert_eq!(p.letta_tool_ids, vec!["tool-1", "tool-2"]);
     }
 
     #[test]

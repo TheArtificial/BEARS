@@ -1,0 +1,22 @@
+[package]
+name = "den-protocol"
+version.workspace = true
+edition = "2021"
+
+# Stable protocol/data contracts shared by runtime implementations and edge crates.
+# Keep this crate light: DTOs, event enums, request/response contracts, and small
+# classification helpers only. No concrete app state or runtime execution logic.
+
+[lints]
+workspace = true
+
+[features]
+production = ["den-core/production"]
+
+[dependencies]
+den-core = { path = "../den-core" }
+bytes.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

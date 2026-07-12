@@ -1,8 +1,8 @@
 # Reflection system shared infrastructure plan
 
-> **Note (2026-06).** The Den-owned reflection queue aligns with the target; note that reflection outcomes land in per-Bear SQLite while the scheduler/queue stays in Den Postgres. See [Den-Native Runtime](../architecture/den-native-runtime.md#the-reflection-run-split) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Note (2026-06).** The Den-owned reflection queue aligns with the target; note that reflection outcomes land in per-Bear SQLite while the scheduler/queue stays in Den Postgres. See [Den runtime](../architecture/den-runtime.md#the-reflection-run-split) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: focused shared-infrastructure plan. Implementation status and sequencing now live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 
 This document describes the shared Reflection control-plane infrastructure that supports multiple BEARS maintenance and learning lanes. It intentionally avoids tracking lane-specific implementation phases; use the roadmap for current/pending work.

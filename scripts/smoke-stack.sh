@@ -27,7 +27,7 @@ recall_enabled() {
 }
 
 if [ "${AGENT_RUNTIME}" != "native" ]; then
-  printf 'smoke-stack.sh requires AGENT_RUNTIME=native; Letta/Codepool/MemFS are not in docker-compose.yaml\n' >&2
+  printf 'smoke-stack.sh requires AGENT_RUNTIME=native\n' >&2
   exit 1
 fi
 
@@ -115,7 +115,7 @@ apply_smoke_seed_until_pair_ready() {
 
   printf 'smoke seed did not provision the test-bear pair role binding\n' >&2
   compose_with_env exec -T bears-postgres psql -U bears -d den -c "
-    SELECT b.slug, ba.profile, ba.binding_id, ba.letta_agent_id, ba.provisioning_status, ba.last_provisioning_error
+    SELECT b.slug, ba.profile, ba.binding_id, ba.provisioning_status, ba.last_provisioning_error
     FROM bears b
     LEFT JOIN bear_profile_bindings ba ON ba.bear_id = b.id
     WHERE b.slug = 'test-bear'

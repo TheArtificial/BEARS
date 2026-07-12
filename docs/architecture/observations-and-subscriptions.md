@@ -2,7 +2,7 @@
 
 Subscriptions let a Bear receive external events. Observations are the structured records `watch` writes when those events arrive.
 
-For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on subscription and observation flow.
+For the canonical stance model and current stance names, see [bear stances](bear-stances.md). This document focuses on subscription and observation flow.
 
 ## Summary
 
@@ -104,7 +104,7 @@ Avoid:
 ## Related docs
 
 - [Bear Den and Den](bears-and-den.md)
-- [bear roles](bear-roles.md)
+- [bear stances](bear-stances.md)
 - [Memory model](memory-model.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
 - [Capabilities and skills](capabilities-and-skills.md)

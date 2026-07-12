@@ -12,14 +12,15 @@ Human-oriented docs for the Bear Den product.
 | [decisions/](decisions/) | Architecture Decision Records (ADRs), named `adr-####-slug.md` |
 | [guides/](guides/) | Human guides, deployment docs, contributor notes, troubleshooting, and operational runbooks |
 | [roadmap/](roadmap/) | Active planning, implementation sequencing, and archived roadmap materials |
-| [../services/codepool/](../services/codepool/) | Codepool runtime service |
 
 ## Suggested entry points
 
 - [architecture/README.md](architecture/README.md)
+- [architecture/context-compilation-scenarios.md](architecture/context-compilation-scenarios.md)
 - [decisions/README.md](decisions/README.md)
 - [guides/README.md](guides/README.md)
 - [roadmap/PLAN.md](roadmap/PLAN.md)
+- [architecture/prompt-fragment-registry.md](architecture/prompt-fragment-registry.md)
 
 Service-specific runbooks may also stay next to service configs under `services/*` where appropriate.
 

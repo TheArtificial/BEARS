@@ -170,9 +170,18 @@ mod tests {
         let store = new_test_store().await;
         let alice = confirmed_person(&store, "Alice", "alice@acme.com").await;
         let bob = confirmed_person(&store, "Bob", "bob@acme.com").await;
-        append_relation(&store, "mem-a", &alice, "audience", &json!({}), "curate", None, None)
-            .await
-            .unwrap();
+        append_relation(
+            &store,
+            "mem-a",
+            &alice,
+            "audience",
+            &json!({}),
+            "curate",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         // Empty context is fail-closed.
         assert!(!record_visible(&store, "mem-a", &AccessContext::empty())
@@ -239,9 +248,18 @@ mod tests {
         let store = new_test_store().await;
         let alice = confirmed_person(&store, "Alice", "alice@acme.com").await;
         let surface = confirmed_surface(&store, "github.com/acme/app").await;
-        append_relation(&store, "mem-d", &alice, "audience", &json!({}), "curate", None, None)
-            .await
-            .unwrap();
+        append_relation(
+            &store,
+            "mem-d",
+            &alice,
+            "audience",
+            &json!({}),
+            "curate",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         append_relation(
             &store,
             "mem-d",
@@ -281,9 +299,18 @@ mod tests {
         let survivor = confirmed_person(&store, "Alice", "alice@acme.com").await;
         let loser = confirmed_person(&store, "Alice (dup)", "alice@personal.com").await;
         // Address the record to the (soon-to-be-merged) duplicate.
-        append_relation(&store, "mem-e", &loser, "audience", &json!({}), "curate", None, None)
-            .await
-            .unwrap();
+        append_relation(
+            &store,
+            "mem-e",
+            &loser,
+            "audience",
+            &json!({}),
+            "curate",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         merge_entities(&store, &survivor, &loser).await.unwrap();
 
         // Context carrying the survivor id resolves the merged audience.

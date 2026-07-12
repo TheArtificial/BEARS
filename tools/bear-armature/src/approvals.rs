@@ -1,4 +1,11 @@
-use crate::{env_bool, paths::session_workspace_roots, RuntimeConfig, SessionContext};
+use crate::{
+    env_bool,
+    paths::session_workspace_roots,
+    tools::command_policy::{
+        command_family_key, command_policy_for, command_workspace_scope_label, normalize_command,
+    },
+    RuntimeConfig, SessionContext,
+};
 use agent_client_protocol::schema::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionResponse,
 };
@@ -67,8 +74,11 @@ fn default_approval_scope_kind() -> String {
 pub(crate) enum ApprovalScope {
     Directory,
     Workspace,
+    SiteAccount,
     Host,
     Command,
+    CommandExactWorkspace,
+    CommandFamilyWorkspace,
     Global,
 }
 
@@ -77,8 +87,11 @@ impl ApprovalScope {
         match self {
             Self::Directory => "directory",
             Self::Workspace => "workspace",
+            Self::SiteAccount => "site_account",
             Self::Host => "host",
             Self::Command => "command",
+            Self::CommandExactWorkspace => "command_exact_workspace",
+            Self::CommandFamilyWorkspace => "command_family_workspace",
             Self::Global => "global",
         }
     }
@@ -346,8 +359,29 @@ pub(crate) fn approval_ttl_secs(risk: &str) -> u64 {
     }
 }
 
-fn normalize_command_scope(command: &str) -> String {
-    command.trim().to_string()
+fn command_workspace_fingerprint(
+    context: &SessionContext,
+    prefix: &str,
+    command: &str,
+) -> Option<String> {
+    let command =
+        command_workspace_scope_label(command).unwrap_or_else(|| normalize_command(command));
+    if command.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{prefix}:{command}|workspace:{}",
+        approval_root_fingerprint(context)
+    ))
+}
+
+fn command_family_workspace_fingerprint(context: &SessionContext, command: &str) -> Option<String> {
+    command_family_key(command).map(|family| {
+        format!(
+            "command_family:{family}|workspace:{}",
+            approval_root_fingerprint(context)
+        )
+    })
 }
 
 fn approval_cache_path() -> PathBuf {
@@ -405,8 +439,15 @@ fn approval_scope_fingerprint(
             approval_directory_scope(context, target.path).map(|path| path.display().to_string())
         }
         ApprovalScope::Workspace => Some(approval_root_fingerprint(context)),
+        ApprovalScope::SiteAccount => target.url.and_then(approval_url_site_account_scope),
         ApprovalScope::Host => target.url.and_then(approval_url_host_scope),
-        ApprovalScope::Command => target.command.map(normalize_command_scope),
+        ApprovalScope::Command => target.command.map(normalize_command),
+        ApprovalScope::CommandExactWorkspace => target
+            .command
+            .and_then(|command| command_workspace_fingerprint(context, "command_exact", command)),
+        ApprovalScope::CommandFamilyWorkspace => target
+            .command
+            .and_then(|command| command_family_workspace_fingerprint(context, command)),
         ApprovalScope::Global => Some("global".to_string()),
     }
 }
@@ -417,10 +458,21 @@ pub(crate) fn candidate_approval_scopes(
     target_command: Option<&str>,
 ) -> Vec<ApprovalScope> {
     if target_url.and_then(approval_url_host_scope).is_some() {
-        return vec![ApprovalScope::Host, ApprovalScope::Global];
+        let mut scopes = Vec::new();
+        if target_url
+            .and_then(approval_url_site_account_scope)
+            .is_some()
+        {
+            scopes.push(ApprovalScope::SiteAccount);
+        }
+        scopes.push(ApprovalScope::Host);
+        scopes.push(ApprovalScope::Global);
+        return scopes;
     }
     if target_command.map(str::trim).is_some_and(|s| !s.is_empty()) {
         return vec![
+            ApprovalScope::CommandExactWorkspace,
+            ApprovalScope::CommandFamilyWorkspace,
             ApprovalScope::Command,
             ApprovalScope::Workspace,
             ApprovalScope::Global,
@@ -443,6 +495,24 @@ pub(crate) fn approval_url_host_scope(raw_url: &str) -> Option<String> {
         Some(port) => format!("{host}:{port}"),
         None => host,
     })
+}
+
+pub(crate) fn approval_url_site_account_scope(raw_url: &str) -> Option<String> {
+    let url = Url::parse(raw_url.trim()).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
+    let mut segments = url
+        .path_segments()?
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if host == "github.com" {
+        let account = segments.first()?.trim();
+        if account.is_empty() {
+            return None;
+        }
+        return Some(format!("github.com/{account}"));
+    }
+    segments.clear();
+    None
 }
 
 pub(crate) fn approval_directory_scope(
@@ -485,18 +555,46 @@ pub(crate) fn permission_options_for_context(
         "Only this time",
         PermissionOptionKind::AllowOnce,
     )];
+    if let Some(site_account) = target_url.and_then(approval_url_site_account_scope) {
+        let label = if let Some(account) = site_account.strip_prefix("github.com/") {
+            format!("Always allow this GitHub account ({account})")
+        } else {
+            format!("Always allow this account ({site_account})")
+        };
+        options.push(PermissionOption::new(
+            "allow_site_account",
+            label,
+            PermissionOptionKind::AllowAlways,
+        ));
+    }
     if let Some(host) = target_url.and_then(approval_url_host_scope) {
         options.push(PermissionOption::new(
             "allow_host",
-            format!("Always for {host}"),
+            format!("Always allow this host ({host})"),
             PermissionOptionKind::AllowAlways,
         ));
     } else if let Some(command) = target_command.map(str::trim).filter(|s| !s.is_empty()) {
+        let exact =
+            command_workspace_scope_label(command).unwrap_or_else(|| normalize_command(command));
         options.push(PermissionOption::new(
-            "allow_command_workspace",
-            format!("Always allow `{}` in this workspace", command),
+            "allow_command_exact_workspace",
+            format!("Always allow `{exact}` in this workspace"),
             PermissionOptionKind::AllowAlways,
         ));
+        if let Some(policy) = command_policy_for(command) {
+            if policy.approval_mode
+                == crate::tools::command_policy::CommandApprovalMode::FamilyAllowed
+            {
+                options.push(PermissionOption::new(
+                    "allow_command_family_workspace",
+                    format!(
+                        "Always allow safe {} commands in this workspace",
+                        policy.family_label
+                    ),
+                    PermissionOptionKind::AllowAlways,
+                ));
+            }
+        }
         if let Some(context) = context {
             options.push(PermissionOption::new(
                 "allow_workspace",
@@ -600,20 +698,25 @@ pub(crate) fn permission_decision_from_option_id(id: &str) -> PermissionDecision
             remember: true,
             scope: ApprovalScope::Workspace,
         },
-        "allow_url" => PermissionDecision {
+        "allow_site_account" => PermissionDecision {
             approved: true,
             remember: true,
-            scope: ApprovalScope::Workspace,
+            scope: ApprovalScope::SiteAccount,
         },
         "allow_host" => PermissionDecision {
             approved: true,
             remember: true,
             scope: ApprovalScope::Host,
         },
-        "allow_command_workspace" => PermissionDecision {
+        "allow_command_workspace" | "allow_command_exact_workspace" => PermissionDecision {
             approved: true,
             remember: true,
-            scope: ApprovalScope::Command,
+            scope: ApprovalScope::CommandExactWorkspace,
+        },
+        "allow_command_family_workspace" => PermissionDecision {
+            approved: true,
+            remember: true,
+            scope: ApprovalScope::CommandFamilyWorkspace,
         },
         "allow_global" => PermissionDecision {
             approved: true,
@@ -984,10 +1087,30 @@ mod tests {
     }
 
     #[test]
+    fn approval_url_site_account_scope_supports_github_accounts() {
+        assert_eq!(
+            approval_url_site_account_scope("https://github.com/Bears-AI/repo/issues/1").as_deref(),
+            Some("github.com/Bears-AI")
+        );
+        assert_eq!(
+            approval_url_site_account_scope("https://docs.example.test/reference"),
+            None
+        );
+    }
+
+    #[test]
     fn candidate_approval_scopes_prefers_host_for_urls() {
         assert_eq!(
             candidate_approval_scopes(None, Some("https://example.test:3030/path"), None),
             vec![ApprovalScope::Host, ApprovalScope::Global]
+        );
+        assert_eq!(
+            candidate_approval_scopes(None, Some("https://github.com/bears-ai/bear-den"), None),
+            vec![
+                ApprovalScope::SiteAccount,
+                ApprovalScope::Host,
+                ApprovalScope::Global
+            ]
         );
         assert_eq!(
             candidate_approval_scopes(Some(Path::new("/workspace/src/main.rs")), None, None),
@@ -998,13 +1121,65 @@ mod tests {
             ]
         );
         assert_eq!(
-            candidate_approval_scopes(None, None, Some("cargo")),
+            candidate_approval_scopes(None, None, Some("cargo build")),
             vec![
+                ApprovalScope::CommandExactWorkspace,
+                ApprovalScope::CommandFamilyWorkspace,
                 ApprovalScope::Command,
                 ApprovalScope::Workspace,
                 ApprovalScope::Global
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn approval_cache_command_family_scope_is_workspace_bounded() {
+        let cache = test_approval_cache("http://den.test", "meta", "zed");
+        let workspace_a = workspace_context("/workspace/a");
+        let workspace_b = workspace_context("/workspace/b");
+        cache
+            .remember_for_target(
+                &workspace_a,
+                "process_run",
+                "command_run",
+                ApprovalScope::CommandFamilyWorkspace,
+                ApprovalTarget {
+                    path: None,
+                    url: None,
+                    command: Some("cargo build"),
+                },
+            )
+            .await;
+
+        assert!(cache
+            .is_allowed_for_target(
+                &workspace_a,
+                "process_run",
+                None,
+                None,
+                Some("cargo check"),
+            )
+            .await);
+        assert!(
+            !cache
+                .is_allowed_for_target(
+                    &workspace_a,
+                    "process_run",
+                    None,
+                    None,
+                    Some("cargo publish"),
+                )
+                .await
+        );
+        assert!(!cache
+            .is_allowed_for_target(
+                &workspace_b,
+                "process_run",
+                None,
+                None,
+                Some("cargo check"),
+            )
+            .await);
     }
 
     #[test]
@@ -1050,6 +1225,11 @@ mod tests {
         assert!(host.approved);
         assert!(host.remember);
         assert_eq!(host.scope, ApprovalScope::Host);
+
+        let site_account = permission_decision_from_option_id("allow_site_account");
+        assert!(site_account.approved);
+        assert!(site_account.remember);
+        assert_eq!(site_account.scope, ApprovalScope::SiteAccount);
 
         let global = permission_decision_from_option_id("allow_global");
         assert!(global.approved);
@@ -1159,7 +1339,40 @@ mod tests {
         );
         assert!(serialized
             .to_string()
-            .contains("Always for docs.example.test:8443"));
+            .contains("Always allow this host (docs.example.test:8443)"));
+    }
+
+    #[test]
+    fn permission_options_use_site_account_scope_for_supported_urls() {
+        let context = workspace_context("/workspace");
+        let options = permission_options_for_context(
+            Some(&context),
+            None,
+            Some("https://github.com/bears-ai/bear-den/issues/1"),
+            None,
+            "network access",
+        );
+        let serialized = serde_json::to_value(&options).unwrap();
+        let option_ids = serialized
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["optionId"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            option_ids,
+            vec![
+                "allow_once",
+                "allow_site_account",
+                "allow_host",
+                "allow_global",
+                "reject_once",
+                "reject_always",
+            ]
+        );
+        assert!(serialized
+            .to_string()
+            .contains("Always allow this GitHub account (bears-ai)"));
     }
 
     #[test]
@@ -1169,7 +1382,7 @@ mod tests {
             Some(&context),
             None,
             None,
-            Some("cargo"),
+            Some("cargo build"),
             "command execution tools",
         );
         let serialized = serde_json::to_value(&options).unwrap();
@@ -1183,7 +1396,8 @@ mod tests {
             option_ids,
             vec![
                 "allow_once",
-                "allow_command_workspace",
+                "allow_command_exact_workspace",
+                "allow_command_family_workspace",
                 "allow_workspace",
                 "allow_global",
                 "reject_once",
@@ -1192,7 +1406,52 @@ mod tests {
         );
         assert!(serialized
             .to_string()
-            .contains("Always allow `cargo` in this workspace"));
+            .contains("Always allow `cargo build` in this workspace"));
+    }
+
+    #[test]
+    fn permission_options_use_git_subcommand_label_for_exact_workspace_scope() {
+        let context = workspace_context("/workspace");
+        let options = permission_options_for_context(
+            Some(&context),
+            None,
+            None,
+            Some("git diff -- src/main.rs"),
+            "commands",
+        );
+        let serialized = serde_json::to_value(&options).unwrap().to_string();
+        assert!(serialized.contains("Always allow `git diff` in this workspace"));
+        assert!(!serialized.contains("Always allow `git diff -- src/main.rs` in this workspace"));
+    }
+
+    #[test]
+    fn permission_options_use_short_exact_labels_for_safe_command_families() {
+        let context = workspace_context("/workspace");
+
+        let cargo = permission_options_for_context(
+            Some(&context),
+            None,
+            None,
+            Some("cargo test --lib foo::bar"),
+            "commands",
+        );
+        let cargo_serialized = serde_json::to_value(&cargo).unwrap().to_string();
+        assert!(cargo_serialized.contains("Always allow `cargo test` in this workspace"));
+        assert!(!cargo_serialized
+            .contains("Always allow `cargo test --lib foo::bar` in this workspace"));
+
+        let pytest = permission_options_for_context(
+            Some(&context),
+            None,
+            None,
+            Some("python -m pytest tests/unit/test_x.py -k foo"),
+            "commands",
+        );
+        let pytest_serialized = serde_json::to_value(&pytest).unwrap().to_string();
+        assert!(pytest_serialized.contains("Always allow `python -m pytest` in this workspace"));
+        assert!(!pytest_serialized.contains(
+            "Always allow `python -m pytest tests/unit/test_x.py -k foo` in this workspace"
+        ));
     }
 
     #[test]

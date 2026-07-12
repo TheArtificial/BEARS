@@ -1,4 +1,4 @@
-//! Normalize Letta `GET /v1/agents/{id}` JSON shapes before reading fields.
+//! Normalize provider `GET /v1/agents/{id}` JSON shapes before reading fields.
 
 use serde_json::Value;
 

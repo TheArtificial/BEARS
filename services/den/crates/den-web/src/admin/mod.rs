@@ -2,7 +2,9 @@
 pub mod api;
 pub mod bears;
 pub mod membership;
+pub mod models;
 pub mod oauth_clients;
+pub mod sandbox_images;
 pub mod users;
 
 use axum::response::Response;
@@ -12,10 +14,7 @@ use minijinja::context;
 
 use crate::errors::CustomError;
 use crate::web::{self, AppState};
-use crate::{
-    auth_backend::AuthSession,
-    core::user,
-};
+use crate::{auth_backend::AuthSession, core::user};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -25,6 +24,8 @@ pub fn router() -> Router<AppState> {
         .merge(oauth_clients::router())
         .merge(bears::router())
         .merge(membership::router())
+        .merge(models::router())
+        .merge(sandbox_images::router())
 }
 
 async fn admin_home(

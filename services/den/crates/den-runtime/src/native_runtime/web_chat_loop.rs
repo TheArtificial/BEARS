@@ -8,40 +8,39 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
+use den_memory::MemoryStoreManager;
+use den_protocol::{
+    RuntimeErrorCategory, RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent,
+    ToolCallFinishStatus,
+};
+use den_service::bears::BearProfile;
 use futures::Stream;
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    {
-        agent_loop::{
-            pending_tool_calls, provider_tool_supports_unilateral_execution, run_agent_step_stream,
-            spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
-            tool_call_finished_event, tool_call_finished_event_for_content,
-            tool_call_finished_event_for_incomplete,
-            AgentLoopSessionStore, AgentStepOverflowContext, NativeToolDispatchMode,
-            SessionTrackingStream,
-        },
-        runtime_compaction::enqueue_compaction_after_turn,
-        runtime_contracts::ToolCallFinishStatus,
-        bears::BearProfile,
-        llm::{ChatMessage, ChatToolCall, LlmClient},
-        memory::MemoryStoreManager,
-        runtime_contracts::{
-            RuntimeErrorCategory, RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent,
-        },
+    agent_loop::{
+        classify_tool_budget_class, evaluate_turn_budget, pending_tool_calls,
+        provider_tool_supports_unilateral_execution, run_agent_step_stream,
+        spawn_persist_web_chat_interrupted_turn, spawn_persist_web_chat_turn,
+        tool_call_finished_event, tool_call_finished_event_for_content,
+        tool_call_finished_event_for_incomplete, tool_result_content_indicates_error,
+        tool_signature_from_call, AgentLoopSessionStore, AgentStepOverflowContext,
+        NativeToolDispatchMode, SessionTrackingStream, ToolContinuationObservation,
     },
+    llm::{ChatMessage, ChatToolCall, LlmClient},
+    runtime_compaction::enqueue_compaction_after_turn,
 };
-use den_core::DenError;
 use den_core::tools::arguments::DenToolChannelContext;
 use den_core::tools::context::DenToolInvocationContext;
 use den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
+use den_core::DenError;
 
 use crate::native_runtime::RuntimeToolInvoker;
 
 const WEB_CHAT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
-const WEB_CHAT_TURN_BUDGET: Duration = Duration::from_secs(120);
+const WEB_CHAT_TURN_BUDGET: Duration = Duration::from_mins(2);
 
 #[derive(Clone)]
 pub struct NativeWebChatLoopRuntime {
@@ -63,10 +62,8 @@ pub struct NativeWebChatLoopRuntime {
     pub tool_invoker: Arc<dyn RuntimeToolInvoker>,
 }
 
-type ToolExecFuture =
-    Pin<Box<dyn Future<Output = Result<ChatMessage, DenError>> + Send>>;
-type NextStepFuture =
-    Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
+type ToolExecFuture = Pin<Box<dyn Future<Output = Result<ChatMessage, DenError>> + Send>>;
+type NextStepFuture = Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 
 enum LoopPhase {
     Streaming(Pin<Box<dyn Stream<Item = Result<RuntimeStreamEvent, DenError>> + Send>>),
@@ -95,7 +92,8 @@ fn turn_timeout_event() -> RuntimeStreamEvent {
     RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
         turn: None,
         category: RuntimeErrorCategory::Timeout,
-        message: "This reply took too long and was stopped. Try a simpler question or retry.".to_string(),
+        message: "This reply took too long and was stopped. Try a simpler question or retry."
+            .to_string(),
     })
 }
 
@@ -188,7 +186,11 @@ impl NativeWebChatLoopStream {
     fn emit_incomplete_tool_outcomes(&mut self, calls: &[ChatToolCall], reason: &str) {
         for call in calls {
             self.pending_out.push_back(RuntimeStreamEvent::Semantic(
-                tool_call_finished_event_for_incomplete(call.id.clone(), &call.function.name, reason),
+                tool_call_finished_event_for_incomplete(
+                    call.id.clone(),
+                    &call.function.name,
+                    reason,
+                ),
             ));
         }
     }
@@ -219,11 +221,13 @@ impl NativeWebChatLoopStream {
             runtime.session_store.clone(),
             runtime.pool.clone(),
             runtime.bear_id,
+            runtime.bear_slug.clone(),
             Some(runtime.user_id),
             runtime.conversation_id.clone(),
             runtime.session_id.clone(),
             Some(runtime.request_id.clone()),
             runtime.config.clone(),
+            runtime.stores.clone(),
             BearProfile::Chat,
             NativeToolDispatchMode::ServerSideInProcess,
         ))
@@ -254,11 +258,92 @@ impl NativeWebChatLoopStream {
                 session_store: runtime.session_store.clone(),
             };
             let raw = run_agent_step_stream(&runtime.llm, &session, Some(overflow)).await?;
-            Ok(NativeWebChatLoopStream::wrap_step_stream(&runtime, raw, &session))
+            Ok(NativeWebChatLoopStream::wrap_step_stream(
+                &runtime, raw, &session,
+            ))
         }));
     }
 
-    fn poll_tool_execution(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<RuntimeStreamEvent, DenError>>> {
+    fn evaluate_completed_tool_batch(
+        &mut self,
+        calls: &[ChatToolCall],
+        completed: &[ChatMessage],
+    ) -> Option<RuntimeStreamEvent> {
+        let Some(prior_session) = self.runtime.session_store.get(&self.runtime.session_key) else {
+            return Some(RuntimeStreamEvent::Semantic(
+                RuntimeSemanticEvent::TurnFailed {
+                    turn: None,
+                    category: RuntimeErrorCategory::Internal,
+                    message: "native web chat session not found".to_string(),
+                },
+            ));
+        };
+        let observations = calls
+            .iter()
+            .zip(completed.iter())
+            .map(|(call, message)| ToolContinuationObservation {
+                tool_name: call.function.name.clone(),
+                signature: tool_signature_from_call(call),
+                class: classify_tool_budget_class(&call.function.name),
+                failed: tool_result_content_indicates_error(message.content.as_deref()),
+            })
+            .collect::<Vec<_>>();
+        let evaluation = evaluate_turn_budget(
+            prior_session.turn_budget,
+            prior_session.step,
+            prior_session
+                .turn_budget_state
+                .started_at
+                .elapsed()
+                .as_millis() as u64,
+            &prior_session.turn_budget_state,
+            &observations,
+        );
+        self.runtime
+            .session_store
+            .update(&self.runtime.session_key, |session| {
+                session.messages.extend(completed.iter().cloned());
+                session.turn_budget_state = evaluation.next_state.clone();
+                if let Some(warning) = evaluation.warning.as_ref() {
+                    if session.messages.last().is_some_and(|message| {
+                        message.role == "system"
+                            && message.content.as_deref() == Some(warning.model_message())
+                    }) {
+                        return;
+                    }
+                    if session.messages.last().is_some_and(|message| {
+                        message.role == "system"
+                            && message
+                                .content
+                                .as_deref()
+                                .is_some_and(|content| content.starts_with("Budget advisory:"))
+                    }) {
+                        session.messages.pop();
+                    }
+                    session.messages.push(ChatMessage {
+                        role: "system".to_string(),
+                        content: Some(warning.model_message().to_string()),
+                        tool_call_id: None,
+                        name: None,
+                        tool_calls: None,
+                    });
+                }
+            });
+        let reason = evaluation.stop_reason?;
+        self.persist_interrupted_turn(reason.persistence_reason());
+        Some(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::TurnFailed {
+                turn: None,
+                category: RuntimeErrorCategory::Internal,
+                message: reason.user_message(),
+            },
+        ))
+    }
+
+    fn poll_tool_execution(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<RuntimeStreamEvent, DenError>>> {
         let LoopPhase::ExecutingTools {
             calls,
             index,
@@ -271,10 +356,14 @@ impl NativeWebChatLoopStream {
 
         if *index >= calls.len() {
             let completed = std::mem::take(results);
-            let runtime = self.runtime.clone();
-            runtime.session_store.update(&runtime.session_key, |session| {
-                session.messages.extend(completed);
-            });
+            let completed_calls = calls.clone();
+            if let Some(stop_event) =
+                self.evaluate_completed_tool_batch(&completed_calls, &completed)
+            {
+                self.phase = LoopPhase::Finished;
+                self.pending_out.push_back(stop_event);
+                return Poll::Pending;
+            }
             self.begin_next_step();
             return Poll::Pending;
         }
@@ -282,7 +371,9 @@ impl NativeWebChatLoopStream {
         if active.is_none() {
             let call = calls[*index].clone();
             let runtime = self.runtime.clone();
-            *active = Some(Box::pin(async move { execute_one_web_chat_den_tool(&runtime, call).await }));
+            *active = Some(Box::pin(async move {
+                execute_one_web_chat_den_tool(&runtime, call).await
+            }));
         }
 
         let Some(fut) = active.as_mut() else {
@@ -304,14 +395,13 @@ impl NativeWebChatLoopStream {
             Poll::Ready(Err(error)) => {
                 let call = calls[*index].clone();
                 let summary = format!("{} failed: {error}", call.function.name);
-                self.pending_out.push_back(RuntimeStreamEvent::Semantic(
-                    tool_call_finished_event(
+                self.pending_out
+                    .push_back(RuntimeStreamEvent::Semantic(tool_call_finished_event(
                         &call,
                         ToolCallFinishStatus::Error,
                         summary.clone(),
                         Some(summary),
-                    ),
-                ));
+                    )));
                 results.push(ChatMessage {
                     role: "tool".to_string(),
                     content: Some(format!("error: {error}")),
@@ -340,11 +430,18 @@ impl Stream for NativeWebChatLoopStream {
         if let Some(event) = self.maybe_keepalive() {
             return Poll::Ready(Some(Ok(event)));
         }
-        if self.started_at.elapsed() >= WEB_CHAT_TURN_BUDGET {
+        let wall_clock_limit = self
+            .runtime
+            .session_store
+            .get(&self.runtime.session_key)
+            .map(|session| Duration::from_millis(session.turn_budget.max_wall_clock_ms))
+            .unwrap_or(WEB_CHAT_TURN_BUDGET);
+        if self.started_at.elapsed() >= wall_clock_limit {
             if let LoopPhase::ExecutingTools { calls, index, .. } = &self.phase {
                 let pending = calls[*index..].to_vec();
                 self.emit_incomplete_tool_outcomes(&pending, "turn_timeout");
-            } else if let Some(session) = self.runtime.session_store.get(&self.runtime.session_key) {
+            } else if let Some(session) = self.runtime.session_store.get(&self.runtime.session_key)
+            {
                 let pending = pending_tool_calls(&session.messages);
                 self.emit_incomplete_tool_outcomes(&pending, "turn_timeout");
             }
@@ -372,7 +469,9 @@ impl Stream for NativeWebChatLoopStream {
                 },
                 LoopPhase::Streaming(stream) => match stream.as_mut().poll_next(cx) {
                     Poll::Ready(Some(Ok(
-                        event @ RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }),
+                        event @ RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted {
+                            ..
+                        }),
                     ))) => {
                         self.saw_turn_completed = true;
                         self.touch_outbound();
@@ -396,15 +495,16 @@ impl Stream for NativeWebChatLoopStream {
                         return Poll::Ready(Some(Err(error)));
                     }
                     Poll::Ready(None) => {
-                        let session = match self.runtime.session_store.get(&self.runtime.session_key) {
-                            Some(session) => session,
-                            None => {
-                                self.phase = LoopPhase::Finished;
-                                return Poll::Ready(Some(Err(DenError::System(
-                                    "native web chat session not found".to_string(),
-                                ))));
-                            }
-                        };
+                        let session =
+                            match self.runtime.session_store.get(&self.runtime.session_key) {
+                                Some(session) => session,
+                                None => {
+                                    self.phase = LoopPhase::Finished;
+                                    return Poll::Ready(Some(Err(DenError::System(
+                                        "native web chat session not found".to_string(),
+                                    ))));
+                                }
+                            };
                         let pending = pending_tool_calls(&session.messages);
                         if pending.is_empty() {
                             if !self.saw_turn_completed {
@@ -419,14 +519,17 @@ impl Stream for NativeWebChatLoopStream {
                             }
                             return Poll::Ready(None);
                         }
-                        if session.step >= session.max_steps {
-                            self.persist_interrupted_turn("max_agent_steps");
+                        if session.step >= session.turn_budget.emergency_hard_steps {
+                            self.persist_interrupted_turn("emergency_hard_step_limit");
                             self.phase = LoopPhase::Finished;
                             return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
                                 RuntimeSemanticEvent::TurnFailed {
                                     turn: None,
                                     category: RuntimeErrorCategory::Internal,
-                                    message: "native web chat reached max agent steps".to_string(),
+                                    message: format!(
+                                        "native web chat reached emergency hard step limit (step={}/emergency_hard_steps={})",
+                                        session.step, session.turn_budget.emergency_hard_steps
+                                    ),
                                 },
                             ))));
                         }
@@ -447,7 +550,9 @@ async fn execute_one_web_chat_den_tool(
     let canonical = builtin_den_tool_descriptor_for_provider_name(&provider_name)
         .map(|descriptor| descriptor.name.to_string())
         .unwrap_or_else(|| provider_name.clone());
-    let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| Value::Object(Default::default()));
+    let args: Value = serde_json::from_str(&call.function.arguments)
+        .unwrap_or_else(|_| Value::Object(Default::default()));
+    let session_snapshot = runtime.session_store.get(&runtime.session_key);
     let content = if !provider_tool_supports_unilateral_execution(&provider_name) {
         serde_json::json!({
             "ok": false,
@@ -467,14 +572,30 @@ async fn execute_one_web_chat_den_tool(
             membership_role: runtime.membership_role.clone(),
             conversation_id: runtime.conversation_id.clone(),
             session_id: runtime.session_id.clone(),
-            acp_session_id: None,
+            client_session_id: None,
             conversation_selection: Some(runtime.conversation_id.clone()),
             runtime_target: Some(runtime.conversation_id.clone()),
             workspace_roots: Vec::new(),
             session_policy: None,
-            activity: None,
-            runtime: None,
-            context_budget: None,
+            activity: session_snapshot
+                .as_ref()
+                .and_then(|session| session.active_activity_plan.as_ref())
+                .and_then(|plan| serde_json::to_value(plan).ok()),
+            runtime: session_snapshot
+                .as_ref()
+                .map(|session| session.session_info_runtime_snapshot()),
+            context_budget: session_snapshot.as_ref().and_then(|session| {
+                session
+                    .latest_context_budget
+                    .as_ref()
+                    .and_then(|budget| serde_json::to_value(budget).ok())
+            }),
+            projected_memory: session_snapshot
+                .as_ref()
+                .and_then(|session| session.latest_projected_memory.clone()),
+            recalled_memory: session_snapshot
+                .as_ref()
+                .and_then(|session| session.latest_recalled_memory.clone()),
             request_id: Some(runtime.request_id.clone()),
             channel: DenToolChannelContext {
                 family: Some("browser_chat".to_string()),

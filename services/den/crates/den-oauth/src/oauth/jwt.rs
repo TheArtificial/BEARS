@@ -4,7 +4,7 @@
 //! replacing the simple random string tokens with self-contained JWT tokens that
 //! include claims and can be validated without database lookups.
 
-use crate::oauth::{error::OAuthError, OAuthScope};
+use crate::oauth::{error::OAuthError, utils::generate_secure_random_string, OAuthScope};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -237,17 +237,7 @@ impl JwtManager {
 /// # Returns
 /// A unique identifier for the JWT token
 fn generate_jti() -> String {
-    use rand::Rng;
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ\
-                            abcdefghijklmnopqrstuvwxyz\
-                            0123456789";
-    let mut rng = rand::rng();
-    (0..16)
-        .map(|_| {
-            let idx = rng.random_range(0..CHARSET.len());
-            CHARSET[idx] as char
-        })
-        .collect()
+    generate_secure_random_string(16)
 }
 
 /// JWT signing material for HS256 access tokens.

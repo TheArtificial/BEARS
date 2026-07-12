@@ -59,7 +59,10 @@ impl Default for UpdateOptions {
             .unwrap_or_else(|| "stable".to_string()),
             manifest_url: env_with_fallback(
                 "BEAR_ARMATURE_UPDATE_MANIFEST_URL",
-                &["BEARS_ACP_UPDATE_MANIFEST_URL", "DEN_ACP_UPDATE_MANIFEST_URL"],
+                &[
+                    "BEARS_ACP_UPDATE_MANIFEST_URL",
+                    "DEN_ACP_UPDATE_MANIFEST_URL",
+                ],
             ),
             yes: false,
             install_mode: UpdateInstallMode::OpenInstaller,
@@ -100,9 +103,7 @@ impl UpdateOptions {
                     std::process::exit(0);
                 }
                 unknown => {
-                    bail!(
-                        "unknown update argument {unknown:?}; use bear-armature update --help"
-                    )
+                    bail!("unknown update argument {unknown:?}; use bear-armature update --help")
                 }
             }
         }
@@ -349,7 +350,9 @@ async fn download_update_pkg(
     if let Some(expected_size) = platform.size {
         let actual_size = bytes.len() as u64;
         if actual_size != expected_size {
-            bail!("downloaded package size mismatch: expected {expected_size} bytes, got {actual_size}");
+            bail!(
+                "downloaded package size mismatch: expected {expected_size} bytes, got {actual_size}"
+            );
         }
     }
     fs::write(&pkg_path, &bytes)
@@ -612,12 +615,14 @@ async fn fetch_manifest_body(
         && options.manifest_url.is_none()
         && manifest_url.starts_with(DEFAULT_UPDATE_BASE_URL)
     {
-        let legacy_url = format!("{LEGACY_UPDATE_BASE_URL}/{}/{}.json", options.channel, target);
-        let legacy_response = http
-            .get(&legacy_url)
-            .send()
-            .await
-            .with_context(|| format!("could not fetch legacy update manifest from {legacy_url}"))?;
+        let legacy_url = format!(
+            "{LEGACY_UPDATE_BASE_URL}/{}/{}.json",
+            options.channel, target
+        );
+        let legacy_response =
+            http.get(&legacy_url).send().await.with_context(|| {
+                format!("could not fetch legacy update manifest from {legacy_url}")
+            })?;
         let legacy_status = legacy_response.status();
         let legacy_body = legacy_response.text().await.unwrap_or_default();
         return Ok((legacy_status, legacy_body, legacy_url));

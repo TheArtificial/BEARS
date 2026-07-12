@@ -15,22 +15,48 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+CURRENT_MODE = "startup"
+
+
+def emit(stream, msg: str) -> None:
+    print(msg, file=stream, flush=True)
+
 
 def err(msg: str) -> None:
-    print(f"preflight: ERROR: {msg}", file=sys.stderr)
+    emit(sys.stderr, f"preflight[{CURRENT_MODE}]: ERROR: {msg}")
 
 
 def warn(msg: str) -> None:
-    print(f"preflight: WARNING: {msg}", file=sys.stderr)
+    emit(sys.stderr, f"preflight[{CURRENT_MODE}]: WARNING: {msg}")
 
 
 def info(msg: str) -> None:
-    print(f"preflight: {msg}", file=sys.stderr)
+    emit(sys.stderr, f"preflight[{CURRENT_MODE}]: {msg}")
+
+
+def banner(title: str, msg: str) -> str:
+    return "\n".join(
+        [
+            "",
+            f"================ BEARS PREFLIGHT {title} [{CURRENT_MODE}] ================",
+            msg,
+            "===============================================================",
+            "",
+        ]
+    )
 
 
 def fail(msg: str) -> None:
-    err(msg)
+    rendered = banner("FAILED", msg)
+    emit(sys.stderr, rendered)
+    emit(sys.stdout, rendered)
     sys.exit(1)
+
+
+def success(msg: str) -> None:
+    rendered = banner("OK", msg)
+    emit(sys.stderr, rendered)
+    emit(sys.stdout, rendered)
 
 
 def require_non_empty(name: str) -> str:
@@ -38,6 +64,13 @@ def require_non_empty(name: str) -> str:
     value = "" if raw is None else str(raw).strip()
     if not value or value == "SETME":
         fail(f"{name} must be set (current value is {value or 'empty'})")
+    return value
+
+
+def require_min_length(name: str, min_length: int) -> str:
+    value = require_non_empty(name)
+    if len(value) < min_length:
+        fail(f"{name} must be at least {min_length} characters")
     return value
 
 
@@ -135,12 +168,58 @@ def validate_bifrost_model_metadata_config() -> None:
         fail(f"BIFROST_CONFIG_PATH is not valid JSON: {exc}")
 
     bears = config.get("bears")
-    if not isinstance(bears, dict):
-        fail("Bifrost config must include a top-level bears object with model metadata")
+    models = []
+    if bears is None:
+        warn(
+            "Bifrost config has no top-level bears model metadata; Den will rely on the live /v1/models catalog"
+        )
+    elif not isinstance(bears, dict):
+        fail("Bifrost config top-level bears value must be an object when present")
+    else:
+        models = bears.get("models")
+        if not isinstance(models, list):
+            fail(
+                "Bifrost config bears.models must be an array when bears metadata is present"
+            )
 
-    models = bears.get("models")
-    if not isinstance(models, list) or not models:
-        fail("Bifrost config bears.models must be a non-empty array")
+    if "auth_config" in config:
+        fail(
+            "Bifrost config top-level auth_config is deprecated; use governance.auth_config so /api/session/login is enabled after config-store reconciliation"
+        )
+
+    governance = config.get("governance")
+    if not isinstance(governance, dict):
+        fail(
+            "Bifrost config must include governance.auth_config for runtime virtual-key provisioning"
+        )
+    auth_config = governance.get("auth_config")
+    if not isinstance(auth_config, dict):
+        fail(
+            "Bifrost config must include governance.auth_config for runtime virtual-key provisioning"
+        )
+    if auth_config.get("is_enabled") is not True:
+        fail(
+            "Bifrost config governance.auth_config.is_enabled must be true for Den to provision virtual keys"
+        )
+    if auth_config.get("admin_username") != "env.BIFROST_ADMIN_USERNAME":
+        fail(
+            "Bifrost config governance.auth_config.admin_username must be env.BIFROST_ADMIN_USERNAME"
+        )
+    if auth_config.get("admin_password") != "env.BIFROST_ADMIN_PASSWORD":
+        fail(
+            "Bifrost config governance.auth_config.admin_password must be env.BIFROST_ADMIN_PASSWORD"
+        )
+    if auth_config.get("disable_auth_on_inference") is not False:
+        fail(
+            "Bifrost config governance.auth_config.disable_auth_on_inference must be false; BEARS requires virtual keys for all model inference"
+        )
+    client = config.get("client")
+    if not isinstance(client, dict):
+        fail("Bifrost config client must be an object")
+    if client.get("enforce_auth_on_inference") is not True:
+        fail(
+            "Bifrost config client.enforce_auth_on_inference must be true; BEARS requires virtual keys for all model inference"
+        )
 
     providers = config.get("providers")
     if not isinstance(providers, dict) or not providers:
@@ -154,7 +233,13 @@ def validate_bifrost_model_metadata_config() -> None:
         for key in provider.get("keys", []) or []:
             if not isinstance(key, dict):
                 continue
-            for model in key.get("models", []) or []:
+            key_name = str(key.get("name", "<unnamed>")).strip() or "<unnamed>"
+            key_models = key.get("models")
+            if not isinstance(key_models, list) or not key_models:
+                fail(
+                    f"providers.{provider_name}.keys[{key_name}] must declare a non-empty models array; use ['*'] for provider-wide routing"
+                )
+            for model in key_models:
                 if model == "*":
                     wildcard_providers.add(provider_name)
                 elif isinstance(model, str) and model.strip():
@@ -204,14 +289,18 @@ def validate_bifrost_model_metadata_config() -> None:
                 f"bears.models[{idx}] maps handle {handle!r} to {provider}/{upstream_model}, but that model is not listed under providers.{provider}.keys[].models"
             )
 
-    if enabled_count == 0:
+    if models and enabled_count == 0:
         fail("Bifrost config bears.models has no enabled models")
     if wildcard_providers:
         warn(
-            "Bifrost provider keys still use models: ['*']; explicit provider model lists are recommended so preflight can validate availability"
+            "Bifrost provider keys use provider-wide routing (models: ['*']); "
+            "explicit provider model lists are recommended only when you want preflight to validate exact availability"
         )
 
-    info(f"Bifrost model metadata OK ({enabled_count} enabled models in {path})")
+    if models:
+        info(f"Bifrost model metadata OK ({enabled_count} enabled models in {path})")
+    else:
+        info(f"Bifrost provider config OK (no bears model metadata in {path})")
 
 
 def validate_database_url(reachable: bool = True) -> None:
@@ -232,9 +321,29 @@ def validate_config_shape() -> None:
     require_non_empty("JWT_SECRET")
     info("JWT_SECRET is set")
 
+    require_min_length("DEN_SECRET_ENCRYPTION_KEY", 16)
+    info("DEN_SECRET_ENCRYPTION_KEY is set")
+
+    require_min_length("BIFROST_ENCRYPTION_KEY", 16)
+    info("BIFROST_ENCRYPTION_KEY is set")
+    require_non_empty("BIFROST_ADMIN_USERNAME")
+    info("BIFROST_ADMIN_USERNAME is set")
+    require_min_length("BIFROST_ADMIN_PASSWORD", 8)
+    info("BIFROST_ADMIN_PASSWORD is set")
+
     validate_database_url(reachable=False)
 
-    llm = os.environ.get("LLM_API_URL", "").strip() or "http://bears-bifrost:8080/v1"
+    origin = os.environ.get("BIFROST_ORIGIN", "").strip().rstrip("/")
+    if origin:
+        management = f"{origin}/api"
+        llm = f"{origin}/v1"
+    else:
+        origin = "http://bears-bifrost:8080"
+        management = os.environ.get("BIFROST_MANAGEMENT_URL", "").strip() or f"{origin}/api"
+        llm = os.environ.get("LLM_API_URL", "").strip() or f"{origin}/v1"
+    validate_http_url("BIFROST_MANAGEMENT_URL", management)
+    info(f"BIFROST_MANAGEMENT_URL OK ({management})")
+
     validate_http_url("LLM_API_URL", llm)
     info(f"LLM_API_URL OK ({llm})")
 
@@ -251,16 +360,20 @@ def validate_config_shape() -> None:
 
 
 def main() -> None:
+    global CURRENT_MODE
     mode = sys.argv[1] if len(sys.argv) > 1 else "all"
+    CURRENT_MODE = mode
 
     if mode == "config":
         validate_config_shape()
+        success("configuration shape checks passed")
     elif mode == "den-db":
         validate_database_url(reachable=True)
+        success("Den database reachability checks passed")
     elif mode == "all":
         validate_config_shape()
         validate_database_url(reachable=True)
-        info("all preflight checks passed")
+        success("all preflight checks passed")
     else:
         fail(f"unknown preflight mode {mode!r}; expected config, den-db, or all")
 

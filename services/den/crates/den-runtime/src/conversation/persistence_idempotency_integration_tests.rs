@@ -1,9 +1,12 @@
 use sqlx::PgPool;
 
-use crate::{
-    bears::{db::create_bear, db::BearParams},
-    conversation_message_types::{ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility, ConversationMessageWrite},
-    conversation_persistence::{append_message, ensure_conversation_for_external_id},
+use den_service::{
+    bears::db::{create_bear, BearParams},
+    conversation::message_types::{
+        ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
+        ConversationMessageWrite,
+    },
+    conversation::persistence::{append_message, ensure_conversation_for_external_id},
 };
 
 #[sqlx::test]
@@ -19,8 +22,6 @@ async fn duplicate_source_event_id_returns_existing_sequence(
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )
@@ -34,7 +35,7 @@ async fn duplicate_source_event_id_returns_existing_sequence(
         None,
     )
     .await?;
-    let source_event_id = "acp:assistant-output:req-123";
+    let source_event_id = "client:assistant-output:req-123";
     let content_json = serde_json::json!({
         "event": "assistant_output",
         "request_id": "req-123"

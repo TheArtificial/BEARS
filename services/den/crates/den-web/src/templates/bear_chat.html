@@ -27,6 +27,14 @@ block head %} {{ super() }}
                 aria-label="Conversations"
             ></ul>
         </div>
+        <label class="form-hint" for="den-model-select">Model</label>
+        <select
+            id="den-model-select"
+            class="den-model-select"
+            aria-label="Conversation model"
+        >
+            <option value="auto">Auto / stance default</option>
+        </select>
         <a class="button-link" href="/bear/{{ bear_slug | e }}/overview"
             >Overview</a
         >
@@ -46,7 +54,7 @@ block head %} {{ super() }}
 <script>
     var BEAR_ID = "{{ bear_id | e }}";
     var BEAR_NAME = "{{ bear_name | e }}";
-    /** Letta conversation id from URL (`default` = agent main thread, or `conv-…`). */
+    /** Conversation id from URL (`default` = agent main thread, or `conv-…`). */
     var PREFERRED_CONVERSATION_ID = (function () {
         var p = new URLSearchParams(window.location.search).get(
             "conversation_id",
@@ -57,6 +65,7 @@ block head %} {{ super() }}
     var CONVERSATION_ID = PREFERRED_CONVERSATION_ID;
     var DEN_CONVERSATIONS = [];
     var DEN_PENDING_CONVERSATION = null;
+    var DEN_MODEL_OPTIONS = [];
     /**
      * Show raw `<system-reminder>…</system-reminder>` in the chat only when
      * `?debug=true` or `?debug=verbose` (no UI toggle).
@@ -67,13 +76,109 @@ block head %} {{ super() }}
         return v === "true" || v === "verbose";
     })();
     var errEl = document.getElementById("err");
-    /** Page size for Letta `GET …/messages` (newest page first; scroll up loads older). */
+    /** Page size for Den history `GET …/messages` (newest page first; scroll up loads older). */
     var DEN_HISTORY_PAGE = 50;
     var historyNextBefore = null;
 
     function showErr(msg) {
         errEl.textContent = msg;
         errEl.hidden = false;
+    }
+
+    function currentModelSelect() {
+        return document.getElementById("den-model-select");
+    }
+
+    function renderModelSelector(data) {
+        var select = currentModelSelect();
+        if (!select || !data) return;
+        DEN_MODEL_OPTIONS = data.model_options || [];
+        var mode = data.selection_mode === "explicit" ? "explicit" : "auto";
+        var selected =
+            mode === "explicit"
+                ? data.selected_model || data.requested_model || ""
+                : "auto";
+        var html = [
+            '<option value="auto">Auto / stance default (' +
+                escapeHtml(data.effective_model || "default") +
+                ")</option>",
+        ];
+        for (var i = 0; i < DEN_MODEL_OPTIONS.length; i++) {
+            var m = DEN_MODEL_OPTIONS[i];
+            if (!m || !m.handle) continue;
+            html.push(
+                '<option value="' +
+                    escapeHtml(m.handle) +
+                    '">' +
+                    escapeHtml(m.label || m.handle) +
+                    "</option>",
+            );
+        }
+        select.innerHTML = html.join("");
+        select.value = selected;
+        if (select.value !== selected) select.value = "auto";
+        select.title =
+            mode === "explicit"
+                ? "Conversation model: " + selected
+                : "Using stance/Bear default: " + (data.effective_model || "");
+        select.disabled = String(CONVERSATION_ID || "").indexOf("new-") === 0;
+    }
+
+    function loadConversationModel() {
+        if (!BEAR_ID) return Promise.resolve();
+        var params = new URLSearchParams();
+        params.set("bear_id", BEAR_ID);
+        params.set("conversation_id", CONVERSATION_ID || "default");
+        return fetch("/v1/chat/model?" + params.toString(), {
+            credentials: "same-origin",
+        })
+            .then(function (response) {
+                if (!response.ok)
+                    return response.text().then(function (t) {
+                        throw new Error(t || "HTTP " + response.status);
+                    });
+                return response.json();
+            })
+            .then(renderModelSelector)
+            .catch(function (err) {
+                showErr(String(err.message || err));
+            });
+    }
+
+    function saveConversationModel(value) {
+        if (
+            !BEAR_ID ||
+            !CONVERSATION_ID ||
+            String(CONVERSATION_ID).indexOf("new-") === 0
+        )
+            return;
+        var body = {
+            bear_id: BEAR_ID,
+            conversation_id: CONVERSATION_ID,
+            selection_mode: value === "auto" ? "auto" : "explicit",
+            model: value === "auto" ? null : value,
+        };
+        return fetch("/v1/chat/model", {
+            method: "PATCH",
+            credentials: "same-origin",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+            },
+            body: JSON.stringify(body),
+        })
+            .then(function (response) {
+                if (!response.ok)
+                    return response.text().then(function (t) {
+                        throw new Error(t || "HTTP " + response.status);
+                    });
+                return response.json();
+            })
+            .then(renderModelSelector)
+            .catch(function (err) {
+                showErr(String(err.message || err));
+                loadConversationModel();
+            });
     }
 
     function denLoginRedirectUrl() {
@@ -208,7 +313,7 @@ block head %} {{ super() }}
 
     /**
      * Subagent / fork instructions sometimes appear as plain text (not only in system-reminder XML).
-     * Must match [strip_letta_harness_for_user] in `core/letta/assistant_display.rs` (used for /v1/chat/history).
+     * Must match the server-side history display cleanup used for /v1/chat/history.
      */
     function stripSubagentForkBoilerplate(text) {
         if (DEN_CHAT_DEBUG_VERBOSE || typeof text !== "string") return text;
@@ -239,7 +344,7 @@ block head %} {{ super() }}
      * Live stream only: remove **closed** reminder blocks. Do not strip at a partial
      * `system[-_]reminder` at the end of the buffer — that would drop the whole tail of the
      * reply until more chunks arrive (or forever if the model never closed the tag), i.e. fake
-     * "truncation" in the chat UI with full text still in Letta. Fork blob is only removed when
+     * "truncation" in the chat UI with full text still in history. Fork blob is only removed when
      * the full phrase is present in the buffer.
      */
     function stripSystemReminderBlocksLive(text) {
@@ -362,8 +467,8 @@ block head %} {{ super() }}
         );
     }
 
-    /** Letta sometimes wraps the real payload in `contents` (same pattern as `error_message`). */
-    function lettaInnerForStream(obj) {
+    /** The runtime may wraps the real payload in `contents` (same pattern as `error_message`). */
+    function runtimeInnerForStream(obj) {
         if (!obj || typeof obj !== "object") return obj;
         if (
             obj.contents &&
@@ -411,7 +516,7 @@ block head %} {{ super() }}
         });
     }
 
-    /** Letta may send `content` as a string or structured parts (same idea as Code SDK `extractTextFromContent`). */
+    /** The runtime may send `content` as a string or structured parts (same idea as Code SDK `extractTextFromContent`). */
     function assistantChunkText(inner) {
         var c = inner.content;
         if (typeof c === "string") return c;
@@ -557,7 +662,7 @@ block head %} {{ super() }}
 
         /**
          * Deep Chat default is displayServiceErrorMessages: false — then `signals.onResponse({ error })`
-         * does not show the real string from Codepool/Den (SSE error_message or HTTP JSON), which looks
+         * does not show the real string from Den (SSE error_message or HTTP JSON), which looks
          * like silence in the thread. Enable full service errors for harness/proxy failures (e.g. EACCES).
          */
         chat.errorMessages = {
@@ -751,7 +856,7 @@ block head %} {{ super() }}
 
         chat.remarkable = { html: false, breaks: true };
 
-        chat.connect = { handler: lettaSseHandler, stream: true };
+        chat.connect = { handler: nativeSseHandler, stream: true };
 
         chat.loadHistory = loadDenHistory;
 
@@ -800,9 +905,9 @@ block head %} {{ super() }}
         }
     }
 
-    /** Map one Letta SSE JSON object to a stream Response (see denChatSignalError — use `text`, not `error`). */
-    function lettaStreamEventErrorSignal(obj, requestRef) {
-        var inner = lettaInnerForStream(obj);
+    /** Map one native SSE JSON object to a stream Response (see denChatSignalError — use `text`, not `error`). */
+    function runtimeStreamEventErrorSignal(obj, requestRef) {
+        var inner = runtimeInnerForStream(obj);
         if (!inner || inner.message_type !== "error_message") return null;
         var lines = [];
         if (inner.error_type) lines.push("[" + String(inner.error_type) + "]");
@@ -818,7 +923,7 @@ block head %} {{ super() }}
         return { text: msg, role: "error" };
     }
 
-    function lettaSseHandler(body, signals) {
+    function nativeSseHandler(body, signals) {
         var userText =
             (body.messages || [])
                 .filter(function (m) {
@@ -916,14 +1021,14 @@ block head %} {{ super() }}
                         }
                         return;
                     }
-                    var errSig = lettaStreamEventErrorSignal(obj, requestRef);
+                    var errSig = runtimeStreamEventErrorSignal(obj, requestRef);
                     if (errSig) {
                         sawStreamError = true;
                         hideReasoningLog();
                         signals.onResponse(errSig);
                         return;
                     }
-                    var inner = lettaInnerForStream(obj);
+                    var inner = runtimeInnerForStream(obj);
                     if (!inner || typeof inner !== "object") return;
 
                     if (inner.message_type === "conversation_resolved") {
@@ -943,6 +1048,7 @@ block head %} {{ super() }}
                             PREFERRED_CONVERSATION_ID = resolvedId;
                             syncConversationUrl(resolvedId);
                             renderConversationTabs();
+                            loadConversationModel();
                         }
                         return;
                     }
@@ -984,9 +1090,9 @@ block head %} {{ super() }}
                         hideReasoningLog();
                         var chunk = assistantChunkText(inner);
                         /**
-                         * Accumulate all assistant tokens for this HTTP response. Codepool / Letta may
+                         * Accumulate all assistant tokens for this HTTP response. The runtime may
                          * change `id` between stream_event chunks; resetting the buffer on id change dropped
-                         * the start of the reply in the UI while Letta and history still had the full text.
+                         * the start of the reply in the UI while history still had the full text.
                          */
                         var isFirstAssistantChunk = assistantBuf.length === 0;
                         assistantBuf += chunk;
@@ -1141,6 +1247,7 @@ block head %} {{ super() }}
         PREFERRED_CONVERSATION_ID = CONVERSATION_ID;
         syncConversationUrl(CONVERSATION_ID);
         renderConversationTabs();
+        loadConversationModel();
         if (shouldRemount !== false) remountDeepChat();
     }
 
@@ -1383,7 +1490,9 @@ block head %} {{ super() }}
                 CONVERSATION_ID = pick;
                 renderConversationTabs();
                 syncConversationUrl(CONVERSATION_ID);
-                return "ok";
+                return loadConversationModel().then(function () {
+                    return "ok";
+                });
             })
             .catch(function (err) {
                 showErr(String(err.message || err));
@@ -1391,11 +1500,19 @@ block head %} {{ super() }}
                 CONVERSATION_ID = "default";
                 renderConversationTabs();
                 syncConversationUrl(CONVERSATION_ID);
-                return "ok";
+                return loadConversationModel().then(function () {
+                    return "ok";
+                });
             });
     }
 
     function boot() {
+        var modelSelect = currentModelSelect();
+        if (modelSelect) {
+            modelSelect.addEventListener("change", function () {
+                saveConversationModel(modelSelect.value || "auto");
+            });
+        }
         /**
          * Run `loadConversations()` before `configureDenChat()` so `CONVERSATION_ID` and
          * `#den-conv` match `?conversation_id=` and `loadHistory` uses the same id (avoids

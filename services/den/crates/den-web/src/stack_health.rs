@@ -2,7 +2,7 @@
 //!
 //! Combines **runtime probes** (PostgreSQL, upstream HTTP) with **low-cost config sanity**
 //! aligned with the repo’s **`services/preflight`** script: JWT when
-//! required, `LETTA_PG_URI` / `LLM_API_URL` shape, and `OPENAI_API_KEY` presence warnings.
+//! required, `LLM_API_URL` shape, and provider key presence warnings.
 
 use std::time::Duration;
 
@@ -15,7 +15,7 @@ use url::Url;
 use crate::config::Config;
 use crate::web::AppState;
 
-/// Wall-clock timeout for each upstream HTTP health call (Letta, Codepool, Bifrost).
+/// Wall-clock timeout for each upstream HTTP health call.
 const HTTP_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Serialize)]
@@ -34,7 +34,7 @@ pub struct HealthCheck {
     pub detail: String,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CheckState {
     Ok,
@@ -80,11 +80,20 @@ pub async fn gather(state: &AppState) -> StackHealthReport {
     checks.push(web_server_url_shape(cfg));
 
     let den_pg = check_den_postgres(state.sqlx_pool()).await;
-    let bifrost_h =
-        check_bifrost_http(&cfg.bifrost_base_url, &cfg.bifrost_metadata_url).await;
+    let bifrost_h = check_bifrost_http(&cfg.bifrost_base_url).await;
+    let bifrost_management_auth = check_bifrost_management_auth(&cfg.bifrost_management_url).await;
 
     checks.push(den_pg);
     checks.push(bifrost_h);
+    checks.push(HealthCheck {
+        id: "bifrost_models",
+        label: "Bifrost models",
+        state: CheckState::Skipped,
+        detail:
+            "global /v1/models probe disabled; BEARS requires Bear-scoped x-bf-vk for model listing"
+                .into(),
+    });
+    checks.push(bifrost_management_auth);
     checks.push(check_qdrant(cfg).await);
 
     StackHealthReport::from_checks(checks)
@@ -171,7 +180,7 @@ fn llm_api_url_shape() -> Option<HealthCheck> {
                     id: "llm_api_url_shape",
                     label: "LLM_API_URL (shape)",
                     state: CheckState::Ok,
-                    detail: "valid http(s) URL (Letta → Bifrost; mirrors preflight)".into(),
+                    detail: "valid http(s) URL for Bifrost".into(),
                 }
             } else {
                 HealthCheck {
@@ -261,7 +270,7 @@ async fn check_den_postgres(pool: &PgPool) -> HealthCheck {
     }
 }
 
-async fn check_bifrost_http(base: &str, metadata_url: &str) -> HealthCheck {
+async fn check_bifrost_http(base: &str) -> HealthCheck {
     if base.trim().is_empty() {
         return HealthCheck {
             id: "bifrost",
@@ -305,24 +314,280 @@ async fn check_bifrost_http(base: &str, metadata_url: &str) -> HealthCheck {
         },
         Ok(Ok(resp)) => {
             let status = resp.status();
-            if status.is_success() {
-                let metadata_detail = check_bifrost_metadata(&client, metadata_url).await;
+            HealthCheck {
+                id: "bifrost",
+                label: "Bifrost",
+                state: if status.is_success() {
+                    CheckState::Ok
+                } else {
+                    CheckState::Fail
+                },
+                detail: format!("HTTP {status} from {url}"),
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+async fn check_bifrost_live_models(llm_api_url: &str) -> HealthCheck {
+    let base = llm_api_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return HealthCheck {
+            id: "bifrost_models",
+            label: "Bifrost models",
+            state: CheckState::Skipped,
+            detail: "LLM_API_URL unset — cannot probe Bifrost /v1/models".into(),
+        };
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(HTTP_PROBE_TIMEOUT)
+        .connect_timeout(Duration::from_secs(4))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return HealthCheck {
+                id: "bifrost_models",
+                label: "Bifrost models",
+                state: CheckState::Fail,
+                detail: format!("reqwest client: {e}"),
+            };
+        }
+    };
+
+    let url = format!("{base}/models");
+    match timeout(HTTP_PROBE_TIMEOUT, client.get(&url).send()).await {
+        Err(_) => HealthCheck {
+            id: "bifrost_models",
+            label: "Bifrost models",
+            state: CheckState::Fail,
+            detail: format!("timeout after {}s ({url})", HTTP_PROBE_TIMEOUT.as_secs()),
+        },
+        Ok(Err(e)) => HealthCheck {
+            id: "bifrost_models",
+            label: "Bifrost models",
+            state: CheckState::Fail,
+            detail: e.to_string(),
+        },
+        Ok(Ok(resp)) => {
+            let status = resp.status();
+            let text = match resp.text().await {
+                Ok(text) => text,
+                Err(e) => {
+                    return HealthCheck {
+                        id: "bifrost_models",
+                        label: "Bifrost models",
+                        state: CheckState::Fail,
+                        detail: format!("/v1/models body failed: {e}"),
+                    };
+                }
+            };
+            if !status.is_success() {
+                return HealthCheck {
+                    id: "bifrost_models",
+                    label: "Bifrost models",
+                    state: CheckState::Fail,
+                    detail: format!("HTTP {status} from {url}: {text}"),
+                };
+            }
+            let value: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(value) => value,
+                Err(e) => {
+                    return HealthCheck {
+                        id: "bifrost_models",
+                        label: "Bifrost models",
+                        state: CheckState::Fail,
+                        detail: format!("/v1/models JSON parse failed: {e}; body: {text}"),
+                    };
+                }
+            };
+            let (usable_count, wildcard_count) = count_usable_bifrost_models(&value);
+            if usable_count == 0 {
                 HealthCheck {
-                    id: "bifrost",
-                    label: "Bifrost",
-                    state: metadata_detail.0,
-                    detail: format!("HTTP {status} from {url}; {}", metadata_detail.1),
+                    id: "bifrost_models",
+                    label: "Bifrost models",
+                    state: CheckState::Fail,
+                    detail: format!(
+                        "/v1/models returned no concrete usable models (wildcard entries filtered: {wildcard_count})"
+                    ),
                 }
             } else {
                 HealthCheck {
-                    id: "bifrost",
-                    label: "Bifrost",
-                    state: CheckState::Fail,
-                    detail: format!("HTTP {status} from {url}"),
+                    id: "bifrost_models",
+                    label: "Bifrost models",
+                    state: CheckState::Ok,
+                    detail: format!(
+                        "/v1/models advertises {usable_count} concrete usable model(s); wildcard entries filtered: {wildcard_count}"
+                    ),
                 }
             }
         }
     }
+}
+
+async fn check_bifrost_management_auth(management_url: &str) -> HealthCheck {
+    let base = management_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Skipped,
+            detail: "BIFROST_MANAGEMENT_URL unset — cannot verify virtual-key management auth"
+                .into(),
+        };
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(HTTP_PROBE_TIMEOUT)
+        .connect_timeout(Duration::from_secs(4))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return HealthCheck {
+                id: "bifrost_management_auth",
+                label: "Bifrost management auth",
+                state: CheckState::Fail,
+                detail: format!("reqwest client: {e}"),
+            };
+        }
+    };
+
+    let url = format!("{base}/config");
+    match timeout(HTTP_PROBE_TIMEOUT, client.get(&url).send()).await {
+        Err(_) => HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Fail,
+            detail: format!("timeout after {}s ({url})", HTTP_PROBE_TIMEOUT.as_secs()),
+        },
+        Ok(Err(e)) => HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Fail,
+            detail: e.to_string(),
+        },
+        Ok(Ok(resp)) => {
+            let status = resp.status();
+            let text = match resp.text().await {
+                Ok(text) => text,
+                Err(e) => {
+                    return HealthCheck {
+                        id: "bifrost_management_auth",
+                        label: "Bifrost management auth",
+                        state: CheckState::Fail,
+                        detail: format!("/api/config body failed: {e}"),
+                    };
+                }
+            };
+
+            if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+            {
+                if text.contains("Authentication is not enabled") {
+                    return stale_bifrost_auth_config_check(format!(
+                        "HTTP {status} from {url}: {text}"
+                    ));
+                }
+                return HealthCheck {
+                    id: "bifrost_management_auth",
+                    label: "Bifrost management auth",
+                    state: CheckState::Ok,
+                    detail: format!(
+                        "/api/config is protected (HTTP {status}); management auth appears enabled"
+                    ),
+                };
+            }
+
+            if !status.is_success() {
+                return HealthCheck {
+                    id: "bifrost_management_auth",
+                    label: "Bifrost management auth",
+                    state: CheckState::Fail,
+                    detail: format!("HTTP {status} from {url}: {text}"),
+                };
+            }
+
+            let value: serde_json::Value = match serde_json::from_str(&text) {
+                Ok(value) => value,
+                Err(e) => {
+                    return HealthCheck {
+                        id: "bifrost_management_auth",
+                        label: "Bifrost management auth",
+                        state: CheckState::Fail,
+                        detail: format!("/api/config JSON parse failed: {e}; body: {text}"),
+                    };
+                }
+            };
+            bifrost_management_auth_config_check_from_value(&value)
+        }
+    }
+}
+
+fn bifrost_management_auth_config_check_from_value(value: &serde_json::Value) -> HealthCheck {
+    let auth_enabled = value
+        .get("auth_config")
+        .or_else(|| {
+            value
+                .get("governance")
+                .and_then(|governance| governance.get("auth_config"))
+        })
+        .and_then(|auth_config| auth_config.get("is_enabled"))
+        .and_then(serde_json::Value::as_bool);
+
+    match auth_enabled
+    {
+        Some(true) => HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Ok,
+            detail: "runtime /api/config reports auth_config.is_enabled=true; virtual-key management login should be available".into(),
+        },
+        Some(false) => stale_bifrost_auth_config_check(
+            "runtime /api/config reports auth_config.is_enabled=false".to_string(),
+        ),
+        None => HealthCheck {
+            id: "bifrost_management_auth",
+            label: "Bifrost management auth",
+            state: CheckState::Fail,
+            detail: "runtime /api/config does not expose auth_config.is_enabled or governance.auth_config.is_enabled; Den cannot verify Bifrost virtual-key management auth".into(),
+        },
+    }
+}
+
+fn stale_bifrost_auth_config_check(observed: String) -> HealthCheck {
+    HealthCheck {
+        id: "bifrost_management_auth",
+        label: "Bifrost management auth",
+        state: CheckState::Fail,
+        detail: format!(
+            "{observed}. Bifrost virtual-key provisioning will fail. If services/bifrost/config.json has governance.auth_config.is_enabled=true, Bifrost is likely serving stale config-store state from /app/data/config.db or reading a different config file; recreate/reset bears-bifrost config.db after redeploying the corrected image."
+        ),
+    }
+}
+
+#[allow(dead_code)]
+fn count_usable_bifrost_models(value: &serde_json::Value) -> (usize, usize) {
+    let Some(items) = value.get("data").and_then(|data| data.as_array()) else {
+        return (0, 0);
+    };
+    let mut usable = 0;
+    let mut wildcard = 0;
+    for item in items {
+        let Some(id) = item.get("id").and_then(|id| id.as_str()).map(str::trim) else {
+            continue;
+        };
+        if id.is_empty() {
+            continue;
+        }
+        if den_llm::model_registry::is_routing_wildcard_model_handle(id) {
+            wildcard += 1;
+        } else {
+            usable += 1;
+        }
+    }
+    (usable, wildcard)
 }
 
 /// Probe the derived recall index (Qdrant). Recall is optional and derived (ADR-0038), so an
@@ -330,7 +595,7 @@ async fn check_bifrost_http(base: &str, metadata_url: &str) -> HealthCheck {
 /// failure that would 503 the whole stack. Idempotently ensures the recall collection so the
 /// status surface self-heals startup races against the `recall` compose profile.
 async fn check_qdrant(config: &Config) -> HealthCheck {
-    let Some(recall) = den_runtime::recall::QdrantRecall::from_config(config) else {
+    let Some(recall) = den_service::recall::QdrantRecall::from_config(config) else {
         return HealthCheck {
             id: "qdrant",
             label: "Qdrant recall",
@@ -377,63 +642,5 @@ async fn check_qdrant(config: &Config) -> HealthCheck {
     }
 }
 
-async fn check_bifrost_metadata(
-    client: &reqwest::Client,
-    metadata_url: &str,
-) -> (CheckState, String) {
-    let url = metadata_url.trim();
-    if url.is_empty() {
-        return (
-            CheckState::Warn,
-            "BIFROST_METADATA_URL unset — model context windows cannot be verified".into(),
-        );
-    }
-
-    match timeout(HTTP_PROBE_TIMEOUT, client.get(url).send()).await {
-        Err(_) => (
-            CheckState::Warn,
-            format!(
-                "metadata timeout after {}s ({url})",
-                HTTP_PROBE_TIMEOUT.as_secs()
-            ),
-        ),
-        Ok(Err(e)) => (CheckState::Warn, format!("metadata request failed: {e}")),
-        Ok(Ok(resp)) => {
-            let status = resp.status();
-            if !status.is_success() {
-                return (
-                    CheckState::Warn,
-                    format!("metadata HTTP {status} from {url}"),
-                );
-            }
-            let text = match resp.text().await {
-                Ok(t) => t,
-                Err(e) => return (CheckState::Warn, format!("metadata body failed: {e}")),
-            };
-            let value: serde_json::Value = match serde_json::from_str(&text) {
-                Ok(v) => v,
-                Err(e) => return (CheckState::Warn, format!("metadata JSON parse failed: {e}")),
-            };
-            let models = value
-                .get("models")
-                .and_then(|x| x.as_array())
-                .map(|xs| {
-                    xs.iter()
-                        .filter(|m| m.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true))
-                        .count()
-                })
-                .unwrap_or(0);
-            if models == 0 {
-                (
-                    CheckState::Warn,
-                    "metadata returned no enabled models".into(),
-                )
-            } else {
-                (
-                    CheckState::Ok,
-                    format!("metadata OK ({models} enabled models)"),
-                )
-            }
-        }
-    }
-}
+#[cfg(test)]
+mod tests;

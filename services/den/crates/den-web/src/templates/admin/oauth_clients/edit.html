@@ -33,9 +33,9 @@
         {% elif scope == "profile:email" %}
         - Access to user's email address
         {% elif scope == "data:read" %}
-        - Read access to user data exposed by your API (starter scope — customize)
+        - Read access to API data
         {% elif scope == "data:write" %}
-        - Write access to user data exposed by your API (starter scope — customize)
+        - Write access to API data
         {% endif %}
       </label>
     </div>
@@ -60,7 +60,7 @@
 </div>
 
 <div class="warning-box">
-  <h3>⚠️ Important Notes</h3>
+  <h3>Operational guidance</h3>
   <ul>
     <li><strong>Client ID and Secret:</strong> These cannot be changed through editing. Use "Regenerate Secret" if needed.</li>
     <li><strong>Scope Changes:</strong> Reducing scopes may break existing integrations that depend on removed permissions.</li>

@@ -14,11 +14,11 @@ use validator::{Validate, ValidationError, ValidationErrors};
 
 use crate::{
     auth_backend::AuthSession,
+    core::user::db as user_db,
     errors::CustomError,
     web::{self, AppState},
-    core::user::db as user_db,
 };
-use den_runtime::bears::db as bears_db;
+use den_service::bears::db as bears_db;
 
 pub fn router() -> Router<AppState> {
     Router::new()

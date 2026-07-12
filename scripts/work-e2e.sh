@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# End-to-end acceptance walkthrough for the native `work` sandbox flow:
+# a Docket job on a remote-git work surface, executed in a sandbox by a
+# headless armature, with the result pushed to the upstream work branch.
+#
+# Requirements (not a CI test — run on a docker host with a live stack):
+#   - docker + the sandbox images built (scripts/build-sandbox-image.sh)
+#   - a running Den (RUN_API + RUN_WORKERS) with SANDBOX_SERVER_URL pointed
+#     at the provider this script starts, and a working LLM substrate
+#   - psql access to the Den database (DATABASE_URL)
+#   - BEAR_ID: the bear to run the job as; USER_ID: the requesting user
+#
+# What it does:
+#   1. Creates a bare git repo in $E2E_DIR/upstream.git seeded with NOTES.md —
+#      this is the "remote upstream" work surface.
+#   2. Registers it as a managed work surface in Den's database (assigned to
+#      BEAR_ID) — the durable path the /work/surfaces UI uses.
+#   3. Starts the sandbox provider (RUN_SANDBOX) and pushes the managed
+#      config to it directly (Den's dispatch worker converges to the same
+#      content on its own sync ticks).
+#   4. Seeds a Docket job (commit_policy per_task) with one work task:
+#      append a line to NOTES.md.
+#   5. Enqueues a work run and waits for the dispatch worker to finish it.
+#   6. Asserts the upstream gained a den/job-* branch whose tip changes NOTES.md.
+set -euo pipefail
+
+: "${DATABASE_URL:?set DATABASE_URL (Den database)}"
+: "${BEAR_ID:?set BEAR_ID (uuid of the bear to run as)}"
+: "${USER_ID:?set USER_ID (id of the requesting user)}"
+E2E_DIR="${E2E_DIR:-$(mktemp -d /tmp/work-e2e.XXXXXX)}"
+SANDBOX_PORT="${SANDBOX_PORT:-3202}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+echo "== e2e dir: $E2E_DIR"
+
+# 1. Bare upstream with an initial commit.
+git init --bare -b main "$E2E_DIR/upstream.git"
+git init -b main "$E2E_DIR/seed"
+(
+    cd "$E2E_DIR/seed"
+    git -c user.name=e2e -c user.email=e2e@test.invalid commit --allow-empty -m init >/dev/null
+    echo "# Notes" > NOTES.md
+    git add NOTES.md
+    git -c user.name=e2e -c user.email=e2e@test.invalid commit -m "seed NOTES.md" >/dev/null
+    git push -q "$E2E_DIR/upstream.git" main
+)
+
+# 2. Managed work surface in Den's database, assigned to the bear. Use a
+#    unique name so reruns don't collide (surface names are immutable).
+SURFACE_NAME="e2e-$(date +%s)"
+psql "$DATABASE_URL" -qtA <<SQL >/dev/null
+WITH surface AS (
+    INSERT INTO work_surfaces (name, upstream_url, default_ref, created_by_user_id)
+    VALUES ('$SURFACE_NAME', '$E2E_DIR/upstream.git', 'main', $USER_ID)
+    RETURNING id
+), owner AS (
+    INSERT INTO work_surface_managers (surface_id, user_id, role)
+    SELECT id, $USER_ID, 'owner' FROM surface
+)
+INSERT INTO work_surface_bears (surface_id, bear_id, granted_by_user_id)
+SELECT id, '$BEAR_ID', $USER_ID FROM surface;
+SQL
+echo "== registered managed surface $SURFACE_NAME"
+
+# 3. Sandbox provider (backgrounded; killed on exit). No config file: the
+#    provider starts empty and receives the managed config over the API.
+(
+    cd "$REPO_ROOT/services/den"
+    RUN_SANDBOX=true RUN_WEB=false RUN_API=false RUN_WORKERS=false \
+    SANDBOX_PORT="$SANDBOX_PORT" \
+    SANDBOX_WORKSPACES_DIR="$E2E_DIR/workspaces" \
+    SANDBOX_SERVICE_TOKEN="${SANDBOX_SERVICE_TOKEN:-e2e-token}" \
+    cargo run --quiet -- serve
+) &
+PROVIDER_PID=$!
+trap 'kill $PROVIDER_PID 2>/dev/null || true' EXIT
+for _ in $(seq 1 60); do
+    curl -fsS "http://127.0.0.1:$SANDBOX_PORT/sandbox/v1/health" >/dev/null 2>&1 && break
+    sleep 1
+done
+curl -fsS "http://127.0.0.1:$SANDBOX_PORT/sandbox/v1/health" >/dev/null
+echo "== provider is up on :$SANDBOX_PORT"
+
+# Seed the provider immediately (a versionless push; the Den worker's own
+# reconcile replaces it with equivalent DB-derived content within 5 min).
+curl -fsS -X PUT "http://127.0.0.1:$SANDBOX_PORT/sandbox/v1/managed-config" \
+    -H "Authorization: Bearer ${SANDBOX_SERVICE_TOKEN:-e2e-token}" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"surfaces\": [{\"name\": \"$SURFACE_NAME\", \"upstream_url\": \"$E2E_DIR/upstream.git\", \"default_ref\": \"main\"}],
+      \"images\": [{\"name\": \"base\", \"image\": \"${SANDBOX_IMAGE:-bears/sandbox:latest}\", \"default\": true}]
+    }" >/dev/null
+echo "== managed config pushed"
+echo "== ensure the Den worker process has:"
+echo "   SANDBOX_SERVER_URL=http://<this-host>:$SANDBOX_PORT SANDBOX_SERVER_TOKEN=${SANDBOX_SERVICE_TOKEN:-e2e-token}"
+
+# 4. Seed the Docket job + work task + queued run.
+JOB_ID=$(psql "$DATABASE_URL" -qtA <<SQL
+WITH job AS (
+    INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal,
+                           work_surface_ref, work_surface_id, commit_policy, status, visibility)
+    SELECT '$BEAR_ID', $USER_ID, 'ui', 'work-e2e: append a line to NOTES.md',
+           '$SURFACE_NAME', s.id, 'per_task', 'ready', 'same_user'
+    FROM work_surfaces s WHERE s.name = '$SURFACE_NAME'
+    RETURNING id
+), run AS (
+    INSERT INTO bear_job_runs (job_id, trigger, state)
+    SELECT id, 'manual', 'running' FROM job RETURNING id, job_id
+), upd AS (
+    UPDATE bear_jobs SET current_run_id = run.id FROM run WHERE bear_jobs.id = run.job_id
+), task AS (
+    INSERT INTO bear_tasks (bear_id, job_id, sibling_order, kind, scope, title, body,
+                            completion_criteria, assigned_to_role)
+    SELECT '$BEAR_ID', id, 0, 'execution', 'template',
+           'Append an e2e marker line to NOTES.md',
+           'Append the exact line "e2e marker" to the end of NOTES.md and commit the change.',
+           '["NOTES.md ends with a line reading e2e marker", "the change is committed"]'::jsonb,
+           'work'
+    FROM job RETURNING id, job_id
+)
+INSERT INTO bear_work_runs (bear_id, job_id, task_id, job_run_id, root_name)
+SELECT '$BEAR_ID', task.job_id, task.id, run.id, '$SURFACE_NAME' FROM task, run
+RETURNING job_id;
+SQL
+)
+echo "== seeded job $JOB_ID; waiting for the dispatch worker"
+
+# 5. Wait for a terminal run.
+for _ in $(seq 1 120); do
+    STATE=$(psql "$DATABASE_URL" -qtA -c \
+        "SELECT state FROM bear_work_runs WHERE job_id = '$JOB_ID' ORDER BY queued_at DESC LIMIT 1")
+    echo "   run state: $STATE"
+    case "$STATE" in
+        succeeded) break ;;
+        blocked|failed|cancelled|timed_out)
+            psql "$DATABASE_URL" -c \
+                "SELECT state, result_summary, error FROM bear_work_runs WHERE job_id = '$JOB_ID'"
+            echo "E2E FAILED: run ended $STATE" >&2; exit 1 ;;
+    esac
+    sleep 5
+done
+[ "$STATE" = "succeeded" ] || { echo "E2E FAILED: run never finished" >&2; exit 1; }
+
+# 6. The upstream must have the job's work branch with the change.
+BRANCH=$(psql "$DATABASE_URL" -qtA -c "SELECT work_branch FROM bear_jobs WHERE id = '$JOB_ID'")
+echo "== job work branch: $BRANCH"
+git -C "$E2E_DIR/upstream.git" rev-parse "refs/heads/$BRANCH" >/dev/null
+git clone -q --branch "$BRANCH" "$E2E_DIR/upstream.git" "$E2E_DIR/verify"
+grep -q "e2e marker" "$E2E_DIR/verify/NOTES.md"
+echo "== E2E OK: upstream $BRANCH carries the committed change"
+psql "$DATABASE_URL" -c \
+    "SELECT state, result_summary, result_refs->'published' AS published
+     FROM bear_work_runs WHERE job_id = '$JOB_ID'"

@@ -16,12 +16,10 @@ use crate::{
     core::tools::{prompt_memory::DenPromptMemoryStore, session::DenToolInvocationContext},
     errors::{CustomError, DenError},
 };
-use den_runtime::{
-    bears::BearProfile,
-    memory::{tools as sqlite_memory, MemoryStoreManager},
-};
+use den_memory::{tools as sqlite_memory, MemoryStoreManager};
+use den_service::bears::BearProfile;
 
-/// Concrete [`RoleMemoryStore`] over the runtime config (native SQLite + legacy MemFS).
+/// Concrete [`RoleMemoryStore`] over the native SQLite memory runtime.
 pub(crate) struct DenRoleMemoryStore<'a> {
     pool: &'a PgPool,
     config: &'a Config,
@@ -83,6 +81,8 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
             &entry.title,
             &entry.body,
             &entry.tags,
+            entry.refs,
+            entry.lifecycle,
             entry.source,
             entry.author,
         )

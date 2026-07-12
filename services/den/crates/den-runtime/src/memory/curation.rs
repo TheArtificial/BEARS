@@ -5,21 +5,18 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-    {
-        bear_observations::{self, BearObservationRow, CreateBearObservation},
-        bears::BearProfile,
-        memory::{
-            store::{
-                self, create_memory_observation, create_memory_proposal, create_reflection_run_outcome,
-                complete_reflection_run_outcome, list_memory_proposals, promote_to_shared_core,
-                resolve_memory_proposal, mark_observation_review_queued, SqliteMemoryProposal,
-                MemoryStoreManager,
-            },
-        },
-        memory_proposals::{CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams},
-    },
+use den_memory::{
+    self as store, complete_reflection_run_outcome, create_memory_observation,
+    create_memory_proposal, create_reflection_run_outcome, list_memory_proposals,
+    mark_observation_review_queued, promote_to_shared_core, promote_to_shared_core_at_path,
+    resolve_memory_proposal, MemoryStoreManager, SqliteMemoryProposal,
 };
+use den_service::bears::BearProfile;
+use den_service::memory_proposals::{
+    CreateMemoryProposal, MemoryProposalRow, ProposalResolutionParams,
+};
+
+use crate::bear_observations::{self, BearObservationRow, CreateBearObservation};
 
 pub async fn create_proposal(
     _pool: &PgPool,
@@ -52,7 +49,11 @@ pub async fn create_proposal(
         &payload,
     )
     .await?;
-    Ok(sqlite_proposal_to_row(params.bear_id, &sqlite, params.source_profile))
+    Ok(sqlite_proposal_to_row(
+        params.bear_id,
+        &sqlite,
+        params.source_profile,
+    ))
 }
 
 pub async fn create_observation(
@@ -95,8 +96,7 @@ pub async fn mark_observation_review_queued_for_bear(
     proposal_id: Uuid,
 ) -> Result<(), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
-    mark_observation_review_queued(&store, observation_id, &proposal_id.to_string())
-        .await
+    mark_observation_review_queued(&store, observation_id, &proposal_id.to_string()).await
 }
 
 pub async fn list_proposals(
@@ -111,13 +111,7 @@ pub async fn list_proposals(
     let rows = list_memory_proposals(&store, status, limit).await?;
     Ok(rows
         .into_iter()
-        .map(|row| {
-            sqlite_proposal_to_row(
-                bear_id,
-                &row,
-                BearProfile::Curate,
-            )
-        })
+        .map(|row| sqlite_proposal_to_row(bear_id, &row, BearProfile::Curate))
         .collect())
 }
 
@@ -170,8 +164,29 @@ pub async fn promote_core_content(
     author_profile: &str,
 ) -> Result<(String, String), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
-    promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile)
-        .await
+    promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile).await
+}
+
+pub async fn promote_core_content_at_path(
+    stores: &MemoryStoreManager,
+    bear_id: Uuid,
+    source_memory_id: &str,
+    target_path: &str,
+    kind: &str,
+    content_text: &str,
+    author_profile: &str,
+) -> Result<(String, String), DenError> {
+    let store = stores.store_for_bear(bear_id).await?;
+    promote_to_shared_core_at_path(
+        &store,
+        source_memory_id,
+        target_path,
+        kind,
+        content_text,
+        author_profile,
+        None,
+    )
+    .await
 }
 
 pub async fn record_reflection_outcome_start(
@@ -186,8 +201,7 @@ pub async fn record_reflection_outcome_start(
     if store::reflection_outcomes::reflection_outcome_exists(&store, run_id).await {
         return Ok(());
     }
-    create_reflection_run_outcome(&store, run_id, lane, trigger, input_summary)
-        .await
+    create_reflection_run_outcome(&store, run_id, lane, trigger, input_summary).await
 }
 
 pub async fn record_reflection_outcome_complete(
@@ -199,8 +213,7 @@ pub async fn record_reflection_outcome_complete(
     proposal_ids: &[String],
 ) -> Result<(), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
-    complete_reflection_run_outcome(&store, run_id, status, output_summary, proposal_ids)
-        .await
+    complete_reflection_run_outcome(&store, run_id, status, output_summary, proposal_ids).await
 }
 
 fn sqlite_proposal_to_row(
@@ -237,7 +250,10 @@ fn sqlite_proposal_to_row(
             .and_then(|v| v.as_str())
             .unwrap_or("review")
             .to_string(),
-        target_ref: p.get("target_ref").and_then(|v| v.as_str()).map(str::to_string),
+        target_ref: p
+            .get("target_ref")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         title: p
             .get("title")
             .and_then(|v| v.as_str())
@@ -283,7 +299,10 @@ fn sqlite_proposal_to_row(
     }
 }
 
-fn sqlite_observation_to_row(bear_id: Uuid, sqlite: &store::SqliteMemoryObservation) -> BearObservationRow {
+fn sqlite_observation_to_row(
+    bear_id: Uuid,
+    sqlite: &store::SqliteMemoryObservation,
+) -> BearObservationRow {
     BearObservationRow {
         id: Uuid::new_v4(),
         bear_id,

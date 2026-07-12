@@ -1,13 +1,13 @@
 # Den Model Registry Schema and Sync Spec
 
-> **Direction changed (2026-06).** Drop Letta-facing model option types (`LettaModelOption`); the Den registry feeds Bifrost only, called directly by the Den-native runtime. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Drop Letta-facing model option types (`LettaModelOption`); the Den registry feeds Bifrost only, called directly by the Den runtime. Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: proposed implementation spec.
 
 ## Objective
 
-Define the first concrete implementation contract for a Den-owned model metadata registry used for validation, display, context-window estimates, and reconciliation with Bifrost. Bifrost remains the source of truth for live model availability, provider keys, execution aliases, and routing.
+Define the first concrete implementation contract for a Den-owned model metadata overlay used for validation, display, context-window estimates, profile/task suitability, and reconciliation with Bifrost. Bifrost's Model Catalog remains the preferred source for live model availability, provider/model mapping, pricing, and provider-reported capability metadata.
 
 This document is narrower and more concrete than `DEN_MODEL_REGISTRY_AND_BIFROST_CONFIG_PLAN.md`. That planning document explains the project shape and migration strategy. This spec defines the metadata model, source hierarchy, validation behavior, and Den↔Bifrost reconciliation boundary.
 
@@ -23,46 +23,30 @@ This document is narrower and more concrete than `DEN_MODEL_REGISTRY_AND_BIFROST
 
 ## Current repo-grounded baseline
 
-Today, effective model metadata is stored in `services/bifrost/config.json` under the custom `bears.models` section.
+Current implementation has moved beyond the original `bears.models` sidecar bootstrap.
 
-That metadata currently includes fields such as:
-- `handle`
-- `provider`
-- `model`
-- `display_name`
-- `context_window`
-- `max_output_tokens`
-- `supports_tools`
-- `supports_responses_api`
-- `supports_vision`
-- `enabled`
+As of 2026-06:
 
-Den currently consumes that metadata through `services/den/src/core/bifrost.rs`, which:
-- fetches a JSON payload from `BIFROST_METADATA_URL`
-- deserializes `models: Vec<BifrostModelMetadata>`
-- filters to enabled models
-- sorts models for presentation
-- converts each record into a Letta-facing `LettaModelOption`
+- Bifrost remains the execution/availability owner.
+- Den reads live availability and available capability hints from paginated Bifrost `GET /v1/models` in `services/den/crates/den-service/src/bifrost.rs`.
+- Den stores that live surface in `BifrostCatalogSnapshot` / `BifrostCatalogStore`, keyed by canonical Den handles, and refreshes it in edge state.
+- Den's static metadata overlay lives in `services/den/crates/den-llm/src/model_registry.rs` and is used for labels, aliases, fallback capability facts, curated UI exposure, and reconciliation.
+- Bear Admin and BearWire model option lists should use the snapshot-derived `/v1/models` availability surface; `/bears/models` is compatibility-only and must not feed the primary selector/datalist.
+- `services/bifrost/config.json` may still contain a BEARS-specific `bears.models` metadata seed, but it is no longer the desired source for live Bear Admin choices.
 
-So the current architecture is effectively:
-1. Bifrost config is the source of truth.
-2. Bifrost exposes model metadata.
-3. Den reads Bifrost’s metadata projection.
-4. Den presents a simplified model list to clients.
-
-The desired architecture in this spec clarifies that ownership:
-1. Bifrost owns live availability, provider keys, provider allowlists, execution aliases, and routing.
-2. Den owns metadata estimates and validation context.
-3. Den reconciles configured Bear models against Bifrost availability.
-4. Den reports drift or unknown metadata, but does not have to generate Bifrost configuration as the default path.
+The desired architecture in this spec clarifies ownership:
+1. Bifrost owns live availability, provider keys, provider allowlists, execution aliases, routing, and Model Catalog facts.
+2. Den owns curated overlays and Bear-specific validation context.
+3. Den hydrates/enriches model options from Bifrost `/v1/models` availability and may later supplement metadata from Bifrost management catalog endpoints.
+4. Den reports unknown metadata or availability mismatches, but does not maintain a duplicate authoritative model catalog.
 
 ---
 
 ## Design goals
 
-1. Give Den a stable metadata registry for model identity, capability estimates, and validation.
-2. Separate Den metadata identity from deployment-specific Bifrost availability and routing.
-3. Preserve enough provenance to distinguish observed, documented, inferred, and manually curated values.
+1. Give Den a stable metadata overlay for model identity, capability corrections, profile/task suitability, and validation.
+2. Use Bifrost Model Catalog as the primary source for availability, pricing, provider mappings, and provider-reported capabilities.
+3. Preserve enough provenance to distinguish Bifrost-observed, provider-documented, inferred, and manually curated values.
 4. Support multiple naming layers:
    - canonical provider-qualified key
    - provider-native model id
@@ -347,7 +331,63 @@ This is the observed Bifrost model surface Den compares against its metadata reg
 }
 ```
 
-The exact shape can come from Bifrost `/bears/models`, `/v1/models`, or management APIs. Den should treat it as availability evidence, not as authoritative capability metadata.
+For the v1 implementation, this shape comes from paginated Bifrost `/v1/models` through `BifrostCatalogSnapshot`. Management APIs may supplement metadata later, and `/bears/models` is compatibility-only. Den should treat observed Bifrost data as availability evidence and live capability hints, not as Den-owned policy metadata.
+
+---
+
+## Runtime catalog snapshot (caching contract)
+
+The reconciliation pipeline's runtime index (see [Reconciliation pipeline](#reconciliation-pipeline)) should be a concrete, shared, refreshable in-memory object rather than an ad-hoc per-request fetch.
+
+Implemented baseline (2026-06): `services/den/crates/den-service/src/bifrost.rs` defines `BifrostCatalogSnapshot` / `BifrostCatalogEntry` and `BifrostCatalogStore = Arc<RwLock<BifrostCatalogSnapshot>>`. API and web state own snapshot stores and warm them best-effort at startup. BearWire run/session paths and web model UI/status paths now read the snapshot instead of fetching `/v1/models` per request. The former `den-llm::model_registry` process-global routing cache has been removed.
+
+## `BifrostCatalogSnapshot`
+
+```json
+{
+  "fetched_at": "2026-06-22T00:00:00Z",
+  "source": "v1_models",
+  "stale": false,
+  "models": {
+    "openai/gpt-4.1": {
+      "available": true,
+      "provider": "openai",
+      "provider_model_id": "gpt-4.1",
+      "gateway_handle": "gpt-4.1",
+      "display_name": "OpenAI GPT-4.1",
+      "context_window": 1047576,
+      "max_output_tokens": 32768,
+      "supports_tools": true,
+      "supports_responses_api": true,
+      "supports_vision": true
+    }
+  }
+}
+```
+
+### Contract
+
+- Keyed by canonical Den key (`resolve_model_handle` applied to each Bifrost handle); the raw `gateway_handle` is retained for execution.
+- Held on shared edge application state (`DenState.bifrost_catalog` / `AppState.bifrost_catalog`) as `Arc<RwLock<BifrostCatalogSnapshot>>`, not refetched per request on the BearWire/web hot paths.
+- Startup primes it once (best-effort). Periodic TTL refresh and explicit last-good error metadata remain to be implemented. On warm-up failure the initialized empty snapshot remains `stale`.
+- Live capability flags (`supports_responses_api`, `supports_tools`, `supports_vision`, token limits) are read from this snapshot where the snapshot is available. The registry supplies these only as a documented fallback when a model is absent from the snapshot, at lower confidence.
+
+### Capability resolution precedence (runtime hot path)
+
+For a capability needed during request handling (e.g. API-style routing via `preferred_api_style_for_model`):
+
+1. snapshot value for the resolved key, when the snapshot is fresh
+2. snapshot value for the resolved key, when `stale` (logged)
+3. static registry overlay value (documented fallback)
+4. conservative default
+
+Implemented baseline: BearWire run preflight reads the snapshot entry's `supports_responses_api`, derives `LlmApiStyle`, and passes it explicitly through `TurnStartRequest` / `AgentLoopSession`. `den-llm` exposes `preferred_api_style_for_model_with_catalog_support(model, supports_responses_api)` and contains no hidden global catalog state. The older pure `preferred_api_style_for_model(model)` remains only as a fallback for call sites that have not yet been handed a snapshot view.
+
+### Single validation entry point
+
+All "is this model usable?" checks — session model set, run preflight, bear default validation — should resolve and validate against the same snapshot through one helper, so the three current implementations converge and a persisted-but-now-unavailable model fails at preflight in one well-defined place rather than via three slightly different paths.
+
+Implemented baseline: BearWire run preflight, BearWire session model selection, HTML bear create/edit, JSON bear create, and `/status` reconciliation read snapshot-derived availability. Remaining cleanup: extract the edge-local validation helpers into one shared cross-crate validation API and decide whether API/web should share one process-wide snapshot store rather than separate edge-owned stores.
 
 ---
 
@@ -405,9 +445,9 @@ Allowed only for soft assumptions and should not silently override better source
 
 ### First implementation recommendation
 
-Bootstrap from the repo’s existing `services/bifrost/config.json` values as `manual_curated`, then selectively upgrade fields as better evidence is gathered.
+Use Bifrost `/v1/models` as the ordinary live availability source. Use `/api/models/details` and `/api/models/base` when management auth is available and richer catalog data is needed. Keep Den's local registry as a curated overlay/fallback, not as a complete manually maintained catalog.
 
-That is the fastest path to give Den useful metadata without claiming ownership of live Bifrost availability.
+This gives Den useful metadata while allowing Bifrost's Model Catalog and provider list-model APIs to keep the available model set fresh.
 
 ---
 
@@ -452,23 +492,26 @@ The intended pipeline is:
 2. Merge data-source overlays if configured.
 3. Validate metadata entries and alias uniqueness.
 4. Fetch or observe Bifrost-available model handles.
-5. Produce runtime index for Den validation and UI enrichment.
+5. Produce the runtime index — a shared `BifrostCatalogSnapshot` (see [Runtime catalog snapshot](#runtime-catalog-snapshot-caching-contract)) — for Den validation, capability/API-style routing, and UI enrichment.
 6. Surface reconciliation differences in status/admin views.
 7. Optionally expose Den-native registry read APIs.
 
 ### Phase 1 recommended implementation split
 
-#### Den-owned metadata artifact
-A checked-in Den-side metadata file or Rust bootstrap, for example:
-- `services/den/model_registry.json`
-- `services/den/config/model_registry.json`
+#### Den-owned metadata overlay
+A checked-in Den-side overlay file or Rust bootstrap, for example:
+- `services/den/model_overrides.json`
+- `services/den/config/model_metadata_overrides.json`
 - or `den-runtime::llm::model_registry` while the shape is still small.
 
-#### Bifrost availability source
+This overlay should contain only Den-specific labels, aliases, suitability hints, and corrections/overrides—not a full copy of the provider catalog.
+
+#### Bifrost catalog and availability source
 Use one or more Bifrost surfaces:
-- `/bears/models` compatibility metadata sidecar
-- `/v1/models` where sufficient
-- management APIs when `config_store` and management auth are enabled
+- `/v1/models` for ordinary live availability
+- `/api/models/details` for richer capability metadata when management auth is enabled
+- `/api/models/base` for base catalog/pricing awareness when management auth is enabled
+- `/bears/models` compatibility metadata sidecar only as a fallback while it exists
 
 #### Reconciliation step
 A small Den-side tool or status helper that:
@@ -479,8 +522,8 @@ A small Den-side tool or status helper that:
 ### Recommended ownership split
 
 The cleanest medium-term split is:
-- Den owns model metadata and validation policy.
-- Bifrost owns provider credentials, provider routing config, gateway-local operational flags, and live availability.
+- Den owns curated overlays and Bear-facing validation policy.
+- Bifrost owns provider credentials, provider routing config, gateway-local operational flags, Model Catalog, pricing, and live availability.
 - Optional sync/export tooling is an audited executor, not the architectural source of truth.
 
 ---

@@ -1,150 +1,88 @@
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::runtime_contracts::{
-    RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent, ToolCallFinishStatus,
+use bearwire_protocol::wire::{
+    bearwire_event_to_json_rpc_notification, BearWireEvent, ExecutionTargetWire,
+    JsonRpcNotification, ToolCallFinishStatusWire, ToolCallFinishWire, ToolCallRefWire,
+    ToolCallRequestedWire, ToolCallWaitingWire, ToolCallWire, ToolPermissionWire,
 };
+use den_core::{
+    client_tools::{
+        client_tool_display_for_provider, client_tool_policy_json_for_provider, ClientToolName,
+    },
+    tools::descriptor::{
+        builtin_den_tool_descriptor_for_provider_name, den_tool_display_json_for_provider,
+    },
+};
+use den_protocol::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BearWireEventScope {
-    Persistent,
-    Ephemeral,
-}
-
-impl Default for BearWireEventScope {
-    fn default() -> Self {
-        Self::Ephemeral
+pub fn tool_call_wire(
+    tool_call_id: &str,
+    tool_name: &str,
+    title: Option<&str>,
+    kind: &str,
+    arguments: &Value,
+) -> ToolCallWire {
+    let display = den_tool_display_json_for_provider(tool_name, arguments)
+        .unwrap_or_else(|| client_tool_display_for_provider(tool_name, arguments));
+    ToolCallWire {
+        id: tool_call_id.to_string(),
+        name: tool_name.to_string(),
+        title: title.map(str::to_string),
+        kind: kind.to_string(),
+        arguments: arguments.clone(),
+        display,
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BearWireEvent {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub event_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sequence: Option<u64>,
-    pub scope: BearWireEventScope,
-    pub source: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subject: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bear_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role_agent_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub human_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub resource_refs: Vec<ResourceRef>,
-    pub data: Value,
-}
-
-impl BearWireEvent {
-    pub fn ephemeral(event_type: impl Into<String>, data: Value) -> Self {
-        Self {
-            event_id: None,
-            sequence: None,
-            scope: BearWireEventScope::Ephemeral,
-            source: "den.runtime".to_string(),
-            event_type: event_type.into(),
-            subject: None,
-            time: None,
-            bear_id: None,
-            role: None,
-            role_agent_id: None,
-            human_id: None,
-            session_id: None,
-            run_id: None,
-            resource_refs: Vec::new(),
-            data,
-        }
-    }
-
-    fn with_run_id(mut self, run_id: Option<String>) -> Self {
-        self.run_id = run_id.clone();
-        if let Some(run_id) = run_id {
-            self.subject = Some(format!("resource/run/{run_id}"));
-            self.resource_refs.push(ResourceRef::new("run", run_id));
-        }
-        self
-    }
-
-    fn with_tool_call(mut self, tool_call_id: String) -> Self {
-        self.subject = Some(format!("resource/tool_call/{tool_call_id}"));
-        self.resource_refs
-            .push(ResourceRef::new("tool_call", tool_call_id));
-        self
-    }
-
-    fn with_permission_request(mut self, permission_request_id: Option<String>) -> Self {
-        if let Some(permission_request_id) = permission_request_id {
-            self.resource_refs.push(ResourceRef::new(
-                "permission_request",
-                permission_request_id,
-            ));
-        }
-        self
-    }
-
-    fn with_session(mut self, session_id: String) -> Self {
-        self.session_id = Some(session_id.clone());
-        self.subject = Some(format!("resource/session/{session_id}"));
-        self.resource_refs.push(ResourceRef::new("session", session_id));
-        self
+fn tool_call_execution_target(tool_name: &str) -> ExecutionTargetWire {
+    let den_owned = tool_name == crate::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME
+        || builtin_den_tool_descriptor_for_provider_name(tool_name)
+            .is_some_and(|descriptor| descriptor.execution_target == "den");
+    if den_owned {
+        ExecutionTargetWire::Den
+    } else {
+        ExecutionTargetWire::ArmatureLocal
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResourceRef {
-    pub kind: String,
-    pub id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uri: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Value>,
-}
-
-impl ResourceRef {
-    pub fn new(kind: impl Into<String>, id: impl Into<String>) -> Self {
-        Self {
-            kind: kind.into(),
-            id: id.into(),
-            uri: None,
-            display_name: None,
-            version: None,
-            metadata: None,
-        }
+fn tool_call_policy(tool_name: &str) -> Option<Value> {
+    match tool_call_execution_target(tool_name) {
+        ExecutionTargetWire::Den => Some(json!({ "execution_target": "den" })),
+        ExecutionTargetWire::ArmatureLocal => ClientToolName::from_provider_alias(tool_name)
+            .map(|_| client_tool_policy_json_for_provider(tool_name)),
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct JsonRpcNotification<T> {
-    pub jsonrpc: &'static str,
-    pub method: &'static str,
-    pub params: T,
-}
-
-pub fn bearwire_event_to_json_rpc_notification(
-    event: BearWireEvent,
-) -> JsonRpcNotification<BearWireEvent> {
-    JsonRpcNotification {
-        jsonrpc: "2.0",
-        method: "event",
-        params: event,
+pub fn tool_call_finish_wire(
+    tool_call_id: &str,
+    tool_name: Option<&str>,
+    status: &str,
+    summary: Option<&str>,
+    error_message: Option<&str>,
+    content: Option<&str>,
+    structured_content: Option<Value>,
+    error: Option<Value>,
+    compacted: Option<Value>,
+) -> ToolCallFinishWire {
+    // ponytail: content preview is deliberately simple; upgrade by sharing the
+    // client-tool result compactor's summary extraction if cards need richer text.
+    let summary = summary
+        .map(str::to_string)
+        .or_else(|| error_message.map(str::to_string))
+        .or_else(|| content.map(|text| text.chars().take(160).collect::<String>()));
+    let tool_name = tool_name.map(str::to_string);
+    ToolCallFinishWire {
+        tool_call: ToolCallRefWire {
+            id: tool_call_id.to_string(),
+            name: tool_name,
+        },
+        status: ToolCallFinishStatusWire::from_wire_str(status),
+        summary,
+        error_message: error_message.map(str::to_string),
+        content: content.map(str::to_string),
+        structured_content,
+        error,
+        compacted,
     }
 }
 
@@ -174,6 +112,14 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 "delta": text,
             }),
         )],
+        RuntimeSemanticEvent::ReasoningTextDelta { text } => vec![BearWireEvent::ephemeral(
+            "message.reasoning.delta",
+            json!({
+                "delta": text,
+                "source": "provider_reasoning",
+                "replay_policy": "thought",
+            }),
+        )],
         RuntimeSemanticEvent::StatusText { text } => vec![BearWireEvent::ephemeral(
             "run.progress",
             json!({
@@ -186,15 +132,36 @@ pub fn runtime_semantic_event_to_bearwire_events(
             text,
             phase,
             detail,
-        } => vec![BearWireEvent::ephemeral(
-            "run.progress",
-            json!({
-                "kind": kind,
-                "text": text,
-                "phase": phase,
-                "detail": detail,
-            }),
-        )],
+        } => {
+            if kind == "session_info_update" {
+                let title = detail
+                    .as_ref()
+                    .and_then(|value| value.get("title"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let updated_at = detail
+                    .as_ref()
+                    .and_then(|value| value.get("updated_at"))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                return vec![BearWireEvent::ephemeral(
+                    "session_info_update",
+                    json!({
+                        "title": title,
+                        "updated_at": updated_at,
+                    }),
+                )];
+            }
+            vec![BearWireEvent::ephemeral(
+                "run.progress",
+                json!({
+                    "kind": kind,
+                    "text": text,
+                    "phase": phase,
+                    "detail": detail,
+                }),
+            )]
+        }
         RuntimeSemanticEvent::RunPaused {
             reason,
             resume_token,
@@ -218,27 +185,51 @@ pub fn runtime_semantic_event_to_bearwire_events(
             approval_reason,
             run_id,
         } => {
-            let event_type = if approval_required {
-                "tool_call.blocked"
+            let has_permission_id = approval_request_id
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|id| !id.is_empty());
+            let effective_kind = kind.unwrap_or_else(|| "function".to_string());
+            let tool_call = tool_call_wire(
+                &tool_call_id,
+                &tool_name,
+                title.as_deref(),
+                &effective_kind,
+                &arguments,
+            );
+            let execution_target = tool_call_execution_target(&tool_name);
+            let event = if approval_required && has_permission_id {
+                let permission_id = approval_request_id.clone().unwrap_or_default();
+                BearWireEvent::tool_call_waiting(ToolCallWaitingWire {
+                    expected_responder_action: None,
+                    expected_client_method: "client.permission.result".to_string(),
+                    obligation_id: None,
+                    tool_call,
+                    permission: ToolPermissionWire {
+                        id: permission_id,
+                        reason: approval_reason,
+                        title: None,
+                        target: None,
+                    },
+                    approval_required: true,
+                    execution_target,
+                    policy: tool_call_policy(&tool_name),
+                    turn_step_id: None,
+                })
             } else {
-                "tool_call.requested"
+                BearWireEvent::tool_call_requested(ToolCallRequestedWire {
+                    policy: tool_call_policy(&tool_name),
+                    tool_call,
+                    approval_required: false,
+                    execution_target,
+                    approval_request_id: approval_request_id.clone(),
+                    reason: approval_reason,
+                })
             };
-            vec![BearWireEvent::ephemeral(
-                event_type,
-                json!({
-                    "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
-                    "title": title,
-                    "kind": kind.unwrap_or_else(|| "function".to_string()),
-                    "arguments": arguments,
-                    "approval_required": approval_required,
-                    "approval_request_id": approval_request_id,
-                    "reason": approval_reason,
-                }),
-            )
-            .with_run_id(run_id)
-            .with_tool_call(tool_call_id)
-            .with_permission_request(approval_request_id)]
+            vec![event
+                .with_run_id(run_id)
+                .with_tool_call(tool_call_id)
+                .with_permission_request(approval_request_id)]
         }
         RuntimeSemanticEvent::ToolCallFinished {
             tool_call_id,
@@ -247,22 +238,17 @@ pub fn runtime_semantic_event_to_bearwire_events(
             summary,
             error_message,
         } => {
-            let event_type = match status {
-                ToolCallFinishStatus::Ok => "tool_call.completed",
-                ToolCallFinishStatus::Error => "tool_call.failed",
-                ToolCallFinishStatus::Incomplete => "tool_call.warning",
-                ToolCallFinishStatus::Cancelled => "tool_call.cancelled",
-            };
-            vec![BearWireEvent::ephemeral(
-                event_type,
-                json!({
-                    "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
-                    "status": status.as_str(),
-                    "summary": summary,
-                    "error_message": error_message,
-                }),
-            )
+            vec![BearWireEvent::tool_call_finished(tool_call_finish_wire(
+                &tool_call_id,
+                Some(&tool_name),
+                status.as_str(),
+                summary.as_deref(),
+                error_message.as_deref(),
+                None,
+                None,
+                None,
+                None,
+            ))
             .with_tool_call(tool_call_id)]
         }
         RuntimeSemanticEvent::Error {
@@ -281,15 +267,17 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 "context": context,
             }),
         )],
-        RuntimeSemanticEvent::ConversationResolved { conversation } => vec![BearWireEvent::ephemeral(
-            "session.bound",
-            json!({
-                "binding": {
-                    "conversation_id": conversation.id,
-                }
-            }),
-        )
-        .with_session(conversation.id)],
+        RuntimeSemanticEvent::ConversationResolved { conversation } => {
+            vec![BearWireEvent::ephemeral(
+                "session.bound",
+                json!({
+                    "binding": {
+                        "conversation_id": conversation.id,
+                    }
+                }),
+            )
+            .with_session(conversation.id)]
+        }
         RuntimeSemanticEvent::TurnCompleted { turn } => vec![BearWireEvent::ephemeral(
             "run.completed",
             json!({

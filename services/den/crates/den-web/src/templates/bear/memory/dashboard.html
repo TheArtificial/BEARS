@@ -1,12 +1,12 @@
-{% extends "base.html" %} {% set memory_subnav = "dashboard" %} {% block title
-%}Memory · {{ bear.slug }}{% endblock %} {% block content %} {% include
-"bear/settings/_bear_nav.html" %} {% include "bear/memory/_memory_nav.html" %}
+{% extends "bear/_manage.html" %} {% set memory_subnav = "dashboard" %} {% block title
+%}Memory · {{ bear.slug }}{% endblock %} {% block manage %} {% include "bear/memory/_memory_nav.html" %}
 
 <div class="box">
     <h2>Memory dashboard</h2>
     <p class="form-hint">
-        Canonical memory lives in this Bear's SQLite store; the recall index and
-        entity layer are derived.
+        This is the Bear's owned, portable mind: it travels with an export, unlike
+        the transcripts that formed it. Canonical memory lives in this Bear's
+        SQLite store; the recall index and entity layer are derived.
     </p>
 
     {% if import_notice %}
@@ -59,6 +59,187 @@
     <p class="form-errors">
         Memory store statistics are unavailable for this Bear.
     </p>
+    {% endif %}
+</div>
+
+<div class="box">
+    <h3>Review queue</h3>
+    {% if pending_proposals or (stats and stats.pending_observations > 0) %}
+    {% if pending_proposals %}
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>From</th>
+                <th>Risk</th>
+                <th>Store</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in pending_proposals %}
+            <tr>
+                <td>
+                    <a
+                        href="/bear/{{ bear.slug | e }}/memory/proposals/{{ p.id }}"
+                        >{{ p.title | e }}</a
+                    >
+                </td>
+                <td>{{ p.source_profile | e }}</td>
+                <td>{% if p.requires_human %}<strong>human</strong> · {% endif %}<code>{{ p.sensitivity | e }}</code></td>
+                <td><code>{{ p.store | e }}</code></td>
+                <td class="form-hint">{{ p.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% if stats and stats.pending_observations > 0 %}
+    <p class="form-hint">
+        {{ stats.pending_observations }} watch observation{{
+        stats.pending_observations == 1 and "" or "s" }} also awaiting review.
+    </p>
+    {% endif %}
+    {% else %}
+    <p class="form-hint">Nothing awaiting review.</p>
+    {% endif %}
+</div>
+
+<div class="box">
+    <h3>Reflection performance</h3>
+    <p class="form-hint">
+        Recent sleep-time memory work across curation, archive harvest, recall indexing,
+        and context compaction. Queue wait is time from enqueue to start; runtime is time
+        from start to completion (or age while running).
+    </p>
+
+    <div
+        style="
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+            gap: 0.75rem;
+            margin: 1rem 0;
+        "
+    >
+        <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.queued }}</strong><br />queued</div>
+        <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.running }}</strong><br />running</div>
+        <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.completed }}</strong><br />completed</div>
+        <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.failed }}</strong><br />failed</div>
+        <div class="box" style="margin: 0"><strong>{{ reflection_run_summary.avg_completed_duration_label | e }}</strong><br />avg runtime</div>
+    </div>
+
+    <div
+        style="
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+            gap: 0.75rem;
+            margin: 1rem 0;
+        "
+    >
+        <div class="box" style="margin: 0">
+            <strong{% if reflection_slo.oldest_queued_attention %} class="form-errors"{% endif %}>{{ reflection_slo.oldest_queued_label | e }}</strong><br />oldest queued
+        </div>
+        <div class="box" style="margin: 0">
+            <strong{% if reflection_slo.failure_attention %} class="form-errors"{% endif %}>{{ reflection_slo.failure_rate_24h_label | e }}</strong><br />24h failure rate
+            <div class="form-hint">{{ reflection_slo.failed_24h }} / {{ reflection_slo.runs_24h }} runs</div>
+        </div>
+    </div>
+
+    {% if reflection_slo.lane_runtimes %}
+    <details>
+        <summary>Runtime percentiles by lane (last 7 days)</summary>
+        <table>
+            <thead>
+                <tr>
+                    <th>Lane</th>
+                    <th>Completed</th>
+                    <th>p50</th>
+                    <th>p95</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for lane in reflection_slo.lane_runtimes %}
+                <tr>
+                    <td><code>{{ lane.lane | e }}</code></td>
+                    <td>{{ lane.completed_runs }}</td>
+                    <td>{{ lane.p50_duration_label | e }}</td>
+                    <td>{{ lane.p95_duration_label | e }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </details>
+    {% endif %}
+
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 1rem 0;">
+        <span class="form-hint">Attention:</span>
+        <a href="/bear/{{ bear.slug | e }}/memory?reflection_status=failed&amp;reflection_attention=failed_today"{% if reflection_run_filters.selected_attention == "failed_today" %} aria-current="page"{% endif %} style="border: 1px solid currentColor; border-radius: 999px; padding: 0.15rem 0.55rem;">failed today</a>
+        <a href="/bear/{{ bear.slug | e }}/memory?reflection_status=queued&amp;reflection_attention=queued_over_10m"{% if reflection_run_filters.selected_attention == "queued_over_10m" %} aria-current="page"{% endif %} style="border: 1px solid currentColor; border-radius: 999px; padding: 0.15rem 0.55rem;">queued &gt; 10m</a>
+        <a href="/bear/{{ bear.slug | e }}/memory?reflection_status=completed&amp;reflection_attention=slow_completed"{% if reflection_run_filters.selected_attention == "slow_completed" %} aria-current="page"{% endif %} style="border: 1px solid currentColor; border-radius: 999px; padding: 0.15rem 0.55rem;">slow completed</a>
+        {% if reflection_run_filters.selected_attention != "all" %}
+        <a href="/bear/{{ bear.slug | e }}/memory" class="form-hint">clear attention</a>
+        {% endif %}
+    </div>
+
+    <form method="get" action="/bear/{{ bear.slug | e }}/memory" style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin: 1rem 0;">
+        <label>
+            Lane<br />
+            <select name="reflection_lane">
+                <option value="all"{% if reflection_run_filters.selected_lane == "all" %} selected{% endif %}>All lanes</option>
+                {% for lane in reflection_run_filters.lane_options %}
+                <option value="{{ lane | e }}"{% if reflection_run_filters.selected_lane == lane %} selected{% endif %}>{{ lane | e }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            Status<br />
+            <select name="reflection_status">
+                <option value="all"{% if reflection_run_filters.selected_status == "all" %} selected{% endif %}>All statuses</option>
+                {% for status in reflection_run_filters.status_options %}
+                <option value="{{ status | e }}"{% if reflection_run_filters.selected_status == status %} selected{% endif %}>{{ status | e }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="submit">Filter runs</button>
+        <a href="/bear/{{ bear.slug | e }}/memory">Clear</a>
+    </form>
+
+    {% if reflection_runs %}
+    <table>
+        <thead>
+            <tr>
+                <th>Run</th>
+                <th>Lane</th>
+                <th>Status</th>
+                <th>Trigger</th>
+                <th>Queue wait</th>
+                <th>Runtime</th>
+                <th>Outcome</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for run in reflection_runs %}
+            <tr>
+                <td><a href="/bear/{{ bear.slug | e }}/memory/reflection/{{ run.id }}"><code>{{ run.short_id | e }}</code></a></td>
+                <td><code>{{ run.lane | e }}</code></td>
+                <td>{{ run.status_label | e }}{% if run.status == "queued" %}<span class="form-hint"> · age {{ run.queued_age_label | e }}</span>{% endif %}</td>
+                <td>{{ run.trigger | e }}</td>
+                <td>{{ run.queue_wait_label | e }}</td>
+                <td>{{ run.duration_label | e }}</td>
+                <td>
+                    {% if run.proposal_count is not none %}{{ run.proposal_count }} proposal{{ run.proposal_count == 1 and "" or "s" }}{% endif %}
+                    {% if run.scanned_artifacts is not none %}{% if run.proposal_count is not none %} · {% endif %}{{ run.scanned_artifacts }} scanned{% endif %}
+                    {% if run.error %}<span class="form-errors">{{ run.error | e }}</span>{% endif %}
+                    {% if run.proposal_count is none and run.scanned_artifacts is none and not run.error %}<span class="form-hint">—</span>{% endif %}
+                </td>
+                <td class="form-hint">{{ run.created_at | e }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="form-hint">No reflection runs match these filters.</p>
     {% endif %}
 </div>
 
@@ -172,10 +353,10 @@
     </div>
 </section>
 
-<div class="box" id="letta-import">
-    <h3>Letta memory upload</h3>
+<div class="box" id="legacy-memory-import">
+    <h3>Legacy memory upload</h3>
     <p class="form-hint">
-        Upload a Letta git bundle to import current memory heads into this
+        Upload an archived legacy memory git bundle to import current memory heads into this
         Bear's SQLite store. Failed uploads are discarded after the importer
         logs the error.
     </p>
@@ -185,16 +366,16 @@
         the
         <code>admin</code> Bear access level from the Access page.
     </p>
-    {% endif %} {% if letta_import_locked %}
+    {% endif %} {% if legacy_import_locked %}
     <p class="form-hint">
         This import is disabled because this Bear already has memory records.
-        Letta bundle import is intended only for the initial backfill into an
+        Legacy bundle import is intended only for the initial backfill into an
         empty Bear memory store.
     </p>
     {% endif %}
     <form
         method="post"
-        action="/bear/{{ bear.slug | e }}/memory/import-letta"
+        action="/bear/{{ bear.slug | e }}/memory/import-legacy"
         enctype="multipart/form-data"
     >
         <label for="bundle"><strong>Bundle file</strong></label>
@@ -204,7 +385,7 @@
             type="file"
             required{%
             if
-            letta_import_locked
+            legacy_import_locked
             or
             not
             can_manage_bear
@@ -218,7 +399,7 @@
                 type="submit"
                 {%
                 if
-                letta_import_locked
+                legacy_import_locked
                 or
                 not
                 can_manage_bear
@@ -227,7 +408,7 @@
                 endif
                 %}
             >
-                Upload Letta memory
+                Upload legacy memory
             </button>
         </p>
     </form>
@@ -270,7 +451,9 @@
                 <th>Title</th>
                 <th>From</th>
                 <th>Status</th>
-                <th>Created</th>
+                <th>Risk</th>
+                <th>Store</</th>th>
+                <th></th>Created</th>
             </tr>
         </thead>
         <tbody>
@@ -284,6 +467,8 @@
                 </td>
                 <td>{{ p.source_profile | e }}</td>
                 <td>{{ p.status | e }}</td>
+                <td>{% if p.requires_human %}<strong>human</strong> · {% endif %}<code>{{ p.sensitivity | e }}</code></td>
+                <td><code>{{ p.store | e }}</code></td>
                 <td class="form-hint">{{ p.created_at }}</td>
             </tr>
             {% endfor %}

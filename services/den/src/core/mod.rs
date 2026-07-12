@@ -2,27 +2,17 @@
 // Modules below depend on it directly via `den_runtime::*` (the former flat
 // `pub use den_runtime::*` shims here were dropped in the final flip). What remains
 // in `core` are the den-binary-local subsystems.
-//
-// The ACP edge (`acp` + its runtime/tokens/turn_runner) lives in `den-acp` (v1.5
-// split); re-exported here so `crate::core::acp*` call sites (seeds, web) are
-// unchanged until those callers migrate off the binary-local path.
-pub use den_acp::core::{acp, acp_runtime, acp_tokens, acp_turn_runner};
 // `api_utils`, `email`, and `user` moved to the shared edge foundation crate
 // `den-http` (v1.5 split); re-exported here so `crate::core::*` call sites are
 // unchanged until the edges are extracted.
 pub use den_http::{api_utils, email, user};
-pub mod docket;
-pub mod sandbox;
 pub mod tools;
 pub use tools::tool_descriptor_guidance;
 pub use tools::web_policy;
-pub mod work_plans;
 
 // Cross-layer bridge tests: they exercise den_runtime modules together with
 // den-only modules (native_runtime / turn_controller), so they live here in the
 // `den` crate rather than in den-runtime. Relocated during the v1.4 runtime lift.
-#[cfg(test)]
-mod conversation_persistence_non_acp_bridge_tests;
 #[cfg(test)]
 mod reflection_conductor_bridge_tests;
 #[cfg(test)]

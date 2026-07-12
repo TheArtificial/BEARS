@@ -11,10 +11,10 @@ use serde_json::Value;
 use sqlx::PgPool;
 use std::sync::{Arc, OnceLock};
 
-use den_core::{config::Config, DenError};
 use den_core::tools::context::DenToolInvocationContext;
+use den_core::{config::Config, DenError};
 
-use crate::memory::MemoryStoreManager;
+use den_memory::MemoryStoreManager;
 
 /// Dispatches a single builtin Den tool call to its concrete executor.
 #[async_trait]
@@ -34,8 +34,8 @@ static TOOL_INVOKER: OnceLock<Arc<dyn RuntimeToolInvoker>> = OnceLock::new();
 
 /// Install the process-wide builtin-Den-tool invoker.
 ///
-/// The HTTP edges (`den-api`/`den-acp`/`den-web`) execute builtin Den tools (the
-/// `/internal/den-tools/invoke` endpoint, ACP runtime-local tool calls, the web
+/// The HTTP edges (`den-api`/`adapter edge`/`den-web`) execute builtin Den tools (the
+/// `/internal/den-tools/invoke` endpoint, armature runtime-local tool calls, the web
 /// chat turn) but depend only on the [`RuntimeToolInvoker`] trait — not on the
 /// concrete den-side tool composition (`DenToolContext` + executors), which lives
 /// in the `den` binary. The binary injects its concrete invoker here at startup,

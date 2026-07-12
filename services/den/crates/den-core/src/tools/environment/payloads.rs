@@ -10,24 +10,181 @@ use crate::BearProfile;
 
 use crate::tools::{
     context::DenToolInvocationContext,
-    descriptor::{builtin_den_tool_descriptors_for_profile, memory_tool_provider_names_for_profile},
+    descriptor::{
+        builtin_den_tool_descriptors_for_profile, memory_tool_provider_names_for_profile,
+    },
     identity::{role_is_bear_admin, CurrentUser},
-    memory::source_acp_session_id,
+    memory::source_client_session_id,
     support::{clean_optional, memory_read_scopes, memory_write_scopes},
     work_surface::infer_work_surface_hint,
 };
 
+fn trusted_workspace_from_context(
+    context: &DenToolInvocationContext,
+    adapter_runtime: Option<&Value>,
+) -> Value {
+    if let Some(trusted) = adapter_runtime
+        .and_then(|value| value.get("trusted_workspace"))
+        .cloned()
+    {
+        return trusted;
+    }
+    json!({
+        "cwd": context.workspace_roots.first().cloned(),
+        "roots": context.workspace_roots,
+        "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" },
+    })
+}
+
+fn memory_context_layers(
+    context: &DenToolInvocationContext,
+    context_budget: &Value,
+    memory_status: &Value,
+    entities: &Value,
+) -> Value {
+    let projected_memory = context.projected_memory.clone().unwrap_or_else(|| {
+        json!({
+            "status": "unknown",
+            "count": "unknown",
+            "reason": "Projection metadata is not wired into session_info yet.",
+            "next_surface": "prompt memory blocks in model prompt / future projection diagnostic"
+        })
+    });
+    let recalled_memory = context.recalled_memory.clone().unwrap_or_else(|| {
+        json!({
+            "status": "unknown",
+            "count": "unknown",
+            "reason": "Recall passage metadata is not wired into session_info yet.",
+            "next_surface": "memory_search / future recall diagnostic"
+        })
+    });
+    let durable_memory_status = if memory_status
+        .get("available")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        "available"
+    } else {
+        match memory_status.get("configured").and_then(Value::as_bool) {
+            Some(true) => "degraded",
+            Some(false) => "unavailable",
+            None => "unknown",
+        }
+    };
+    let memory_scope = format!("{}/", context.profile.unwrap_or(BearProfile::Pair).as_str());
+    json!({
+        "schema": "den.memory_context_layers.v1",
+        "source": "den.session_info",
+        "layers": [
+            {
+                "name": "conversation_context",
+                "label": "Current conversation/context",
+                "status": "available",
+                "scope": "session",
+                "lifetime": "transient",
+                "mutability": "append_only_during_turn",
+                "authority": "current_transcript_and_runtime",
+                "next_surface": "conversation transcript / session_info.context_budget"
+            },
+            {
+                "name": "context_budget",
+                "label": "Context budget",
+                "status": context_budget.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                "scope": "session",
+                "lifetime": "turn",
+                "mutability": "runtime_reported",
+                "authority": "provider_or_den_estimate",
+                "next_surface": "session_info.context_budget"
+            },
+            {
+                "name": "projected_memory",
+                "label": "Prompt-projected memory",
+                "status": projected_memory.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                "scope": memory_scope,
+                "lifetime": "prompt_projection",
+                "mutability": "runtime_selected",
+                "authority": "prompt_context",
+                "count": projected_memory.get("count").cloned().unwrap_or_else(|| json!("unknown")),
+                "reason": projected_memory.get("reason").cloned().unwrap_or(Value::Null),
+                "selected_paths": projected_memory.get("selected_paths").cloned().unwrap_or_else(|| json!([])),
+                "matched_block_ids": projected_memory.get("matched_block_ids").cloned().unwrap_or_else(|| json!([])),
+                "next_surface": projected_memory.get("next_surface").cloned().unwrap_or_else(|| json!("prompt memory blocks in model prompt / future projection diagnostic"))
+            },
+            {
+                "name": "recalled_memory",
+                "label": "Turn-start recalled memory",
+                "status": recalled_memory.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                "scope": memory_scope,
+                "lifetime": "turn",
+                "mutability": "runtime_selected",
+                "authority": "recall_pipeline",
+                "count": recalled_memory.get("count").cloned().unwrap_or_else(|| json!("unknown")),
+                "query": recalled_memory.get("query").cloned().unwrap_or(Value::Null),
+                "top_paths": recalled_memory.get("top_paths").cloned().unwrap_or_else(|| json!([])),
+                "reason": recalled_memory.get("reason").cloned().unwrap_or(Value::Null),
+                "next_surface": recalled_memory.get("next_surface").cloned().unwrap_or_else(|| json!("memory_search / future recall diagnostic"))
+            },
+            {
+                "name": "durable_memory",
+                "label": "Persistent semantic memory",
+                "status": durable_memory_status,
+                "scope": memory_scope,
+                "lifetime": "durable_or_lifecycle_managed",
+                "mutability": "explicit_tool_or_review_flow",
+                "authority": "sqlite_memory_store",
+                "next_surface": "session_info.memory.status / memory_status / memory_search"
+            },
+            {
+                "name": "task_work_state",
+                "label": "Task, Docket, and workplan state",
+                "status": if context.activity.is_some() { "available" } else { "unknown" },
+                "scope": "work_surface_or_session",
+                "lifetime": "task_lifecycle",
+                "mutability": "task_tools",
+                "authority": "docket_and_task_list_surfaces",
+                "next_surface": "activity / task-list tools"
+            },
+            {
+                "name": "entity_context",
+                "label": "Entity/work-surface orientation",
+                "status": entities.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                "scope": "work_surface_or_bear",
+                "lifetime": "lifecycle_managed",
+                "mutability": "entity_tools",
+                "authority": "entity_orientation_surface",
+                "next_surface": "session_info.entities / entity tools"
+            },
+            {
+                "name": "tool_runtime_surface",
+                "label": "Runtime instructions and callable tools",
+                "status": "available",
+                "scope": "turn",
+                "lifetime": "turn",
+                "mutability": "runtime_controlled",
+                "authority": "system_developer_prompt_and_tool_descriptors",
+                "next_surface": "tool descriptors / session_info.policy"
+            }
+        ]
+    })
+}
+
 pub fn bear_environment_payload(
     context: &DenToolInvocationContext,
-    memfs_configured: bool,
     role: BearProfile,
     current_user: Option<&CurrentUser>,
     member_count: i64,
     memory_status: &Value,
+    entities: &Value,
     adapter_runtime: &Value,
 ) -> Value {
-    let session_info =
-        session_info_payload(context, role, current_user, member_count, memory_status);
+    let session_info = session_info_payload(
+        context,
+        role,
+        current_user,
+        member_count,
+        memory_status,
+        entities,
+    );
     let runtime = session_info.get("runtime").cloned().unwrap_or_else(|| {
         json!({
             "state": "idle",
@@ -36,7 +193,7 @@ pub fn bear_environment_payload(
     });
     let session = json!({
         "id": context.session_id,
-        "acp_session_id": source_acp_session_id(context),
+        "client_session_id": source_client_session_id(context),
         "conversation_id": clean_optional(&context.conversation_id),
         "conversation_selection": context.conversation_selection,
         "runtime_target": context.runtime_target,
@@ -44,12 +201,8 @@ pub fn bear_environment_payload(
         "channel": context.channel,
         "active_turn": runtime.get("active_turn").cloned().unwrap_or(Value::Null),
     });
-    let workspace = json!({
-        "cwd": context.workspace_roots.first().cloned(),
-        "roots": context.workspace_roots,
-        "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" },
-        "work_surface": infer_work_surface_hint(context, role)["work_surface"].clone(),
-    });
+    let mut workspace = trusted_workspace_from_context(context, Some(adapter_runtime));
+    workspace["work_surface"] = infer_work_surface_hint(context, role)["work_surface"].clone();
     let tools = json!({
         "session_policy": context.session_policy,
         "available_den_tools": builtin_den_tool_descriptors_for_profile(role)
@@ -80,7 +233,7 @@ pub fn bear_environment_payload(
         browser
     } else {
         json!({
-            "status": if source_acp_session_id(context).is_some() { "unavailable" } else { "unknown" },
+            "status": if source_client_session_id(context).is_some() { "unavailable" } else { "unknown" },
             "active_source": Value::Null,
             "note": "Browser environment providers are not yet integrated into harness-level bear_environment for non-adapter baseline snapshots.",
         })
@@ -109,15 +262,15 @@ pub fn bear_environment_payload(
             "details": memory_status,
         },
         "adapter": {
-            "status": if adapter_service.is_object() { "ok" } else if source_acp_session_id(context).is_some() { "degraded" } else { "not_applicable" },
+            "status": if adapter_service.is_object() { "ok" } else if source_client_session_id(context).is_some() { "degraded" } else { "not_applicable" },
             "details": adapter_service,
         },
     });
-    let is_acp = source_acp_session_id(context).is_some();
+    let has_client_session = source_client_session_id(context).is_some();
     let adapter_environment_status = adapter_runtime
         .get("status")
         .and_then(Value::as_str)
-        .unwrap_or(if is_acp {
+        .unwrap_or(if has_client_session {
             "unavailable"
         } else {
             "not_applicable"
@@ -129,25 +282,25 @@ pub fn bear_environment_payload(
     } else {
         "ok"
     };
-    let acp_variant = if is_acp {
-        let acp_runtime = adapter_runtime
+    let client_variant = if has_client_session {
+        let client_runtime = adapter_runtime
             .get("runtime")
             .cloned()
             .unwrap_or_else(|| runtime.clone());
         json!({
             "status": "ok",
             "session": {
-                "acp_session_id": source_acp_session_id(context),
+                "client_session_id": source_client_session_id(context),
                 "conversation_selection": context.conversation_selection,
                 "runtime_target": context.runtime_target,
             },
-            "runtime": acp_runtime,
+            "runtime": client_runtime,
             "permissions": context.session_policy,
         })
     } else {
         json!({ "status": "not_applicable" })
     };
-    let adapter_variant = if is_acp {
+    let adapter_variant = if has_client_session {
         if adapter_environment.is_object() {
             json!({
                 "status": adapter_environment_status,
@@ -156,7 +309,7 @@ pub fn bear_environment_payload(
         } else {
             json!({
                 "status": adapter_environment_status,
-                "note": "Adapter enrichment could not be fetched for this ACP session.",
+                "note": "Adapter enrichment is not available for this client session.",
             })
         }
     } else {
@@ -164,9 +317,9 @@ pub fn bear_environment_payload(
     };
     let diagnostics_warnings = {
         let mut warnings = Vec::<Value>::new();
-        if is_acp && !adapter_environment.is_object() {
+        if has_client_session && !adapter_environment.is_object() {
             warnings.push(json!(
-                "Adapter enrichment could not be fetched for this ACP session."
+                "Adapter enrichment is not available for this client session."
             ));
         }
         if let Some(values) = adapter_environment
@@ -211,7 +364,7 @@ pub fn bear_environment_payload(
             "state": runtime.get("state").cloned().unwrap_or_else(|| json!("unknown")),
             "channel": context.channel,
             "context_budget": context.context_budget,
-            "memfs_configured": memfs_configured,
+            "memory_runtime": "sqlite",
         },
         "session": session,
         "workspace": workspace,
@@ -219,7 +372,7 @@ pub fn bear_environment_payload(
         "browser": browser,
         "services": services,
         "environment_variants": {
-            "acp": acp_variant,
+            "client": client_variant,
             "adapter": adapter_variant,
         },
         "diagnostics": {
@@ -237,13 +390,10 @@ pub fn session_info_payload(
     current_user: Option<&CurrentUser>,
     member_count: i64,
     memory_status: &Value,
+    entities: &Value,
 ) -> Value {
     let work_surface = infer_work_surface_hint(context, role);
-    let workspace = json!({
-        "roots": context.workspace_roots,
-        "cwd": context.workspace_roots.first().cloned(),
-        "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" }
-    });
+    let workspace = trusted_workspace_from_context(context, None);
     let runtime = context.runtime.clone().unwrap_or_else(|| {
         json!({
             "state": "idle",
@@ -263,7 +413,7 @@ pub fn session_info_payload(
     let context_budget = context.context_budget.clone().unwrap_or_else(|| {
         json!({
             "status": "unavailable",
-            "reason": "Letta/provider context usage data is not wired into Den session_info yet",
+            "reason": "Provider context usage data is not wired into Den session_info yet",
             "source": "den.session_info",
         })
     });
@@ -282,6 +432,7 @@ pub fn session_info_payload(
         BearProfile::Pair => Some("Builder Bear"),
         _ => None,
     };
+    let context_layers = memory_context_layers(context, &context_budget, memory_status, entities);
     json!({
         "role_contract_context": {
             "profile": role.as_str(),
@@ -295,7 +446,7 @@ pub fn session_info_payload(
             "active_bear_id": context.bear_id,
             "active_bear_authority": "trusted_session",
             "memory_surface": format!("{}/", role.as_str()),
-            "workspace_root": context.workspace_roots.first().cloned(),
+            "workspace_root": workspace.get("cwd").cloned().unwrap_or(Value::Null),
         },
         "context_composition_note": if role_contract_label.is_some() {
             Value::String("Role-contract context defines role behavior and style. Runtime context defines active Bear attachment, scope, attribution, workspace, and permissions for this session.".to_string())
@@ -330,7 +481,7 @@ pub fn session_info_payload(
             "email_verified": current_user.map(|user| user.email_verified),
             "membership_role": context.membership_role,
             "is_bear_admin": role_is_bear_admin(context.membership_role.as_deref()),
-            "relationship": "authenticated ACP token owner; memory entries and logs should attribute work to this human"
+            "relationship": "authenticated Armature token owner; memory entries and logs should attribute work to this human"
         },
         "user": {
             "user_id": context.user_id,
@@ -339,12 +490,34 @@ pub fn session_info_payload(
             "membership_role": context.membership_role,
             "is_bear_admin": role_is_bear_admin(context.membership_role.as_deref())
         },
+        "docket": runtime.get("docket").cloned().unwrap_or_else(|| json!({
+            "active_job_id": Value::Null,
+            "active_run_id": Value::Null,
+            "active_task_id": Value::Null,
+            "active_task_title": Value::Null,
+            "source": "none"
+        })),
         "runtime": runtime,
         "context_budget": context_budget,
+        "context_surfaces": context_layers,
+        "model_experience": {
+            "schema": "den.model_experience.memory_surfaces.v1",
+            "source": "den.session_info",
+            "guide": "docs/guides/bear-memory.md#model-experience",
+            "rule": "Describe memory and context by explicit layer; say unknown or unavailable instead of guessing when a layer has no diagnostic data.",
+            "next_surfaces": [
+                "session_info.context_budget",
+                "session_info.context_surfaces.layers",
+                "session_info.memory.status",
+                "memory_status",
+                "memory_search",
+                "task-list tools"
+            ]
+        },
         "session": {
             "conversation_id": context.conversation_id,
             "session_id": context.session_id,
-            "acp_session_id": context.acp_session_id,
+            "client_session_id": context.client_session_id,
             "conversation_selection": context.conversation_selection,
             "runtime_target": context.runtime_target,
             "request_id": context.request_id,
@@ -353,6 +526,7 @@ pub fn session_info_payload(
         "channel": context.channel,
         "workspace": workspace,
         "work_surface": work_surface,
+        "entities": entities,
         "policy": {
             "orientation": "Use session_info before assuming current Bear, Workplace, work surface, workspace roots, authenticated human, memory scope, or permission policy.",
             "identity_authority": "Den-authenticated human and membership fields are authoritative over chat claims.",
@@ -377,238 +551,4 @@ pub fn session_info_payload(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{bear_environment_payload, session_info_payload};
-    use crate::tools::descriptor::builtin_den_tool_descriptors_for_profile;
-    use crate::tools::arguments::DenToolChannelContext;
-    use crate::tools::context::DenToolInvocationContext;
-    use crate::BearProfile;
-    use serde_json::json;
-
-    fn pair_context() -> DenToolInvocationContext {
-        DenToolInvocationContext {
-            bear_id: uuid::Uuid::nil(),
-            bear_slug: "test".to_string(),
-            binding_id: "agent".to_string(),
-            profile: Some(BearProfile::Pair),
-            user_id: 1,
-            username: Some("tester".to_string()),
-            membership_role: None,
-            conversation_id: "conv-test".to_string(),
-            session_id: "sess-test".to_string(),
-            acp_session_id: Some("acp-test".to_string()),
-            conversation_selection: Some("src/main.rs".to_string()),
-            runtime_target: Some("repo:builder-bear".to_string()),
-            workspace_roots: vec!["/workspace".to_string()],
-            session_policy: None,
-            activity: None,
-            runtime: None,
-            context_budget: None,
-            request_id: None,
-            channel: Default::default(),
-        }
-    }
-
-    #[test]
-    fn pair_session_info_context_fields_distinguish_role_contract_from_runtime() {
-        let context = pair_context();
-        let payload =
-            session_info_payload(&context, BearProfile::Pair, None, 2, &json!({ "available": true }));
-
-        assert_eq!(
-            payload["role_contract_context"]["contract_label"],
-            json!("Builder Bear")
-        );
-        assert_eq!(payload["role_contract_context"]["profile"], json!("pair"));
-        assert_eq!(
-            payload["runtime_context"]["active_bear_slug"],
-            json!("test")
-        );
-        assert_eq!(
-            payload["runtime_context"]["active_bear_authority"],
-            json!("trusted_session")
-        );
-        assert_eq!(payload["context_composition_note"], json!("Role-contract context defines role behavior and style. Runtime context defines active Bear attachment, scope, attribution, workspace, and permissions for this session."));
-        assert_eq!(payload["agent_context_summary"], json!("You are the pair-role collaborator operating under the Builder Bear role-contract context, currently attached to the test Bear runtime context."));
-    }
-
-    #[test]
-    fn pair_session_info_includes_runtime_health_and_context_budget_defaults() {
-        let context = pair_context();
-        let payload =
-            session_info_payload(&context, BearProfile::Pair, None, 2, &json!({ "available": true }));
-
-        assert_eq!(payload["runtime"]["state"], json!("idle"));
-        assert_eq!(payload["runtime"]["active_turn"]["present"], json!(false));
-        assert_eq!(
-            payload["runtime"]["active_turn"]["pending_obligations"],
-            json!(0)
-        );
-        assert_eq!(
-            payload["runtime"]["active_turn"]["pending_adapter_tools"],
-            json!(0)
-        );
-        assert_eq!(
-            payload["runtime"]["active_turn"]["pending_den_tools"],
-            json!(0)
-        );
-        assert_eq!(payload["runtime"]["source"], json!("session_info_default"));
-        assert_eq!(payload["context_budget"]["status"], json!("unavailable"));
-        assert_eq!(
-            payload["context_budget"]["source"],
-            json!("den.session_info")
-        );
-    }
-
-    #[test]
-    fn pair_session_info_uses_context_runtime_health_when_available() {
-        let mut context = pair_context();
-        context.runtime = Some(json!({
-            "state": "requires_action",
-            "active_turn": {
-                "present": true,
-                "phase": "WaitingForObligations",
-                "pending_obligations": 1,
-                "pending_adapter_tools": 1,
-                "pending_den_tools": 0,
-                "pending_permissions": 0
-            },
-            "source": "acp_active_turn_registry"
-        }));
-        context.context_budget = Some(json!({
-            "status": "estimated",
-            "used_tokens": 1000,
-            "remaining_tokens": 9000,
-            "source": "test"
-        }));
-        let payload =
-            session_info_payload(&context, BearProfile::Pair, None, 2, &json!({ "available": true }));
-
-        assert_eq!(payload["runtime"]["state"], json!("requires_action"));
-        assert_eq!(payload["runtime"]["active_turn"]["present"], json!(true));
-        assert_eq!(
-            payload["runtime"]["active_turn"]["pending_adapter_tools"],
-            json!(1)
-        );
-        assert_eq!(
-            payload["runtime"]["source"],
-            json!("acp_active_turn_registry")
-        );
-        assert_eq!(payload["context_budget"]["status"], json!("estimated"));
-        assert_eq!(payload["context_budget"]["source"], json!("test"));
-    }
-
-    #[test]
-    fn chat_profile_exposes_memory_read_and_write_tools() {
-        let names: Vec<_> = builtin_den_tool_descriptors_for_profile(BearProfile::Chat)
-            .into_iter()
-            .filter(|descriptor| descriptor.domain == "memory")
-            .map(|descriptor| descriptor.provider_name)
-            .collect();
-        assert!(names.contains(&"memory_search".to_string()));
-        assert!(names.contains(&"memory_read".to_string()));
-        assert!(names.contains(&"memory_write_entry".to_string()));
-        assert!(!names.contains(&"memory_list_proposals".to_string()));
-    }
-
-    #[test]
-    fn chat_session_info_available_tools_match_memory_roster() {
-        let context = DenToolInvocationContext {
-            bear_id: uuid::Uuid::nil(),
-            bear_slug: "meta".to_string(),
-            binding_id: "agent-123".to_string(),
-            profile: Some(BearProfile::Chat),
-            user_id: 7,
-            username: Some("gerwitz".to_string()),
-            membership_role: Some("admin".to_string()),
-            conversation_id: "conv-123".to_string(),
-            session_id: "sess-123".to_string(),
-            acp_session_id: None,
-            conversation_selection: Some("conv-123".to_string()),
-            runtime_target: Some("conv-123".to_string()),
-            workspace_roots: Vec::new(),
-            session_policy: None,
-            activity: None,
-            runtime: None,
-            context_budget: None,
-            request_id: None,
-            channel: Default::default(),
-        };
-        let payload = session_info_payload(
-            &context,
-            BearProfile::Chat,
-            None,
-            2,
-            &json!({ "available": true }),
-        );
-        let tools = payload["memory"]["available_tools"]
-            .as_array()
-            .expect("available_tools array");
-        let names: Vec<_> = tools
-            .iter()
-            .filter_map(|value| value.as_str())
-            .collect();
-        assert!(names.contains(&"memory_search"));
-        assert!(names.contains(&"memory_write_entry"));
-        assert!(!names.contains(&"memory_list_proposals"));
-    }
-
-    #[test]
-    fn bear_environment_payload_exposes_baseline_sections() {
-        let context = DenToolInvocationContext {
-            bear_id: uuid::Uuid::nil(),
-            bear_slug: "meta".to_string(),
-            binding_id: "agent-123".to_string(),
-            profile: Some(BearProfile::Pair),
-            user_id: 7,
-            username: Some("gerwitz".to_string()),
-            membership_role: Some("admin".to_string()),
-            conversation_id: "conv-123".to_string(),
-            session_id: "sess-123".to_string(),
-            acp_session_id: Some("acp-123".to_string()),
-            conversation_selection: Some("conv-123".to_string()),
-            runtime_target: Some("conv-123".to_string()),
-            workspace_roots: vec!["/workspace".to_string()],
-            session_policy: Some(json!({ "mode_label": "Write" })),
-            activity: None,
-            runtime: Some(json!({
-                "state": "running",
-                "active_turn": { "present": true, "pending_obligations": 0 }
-            })),
-            context_budget: Some(json!({ "status": "unavailable" })),
-            request_id: Some("req-123".to_string()),
-            channel: DenToolChannelContext {
-                family: Some("acp".to_string()),
-                client: Some("api-direct".to_string()),
-                protocol: Some("acp".to_string()),
-            },
-        };
-        let payload = bear_environment_payload(
-            &context,
-            false,
-            BearProfile::Pair,
-            None,
-            2,
-            &json!({ "configured": false, "available": false }),
-            &json!({
-                "status": "ok",
-                "runtime": { "ok": true, "channel_kind": "acp_session" },
-                "adapter_environment": {
-                    "browser": { "active_source": "host_bridge", "status": "ok" },
-                    "services": { "den": { "status": "ok" } },
-                    "diagnostics": { "warnings": ["adapter warning"], "errors": [] }
-                }
-            }),
-        );
-
-        assert_eq!(payload["bear"]["slug"], "meta");
-        assert_eq!(payload["runtime"]["state"], "running");
-        assert_eq!(payload["session"]["id"], "sess-123");
-        assert_eq!(payload["workspace"]["cwd"], "/workspace");
-        assert_eq!(payload["browser"]["active_source"], "host_bridge");
-        assert_eq!(payload["environment_variants"]["acp"]["status"], "ok");
-        assert_eq!(payload["environment_variants"]["adapter"]["status"], "ok");
-        assert_eq!(payload["diagnostics"]["warnings"][0], "adapter warning");
-        assert!(payload["tools"]["available_den_tools"].is_array());
-    }
-}
+mod tests;

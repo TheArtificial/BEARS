@@ -10,9 +10,9 @@
 - [ADR-0006 — Bear work surfaces](adr-0006-bear-work-surfaces.md)
 - [ADR-0040 — Connections and user-facing work-surface presentation](adr-0040-connections-and-work-surface-presentation.md)
 - [ADR-0028 — Environment affordance and resource boundaries](adr-0028-environment-affordance-and-resource-boundaries.md)
-- [`interactive-profiles-and-role-axes.md`](../architecture/interactive-profiles-and-role-axes.md)
+- [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 - [`work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md)
-- [`den-native-runtime.md`](../architecture/den-native-runtime.md)
+- [`den-runtime.md`](../architecture/den-runtime.md)
 - [`DEN_NATIVE_RUNTIME_PLAN.md`](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md) Phase 7
 
 ## Context
@@ -23,6 +23,7 @@ Design discussions settled several product constraints:
 
 - **`chat` never gets a sandbox.** When execution armature is required, `chat` delegates to a **`work`** run (typically via Docket). The chat channel streams phase events so UX is better than a blocking “please wait.”
 - **`pair` defaults to client armature** (ACP client tools, local workspace). Server-hosted checkout for mobile/web is the same sandbox machinery with different profile policy — deferred to Phase 7.1.
+- **Durable workspaces from v1** — sandbox sessions are materialized instances of Den-owned workspace records, not invisible throwaway implementation details. A workspace survives across turns and can be archived/recovered even if the runner instance is gone.
 - **No warm pool in v1** — a working hypothesis that cold start is tolerable; **telemetry from day one** will validate or falsify that (see §11).
 - **Git upstreams are Den-managed** at bear level (origins UI, auth to GitHub / GitLab / Gitea). Legacy `memfs_repo_path` is not the long-term checkout source of truth.
 - **Upstream auth is inherently multi-actor.** A single token per sandbox is wrong for UX and security. The desired default on GitHub when a human is in the loop: the **Bear service identity commits**, the **requesting human opens the PR** — without exposing multiple real tokens inside the workspace.
@@ -77,6 +78,45 @@ The runner exposes a **`SandboxBackend`** abstraction. Den’s `SandboxManager` 
 **Ownership rule:** Den owns the **contract** (origins, credentials, policy, audit). The runner owns **materialized bits** (cloned trees, instance state, optional future bare mirrors). Operator configuration of “which GitHub repo is BEARS” lives only in Den.
 
 **Parallel runs:** Multiple concurrent Docket runs on one Bear each get an isolated session (network, branch namespace, ports). This is a first-class requirement — one lesson taken directly from Locki.
+
+### 2.1 Durable workspaces and work lifecycle
+
+Borrowing from Jean's coherent project/worktree/session model, Phase 7 treats the sandbox as part of a durable work lifecycle, not just a container allocator.
+
+Den owns a **workspace record** for each `work` run/work surface. The runner owns materialized instances for that workspace. The workspace record tracks at minimum:
+
+- workspace id, Bear id, Docket run/task ids, stance (`work`), and work surface/origin
+- base ref, working branch, clone depth, branch namespace, and PR association when present
+- sandbox backend, materialized path/ref, runner instance id, and readiness timestamps
+- status (`queued`, `planning`, `running`, `waiting_for_input`, `waiting_for_approval`, `review_ready`, `completed`, `failed`, `archived`, `orphaned`)
+- dirty state, changed-file summary, commits produced, last command/check result, and latest artifact refs
+- archive, recovery, and cleanup state
+
+A workspace is separate from model turns. V1 may run one active `work` loop per workspace, but the data model must allow later session purposes inside the same workspace: investigation, implementation, review/fixup, conflict resolution, and recap.
+
+Den should expose a minimal **work canvas / run dashboard** over these records so humans can answer: what is in flight, what needs approval, what changed, what failed, what is review-ready, and what can be archived.
+
+### 2.2 Workflow actions, output shaping, and recaps
+
+The coding harness should expose repeatable workflow actions rather than only free-form shell turns. V1 actions should be represented as Docket/run artifacts with prompt/model/tool defaults where useful:
+
+- investigate
+- implement
+- run checks
+- summarize diff
+- draft PR
+- address review comments
+- resolve conflicts
+- handoff or recap summary
+
+Shell/fs RPCs must shape output for the model. Full stdout/stderr and large artifacts are stored as run artifacts; model-facing tool results carry bounded summaries and excerpts: status, exit code, concise summary, stdout/stderr excerpts, artifact refs, and truncation markers.
+
+Every nontrivial workspace should be able to produce a durable recap artifact: attempted work, changed files, commands/checks run, current blockers, PR/commit status, and next recommended action. Completed workspaces can be archived/restored; orphaned, dirty, or stale runner instances have explicit recovery and cleanup paths.
+
+### 2.3 Deferred Jean-inspired conveniences
+
+- **Linked projects / linked work surfaces** are deferred. V1 writes only to the active workspace and reads only configured task/work-surface context plus Bear memory. Read-only cross-repo context can come later as an explicit link graph.
+- **Auto-sweeps from task sources** (periodic issue/security/Linear intake with filters, active hours, and run limits) are deferred until durable workspace lifecycle and manual Docket dispatch are stable.
 
 ### 3. Paired workspace + egress gateway (structural boundary)
 
@@ -323,7 +363,7 @@ To preserve arbitrary-repo and cloud-hosted use cases, Bears **does not** adopt:
 - Two isolation peers per active run increases resource use vs a monolithic sandbox.
 - Gateway + multi-identity policy + git bridge is more moving parts than a single PAT in env.
 - GitHub App onboarding is heavier for self-hosters; machine user docs and warnings are required.
-- Path from legacy MemFS checkouts needs a migration story (Phase 8 or parallel backfill).
+- Legacy MemFS checkout migration is retired for production because there are no production Letta-runtime Bears; archived bundles can use optional import tooling if needed.
 - Git command grammar allowlists require ongoing maintenance and remain bypass-prone.
 
 ## Non-goals (Phase 7)

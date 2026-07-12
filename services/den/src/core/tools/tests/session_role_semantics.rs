@@ -3,7 +3,7 @@ use serde_json::json;
 use crate::core::{
     tools::{session::DenToolInvocationContext, work_surface::infer_work_surface_hint},
 };
-use den_runtime::bears::BearProfile;
+use den_service::bears::BearProfile;
 
 fn context_for(role: BearProfile) -> DenToolInvocationContext {
     DenToolInvocationContext {
@@ -16,7 +16,7 @@ fn context_for(role: BearProfile) -> DenToolInvocationContext {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
-        acp_session_id: Some("acp-test".to_string()),
+        client_session_id: Some("client-test".to_string()),
         conversation_selection: Some("src/main.rs".to_string()),
         runtime_target: Some("repo:builder-bear".to_string()),
         workspace_roots: vec!["/workspace".to_string()],
@@ -24,6 +24,8 @@ fn context_for(role: BearProfile) -> DenToolInvocationContext {
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: None,
         channel: Default::default(),
     }

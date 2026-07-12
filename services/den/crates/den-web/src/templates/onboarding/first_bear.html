@@ -10,10 +10,10 @@
     </p>
 
     {% if provision_error %}
-    <p class="form-errors"><strong>Letta provisioning failed</strong> (Bear was saved): {{ provision_error }}</p>
+    <p class="form-errors"><strong>Runtime setup failed</strong> (Bear was saved): {{ provision_error }}</p>
     {% endif %}
-    {% if letta_sync_error %}
-    <p class="form-errors"><strong>Letta sync failed</strong> (Bear was saved): {{ letta_sync_error }}</p>
+    {% if runtime_sync_error %}
+    <p class="form-errors"><strong>Runtime sync failed</strong> (Bear was saved): {{ runtime_sync_error }}</p>
     {% endif %}
 
     <form method="post" class="box den-first-bear-form">
@@ -101,16 +101,16 @@
         </div>
 
         <h3>6. Model</h3>
-        {% if letta_configured %}
+        {% if model_catalog_configured %}
         <label for="default_model_field" {% if errors and errors.default_model %}class="has-error"{% endif %}>Model</label>
-        {% if letta_models_fetch_error %}
-        <p class="form-errors">{{ letta_models_fetch_error }}</p>
+        {% if models_fetch_error %}
+        <p class="form-errors">{{ models_fetch_error }}</p>
         {% endif %}
         <div class="form-field{% if errors and errors.default_model %} has-error{% endif %}">
-            {% if letta_model_options and letta_model_options | length > 0 %}
+            {% if model_options and model_options | length > 0 %}
             <select id="default_model_field" name="default_model" required>
                 <option value="" disabled{% if not form.default_model %} selected{% endif %}>— Choose a model —</option>
-                {% for m in letta_model_options %}
+                {% for m in model_options %}
                 <option value="{{ m.handle | e }}"{% if form.default_model == m.handle %} selected{% endif %}>{{ m.label | e }} — {{ m.handle | e }}</option>
                 {% endfor %}
             </select>

@@ -9,13 +9,11 @@ use sqlx::{postgres::PgPoolOptions, types::Json, PgPool};
 
 use crate::{
     config::Config,
-    core::{
-        acp_tokens,
-        user::{self, db as user_db, email_settings},
-    },
+    core::user::{self, db as user_db, email_settings},
     startup::run_sqlx_migrations,
 };
-use den_runtime::bears::{
+use den_http::armature_tokens;
+use den_service::bears::{
     db as bears_db,
     db::BearParams,
     db::BEAR_ROLE_ADMIN,
@@ -26,7 +24,8 @@ use den_runtime::bears::{
 pub const SMOKE_USERNAME: &str = "alice";
 pub const SMOKE_PASSWORD: &str = "Never deploy seed passwords.";
 pub const SMOKE_BEAR_SLUG: &str = "test-bear";
-pub const SMOKE_ACP_TOKEN: &str = "bears_acp_smoke_known_token_for_dev_and_ci_only_000000000000";
+pub const SMOKE_ARMATURE_TOKEN: &str =
+    "bear_arm_smoke_known_token_for_dev_and_ci_only_000000000000";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeedProfile {
@@ -105,9 +104,9 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
     bears_db::grant_membership(pool, user_id, bear_id, Some(BEAR_ROLE_ADMIN))
         .await
         .context("ensure smoke membership")?;
-    ensure_smoke_acp_token(pool, user_id, bear_id)
+    ensure_smoke_armature_token(pool, user_id, bear_id)
         .await
-        .context("ensure smoke ACP token")?;
+        .context("ensure smoke Armature token")?;
     if let Err(err) = ensure_smoke_role_runtimes(pool, bear_id, &config).await {
         tracing::warn!(error = %err, "smoke seed could not provision profile runtimes; continuing with database fixtures only");
     }
@@ -158,8 +157,6 @@ async fn ensure_bear(pool: &PgPool, slug: &str, _config: &Config) -> Result<uuid
             system_prompt: "You are Test Bear, a concise assistant for local BEARS development and smoke testing.",
             default_model: None,
             tools_enabled: None::<Json<serde_json::Value>>,
-            letta_agent_type: None,
-            letta_tool_ids: Json(Vec::new()),
             context_profile: None,
         },
     )
@@ -181,7 +178,7 @@ async fn ensure_smoke_bear_model(
           AND (
             default_model IS NULL
             OR btrim(default_model) = ''
-            OR default_model LIKE 'letta/%'
+            OR default_model LIKE 'provider/%'
             OR strpos(default_model, '/') = 0
           )
         ",
@@ -203,13 +200,17 @@ async fn ensure_smoke_role_runtimes(
         .context("provision smoke bear native runtimes")
 }
 
-async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid) -> Result<()> {
-    let token_hash = acp_tokens::hash_raw_token_for_seed(SMOKE_ACP_TOKEN);
+async fn ensure_smoke_armature_token(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: uuid::Uuid,
+) -> Result<()> {
+    let token_hash = armature_tokens::hash_raw_token_for_seed(SMOKE_ARMATURE_TOKEN);
     let mut tx = pool.begin().await?;
     let row: (uuid::Uuid,) = sqlx::query_as(
         r"
-        INSERT INTO acp_tokens (user_id, name, token_hash, scopes, revoked_at, expires_at)
-        VALUES ($1, 'Smoke ACP token', $2, $3, NULL, NULL)
+        INSERT INTO armature_tokens (user_id, name, token_hash, scopes, revoked_at, expires_at)
+        VALUES ($1, 'Smoke Armature token', $2, $3, NULL, NULL)
         ON CONFLICT (token_hash) DO UPDATE
         SET user_id = EXCLUDED.user_id,
             name = EXCLUDED.name,
@@ -222,15 +223,15 @@ async fn ensure_smoke_acp_token(pool: &PgPool, user_id: i32, bear_id: uuid::Uuid
     .bind(user_id)
     .bind(token_hash)
     .bind(serde_json::json!([
-        acp_tokens::acp_chat_scope(),
-        acp_tokens::acp_tools_scope()
+        armature_tokens::armature_chat_scope(),
+        armature_tokens::armature_tools_scope()
     ]))
     .fetch_one(&mut *tx)
     .await?;
 
     sqlx::query(
         r"
-        INSERT INTO acp_token_bears (token_id, bear_id)
+        INSERT INTO armature_token_bears (token_id, bear_id)
         VALUES ($1, $2)
         ON CONFLICT DO NOTHING
         ",

@@ -3,13 +3,34 @@
 {% block title %}Operations{% endblock %}
 
 {% block content %}
-<nav>
-    <a href="/admin">Dashboard</a> |
-    <a href="/admin/users/">Users</a> |
-    <a href="/admin/bears/">Bears</a> |
-    <a href="/admin/membership/">Access</a> |
-    <a href="/admin/oauth_clients/">OAuth</a>
-</nav>
-<hr>
-{% block admin_content %}{% endblock %}
+<div class="admin-shell">
+    <aside class="admin-sidebar" aria-label="Admin navigation">
+        <nav>
+            <h3><a href="/admin">Admin</a></h3>
+
+            <h4>Identity</h4>
+            <ul>
+                <li><a href="/admin/users/">Users</a></li>
+                <li><a href="/admin/bears/">Bears</a></li>
+                <li><a href="/admin/membership/">Membership</a></li>
+            </ul>
+
+            <h4>Runtime</h4>
+            <ul>
+                <li><a href="/admin/models">Models</a></li>
+                <li><a href="/admin/sandbox">Sandbox images</a></li>
+                <li><a href="/admin/oauth_clients/">OAuth clients</a></li>
+            </ul>
+
+            <h4>Operations</h4>
+            <ul>
+                <li><a href="/admin">Dashboard</a></li>
+            </ul>
+        </nav>
+    </aside>
+
+    <main class="admin-main">
+        {% block admin_content %}{% endblock %}
+    </main>
+</div>
 {% endblock %}

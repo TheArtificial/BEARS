@@ -7,8 +7,8 @@
 <div class="box">
 <h2>Advanced · {{ bear.name }}</h2>
 
-{% if message or letta_retry_message %}
-<p><strong>{{ (message or letta_retry_message) | e }}</strong></p>
+{% if message or runtime_retry_message %}
+<p><strong>{{ (message or runtime_retry_message) | e }}</strong></p>
 {% endif %}
 
 <h3>Diagnostics</h3>
@@ -16,9 +16,7 @@
   <dt>Bear id</dt>
   <dd><code>{{ bear.id }}</code></dd>
   <dt>Runtime</dt>
-  <dd>{% if native_runtime %}Native (Den in-process){% else %}Letta-backed{% endif %}</dd>
-  <dt>Letta configured</dt>
-  <dd>{% if letta_configured %}yes{% else %}no{% endif %}</dd>
+  <dd>Active</dd>
   <dt>Created</dt>
   <dd>{{ bear.created_at | datetimeformat(format="short") }}</dd>
   <dt>Updated</dt>
@@ -26,7 +24,7 @@
 </dl>
 
 {% if stats %}
-<h3>SQLite memory file</h3>
+<h3>Memory file</h3>
 <dl>
   <dt>Path</dt>
   <dd><code>{{ stats.db_path | e }}</code></dd>
@@ -37,20 +35,5 @@
 </dl>
 {% endif %}
 
-{% if not native_runtime and letta_configured %}
-<h3>Letta operations</h3>
-<form method="post" action="/admin/bears/{{ bear.id }}/retry-letta" style="display:inline;">
-  <button type="submit">Retry Letta provisioning</button>
-</form>
-<form method="post" action="/admin/bears/{{ bear.id }}/provision-missing-profiles" style="display:inline; margin-left: 0.5rem;">
-  <button type="submit">Provision missing profiles</button>
-</form>
-{% elif not native_runtime %}
-<p><em>Letta is not configured.</em></p>
-{% endif %}
-
-{% if not native_runtime %}
-<p class="form-hint">Role and Letta details also appear on the <a href="/admin/bears/{{ bear.id }}/roles">Roles</a> page.</p>
-{% endif %}
 </div>
 {% endblock %}

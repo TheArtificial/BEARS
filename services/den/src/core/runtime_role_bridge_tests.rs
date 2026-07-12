@@ -1,28 +1,26 @@
 #[cfg(test)]
 mod tests {
-    use den_runtime::{
-        role_runtime::{
-            AcpTurnLifecycleContext, AcpTurnLifecycleRuntime, RoleRuntimeRole, TurnResultReason,
-            TurnResultStatus,
-        },
-        tool_turns::ToolTurnCoordinator,
-        turn_controller::ActiveTurnCancelRegistry,
+    use den_runtime::role_runtime::{
+        ClientTurnLifecycleContext, ClientTurnLifecycleRuntime, RoleRuntimeRole, TurnResultReason,
+        TurnResultStatus,
     };
+    use den_service::tool_turns::ToolTurnCoordinator;
+    use den_service::turn_controller::ActiveTurnCancelRegistry;
     use uuid::Uuid;
 
     #[test]
-    fn acp_turn_lifecycle_runtime_builds_pair_scope() {
+    fn client_turn_lifecycle_runtime_builds_pair_scope() {
         let tool_turns = ToolTurnCoordinator::new();
         let cancellations = ActiveTurnCancelRegistry::new();
-        let runtime = AcpTurnLifecycleRuntime::new(tool_turns, cancellations);
+        let runtime = ClientTurnLifecycleRuntime::new(tool_turns, cancellations);
         let request_id = Uuid::new_v4();
         let bear_id = Uuid::new_v4();
 
         let lease = runtime
             .acquire_pair_turn(
-                AcpTurnLifecycleContext {
+                ClientTurnLifecycleContext {
                     bear_id,
-                    acp_session_id: "session-1".to_string(),
+                    client_session_id: "session-1".to_string(),
                     resolved_conversation_id: Some("conv-1".to_string()),
                 },
                 request_id,

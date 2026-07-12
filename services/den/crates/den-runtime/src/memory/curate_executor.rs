@@ -3,15 +3,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-    {
-        bears::BearProfile,
-        memory::{
-            get_proposal, promote_core_content, resolve_proposal, MemoryStoreManager,
-        },
-        memory_proposals::{MemoryProposalRow, ProposalResolutionParams},
-    },
-};
+use den_memory::MemoryStoreManager;
+use den_service::memory_proposals::{MemoryProposalRow, ProposalResolutionParams};
+
+use crate::memory::{get_proposal, promote_core_content_at_path, resolve_proposal};
+use den_service::bears::BearProfile;
 
 pub const MEMORY_CURATE_RUNNER_AGENT_ID: &str = "memory_curate_runner";
 
@@ -104,11 +100,21 @@ impl CurateTriage {
 
     fn decision_summary(&self) -> &'static str {
         match self {
-            Self::RetainProfileLocal { decision_summary, .. }
-            | Self::Reject { decision_summary, .. }
-            | Self::Defer { decision_summary, .. }
-            | Self::EscalateHuman { decision_summary, .. }
-            | Self::PromoteToCore { decision_summary, .. } => decision_summary,
+            Self::RetainProfileLocal {
+                decision_summary, ..
+            }
+            | Self::Reject {
+                decision_summary, ..
+            }
+            | Self::Defer {
+                decision_summary, ..
+            }
+            | Self::EscalateHuman {
+                decision_summary, ..
+            }
+            | Self::PromoteToCore {
+                decision_summary, ..
+            } => decision_summary,
         }
     }
 }
@@ -117,14 +123,16 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
     if proposal.requires_human {
         return CurateTriage::EscalateHuman {
             review_notes: "Proposal was flagged requires_human=true.",
-            decision_summary: "Escalated to human review because the proposal requires human follow-up.",
+            decision_summary:
+                "Escalated to human review because the proposal requires human follow-up.",
         };
     }
 
     if sensitivity_requires_human(&proposal.sensitivity) {
         return CurateTriage::EscalateHuman {
             review_notes: "Proposal sensitivity requires human review.",
-            decision_summary: "Escalated to human review because sensitivity policy blocks autonomous resolution.",
+            decision_summary:
+                "Escalated to human review because sensitivity policy blocks autonomous resolution.",
         };
     }
 
@@ -134,7 +142,8 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
             decision_summary: "Escalated to human review per suggested_action=human_review.",
         },
         "retain_profile_local" => CurateTriage::RetainProfileLocal {
-            review_notes: "Role-local memory remains the durable source; no shared-memory write needed.",
+            review_notes:
+                "Role-local memory remains the durable source; no shared-memory write needed.",
             decision_summary: "Autonomous curate retained the proposal as role-local memory.",
         },
         "delete_after_review" => CurateTriage::Reject {
@@ -145,19 +154,24 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
             if can_auto_promote_to_core(proposal) {
                 CurateTriage::PromoteToCore {
                     review_notes: "Low-risk core promotion candidate with bounded summary content.",
-                    decision_summary: "Autonomous curate applied a distilled summary to core memory.",
+                    decision_summary:
+                        "Autonomous curate applied a distilled summary to core memory.",
                 }
             } else {
                 CurateTriage::Defer {
-                    review_notes: "Core promotion requires curate-agent review or additional proposal content.",
+                    review_notes: "Core promotion requires curate-agent review or additional proposal content; no silent core write was applied.",
                     decision_summary: "Deferred core promotion until curate can review with richer context.",
                 }
             }
         }
-        "cabinet_update" | "skill_review" | "archive_index" | "task_context" => CurateTriage::Defer {
-            review_notes: "Specialized promotion path is not handled by the autonomous substrate yet.",
-            decision_summary: "Deferred until curate can route the proposal through the appropriate workflow.",
-        },
+        "cabinet_update" | "skill_review" | "archive_index" | "task_context" => {
+            CurateTriage::Defer {
+                review_notes:
+                    "Specialized promotion path is not handled by the autonomous substrate yet.",
+                decision_summary:
+                    "Deferred until curate can route the proposal through the appropriate workflow.",
+            }
+        }
         "unspecified" => {
             if trigger == Some("pair_reflection") && proposal.sensitivity == "normal" {
                 CurateTriage::RetainProfileLocal {
@@ -166,13 +180,15 @@ fn decide_curate_triage(proposal: &MemoryProposalRow, trigger: Option<&str>) -> 
                 }
             } else if trigger == Some("watch_observation") {
                 CurateTriage::Defer {
-                    review_notes: "Watch observation recorded; curate review decides promotion or dismissal.",
+                    review_notes:
+                        "Watch observation recorded; curate review decides promotion or dismissal.",
                     decision_summary: "Deferred watch observation for curate review.",
                 }
             } else {
                 CurateTriage::Defer {
                     review_notes: "Ambiguous proposal needs curate-agent review.",
-                    decision_summary: "Deferred unspecified proposal until curate can decide the final outcome.",
+                    decision_summary:
+                        "Deferred unspecified proposal until curate can decide the final outcome.",
                 }
             }
         }
@@ -191,7 +207,22 @@ fn sensitivity_requires_human(sensitivity: &str) -> bool {
 }
 
 fn can_auto_promote_to_core(proposal: &MemoryProposalRow) -> bool {
-    if proposal.sensitivity != "normal" {
+    if proposal.requires_human || sensitivity_requires_human(&proposal.sensitivity) {
+        return false;
+    }
+    if proposal
+        .proposed_patch
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return false;
+    }
+    if proposal
+        .refs
+        .get("archive_harvest")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
         return false;
     }
     let has_body = proposal
@@ -284,10 +315,7 @@ async fn build_curate_briefing(
 ) -> Result<Vec<CurateBriefingItem>, DenError> {
     let mut briefing = Vec::new();
     for outcome in outcomes {
-        if !matches!(
-            outcome.status.as_str(),
-            "deferred" | "needs_human_review"
-        ) {
+        if !matches!(outcome.status.as_str(), "deferred" | "needs_human_review") {
             continue;
         }
         let Some(proposal) =
@@ -409,10 +437,11 @@ async fn apply_core_promotion(
         .next_back()
         .unwrap_or("note")
         .trim_end_matches(".md");
-    let (memory_id, _promotion_id) = promote_core_content(
+    let (memory_id, _promotion_id) = promote_core_content_at_path(
         stores,
         bear_id,
         &proposal.id.to_string(),
+        &target_path,
         kind,
         &promotion_body(proposal),
         BearProfile::Curate.as_str(),
@@ -473,7 +502,11 @@ mod tests {
     use super::*;
     use time::OffsetDateTime;
 
-    fn sample_proposal(suggested_action: &str, sensitivity: &str, requires_human: bool) -> MemoryProposalRow {
+    fn sample_proposal(
+        suggested_action: &str,
+        sensitivity: &str,
+        requires_human: bool,
+    ) -> MemoryProposalRow {
         MemoryProposalRow {
             id: Uuid::new_v4(),
             bear_id: Uuid::new_v4(),
@@ -526,10 +559,39 @@ mod tests {
     }
 
     #[test]
+    fn risky_sensitivity_escalates_to_human_review() {
+        for sensitivity in ["person", "secret_risk", "external_untrusted", "unknown"] {
+            let proposal = sample_proposal("promote_to_core", sensitivity, false);
+            let triage = decide_curate_triage(&proposal, None);
+            assert_eq!(
+                triage.resolution_status(),
+                "needs_human_review",
+                "sensitivity={sensitivity}"
+            );
+        }
+    }
+
+    #[test]
     fn promote_to_core_with_summary_is_promotable() {
         let proposal = sample_proposal("promote_to_core", "normal", false);
         let triage = decide_curate_triage(&proposal, None);
         assert_eq!(triage.triage_label(), "promote_to_core");
+    }
+
+    #[test]
+    fn archive_harvest_candidates_are_not_auto_promoted() {
+        let mut proposal = sample_proposal("promote_to_core", "normal", false);
+        proposal.refs = serde_json::json!({ "archive_harvest": true });
+        let triage = decide_curate_triage(&proposal, None);
+        assert_eq!(triage.resolution_status(), "deferred");
+    }
+
+    #[test]
+    fn proposed_patches_are_not_auto_promoted() {
+        let mut proposal = sample_proposal("promote_to_core", "normal", false);
+        proposal.proposed_patch = Some("@@ questionable patch @@".to_string());
+        let triage = decide_curate_triage(&proposal, None);
+        assert_eq!(triage.resolution_status(), "deferred");
     }
 
     #[test]

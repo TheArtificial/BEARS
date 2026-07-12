@@ -3,12 +3,17 @@
 # Recommended for Coolify: Add Resource → Docker Compose → this repository,
 # Base Directory: `.` (repo root), Compose file: `docker-compose.yaml`.
 #
-# Default stack: `bears-bifrost`, `bears-den`, optional `bears-postgres` (profile `bundled`).
+# Default stack: `bears-bifrost`, `bears-den`, `bears-sandbox-provider` +
+# `bears-sandbox-engine` (work sandboxes), optional `bears-postgres` (profile `bundled`).
 # The Den-native in-process agent loop and per-Bear SQLite (`BEAR_SQLITE_DATA_DIR` /
 # `bears-den-sqlite-data`) are the only runtime; Letta/Codepool/MemFS have been removed.
 #
 # PostgreSQL: set **`DATABASE_URL`** for `bears-den` (managed DB — preferred in Coolify).
 # Optional bundled Den Postgres: `COMPOSE_PROFILES=bundled` then `docker compose --profile bundled up -d`.
+#
+# Shared-server deployments should use distinct service ports per environment
+# (for example BIFROST_APP_PORT=8080 in prod and 8081 in test) and let Den derive
+# all Bifrost URLs from that one port-derived origin.
 #
 # See docs/deployment/DEPLOYMENT.md and per-service COOLIFY_DEPLOY.md files.
 #
@@ -25,10 +30,14 @@ x-preflight-build: &preflight-build
 x-preflight-environment: &preflight-environment
     BIFROST_CONFIG_PATH: /app/bifrost/config.json
     JWT_SECRET: ${JWT_SECRET:-SETME}
+    DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-SETME}
+    BIFROST_ENCRYPTION_KEY: ${BIFROST_ENCRYPTION_KEY:-SETME}
+    BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
+    BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
+    BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
     DATABASE_URL: ${DATABASE_URL:-SETME}
     WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_DEN:-SETME}}
-    LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
     DEN_SEARCH_PROVIDER: ${DEN_SEARCH_PROVIDER:-}
     BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
     DEN_SEARCH_MAX_RESULTS: ${DEN_SEARCH_MAX_RESULTS:-5}
@@ -102,9 +111,25 @@ services:
             - "6333"
             - "6334"
 
+    bears-bifrost-valkey:
+        image: ${VALKEY_IMAGE:-valkey/valkey-bundle:9.0.0}
+        restart: unless-stopped
+        volumes:
+            - bears-bifrost-valkey-data:/data
+        expose:
+            - "6379"
+        healthcheck:
+            test: ["CMD", "valkey-cli", "ping"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+
     bears-bifrost:
         depends_on:
             <<: *preflight-depends
+            bears-bifrost-valkey:
+                condition: service_healthy
         build:
             context: ./services/bifrost
             dockerfile: Dockerfile
@@ -115,8 +140,12 @@ services:
             APP_PORT: ${BIFROST_APP_PORT:-8080}
             LOG_LEVEL: ${BIFROST_LOG_LEVEL:-info}
             LOG_STYLE: ${BIFROST_LOG_STYLE:-json}
-            DEN_METADATA_PORT: ${BIFROST_METADATA_PORT:-8081}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
+            BIFROST_ENCRYPTION_KEY: ${BIFROST_ENCRYPTION_KEY:-SETME}
+            BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
+            BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
+        volumes:
+            - bears-bifrost-data:/app/data
         healthcheck:
             test:
                 [
@@ -149,19 +178,27 @@ services:
             - bears-den-sqlite-data:/backup:ro
 
     bears-den:
-        pull_policy: build
+        # No `pull_policy: build`. Coolify deploys in two phases — `docker compose
+        # build` then `docker compose up -d` — from two different directories.
+        # `pull_policy: build` forces `up` to recompile the image a second time
+        # even though `build` already produced `bears-den:local`. Omitting it lets
+        # `up` reuse the freshly built image (default pull policy reuses a present
+        # local image and never rebuilds without `--build`). The `build` phase
+        # always runs first, so the reused image is always current — no staleness.
         build:
             context: ./services/den
             dockerfile: Dockerfile
             args:
                 SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
-                GIT_SHA: ${GIT_SHA:-}
                 CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
         image: ${DEN_IMAGE:-bears-den:${SOURCE_COMMIT:-local}}
         restart: unless-stopped
         depends_on:
+            bears-den-migrate:
+                condition: service_completed_successfully
             bears-bifrost:
                 condition: service_healthy
+        command: ["serve"]
         environment:
             BEAR_SQLITE_DATA_DIR: ${BEAR_SQLITE_DATA_DIR:-/var/lib/den/bear-sqlite}
             DATABASE_URL: ${DATABASE_URL:-SETME}
@@ -170,27 +207,42 @@ services:
             DB_IDLE_TIMEOUT_SECS: ${DB_IDLE_TIMEOUT_SECS:-600}
             SQLX_MIGRATE_IGNORE_MISSING: ${SQLX_MIGRATE_IGNORE_MISSING:-false}
             JWT_SECRET: ${JWT_SECRET:-SETME}
+            DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-}
             RUN_WEB: ${RUN_WEB:-true}
             RUN_API: ${RUN_API:-true}
-            RUN_WORKERS: ${RUN_WORKERS:-false}
-            ACP_GATEWAY_ENABLED: ${ACP_GATEWAY_ENABLED:-true}
+            RUN_WORKERS: ${RUN_WORKERS:-true}
+            RUN_SANDBOX: ${RUN_SANDBOX:-false}
+            # Work-dispatch client settings. The default stack runs the
+            # sandbox provider, so dispatch is wired up out of the box; set
+            # SANDBOX_SERVER_URL= (empty) to disable dispatch. The token
+            # defaults must match SANDBOX_SERVICE_TOKEN on the provider —
+            # setting either env var updates both sides; override it in
+            # production.
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-http://bears-sandbox-provider:${SANDBOX_PORT:-3002}}
+            SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
+            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
+            WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
+            WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
+            WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
             RUST_LOG: ${RUST_LOG:-info}
             PORT: ${DEN_PORT:-3000}
             API_PORT: ${DEN_API_PORT:-3001}
             DEN_GIT_SHA_OVERRIDE: ${DEN_GIT_SHA_OVERRIDE:-${SOURCE_COMMIT:-}}
             APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-Bear Den}
             APP_SLUG: ${APP_SLUG:-bears-den}
-            WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_DEN:-SETME}}
-            API_SERVER_URL: ${API_SERVER_URL:-SETME}
+            DEN_WEB_ORIGIN: ${DEN_WEB_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            DEN_API_ORIGIN: ${DEN_API_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            WEB_SERVER_URL: ${DEN_WEB_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            API_SERVER_URL: ${DEN_API_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
             SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
             SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
             MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@bears.artificial.design}
             MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
             MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
-            TEMPLATES_DIR: ${TEMPLATES_DIR:-src/web/templates}
-            BIFROST_BASE_URL: ${BIFROST_BASE_URL:-http://bears-bifrost:8080}
-            BIFROST_METADATA_URL: ${BIFROST_METADATA_URL:-http://bears-bifrost:8081/bears/models}
-            LLM_API_URL: ${LLM_API_URL:-http://bears-bifrost:8080/v1}
+            TEMPLATES_DIR: ${TEMPLATES_DIR:-crates/den-web/src/templates}
+            BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
+            BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
+            BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
             # Derived recall index (ADR-0038). QDRANT_URL empty = recall disabled (LIKE fallback);
             # set to http://bears-qdrant:6333 with COMPOSE_PROFILES=recall to enable. Embedding
@@ -228,7 +280,222 @@ services:
             - "3000"
             - "3001"
 
+    bears-den-migrate:
+        build:
+            context: ./services/den
+            dockerfile: Dockerfile
+            args:
+                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
+                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        image: ${DEN_IMAGE:-bears-den:${SOURCE_COMMIT:-local}}
+        restart: "no"
+        depends_on:
+            bears-preflight-config:
+                condition: service_completed_successfully
+            bears-preflight-den-db:
+                condition: service_completed_successfully
+            bears-bifrost:
+                condition: service_healthy
+        command: ["migrate"]
+        environment:
+            BEAR_SQLITE_DATA_DIR: ${BEAR_SQLITE_DATA_DIR:-/var/lib/den/bear-sqlite}
+            DATABASE_URL: ${DATABASE_URL:-SETME}
+            DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}
+            DB_ACQUIRE_TIMEOUT_SECS: ${DB_ACQUIRE_TIMEOUT_SECS:-3}
+            DB_IDLE_TIMEOUT_SECS: ${DB_IDLE_TIMEOUT_SECS:-600}
+            SQLX_MIGRATE_IGNORE_MISSING: ${SQLX_MIGRATE_IGNORE_MISSING:-false}
+            JWT_SECRET: ${JWT_SECRET:-SETME}
+            DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-}
+            RUN_WEB: ${RUN_WEB:-true}
+            RUN_API: ${RUN_API:-true}
+            RUN_WORKERS: ${RUN_WORKERS:-true}
+            RUN_SANDBOX: ${RUN_SANDBOX:-false}
+            # Work-dispatch client settings. The default stack runs the
+            # sandbox provider, so dispatch is wired up out of the box; set
+            # SANDBOX_SERVER_URL= (empty) to disable dispatch. The token
+            # defaults must match SANDBOX_SERVICE_TOKEN on the provider —
+            # setting either env var updates both sides; override it in
+            # production.
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-http://bears-sandbox-provider:${SANDBOX_PORT:-3002}}
+            SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
+            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
+            WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
+            WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
+            WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
+            RUST_LOG: ${RUST_LOG:-info}
+            PORT: ${DEN_PORT:-3000}
+            API_PORT: ${DEN_API_PORT:-3001}
+            DEN_GIT_SHA_OVERRIDE: ${DEN_GIT_SHA_OVERRIDE:-${SOURCE_COMMIT:-}}
+            APP_DISPLAY_NAME: ${APP_DISPLAY_NAME:-Bear Den}
+            APP_SLUG: ${APP_SLUG:-bears-den}
+            DEN_WEB_ORIGIN: ${DEN_WEB_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            DEN_API_ORIGIN: ${DEN_API_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            WEB_SERVER_URL: ${DEN_WEB_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            API_SERVER_URL: ${DEN_API_ORIGIN:-${SERVICE_URL_DEN:-SETME}}
+            SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:-}
+            SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+            MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-noreply@bears.artificial.design}
+            MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+            MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
+            TEMPLATES_DIR: ${TEMPLATES_DIR:-crates/den-web/src/templates}
+            BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
+            BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
+            BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
+            OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
+            QDRANT_URL: ${QDRANT_URL:-}
+            EMBEDDING_STANDARD: ${EMBEDDING_STANDARD:-bears-embed-v1}
+            EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+            EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
+            DEN_SEARCH_PROVIDER: ${DEN_SEARCH_PROVIDER:-}
+            BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+            DEN_SEARCH_MAX_RESULTS: ${DEN_SEARCH_MAX_RESULTS:-5}
+            S3_ENDPOINT: ${S3_ENDPOINT:-}
+            S3_BUCKET: ${S3_BUCKET:-}
+            S3_REGION: ${S3_REGION:-garage}
+            S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+            S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+            S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+            S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+            GITHUB_PACKAGES_TOKEN: ${GITHUB_PACKAGES_TOKEN:-}
+            GHCR_PACKAGES_OWNER: ${GHCR_PACKAGES_OWNER:-}
+            GHCR_PACKAGES_OWNER_KIND: ${GHCR_PACKAGES_OWNER_KIND:-}
+
+    # Work sandboxes (part of the default stack): two services — the provider
+    # manages, the engine executes. Sandboxes never touch the host docker
+    # daemon; everything sandbox-shaped (containers, relays, internal
+    # networks, images, disk) lives inside bears-sandbox-engine and is
+    # removed with the project. The Den workers reach the provider via
+    # SANDBOX_SERVER_URL (default http://bears-sandbox-provider:3002) with
+    # SANDBOX_CALLBACK_API_URL=http://bears-den:3001 (http: required by the
+    # default restricted network mode).
+    #
+    # Sandbox images must exist inside the ENGINE's store: reference
+    # registry-published images in the Den-managed catalog (pulled on first
+    # use), build them from the /admin/sandbox web UI, or build them with
+    # `docker compose --profile sandbox-build run --rm bears-sandbox-images`.
+
+    # The Docker Engine that hosts sandbox containers. `privileged` is what
+    # dind requires; it is root over its own world only — the host daemon and
+    # host filesystem stay out of reach (this replaces the previous
+    # host-root-equivalent docker.sock mount).
+    bears-sandbox-engine:
+        image: ${SANDBOX_ENGINE_IMAGE:-docker:27-dind}
+        restart: unless-stopped
+        privileged: true
+        environment:
+            DOCKER_TLS_CERTDIR: /certs
+        volumes:
+            - bears-sandbox-engine-data:/var/lib/docker
+            - bears-sandbox-certs:/certs
+            # Same path as in the provider: the engine resolves sandbox
+            # bind-mount sources, so the shared workspaces volume must appear
+            # at an identical path in both services.
+            - bears-sandbox-workspaces:/var/lib/bears/sandbox-workspaces
+        healthcheck:
+            test: ["CMD-SHELL", "docker info >/dev/null 2>&1"]
+            interval: 15s
+            timeout: 10s
+            retries: 10
+            start_period: 30s
+        expose:
+            - "2376"
+
+    # Sandbox provider (RUN_SANDBOX only, no database): the Den binary plus a
+    # docker CLI, talking to the engine over TLS TCP.
+    bears-sandbox-provider:
+        build:
+            context: ./services/den
+            dockerfile: Dockerfile
+            target: sandbox-provider
+            args:
+                SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
+                CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        image: ${SANDBOX_PROVIDER_IMAGE:-bears-sandbox-provider:${SOURCE_COMMIT:-local}}
+        restart: unless-stopped
+        depends_on:
+            bears-preflight-config:
+                condition: service_completed_successfully
+            bears-sandbox-engine:
+                condition: service_healthy
+        command: ["serve"]
+        environment:
+            RUN_WEB: "false"
+            RUN_API: "false"
+            RUN_WORKERS: "false"
+            RUN_SANDBOX: "true"
+            RUST_LOG: ${RUST_LOG:-info}
+            DOCKER_HOST: tcp://bears-sandbox-engine:2376
+            DOCKER_TLS_VERIFY: "1"
+            DOCKER_CERT_PATH: /certs/client
+            SANDBOX_PORT: ${SANDBOX_PORT:-3002}
+            # Must match SANDBOX_SERVER_TOKEN on bears-den; setting either
+            # env var updates both sides. Override the default in production.
+            SANDBOX_SERVICE_TOKEN: ${SANDBOX_SERVICE_TOKEN:-${SANDBOX_SERVER_TOKEN:-den-sandbox-default-token}}
+            # Shared volume mounted at the same path in provider and engine,
+            # so bind sources resolve without host-path mapping.
+            SANDBOX_WORKSPACES_DIR: /var/lib/bears/sandbox-workspaces
+            SANDBOX_IMAGE: ${SANDBOX_IMAGE:-bears/sandbox:latest}
+            SANDBOX_MAX_CONCURRENT: ${SANDBOX_MAX_CONCURRENT:-2}
+            SANDBOX_DEFAULT_TIMEOUT_SECS: ${SANDBOX_DEFAULT_TIMEOUT_SECS:-900}
+            SANDBOX_MAX_LOG_BYTES: ${SANDBOX_MAX_LOG_BYTES:-2097152}
+            # One-click image builds from /admin/sandbox build the shipped
+            # Dockerfile variants out of this read-only mount.
+            SANDBOX_BUILD_CONTEXT_DIR: /opt/bears/sandbox-build
+        volumes:
+            - bears-sandbox-certs:/certs:ro
+            # Also holds the persisted Den-managed config (surfaces + image
+            # catalog, synced from Den; manage them in the web UI).
+            - bears-sandbox-workspaces:/var/lib/bears/sandbox-workspaces
+            # Shipped sandbox-image build context. The variants live outside
+            # the provider's own build context (services/den); the docker CLI
+            # tars these provider-side and ships them to the engine. The base
+            # Dockerfile COPYs tools/bear-armature from the context root.
+            - ./packaging/sandbox-image:/opt/bears/sandbox-build/packaging/sandbox-image:ro
+            - ./tools/bear-armature:/opt/bears/sandbox-build/tools/bear-armature:ro
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "wget --no-verbose --tries=1 -O /dev/null http://127.0.0.1:$${SANDBOX_PORT:-3002}/sandbox/v1/health || exit 1",
+                ]
+            interval: 30s
+            timeout: 15s
+            retries: 5
+            start_period: 30s
+        expose:
+            - "${SANDBOX_PORT:-3002}"
+
+    # One-shot builder: compiles the sandbox images INTO the engine's store
+    # (dev / air-gapped alternative to registry-published catalog images).
+    # Run manually: `docker compose --profile sandbox-build run --rm bears-sandbox-images`
+    bears-sandbox-images:
+        image: ${SANDBOX_CLI_IMAGE:-docker:27-cli}
+        restart: "no"
+        profiles: ["sandbox-build"]
+        depends_on:
+            bears-sandbox-engine:
+                condition: service_healthy
+        environment:
+            DOCKER_HOST: tcp://bears-sandbox-engine:2376
+            DOCKER_TLS_VERIFY: "1"
+            DOCKER_CERT_PATH: /certs/client
+        working_dir: /src
+        entrypoint:
+            [
+                "/bin/sh",
+                "-c",
+                "apk add --no-cache bash git >/dev/null && bash scripts/build-sandbox-image.sh all",
+            ]
+        volumes:
+            - bears-sandbox-certs:/certs:ro
+            - .:/src:ro
+
 volumes:
     bears-postgres-data:
     bears-den-sqlite-data:
     bears-qdrant-data:
+    bears-bifrost-valkey-data:
+    bears-bifrost-data:
+    bears-sandbox-engine-data:
+    bears-sandbox-certs:
+    bears-sandbox-workspaces:

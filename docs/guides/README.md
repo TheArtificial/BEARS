@@ -4,9 +4,12 @@ Human-oriented documentation, operational notes, contributor guides, troubleshoo
 
 ## Architecture
 
-- [den-native runtime](../architecture/den-native-runtime.md)
+- [den runtime](../architecture/den-runtime.md)
+- [context compilation scenarios](../architecture/context-compilation-scenarios.md)
+- [prompt fragment registry](../architecture/prompt-fragment-registry.md)
 - [memory model](../architecture/memory-model.md)
-- [Den native runtime plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
+- [Den runtime plan](../roadmap/DEN_RUNTIME_PLAN.md)
+- [Prompt fragment registry plan](../roadmap/PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md)
 
 ## Guides
 
@@ -27,6 +30,9 @@ Human-oriented documentation, operational notes, contributor guides, troubleshoo
 - [bear memory](bear-memory.md)
 - [bear package format](bear-package.md)
 - [work surfaces and conversations](work-surfaces-and-conversations.md)
+- [running background work](running-background-work.md) — user guide to `work`-stance jobs
+- [work sandbox internals](work-sandbox-internals.md) — developer map of the work execution path
+- [sandbox server ops](sandbox-server-ops.md) — running the RUN_SANDBOX provider
 - [context compaction guide](context-compaction-guide.md)
 - [rename from starter](rename-from-starter.md)
 - [context compaction comparative report](../research/context-compaction-comparative-report.md)

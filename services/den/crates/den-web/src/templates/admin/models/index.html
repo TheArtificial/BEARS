@@ -1,0 +1,142 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Models{% endblock %}
+
+{% block admin_content %}
+<h3>Models</h3>
+
+{% if message %}
+<p><strong>{{ message }}</strong></p>
+{% endif %}
+
+<h4>Usage and cost</h4>
+{% if usage.status == "ok" and usage.has_rows %}
+<table>
+    <thead>
+        <tr>
+            <th>Model</th>
+            <th>Provider</th>
+            <th>Requests</th>
+            <th>Tokens</th>
+            <th>Cost</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in usage.rows %}
+        <tr>
+            <td><code>{{ row.model }}</code></td>
+            <td>{{ row.provider }}</td>
+            <td>{{ row.requests }}</td>
+            <td>{{ row.tokens }}</td>
+            <td>{{ row.cost }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% elif usage.status == "ok" %}
+<p>No usage rows returned.</p>
+{% else %}
+<p>Usage unavailable.</p>
+{% endif %}
+
+<h4>Add model</h4>
+<form method="post" action="/admin/models">
+    <p>
+        <input type="text" name="handle" placeholder="provider/model" size="28" required>
+        <input type="text" name="display_name" placeholder="Display name" size="28" required>
+        <input type="number" name="sort_order" placeholder="sort" style="width: 6em">
+        <label><input type="checkbox" name="selectable" checked> selectable</label>
+        <label><input type="checkbox" name="recommended"> recommended</label>
+    </p>
+    <p><input type="text" name="notes" placeholder="notes" size="80"></p>
+    <p><textarea name="metadata_json" rows="4" cols="96">{{ default_metadata }}</textarea></p>
+    <p><button type="submit">Add model</button></p>
+</form>
+
+<h4>Configured models</h4>
+<table>
+    <thead>
+        <tr>
+            <th>Handle</th>
+            <th>Model</th>
+            <th>Bifrost</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for model in models %}
+        <tr>
+            <td><code>{{ model.handle }}</code></td>
+            <td>
+                <form method="post" action="/admin/models/update">
+                    <input type="hidden" name="handle" value="{{ model.handle }}">
+                    <p>
+                        <input type="text" name="display_name" value="{{ model.display_name }}" size="28" required>
+                        <input type="number" name="sort_order" value="{{ model.sort_order or '' }}" style="width: 6em">
+                        <label><input type="checkbox" name="selectable" {% if model.selectable %}checked{% endif %}> selectable</label>
+                        <label><input type="checkbox" name="recommended" {% if model.recommended %}checked{% endif %}> recommended</label>
+                    </p>
+                    <p><input type="text" name="notes" value="{{ model.notes }}" size="80" placeholder="notes"></p>
+                    <p><textarea name="metadata_json" rows="5" cols="96">{{ model.metadata_json }}</textarea></p>
+                    <button type="submit">Save</button>
+                </form>
+            </td>
+            <td>
+                <p>{{ model.bifrost_status }}</p>
+                <p>Context: {{ model.bifrost_context_window }}</p>
+                <p>Output: {{ model.bifrost_max_output_tokens }}</p>
+                <p>{{ model.bifrost_capabilities }}</p>
+            </td>
+            <td>
+                <form method="post" action="/admin/models/delete"
+                      onsubmit="return confirm('Delete model option {{ model.handle }}?')">
+                    <input type="hidden" name="handle" value="{{ model.handle }}">
+                    <button type="submit">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4">No models configured.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<h4>Bifrost catalog</h4>
+<p>Source: {{ catalog_source }}; fetched: {{ catalog_fetched_at }}{% if catalog_stale %}; stale{% endif %}</p>
+{% if catalog_rows %}
+<table>
+    <thead>
+        <tr>
+            <th>Handle</th>
+            <th>Display name</th>
+            <th>Context</th>
+            <th>Output</th>
+            <th>Capabilities</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in catalog_rows %}
+        <tr>
+            <td><code>{{ row.handle }}</code></td>
+            <td>{{ row.display_name }}</td>
+            <td>{{ row.context_window }}</td>
+            <td>{{ row.max_output_tokens }}</td>
+            <td>{{ row.capabilities }}</td>
+            <td>
+                <form method="post" action="/admin/models">
+                    <input type="hidden" name="handle" value="{{ row.handle }}">
+                    <input type="hidden" name="display_name" value="{{ row.display_name }}">
+                    <input type="hidden" name="metadata_json" value="{{ row.metadata_json }}">
+                    <input type="hidden" name="selectable" value="on">
+                    <button type="submit">Add</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No unconfigured catalog models.</p>
+{% endif %}
+{% endblock %}

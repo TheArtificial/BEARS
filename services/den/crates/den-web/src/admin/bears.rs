@@ -23,15 +23,17 @@ use crate::{
     web::{self, AppState},
 };
 use den_core::DenError;
-use den_runtime::{
-    bears::{db as bears_db, db::BearParams, provision, BearProfile, BearProfileBinding},
-    memory::{admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager},
+use den_memory::{
+    admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager,
+};
+use den_service::bears::{
+    db as bears_db, db::BearParams, provision, BearProfile, BearProfileBinding,
 };
 
-use crate::web::bear_create_support::{
+use crate::web::bear::create_support::{
     admin_bear_edit_page_context, admin_bear_new_form_context, canonical_default_model_handle,
-    model_catalog_select_context, validate_default_model_for_catalog, AdminBearPromptForm,
-    AdminNewBearForm, NewBearForm,
+    model_catalog_select_context, provision_bifrost_virtual_key_for_bear,
+    validate_default_model_for_catalog, AdminBearPromptForm, AdminNewBearForm, NewBearForm,
 };
 
 async fn redirect_bear_slug(
@@ -157,21 +159,21 @@ pub(crate) struct BearProfileBindingHealthRow {
     pub(crate) binding_id: String,
     pub(crate) runtime_family: String,
     pub(crate) branch: String,
-    pub(crate) letta_agent_id: Option<String>,
+    pub(crate) legacy_agent_id: Option<String>,
     pub(crate) provisioning_status: String,
     pub(crate) last_provisioned_version: i32,
     pub(crate) last_synced_at: Option<String>,
     pub(crate) health_status: String,
     pub(crate) health_label: String,
     pub(crate) health_detail: Option<String>,
-    letta_name: Option<String>,
-    letta_model: Option<String>,
-    letta_agent_type: Option<String>,
-    letta_tool_count: Option<usize>,
-    letta_memory_block_count: Option<usize>,
-    memfs_view_state: Option<String>,
-    memfs_view_quarantined: bool,
-    memfs_view_diagnostic: Option<String>,
+    legacy_provider_name: Option<String>,
+    legacy_provider_model: Option<String>,
+    legacy_provider_type: Option<String>,
+    legacy_provider_tool_count: Option<usize>,
+    legacy_provider_memory_block_count: Option<usize>,
+    memory_view_state: Option<String>,
+    memory_view_quarantined: bool,
+    memory_view_diagnostic: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -204,12 +206,7 @@ fn profile_surface_label(role: BearProfile) -> String {
 
 impl BearProfileBindingHealthRow {
     fn native(agent: &BearProfileBinding, role: BearProfile) -> Self {
-        let binding = agent
-            .letta_agent_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string);
+        let binding = Some(agent.binding_id.trim().to_string()).filter(|s| !s.is_empty());
         let (health_status, health_label, health_detail) = match agent.provisioning_status.as_str()
         {
             "ready" => ("ok", "Ready", None),
@@ -227,21 +224,21 @@ impl BearProfileBindingHealthRow {
             binding_id: agent.binding_id.clone(),
             runtime_family: role.runtime_family().to_string(),
             branch: role.as_str().to_string(),
-            letta_agent_id: binding,
+            legacy_agent_id: binding,
             provisioning_status: agent.provisioning_status.clone(),
             last_provisioned_version: agent.last_provisioned_version,
             last_synced_at: agent.last_synced_at.map(|t| t.to_string()),
             health_status: health_status.to_string(),
             health_label: health_label.to_string(),
             health_detail,
-            letta_name: None,
-            letta_model: None,
-            letta_agent_type: None,
-            letta_tool_count: None,
-            letta_memory_block_count: None,
-            memfs_view_state: None,
-            memfs_view_quarantined: false,
-            memfs_view_diagnostic: None,
+            legacy_provider_name: None,
+            legacy_provider_model: None,
+            legacy_provider_type: None,
+            legacy_provider_tool_count: None,
+            legacy_provider_memory_block_count: None,
+            memory_view_state: None,
+            memory_view_quarantined: false,
+            memory_view_diagnostic: None,
         }
     }
 }
@@ -419,9 +416,9 @@ pub(crate) async fn bear_plan_mode_rows(
         ),
     >(
         r"
-        SELECT p.id, p.user_id, u.username, p.acp_session_id, p.state, p.reason,
+        SELECT p.id, p.user_id, u.username, p.client_session_id, p.state, p.reason,
                p.plan_artifact_path, p.plan_title, p.created_at, p.updated_at
-        FROM acp_plan_mode_sessions p
+        FROM client_plan_mode_sessions p
         LEFT JOIN users u ON u.id = p.user_id
         WHERE p.bear_id = $1
         ORDER BY p.updated_at DESC
@@ -464,7 +461,7 @@ pub(crate) async fn bear_plan_mode_rows(
 pub(crate) async fn bear_agent_health_rows(
     state: &AppState,
     bear_id: Uuid,
-    _letta_configured: bool,
+    _runtime_configured: bool,
 ) -> Result<Vec<BearProfileBindingHealthRow>, CustomError> {
     bears_db::ensure_bear_profile_binding_rows(state.sqlx_pool(), bear_id).await?;
     let agents = bears_db::list_bear_profile_bindings(state.sqlx_pool(), bear_id).await?;
@@ -489,8 +486,8 @@ async fn bear_detail_response(
 
     let member_count = bears_db::count_bear_members(state.sqlx_pool(), id).await?;
     let native_runtime = true;
-    let letta_configured = false;
-    let agent_health_rows = bear_agent_health_rows(state, id, letta_configured).await?;
+    let runtime_configured = true;
+    let agent_health_rows = bear_agent_health_rows(state, id, runtime_configured).await?;
     let roles_ready = agent_health_rows
         .iter()
         .filter(|row| row.health_status == "ok")
@@ -528,7 +525,7 @@ async fn bear_detail_response(
             member_count,
             native_runtime,
             context_profile_enabled => bear.context_profile.is_some(),
-            letta_configured,
+            runtime_configured,
             agent_health_rows,
             roles_ready,
             roles_error,
@@ -639,12 +636,30 @@ pub async fn new_action(
                 system_prompt: form.system_prompt.trim(),
                 default_model: default_model_opt.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: None,
-                letta_tool_ids: Json(Vec::new()),
                 context_profile: None,
             },
         )
         .await?;
+
+        if let Err(e) = provision_bifrost_virtual_key_for_bear(&state, id, form.slug.trim()).await {
+            let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
+            tracing::warn!(%id, "Bifrost virtual key provision failed: {e}");
+            let users = user_db::get_users(state.sqlx_pool()).await?;
+            let page = admin_bear_new_form_context(&state, &form).await;
+            return web::render_template(
+                &state,
+                "admin/bears/new.html",
+                auth_session,
+                context! {
+                    form => form,
+                    admin_form => admin_form,
+                    users,
+                    provision_error => format!("Bifrost virtual key provisioning failed: {e}"),
+                    ..page
+                },
+            )
+            .await;
+        }
 
         if let Err(e) =
             provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id)
@@ -752,8 +767,6 @@ async fn edit_action(
         validation_errors = e;
     }
 
-    let letta_agent_type_db: Option<String> = bear.letta_agent_type.clone();
-
     let default_model_trim = form.default_model.trim();
     validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
 
@@ -782,8 +795,6 @@ async fn edit_action(
                 system_prompt,
                 default_model: default_model_opt.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: letta_agent_type_db.as_deref(),
-                letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),
                 context_profile: bear.context_profile.clone(),
             },
         )
@@ -911,8 +922,6 @@ async fn edit_prompt_action(
                 system_prompt: system_prompt.trim(),
                 default_model: bear.default_model.as_deref(),
                 tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: bear.letta_agent_type.as_deref(),
-                letta_tool_ids: Json(bear.letta_tool_ids.0.clone()),
                 context_profile: context_profile.clone(),
             },
         )
@@ -1136,298 +1145,8 @@ async fn provision_missing_profiles_action(
     };
 
     Ok(Redirect::to(&format!(
-        "/admin/bears/{id}/roles?message={}",
+        "/admin/bears/{id}/profiles?message={}",
         urlencoding::encode(&message)
     ))
     .into_response())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::{
-        body::Body,
-        http::{header, Request, StatusCode},
-    };
-    use http_body_util::BodyExt;
-    use minijinja::Environment;
-    use sqlx::{postgres::PgPoolOptions, types::Json};
-    use std::sync::Arc;
-    use tower::ServiceExt;
-    use tower_sessions_sqlx_store::PostgresStore;
-
-    use crate::{config::Config, web::AppState};
-
-    static TEST_DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-    async fn test_pool() -> Option<sqlx::PgPool> {
-        dotenvy::dotenv().ok();
-        let Ok(url) = std::env::var("DATABASE_URL") else {
-            eprintln!("skipping DB-backed admin route test: DATABASE_URL is not set");
-            return None;
-        };
-        let pool = match PgPoolOptions::new()
-            .max_connections(2)
-            .acquire_timeout(std::time::Duration::from_secs(5))
-            .connect(&url)
-            .await
-        {
-            Ok(pool) => pool,
-            Err(err) => {
-                eprintln!(
-                    "skipping DB-backed admin route test: could not connect to DATABASE_URL: {err}"
-                );
-                return None;
-            }
-        };
-        if let Err(err) = sqlx::migrate!("../../migrations")
-            .set_ignore_missing(true)
-            .run(&pool)
-            .await
-        {
-            eprintln!("skipping DB-backed admin route test: migrations failed: {err}");
-            return None;
-        }
-        Some(pool)
-    }
-
-    fn test_state(pool: sqlx::PgPool) -> AppState {
-        let config = Arc::new(Config::test_stub());
-        let mut template_env = Environment::new();
-        template_env
-            .add_template("admin/bears/detail.html", "{{ web_message }} {{ web_sources | length }} {{ web_approvals | length }} {{ web_fetches | length }}{% for approval in web_approvals %} {{ approval.approved_by_user_label }}{% endfor %}")
-            .expect("add test template");
-        AppState::test_with_template_env(pool, template_env, config)
-    }
-
-    async fn test_app(pool: sqlx::PgPool) -> axum::Router {
-        let store = PostgresStore::new(pool.clone());
-        store.migrate().await.expect("session store migration");
-        Router::new()
-            .merge(router())
-            .with_state(test_state(pool.clone()))
-            .layer(
-                axum_login::AuthManagerLayerBuilder::new(
-                    crate::auth_backend::Backend::new(pool),
-                    axum_login::tower_sessions::SessionManagerLayer::new(store),
-                )
-                .build(),
-            )
-    }
-
-    async fn create_test_bear(pool: &sqlx::PgPool) -> Uuid {
-        bears_db::create_bear(
-            pool,
-            BearParams {
-                slug: &format!("web-admin-{}", Uuid::new_v4()),
-                name: "Web Admin Test Bear",
-                description: "",
-                system_prompt: "System prompt",
-                default_model: None,
-                tools_enabled: None::<Json<serde_json::Value>>,
-                letta_agent_type: None,
-                letta_tool_ids: Json(Vec::new()),
-                context_profile: None,
-            },
-        )
-        .await
-        .expect("create bear")
-    }
-
-    async fn create_test_user(pool: &sqlx::PgPool) -> i32 {
-        sqlx::query_scalar::<_, i32>(
-            r"
-            INSERT INTO users (email, username, display_name, passhash, is_admin)
-            VALUES ($1, $2, $3, $4, true)
-            RETURNING id
-            ",
-        )
-        .bind(format!("web-admin-{}@example.test", Uuid::new_v4()))
-        .bind(format!("wa{}", &Uuid::new_v4().simple().to_string()[..28]))
-        .bind("Admin Display")
-        .bind("test-passhash")
-        .fetch_one(pool)
-        .await
-        .expect("create user")
-    }
-
-    #[tokio::test]
-    async fn add_web_source_route_normalizes_host_and_flashes() {
-        let _guard = TEST_DB_LOCK.lock().await;
-        let Some(pool) = test_pool().await else {
-            return;
-        };
-        let bear_id = create_test_bear(&pool).await;
-        let _user_id = create_test_user(&pool).await;
-        let app = test_app(pool.clone()).await;
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/bears/{bear_id}/web-sources"))
-                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                    .body(Body::from("scope_kind=host&scope_value=Example.COM%3A8443.&policy=preferred&label=Docs&priority=10"))
-                    .unwrap(),
-            )
-            .await
-            .expect("add source response");
-
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert!(response
-            .headers()
-            .get(header::LOCATION)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default()
-            .contains("message=Web%20source%20saved"));
-        let stored: String = sqlx::query_scalar(
-            "SELECT scope_value FROM bear_web_sources WHERE bear_id = $1 AND scope_kind = 'host'",
-        )
-        .bind(bear_id)
-        .fetch_one(&pool)
-        .await
-        .expect("stored source");
-        assert_eq!(stored, "example.com:8443");
-    }
-
-    #[tokio::test]
-    async fn add_web_source_route_rejects_url_in_host_scope() {
-        let _guard = TEST_DB_LOCK.lock().await;
-        let Some(pool) = test_pool().await else {
-            return;
-        };
-        let bear_id = create_test_bear(&pool).await;
-        let _user_id = create_test_user(&pool).await;
-        let app = test_app(pool.clone()).await;
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/bears/{bear_id}/web-sources"))
-                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                    .body(Body::from("scope_kind=host&scope_value=https%3A%2F%2Fexample.com%2Fdocs&policy=preferred&label=&priority=0"))
-                    .unwrap(),
-            )
-            .await
-            .expect("validation response");
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let body = String::from_utf8_lossy(&body);
-        assert!(body.contains("host must be a bare hostname"));
-    }
-
-    #[tokio::test]
-    async fn add_and_revoke_web_approval_routes_update_active_approvals() {
-        let _guard = TEST_DB_LOCK.lock().await;
-        let Some(pool) = test_pool().await else {
-            return;
-        };
-        let bear_id = create_test_bear(&pool).await;
-        let _user_id = create_test_user(&pool).await;
-        let app = test_app(pool.clone()).await;
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/bears/{bear_id}/web-approvals"))
-                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                    .body(Body::from("scope_kind=host&scope_value=Docs.RS"))
-                    .unwrap(),
-            )
-            .await
-            .expect("add approval response");
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
-
-        let approval_id: Uuid = sqlx::query_scalar(
-            "SELECT id FROM bear_web_approvals WHERE bear_id = $1 AND scope_value = 'docs.rs' AND revoked_at IS NULL",
-        )
-        .bind(bear_id)
-        .fetch_one(&pool)
-        .await
-        .expect("active approval");
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!(
-                        "/bears/{bear_id}/web-approvals/{approval_id}/revoke"
-                    ))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .expect("revoke response");
-        assert_eq!(response.status(), StatusCode::SEE_OTHER);
-
-        let active_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*)::bigint FROM bear_web_approvals WHERE bear_id = $1 AND revoked_at IS NULL",
-        )
-        .bind(bear_id)
-        .fetch_one(&pool)
-        .await
-        .expect("approval count");
-        assert_eq!(active_count, 0);
-    }
-
-    #[tokio::test]
-    async fn detail_route_displays_approval_user_label_and_recent_fetches() {
-        let _guard = TEST_DB_LOCK.lock().await;
-        let Some(pool) = test_pool().await else {
-            return;
-        };
-        let bear_id = create_test_bear(&pool).await;
-        let user_id = create_test_user(&pool).await;
-        web_policy::record_web_approval(
-            &pool,
-            bear_id,
-            "host",
-            "example.com",
-            Some(user_id),
-            "admin",
-            None,
-        )
-        .await
-        .expect("record approval");
-        web_policy::record_web_fetch_attempt(
-            &pool,
-            web_policy::WebFetchAuditParams {
-                bear_id,
-                session_id: Some("session-1"),
-                tool_call_id: Some("tool-1"),
-                url: "https://example.com/",
-                final_url: None,
-                host: "example.com",
-                execution_location: "den",
-                approval_kind: "user_host",
-                http_status: Some(200),
-                content_type: Some("text/html"),
-                bytes: Some(123),
-            },
-        )
-        .await
-        .expect("record fetch");
-
-        let app = test_app(pool.clone()).await;
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/bears/{bear_id}?message=Saved"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .expect("detail response");
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let body = String::from_utf8_lossy(&body);
-        assert!(body.contains("Saved"));
-        assert!(body.contains("Admin Display"));
-        assert!(body.contains("1 1") || body.contains("1 1 1"));
-    }
 }

@@ -312,7 +312,10 @@ pub async fn bounded_graph_expand(
         let mut next: Vec<String> = Vec::new();
         for memory_id in candidates {
             if seen.insert(memory_id.clone()) {
-                out.push(GraphReach { memory_id: memory_id.clone(), hop });
+                out.push(GraphReach {
+                    memory_id: memory_id.clone(),
+                    hop,
+                });
                 next.push(memory_id);
                 if out.len() >= limit {
                     return Ok(out);
@@ -479,7 +482,9 @@ mod tests {
         assert_eq!(gate[0].relation, "den.memory.relation.audience");
 
         // The union view returns both, correctly tagged.
-        let all = list_relations_for_source(&store, "mem-1", 10).await.unwrap();
+        let all = list_relations_for_source(&store, "mem-1", 10)
+            .await
+            .unwrap();
         assert_eq!(all.len(), 2);
         assert!(all.iter().any(|r| r.class == RelationClass::Descriptive));
         assert!(all.iter().any(|r| r.class == RelationClass::AccessBearing));
@@ -572,18 +577,54 @@ mod tests {
         let other = resolved_person(&store, "Dana", "dana@acme.com").await;
 
         // Descriptive relations participate in recall; access-bearing (gate) must be excluded.
-        append_relation(&store, "mem-1", &person, "subject", &json!({}), "pair", None, None)
-            .await
-            .unwrap();
-        append_relation(&store, "mem-1", &other, "participant", &json!({}), "pair", None, None)
-            .await
-            .unwrap();
-        append_relation(&store, "mem-1", &person, "audience", &json!({}), "curate", None, None)
-            .await
-            .unwrap();
-        append_relation(&store, "mem-2", &other, "subject", &json!({}), "pair", None, None)
-            .await
-            .unwrap();
+        append_relation(
+            &store,
+            "mem-1",
+            &person,
+            "subject",
+            &json!({}),
+            "pair",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        append_relation(
+            &store,
+            "mem-1",
+            &other,
+            "participant",
+            &json!({}),
+            "pair",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        append_relation(
+            &store,
+            "mem-1",
+            &person,
+            "audience",
+            &json!({}),
+            "curate",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        append_relation(
+            &store,
+            "mem-2",
+            &other,
+            "subject",
+            &json!({}),
+            "pair",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let map = descriptive_entity_ids_by_source(&store).await.unwrap();
 
@@ -591,7 +632,10 @@ mod tests {
         mem1.sort();
         let mut expected = vec![person.clone(), other.clone()];
         expected.sort();
-        assert_eq!(mem1, expected, "descriptive entities only, gate row excluded");
+        assert_eq!(
+            mem1, expected,
+            "descriptive entities only, gate row excluded"
+        );
         assert_eq!(map.get("mem-2").map(Vec::len), Some(1));
     }
 
@@ -602,23 +646,88 @@ mod tests {
         let e2 = resolved_person(&store, "Bob", "bob@acme.com").await;
 
         // A—e1—B (1 hop apart), B—e2—C (so C is 2 hops from A, never sharing an entity with A).
-        append_relation(&store, "rec-A", &e1, "subject", &json!({}), "pair", None, None).await.unwrap();
-        append_relation(&store, "rec-B", &e1, "participant", &json!({}), "pair", None, None).await.unwrap();
-        append_relation(&store, "rec-B", &e2, "subject", &json!({}), "pair", None, None).await.unwrap();
-        append_relation(&store, "rec-C", &e2, "participant", &json!({}), "pair", None, None).await.unwrap();
+        append_relation(
+            &store,
+            "rec-A",
+            &e1,
+            "subject",
+            &json!({}),
+            "pair",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        append_relation(
+            &store,
+            "rec-B",
+            &e1,
+            "participant",
+            &json!({}),
+            "pair",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        append_relation(
+            &store,
+            "rec-B",
+            &e2,
+            "subject",
+            &json!({}),
+            "pair",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        append_relation(
+            &store,
+            "rec-C",
+            &e2,
+            "participant",
+            &json!({}),
+            "pair",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         // Depth 2 from A reaches B (hop 1) and C (hop 2); the seed A is excluded.
-        let reached = bounded_graph_expand(&store, &["rec-A".into()], 2, 10).await.unwrap();
-        let by_id: std::collections::HashMap<&str, u32> =
-            reached.iter().map(|r| (r.memory_id.as_str(), r.hop)).collect();
-        assert_eq!(by_id.get("rec-B"), Some(&1), "B is one hop via the shared entity: {reached:?}");
-        assert_eq!(by_id.get("rec-C"), Some(&2), "C is two hops, never directly co-located: {reached:?}");
-        assert!(!by_id.contains_key("rec-A"), "seed is excluded from results");
+        let reached = bounded_graph_expand(&store, &["rec-A".into()], 2, 10)
+            .await
+            .unwrap();
+        let by_id: std::collections::HashMap<&str, u32> = reached
+            .iter()
+            .map(|r| (r.memory_id.as_str(), r.hop))
+            .collect();
+        assert_eq!(
+            by_id.get("rec-B"),
+            Some(&1),
+            "B is one hop via the shared entity: {reached:?}"
+        );
+        assert_eq!(
+            by_id.get("rec-C"),
+            Some(&2),
+            "C is two hops, never directly co-located: {reached:?}"
+        );
+        assert!(
+            !by_id.contains_key("rec-A"),
+            "seed is excluded from results"
+        );
 
         // Depth 1 stops at B; C is beyond the cap.
-        let shallow = bounded_graph_expand(&store, &["rec-A".into()], 1, 10).await.unwrap();
+        let shallow = bounded_graph_expand(&store, &["rec-A".into()], 1, 10)
+            .await
+            .unwrap();
         let ids: Vec<&str> = shallow.iter().map(|r| r.memory_id.as_str()).collect();
-        assert_eq!(ids, vec!["rec-B"], "depth 1 reaches only the 1-hop neighbor: {shallow:?}");
+        assert_eq!(
+            ids,
+            vec!["rec-B"],
+            "depth 1 reaches only the 1-hop neighbor: {shallow:?}"
+        );
     }
 
     #[tokio::test]

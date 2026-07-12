@@ -37,7 +37,7 @@ pub fn validate_memory_write_entry_semantics(
     let kind = validate_memory_kind(&args.kind)?;
     if kind == "plan" {
         return Err(DenError::ValidationError(
-            "This content appears to be a workplan; use update_plan for visible activity plans and exit_plan_mode for submitted implementation plans instead of memory_write_entry.".to_string(),
+            "This content appears to be a workplan; use update_task_list for visible session task lists and exit_plan_mode for submitted implementation plans instead of memory_write_entry.".to_string(),
         ));
     }
     let title_lower = args.title.trim().to_ascii_lowercase();
@@ -46,15 +46,16 @@ pub fn validate_memory_write_entry_semantics(
     let lines = args.body.lines().map(str::trim).collect::<Vec<_>>();
     let task_like = looks_like_activity_or_task_content(&haystack, &title_lower, &lines);
     let plan_like = looks_like_workplan_content(&haystack, &title_lower, &lines);
-    let explicit_plan_title = contains_any(&title_lower, &["implementation plan", "execution plan"]);
+    let explicit_plan_title =
+        contains_any(&title_lower, &["implementation plan", "execution plan"]);
     if task_like && !plan_like {
         return Err(DenError::ValidationError(
-            "This content appears to be task tracking or a task intent; use update_plan or request_work_handoff instead of memory_write_entry.".to_string(),
+            "This content appears to be task tracking or a task intent; use update_task_list or request_task_list_handoff instead of memory_write_entry.".to_string(),
         ));
     }
     if plan_like && explicit_plan_title {
         return Err(DenError::ValidationError(
-            "This content appears to be an active workplan or implementation plan; use enter_plan_mode/exit_plan_mode for approval plans or update_plan for visible activity tracking instead of memory_write_entry.".to_string(),
+            "This content appears to be an active workplan or implementation plan; use enter_plan_mode/exit_plan_mode for approval plans or update_task_list for visible session task-list tracking instead of memory_write_entry.".to_string(),
         ));
     }
     if let Some(domain) = args.domain.as_deref() {
@@ -64,7 +65,7 @@ pub fn validate_memory_write_entry_semantics(
                 "This content appears to be a workplan artifact; use plan-mode tools instead of memory_write_entry.".to_string(),
             )),
             "activity" => return Err(DenError::ValidationError(
-                "This content appears to be live activity state; use update_plan or related activity tools instead of memory_write_entry.".to_string(),
+                "This content appears to be live activity state; use update_task_list or related task-list tools instead of memory_write_entry.".to_string(),
             )),
             "execution" => {
                 let title = args.title.trim().to_ascii_lowercase();
@@ -88,10 +89,10 @@ pub fn validate_memory_write_entry_semantics(
                 "This content appears to be a workplan artifact; use plan-mode tools instead of memory_write_entry.".to_string(),
             )),
             "activity_status" => return Err(DenError::ValidationError(
-                "This content appears to be live activity state; use update_plan instead of memory_write_entry.".to_string(),
+                "This content appears to be live activity state; use update_task_list instead of memory_write_entry.".to_string(),
             )),
             "task_intent" => return Err(DenError::ValidationError(
-                "This content appears to be a task intent; use request_work_handoff or task-intent tools instead of memory_write_entry.".to_string(),
+                "This content appears to be a task intent; use request_task_list_handoff or task-intent tools instead of memory_write_entry.".to_string(),
             )),
             "run_result" => return Err(DenError::ValidationError(
                 "This content appears to be a run result; use the run-result tool instead of memory_write_entry.".to_string(),
@@ -110,7 +111,7 @@ pub fn validate_memory_write_entry_semantics(
     }
     if looks_like_activity_or_task_content(&haystack, &title_lower, &lines) {
         return Err(DenError::ValidationError(
-            "This content appears to be task tracking or a task intent; use update_plan or request_work_handoff instead of memory_write_entry.".to_string(),
+            "This content appears to be task tracking or a task intent; use update_task_list or request_task_list_handoff instead of memory_write_entry.".to_string(),
         ));
     }
     if looks_like_run_result_content(&haystack) {
@@ -118,7 +119,13 @@ pub fn validate_memory_write_entry_semantics(
             "This content appears to be a run result or command output; use the appropriate execution/result tool instead of memory_write_entry.".to_string(),
         ));
     }
-    if title_lower.contains("observation") || body_lower.contains("alert") || body_lower.contains("telemetry") || body_lower.contains("incident") || body_lower.contains("detected") || body_lower.contains("observed") {
+    if title_lower.contains("observation")
+        || body_lower.contains("alert")
+        || body_lower.contains("telemetry")
+        || body_lower.contains("incident")
+        || body_lower.contains("detected")
+        || body_lower.contains("observed")
+    {
         return Err(DenError::ValidationError(
             "This content appears to be an observation; use the observation tool instead of memory_write_entry.".to_string(),
         ));
@@ -135,11 +142,12 @@ pub fn assess_unlabeled_memory_misuse(
     let haystack = format!("{}\n{}", title, body).to_ascii_lowercase();
     let title_lower = title.to_ascii_lowercase();
     let lines = body.lines().map(str::trim).collect::<Vec<_>>();
-    let explicit_plan_title = contains_any(&title_lower, &["implementation plan", "execution plan"]);
+    let explicit_plan_title =
+        contains_any(&title_lower, &["implementation plan", "execution plan"]);
     if looks_like_workplan_content(&haystack, &title_lower, &lines) {
         return if explicit_plan_title {
             Err(DenError::ValidationError(
-                "This content appears to be an active workplan or implementation plan; use enter_plan_mode/exit_plan_mode for approval plans or update_plan for visible activity tracking instead of memory_write_entry.".to_string(),
+                "This content appears to be an active workplan or implementation plan; use enter_plan_mode/exit_plan_mode for approval plans or update_task_list for visible session task-list tracking instead of memory_write_entry.".to_string(),
             ))
         } else if confirm_suspicious_memory_write(args, context, "plan_like_memory")? {
             Ok(ToolPreflight::Proceed)
@@ -154,7 +162,7 @@ pub fn assess_unlabeled_memory_misuse(
     }
     if looks_like_activity_or_task_content(&haystack, &title_lower, &lines) {
         return Err(DenError::ValidationError(
-            "This content appears to be task tracking or a task intent; use update_plan or request_work_handoff instead of memory_write_entry.".to_string(),
+            "This content appears to be task tracking or a task intent; use update_task_list or request_task_list_handoff instead of memory_write_entry.".to_string(),
         ));
     }
     if looks_like_run_result_content(&haystack) {
@@ -170,8 +178,18 @@ pub fn assess_unlabeled_memory_misuse(
     Ok(ToolPreflight::Proceed)
 }
 
-pub fn clean_limited_strings(values: Vec<String>, max_items: usize, max_chars: usize) -> Vec<String> {
-    values.into_iter().map(|value| value.trim().to_string()).filter(|value| !value.is_empty()).map(|value| value.chars().take(max_chars).collect::<String>()).take(max_items).collect()
+pub fn clean_limited_strings(
+    values: Vec<String>,
+    max_items: usize,
+    max_chars: usize,
+) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(max_chars).collect::<String>())
+        .take(max_items)
+        .collect()
 }
 
 pub fn memory_read_scopes(role: BearProfile) -> Vec<&'static str> {
@@ -207,12 +225,24 @@ pub fn memory_write_scopes(role: BearProfile) -> Vec<&'static str> {
 }
 
 pub fn validate_public_http_url(raw: &str) -> Result<url::Url, DenError> {
-    let url = url::Url::parse(raw.trim()).map_err(|e| DenError::ValidationError(format!("url must be a valid HTTP(S) URL: {e}")))?;
-    match url.scheme() { "http" | "https" => {} _ => return Err(DenError::ValidationError("url scheme must be http or https".to_string())), }
-    let host = url.host_str().ok_or_else(|| DenError::ValidationError("url must include a host".to_string()))?;
+    let url = url::Url::parse(raw.trim())
+        .map_err(|e| DenError::ValidationError(format!("url must be a valid HTTP(S) URL: {e}")))?;
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => {
+            return Err(DenError::ValidationError(
+                "url scheme must be http or https".to_string(),
+            ));
+        }
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| DenError::ValidationError("url must include a host".to_string()))?;
     let lower_host = host.trim_end_matches('.').to_ascii_lowercase();
     if lower_host == "localhost" || lower_host.ends_with(".localhost") {
-        return Err(DenError::ValidationError("localhost URLs are not allowed for den.web.fetch".to_string()));
+        return Err(DenError::ValidationError(
+            "localhost URLs are not allowed for den.web.fetch".to_string(),
+        ));
     }
     if let Ok(ip) = lower_host.parse::<IpAddr>() {
         if !is_public_ip(ip) {
@@ -221,10 +251,15 @@ pub fn validate_public_http_url(raw: &str) -> Result<url::Url, DenError> {
         return Ok(url);
     }
     let port = url.port_or_known_default().unwrap_or(443);
-    let addrs = (host, port).to_socket_addrs().map_err(|e| DenError::ValidationError(format!("url host could not be resolved safely: {e}")))?;
+    let addrs = (host, port).to_socket_addrs().map_err(|e| {
+        DenError::ValidationError(format!("url host could not be resolved safely: {e}"))
+    })?;
     for addr in addrs {
         if !is_public_ip(addr.ip()) {
-            return Err(DenError::ValidationError(format!("url host resolves to a non-public address: {}", addr.ip())));
+            return Err(DenError::ValidationError(format!(
+                "url host resolves to a non-public address: {}",
+                addr.ip()
+            )));
         }
     }
     Ok(url)
@@ -232,14 +267,32 @@ pub fn validate_public_http_url(raw: &str) -> Result<url::Url, DenError> {
 
 pub fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => !(ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_multicast() || ip.is_broadcast() || ip.is_documentation() || ip.octets()[0] == 0),
-        IpAddr::V6(ip) => !(ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() || ip.segments()[0] & 0xfe00 == 0xfc00 || ip.segments()[0] & 0xffc0 == 0xfe80),
+        IpAddr::V4(ip) => {
+            !(ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+                || ip.is_documentation()
+                || ip.octets()[0] == 0)
+        }
+        IpAddr::V6(ip) => {
+            !(ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.segments()[0] & 0xfe00 == 0xfc00
+                || ip.segments()[0] & 0xffc0 == 0xfe80)
+        }
     }
 }
 
 pub fn clean_optional(value: &str) -> Option<String> {
     let trimmed = value.trim();
-    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 pub fn format_rfc3339(value: time::OffsetDateTime) -> String {
@@ -250,48 +303,195 @@ fn validate_memory_kind(value: &str) -> Result<String, DenError> {
     let kind = value.trim().to_ascii_lowercase();
     match kind.as_str() {
         "note" | "log" | "decision" | "reflection" | "scratch" | "summary" | "plan" => Ok(kind),
-        _ => Err(DenError::ValidationError("kind must be one of note, log, decision, reflection, scratch, summary, plan".to_string())),
+        _ => Err(DenError::ValidationError(
+            "kind must be one of note, log, decision, reflection, scratch, summary, plan"
+                .to_string(),
+        )),
     }
 }
 
 fn looks_like_workplan_content(haystack: &str, title: &str, lines: &[&str]) -> bool {
     let explicit_plan_title = contains_any(title, &["implementation plan", "execution plan"]);
-    if explicit_plan_title { return true; }
-    let suspicious_title = contains_any(title, &["approval plan", "proposed plan", "next steps", "plan concepts"]);
-    let plan_terms = contains_any(haystack, &["implementation plan", "execution plan", "workplan", "work plan", "plan of record", "approval plan", "proposed plan"]);
-    let approval_or_execution_cues = contains_any(haystack, &["submit this plan", "once approved", "awaiting approval", "we will", "i will", "next i will", "first i will", "then i will"]);
-    let structured_action_list = checkbox_or_numbered_item_count(lines) >= 3 && contains_any(haystack, &["inspect", "edit", "implement", "fix", "run", "validate", "update", "create"]);
-    let expository = contains_any(haystack, &["summary", "concept", "architecture", "orientation", "difference between", "distinguishes", "the docs describe", "means", "refers to"]);
-    suspicious_title || (!expository && plan_terms && (approval_or_execution_cues || structured_action_list))
+    if explicit_plan_title {
+        return true;
+    }
+    let suspicious_title = contains_any(
+        title,
+        &[
+            "approval plan",
+            "proposed plan",
+            "next steps",
+            "plan concepts",
+        ],
+    );
+    let plan_terms = contains_any(
+        haystack,
+        &[
+            "implementation plan",
+            "execution plan",
+            "workplan",
+            "work plan",
+            "plan of record",
+            "approval plan",
+            "proposed plan",
+        ],
+    );
+    let approval_or_execution_cues = contains_any(
+        haystack,
+        &[
+            "submit this plan",
+            "once approved",
+            "awaiting approval",
+            "we will",
+            "i will",
+            "next i will",
+            "first i will",
+            "then i will",
+        ],
+    );
+    let structured_action_list = checkbox_or_numbered_item_count(lines) >= 3
+        && contains_any(
+            haystack,
+            &[
+                "inspect",
+                "edit",
+                "implement",
+                "fix",
+                "run",
+                "validate",
+                "update",
+                "create",
+            ],
+        );
+    let expository = contains_any(
+        haystack,
+        &[
+            "summary",
+            "concept",
+            "architecture",
+            "orientation",
+            "difference between",
+            "distinguishes",
+            "the docs describe",
+            "means",
+            "refers to",
+        ],
+    );
+    suspicious_title
+        || (!expository && plan_terms && (approval_or_execution_cues || structured_action_list))
 }
 
 fn looks_like_activity_or_task_content(haystack: &str, title: &str, lines: &[&str]) -> bool {
     let suspicious_title = contains_any(title, &["current tasks", "task list", "next steps"]);
-    let explicit_task_language = contains_any(haystack, &["todo:", "to-do:", "task list", "tasks:", "current task", "current item", "in progress", "blocked:", "next steps:", "handoff request", "task intent", "request work handoff"]);
-    let structured_action_list = checkbox_or_numbered_item_count(lines) >= 3 && contains_any(haystack, &["inspect", "edit", "implement", "fix", "run", "update", "create", "validate", "complete", "blocked", "pending"]);
+    let explicit_task_language = contains_any(
+        haystack,
+        &[
+            "todo:",
+            "to-do:",
+            "task list",
+            "tasks:",
+            "current task",
+            "current item",
+            "in progress",
+            "blocked:",
+            "next steps:",
+            "handoff request",
+            "task intent",
+            "request work handoff",
+        ],
+    );
+    let structured_action_list = checkbox_or_numbered_item_count(lines) >= 3
+        && contains_any(
+            haystack,
+            &[
+                "inspect",
+                "edit",
+                "implement",
+                "fix",
+                "run",
+                "update",
+                "create",
+                "validate",
+                "complete",
+                "blocked",
+                "pending",
+            ],
+        );
     suspicious_title || explicit_task_language || structured_action_list
 }
 
 fn looks_like_run_result_content(haystack: &str) -> bool {
-    contains_any(haystack, &["command output", "run result", "test result", "test results", "cargo test", "cargo check", "npm test", "pytest", "exit code", "exit status", "stdout", "stderr", "stack trace", "failed tests", "test failed", "tests passed"])
+    contains_any(
+        haystack,
+        &[
+            "command output",
+            "run result",
+            "test result",
+            "test results",
+            "cargo test",
+            "cargo check",
+            "npm test",
+            "pytest",
+            "exit code",
+            "exit status",
+            "stdout",
+            "stderr",
+            "stack trace",
+            "failed tests",
+            "test failed",
+            "tests passed",
+        ],
+    )
 }
 
 fn looks_like_observation_content(haystack: &str) -> bool {
-    contains_any(haystack, &["observation", "observation:", "observed:", "i observed", "watch observed", "monitoring observed", "detected", "detected:", "incident", "incident:", "alert", "alert:", "telemetry", "metric spike"])
+    contains_any(
+        haystack,
+        &[
+            "observation",
+            "observation:",
+            "observed:",
+            "i observed",
+            "watch observed",
+            "monitoring observed",
+            "detected",
+            "detected:",
+            "incident",
+            "incident:",
+            "alert",
+            "alert:",
+            "telemetry",
+            "metric spike",
+        ],
+    )
 }
 
 fn checkbox_or_numbered_item_count(lines: &[&str]) -> usize {
-    lines.iter().filter(|line| {
-        let line = line.trim_start();
-        line.starts_with("- [ ]") || line.starts_with("- [x]") || line.starts_with("* [ ]") || line.starts_with("* [x]") || line.starts_with("- todo") || line.starts_with("- task") || line.chars().next().is_some_and(|ch| ch.is_ascii_digit()) && line.contains(". ")
-    }).count()
+    lines
+        .iter()
+        .filter(|line| {
+            let line = line.trim_start();
+            line.starts_with("- [ ]")
+                || line.starts_with("- [x]")
+                || line.starts_with("* [ ]")
+                || line.starts_with("* [x]")
+                || line.starts_with("- todo")
+                || line.starts_with("- task")
+                || line.chars().next().is_some_and(|ch| ch.is_ascii_digit()) && line.contains(". ")
+        })
+        .count()
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
-fn memory_semantic_warning(args: &MemoryWriteEntryArguments, context: &DenToolInvocationContext, category: &'static str, message: &str) -> ToolSemanticWarning {
+fn memory_semantic_warning(
+    args: &MemoryWriteEntryArguments,
+    context: &DenToolInvocationContext,
+    category: &'static str,
+    message: &str,
+) -> ToolSemanticWarning {
     ToolSemanticWarning {
         code: "semantic_confirmation_required",
         category,
@@ -300,29 +500,69 @@ fn memory_semantic_warning(args: &MemoryWriteEntryArguments, context: &DenToolIn
     }
 }
 
-fn issue_memory_confirmation_token(args: &MemoryWriteEntryArguments, context: &DenToolInvocationContext, category: &str) -> String {
-    let exp = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_secs() + 15 * 60).unwrap_or(15 * 60);
+fn issue_memory_confirmation_token(
+    args: &MemoryWriteEntryArguments,
+    context: &DenToolInvocationContext,
+    category: &str,
+) -> String {
+    let exp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() + 15 * 60)
+        .unwrap_or(15 * 60);
     let payload_hash = memory_confirmation_payload_hash(args, context, category, exp);
     let token_payload = format!("{category}:{exp}:{payload_hash}");
     URL_SAFE_NO_PAD.encode(token_payload)
 }
 
-fn confirm_suspicious_memory_write(args: &MemoryWriteEntryArguments, context: &DenToolInvocationContext, category: &str) -> Result<bool, DenError> {
-    let Some(token) = args.semantic_confirmation_token.as_deref() else { return Ok(false); };
-    let decoded = URL_SAFE_NO_PAD.decode(token.trim()).map_err(|_| DenError::ValidationError("semantic_confirmation_token is invalid; retry the warning flow to get a fresh token".to_string()))?;
-    let decoded = String::from_utf8(decoded).map_err(|_| DenError::ValidationError("semantic_confirmation_token is invalid; retry the warning flow to get a fresh token".to_string()))?;
+fn confirm_suspicious_memory_write(
+    args: &MemoryWriteEntryArguments,
+    context: &DenToolInvocationContext,
+    category: &str,
+) -> Result<bool, DenError> {
+    let Some(token) = args.semantic_confirmation_token.as_deref() else {
+        return Ok(false);
+    };
+    let decoded = URL_SAFE_NO_PAD.decode(token.trim()).map_err(|_| {
+        DenError::ValidationError(
+            "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"
+                .to_string(),
+        )
+    })?;
+    let decoded = String::from_utf8(decoded).map_err(|_| {
+        DenError::ValidationError(
+            "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"
+                .to_string(),
+        )
+    })?;
     let mut parts = decoded.splitn(3, ':');
     let token_category = parts.next().unwrap_or_default();
     let exp_raw = parts.next().unwrap_or_default();
     let token_hash = parts.next().unwrap_or_default();
-    if token_category != category { return Ok(false); }
-    let exp = exp_raw.parse::<u64>().map_err(|_| DenError::ValidationError("semantic_confirmation_token is invalid; retry the warning flow to get a fresh token".to_string()))?;
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0);
-    if exp < now { return Ok(false); }
+    if token_category != category {
+        return Ok(false);
+    }
+    let exp = exp_raw.parse::<u64>().map_err(|_| {
+        DenError::ValidationError(
+            "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"
+                .to_string(),
+        )
+    })?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    if exp < now {
+        return Ok(false);
+    }
     Ok(token_hash == memory_confirmation_payload_hash(args, context, category, exp))
 }
 
-fn memory_confirmation_payload_hash(args: &MemoryWriteEntryArguments, context: &DenToolInvocationContext, category: &str, exp: u64) -> String {
+fn memory_confirmation_payload_hash(
+    args: &MemoryWriteEntryArguments,
+    context: &DenToolInvocationContext,
+    category: &str,
+    exp: u64,
+) -> String {
     let confirmation_context = json!({
         "tool": DEN_MEMORY_WRITE_ENTRY,
         "category": category,
@@ -331,7 +571,7 @@ fn memory_confirmation_payload_hash(args: &MemoryWriteEntryArguments, context: &
         "profile": context.profile.map(|role| role.as_str()),
         "conversation_id": context.conversation_id,
         "session_id": context.session_id,
-        "acp_session_id": context.acp_session_id,
+        "client_session_id": context.client_session_id,
         "request_id": context.request_id,
         "kind": args.kind,
         "title": args.title,

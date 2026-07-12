@@ -1,31 +1,33 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use time::{Date, OffsetDateTime};
 use uuid::Uuid;
 
-use std::sync::Arc;
-
-use crate::{
+use den_memory::MemoryStoreManager;
+use den_service::{
     bears::BearProfile,
-    conversation_events::{
+    conversation::events::{
         canonical_persistence_context, memory_curate_completed_projection,
         memory_curate_enqueued_projection, memory_curate_failed_projection,
         memory_curate_started_projection, project_to_conversation,
         spawn_persist_assistant_summary_message, ProjectionProvenance, ProjectionSource,
     },
-    memory::{
-        record_reflection_outcome_complete, record_reflection_outcome_start, MemoryStoreManager,
-    },
+};
+use std::sync::Arc;
+
+use crate::{
+    memory::{record_reflection_outcome_complete, record_reflection_outcome_start},
     memory_curate_executor::{self, MemoryCurateRunOutput},
     native_runtime::{
         compose_curate_briefing_prompt, run_native_profile_turn_collect_assistant_text,
         NativeRuntimeDeps,
     },
+    recall::{reconcile_bear, QdrantRecall},
+    reflection::archive_harvest::harvest_compaction_artifacts_once,
     reflection::conversations::{
         bind_memory_curate_run_conversation, ensure_memory_curate_conversation,
         touch_memory_curate_conversation,
     },
-    recall::{reconcile_bear, QdrantRecall},
 };
 use std::str::FromStr;
 
@@ -33,7 +35,7 @@ use crate::runtime_compaction::{run_compaction_job, TurnCompactionState, TurnCom
 use den_core::{config::Config, DenError};
 use den_llm::EmbeddingClient;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct ReflectionRunRow {
     pub id: Uuid,
     pub bear_id: Uuid,
@@ -50,6 +52,198 @@ pub struct ReflectionRunRow {
     pub started_at: Option<OffsetDateTime>,
     pub completed_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
+}
+
+// ---------------------------------------------------------------------------
+// archive_harvest lane: mine compaction artifacts into memory proposals.
+// ---------------------------------------------------------------------------
+
+const ARCHIVE_HARVEST_RETURNING: &str = r"
+    RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+              conversation_id, conversation_key, conversation_date,
+              input_summary, output_summary, error,
+              started_at, completed_at, created_at
+";
+
+pub async fn enqueue_archive_harvest_for_bear(
+    pool: &PgPool,
+    bear_id: Uuid,
+    trigger: &str,
+) -> Result<Option<ReflectionRunRow>, DenError> {
+    let row = sqlx::query_as::<_, ReflectionRunRow>(
+        r"
+        INSERT INTO bear_reflection_runs (bear_id, lane, trigger, status, input_summary, output_summary)
+        SELECT $1, 'archive_harvest', $2, 'queued', '{}'::jsonb, '{}'::jsonb
+        WHERE NOT EXISTS (
+            SELECT 1 FROM bear_reflection_runs
+            WHERE bear_id = $1 AND lane = 'archive_harvest' AND status = 'queued'
+        )
+        RETURNING id, bear_id, lane, trigger, status, role_agent_id,
+                  conversation_id, conversation_key, conversation_date,
+                  input_summary, output_summary, error,
+                  started_at, completed_at, created_at
+        ",
+    )
+    .bind(bear_id)
+    .bind(trigger)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+async fn claim_next_archive_harvest_run(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Option<ReflectionRunRow>, DenError> {
+    let row = sqlx::query_as::<_, ReflectionRunRow>(
+        r"
+        WITH next_run AS (
+            SELECT id
+            FROM bear_reflection_runs
+            WHERE bear_id = $1 AND lane = 'archive_harvest' AND status = 'queued'
+            ORDER BY created_at ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE bear_reflection_runs runs
+        SET status = 'running', started_at = COALESCE(started_at, NOW())
+        FROM next_run
+        WHERE runs.id = next_run.id
+        RETURNING runs.id, runs.bear_id, runs.lane, runs.trigger, runs.status,
+                  runs.role_agent_id, runs.conversation_id, runs.conversation_key,
+                  runs.conversation_date, runs.input_summary, runs.output_summary,
+                  runs.error, runs.started_at, runs.completed_at, runs.created_at
+        ",
+    )
+    .bind(bear_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+async fn mark_archive_harvest_completed(
+    pool: &PgPool,
+    bear_id: Uuid,
+    run_id: Uuid,
+    output_summary: serde_json::Value,
+) -> Result<ReflectionRunRow, DenError> {
+    let sql = format!(
+        "UPDATE bear_reflection_runs SET status = 'completed', output_summary = $3, \
+         error = NULL, completed_at = NOW() \
+         WHERE bear_id = $1 AND id = $2 AND lane = 'archive_harvest'{ARCHIVE_HARVEST_RETURNING}"
+    );
+    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
+        .bind(bear_id)
+        .bind(run_id)
+        .bind(output_summary)
+        .fetch_one(pool)
+        .await?;
+    Ok(row)
+}
+
+async fn mark_archive_harvest_failed(
+    pool: &PgPool,
+    bear_id: Uuid,
+    run_id: Uuid,
+    error: &str,
+) -> Result<ReflectionRunRow, DenError> {
+    let sql = format!(
+        "UPDATE bear_reflection_runs SET status = 'failed', error = $3, completed_at = NOW() \
+         WHERE bear_id = $1 AND id = $2 AND lane = 'archive_harvest'{ARCHIVE_HARVEST_RETURNING}"
+    );
+    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
+        .bind(bear_id)
+        .bind(run_id)
+        .bind(error)
+        .fetch_one(pool)
+        .await?;
+    Ok(row)
+}
+
+async fn list_bears_with_queued_archive_harvest_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
+    let rows = sqlx::query_scalar::<_, Uuid>(
+        r"
+        SELECT DISTINCT bear_id
+        FROM bear_reflection_runs
+        WHERE lane = 'archive_harvest' AND status = 'queued'
+        ORDER BY bear_id
+        ",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn run_next_archive_harvest_once(
+    pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
+    bear_id: Uuid,
+) -> Result<Option<ReflectionRunRow>, DenError> {
+    let Some(run) = claim_next_archive_harvest_run(pool, bear_id).await? else {
+        return Ok(None);
+    };
+
+    let run_id = run.id.to_string();
+    match harvest_compaction_artifacts_once(pool, config, stores, bear_id, 20, Some(&run_id)).await
+    {
+        Ok(output) => {
+            let completed = mark_archive_harvest_completed(
+                pool,
+                bear_id,
+                run.id,
+                serde_json::json!({
+                    "scanned_artifacts": output.scanned_artifacts,
+                    "created_proposal_ids": output.created_proposal_ids,
+                }),
+            )
+            .await?;
+            Ok(Some(completed))
+        }
+        Err(error) => {
+            let failed =
+                mark_archive_harvest_failed(pool, bear_id, run.id, &error.to_string()).await?;
+            Ok(Some(failed))
+        }
+    }
+}
+
+pub async fn run_archive_harvest_worker_loop(
+    pool: PgPool,
+    config: Arc<Config>,
+    worker_token: tokio_util::sync::CancellationToken,
+    poll_interval: std::time::Duration,
+) -> Result<(), DenError> {
+    loop {
+        tokio::select! {
+            () = worker_token.cancelled() => { break; }
+            () = tokio::time::sleep(poll_interval) => {}
+        }
+
+        let bear_ids = list_bears_with_queued_archive_harvest_runs(&pool).await?;
+        let stores = MemoryStoreManager::new(config.as_ref());
+        for bear_id in bear_ids {
+            if worker_token.is_cancelled() {
+                break;
+            }
+            match run_next_archive_harvest_once(&pool, config.as_ref(), &stores, bear_id).await {
+                Ok(Some(run)) => tracing::info!(
+                    bear_id = %bear_id,
+                    reflection_run_id = %run.id,
+                    status = %run.status,
+                    output = %run.output_summary,
+                    "archive_harvest worker processed queued run"
+                ),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    bear_id = %bear_id,
+                    error = %error,
+                    "archive_harvest worker run failed; continuing"
+                ),
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -71,7 +265,7 @@ pub async fn create_run(
     pool: &PgPool,
     params: CreateReflectionRun<'_>,
 ) -> Result<ReflectionRunRow, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ReflectionRunRow>(
         r"
         INSERT INTO bear_reflection_runs (
             bear_id, lane, trigger, status, role_agent_id,
@@ -98,7 +292,7 @@ pub async fn create_run(
     .bind(params.error)
     .fetch_one(pool)
     .await?;
-    Ok(row_from_sql(row))
+    Ok(row)
 }
 
 pub struct ProposalEnqueueParams<'a> {
@@ -158,11 +352,7 @@ fn project_memory_curate_started(pool: &PgPool, row: &ReflectionRunRow, proposal
     );
 }
 
-fn project_memory_curate_completed(
-    pool: &PgPool,
-    row: &ReflectionRunRow,
-    proposal_ids: Vec<Uuid>,
-) {
+fn project_memory_curate_completed(pool: &PgPool, row: &ReflectionRunRow, proposal_ids: Vec<Uuid>) {
     project_to_conversation(
         pool,
         row.bear_id,
@@ -238,7 +428,7 @@ pub async fn list_queued_memory_curate_runs(
     bear_id: Uuid,
     limit: i64,
 ) -> Result<Vec<ReflectionRunRow>, DenError> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, ReflectionRunRow>(
         r"
         SELECT id, bear_id, lane, trigger, status, role_agent_id,
                conversation_id, conversation_key, conversation_date,
@@ -256,14 +446,14 @@ pub async fn list_queued_memory_curate_runs(
     .bind(limit.clamp(1, 200))
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(row_from_sql).collect())
+    Ok(rows)
 }
 
 pub async fn claim_next_memory_curate_run(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ReflectionRunRow>(
         r"
         WITH next_run AS (
             SELECT id
@@ -276,7 +466,7 @@ pub async fn claim_next_memory_curate_run(
             FOR UPDATE SKIP LOCKED
         )
         UPDATE bear_reflection_runs runs
-        SET status = 'started',
+        SET status = 'running',
             started_at = COALESCE(started_at, NOW())
         FROM next_run
         WHERE runs.id = next_run.id
@@ -292,7 +482,7 @@ pub async fn claim_next_memory_curate_run(
     let Some(row) = row else {
         return Ok(None);
     };
-    let mut run = row_from_sql(row);
+    let mut run = row;
     if let Some(conversation_date) = run.conversation_date {
         let reflection_conversation = ensure_memory_curate_conversation(
             pool,
@@ -302,8 +492,7 @@ pub async fn claim_next_memory_curate_run(
         )
         .await?;
         if let Some(conversation_id) = reflection_conversation.conversation_id.as_deref() {
-            bind_memory_curate_run_conversation(pool, run.bear_id, run.id, conversation_id)
-                .await?;
+            bind_memory_curate_run_conversation(pool, run.bear_id, run.id, conversation_id).await?;
             run.conversation_id = Some(conversation_id.to_string());
         }
         let _ = touch_memory_curate_conversation(pool, run.bear_id, conversation_date).await;
@@ -317,10 +506,10 @@ pub async fn mark_memory_curate_started(
     bear_id: Uuid,
     reflection_run_id: Uuid,
 ) -> Result<ReflectionRunRow, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ReflectionRunRow>(
         r"
         UPDATE bear_reflection_runs
-        SET status = 'started',
+        SET status = 'running',
             started_at = COALESCE(started_at, NOW())
         WHERE bear_id = $1 AND id = $2 AND lane = 'memory_curate'
         RETURNING id, bear_id, lane, trigger, status, role_agent_id,
@@ -333,7 +522,7 @@ pub async fn mark_memory_curate_started(
     .bind(reflection_run_id)
     .fetch_one(pool)
     .await?;
-    let run = row_from_sql(row);
+    let run = row;
     project_memory_curate_started(pool, &run, proposal_ids_from_summary(&run.input_summary));
     Ok(run)
 }
@@ -344,7 +533,7 @@ pub async fn mark_memory_curate_completed(
     reflection_run_id: Uuid,
     output_summary: serde_json::Value,
 ) -> Result<ReflectionRunRow, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ReflectionRunRow>(
         r"
         UPDATE bear_reflection_runs
         SET status = 'completed',
@@ -363,7 +552,7 @@ pub async fn mark_memory_curate_completed(
     .bind(output_summary)
     .fetch_one(pool)
     .await?;
-    let run = row_from_sql(row);
+    let run = row;
     project_memory_curate_completed(pool, &run, proposal_ids_from_summary(&run.input_summary));
     Ok(run)
 }
@@ -374,7 +563,7 @@ pub async fn mark_memory_curate_failed(
     reflection_run_id: Uuid,
     error: &str,
 ) -> Result<ReflectionRunRow, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ReflectionRunRow>(
         r"
         UPDATE bear_reflection_runs
         SET status = 'failed',
@@ -392,7 +581,7 @@ pub async fn mark_memory_curate_failed(
     .bind(error)
     .fetch_one(pool)
     .await?;
-    let run = row_from_sql(row);
+    let run = row;
     project_memory_curate_failed(pool, &run, proposal_ids_from_summary(&run.input_summary));
     Ok(run)
 }
@@ -539,10 +728,12 @@ fn memory_curate_output_summary(output: &MemoryCurateRunOutput) -> serde_json::V
 }
 
 fn native_curate_llm_briefing_enabled() -> bool {
-    match std::env::var("NATIVE_CURATE_LLM_BRIEFING") {
+    // Cached after first read: this is process-startup config, not a hot toggle.
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| match std::env::var("NATIVE_CURATE_LLM_BRIEFING") {
         Ok(value) => value == "1" || value.eq_ignore_ascii_case("true"),
         Err(_) => true,
-    }
+    })
 }
 
 async fn maybe_run_native_curate_briefing_turn(
@@ -703,7 +894,7 @@ pub async fn enqueue_recall_index(
     bear_id: Uuid,
     trigger: &str,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ReflectionRunRow>(
         r"
         INSERT INTO bear_reflection_runs (bear_id, lane, trigger, status, input_summary, output_summary)
         SELECT $1, 'recall_index', $2, 'queued', '{}'::jsonb, '{}'::jsonb
@@ -721,7 +912,7 @@ pub async fn enqueue_recall_index(
     .bind(trigger)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_from_sql))
+    Ok(row)
 }
 
 /// Best-effort recall enqueue for the memory write path: a no-op when recall is disabled
@@ -750,7 +941,7 @@ async fn claim_next_recall_index_run(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ReflectionRunRow>(
         r"
         WITH next_run AS (
             SELECT id
@@ -761,7 +952,7 @@ async fn claim_next_recall_index_run(
             FOR UPDATE SKIP LOCKED
         )
         UPDATE bear_reflection_runs runs
-        SET status = 'started', started_at = COALESCE(started_at, NOW())
+        SET status = 'running', started_at = COALESCE(started_at, NOW())
         FROM next_run
         WHERE runs.id = next_run.id
         RETURNING runs.id, runs.bear_id, runs.lane, runs.trigger, runs.status,
@@ -773,7 +964,7 @@ async fn claim_next_recall_index_run(
     .bind(bear_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_from_sql))
+    Ok(row)
 }
 
 async fn mark_recall_index_completed(
@@ -787,13 +978,13 @@ async fn mark_recall_index_completed(
          error = NULL, completed_at = NOW() \
          WHERE bear_id = $1 AND id = $2 AND lane = 'recall_index'{RECALL_INDEX_RETURNING}"
     );
-    let row = sqlx::query(&sql)
+    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
         .bind(bear_id)
         .bind(run_id)
         .bind(output_summary)
         .fetch_one(pool)
         .await?;
-    Ok(row_from_sql(row))
+    Ok(row)
 }
 
 async fn mark_recall_index_failed(
@@ -806,13 +997,13 @@ async fn mark_recall_index_failed(
         "UPDATE bear_reflection_runs SET status = 'failed', error = $3, completed_at = NOW() \
          WHERE bear_id = $1 AND id = $2 AND lane = 'recall_index'{RECALL_INDEX_RETURNING}"
     );
-    let row = sqlx::query(&sql)
+    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
         .bind(bear_id)
         .bind(run_id)
         .bind(error)
         .fetch_one(pool)
         .await?;
-    Ok(row_from_sql(row))
+    Ok(row)
 }
 
 async fn list_bears_with_queued_recall_index_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
@@ -939,7 +1130,7 @@ async fn claim_next_context_compact_run(
     pool: &PgPool,
     bear_id: Uuid,
 ) -> Result<Option<ReflectionRunRow>, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ReflectionRunRow>(
         r"
         WITH next_run AS (
             SELECT id
@@ -950,7 +1141,7 @@ async fn claim_next_context_compact_run(
             FOR UPDATE SKIP LOCKED
         )
         UPDATE bear_reflection_runs runs
-        SET status = 'started', started_at = COALESCE(started_at, NOW())
+        SET status = 'running', started_at = COALESCE(started_at, NOW())
         FROM next_run
         WHERE runs.id = next_run.id
         RETURNING runs.id, runs.bear_id, runs.lane, runs.trigger, runs.status,
@@ -962,7 +1153,7 @@ async fn claim_next_context_compact_run(
     .bind(bear_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_from_sql))
+    Ok(row)
 }
 
 async fn mark_context_compact_completed(
@@ -976,13 +1167,13 @@ async fn mark_context_compact_completed(
          error = NULL, completed_at = NOW() \
          WHERE bear_id = $1 AND id = $2 AND lane = 'context_compact'{CONTEXT_COMPACT_RETURNING}"
     );
-    let row = sqlx::query(&sql)
+    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
         .bind(bear_id)
         .bind(run_id)
         .bind(output_summary)
         .fetch_one(pool)
         .await?;
-    Ok(row_from_sql(row))
+    Ok(row)
 }
 
 async fn mark_context_compact_failed(
@@ -995,18 +1186,16 @@ async fn mark_context_compact_failed(
         "UPDATE bear_reflection_runs SET status = 'failed', error = $3, completed_at = NOW() \
          WHERE bear_id = $1 AND id = $2 AND lane = 'context_compact'{CONTEXT_COMPACT_RETURNING}"
     );
-    let row = sqlx::query(&sql)
+    let row = sqlx::query_as::<_, ReflectionRunRow>(&sql)
         .bind(bear_id)
         .bind(run_id)
         .bind(error)
         .fetch_one(pool)
         .await?;
-    Ok(row_from_sql(row))
+    Ok(row)
 }
 
-async fn list_bears_with_queued_context_compact_runs(
-    pool: &PgPool,
-) -> Result<Vec<Uuid>, DenError> {
+async fn list_bears_with_queued_context_compact_runs(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
     let rows = sqlx::query_scalar::<_, Uuid>(
         r"
         SELECT DISTINCT bear_id
@@ -1138,24 +1327,4 @@ pub async fn run_context_compact_worker_loop(
         }
     }
     Ok(())
-}
-
-fn row_from_sql(row: sqlx::postgres::PgRow) -> ReflectionRunRow {
-    ReflectionRunRow {
-        id: row.get("id"),
-        bear_id: row.get("bear_id"),
-        lane: row.get("lane"),
-        trigger: row.get("trigger"),
-        status: row.get("status"),
-        role_agent_id: row.get("role_agent_id"),
-        conversation_id: row.get("conversation_id"),
-        conversation_key: row.get("conversation_key"),
-        conversation_date: row.get("conversation_date"),
-        input_summary: row.get("input_summary"),
-        output_summary: row.get("output_summary"),
-        error: row.get("error"),
-        started_at: row.get("started_at"),
-        completed_at: row.get("completed_at"),
-        created_at: row.get("created_at"),
-    }
 }

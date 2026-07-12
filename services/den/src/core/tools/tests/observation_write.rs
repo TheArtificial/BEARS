@@ -13,10 +13,8 @@ use crate::{
         user::db::create_user,
     },
 };
-use den_runtime::{
-    bears::{db, db::grant_membership, db::BearParams, BearProfile},
-    memory::MemoryStoreManager,
-};
+use den_memory::MemoryStoreManager;
+use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
 
 async fn seed_watch_agent(
     pool: &PgPool,
@@ -25,10 +23,10 @@ async fn seed_watch_agent(
 ) -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(
         r"
-        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id)
-        VALUES ($1, 'watch', $2, $2)
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id)
+        VALUES ($1, 'watch', $2)
         ON CONFLICT (bear_id, profile)
-        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id
+        DO NOTHING
         ",
     )
     .bind(bear_id)
@@ -51,8 +49,6 @@ async fn observation_write_persists_and_enqueues_memory_curate(
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )
@@ -82,7 +78,7 @@ async fn observation_write_persists_and_enqueues_memory_curate(
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-watch-observation-test".to_string(),
         session_id: "watch-session".to_string(),
-        acp_session_id: None,
+        client_session_id: None,
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec![],
@@ -90,6 +86,8 @@ async fn observation_write_persists_and_enqueues_memory_curate(
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some(Uuid::new_v4().to_string()),
         channel: DenToolChannelContext::default(),
     };
@@ -139,7 +137,7 @@ async fn observation_write_persists_and_enqueues_memory_curate(
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-watch-observation-test".to_string(),
         session_id: "watch-session".to_string(),
-        acp_session_id: None,
+        client_session_id: None,
         conversation_selection: None,
         runtime_target: None,
         workspace_roots: vec![],
@@ -147,6 +145,8 @@ async fn observation_write_persists_and_enqueues_memory_curate(
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some(Uuid::new_v4().to_string()),
         channel: DenToolChannelContext::default(),
     };

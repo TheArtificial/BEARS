@@ -1,6 +1,6 @@
 # Implementation Plan: Den Context Compaction
 
-> **Note (2026-06).** Den-owned compaction aligns with the Den-native runtime. References to the (now missing) `letta-migration-plan.md` should be read against [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Note (2026-06).** Den-owned compaction aligns with the Den runtime. References to the (now missing) `letta-migration-plan.md` should be read against [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
 This plan implements the context-compaction direction described in [ADR-0032: Den Context Compaction Architecture](../decisions/adr-0032-den-context-compaction-architecture.md), supports the Letta migration plan in [letta-migration-plan.md](./letta-migration-plan.md), and should be read alongside the Den-owned canonical persistence target in [den-conversation-persistence-and-archive-model.md](../architecture/den-conversation-persistence-and-archive-model.md).
 
@@ -368,19 +368,35 @@ This section tracks Den-owned compaction on the `test` branch (through commit `7
   - One-shot reassemble + LLM retry in `LazyAgentStepStream` (`step.rs`, `overflow_retry.rs`)
   - ACP terminal `TurnResultReason::CompactedRetry` + `TurnResultStatus::Recovered` when retry succeeds
 
+- **Operator/admin visibility (Phase 7 UI)**
+  - Conversation list compaction status in `/bear/{slug}/conversations`
+  - Conversation detail compaction event history, trigger/policy provenance, source spans, diagnostics, and artifact refs
+  - Persisted compaction artifact drill-down with source message/group provenance and artifact JSON
+
+- **Phase 9 rollout docs**
+  - Observe→active checklist, production gates, and rollback runbook in [Context Compaction Guide](../guides/context-compaction-guide.md)
+
+- **LLM summarization scaffolding**
+  - `agent_compaction` summarizer adapter contract and prompt shape (`summarize.rs`)
+  - Validation merges generated artifacts with deterministic fallback fields so compaction can fail open
+
+- **`archive_harvest` mining**
+  - Queued `archive_harvest` Reflection lane
+  - Compaction artifacts mined into review-required memory proposals with artifact/source-span provenance
+  - Worker loop started with Den workers and enqueued after active compaction artifact creation
+
 - **Validation**
   - `cargo test -p den-runtime compaction` and overflow classifier tests
 
 ### Still open (prioritize in roadmap)
 
-1. **Operator/admin compaction visibility (Phase 7 UI)** — session compaction history, artifact drill-down, trigger/policy provenance in admin surfaces
-2. **LLM-backed summarization** — replace deterministic v1 summary merge with model-generated summaries
-3. **Phase 9 rollout checklist** — observe→active env guide, rollback runbook, production gating
-4. **`archive_harvest` mining** — compaction artifacts → memory proposals via reflection lane
+1. **Provider-backed LLM summarization execution** — wire the `agent_compaction` summarizer adapter to the Den model task/provider layer once a non-streaming structured model-task runner is available
 
 ### Practical migration summary
 
 - **Architecture, schema, and contract:** complete
 - **End-to-end transcript-backed compaction (turn-start + post-turn):** complete on test branch
 - **Reactive overflow recovery:** complete on test branch (`COMPACTION_MODE=active` required for retry to shrink prompt)
-- **Operator UI, LLM summaries, rollout docs, archive harvest:** not yet complete
+- **Operator UI and rollout docs:** complete
+- **LLM summarizer contract and archive harvest:** complete
+- **Provider-backed LLM summarization execution:** not yet complete

@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::DenError;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BearObservationRow {
     pub id: Uuid,
     pub bear_id: Uuid,
@@ -40,7 +40,7 @@ pub async fn create(
     params: CreateBearObservation<'_>,
 ) -> Result<BearObservationRow, DenError> {
     let logical_path = observation_logical_path(params.observation_id);
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, BearObservationRow>(
         r"
         INSERT INTO bear_observations (
             bear_id, observation_id, summary, salience, payload_ref, source, logical_path
@@ -59,7 +59,7 @@ pub async fn create(
     .bind(logical_path)
     .fetch_one(pool)
     .await?;
-    Ok(row_from_sql(row))
+    Ok(row)
 }
 
 pub async fn mark_review_queued(
@@ -68,7 +68,7 @@ pub async fn mark_review_queued(
     observation_row_id: Uuid,
     proposal_id: Uuid,
 ) -> Result<BearObservationRow, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, BearObservationRow>(
         r"
         UPDATE bear_observations
         SET status = 'review_queued',
@@ -83,7 +83,7 @@ pub async fn mark_review_queued(
     .bind(proposal_id)
     .fetch_one(pool)
     .await?;
-    Ok(row_from_sql(row))
+    Ok(row)
 }
 
 pub async fn get_for_bear(
@@ -91,7 +91,7 @@ pub async fn get_for_bear(
     bear_id: Uuid,
     observation_id: &str,
 ) -> Result<Option<BearObservationRow>, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, BearObservationRow>(
         r"
         SELECT id, bear_id, observation_id, summary, salience, payload_ref, source,
                logical_path, status, proposal_id, created_at, reviewed_at
@@ -103,22 +103,5 @@ pub async fn get_for_bear(
     .bind(observation_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(row_from_sql))
-}
-
-fn row_from_sql(row: sqlx::postgres::PgRow) -> BearObservationRow {
-    BearObservationRow {
-        id: row.get("id"),
-        bear_id: row.get("bear_id"),
-        observation_id: row.get("observation_id"),
-        summary: row.get("summary"),
-        salience: row.get("salience"),
-        payload_ref: row.get("payload_ref"),
-        source: row.get("source"),
-        logical_path: row.get("logical_path"),
-        status: row.get("status"),
-        proposal_id: row.get("proposal_id"),
-        created_at: row.get("created_at"),
-        reviewed_at: row.get("reviewed_at"),
-    }
+    Ok(row)
 }

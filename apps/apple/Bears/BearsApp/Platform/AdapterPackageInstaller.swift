@@ -39,10 +39,10 @@ struct InstallerAppAdapterPackageInstaller: AdapterPackageInstalling {
         semaphore.wait()
 
         if let openError = resultBox.error {
-            throw AdapterPackageInstallerError.installerFailed("Failed to open the adapter package in Installer.app: \(openError.localizedDescription)")
+            throw AdapterPackageInstallerError.installerFailed("Failed to open the armature package in Installer.app: \(openError.localizedDescription)")
         }
 
-        return "Opened adapter package in Installer.app."
+        return "Opened armature package in Installer.app."
         #else
         throw AdapterPackageInstallerError.installerFailed("Opening Installer.app is only supported on macOS.")
         #endif

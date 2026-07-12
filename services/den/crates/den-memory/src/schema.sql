@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS memory_records (
     -- true or ceased to be true. created_at remains transaction time. Recall reads
     -- COALESCE(valid_from, created_at). invalid_at is forward-looking (set on supersession).
     valid_from TEXT NULL,
-    invalid_at TEXT NULL
+    invalid_at TEXT NULL,
+    salience TEXT NOT NULL DEFAULT 'normal' CHECK (salience IN ('low', 'normal', 'high', 'critical'))
 );
 CREATE INDEX IF NOT EXISTS idx_memory_records_bear_sequence
     ON memory_records (bear_id, sequence_no);
@@ -158,6 +159,20 @@ CREATE TABLE IF NOT EXISTS memory_observations (
     created_at TEXT NOT NULL,
     reviewed_at TEXT NULL
 );
+
+CREATE TABLE IF NOT EXISTS memory_harvest_marks (
+    mark_id TEXT PRIMARY KEY,
+    bear_id TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    source_kind TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    source_hash TEXT NULL,
+    harvested_at TEXT NOT NULL,
+    run_id TEXT NULL,
+    proposal_ids_json TEXT NOT NULL DEFAULT '[]'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_harvest_marks_source
+    ON memory_harvest_marks (bear_id, source_kind, source_ref);
 
 CREATE TABLE IF NOT EXISTS reflection_run_outcomes (
     run_id TEXT PRIMARY KEY,

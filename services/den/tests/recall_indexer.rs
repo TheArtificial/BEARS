@@ -8,11 +8,11 @@
 //! no-op in environments without the recall stack.
 
 use den::{config::Config, startup::run_sqlx_migrations};
+use den_memory::tools::sqlite_memory_search;
 use den_memory::{
     append_memory_record, append_relation, resolve, Assertion, LogicalMemoryPath,
     MemoryStoreManager, Resolution, Signal,
 };
-use den_runtime::memory::tools::sqlite_memory_search;
 use den_runtime::recall::{
     hybrid_memory_search, recall_for_turn, reconcile::list_indexable_heads, render_recall_block,
     DeterministicEmbedder, IndexRequest, PassageEmbedder, QdrantRecall, RecallIndexer,
@@ -74,6 +74,9 @@ async fn recall_indexer_round_trip_against_live_qdrant() {
         kind: "summary".into(),
         visibility: "normal".into(),
         content_text: body.clone(),
+        salience: "normal".into(),
+        lifecycle_status: "active".into(),
+        freshness_trend: "stable".into(),
         entity_ids: Vec::new(),
     };
 
@@ -175,6 +178,9 @@ async fn recall_query_retrieves_indexed_passage_against_live_qdrant() {
         kind: "summary".into(),
         visibility: "normal".into(),
         content_text: body.clone(),
+        salience: "normal".into(),
+        lifecycle_status: "active".into(),
+        freshness_trend: "stable".into(),
         entity_ids: Vec::new(),
     };
 
@@ -282,6 +288,9 @@ async fn entity_scoped_recall_filters_by_payload_entity_ids() {
         kind: "summary".into(),
         visibility: "normal".into(),
         content_text: body.clone(),
+        salience: "normal".into(),
+        lifecycle_status: "active".into(),
+        freshness_trend: "stable".into(),
         entity_ids: vec![entity_id.clone()],
     };
 
@@ -289,7 +298,7 @@ async fn entity_scoped_recall_filters_by_payload_entity_ids() {
     assert_eq!(outcome.embedded_chunks, 1, "single-chunk body: {outcome:?}");
 
     let query_vec = embedder
-        .embed(&[body.clone()])
+        .embed(std::slice::from_ref(&body))
         .await
         .expect("embed query")
         .into_iter()

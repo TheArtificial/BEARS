@@ -1,14 +1,14 @@
-{% extends "base.html" %}
+{% extends "bear/_manage.html" %}
 {% import "forms.jinja" as forms %}
 
 {% block title %}Edit system prompt · {{ bear.name | e }}{% endblock %}
 
-{% block content %}
+{% block manage %}
 <section>
     <h2>System prompt</h2>
     <p><a href="/bear/{{ bear.slug | e }}/overview">Back to bear</a></p>
-    {% if letta_sync_error %}
-    <p class="form-errors"><strong>Letta sync failed</strong>: {{ letta_sync_error | e }}</p>
+    {% if runtime_sync_error %}
+    <p class="form-errors"><strong>Runtime sync failed</strong>: {{ runtime_sync_error | e }}</p>
     {% endif %}
     <form method="post" class="box full-width">
         <label for="system_prompt_textarea" {% if errors and errors.system_prompt %}class="has-error"{% endif %}>System prompt</label>

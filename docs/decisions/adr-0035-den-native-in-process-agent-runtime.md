@@ -11,7 +11,7 @@
 - [ADR-0034](adr-0034-jobs-and-tasks-work-management.md) — Docket jobs/tasks in Den Postgres
 - [ADR-0037](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) — work sandbox, egress gateway, upstream auth (Phase 7)
 - [ADR-0043](adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md) — keeps this loop protocol-agnostic; ACP is an edge adapter, so the turn/session/event machinery stays neutral and core-owned
-- [Den-Native Runtime architecture](../architecture/den-native-runtime.md)
+- [Den runtime architecture](../architecture/den-runtime.md)
 - [Migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)
 
 ## Context
@@ -30,7 +30,7 @@ BEARS adopts a **Den-native, in-process agent runtime** as the sole execution su
 2. **One loop primitive** (assemble context → stream model → execute tools → persist), parameterized by a thin **strategy policy** (`plan?` / `reflect_on_fail?` / `critique?` / `fanout_n`), not by forked runtimes or a pluggable "agent-pattern" framework.
 3. **A turn is a Tokio task** owned by Den. Cancellation is a `CancellationToken`, not external run-ids.
 4. **Den owns** conversation identity, transcript, message/context state, approvals, and compaction. No conversation materialization to Letta, no run-ids, no approval-deny recovery against a remote process, no synthetic `TurnCompleted` to paper over provider gaps.
-5. **Bifrost** (`LLM_API_URL`) is the inference substrate (OpenAI-compatible `chat/completions` with tool-calling), called directly by Den.
+5. **Bifrost** (`LLM_API_URL`) is the inference substrate, called directly by Den through model-aware stream adapters. Den prefers the Responses API for models that require or benefit from it (for example GPT-5.5) and retains chat/completions streaming as the compatibility path.
 
 ### Storage boundary
 
@@ -54,7 +54,7 @@ LATS tree search and LLM Compiler DAG engines are **deferred**.
 
 ### Transitional compatibility
 
-During migration, `AGENT_RUNTIME=letta|native` (default `letta` until parity proven) selects the turn backend. Letta, Codepool, and MemFS are removed only after Phase 8 teardown (compose changes require explicit approval).
+This transition is complete for production: the Den-native runtime is the supported runtime path, and Letta, Codepool, and live MemFS are not production runtime dependencies. The former Phase 8 data backfill is retired because there are no production Letta-runtime Bears to migrate.
 
 ## Consequences
 
@@ -70,7 +70,7 @@ During migration, `AGENT_RUNTIME=letta|native` (default `letta` until parity pro
 - Den must reproduce context/compaction and tool-calling fidelity Letta provided implicitly.
 - Per-Bear SQLite introduces schema, migration, and logical-path projection work.
 - Phase 7 (coding harness / sandbox) remains the largest sub-project.
-- One-time backfill from Letta history and MemFS content.
+- Residual Letta/MemFS naming cleanup remains, but no production one-time backfill is required.
 
 ## Non-goals
 

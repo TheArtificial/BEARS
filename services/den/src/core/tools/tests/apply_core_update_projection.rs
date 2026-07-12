@@ -10,10 +10,8 @@ use crate::core::{
     },
     user::db::create_user,
 };
-use den_runtime::{
-    bears::{db, db::grant_membership, db::BearParams, BearProfile},
-    memory_proposals::{create, CreateMemoryProposal},
-};
+use den_service::bears::{db, db::grant_membership, db::BearParams, BearProfile};
+use den_service::memory_proposals::{create, CreateMemoryProposal};
 
 async fn seed_curate_agent(
     pool: &PgPool,
@@ -22,10 +20,10 @@ async fn seed_curate_agent(
 ) -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(
         r"
-        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id, letta_agent_id)
-        VALUES ($1, 'curate', $2, $2)
+        INSERT INTO bear_profile_bindings (bear_id, profile, binding_id)
+        VALUES ($1, 'curate', $2)
         ON CONFLICT (bear_id, profile)
-        DO UPDATE SET letta_agent_id = EXCLUDED.letta_agent_id
+        DO NOTHING
         ",
     )
     .bind(bear_id)
@@ -48,8 +46,6 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
             system_prompt: "test",
             default_model: None,
             tools_enabled: None,
-            letta_agent_type: None,
-            letta_tool_ids: sqlx::types::Json(vec![]),
             context_profile: None,
         },
     )
@@ -69,7 +65,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
     let agent_id = format!("agent-{}", Uuid::new_v4());
     seed_curate_agent(&pool, bear_id, &agent_id).await?;
 
-    let conversation = den_runtime::conversation_persistence::ensure_conversation_for_external_id(
+    let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
         &pool,
         bear_id,
         Some(user_id),
@@ -88,7 +84,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
             source_paths: vec!["pair/notes/test.md".to_string()],
             source_refs: json!({
                 "conversation_id": "conv-memory-apply-tool-test",
-                "session_id": "acp-memory-apply-tool-session"
+                "session_id": "client-memory-apply-tool-session"
             }),
             suggested_action: "promote_to_core",
             target_ref: None,
@@ -114,8 +110,8 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
         username: Some("tester".to_string()),
         membership_role: Some("admin".to_string()),
         conversation_id: "conv-memory-apply-tool-test".to_string(),
-        session_id: "acp-memory-apply-tool-session".to_string(),
-        acp_session_id: Some("acp-memory-apply-tool-session".to_string()),
+        session_id: "client-memory-apply-tool-session".to_string(),
+        client_session_id: Some("client-memory-apply-tool-session".to_string()),
         conversation_selection: Some("conv-memory-apply-tool-test".to_string()),
         runtime_target: None,
         workspace_roots: vec!["/workspace".to_string()],
@@ -123,12 +119,14 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
         activity: None,
         runtime: None,
         context_budget: None,
+        projected_memory: None,
+        recalled_memory: None,
         request_id: Some(Uuid::new_v4().to_string()),
         channel: DenToolChannelContext::default(),
     };
 
     let config = crate::config::Config::test_stub();
-    let stores = den_runtime::memory::MemoryStoreManager::new(&config);
+    let stores = den_memory::MemoryStoreManager::new(&config);
     let payload = invoke_den_tool(
         &pool,
         &config,
@@ -146,22 +144,22 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
 
     assert!(payload.is_err());
 
-    let projection_context = den_runtime::conversation_events::canonical_persistence_context(
+    let projection_context = den_service::conversation::events::canonical_persistence_context(
         pool.clone(),
         bear_id,
         Some(user_id),
         "conv-memory-apply-tool-test".to_string(),
         None,
         None,
-        "acp-memory-apply-tool-session".to_string(),
+        "client-memory-apply-tool-session".to_string(),
         false,
     );
-    den_runtime::conversation_events::persist_projection(
+    den_service::conversation::events::persist_projection(
         &projection_context,
-        &den_runtime::conversation_events::memory_proposal_resolved_projection(
-            den_runtime::conversation_events::ProjectionProvenance {
-                source: den_runtime::conversation_events::ProjectionSource::DenTools,
-                scope_id: "acp-memory-apply-tool-session".to_string(),
+        &den_service::conversation::events::memory_proposal_resolved_projection(
+            den_service::conversation::events::ProjectionProvenance {
+                source: den_service::conversation::events::ProjectionSource::DenTools,
+                scope_id: "client-memory-apply-tool-session".to_string(),
             },
             proposal.id,
             "pair".to_string(),
@@ -175,7 +173,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
     )
     .await?;
 
-    let messages = den_runtime::conversation_persistence::list_messages_page(
+    let messages = den_service::conversation::persistence::list_messages_page(
         &pool,
         conversation.id,
         None,

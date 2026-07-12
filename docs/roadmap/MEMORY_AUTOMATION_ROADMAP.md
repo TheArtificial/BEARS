@@ -1,11 +1,11 @@
 # Memory Automation Roadmap
 
-> **Direction changed (2026-06).** Canonical memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); Letta Archives and `pair/` MemFS branches are removed. Long-term recall is a **derived Qdrant index** over canonical SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); the engine that *fills* it (extraction-first **harvest** + **consolidation** by supersession) and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Canonical memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); Letta Archives and `pair/` MemFS branches are removed. Long-term recall is a **derived Qdrant index** over canonical SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); the engine that *fills* it (extraction-first **harvest** + **consolidation** by supersession) and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
-Status: implementation roadmap; P0 pair-reflection proposal enqueue is implemented for ACP close.
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
+Status: implementation roadmap; P0 pair-reflection proposal enqueue and P2 compaction-summary-assisted pair reflection proposals are implemented for ACP close. Remaining automation enhancements are optional and evidence-driven.
 
-This roadmap sequences the remaining work needed for `pair` learning to become useful to `work` through reflection, curation, `core/`, Cabinet, task context, and the **derived recall index**.
+This roadmap sequences the work needed for `pair` learning to become useful to `work` through reflection, curation, `core/`, Cabinet, task context, and the **derived recall index**. The safety-critical flywheel is now in place; further automation should wait for concrete operational evidence.
 
 Related docs:
 
@@ -48,7 +48,7 @@ Pair reflection should immediately feed curation without waiting for manual huma
 2. ✅ Pair reflection creates a `bear_memory_proposals` row referencing that summary.
 3. ✅ Pair reflection enqueues a queued `bear_reflection_runs` row with `lane = memory_curate` and `trigger = pair_reflection`.
 4. ✅ ACP close remains responsive; curation does not run inline during ACP close.
-5. Pending: UI shows the generated proposal and queued curate run.
+5. 🟡 UI shows generated memory proposals on the Bear memory dashboard, including native SQLite proposal rows, and recent reflection-run performance (queue wait/runtime/outcomes); dedicated run detail/retry UI remains pending.
 
 ### Notes
 
@@ -160,13 +160,15 @@ Signals:
 
 ## P2 — Model-assisted pair reflection
 
+Status: 🟡 v1 implemented for ACP close by extracting durable candidates from the latest structured compaction summary and creating memory proposals. A separate direct model pass over raw turn/tool context is deferred until there is evidence that summary-based extraction misses important facts.
+
 ### Goal
 
 Upgrade deterministic pair summaries into useful role-local reflection.
 
 ### Behavior
 
-A model-assisted pair reflection pass should extract:
+A model-assisted pair reflection pass should extract (v1 does this from structured compaction summaries):
 
 - durable technical decisions;
 - repeated failure modes;
@@ -196,6 +198,20 @@ pair/notes/
 
 May create memory proposals.
 
+### Current v1
+
+- ACP `session.close` runs pair compaction, then reads the latest structured compaction summary.
+- Decisions and constraints become `retain_profile_local` memory proposals.
+- Artifact refs become human-review memory proposals.
+- Goals, workflow refs, and unresolved follow-ups are treated as continuation state and are not proposed as durable memory.
+- Secret/person/external-risk signals use proposal sensitivity and force human review.
+
+### Deferred until evidence
+
+- Direct model pass over raw ACP messages/tool activity.
+- Source-turn-level scoring and richer confidence explanations.
+- Promotion from goals/workflow buckets when they encode durable preferences or conventions.
+
 ### Constraints
 
 - No `core/` writes.
@@ -214,9 +230,9 @@ Turn closed session archives into durable memory candidates, not just the active
 
 ### Behavior
 
-- Scan **un-mined** conversations and compaction artifacts; run an **extraction-first** pass that distills durable facts/decisions/preferences/lessons and discards filler.
-- Emit memory proposals (candidate durable entries) with provenance back to source `conversation_messages`; do not write `core/` (that is `memory_curate`).
-- Apply a quality/confidence filter before a candidate becomes a proposal (guards against hallucination propagation).
+- 🟡 Compaction-artifact harvest is implemented: scan **un-mined** compaction artifacts, distill structured summary sections, and create human-review memory proposals. Broader closed-conversation mining and model-assisted extraction are deferred until compaction-artifact coverage proves insufficient.
+- ✅ Emit memory proposals (candidate durable entries) with harvest provenance (`source_hash`, `run_id`, source refs); do not write `core/` (that is `memory_curate`).
+- 🟡 Apply a deterministic quality/risk filter before a candidate becomes a proposal: transient follow-up-only artifacts and goal/workflow-only summaries are marked harvested without a proposal; durable decisions/constraints/artifacts receive confidence metadata; artifact-only candidates are retained at medium confidence; person/secret/external-risk signals set proposal sensitivity for human review. Fixture coverage exists for each deterministic branch. Richer model-assisted confidence scoring is deferred until proposal quality metrics show a problem.
 
 ### Triggers
 
@@ -226,13 +242,13 @@ Turn closed session archives into durable memory candidates, not just the active
 
 ### Data model
 
-Add `memory_harvest_marks` (per-Bear SQLite) for idempotency: `source_kind` (`conversation` | `compaction_artifact` | `observation` | `pair_summary`), `source_ref`, `source_hash`, `harvested_at`, `run_id`, `proposal_ids_json`. Never re-harvest an unchanged source. See [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) schema deltas.
+✅ `memory_harvest_marks` (per-Bear SQLite) is implemented for idempotency: `source_kind` (`conversation` | `compaction_artifact` | `observation` | `pair_summary`), `source_ref`, `source_hash`, `harvested_at`, `run_id`, `proposal_ids_json`. Current compaction-artifact harvest records `source_hash` and the reflection `run_id`. See [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) schema deltas.
 
 ### Constraints
 
 - transcripts are source material, never auto-promoted to memory;
 - bounded token budget per run;
-- feeds `memory_curate` for dedup, supersession, and promotion.
+- feeds `memory_curate` for dedup, supersession, and promotion. Deterministic exact-claim/different-path matches now add human-review `consolidation_review` metadata; broader semantic duplicate/supersession scoring is deferred until duplicate/conflict misses become a real review burden.
 
 ---
 
@@ -244,7 +260,7 @@ Maintain a **derived Qdrant recall index** over canonical SQLite (and Cabinet) s
 
 ### What is indexed
 
-Per [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) §4: `visibility=normal` shared records and role-local `note`/`decision`/`summary` (**latest head only**, respecting `supersedes_memory_id`); approved proposal outcomes; Cabinet material where approved. Excluded by default: `scratch`, raw `log` streams, pending proposals/observations, superseded bodies, and transcripts.
+Per [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) §4 and [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md): `visibility=normal` shared records and role-local `note`/`decision`/`summary` (**latest non-invalid head only**, respecting `supersedes_memory_id`/`invalid_at`); approved proposal outcomes; Cabinet material where approved. Excluded by default: `scratch`, raw `log` streams, pending proposals/observations, superseded/archived bodies, and transcripts.
 
 ### Data model (passage registry, not vectors)
 
@@ -254,7 +270,7 @@ Vectors live in **Qdrant**; Den **Postgres** holds passage-registry metadata onl
 
 - unchanged `content_hash`: no-op;
 - changed `content_hash`: re-embed and replace the passage;
-- superseded/deleted canonical source: delete passages by source id + hash;
+- superseded/deleted/archived canonical source: delete passages by source id + hash or skip on reconcile;
 - bear package import rebuilds vectors from `memory.sqlite`; vectors are never shipped;
 - search results point back to canonical sources.
 
@@ -272,7 +288,7 @@ Allow `work` to benefit from curated pair/curate learning without reading raw `p
 
 ### Tool
 
-Upgrade `memory_search` to **hybrid** (vector recall over Qdrant when configured, else SQL `LIKE`), ranked by `recency × relevance × importance` ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)); degrade gracefully to anchors + `LIKE` when Qdrant is unavailable. An optional `den.memory.recall` / `memory_recall` may be added if a dedicated recall entry point is preferred over overloading `memory_search`.
+Upgrade `memory_search` to **hybrid** (vector recall over Qdrant when configured, else SQL `LIKE`), ranked by `recency × relevance × importance × freshness_trend` ([ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md)); degrade gracefully to anchors + `LIKE` when Qdrant is unavailable. Vector/keyword/graph hits now carry salience plus lifecycle/freshness indicators. An optional `den.memory.recall` / `memory_recall` may be added if a dedicated recall entry point is preferred over overloading `memory_search`.
 
 ### Work policy
 
@@ -375,10 +391,10 @@ Humans should see what the system is doing and override when necessary, without 
 
 1. ✅ Pair reflection creates a memory proposal and enqueues a `memory_curate` run.
 2. ✅ Add lane-neutral `bear_reflection_runs`, `bear_reflection_run_items`, and `reflection_conversations` storage.
-3. Next: **tool exposure** — decide the per-profile memory roster so user-facing bears actually have memory tools (see [Memory Tools Implementation Plan](MEMORY_TOOLS_IMPLEMENTATION_PLAN.md)); align `session_info.memory.available_tools` with the real roster.
+3. ✅ **Tool exposure (read side)** — `chat`, `pair`, `curate`, `work`, and `watch` have read/status/search descriptors; write/review policy for `work`/`watch` remains open.
 4. Next: add manual/queued conductor runner for the `memory_curate` lane.
 5. Next: surface generated proposals and queued reflection runs in UI.
-6. Next: apply [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) schema deltas (`salience` on `memory_records`, `valid_from`/`invalid_at`, begin writing `supersedes_memory_id`, `memory_harvest_marks`).
+6. ✅ Apply core [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) store deltas (`salience` on `memory_records`, `valid_from`/`invalid_at`, store-level supersession invalidation, `memory_harvest_marks`) and deterministic proposal safety metadata (freshness conflicts, archive/risk gates, exact-claim different-path consolidation review). Next: model-assisted curate/consolidation policy.
 7. Then: add model-assisted pair reflection (P2) and the `archive_harvest` lane (P2.5).
-8. Then: stand up the derived Qdrant recall index (P3, [Derived recall index plan](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)) and hybrid scored `memory_search` (P4).
+8. ✅ Derived Qdrant recall index (P3) and hybrid scored `memory_search` (P4) are landed; remaining recall work is live ops exercise and deeper salience/freshness scoring.
 9. Then: work task context bridge (P5).

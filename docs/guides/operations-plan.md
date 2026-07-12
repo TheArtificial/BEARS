@@ -5,7 +5,7 @@
 **Scope.** This plan describes *operational strategy and policy*. Step-by-step deploy mechanics live in the per-service guides and are referenced, not duplicated:
 
 - Stack composition and shared network: [`docker-compose.yaml`](../../docker-compose.yaml), [deployment/deployment.md](deployment/deployment.md)
-- Den (control plane + native runtime): [services/den/COOLIFY_DEPLOY.md](../../services/den/COOLIFY_DEPLOY.md), [den-deploy.md](den-deploy.md)
+- Den (control plane + in-process runtime): [services/den/COOLIFY_DEPLOY.md](../../services/den/COOLIFY_DEPLOY.md), [den-deploy.md](den-deploy.md)
 - Bifrost (model gateway): [services/bifrost/COOLIFY_DEPLOY.md](../../services/bifrost/COOLIFY_DEPLOY.md)
 - Garage (object store): [services/garage/COOLIFY_DEPLOY.md](../../services/garage/COOLIFY_DEPLOY.md)
 - Processes, ports, health endpoints, `/status`: [infrastructure-and-ops.md](infrastructure-and-ops.md)
@@ -17,7 +17,7 @@
 
 | Service | Role | Persistent state | Volume / location | Deploy guide |
 |---------|------|------------------|-------------------|--------------|
-| `bears-den` | Control plane + in-process native agent loop | Per-Bear **SQLite** (canonical Bear memory/tasks/entities) | `bears-den-sqlite-data` → `BEAR_SQLITE_DATA_DIR` (`/var/lib/den/bear-sqlite`) | [den](../../services/den/COOLIFY_DEPLOY.md) |
+| `bears-den` | Control plane + in-process agent loop | Per-Bear **SQLite** (canonical Bear memory/tasks/entities) | `bears-den-sqlite-data` → `BEAR_SQLITE_DATA_DIR` (`/var/lib/den/bear-sqlite`) | [den](../../services/den/COOLIFY_DEPLOY.md) |
 | Den **Postgres** | Control-plane DB (users, bears, membership, sessions, Connections, recall passage registry) | **PostgreSQL** | managed DB via `DATABASE_URL`, or bundled `bears-postgres` → `bears-postgres-data` (profile `bundled`) | [den](../../services/den/COOLIFY_DEPLOY.md) |
 | `bears-qdrant` | Derived recall vector index ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)) | Vectors (**derived, rebuildable**) | `bears-qdrant-data` → `/qdrant/storage` (profile `recall`) | this doc |
 | `garage` | S3-compatible object store (artifacts, Cabinet/Outline attachments) | Object metadata + data | Garage metadata/data volumes | [garage](../../services/garage/COOLIFY_DEPLOY.md) |

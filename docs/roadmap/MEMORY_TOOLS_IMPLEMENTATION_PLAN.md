@@ -1,11 +1,11 @@
 # Memory tools implementation plan
 
-> **Direction changed (2026-06).** All roles use Den-hosted memory tools against per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); the "Letta Code-native MemFS tools for harness-backed roles" / API-direct split is removed. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest/consolidation/recall scoring are in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md#memory-model-under-sqlite) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** All stances use Den-hosted memory tools against per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); the older split between different runtime families is removed. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest/consolidation/recall scoring are in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md#memory-model-under-sqlite) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 >
 > **Note.** Memory "files"/"paths" are logical-path projections over SQLite `memory_records`, not files in a MemFS/git branch.
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
-Status: partially implemented. P0/P1 memory tools (`memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, `memory_search`, `memory_request_review`) exist for `pair`, `chat`, and read tools for `curate` against SQLite. **Open gaps:** `work`/`watch` exposure, ADR-0041 schema deltas, and harvest/consolidation automation.
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
+Status: partially implemented. P0/P1 memory tools (`memory_write_entry`, `memory_status`, `memory_browse`, `memory_read`, `memory_search`, `memory_request_review`) exist against SQLite. `chat` has read/write exposure, `curate`/`work`/`watch` have read exposure. **Open gaps:** scoped write/review policy for `work`/`watch` and harvest/consolidation automation.
 
 Related docs:
 
@@ -28,9 +28,9 @@ Related docs:
 | `memory_browse`, `memory_read`, `memory_search` (`LIKE`) | P1 | Implemented (SQLite) |
 | `memory_request_review` + proposals/promotions | P4 | Implemented (SQLite `memory_proposals`) |
 | Exposure to `chat` profile | P2 | **Done** — descriptors + keyword-gated web tool surface |
-| Exposure to `work`/`watch` profiles | P2/P3 | **Not done** |
+| Exposure to `work`/`watch` profiles | P2/P3 | **Partial** — read/status/search exposed; write/review policy still open |
 | Hybrid/semantic recall (Qdrant) | P5 | **Landed** — turn-start recall + hybrid `memory_search` (vector + keyword + graph + temporal) when Qdrant configured ([DERIVED_RECALL_INDEX](DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md)) |
-| ADR-0041 schema deltas (`salience` on records, `memory_harvest_marks`, consolidation supersession writes) | Data model | **Partial** — `valid_from`/`invalid_at` on `memory_records` landed; `salience` on records, harvest marks, live supersession writes open |
+| ADR-0041 schema deltas (`salience` on records, `memory_harvest_marks`, consolidation supersession writes) | Data model | **Partial** — `valid_from`/`invalid_at`, record `salience`, harvest marks, and store-level supersession invalidation landed; curate/consolidation policy still open |
 
 Memory tools are gated by per-profile `allowed_roles` (in `den-tools` descriptors). `chat` is granted read/write memory tools; web-chat turns use a keyword-gated tool surface so casual prompts stay tool-free while memory-aware prompts unlock the full roster. Proactive key-memory projection and derived recall run on every `chat` turn (same assembler path as `pair`).
 
@@ -602,8 +602,8 @@ Add or extend stack smoke coverage for:
 
 The pair vertical slice (`session_info`, `memory_write_entry`, `memory_status`, read/search) is implemented. The next targets, in order:
 
-1. **Exposure** — extend `allowed_roles` so the user-facing `chat` profile gets a read/search (and scoped write) subset, and align `session_info.memory.available_tools` with the real per-role roster. This is what makes bears report and use memory tools.
-2. **ADR-0041 schema deltas** — `salience` on `memory_records`, `valid_from`/`invalid_at`, begin writing `supersedes_memory_id`, `memory_harvest_marks`.
-3. **Derived recall** (slice 8) — Qdrant index + hybrid scored `memory_search`.
+1. **Scoped write/review policy** — decide whether `work`/`watch` get `memory_write_entry` and/or `memory_request_review`, and keep schema-owned observations/results out of generic memory writes.
+2. **Consolidation policy** — use the landed ADR-0041 store primitives (`salience`, harvest marks, supersession + `invalid_at`) from `curate`/consolidation flows.
+3. **Entity tools/anchors** — expose entity browse/resolve and promote resolved salient entities into anchors.
 
 This closes the perceived "no memory tools" gap first, then makes memory semantically recallable.

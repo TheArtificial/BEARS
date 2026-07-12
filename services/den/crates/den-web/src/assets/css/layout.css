@@ -7,6 +7,8 @@ html {
 
 body {
     background-color: var(--page-color);
+    background-image: radial-gradient(var(--paper-pattern-color) 0.8px, transparent 0.8px);
+    background-size: 5px 5px;
 
     /* max-width: 96%; */
     padding-left: 0.6em;

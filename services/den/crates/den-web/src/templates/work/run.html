@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Work run{% endblock %}
+{% block head %}
+{% if run.is_active %}<meta http-equiv="refresh" content="10" />{% endif %}
+{% endblock %}
+{% block content %}
+<p><a href="/work">← Work</a> · <a href="/work/jobs/{{ run.job_id }}">Job</a></p>
+<h1>Run {{ run.id[:8] }}… <small>({{ run.state }})</small></h1>
+<p>{{ job_goal }}</p>
+
+<section>
+    <h2>Execution</h2>
+    <table>
+        <tbody>
+            <tr><th>Bear</th><td>{{ run.bear_slug }}</td></tr>
+            <tr><th>State</th><td>
+                {{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}
+                {% if run.queue_position %}
+                — position {{ run.queue_position }} in the job's queue{% if run.waiting_on_run_id %},
+                waiting on run <a href="/work/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}
+                (runs within a job execute one at a time)
+                {% endif %}
+            </td></tr>
+            <tr><th>Attempt</th><td>{{ run.attempt }}</td></tr>
+            <tr><th>Root / ref</th><td>{{ run.root or "—" }} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
+            <tr><th>Image</th><td>{{ run.image or "root default" }}</td></tr>
+            <tr><th>Sandbox</th><td>{{ run.sandbox_type or "—" }}</td></tr>
+            <tr><th>Sandbox strength</th><td>{{ run.sandbox_strength or "—" }}</td></tr>
+            <tr><th>Queued</th><td>{{ run.queued_at }}</td></tr>
+            <tr><th>Started</th><td>{{ run.started_at or "—" }}</td></tr>
+            <tr><th>Finished</th><td>{{ run.finished_at or "—" }}</td></tr>
+            <tr><th>Duration</th><td>{% if run.duration_secs is not none %}{{ run.duration_secs }}s{% else %}—{% endif %}</td></tr>
+            {% if usage %}<tr><th>Usage</th><td><code>{{ usage }}</code></td></tr>{% endif %}
+            {% if run.cleanup_failed %}<tr><th>Cleanup</th><td>⚠ failed — sandbox resources may need manual removal</td></tr>{% endif %}
+        </tbody>
+    </table>
+    {% if run.is_active %}
+    <form method="post" action="/work/runs/{{ run.id }}/cancel">
+        <button type="submit">Cancel run</button>
+    </form>
+    {% elif can_retry %}
+    <form method="post" action="/work/runs/{{ run.id }}/retry">
+        <button type="submit">Retry (new attempt)</button>
+    </form>
+    {% endif %}
+</section>
+
+{% if run.result_summary or run.error or run.published_branch or run.publish_failed %}
+<section>
+    <h2>Outcome</h2>
+    {% if run.result_summary %}<p>{{ run.result_summary }}</p>{% endif %}
+    {% if run.error %}<p><strong>Error:</strong> {{ run.error }}</p>{% endif %}
+    {% if run.published_branch %}
+    <p><strong>Published:</strong> <code>{{ run.published_branch }}</code> @ <code>{{ run.published_commit }}</code></p>
+    {% endif %}
+    {% if run.publish_failed %}
+    <p><strong>⚠ Publish failed:</strong> {{ run.publish_failed }} — the task's commits remain in the run diff below.</p>
+    {% endif %}
+    {% if armature_report %}<p><small>Armature report: <code>{{ armature_report }}</code></small></p>{% endif %}
+    {% if turn_outcome %}<p><small>Turn outcome: <code>{{ turn_outcome }}</code></small></p>{% endif %}
+</section>
+{% endif %}
+
+{% if work_surface %}
+<section>
+    <h2>Work surface</h2>
+    <pre><code>{{ work_surface }}</code></pre>
+</section>
+{% endif %}
+
+{% if changed_files %}
+<section>
+    <h2>Changed files ({{ changed_files | length }})</h2>
+    <table>
+        <tbody>
+            {% for file in changed_files %}
+            <tr><td><code>{{ file.status }}</code></td><td>{{ file.path }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% if diff_patch %}
+    <details>
+        <summary>Diff</summary>
+        <pre><code>{{ diff_patch }}</code></pre>
+    </details>
+    {% endif %}
+</section>
+{% endif %}
+
+{% if log_tail %}
+<section>
+    <h2>Log tail</h2>
+    <pre><code>{{ log_tail }}</code></pre>
+</section>
+{% endif %}
+{% endblock %}

@@ -3,16 +3,32 @@
 {% block title %}Admin{% endblock %}
 
 {% block admin_content %}
-<h3>Site administration</h3>
+<h3>Dashboard</h3>
 <p>{{ users | length }} user(s) in database.</p>
 
-<h4>Agent runtime</h4>
-<p><strong>Native</strong> — Den in-process agent loop with SQLite memory per bear.</p>
+<section class="admin-dashboard-grid" aria-label="Admin sections">
+  <div>
+    <h4>Identity</h4>
+    <ul>
+      <li><a href="/admin/users/">Users</a></li>
+      <li><a href="/admin/bears/">Bears</a></li>
+      <li><a href="/admin/membership/">Membership</a></li>
+    </ul>
+  </div>
 
-<ul>
-  <li><a href="/admin/users/">Users</a></li>
-  <li><a href="/admin/bears/">Bears</a></li>
-  <li><a href="/admin/membership/">Access</a></li>
-  <li><a href="/admin/oauth_clients/">OAuth clients</a></li>
-</ul>
+  <div>
+    <h4>Runtime</h4>
+    <ul>
+      <li><a href="/admin/models">Models</a></li>
+      <li><a href="/admin/sandbox">Sandbox images</a></li>
+      <li><a href="/admin/oauth_clients/">OAuth clients</a></li>
+    </ul>
+  </div>
+  <div>
+    <h4>Operations</h4>
+    <ul>
+      <li><a href="/admin">Dashboard</a></li>
+    </ul>
+  </div>
+</section>
 {% endblock %}

@@ -7,10 +7,16 @@
 mod client;
 mod embeddings;
 mod idle_byte_stream;
+mod model_options;
+pub mod model_registry;
 
 pub use client::{
-    normalize_llm_model_handle, ChatCompletionRequest, ChatMessage, ChatToolCall,
-    ChatToolCallFunction, LlmClient, LlmToolDefinition,
+    bifrost_key_selection_error, normalize_llm_model_handle, preferred_api_style_for_model,
+    preferred_api_style_for_model_with_catalog_support, ChatCompletionRequest, ChatMessage,
+    ChatToolCall, ChatToolCallFunction, LlmApiStyle, LlmClient, LlmRequestTelemetry,
+    LlmToolDefinition,
 };
 pub use embeddings::EmbeddingClient;
 pub use idle_byte_stream::byte_stream_with_idle_timeout;
+pub use model_options::{ModelOption, ToolOption};
+pub use model_registry::execution_fallback_model_handles;

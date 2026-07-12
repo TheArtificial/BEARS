@@ -80,7 +80,7 @@ pub fn render_prometheus_text() -> String {
 
     writeln!(
         s,
-        "# HELP den_chat_send_started_total Chat POST /v1/chat/send requests that passed auth and received an upstream Codepool streaming response (SSE proxy about to start)."
+        "# HELP den_chat_send_started_total Chat POST /v1/chat/send requests that passed auth and started an SSE response."
     )
     .unwrap();
     writeln!(s, "# TYPE den_chat_send_started_total counter").unwrap();
@@ -88,7 +88,7 @@ pub fn render_prometheus_text() -> String {
 
     writeln!(
         s,
-        "# HELP den_chat_send_finished_ok_total SSE streams from Codepool that forwarded at least one byte."
+        "# HELP den_chat_send_finished_ok_total SSE streams that forwarded at least one byte."
     )
     .unwrap();
     writeln!(s, "# TYPE den_chat_send_finished_ok_total counter").unwrap();
@@ -96,7 +96,7 @@ pub fn render_prometheus_text() -> String {
 
     writeln!(
         s,
-        "# HELP den_chat_send_finished_empty_upstream_total SSE streams that ended with zero bytes from Codepool."
+        "# HELP den_chat_send_finished_empty_upstream_total SSE streams that ended with zero bytes from upstream."
     )
     .unwrap();
     writeln!(
@@ -116,7 +116,7 @@ pub fn render_prometheus_text() -> String {
 
     writeln!(
         s,
-        "# HELP den_chat_send_runtime_legacy_total Chat send requests routed through the legacy Codepool conversation endpoint."
+        "# HELP den_chat_send_runtime_legacy_total Chat send requests routed through a legacy conversation endpoint."
     )
     .unwrap();
     writeln!(s, "# TYPE den_chat_send_runtime_legacy_total counter").unwrap();
@@ -124,7 +124,7 @@ pub fn render_prometheus_text() -> String {
 
     writeln!(
         s,
-        "# HELP den_chat_send_runtime_bear_channel_total Chat send requests routed through Codepool bear_channel."
+        "# HELP den_chat_send_runtime_bear_channel_total Chat send requests routed through a legacy bear_channel path."
     )
     .unwrap();
     writeln!(s, "# TYPE den_chat_send_runtime_bear_channel_total counter").unwrap();
@@ -168,36 +168,14 @@ pub fn render_prometheus_text() -> String {
     )
     .unwrap();
     writeln!(s, "# TYPE den_chat_send_dropped_with_bytes_total counter").unwrap();
-    writeln!(s, "den_chat_send_dropped_with_bytes_total {dropped_with_bytes}").unwrap();
+    writeln!(
+        s,
+        "den_chat_send_dropped_with_bytes_total {dropped_with_bytes}"
+    )
+    .unwrap();
 
     s
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prometheus_text_has_type_and_help_lines() {
-        let s = render_prometheus_text();
-        assert!(s.contains("# HELP den_chat_send_started_total"));
-        assert!(s.contains("# TYPE den_chat_send_started_total counter"));
-        assert!(s.contains("den_chat_send_started_total "));
-        assert!(s.contains("# HELP den_chat_send_runtime_legacy_total"));
-        assert!(s.contains("# HELP den_chat_send_runtime_bear_channel_total"));
-        assert!(s.contains("# HELP den_chat_send_ttfb_ms_sum"));
-        assert!(s.contains("# HELP den_chat_send_dropped_total"));
-    }
-
-    #[test]
-    fn ttfb_and_drop_counters_increment() {
-        record_chat_send_ttfb_ms(42);
-        record_chat_send_dropped(false);
-        record_chat_send_dropped(true);
-        let s = render_prometheus_text();
-        assert!(s.contains("den_chat_send_ttfb_ms_sum 42"));
-        assert!(s.contains("den_chat_send_ttfb_ms_count 1"));
-        assert!(s.contains("den_chat_send_dropped_total 2"));
-        assert!(s.contains("den_chat_send_dropped_with_bytes_total 1"));
-    }
-}
+mod tests;

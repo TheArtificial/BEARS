@@ -3,14 +3,12 @@ use sqlx::PgPool;
 use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::{
-    conversation_message_types::{
-        ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
-        ConversationMessageWrite,
-    },
+use den_service::conversation::message_types::{
+    ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
+    ConversationMessageWrite,
 };
 
-use crate::conversation_ids::is_acp_history_target;
+use den_core::conversation_ids::is_acp_history_target;
 use super::persistence::{
     append_message, ensure_conversation_for_external_id, list_messages_page,
 };
@@ -93,9 +91,9 @@ impl CanonicalVisibleRole {
 }
 
 impl ConversationEventProvenance {
-    pub fn acp_session(scope_id: impl Into<String>) -> Self {
+    pub fn client_session(scope_id: impl Into<String>) -> Self {
         Self {
-            source: "acp_stream".to_string(),
+            source: "client_stream".to_string(),
             scope_id: scope_id.into(),
         }
     }
@@ -691,7 +689,7 @@ pub fn spawn_persist_workflow_event(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectionSource {
-    AcpStream,
+    ClientStream,
     MemoryProposals,
     PairReflection,
     ReflectionConductor,
@@ -701,7 +699,7 @@ pub enum ProjectionSource {
 impl ProjectionSource {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::AcpStream => "acp_stream",
+            Self::ClientStream => "client_stream",
             Self::MemoryProposals => "memory_proposals",
             Self::PairReflection => "pair_reflection",
             Self::ReflectionConductor => "reflection_conductor",
@@ -767,7 +765,7 @@ pub struct MemoryProposalResolvedPayload {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PairReflectionCompletedPayload {
     pub reflection_run_id: Uuid,
-    pub acp_session_id: String,
+    pub client_session_id: String,
     pub trigger: String,
     pub status: String,
     pub summary_path: Option<String>,
@@ -1210,8 +1208,7 @@ mod tests {
             "den-conv-abc123"
         ));
         assert!(!canonical_persistence_enabled_for_conversation(
-            "letta-only-id"
+            "provider-only-id"
         ));
     }
 }
-

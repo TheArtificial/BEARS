@@ -2,7 +2,7 @@
 
 a conversation, background run, etc.
 
-**trust profile**
+**trust stance**
 
 a bundle of capability boundaries
 used to enforce the Rule of Two
@@ -31,7 +31,7 @@ Connections. See ADR-0006 and ADR-0040.
 a Den-level, owner-scoped authenticated link to an
 external provider (GitHub, Figma, Google, SSH).
 Set up once, reusable across resources, Bears, trust
-profiles, and governance modes. A work surface is
+stances, and governance modes. A work surface is
 reached through a connection when externally backed.
 See ADR-0037 and ADR-0040.
 
@@ -42,15 +42,19 @@ gate), or check_ref. Injected into dispatch as the
 success contract. See ADR-0034.
 
 **task focus**
-the ephemeral per-turn working state the native
-loop uses to judge whether a candidate yield is
+the ephemeral per-turn working state the in-process
+Den loop uses to judge whether a candidate yield is
 premature. A projection of governance mode ×
 acceptance-criteria state × run/task status, not a
 durable record. See ADR-0023 (re-homed by ADR-0035
-and ADR-0039).
+and ADR-0039); ADR-0050 and the Agent Loop Control
+implementation plan define the concrete budget,
+checkpoint, and Docket reconciliation machinery.
 
 **continuation bias**
 how aggressively a run continues vs. yields. Owned
 by the governance mode, defaulted/modulated by the
-trust profile — not defined by the profile. See
-ADR-0039.
+trust stance — not defined by the stance. See
+ADR-0039. Tool-call budgets, failure thresholds, and
+checkpoint nudges are Agent Loop Control concerns;
+see ADR-0050.

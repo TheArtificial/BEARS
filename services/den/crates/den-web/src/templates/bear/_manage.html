@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}{{ bear.name }} · {{ manage_title | default("Manage") }}{% endblock %}
+{% block content %}
+<div class="bear-manage">
+    {% include "bear/settings/_bear_nav.html" %}
+    <div class="bear-manage-main">{% block manage %}{% endblock %}</div>
+</div>
+{% endblock %}

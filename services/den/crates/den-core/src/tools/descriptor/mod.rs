@@ -2,11 +2,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const ALL_PROFILES: &[&str] = &["chat", "pair", "curate", "work", "watch"];
-const WORK_PLAN_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work"];
-const WORK_PLAN_UPDATE_PROFILES: &[&str] = &["chat", "pair", "work"];
+const TASK_LIST_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work"];
+const TASK_LIST_UPDATE_PROFILES: &[&str] = &["chat", "pair", "work"];
 const CHAT_AND_PAIR_PROFILES: &[&str] = &["chat", "pair"];
 const PAIR_PROFILES: &[&str] = &["pair"];
-const MEMORY_READ_PROFILES: &[&str] = &["chat", "pair", "curate"];
+const MEMORY_READ_PROFILES: &[&str] = &["chat", "pair", "curate", "work", "watch"];
+const ENTITY_RELATION_WRITE_PROFILES: &[&str] = &["chat", "pair", "work", "watch"];
 const CURATE_PROFILES: &[&str] = &["curate"];
 const WATCH_PROFILES: &[&str] = &["watch"];
 const WORK_PROFILES: &[&str] = &["work"];
@@ -14,44 +15,57 @@ const WORK_PROFILES: &[&str] = &["work"];
 use crate::BearProfile;
 
 use crate::tools::{
+    constants::{
+        DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER, DEN_BEAR_GET_SELF,
+        DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF, DEN_CAPABILITY_DESCRIBE,
+        DEN_CAPABILITY_DESCRIBE_PROVIDER, DEN_CAPABILITY_SEARCH, DEN_CAPABILITY_SEARCH_PROVIDER,
+        DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE, DEN_CONVERSATION_SET_TITLE_PROVIDER,
+        DEN_CORE_WRITE_RESULT_SUMMARY, DEN_ENTITY_BROWSE, DEN_ENTITY_BROWSE_PROVIDER,
+        DEN_ENTITY_LINK_MEMORY, DEN_ENTITY_LINK_MEMORY_PROVIDER, DEN_ENTITY_MERGE,
+        DEN_ENTITY_MERGE_PROVIDER, DEN_ENTITY_RESOLVE, DEN_ENTITY_RESOLVE_PROVIDER,
+        DEN_ENTITY_SPLIT, DEN_ENTITY_SPLIT_PROVIDER, DEN_ENTITY_WRITE_ACCESS_RULE,
+        DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER, DEN_ENTITY_WRITE_ANCHOR,
+        DEN_ENTITY_WRITE_ANCHOR_PROVIDER, DEN_JOB_CREATE, DEN_JOB_CREATE_PROVIDER,
+        DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE,
+        DEN_JOB_EXECUTE_PROVIDER, DEN_JOB_GET, DEN_JOB_GET_PROVIDER, DEN_JOB_LIST,
+        DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE, DEN_JOB_UPDATE_PROVIDER,
+        DEN_MEMORY_APPLY_CORE_UPDATE, DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER,
+        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER,
+        DEN_MEMORY_LIST_PROPOSALS, DEN_MEMORY_LIST_PROPOSALS_PROVIDER, DEN_MEMORY_MARK_LIFECYCLE,
+        DEN_MEMORY_MARK_LIFECYCLE_PROVIDER, DEN_MEMORY_ORIENT_WORK_SURFACE,
+        DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER, DEN_MEMORY_READ, DEN_MEMORY_READ_PROPOSAL,
+        DEN_MEMORY_READ_PROPOSAL_PROVIDER, DEN_MEMORY_READ_PROVIDER, DEN_MEMORY_REQUEST_REVIEW,
+        DEN_MEMORY_REQUEST_REVIEW_PROVIDER, DEN_MEMORY_RESOLVE_PROPOSAL,
+        DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER, DEN_MEMORY_SEARCH, DEN_MEMORY_SEARCH_PROVIDER,
+        DEN_MEMORY_STATUS, DEN_MEMORY_STATUS_PROVIDER, DEN_MEMORY_TREE,
+        DEN_MEMORY_TREE_LEGACY_PROVIDER, DEN_MEMORY_TREE_PROVIDER, DEN_MEMORY_WRITE_ENTRY,
+        DEN_MEMORY_WRITE_ENTRY_PROVIDER, DEN_OBSERVATION_WRITE, DEN_PLAN_MODE_CANCEL,
+        DEN_PLAN_MODE_CANCEL_PROVIDER, DEN_PLAN_MODE_ENTER, DEN_PLAN_MODE_ENTER_PROVIDER,
+        DEN_PLAN_MODE_EXIT, DEN_PLAN_MODE_EXIT_PROVIDER, DEN_PLAN_MODE_RECORD_APPROVAL,
+        DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER, DEN_PLAN_MODE_STATUS,
+        DEN_PLAN_MODE_STATUS_PROVIDER, DEN_POLICY_GET_SELF, DEN_PROMPT_MEMORY_LIST,
+        DEN_PROMPT_MEMORY_LIST_PROVIDER, DEN_PROMPT_MEMORY_PATCH, DEN_PROMPT_MEMORY_PATCH_PROVIDER,
+        DEN_PROMPT_MEMORY_UPSERT, DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_RUN_WRITE_RESULT,
+        DEN_SITUATION_GET, DEN_SITUATION_GET_LEGACY_PROVIDER, DEN_SITUATION_GET_PROVIDER,
+        DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
+        DEN_TASK_APPROVE_INTENT, DEN_TASK_CREATE, DEN_TASK_CREATE_PROVIDER, DEN_TASK_LIST,
+        DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_GET_STATUS_PROVIDER, DEN_TASK_LISTS_LIST,
+        DEN_TASK_LISTS_LIST_PROVIDER, DEN_TASK_LISTS_REQUEST_HANDOFF,
+        DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE,
+        DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_CHECKOUT_PROVIDER,
+        DEN_TASK_LIST_PROVIDER, DEN_TASK_LIST_SYNC, DEN_TASK_LIST_SYNC_PROVIDER,
+        DEN_TASK_REJECT_INTENT, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS,
+        DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TASK_UPDATE_PROVIDER, DEN_TASK_WRITE_INTENT,
+        DEN_TOOL_OUTPUT_READ, DEN_TOOL_OUTPUT_READ_PROVIDER, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
+        DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_FETCH_PROVIDER, DEN_WEB_SEARCH,
+        DEN_WEB_SEARCH_PROVIDER, DEN_WORK_CATALOG, DEN_WORK_CATALOG_PROVIDER, DEN_WORK_DISPATCH,
+        DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_CANCEL_PROVIDER,
+        DEN_WORK_RUN_GET, DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST, DEN_WORK_RUN_LIST_PROVIDER,
+    },
     display::ToolDisplayDescriptor,
     tool_descriptor_guidance::{
         render_tool_descriptor_guidance, ToolDescriptorGuidance, ToolOrientationPolicy,
         ToolScopeKind, ToolSideEffectKind,
-    },
-    constants::{
-        DEN_BEAR_ENVIRONMENT, DEN_BEAR_ENVIRONMENT_PROVIDER,
-        DEN_BEAR_GET_SELF, DEN_BEAR_LIST_MEMBERS, DEN_CAPABILITIES_LIST_SELF,
-        DEN_CHANNEL_GET_CONTEXT, DEN_CONVERSATION_SET_TITLE,
-        DEN_CONVERSATION_SET_TITLE_PROVIDER, DEN_CORE_WRITE_RESULT_SUMMARY,
-        DEN_MEMORY_APPLY_CORE_UPDATE, DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER,
-        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
-        DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER, DEN_MEMORY_LIST_PROPOSALS,
-        DEN_MEMORY_LIST_PROPOSALS_PROVIDER, DEN_MEMORY_ORIENT_WORK_SURFACE,
-        DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER, DEN_MEMORY_READ,
-        DEN_MEMORY_READ_PROPOSAL, DEN_MEMORY_READ_PROPOSAL_PROVIDER, DEN_MEMORY_READ_PROVIDER,
-        DEN_MEMORY_REQUEST_REVIEW, DEN_MEMORY_REQUEST_REVIEW_PROVIDER,
-        DEN_MEMORY_RESOLVE_PROPOSAL, DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER,
-        DEN_MEMORY_SEARCH, DEN_MEMORY_SEARCH_PROVIDER, DEN_MEMORY_STATUS,
-        DEN_MEMORY_STATUS_PROVIDER, DEN_MEMORY_TREE, DEN_MEMORY_TREE_LEGACY_PROVIDER,
-        DEN_MEMORY_TREE_PROVIDER, DEN_MEMORY_WRITE_ENTRY, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
-        DEN_OBSERVATION_WRITE, DEN_PLAN_MODE_CANCEL, DEN_PLAN_MODE_CANCEL_PROVIDER,
-        DEN_PLAN_MODE_ENTER, DEN_PLAN_MODE_ENTER_PROVIDER, DEN_PLAN_MODE_EXIT,
-        DEN_PLAN_MODE_EXIT_PROVIDER, DEN_PLAN_MODE_RECORD_APPROVAL,
-        DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER, DEN_PLAN_MODE_STATUS,
-        DEN_PLAN_MODE_STATUS_PROVIDER, DEN_POLICY_GET_SELF, DEN_PROMPT_MEMORY_LIST,
-        DEN_PROMPT_MEMORY_LIST_PROVIDER, DEN_PROMPT_MEMORY_PATCH,
-        DEN_PROMPT_MEMORY_PATCH_PROVIDER, DEN_PROMPT_MEMORY_UPSERT,
-        DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_RUN_WRITE_RESULT, DEN_SITUATION_GET,
-        DEN_SITUATION_GET_LEGACY_PROVIDER, DEN_SITUATION_GET_PROVIDER,
-        DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
-        DEN_TASK_APPROVE_INTENT, DEN_TASK_REJECT_INTENT, DEN_TASK_WRITE_INTENT,
-        DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_FETCH_LEGACY_PROVIDER,
-        DEN_WEB_FETCH_PROVIDER, DEN_WEB_SEARCH, DEN_WEB_SEARCH_PROVIDER,
-        DEN_WORK_PLAN_GET_STATUS, DEN_WORK_PLAN_GET_STATUS_PROVIDER, DEN_WORK_PLAN_LIST,
-        DEN_WORK_PLAN_LIST_PROVIDER, DEN_WORK_PLAN_REQUEST_HANDOFF,
-        DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER, DEN_WORK_PLAN_UPDATE,
-        DEN_WORK_PLAN_UPDATE_PROVIDER,
     },
 };
 
@@ -78,9 +92,12 @@ pub struct DenToolDescriptor {
 
 pub fn provider_safe_tool_name(name: &str) -> String {
     match name {
+        DEN_CAPABILITY_SEARCH => return DEN_CAPABILITY_SEARCH_PROVIDER.to_string(),
+        DEN_CAPABILITY_DESCRIBE => return DEN_CAPABILITY_DESCRIBE_PROVIDER.to_string(),
         DEN_CONVERSATION_SET_TITLE => return DEN_CONVERSATION_SET_TITLE_PROVIDER.to_string(),
         DEN_WEB_FETCH => return DEN_WEB_FETCH_PROVIDER.to_string(),
         DEN_WEB_SEARCH => return DEN_WEB_SEARCH_PROVIDER.to_string(),
+        DEN_TOOL_OUTPUT_READ => return DEN_TOOL_OUTPUT_READ_PROVIDER.to_string(),
         DEN_BEAR_ENVIRONMENT => return DEN_BEAR_ENVIRONMENT_PROVIDER.to_string(),
         DEN_SITUATION_GET => return DEN_SITUATION_GET_PROVIDER.to_string(),
         DEN_MEMORY_WRITE_ENTRY => return DEN_MEMORY_WRITE_ENTRY_PROVIDER.to_string(),
@@ -88,11 +105,18 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_TREE => return DEN_MEMORY_TREE_PROVIDER.to_string(),
         DEN_MEMORY_READ => return DEN_MEMORY_READ_PROVIDER.to_string(),
         DEN_MEMORY_SEARCH => return DEN_MEMORY_SEARCH_PROVIDER.to_string(),
+        DEN_ENTITY_BROWSE => return DEN_ENTITY_BROWSE_PROVIDER.to_string(),
+        DEN_ENTITY_RESOLVE => return DEN_ENTITY_RESOLVE_PROVIDER.to_string(),
+        DEN_ENTITY_LINK_MEMORY => return DEN_ENTITY_LINK_MEMORY_PROVIDER.to_string(),
+        DEN_ENTITY_MERGE => return DEN_ENTITY_MERGE_PROVIDER.to_string(),
+        DEN_ENTITY_SPLIT => return DEN_ENTITY_SPLIT_PROVIDER.to_string(),
+        DEN_ENTITY_WRITE_ACCESS_RULE => return DEN_ENTITY_WRITE_ACCESS_RULE_PROVIDER.to_string(),
+        DEN_ENTITY_WRITE_ANCHOR => return DEN_ENTITY_WRITE_ANCHOR_PROVIDER.to_string(),
         DEN_MEMORY_ORIENT_WORK_SURFACE => {
-            return DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER.to_string()
+            return DEN_MEMORY_ORIENT_WORK_SURFACE_PROVIDER.to_string();
         }
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => {
-            return DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER.to_string()
+            return DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD_PROVIDER.to_string();
         }
         DEN_MEMORY_REQUEST_REVIEW => return DEN_MEMORY_REQUEST_REVIEW_PROVIDER.to_string(),
         DEN_PROMPT_MEMORY_UPSERT => return DEN_PROMPT_MEMORY_UPSERT_PROVIDER.to_string(),
@@ -102,10 +126,32 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_MEMORY_READ_PROPOSAL => return DEN_MEMORY_READ_PROPOSAL_PROVIDER.to_string(),
         DEN_MEMORY_RESOLVE_PROPOSAL => return DEN_MEMORY_RESOLVE_PROPOSAL_PROVIDER.to_string(),
         DEN_MEMORY_APPLY_CORE_UPDATE => return DEN_MEMORY_APPLY_CORE_UPDATE_PROVIDER.to_string(),
-        DEN_WORK_PLAN_LIST => return DEN_WORK_PLAN_LIST_PROVIDER.to_string(),
-        DEN_WORK_PLAN_GET_STATUS => return DEN_WORK_PLAN_GET_STATUS_PROVIDER.to_string(),
-        DEN_WORK_PLAN_UPDATE => return DEN_WORK_PLAN_UPDATE_PROVIDER.to_string(),
-        DEN_WORK_PLAN_REQUEST_HANDOFF => return DEN_WORK_PLAN_REQUEST_HANDOFF_PROVIDER.to_string(),
+        DEN_MEMORY_MARK_LIFECYCLE => return DEN_MEMORY_MARK_LIFECYCLE_PROVIDER.to_string(),
+        DEN_TASK_LISTS_LIST => return DEN_TASK_LISTS_LIST_PROVIDER.to_string(),
+        DEN_TASK_LISTS_GET_STATUS => return DEN_TASK_LISTS_GET_STATUS_PROVIDER.to_string(),
+        DEN_TASK_LISTS_UPDATE => return DEN_TASK_LISTS_UPDATE_PROVIDER.to_string(),
+        DEN_TASK_LISTS_REQUEST_HANDOFF => {
+            return DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER.to_string()
+        }
+        DEN_JOB_CREATE => return DEN_JOB_CREATE_PROVIDER.to_string(),
+        DEN_JOB_LIST => return DEN_JOB_LIST_PROVIDER.to_string(),
+        DEN_JOB_GET => return DEN_JOB_GET_PROVIDER.to_string(),
+        DEN_JOB_UPDATE => return DEN_JOB_UPDATE_PROVIDER.to_string(),
+        DEN_JOB_EXECUTE => return DEN_JOB_EXECUTE_PROVIDER.to_string(),
+        DEN_JOB_EVALUATE_CRITERION => return DEN_JOB_EVALUATE_CRITERION_PROVIDER.to_string(),
+        DEN_TASK_CREATE => return DEN_TASK_CREATE_PROVIDER.to_string(),
+        DEN_TASK_LIST => return DEN_TASK_LIST_PROVIDER.to_string(),
+        DEN_TASK_UPDATE => return DEN_TASK_UPDATE_PROVIDER.to_string(),
+        DEN_TASK_UPDATE_CURRENT_STATUS => {
+            return DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER.to_string()
+        }
+        DEN_TASK_LIST_SYNC => return DEN_TASK_LIST_SYNC_PROVIDER.to_string(),
+        DEN_TASK_LIST_CHECKOUT => return DEN_TASK_LIST_CHECKOUT_PROVIDER.to_string(),
+        DEN_WORK_DISPATCH => return DEN_WORK_DISPATCH_PROVIDER.to_string(),
+        DEN_WORK_RUN_LIST => return DEN_WORK_RUN_LIST_PROVIDER.to_string(),
+        DEN_WORK_RUN_GET => return DEN_WORK_RUN_GET_PROVIDER.to_string(),
+        DEN_WORK_RUN_CANCEL => return DEN_WORK_RUN_CANCEL_PROVIDER.to_string(),
+        DEN_WORK_CATALOG => return DEN_WORK_CATALOG_PROVIDER.to_string(),
         DEN_PLAN_MODE_ENTER => return DEN_PLAN_MODE_ENTER_PROVIDER.to_string(),
         DEN_PLAN_MODE_STATUS => return DEN_PLAN_MODE_STATUS_PROVIDER.to_string(),
         DEN_PLAN_MODE_RECORD_APPROVAL => return DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER.to_string(),
@@ -132,50 +178,654 @@ pub fn provider_safe_tool_name(name: &str) -> String {
 
 pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
     vec![
-        descriptor(DEN_BEAR_GET_SELF, "About this bear", "Return Den's trusted profile for the current bear.", "bear", &["bear.read"], ALL_PROFILES, empty_schema()),
-        descriptor(DEN_USER_GET_CURRENT, "Current user", "Return Den's trusted profile for the current user in this interaction.", "session", &["user.current.read"], ALL_PROFILES, empty_schema()),
-        descriptor(DEN_BEAR_LIST_MEMBERS, "Bear members", "List users who have access to the current bear, with policy redaction.", "bear", &["bear.members.read"], ALL_PROFILES, empty_schema()),
-        descriptor(DEN_CAPABILITIES_LIST_SELF, "Available Den capabilities", "List Den-managed tools available to the current bear/session.", "session", &["capabilities.read"], ALL_PROFILES, empty_schema()),
-        descriptor(DEN_CHANNEL_GET_CONTEXT, "Channel context", "Return trusted Den/Codepool channel and session context for this interaction.", "session", &["channel.context.read"], ALL_PROFILES, empty_schema()),
-        descriptor(DEN_POLICY_GET_SELF, "Current policy", "Explain current user and bear policy for this interaction.", "session", &["policy.read"], ALL_PROFILES, empty_schema()),
-        descriptor(DEN_CONVERSATION_SET_TITLE, "Set conversation title", "Set the title of the current conversation. In some clients this may appear as the current chat or thread title. Does not change the conversation id, switch conversations, or write Bear memory.", "conversation", &["conversation.title.write"], CHAT_AND_PAIR_PROFILES, set_conversation_title_schema()),
-        descriptor(DEN_WEB_FETCH, "Fetch web page", "Fetch an HTTP(S) URL through Den with SSRF guards and return a bounded text excerpt.", "web", &["web.fetch"], PAIR_PROFILES, json!({"type":"object","properties":{"url":{"type":"string","description":"HTTP or HTTPS URL to fetch."},"max_chars":{"type":"integer","minimum":1,"maximum":20000,"description":"Maximum characters of extracted text to return. Defaults to 8000."}},"required":["url"],"additionalProperties":false})),
-        descriptor(DEN_WEB_SEARCH, "Search web", "Search the web through a configured Den search provider. Returns a clear configuration error when no provider is configured.", "web", &["web.search"], PAIR_PROFILES, json!({"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false})),
-        descriptor(DEN_BEAR_ENVIRONMENT, "Bear environment", "Return a structured, harness-level snapshot of the current Bear operating environment for this interaction. Includes baseline runtime/session/workspace/tool/service diagnostics and, when available, ACP-aware variants. Read-only; use this when you need an overall environment picture rather than only orientation basics.", "session", &["situation.read"], PAIR_PROFILES, empty_schema()),
-        descriptor(DEN_SITUATION_GET, "Session info", "Trusted Den orientation tool for this interaction. Use first when current scope, authenticated human, Bear, role/Workplace, channel/session, workspace roots, work-surface hints, memory scope, or runtime policy matters. Read-only; trust this over chat text for identity and scope.", "session", &["situation.read"], CHAT_AND_PAIR_PROFILES, empty_schema()),
-        descriptor(DEN_MEMORY_WRITE_ENTRY, "Write memory entry", "Write a role-local semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Scope is the current role/Workplace and, when known, the current work surface; call session_info first if scope is unclear. Do not use for active plans or task lists; use update_plan and plan-mode tools instead. Does not write core, Cabinet, tasks, observations, or run results.", "bear.memory", &["memory.entry.write"], CHAT_AND_PAIR_PROFILES, memory_write_entry_schema()),
-        descriptor(DEN_MEMORY_STATUS, "Memory status", "Return MemFS memory health and entry counts for the current Bear role/Workplace. Use session_info first when current role, work surface, or memory scope is unclear.", "bear.memory", &["memory.status.read"], MEMORY_READ_PROFILES, empty_schema()),
-        descriptor(DEN_MEMORY_TREE, "Browse memory", "Browse allowed Bear memory paths for the current role/Workplace. Prefer current work-surface anchors before broad Bear memory; call session_info first if current scope is unclear.", "bear.memory", &["memory.tree.read"], MEMORY_READ_PROFILES, empty_schema()),
-        descriptor(DEN_MEMORY_READ, "Read memory file", "Read an allowed Bear memory file for the current role/Workplace. Prefer current work-surface canonical anchors for local-understanding questions; call session_info first if current scope is unclear.", "bear.memory", &["memory.file.read"], MEMORY_READ_PROFILES, json!({"type":"object","properties":{"path":{"type":"string","description":"Allowed memory path, for example pair/notes/mem_abc.md or core/missions.md."}},"required":["path"],"additionalProperties":false})),
-        descriptor(DEN_MEMORY_SEARCH, "Search memory", "Search allowed Bear memory files for the current role/Workplace. For local project/repo/service questions, orient to the current work surface with session_info and memory_orient_work_surface before broad search.", "bear.memory", &["memory.search"], MEMORY_READ_PROFILES, json!({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["query"],"additionalProperties":false})),
-        descriptor(DEN_MEMORY_ORIENT_WORK_SURFACE, "Orient work surface", "Return a read-only orientation briefing for the likely current work surface using trusted session hints from session_info and canonical memory anchor paths when available. Use before broad memory search for local project/repo/service questions.", "bear.memory", &["memory.tree.read", "memory.file.read"], MEMORY_READ_PROFILES, empty_schema()),
-        descriptor(DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD, "Create work-surface scaffold", "Create a minimal work-surface scaffold in Bear memory and register it in the work-surface index. Mutates memory; call session_info and memory_orient_work_surface first unless the user explicitly names the work surface.", "bear.memory", &["memory.write", "memory.core.write"], PAIR_PROFILES, json!({"type":"object","properties":{"work_surface_slug":{"type":"string","minLength":1,"maxLength":80},"work_surface_name":{"type":"string","minLength":1,"maxLength":200},"overview":{"type":"string","minLength":1,"maxLength":20000},"glossary":{"type":"string","maxLength":20000},"current_understanding":{"type":"string","maxLength":20000}},"required":["work_surface_slug", "work_surface_name", "overview"],"additionalProperties":false})),
-        descriptor(DEN_MEMORY_REQUEST_REVIEW, "Request memory review", "Request Reflection/curate review of role-local memory without writing shared memory directly. Use for role/Workplace-local material that may deserve broader Bear-global review; call session_info first if scope/provenance is unclear.", "bear.memory", &["memory.review.request"], PAIR_PROFILES, memory_request_review_schema()),
-        descriptor(DEN_PROMPT_MEMORY_UPSERT, "Upsert prompt memory block", "Create or replace a Den-owned prompt memory block for the current bear role. Use this for editable runtime prompt memory, not semantic memory notes.", "bear.memory", &["memory.entry.write"], PAIR_PROFILES, prompt_memory_upsert_schema()),
-        descriptor(DEN_PROMPT_MEMORY_LIST, "List prompt memory blocks", "List Den-owned prompt memory blocks for the current bear role.", "bear.memory", &["memory.status.read"], PAIR_PROFILES, json!({"type":"object","properties":{"include_archived":{"type":"boolean"},"scope":{"type":"string","enum":["bear_wide","profile_local","work_surface","session"]},"block_type":{"type":"string","enum":["profile_guidance","work_surface_context","session_focus","user_instruction"]},"work_surface":{"type":"string","maxLength":500},"session_id":{"type":"string","maxLength":200}},"additionalProperties":false})),
-        descriptor(DEN_PROMPT_MEMORY_PATCH, "Patch prompt memory block", "Update lifecycle/content fields for an existing Den-owned prompt memory block.", "bear.memory", &["memory.entry.write"], PAIR_PROFILES, prompt_memory_patch_schema()),
-        descriptor(DEN_MEMORY_LIST_PROPOSALS, "List memory proposals", "List memory review proposals for this Bear.", "bear.memory", &["memory.proposal.read"], CURATE_PROFILES, json!({"type":"object","properties":{"status":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false})),
-        descriptor(DEN_MEMORY_READ_PROPOSAL, "Read memory proposal", "Read one memory review proposal with source pointers and status.", "bear.memory", &["memory.proposal.read"], CURATE_PROFILES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"}},"required":["proposal_id"],"additionalProperties":false})),
-        descriptor(DEN_MEMORY_RESOLVE_PROPOSAL, "Resolve memory proposal", "Resolve a memory review proposal without applying shared-memory writes.", "bear.memory", &["memory.proposal.resolve"], CURATE_PROFILES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"status":{"enum":["rejected","retained_local","deferred","superseded","needs_human_review"]},"review_notes":{"type":"string"},"decision_summary":{"type":"string"}},"required":["proposal_id","status"],"additionalProperties":false})),
-        descriptor(DEN_MEMORY_APPLY_CORE_UPDATE, "Apply core memory update", "Apply a reviewed update to allowed core memory paths with provenance.", "bear.memory", &["memory.core.write"], CURATE_PROFILES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"target_path":{"type":"string"},"mode":{"enum":["append_section","create_file","replace_text"]},"title":{"type":"string"},"body":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","target_path","mode"],"additionalProperties":false})),
-        descriptor(DEN_SKILL_PROPOSE, "Propose skill", "Capture a durable skill proposal for curate review without installing it directly.", "bear.skills", &["skill.proposal.write"], ALL_PROFILES, json!({"type":"object","properties":{"skill_name":{"type":"string"},"skill_version":{"type":"string"},"rationale":{"type":"string"},"proposed_content":{"type":"string"},"desired_roles":{"type":"array","items":{"enum":ALL_PROFILES}},"provenance":{"type":"object"}},"required":["skill_name","rationale","proposed_content"],"additionalProperties":false})),
-        descriptor(DEN_SKILL_APPROVE_PROPOSAL, "Approve skill proposal", "Approve a pending skill proposal, update the manifest, and queue reconciliation for affected roles.", "bear.skills", &["skill.proposal.approve"], CURATE_PROFILES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"skill_name":{"type":"string"},"skill_version":{"type":"string"},"applies_to_profiles":{"type":"array","items":{"enum":ALL_PROFILES},"minItems":1},"review_notes":{"type":"string"}},"required":["proposal_id","applies_to_profiles"],"additionalProperties":false})),
-        descriptor(DEN_SKILL_REJECT_PROPOSAL, "Reject skill proposal", "Reject a pending skill proposal with reviewer metadata and a rejection reason.", "bear.skills", &["skill.proposal.reject"], CURATE_PROFILES, json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","rejection_reason"],"additionalProperties":false})),
-        descriptor(DEN_WORK_PLAN_LIST, "List plans", "List visible Bear-level planning state, including live activity plans, submitted workplan gates, and saved workplan artifacts where available. Call session_info first if current thread/session/work-surface scope is unclear.", "bear.activity", &["work_plan.read"], WORK_PLAN_READ_PROFILES, json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["active","blocked","completed","cancelled","archived"]}},"owner_profile":{"enum":ALL_PROFILES},"include_archived":{"type":"boolean"},"include_completed":{"type":"boolean"},"include_plan_mode":{"type":"boolean"},"include_artifacts":{"type":"boolean"}},"additionalProperties":false})),
-        descriptor(DEN_WORK_PLAN_GET_STATUS, "Get work plan status", "Return current status for one visible Den activity plan or this session's active plan. Use to orient before continuing, updating, or handing off plan work; call session_info first if session scope is unclear.", "bear.activity", &["work_plan.read"], WORK_PLAN_READ_PROFILES, json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"source_acp_session_id":{"type":"string"},"source_conversation_id":{"type":"string"}},"additionalProperties":false})),
-        descriptor(DEN_WORK_PLAN_UPDATE, "Update visible plan", "Create or update the current role's live visible activity plan. Use this when the user asks to create, show, update, or execute a plan/task list. This is active work state, not semantic memory; call session_info first if current session/work-surface scope is unclear.", "bear.activity", &["work_plan.write"], WORK_PLAN_UPDATE_PROFILES, json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"expected_version":{"type":"integer","minimum":1},"title":{"type":"string"},"summary":{"type":"string"},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"status":{"enum":["active","blocked","completed","cancelled","archived"]},"items":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"summary":{"type":"string"},"status":{"enum":["pending","in_progress","blocked","completed","cancelled"]},"blocked_reason":{"type":"string"},"source_refs":{"type":"array","items":{"type":"string"}}},"required":["id","title","status"],"additionalProperties":false}},"workspace_context":{"type":"object"}},"required":["title","visibility","status","items"],"additionalProperties":false})),
-        descriptor(DEN_WORK_PLAN_REQUEST_HANDOFF, "Request task handoff", "Request conversion of selected live activity plan items into a schema-validated task intent for curate review.", "bear.activity", &["work_plan.handoff.request"], CHAT_AND_PAIR_PROFILES, json!({"type":"object","properties":{"plan_id":{"type":"string","format":"uuid"},"item_ids":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"summary":{"type":"string"},"requested_outcome":{"type":"string"},"constraints":{"type":"array","items":{"type":"string"}},"allowed_tools_hint":{"type":"array","items":{"type":"string"}}},"required":["plan_id","item_ids","title","summary","requested_outcome"],"additionalProperties":false})),
-        descriptor(DEN_PLAN_MODE_ENTER, "Enter planning mode", "Enter ACP pair workplan mode and reflect that mode in the ACP session UI. Use this when the user asks to enter planning mode.", "bear.workplan", &["plan_mode.enter"], PAIR_PROFILES, json!({"type":"object","properties":{"reason":{"type":"string"},"previous_permission_mode":{"type":"string"}},"additionalProperties":false})),
-        descriptor(DEN_PLAN_MODE_STATUS, "Get plan mode status", "Return the current ACP pair workplan gate for this session, if any.", "bear.workplan", &["plan_mode.read"], PAIR_PROFILES, empty_schema()),
-        descriptor(DEN_PLAN_MODE_RECORD_APPROVAL, "Record plan approval", "Record explicit approval from the authenticated human for the currently submitted implementation workplan. Use only when the user clearly approves the current plan in this conversation, for example 'go ahead', 'approved', or 'proceed'.", "bear.workplan", &["plan_mode.approve"], PAIR_PROFILES, json!({"type":"object","properties":{"plan_mode_id":{"type":"string","format":"uuid"},"approval_text":{"type":"string","description":"The user's approval text that prompted this tool call."}},"required":["approval_text"],"additionalProperties":false})),
-        descriptor(DEN_PLAN_MODE_EXIT, "Submit implementation plan", "Submit a markdown implementation workplan artifact for user approval. This is for durable implementation workplans, not for the live visible task list; use update_plan for visible activity planning.", "bear.workplan", &["plan_mode.exit"], PAIR_PROFILES, json!({"type":"object","properties":{"plan_mode_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"}},"required":["title","body"],"additionalProperties":false})),
-        descriptor(DEN_PLAN_MODE_CANCEL, "Cancel plan mode", "Cancel the current ACP pair workplan gate without approving implementation.", "bear.workplan", &["plan_mode.cancel"], PAIR_PROFILES, json!({"type":"object","properties":{"plan_mode_id":{"type":"string","format":"uuid"}},"additionalProperties":false})),
-        descriptor(DEN_TASK_WRITE_INTENT, "Write task intent", "Write a schema-validated task intent from chat or pair for later curate review.", "bear.tasks", &["task.intent.write"], CHAT_AND_PAIR_PROFILES, json!({"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string"},"requested_outcome":{"type":"string"},"constraints":{"type":"array","items":{"type":"string"}},"allowed_tools_hint":{"type":"array","items":{"type":"string"}},"source_reference":{"type":"object"}},"required":["title","summary","requested_outcome"],"additionalProperties":false})),
-        descriptor(DEN_TASK_APPROVE_INTENT, "Approve task intent", "Approve a chat/pair task intent, write the canonical core task, and update source intent audit metadata.", "bear.tasks", &["task.intent.approve"], CURATE_PROFILES, json!({"type":"object","properties":{"source_intent_path":{"type":"string"},"task_id":{"type":"string"},"title":{"type":"string"},"approved_scope":{"type":"object"},"allowed_tools":{"type":"array","items":{"type":"string"}},"expires_at":{"type":"string"},"review_notes":{"type":"string"}},"required":["source_intent_path","task_id","title","approved_scope","allowed_tools"],"additionalProperties":false})),
-        descriptor(DEN_TASK_REJECT_INTENT, "Reject task intent", "Reject a chat/pair task intent and update source intent audit metadata with the rejection reason.", "bear.tasks", &["task.intent.reject"], CURATE_PROFILES, json!({"type":"object","properties":{"source_intent_path":{"type":"string"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["source_intent_path","rejection_reason"],"additionalProperties":false})),
-        descriptor(DEN_CORE_WRITE_RESULT_SUMMARY, "Write core result summary", "Write a curate-reviewed summary of work results into shared core memory through Den-controlled validation.", "bear.core", &["core.result_summary.write"], CURATE_PROFILES, json!({"type":"object","properties":{"task_id":{"type":"string"},"run_id":{"type":"string"},"summary":{"type":"string"},"durable_learnings":{"type":"array","items":{"type":"string"}},"source_result_path":{"type":"string"}},"required":["task_id","summary"],"additionalProperties":false})),
-        descriptor(DEN_OBSERVATION_WRITE, "Write observation", "Write a schema-validated inbound observation from a Den-delivered watch event.", "bear.observations", &["observation.write"], WATCH_PROFILES, json!({"type":"object","properties":{"observation_id":{"type":"string"},"summary":{"type":"string"},"salience":{"type":"string"},"payload_ref":{"type":"string"},"source":{"type":"object"}},"required":["summary"],"additionalProperties":false})),
-        descriptor(DEN_RUN_WRITE_RESULT, "Write run result", "Write a schema-validated work run result under the active Den-issued run context.", "bear.runs", &["run.result.write"], WORK_PROFILES, json!({"type":"object","properties":{"task_id":{"type":"string"},"run_id":{"type":"string"},"status":{"enum":["succeeded","failed","partial"]},"summary":{"type":"string"},"result":{"type":"object"},"follow_up":{"type":"array","items":{"type":"string"}}},"required":["task_id","run_id","status","summary"],"additionalProperties":false})),
+        descriptor(
+            DEN_BEAR_GET_SELF,
+            "About this bear",
+            "Return Den's trusted profile for the current bear.",
+            "bear",
+            &["bear.read"],
+            ALL_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_USER_GET_CURRENT,
+            "Current user",
+            "Return Den's trusted profile for the current user in this interaction.",
+            "session",
+            &["user.current.read"],
+            ALL_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_BEAR_LIST_MEMBERS,
+            "Bear members",
+            "List users who have access to the current bear, with policy redaction.",
+            "bear",
+            &["bear.members.read"],
+            ALL_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_CAPABILITIES_LIST_SELF,
+            "Available Den capabilities",
+            "List Den-managed tools available to the current bear/session.",
+            "session",
+            &["capabilities.read"],
+            ALL_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_CAPABILITY_SEARCH,
+            "Search capability catalog",
+            "Search the discoverable Capability Catalog using lexical query text, taxonomy tag, and kind filters. Returns compact results with locality, surface, authority, lifetime, risk, and execution-option metadata. Discovery does not grant invocation authority.",
+            "session",
+            &["capabilities.read"],
+            ALL_PROFILES,
+            json!({"type":"object","properties":{"query":{"type":"string"},"tag":{"type":"string"},"kind":{"type":"string","enum":["tool","skill","policy","memory","surface","executor","connector","example","bundle"]},"limit":{"type":"integer","minimum":1,"maximum":50}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_CAPABILITY_DESCRIBE,
+            "Describe capability",
+            "Describe one Capability Catalog entry by ref, canonical tool name, or provider tool name, including locality, surface, authority, lifetime, risk, execution options, and invocation references where available.",
+            "session",
+            &["capabilities.read"],
+            ALL_PROFILES,
+            json!({"type":"object","properties":{"ref":{"type":"string","minLength":1}},"required":["ref"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_CHANNEL_GET_CONTEXT,
+            "Channel context",
+            "Return trusted Den channel and session context for this interaction.",
+            "session",
+            &["channel.context.read"],
+            ALL_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_POLICY_GET_SELF,
+            "Current policy",
+            "Explain current user and bear policy for this interaction.",
+            "session",
+            &["policy.read"],
+            ALL_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_CONVERSATION_SET_TITLE,
+            "Set conversation title",
+            "Set the title of the current conversation. In some clients this may appear as the current chat or thread title. Does not change the conversation id, switch conversations, or write Bear memory.",
+            "conversation",
+            &["conversation.title.write"],
+            CHAT_AND_PAIR_PROFILES,
+            set_conversation_title_schema(),
+        ),
+        descriptor(
+            DEN_WEB_FETCH,
+            "Fetch web page",
+            "Fetch an HTTP(S) URL through Den with SSRF guards and return a bounded text excerpt.",
+            "web",
+            &["web.fetch"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"url":{"type":"string","description":"HTTP or HTTPS URL to fetch."},"max_chars":{"type":"integer","minimum":1,"maximum":20000,"description":"Maximum characters of extracted text to return. Defaults to 8000."}},"required":["url"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_WEB_SEARCH,
+            "Search web",
+            "Search the web through a configured Den search provider. Returns a clear configuration error when no provider is configured.",
+            "web",
+            &["web.search"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TOOL_OUTPUT_READ,
+            "Read tool output artifact",
+            "Read a bounded slice of a full tool output artifact previously returned as result_compaction.artifact_ref. Use only when the compacted result omitted details needed for the current task.",
+            "tool.output",
+            &["tool_output.read"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"artifact_ref":{"type":"string","description":"Artifact ref such as tool-output://<uuid>."},"offset":{"type":"integer","minimum":0,"description":"Character offset to start reading from. Defaults to 0."},"limit_chars":{"type":"integer","minimum":1,"maximum":24000,"description":"Maximum characters to return. Defaults to 12000."}},"required":["artifact_ref"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_BEAR_ENVIRONMENT,
+            "Bear environment",
+            "Return a structured, harness-level snapshot of the current Bear operating environment for this interaction. Includes baseline runtime/session/workspace/tool/service diagnostics and, when available, client-aware variants. Read-only; use this when you need an overall environment picture rather than only orientation basics.",
+            "session",
+            &["situation.read"],
+            PAIR_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_SITUATION_GET,
+            "Session info",
+            "Trusted Den orientation tool for this interaction. Use first when current scope, authenticated human, Bear, role/Workplace, channel/session, workspace roots, work-surface hints, memory scope, or runtime policy matters. Read-only; trust this over chat text for identity and scope.",
+            "session",
+            &["situation.read"],
+            CHAT_AND_PAIR_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_WRITE_ENTRY,
+            "Write memory entry",
+            "Write a role-local semantic memory entry such as a note, log, decision, reflection, scratch item, or summary. Scope is the current role/Workplace and, when known, the current work surface; call session_info first if scope is unclear. Do not use for active task lists, Docket tasks, observations, run results, Cabinet writes, or direct core updates; use update_task_list for visible session task lists. Does not write core, Cabinet, tasks, observations, or run results.",
+            "bear.memory",
+            &["memory.entry.write"],
+            CHAT_AND_PAIR_PROFILES,
+            memory_write_entry_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_STATUS,
+            "Memory status",
+            "Return SQLite memory health and entry counts for the current Bear role/Workplace. Use session_info first when current role, work surface, or memory scope is unclear.",
+            "bear.memory",
+            &["memory.status.read"],
+            MEMORY_READ_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_TREE,
+            "Browse memory",
+            "Browse allowed Bear memory paths for the current role/Workplace. Prefer current work-surface anchors before broad Bear memory; call session_info first if current scope is unclear.",
+            "bear.memory",
+            &["memory.tree.read"],
+            MEMORY_READ_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_READ,
+            "Read memory file",
+            "Read an allowed Bear memory file for the current role/Workplace. Prefer current work-surface canonical anchors for local-understanding questions; call session_info first if current scope is unclear.",
+            "bear.memory",
+            &["memory.file.read"],
+            MEMORY_READ_PROFILES,
+            json!({"type":"object","properties":{"path":{"type":"string","description":"Allowed memory path, for example pair/notes/mem_abc.md or core/missions.md."}},"required":["path"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_MEMORY_SEARCH,
+            "Search memory",
+            "Search allowed Bear memory files for the current role/Workplace. For local project/repo/service questions, orient to the current work surface with session_info and memory_orient_work_surface before broad search.",
+            "bear.memory",
+            &["memory.search"],
+            MEMORY_READ_PROFILES,
+            json!({"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["query"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_ENTITY_BROWSE,
+            "Browse entities",
+            "List Bear-local entities known to memory, optionally filtered by entity type. Use after session_info when you need stable people, missions, domains, work surfaces, connections, or artifacts referenced by Bear memory.",
+            "bear.memory",
+            &["entity.read"],
+            MEMORY_READ_PROFILES,
+            entity_browse_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_RESOLVE,
+            "Resolve entity",
+            "Read a Bear-local entity by id, following merge pointers to the live entity and optionally including handles and memory relations. Use entity ids returned by entity_browse, memory_search, or session/work-surface context.",
+            "bear.memory",
+            &["entity.read"],
+            MEMORY_READ_PROFILES,
+            entity_resolve_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_LINK_MEMORY,
+            "Link memory to entity",
+            "Add a descriptive relation from a memory record to a Bear-local entity. Use this to mark a record as about a person, mission, domain, work surface, connection, or artifact. This tool only writes descriptive relations (`subject`, `source`, `participant`, `applies_when`) and cannot write access rules such as `audience` or `confined_to`.",
+            "bear.memory",
+            &["entity.relation.write"],
+            ENTITY_RELATION_WRITE_PROFILES,
+            entity_link_memory_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_MERGE,
+            "Merge entities",
+            "Curate-only identity repair: merge a duplicate or mistaken entity into a survivor. The loser is not deleted; it forwards to the survivor and active handles are re-homed.",
+            "bear.memory",
+            &["entity.governance.write"],
+            CURATE_PROFILES,
+            entity_merge_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_SPLIT,
+            "Split entity",
+            "Curate-only identity repair: create a new entity and move selected handles to it after an incorrect merge or over-broad identity grouping.",
+            "bear.memory",
+            &["entity.governance.write"],
+            CURATE_PROFILES,
+            entity_split_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_WRITE_ACCESS_RULE,
+            "Write entity access rule",
+            "Curate-only visibility governance: add an access-bearing relation from a memory record to a resolved entity. Supports `audience` and `confined_to`; these relations are enforced by the memory access gate.",
+            "bear.memory",
+            &["entity.access_rule.write"],
+            CURATE_PROFILES,
+            entity_write_access_rule_schema(),
+        ),
+        descriptor(
+            DEN_ENTITY_WRITE_ANCHOR,
+            "Write entity anchor",
+            "Curate-only anchor maintenance: write an explicit canonical memory record for a resolved, anchor-eligible entity at its generated anchor path. This is the v1 source for projected entity anchors.",
+            "bear.memory",
+            &["entity.anchor.write", "memory.core.write"],
+            CURATE_PROFILES,
+            entity_write_anchor_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_ORIENT_WORK_SURFACE,
+            "Orient work surface",
+            "Return a read-only orientation briefing for the likely current work surface using trusted session hints from session_info and canonical memory anchor paths when available. Use before broad memory search for local project/repo/service questions.",
+            "bear.memory",
+            &["memory.tree.read", "memory.file.read"],
+            MEMORY_READ_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
+            "Create work-surface scaffold",
+            "Create a minimal work-surface scaffold in Bear memory and register it in the work-surface index. Mutates memory; call session_info and memory_orient_work_surface first unless the user explicitly names the work surface.",
+            "bear.memory",
+            &["memory.write", "memory.core.write"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"work_surface_slug":{"type":"string","minLength":1,"maxLength":80},"work_surface_name":{"type":"string","minLength":1,"maxLength":200},"overview":{"type":"string","minLength":1,"maxLength":20000},"glossary":{"type":"string","maxLength":20000},"current_understanding":{"type":"string","maxLength":20000}},"required":["work_surface_slug", "work_surface_name", "overview"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_MEMORY_REQUEST_REVIEW,
+            "Request memory review",
+            "Request Reflection/curate review of role-local memory without writing shared memory directly. Use for role/Workplace-local material that may deserve broader Bear-global review; call session_info first if scope/provenance is unclear.",
+            "bear.memory",
+            &["memory.review.request"],
+            PAIR_PROFILES,
+            memory_request_review_schema(),
+        ),
+        descriptor(
+            DEN_PROMPT_MEMORY_UPSERT,
+            "Upsert prompt memory block",
+            "Create or replace a Den-owned prompt memory block for the current bear role. Use this for editable runtime prompt memory, not semantic memory notes.",
+            "bear.memory",
+            &["memory.entry.write"],
+            PAIR_PROFILES,
+            prompt_memory_upsert_schema(),
+        ),
+        descriptor(
+            DEN_PROMPT_MEMORY_LIST,
+            "List prompt memory blocks",
+            "List Den-owned prompt memory blocks for the current bear role.",
+            "bear.memory",
+            &["memory.status.read"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"include_archived":{"type":"boolean"},"scope":{"type":"string","enum":["bear_wide","profile_local","work_surface","session"]},"block_type":{"type":"string","enum":["profile_guidance","work_surface_context","session_focus","user_instruction"]},"work_surface":{"type":"string","maxLength":500},"session_id":{"type":"string","maxLength":200}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_PROMPT_MEMORY_PATCH,
+            "Patch prompt memory block",
+            "Update lifecycle/content fields for an existing Den-owned prompt memory block.",
+            "bear.memory",
+            &["memory.entry.write"],
+            PAIR_PROFILES,
+            prompt_memory_patch_schema(),
+        ),
+        descriptor(
+            DEN_MEMORY_LIST_PROPOSALS,
+            "List memory proposals",
+            "List memory review proposals for this Bear.",
+            "bear.memory",
+            &["memory.proposal.read"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"status":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_MEMORY_READ_PROPOSAL,
+            "Read memory proposal",
+            "Read one memory review proposal with source pointers and status.",
+            "bear.memory",
+            &["memory.proposal.read"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"}},"required":["proposal_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_MEMORY_RESOLVE_PROPOSAL,
+            "Resolve memory proposal",
+            "Resolve a memory review proposal without applying shared-memory writes.",
+            "bear.memory",
+            &["memory.proposal.resolve"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"status":{"enum":["rejected","retained_local","deferred","superseded","needs_human_review"]},"review_notes":{"type":"string"},"decision_summary":{"type":"string"}},"required":["proposal_id","status"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_MEMORY_APPLY_CORE_UPDATE,
+            "Apply core memory update",
+            "Apply a reviewed update to allowed core memory paths with provenance.",
+            "bear.memory",
+            &["memory.core.write"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"target_path":{"type":"string"},"mode":{"enum":["append_section","create_file","replace_text"]},"title":{"type":"string"},"body":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","target_path","mode"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_MEMORY_MARK_LIFECYCLE,
+            "Mark memory lifecycle",
+            "Curate-only lifecycle marker for existing memory records: stale, superseded, archived, archive-candidate, or active. Does not promote or rewrite content.",
+            "bear.memory",
+            &["memory.lifecycle.write"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"memory_id":{"type":"string","minLength":1,"maxLength":200},"status":{"type":"string","enum":["active","stale","superseded","archived","archive-candidate"]},"reason":{"type":"string","maxLength":1000}},"required":["memory_id","status"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_SKILL_PROPOSE,
+            "Propose skill",
+            "Capture a durable skill proposal for curate review without installing it directly.",
+            "bear.skills",
+            &["skill.proposal.write"],
+            ALL_PROFILES,
+            json!({"type":"object","properties":{"skill_name":{"type":"string"},"skill_version":{"type":"string"},"rationale":{"type":"string"},"proposed_content":{"type":"string"},"desired_roles":{"type":"array","items":{"enum":ALL_PROFILES}},"provenance":{"type":"object"}},"required":["skill_name","rationale","proposed_content"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_SKILL_APPROVE_PROPOSAL,
+            "Approve skill proposal",
+            "Approve a pending skill proposal, update the manifest, and queue reconciliation for affected roles.",
+            "bear.skills",
+            &["skill.proposal.approve"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"skill_name":{"type":"string"},"skill_version":{"type":"string"},"applies_to_profiles":{"type":"array","items":{"enum":ALL_PROFILES},"minItems":1},"review_notes":{"type":"string"}},"required":["proposal_id","applies_to_profiles"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_SKILL_REJECT_PROPOSAL,
+            "Reject skill proposal",
+            "Reject a pending skill proposal with reviewer metadata and a rejection reason.",
+            "bear.skills",
+            &["skill.proposal.reject"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"proposal_id":{"type":"string","format":"uuid"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["proposal_id","rejection_reason"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_LISTS_LIST,
+            "List task lists",
+            "List visible planning and task-list context for the current Bear/session, including checked-out Docket task-list projections, submitted plan-mode gates, and saved plan artifacts where available. Session task lists are working projections; durable jobs/tasks live in Docket. Call session_info first if current thread/session/work-surface scope is unclear.",
+            "bear.activity",
+            &["task_list.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["active","blocked","completed","cancelled","archived"]}},"owner_profile":{"enum":ALL_PROFILES},"include_archived":{"type":"boolean"},"include_completed":{"type":"boolean"},"include_plan_mode":{"type":"boolean"},"include_artifacts":{"type":"boolean"}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_LISTS_GET_STATUS,
+            "Get task list status",
+            "Return this session's active Docket-backed task-list projection when one exists. Use to recover focus before continuing, syncing, or handing off task-list work; call session_info first if session scope is unclear.",
+            "bear.activity",
+            &["task_list.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_LISTS_UPDATE,
+            "Update task list",
+            "Deprecated compatibility tool: update_task_list no longer writes session-local task lists. For new durable work use create_job. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status, which infers the active run. Do not call this tool to create visible progress UI.",
+            "bear.activity",
+            &["task_list.write"],
+            TASK_LIST_UPDATE_PROFILES,
+            json!({"type":"object","properties":{},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_LISTS_REQUEST_HANDOFF,
+            "Request task-list handoff",
+            "Request review, promotion, or sync of selected task-list items or changes into durable Docket work. Local-only task-list items may become Docket work through this boundary; Docket-backed items may request reviewed reconciliation.",
+            "bear.activity",
+            &["task_list.handoff.request"],
+            CHAT_AND_PAIR_PROFILES,
+            json!({"type":"object","properties":{"task_list":{"type":"object","description":"TaskListProjection returned by get_job, get_task_list_status, or checkout_task_list."},"item_ids":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"summary":{"type":"string"},"requested_outcome":{"type":"string"}},"required":["task_list","item_ids","title","summary","requested_outcome"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_JOB_CREATE,
+            "Create job",
+            "Create a durable job with acceptance criteria and an optional initial task tree. Jobs are durable work containers larger than individual tasks, and every initial task requires concrete completion_criteria so execution has a stopping condition. Use this when the human asks to create, track, or delegate durable work, or when a task-list handoff should become canonical work. Does not execute the job; execution flows through Bear runtime dispatch.",
+            "bear.docket",
+            &["docket.job.write"],
+            CHAT_AND_PAIR_PROFILES,
+            json!({"type":"object","properties":{"goal":{"type":"string","description":"Human-facing durable goal for the job."},"work_surface_ref":{"type":"string","description":"Managed work surface name (see get_work_catalog surfaces; the bear must be assigned to it) or a raw provider root name."},"commit_policy":{"enum":["none","per_task","per_job","propose_only"]},"work_branch":{"type":"string","description":"Upstream branch work runs publish to when commit_policy allows; defaults to a generated den/job-<short-id> name."},"status":{"enum":["draft","ready","running","blocked","completed","cancelled"]},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]},"criteria":{"type":"array","items":{"type":"object","properties":{"kind":{"enum":["narrative","command","check_ref"]},"description":{"type":"string"},"spec":{"type":"object"},"sibling_order":{"type":"integer"}},"required":["description"],"additionalProperties":false}},"tasks":{"type":"array","items":{"type":"object","properties":{"client_key":{"type":"string"},"parent_client_key":{"type":"string"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"assigned_to_role":{"enum":ALL_PROFILES}},"required":["title","body","completion_criteria"],"additionalProperties":false}}},"required":["goal"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_JOB_LIST,
+            "List Docket jobs",
+            "List durable Docket jobs for the current Bear. Use for canonical job status, not session-local task-list focus.",
+            "bear.docket",
+            &["docket.job.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{"status":{"type":"array","items":{"enum":["draft","ready","running","blocked","completed","cancelled"]}},"include_cancelled":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_JOB_GET,
+            "Get Docket job",
+            "Read one durable Docket job with criteria, task tree, current run, and run-scoped task state. Includes recent work runs (with queue placement) and work_attention: latest-attempt runs that ended blocked/failed and need triage, with their reasons.",
+            "bear.docket",
+            &["docket.job.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_JOB_UPDATE,
+            "Update Docket job",
+            "Update durable Docket job metadata or lifecycle status. Use for status transitions such as running, blocked, completed, or cancelled; does not execute task bodies.",
+            "bear.docket",
+            &["docket.job.write"],
+            CHAT_AND_PAIR_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"goal":{"type":"string"},"work_surface_ref":{"type":["string","null"]},"clear_work_surface_ref":{"type":"boolean"},"commit_policy":{"enum":["none","per_task","per_job","propose_only",null]},"clear_commit_policy":{"type":"boolean"},"status":{"enum":["draft","ready","running","blocked","completed","cancelled"]},"visibility":{"enum":["private_to_profile","same_user","bear_visible","handoff_requested"]}},"required":["job_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_JOB_EXECUTE,
+            "Execute Docket job",
+            "First-pass pair execution: start or advance a Docket job by selecting the next pending task for pair to work in this session. This records job/run/task state only. For tasks assigned to the work stance, use dispatch_work instead — it queues autonomous sandbox execution.",
+            "bear.docket",
+            &["docket.job.execute"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_JOB_EVALUATE_CRITERION,
+            "Evaluate Docket criterion",
+            "Record run-scoped acceptance-criterion state for a Docket job. Use after checking narrative, command, or external evidence; job completion requires criteria to be met or waived.",
+            "bear.docket",
+            &["docket.criteria.write"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"criterion_id":{"type":"string","format":"uuid"},"status":{"enum":["unmet","met","waived"]},"evidence":{"type":"object"}},"required":["job_id","run_id","criterion_id","status"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_CREATE,
+            "Create Docket task",
+            "Create a durable Docket task under a job or client session anchor. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition.",
+            "bear.docket",
+            &["docket.task.write"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"session_anchor_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Concrete criteria that define when this task is done."},"difficulty":{"enum":["trivial","moderate","hard","unknown"]},"effort_hint":{"enum":["low","medium","high"]},"assigned_to_role":{"enum":ALL_PROFILES},"created_in_run_id":{"type":"string","format":"uuid"}},"required":["title","body","completion_criteria"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_LIST,
+            "List Docket tasks",
+            "List durable Docket task definitions for a job/session subtree, including current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for session working focus.",
+            "bear.docket",
+            &["docket.task.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"session_anchor_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"},"include_descendants":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":500}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_UPDATE,
+            "Update Docket task definition",
+            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort/assignment. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, in progress, done, blocked, or cancelled without passing a run_id.",
+            "bear.docket",
+            &["docket.task.write"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"},"completion_criteria":{"type":"array","items":{"type":"string"},"description":"Replacement concrete criteria that define when this task is done."},"parent_task_id":{"type":["string","null"],"format":"uuid"},"clear_parent_task_id":{"type":"boolean"},"sibling_order":{"type":"integer"},"kind":{"enum":["execution","investigation","decision"]},"scope":{"enum":["template","run"]},"difficulty":{"enum":["trivial","moderate","hard","unknown",null]},"effort_hint":{"enum":["low","medium","high",null]},"assigned_to_role":{"enum":["chat","pair","curate","work","watch",null]}} ,"required":["task_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_UPDATE_CURRENT_STATUS,
+            "Update current task status",
+            "Update a Docket task's status/results in the current active Docket run for this session. The tool infers run_id from active job/run context; do not pass run_id. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not edit durable task definitions or execute task bodies.",
+            "bear.docket",
+            &["docket.task.write"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id","status"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_LIST_CHECKOUT,
+            "Checkout task list",
+            "Create a session task-list projection from a Docket job/root task subtree. Use this when you want to work Docket tasks through the current session task list. Checkout does not execute tasks and does not change Docket state by itself.",
+            "bear.docket",
+            &["docket.task.checkout"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_WORK_DISPATCH,
+            "Dispatch work task",
+            "Queue a work-assigned Docket task for autonomous sandbox execution. A dispatch worker provisions an isolated sandbox on the configured sandbox server, a headless armature executes the task there, and results flow back into Docket. When the job's commit_policy is per_task or per_job, successful runs are published (pushed) to the job's upstream work branch. Runs within one job execute one at a time in dispatch order (each building on the previous task's published work); the response reports the run's queue position. Requires the task's assigned_to_role to be work, and a sandbox root: pass root or set work_surface_ref on the job. Returns the work_run_id to inspect with get_work_run.",
+            "bear.docket",
+            &["docket.job.execute"],
+            CHAT_AND_PAIR_PROFILES,
+            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Managed work surface name or provider root name; defaults to the job's work_surface_ref. Managed surfaces require the bear's assignment."},"git_ref":{"type":"string","description":"Git ref to provision the workspace at; defaults to the job's work branch when it exists, else the root's default ref."},"image":{"type":"string","description":"Catalog image name on the sandbox provider (see get_work_catalog); defaults to the root's default image."}},"required":["task_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_WORK_RUN_LIST,
+            "List work runs",
+            "List autonomous work runs (sandbox executions of work-assigned Docket tasks) for this Bear, optionally filtered by job, task, or state. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind) — runs serialize per job.",
+            "bear.docket",
+            &["docket.job.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"state":{"enum":["queued","claimed","provisioning","running","reporting","succeeded","blocked","failed","cancelled","timed_out"]},"limit":{"type":"integer","minimum":1,"maximum":200}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_WORK_RUN_GET,
+            "Get work run",
+            "Read one autonomous work run: state, attempt, sandbox type and strength, recognized work surface, result summary (including published branch/commit in result_refs), changed files, bounded log tail, and error/blockage reason. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind).",
+            "bear.docket",
+            &["docket.job.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"}},"required":["work_run_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_WORK_RUN_CANCEL,
+            "Cancel work run",
+            "Request cancellation of an active work run. The dispatch worker tears the sandbox down and records the task as blocked; this tool only sets the cancel flag and never touches the sandbox host directly.",
+            "bear.docket",
+            &["docket.job.execute"],
+            CHAT_AND_PAIR_PROFILES,
+            json!({"type":"object","properties":{"work_run_id":{"type":"string","format":"uuid"}},"required":["work_run_id"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_WORK_CATALOG,
+            "Get work catalog",
+            "Read what work can run on: managed work surfaces assigned to this bear (preferred for create_job.work_surface_ref / dispatch_work.root), the sandbox provider's roots, and the container images selectable for dispatch_work. Use this before dispatching when the surface or toolchain image is not obvious.",
+            "bear.docket",
+            &["docket.job.read"],
+            TASK_LIST_READ_PROFILES,
+            json!({"type":"object","properties":{},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_LIST_SYNC,
+            "Sync task list to Docket",
+            "Apply authorized changes from a checked-out session task list back to Docket-backed tasks. Docket-backed items update task definitions and run-scoped status; local-only items in a Docket checkout become new child tasks. Conflicts are reported instead of overwritten.",
+            "bear.docket",
+            &["docket.task.sync"],
+            &["pair", "work"],
+            json!({"type":"object","properties":{"task_list":{"type":"object","description":"TaskListProjection returned by get_job, get_task_list_status, update_task_list, or checkout."}},"required":["task_list"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_PLAN_MODE_ENTER,
+            "Enter planning mode",
+            "Enter client pair workplan mode and reflect that mode in the client session UI. Use this when the user asks to enter planning mode.",
+            "bear.workplan",
+            &["plan_mode.enter"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"reason":{"type":"string"},"previous_permission_mode":{"type":"string"}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_PLAN_MODE_STATUS,
+            "Get plan mode status",
+            "Return the current client pair workplan gate for this session, if any.",
+            "bear.workplan",
+            &["plan_mode.read"],
+            PAIR_PROFILES,
+            empty_schema(),
+        ),
+        descriptor(
+            DEN_PLAN_MODE_RECORD_APPROVAL,
+            "Record plan approval",
+            "Record explicit approval from the authenticated human for the currently submitted implementation workplan. Use only when the user clearly approves the current plan in this conversation, for example 'go ahead', 'approved', or 'proceed'.",
+            "bear.workplan",
+            &["plan_mode.approve"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"plan_mode_id":{"type":"string","format":"uuid"},"approval_text":{"type":"string","description":"The user's approval text that prompted this tool call."}},"required":["approval_text"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_PLAN_MODE_EXIT,
+            "Submit implementation plan",
+            "Submit a markdown implementation workplan artifact for user approval. This is for durable implementation workplans, not for the live visible task list; use update_task_list for visible session task-list tracking.",
+            "bear.workplan",
+            &["plan_mode.exit"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"plan_mode_id":{"type":"string","format":"uuid"},"title":{"type":"string"},"body":{"type":"string"}},"required":["title","body"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_PLAN_MODE_CANCEL,
+            "Cancel plan mode",
+            "Cancel the current client pair workplan gate without approving implementation.",
+            "bear.workplan",
+            &["plan_mode.cancel"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"plan_mode_id":{"type":"string","format":"uuid"}},"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_WRITE_INTENT,
+            "Write task intent",
+            "Write a schema-validated task intent from chat or pair for later curate review.",
+            "bear.tasks",
+            &["task.intent.write"],
+            CHAT_AND_PAIR_PROFILES,
+            json!({"type":"object","properties":{"title":{"type":"string"},"summary":{"type":"string"},"requested_outcome":{"type":"string"},"constraints":{"type":"array","items":{"type":"string"}},"allowed_tools_hint":{"type":"array","items":{"type":"string"}},"source_reference":{"type":"object"}},"required":["title","summary","requested_outcome"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_APPROVE_INTENT,
+            "Approve task intent",
+            "Approve a chat/pair task intent, write the canonical core task, and update source intent audit metadata.",
+            "bear.tasks",
+            &["task.intent.approve"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"source_intent_path":{"type":"string"},"task_id":{"type":"string"},"title":{"type":"string"},"approved_scope":{"type":"object"},"allowed_tools":{"type":"array","items":{"type":"string"}},"expires_at":{"type":"string"},"review_notes":{"type":"string"}},"required":["source_intent_path","task_id","title","approved_scope","allowed_tools"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_TASK_REJECT_INTENT,
+            "Reject task intent",
+            "Reject a chat/pair task intent and update source intent audit metadata with the rejection reason.",
+            "bear.tasks",
+            &["task.intent.reject"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"source_intent_path":{"type":"string"},"rejection_reason":{"type":"string"},"review_notes":{"type":"string"}},"required":["source_intent_path","rejection_reason"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_CORE_WRITE_RESULT_SUMMARY,
+            "Write core result summary",
+            "Write a curate-reviewed summary of work results into shared core memory through Den-controlled validation.",
+            "bear.core",
+            &["core.result_summary.write"],
+            CURATE_PROFILES,
+            json!({"type":"object","properties":{"task_id":{"type":"string"},"run_id":{"type":"string"},"summary":{"type":"string"},"durable_learnings":{"type":"array","items":{"type":"string"}},"source_result_path":{"type":"string"}},"required":["task_id","summary"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_OBSERVATION_WRITE,
+            "Write observation",
+            "Write a schema-validated inbound observation from a Den-delivered watch event.",
+            "bear.observations",
+            &["observation.write"],
+            WATCH_PROFILES,
+            json!({"type":"object","properties":{"observation_id":{"type":"string"},"summary":{"type":"string"},"salience":{"type":"string"},"payload_ref":{"type":"string"},"source":{"type":"object"}},"required":["summary"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_RUN_WRITE_RESULT,
+            "Write run result",
+            "Write a schema-validated work run result under the active Den-issued run context.",
+            "bear.runs",
+            &["run.result.write"],
+            WORK_PROFILES,
+            json!({"type":"object","properties":{"task_id":{"type":"string"},"run_id":{"type":"string"},"status":{"enum":["succeeded","failed","partial"]},"summary":{"type":"string"},"result":{"type":"object"},"follow_up":{"type":"array","items":{"type":"string"}}},"required":["task_id","run_id","status","summary"],"additionalProperties":false}),
+        ),
     ]
 }
 
@@ -210,11 +860,13 @@ pub fn render_profile_tool_surface_blurb(role: BearProfile) -> String {
     lines.join("\n")
 }
 
-/// Den tools on the ACP pair surface (adapter environment + native pair LLM turns).
+/// Den tools on the client pair surface (adapter environment + native pair LLM turns).
 /// Keeps session/memory/plan tools without session-admin or plan-mode control noise.
 pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
     &[
         DEN_CONVERSATION_SET_TITLE,
+        DEN_CAPABILITY_SEARCH,
+        DEN_CAPABILITY_DESCRIBE,
         DEN_WEB_FETCH,
         DEN_WEB_SEARCH,
         DEN_SITUATION_GET,
@@ -224,10 +876,27 @@ pub fn pair_acp_surface_den_tool_names() -> &'static [&'static str] {
         DEN_MEMORY_READ,
         DEN_MEMORY_SEARCH,
         DEN_MEMORY_REQUEST_REVIEW,
-        DEN_WORK_PLAN_LIST,
-        DEN_WORK_PLAN_GET_STATUS,
-        DEN_WORK_PLAN_UPDATE,
-        DEN_WORK_PLAN_REQUEST_HANDOFF,
+        DEN_TASK_LISTS_LIST,
+        DEN_TASK_LISTS_GET_STATUS,
+        DEN_TASK_LISTS_UPDATE,
+        DEN_TASK_LISTS_REQUEST_HANDOFF,
+        DEN_JOB_CREATE,
+        DEN_JOB_LIST,
+        DEN_JOB_GET,
+        DEN_JOB_UPDATE,
+        DEN_JOB_EXECUTE,
+        DEN_JOB_EVALUATE_CRITERION,
+        DEN_TASK_CREATE,
+        DEN_TASK_LIST,
+        DEN_TASK_UPDATE,
+        DEN_TASK_UPDATE_CURRENT_STATUS,
+        DEN_TASK_LIST_SYNC,
+        DEN_TASK_LIST_CHECKOUT,
+        DEN_WORK_DISPATCH,
+        DEN_WORK_RUN_LIST,
+        DEN_WORK_RUN_GET,
+        DEN_WORK_RUN_CANCEL,
+        DEN_WORK_CATALOG,
     ]
 }
 
@@ -240,12 +909,16 @@ pub fn builtin_den_tool_descriptors_for_pair_acp_surface() -> Vec<DenToolDescrip
         .collect()
 }
 
-pub fn builtin_den_tool_descriptor_for_provider_name(provider_name: &str) -> Option<DenToolDescriptor> {
-    builtin_den_tool_descriptors().into_iter().find(|descriptor| {
-        descriptor.provider_name == provider_name
-            || descriptor.provider_aliases.contains(&provider_name)
-            || descriptor.name == provider_name
-    })
+pub fn builtin_den_tool_descriptor_for_provider_name(
+    provider_name: &str,
+) -> Option<DenToolDescriptor> {
+    builtin_den_tool_descriptors()
+        .into_iter()
+        .find(|descriptor| {
+            descriptor.provider_name == provider_name
+                || descriptor.provider_aliases.contains(&provider_name)
+                || descriptor.name == provider_name
+        })
 }
 
 pub fn is_builtin_den_tool(tool_name: &str) -> bool {
@@ -257,12 +930,14 @@ pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
         DEN_WEB_FETCH => &[DEN_WEB_FETCH_LEGACY_PROVIDER],
         DEN_SITUATION_GET => &[DEN_SITUATION_GET_LEGACY_PROVIDER],
         DEN_MEMORY_TREE => &[DEN_MEMORY_TREE_LEGACY_PROVIDER],
+
         _ => &[],
     }
 }
 
 fn den_tool_description(name: &'static str, description: &'static str) -> &'static str {
     let guidance = match name {
+        DEN_CAPABILITIES_LIST_SELF | DEN_CAPABILITY_SEARCH | DEN_CAPABILITY_DESCRIBE => None,
         DEN_SITUATION_GET => None,
         DEN_CONVERSATION_SET_TITLE => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::Conversation,
@@ -303,14 +978,37 @@ fn den_tool_description(name: &'static str, description: &'static str) -> &'stat
             side_effect: ToolSideEffectKind::WritesMemory,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
-        DEN_WORK_PLAN_LIST | DEN_WORK_PLAN_GET_STATUS => Some(ToolDescriptorGuidance {
+        DEN_TASK_LISTS_LIST | DEN_TASK_LISTS_GET_STATUS => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
             side_effect: ToolSideEffectKind::ReadOnly,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
-        DEN_WORK_PLAN_UPDATE | DEN_WORK_PLAN_REQUEST_HANDOFF => Some(ToolDescriptorGuidance {
+        DEN_TASK_LISTS_UPDATE | DEN_TASK_LISTS_REQUEST_HANDOFF => Some(ToolDescriptorGuidance {
             scope: ToolScopeKind::CurrentSession,
             side_effect: ToolSideEffectKind::ActiveWorkState,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        DEN_JOB_LIST | DEN_JOB_GET => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::CurrentSession,
+            side_effect: ToolSideEffectKind::ReadOnly,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        DEN_JOB_CREATE
+        | DEN_JOB_UPDATE
+        | DEN_JOB_EXECUTE
+        | DEN_JOB_EVALUATE_CRITERION
+        | DEN_TASK_CREATE
+        | DEN_TASK_UPDATE
+        | DEN_TASK_UPDATE_CURRENT_STATUS
+        | DEN_TASK_LIST_SYNC
+        | DEN_TASK_LIST_CHECKOUT => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::CurrentSession,
+            side_effect: ToolSideEffectKind::ActiveWorkState,
+            orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
+        }),
+        DEN_TASK_LIST => Some(ToolDescriptorGuidance {
+            scope: ToolScopeKind::CurrentSession,
+            side_effect: ToolSideEffectKind::ReadOnly,
             orientation: ToolOrientationPolicy::UseSessionInfoIfScopeUnclear,
         }),
         DEN_PLAN_MODE_ENTER
@@ -374,31 +1072,10 @@ fn descriptor(
     }
 }
 
-fn display_target_summary(keys: &[&str], args: &Value) -> Option<String> {
-    let object = args.as_object()?;
-    let mut values = Vec::new();
-    for key in keys {
-        if let Some(value) = object.get(*key).and_then(Value::as_str) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                values.push(trimmed.to_string());
-            }
-        }
-    }
-    match values.len() {
-        0 => None,
-        1 => values.into_iter().next(),
-        _ => Some(values.join(" → ")),
-    }
-}
-
-pub fn den_tool_display_json_for_provider(
-    provider_name: &str,
-    args: &Value,
-) -> Option<Value> {
+pub fn den_tool_display_json_for_provider(provider_name: &str, args: &Value) -> Option<Value> {
     let descriptor = builtin_den_tool_descriptor_for_provider_name(provider_name)?;
     let display = den_tool_display(descriptor.name, descriptor.label);
-    let target = display_target_summary(display.target_arg_keys, args);
+    let target = crate::tools::display::tool_target_summary(display.target_arg_keys, args);
     Some(json!({
         "label": display.label,
         "title": target.as_ref()
@@ -591,6 +1268,15 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &["body", "old_text", "new_text", "review_notes"],
             approval_summary: "Apply a reviewed update to core memory.",
         },
+        DEN_MEMORY_MARK_LIFECYCLE => ToolDisplayDescriptor {
+            label,
+            category: "memory",
+            progress_verb: "Marking memory lifecycle",
+            complete_verb: "Marked memory lifecycle",
+            target_arg_keys: &["memory_id", "status"],
+            sensitive_arg_keys: &["reason"],
+            approval_summary: "Mark an existing memory record's lifecycle status.",
+        },
         DEN_SKILL_PROPOSE => ToolDisplayDescriptor {
             label,
             category: "skills",
@@ -618,41 +1304,163 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &["rejection_reason", "review_notes"],
             approval_summary: "Reject this skill proposal.",
         },
-        DEN_WORK_PLAN_LIST => ToolDisplayDescriptor {
+        DEN_TASK_LISTS_LIST => ToolDisplayDescriptor {
             label,
-            category: "plan",
-            progress_verb: "Listing plans",
-            complete_verb: "Listed plans",
+            category: "task-list",
+            progress_verb: "Listing task lists",
+            complete_verb: "Listed task lists",
             target_arg_keys: &["owner_profile"],
             sensitive_arg_keys: &[],
-            approval_summary: "Read visible planning state.",
+            approval_summary: "Read visible task-list and planning context.",
         },
-        DEN_WORK_PLAN_GET_STATUS => ToolDisplayDescriptor {
+        DEN_TASK_LISTS_GET_STATUS => ToolDisplayDescriptor {
             label,
-            category: "plan",
-            progress_verb: "Checking plan status",
-            complete_verb: "Checked plan status",
-            target_arg_keys: &["plan_id"],
+            category: "task-list",
+            progress_verb: "Checking task-list status",
+            complete_verb: "Checked task-list status",
+            target_arg_keys: &[],
             sensitive_arg_keys: &[],
-            approval_summary: "Read visible plan status.",
+            approval_summary: "Read visible task-list status.",
         },
-        DEN_WORK_PLAN_UPDATE => ToolDisplayDescriptor {
+        DEN_TASK_LISTS_UPDATE => ToolDisplayDescriptor {
             label,
-            category: "plan",
-            progress_verb: "Updating visible plan",
-            complete_verb: "Updated visible plan",
-            target_arg_keys: &["title", "plan_id"],
+            category: "task-list",
+            progress_verb: "Updating task list",
+            complete_verb: "Updated task list",
+            target_arg_keys: &["title"],
             sensitive_arg_keys: &["summary", "items", "workspace_context"],
-            approval_summary: "Update active visible work state.",
+            approval_summary: "Update active task-list work state.",
         },
-        DEN_WORK_PLAN_REQUEST_HANDOFF => ToolDisplayDescriptor {
+        DEN_TASK_LISTS_REQUEST_HANDOFF => ToolDisplayDescriptor {
             label,
-            category: "plan",
-            progress_verb: "Requesting work handoff",
-            complete_verb: "Requested work handoff",
-            target_arg_keys: &["title", "plan_id"],
+            category: "task-list",
+            progress_verb: "Requesting task-list handoff",
+            complete_verb: "Requested task-list handoff",
+            target_arg_keys: &["title", "task_list_id"],
             sensitive_arg_keys: &["summary", "requested_outcome", "constraints"],
-            approval_summary: "Request conversion of plan items into task intent.",
+            approval_summary: "Request reviewed promotion or reconciliation of task-list items.",
+        },
+        DEN_JOB_CREATE => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Creating job",
+            complete_verb: "Created job",
+            target_arg_keys: &["goal"],
+            sensitive_arg_keys: &["criteria", "tasks"],
+            approval_summary: "Create a durable job without executing it.",
+        },
+        DEN_JOB_LIST => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Listing Docket jobs",
+            complete_verb: "Listed Docket jobs",
+            target_arg_keys: &["status"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read Docket jobs for this Bear.",
+        },
+        DEN_JOB_GET => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Reading Docket job",
+            complete_verb: "Read Docket job",
+            target_arg_keys: &["job_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read this Docket job and task tree.",
+        },
+        DEN_WORK_DISPATCH => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Dispatching work task",
+            complete_verb: "Dispatched work task",
+            target_arg_keys: &["task_id", "root"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Queue this task for autonomous sandbox execution.",
+        },
+        DEN_WORK_RUN_LIST => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Listing work runs",
+            complete_verb: "Listed work runs",
+            target_arg_keys: &["job_id", "task_id", "state"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read work runs for this Bear.",
+        },
+        DEN_WORK_RUN_GET => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Reading work run",
+            complete_verb: "Read work run",
+            target_arg_keys: &["work_run_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read this work run's status and results.",
+        },
+        DEN_WORK_RUN_CANCEL => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Cancelling work run",
+            complete_verb: "Requested work run cancellation",
+            target_arg_keys: &["work_run_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Request cancellation of this work run.",
+        },
+        DEN_WORK_CATALOG => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Reading work catalog",
+            complete_verb: "Read work catalog",
+            target_arg_keys: &[],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read the sandbox provider's roots and image catalog.",
+        },
+        DEN_TASK_CREATE => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Creating Docket task",
+            complete_verb: "Created Docket task",
+            target_arg_keys: &["title", "job_id", "parent_task_id"],
+            sensitive_arg_keys: &["body"],
+            approval_summary: "Create a durable Docket task definition.",
+        },
+        DEN_TASK_LIST => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Listing Docket tasks",
+            complete_verb: "Listed Docket tasks",
+            target_arg_keys: &["job_id", "parent_task_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Read Docket task definitions and current run state.",
+        },
+        DEN_TASK_UPDATE => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Updating Docket task",
+            complete_verb: "Updated Docket task",
+            target_arg_keys: &["task_id", "status"],
+            sensitive_arg_keys: &[
+                "body",
+                "completion_criteria",
+                "result_refs",
+                "result_summary",
+            ],
+            approval_summary: "Update a Docket task definition or run-scoped state.",
+        },
+        DEN_TASK_LIST_CHECKOUT => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Checking out task list",
+            complete_verb: "Checked out task list",
+            target_arg_keys: &["job_id", "parent_task_id"],
+            sensitive_arg_keys: &[],
+            approval_summary: "Create a session task-list projection from Docket state.",
+        },
+        DEN_TASK_LIST_SYNC => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Syncing task list",
+            complete_verb: "Synced task list",
+            target_arg_keys: &[],
+            sensitive_arg_keys: &["task_list"],
+            approval_summary: "Sync checked-out session task-list changes to Docket.",
         },
         DEN_PLAN_MODE_ENTER => ToolDisplayDescriptor {
             label,
@@ -661,7 +1469,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             complete_verb: "Entered planning mode",
             target_arg_keys: &[],
             sensitive_arg_keys: &["reason"],
-            approval_summary: "Enter ACP planning mode.",
+            approval_summary: "Enter client planning mode.",
         },
         DEN_PLAN_MODE_STATUS => ToolDisplayDescriptor {
             label,
@@ -772,10 +1580,21 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_PLAN_MODE_RECORD_APPROVAL
         | DEN_PLAN_MODE_EXIT
         | DEN_PLAN_MODE_CANCEL => "workplan",
-        DEN_WORK_PLAN_LIST
-        | DEN_WORK_PLAN_GET_STATUS
-        | DEN_WORK_PLAN_UPDATE
-        | DEN_WORK_PLAN_REQUEST_HANDOFF => "activity",
+        DEN_TASK_LISTS_LIST
+        | DEN_TASK_LISTS_GET_STATUS
+        | DEN_TASK_LISTS_UPDATE
+        | DEN_TASK_LISTS_REQUEST_HANDOFF => "activity",
+        DEN_JOB_CREATE
+        | DEN_JOB_LIST
+        | DEN_JOB_GET
+        | DEN_JOB_UPDATE
+        | DEN_JOB_EXECUTE
+        | DEN_JOB_EVALUATE_CRITERION
+        | DEN_TASK_CREATE
+        | DEN_TASK_LIST
+        | DEN_TASK_UPDATE
+        | DEN_TASK_LIST_SYNC
+        | DEN_TASK_LIST_CHECKOUT => "docket",
         DEN_MEMORY_WRITE_ENTRY
         | DEN_MEMORY_STATUS
         | DEN_MEMORY_TREE
@@ -790,7 +1609,8 @@ fn tool_domain(name: &str) -> &'static str {
         | DEN_MEMORY_LIST_PROPOSALS
         | DEN_MEMORY_READ_PROPOSAL
         | DEN_MEMORY_RESOLVE_PROPOSAL
-        | DEN_MEMORY_APPLY_CORE_UPDATE => "memory",
+        | DEN_MEMORY_APPLY_CORE_UPDATE
+        | DEN_MEMORY_MARK_LIFECYCLE => "memory",
         DEN_CONVERSATION_SET_TITLE
         | DEN_WEB_FETCH
         | DEN_WEB_SEARCH
@@ -807,9 +1627,10 @@ fn tool_content_class(name: &str) -> Option<&'static str> {
         DEN_MEMORY_REQUEST_REVIEW => Some("semantic_memory"),
         DEN_BEAR_ENVIRONMENT => Some("activity_status"),
         DEN_PLAN_MODE_EXIT => Some("workplan_artifact"),
-        DEN_WORK_PLAN_UPDATE => Some("activity_status"),
-        DEN_WORK_PLAN_REQUEST_HANDOFF => Some("task_intent"),
+        DEN_TASK_LISTS_UPDATE => Some("activity_status"),
+        DEN_TASK_LISTS_REQUEST_HANDOFF => Some("task_intent"),
         DEN_MEMORY_APPLY_CORE_UPDATE => Some("core_update"),
+        DEN_MEMORY_MARK_LIFECYCLE => Some("semantic_memory"),
         DEN_OBSERVATION_WRITE => Some("observation"),
         DEN_RUN_WRITE_RESULT => Some("run_result"),
         _ => None,
@@ -859,6 +1680,65 @@ fn set_conversation_title_schema() -> Value {
         "required": ["title"],
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn den_tool_display_includes_conversation_title_target() {
+        let display = den_tool_display_json_for_provider(
+            "set_conversation_title",
+            &json!({ "title": "Trace ACP tool card title rendering" }),
+        )
+        .expect("display");
+
+        assert_eq!(
+            display["title"],
+            "Setting conversation title Trace ACP tool card title rendering"
+        );
+        assert_eq!(display["subtitle"], "Trace ACP tool card title rendering");
+        assert_ne!(display["subtitle"], "conversation");
+    }
+
+    #[test]
+    fn den_tool_display_includes_job_goal_target() {
+        let display = den_tool_display_json_for_provider(
+            "create_job",
+            &json!({ "goal": "Improve ACP tool card summaries" }),
+        )
+        .expect("display");
+
+        assert_eq!(display["label"], "Create job");
+        assert_eq!(
+            display["title"],
+            "Creating job Improve ACP tool card summaries"
+        );
+        assert_eq!(display["subtitle"], "Improve ACP tool card summaries");
+        assert_eq!(display["category"], "work");
+    }
+
+    #[test]
+    fn den_tool_display_uses_short_display_paths_for_target_paths() {
+        let display = den_tool_display_json_for_provider(
+            "memory_apply_core_update",
+            &json!({
+                "target_path": "/workspace/project/core/decisions.md",
+                "mode": "append_section"
+            }),
+        )
+        .expect("display");
+
+        assert_eq!(
+            display["title"],
+            "Applying core memory update …/project/core/decisions.md → append_section"
+        );
+        assert_eq!(
+            display["subtitle"],
+            "…/project/core/decisions.md → append_section"
+        );
+    }
 }
 
 fn prompt_memory_upsert_schema() -> Value {
@@ -932,7 +1812,7 @@ fn memory_write_entry_schema() -> Value {
                     "scope": { "type": "string", "enum": ["role-local", "core-candidate", "cabinet-candidate"] },
                     "retention": { "type": "string", "enum": ["session", "short", "durable", "archive"] },
                     "promotion": { "type": "string", "enum": ["none", "maybe", "proposed"] },
-                    "status": { "type": "string", "enum": ["active", "superseded", "stale", "archived"] }
+                    "status": { "type": "string", "enum": ["active", "superseded", "stale", "archived", "archive-candidate"] }
                 },
                 "additionalProperties": false
             },
@@ -952,9 +1832,116 @@ fn memory_write_entry_schema() -> Value {
     })
 }
 
+fn entity_browse_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "entity_type": {
+                "type": "string",
+                "enum": ["person", "org", "event", "mission", "domain", "work_surface", "connection", "artifact", "place"]
+            },
+            "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "additionalProperties": false
+    })
+}
+
+fn entity_resolve_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "entity_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "include_relations": { "type": "boolean" },
+            "include_handles": { "type": "boolean" }
+        },
+        "required": ["entity_id"],
+        "additionalProperties": false
+    })
+}
+
+fn entity_link_memory_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "memory_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "entity_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "relation": { "type": "string", "enum": ["subject", "source", "participant", "applies_when"] },
+            "qualifiers": { "type": "object" },
+            "confidence": { "type": "string", "maxLength": 80 }
+        },
+        "required": ["memory_id", "entity_id", "relation"],
+        "additionalProperties": false
+    })
+}
+
+fn entity_merge_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "survivor_entity_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "loser_entity_id": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "required": ["survivor_entity_id", "loser_entity_id"],
+        "additionalProperties": false
+    })
+}
+
+fn entity_split_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "new_entity_type": { "type": "string", "enum": ["person", "org", "event", "mission", "domain", "work_surface", "connection", "artifact"] },
+            "display_name": { "type": "string", "maxLength": 200 },
+            "handle_ids_to_move": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "minItems": 1,
+                "maxItems": 50
+            },
+            "resolution": { "type": "string", "enum": ["observed", "provisional", "resolved", "confirmed"] },
+            "trust": { "type": "string", "enum": ["inferred", "asserted"] }
+        },
+        "required": ["new_entity_type", "handle_ids_to_move"],
+        "additionalProperties": false
+    })
+}
+
+fn entity_write_access_rule_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "memory_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "entity_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "relation": { "type": "string", "enum": ["audience", "confined_to"] },
+            "qualifiers": { "type": "object" },
+            "confidence": { "type": "string", "maxLength": 80 }
+        },
+        "required": ["memory_id", "entity_id", "relation"],
+        "additionalProperties": false
+    })
+}
+
+fn entity_write_anchor_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "entity_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "kind": { "type": "string", "enum": ["profile", "overview", "index"] },
+            "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "body": { "type": "string", "minLength": 1, "maxLength": 50000 },
+            "salience": { "type": "string", "enum": ["low", "normal", "high", "critical"] },
+            "supersedes_memory_id": { "type": "string", "maxLength": 200 }
+        },
+        "required": ["entity_id", "kind", "title", "body"],
+        "additionalProperties": false
+    })
+}
+
 impl DenToolDescriptor {
     pub fn allows_profile(&self, role: BearProfile) -> bool {
-        self.allowed_roles.iter().any(|allowed| *allowed == role.as_str())
+        self.allowed_roles
+            .iter()
+            .any(|allowed| *allowed == role.as_str())
     }
 }
 

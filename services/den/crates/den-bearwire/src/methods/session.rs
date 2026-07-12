@@ -1,15 +1,103 @@
 use axum::http::HeaderMap;
 use serde_json::{json, Value};
 
+use bearwire_protocol::{
+    methods::{SessionIdRequest, SessionModelSetRequest, SessionOpenRequest, SessionStateRequest},
+    wire::BearWireEvent,
+};
 use den_http::errors::CustomError;
 use den_runtime::{
-    acp_sessions, bearwire_events,
-    runtime::bearwire_projection::wire::BearWireEvent,
-    DenState,
+    bearwire_events,
+    pair_reflection::create_pair_reflection_proposals_from_latest_summary,
+    runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
+    turn_obligations,
 };
+use den_service::{bears::BearProfile, client_sessions, DenState};
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
-use crate::methods::{param_string, required_param_string};
+use crate::methods::parse_params;
+
+async fn session_state_payload(
+    state: &DenState,
+    session: client_sessions::ClientSessionRow,
+) -> Result<Value, CustomError> {
+    let conversation_runtime_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or(session.conversation_id.as_str())
+        .to_string();
+    let conversation_external_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or(session.conversation_id.as_str());
+    let latest_context_budget =
+        den_service::conversation::persistence::get_conversation_for_external_id(
+            &state.sqlx_pool,
+            session.bear_id,
+            conversation_external_id,
+        )
+        .await?
+        .and_then(|conversation| conversation.latest_context_budget);
+    let trusted_workspace = session.trusted_workspace_context();
+    let runtime_session_live = den_runtime::native_runtime::native_client_session_exists(
+        &conversation_runtime_id,
+        &session.client_session_id,
+    );
+    let open_obligations = turn_obligations::open_client_obligations_for_session(
+        &state.sqlx_pool,
+        &session.client_session_id,
+    )
+    .await?
+    .into_iter()
+    .map(|obligation| {
+        json!({
+            "id": obligation.id,
+            "run_id": obligation.run_id,
+            "kind": obligation.kind,
+            "expected_responder_action": obligation.expected_responder_action,
+            "tool_call_id": obligation.tool_call_id,
+            "permission_id": obligation.permission_id,
+            "state": obligation.state,
+            "turn_step_id": obligation.turn_step_id,
+            "created_at": obligation.created_at,
+            "updated_at": obligation.updated_at,
+            "timeout_ms": obligation.timeout_ms(),
+            "expires_at": obligation.expires_at(),
+        })
+    })
+    .collect::<Vec<_>>();
+
+    Ok(json!({
+        "id": session.id,
+        "user_id": session.user_id,
+        "bear_id": session.bear_id,
+        "bear_slug": session.bear_slug,
+        "client_session_id": session.client_session_id,
+        "runtime_session_id": session.runtime_session_id,
+        "conversation_id": session.conversation_id,
+        "resolved_conversation_id": session.resolved_conversation_id,
+        "client": session.client,
+        "cwd": session.cwd,
+        "adapter_environment": session.adapter_environment,
+        "current_mode": session.current_mode,
+        "conversation_title": session.conversation_title,
+        "conversation_title_updated_at": session.conversation_title_updated_at,
+        "conversation_title_synced_at": session.conversation_title_synced_at,
+        "closed_at": session.closed_at,
+        "archived_at": session.archived_at,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "context_budget": latest_context_budget,
+        "diagnostics": {
+            "trusted_workspace": trusted_workspace,
+            "runtime_conversation_id": conversation_runtime_id,
+            "runtime_session_live": runtime_session_live,
+            "open_obligations": open_obligations,
+        }
+    }))
+}
 
 pub(crate) async fn session_open_result(
     state: &DenState,
@@ -17,30 +105,65 @@ pub(crate) async fn session_open_result(
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
-    let conversation_id = param_string(params, "conversation_id").unwrap_or_else(|| session_id.clone());
-    let runtime_session_id = param_string(params, "runtime_session_id")
-        .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id));
-    let client = param_string(params, "client").unwrap_or_else(|| "bearwire".to_string());
-    let cwd = param_string(params, "cwd");
-    let current_mode = param_string(params, "mode");
-    acp_sessions::upsert_session(
+    let request: SessionOpenRequest = parse_params(params)?;
+    let session_id = request.session_id;
+    let existing = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
-        acp_sessions::UpsertAcpSession {
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await?;
+    let client = request.client.unwrap_or_else(|| "bearwire".to_string());
+    let conversation_id = request
+        .conversation_id
+        .or_else(|| {
+            existing
+                .as_ref()
+                .map(|session| session.conversation_id.clone())
+        })
+        .unwrap_or_else(|| format!("new-acp-{client}-{}", uuid::Uuid::new_v4().simple()));
+    let resolved_conversation_id = existing
+        .as_ref()
+        .and_then(|session| session.resolved_conversation_id.clone());
+    let runtime_session_id = request
+        .runtime_session_id
+        .or_else(|| {
+            existing
+                .as_ref()
+                .map(|session| session.runtime_session_id.clone())
+        })
+        .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id));
+    let cwd = request.cwd;
+    let current_mode = request.mode;
+    let client_context = request.client_context;
+    client_sessions::upsert_session(
+        &state.sqlx_pool,
+        client_sessions::UpsertClientSession {
             user_id,
             bear_id: bear.id,
             bear_slug: bear.slug.clone(),
-            acp_session_id: session_id.clone(),
+            client_session_id: session_id.clone(),
             runtime_session_id,
             conversation_id,
-            resolved_conversation_id: None,
+            resolved_conversation_id,
             client,
             cwd,
             current_mode,
         },
     )
     .await?;
-    let session = acp_sessions::find_for_user_bear_session(
+    if let Some(client_context) = client_context.as_ref() {
+        client_sessions::update_adapter_environment(
+            &state.sqlx_pool,
+            user_id,
+            bear.id,
+            &session_id,
+            client_context,
+        )
+        .await?;
+    }
+    let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,
@@ -72,28 +195,124 @@ pub(crate) async fn session_open_result(
     }))
 }
 
+pub(crate) async fn session_compact_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: SessionIdRequest = parse_params(params)?;
+    let session_id = request.session_id;
+    let session = client_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    let conversation_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .unwrap_or(&session.conversation_id);
+    let state_result = prepare_turn_compaction(
+        &state.sqlx_pool,
+        &state.config,
+        bear.id,
+        conversation_id,
+        BearProfile::Pair,
+        TurnCompactionTrigger::Manual,
+    )
+    .await?;
+
+    let compacted = state_result
+        .as_ref()
+        .is_some_and(|state| state.compacted_seq_cutoff.is_some());
+    Ok(json!({
+        "ok": true,
+        "session_id": session_id,
+        "conversation_id": conversation_id,
+        "compact_result": {
+            "status": if compacted { "applied" } else { "skipped" },
+            "reason": "bearwire_manual",
+            "compacted_seq_cutoff": state_result.as_ref().and_then(|state| state.compacted_seq_cutoff),
+            "group_count": state_result.as_ref().map(|state| state.groups.len()).unwrap_or(0),
+        }
+    }))
+}
+
 pub(crate) async fn session_close_result(
     state: &DenState,
     headers: &HeaderMap,
     params: &Value,
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
-    let session_id = required_param_string(params, "session_id")?;
-    let Some(session) = acp_sessions::find_for_user_bear_session(
+    let request: SessionIdRequest = parse_params(params)?;
+    let session_id = request.session_id;
+    let Some(session) = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
         &bear.slug,
         &session_id,
     )
-    .await? else {
+    .await?
+    else {
         return Ok(json!({ "ok": true, "closed": false, "session_id": session_id }));
     };
-    acp_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
+    let conversation_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .unwrap_or(&session.conversation_id)
+        .to_string();
+    let reflection_result = match prepare_turn_compaction(
+        &state.sqlx_pool,
+        &state.config,
+        bear.id,
+        &conversation_id,
+        BearProfile::Pair,
+        TurnCompactionTrigger::Manual,
+    )
+    .await
+    {
+        Ok(_) => create_pair_reflection_proposals_from_latest_summary(
+            &state.sqlx_pool,
+            &state.config,
+            &state.memory_stores,
+            bear.id,
+            &conversation_id,
+            &session_id,
+        )
+        .await
+        .map_err(CustomError::from),
+        Err(error) => Err(CustomError::from(error)),
+    };
+    let reflection_payload = match reflection_result {
+        Ok(output) => json!({
+            "status": "processed",
+            "candidate_count": output.candidate_count,
+            "dropped_followup_count": output.dropped_followup_count,
+            "proposal_ids": output.created_proposal_ids,
+        }),
+        Err(error) => {
+            tracing::warn!(
+                bear_id = %bear.id,
+                session_id = %session_id,
+                error = %error,
+                "pair reflection failed during session close"
+            );
+            json!({
+                "status": "failed_open",
+                "error": error.to_string(),
+            })
+        }
+    };
+    client_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
     let mut event = BearWireEvent::ephemeral(
         "session.closed",
         json!({
             "session_id": session_id,
             "bear_slug": bear.slug,
+            "pair_reflection": reflection_payload,
         }),
     );
     event.bear_id = Some(bear.id.to_string());
@@ -112,6 +331,7 @@ pub(crate) async fn session_close_result(
         "closed": true,
         "session_id": session_id,
         "event_sequence": persisted.sequence_no,
+        "pair_reflection": reflection_payload,
     }))
 }
 
@@ -120,7 +340,13 @@ pub(crate) async fn session_state_result(
     headers: &HeaderMap,
     params: &Value,
 ) -> Result<Value, CustomError> {
-    let Some(bear_slug) = params.get("bear_slug").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) else {
+    let request: SessionStateRequest = parse_params(params)?;
+    let Some(bear_slug) = request
+        .bear_slug
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
         return Ok(json!({
             "status": "available",
             "note": "Provide bear_slug and optional session_id for authenticated BearWire session state.",
@@ -128,8 +354,13 @@ pub(crate) async fn session_state_result(
         }));
     };
     let user_id = authenticate_for_bear_slug(state, headers, bear_slug).await?;
-    if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
-        let session = acp_sessions::find_for_user_bear_session(
+    if let Some(session_id) = request
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let session = client_sessions::find_for_user_bear_session(
             &state.sqlx_pool,
             user_id,
             bear_slug,
@@ -139,22 +370,18 @@ pub(crate) async fn session_state_result(
         return Ok(json!({
             "kind": "single",
             "bear_slug": bear_slug,
-            "session": session,
+            "session": match session {
+                Some(session) => Some(session_state_payload(state, session).await?),
+                None => None,
+            },
         }));
     }
 
-    let include_closed = params
-        .get("include_closed")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(50)
-        .clamp(1, 100);
-    let sessions = acp_sessions::list_for_user_bear(
+    let include_closed = request.include_closed.unwrap_or(false);
+    let limit = request.limit.unwrap_or(50).clamp(1, 100);
+    let sessions = client_sessions::list_for_user_bear(
         &state.sqlx_pool,
-        acp_sessions::SessionListParams {
+        client_sessions::SessionListParams {
             user_id,
             bear_slug,
             include_closed,
@@ -165,9 +392,131 @@ pub(crate) async fn session_state_result(
         },
     )
     .await?;
+    let mut sessions_payload = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        sessions_payload.push(session_state_payload(state, session).await?);
+    }
     Ok(json!({
         "kind": "list",
         "bear_slug": bear_slug,
-        "sessions": sessions,
+        "sessions": sessions_payload,
     }))
+}
+
+async fn session_model_payload(
+    state: &DenState,
+    user_id: i32,
+    bear: &den_service::bears::Bear,
+    session_id: &str,
+) -> Result<Value, CustomError> {
+    let session = client_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    let conversation_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .unwrap_or(&session.conversation_id);
+    let view = den_service::model_selection::load_conversation_model_selection_view(
+        &state.sqlx_pool,
+        bear,
+        user_id,
+        BearProfile::Pair,
+        state.config.default_llm_model.as_str(),
+        conversation_id,
+        Some(&session.client_session_id),
+        true,
+    )
+    .await?;
+    Ok(json!({
+        "ok": true,
+        "session_id": session_id,
+        "conversation_id": conversation_id,
+        "selection_mode": view.selection_mode,
+        "requested_model": view.requested_model,
+        "selected_model": view.selected_model,
+        "effective_model": view.effective_model,
+        "model_options": view.model_options,
+    }))
+}
+
+pub(crate) async fn session_model_get_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: SessionIdRequest = parse_params(params)?;
+    let session_id = request.session_id;
+    session_model_payload(state, user_id, &bear, &session_id).await
+}
+
+pub(crate) async fn session_model_set_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: SessionModelSetRequest = parse_params(params)?;
+    let session_id = request.session_id;
+    let mode = request.selection_mode.unwrap_or_else(|| "auto".to_string());
+    let requested_model = request.model;
+    let session = client_sessions::find_for_user_bear_session(
+        &state.sqlx_pool,
+        user_id,
+        &bear.slug,
+        &session_id,
+    )
+    .await?
+    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    let conversation_id = session
+        .resolved_conversation_id
+        .as_deref()
+        .unwrap_or(&session.conversation_id);
+    let conversation = den_service::conversation::persistence::ensure_conversation_for_external_id(
+        &state.sqlx_pool,
+        bear.id,
+        Some(user_id),
+        conversation_id,
+        Some(&session.client_session_id),
+        None,
+    )
+    .await?;
+    let model_state = den_service::model_selection::apply_conversation_model_selection(
+        &state.sqlx_pool,
+        conversation.id,
+        &mode,
+        requested_model.as_deref(),
+        "acp_selected",
+        "inherit_stance_or_bear_default",
+    )
+    .await
+    .map_err(CustomError::from)?;
+
+    let mut event = BearWireEvent::ephemeral(
+        "model.selection.changed",
+        json!({
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "selection_mode": model_state.selection_mode,
+            "selected_model": model_state.selected_model.or(model_state.requested_model),
+        }),
+    );
+    event.bear_id = Some(bear.id.to_string());
+    event.human_id = Some(user_id.to_string());
+    event.session_id = Some(session_id.clone());
+    let _ = bearwire_events::append_bearwire_event(
+        &state.sqlx_pool,
+        &session_id,
+        Some(bear.id),
+        Some(user_id),
+        event,
+    )
+    .await?;
+
+    session_model_payload(state, user_id, &bear, &session_id).await
 }

@@ -7,8 +7,8 @@ Identity defines who a user is and which Bear they are interacting with. Members
 - Users and Bears are separate identities.
 - A user may belong to many Bears.
 - A Bear may have many users.
-- Den enforces membership before routing requests to bear roles.
-- Human membership roles are different from internal bear roles.
+- Den enforces membership before routing requests to Bear stances.
+- Human membership roles are different from internal Bear stances.
 
 ## Users
 
@@ -49,11 +49,11 @@ Membership answers:
 - Can this user administer the Bear?
 - Can this user change capabilities, skills, integrations, or membership?
 
-Den checks membership before allowing requests to proceed to the Bear's internal agents or control-plane operations.
+Den checks membership before allowing requests to proceed to the Bear's internal stances or control-plane operations.
 
 ## Membership roles
 
-Membership roles are human access roles. They are not the same as bear roles.
+Membership roles are human access roles. They are not the same as Bear stances.
 
 Possible membership roles may include:
 
@@ -65,7 +65,7 @@ Possible membership roles may include:
 | Read-only | Can inspect allowed Bear state but not make changes or initiate work. |
 | Operator | Site-level or deployment-level authority, not necessarily a normal Bear member. |
 
-The exact role set can evolve. The important distinction is that membership roles describe human permissions; bear roles describe internal agent responsibilities.
+The exact role set can evolve. The important distinction is that membership roles describe human permissions; Bear stances describe internal assistant responsibilities.
 
 ## Personal and shared Bears
 
@@ -163,11 +163,11 @@ Prefer:
 - “This user is a member of that Bear.”
 - “Den checks membership before routing the request.”
 - “Membership roles control human access.”
-- “bear roles control internal responsibilities.”
+- “Bear stances control internal responsibilities.”
 
 Avoid:
 
-- “A Bear role” when you mean a human membership role.
+- “A Bear stance” when you mean a human membership role.
 - “The agent decided the user was authorized.”
 - “Anyone with a link can administer a Bear.”
 - “User identity is supplied by the prompt.”
@@ -175,7 +175,7 @@ Avoid:
 ## Related docs
 
 - [Bear Den and Den](bears-and-den.md)
-- [bear roles](bear-roles.md)
+- [bear stances](bear-stances.md)
 - [Capabilities and skills](capabilities-and-skills.md)
 - [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
 - [Observations and subscriptions](observations-and-subscriptions.md)

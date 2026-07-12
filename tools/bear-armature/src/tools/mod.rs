@@ -1,8 +1,10 @@
 pub(crate) mod adapter_env;
 pub(crate) mod chrome;
+pub(crate) mod command_policy;
 pub(crate) mod fs;
 pub(crate) mod git;
 pub(crate) mod mcp;
 pub(crate) mod process;
+pub(crate) mod rtk;
 pub(crate) mod terminal;
 pub(crate) mod web;

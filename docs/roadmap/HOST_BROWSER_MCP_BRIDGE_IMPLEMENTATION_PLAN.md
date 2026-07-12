@@ -1,8 +1,8 @@
 # Host Browser MCP Bridge Implementation Plan
 
-> **Direction changed (2026-06).** Browser tools are Den-loop tool descriptors, not Letta-materialized tools; "Letta sees..." framing is historical. Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** Browser tools are Den-loop tool descriptors, not Letta-materialized tools; "Letta sees..." framing is historical. Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 **Status:** Draft  
 **Date:** 2026-05-18  
 **Related ADR:** `docs/architecture/adr/acp-host-browser-mcp-bridge.md`
@@ -75,7 +75,7 @@ When configured, the adapter registers the host browser MCP bridge as an additio
 
 ### Tasks
 
-- Generalize `tools/bears-acp-adapter/src/tools/mcp.rs` from “ACP session-provided MCP servers only” to “MCP sources”.
+- Generalize `tools/bear-armature/src/tools/mcp.rs` from “ACP session-provided MCP servers only” to “MCP sources”.
 - Keep Zed-forwarded `mcpServers` as source kind `client_forwarded`.
 - Add source kind `host_browser_bridge`.
 - Add source metadata into descriptor `x_bears`, for example:
@@ -134,10 +134,10 @@ Authorization: Bearer <token>
 
 ### Tasks
 
-- Add command dispatch in `tools/bears-acp-adapter/src/main.rs` or equivalent:
+- Add command dispatch in `tools/bear-armature/src/main.rs` or equivalent:
 
 ```/dev/null/browser-bridge-cli.txt#L1-4
-bears-acp-adapter browser-bridge \
+bear-armature browser-bridge \
   --bind 127.0.0.1:3766 \
   --path /mcp \
   --token "$BEARS_HOST_BROWSER_MCP_TOKEN"
@@ -149,7 +149,7 @@ bears-acp-adapter browser-bridge \
   - Start only an MCP server exposing browser tools.
 
 - Decide implementation approach:
-  1. reuse/extract BEARS CDP code from `tools/bears-acp-adapter/src/tools/chrome.rs`, or
+  1. reuse/extract BEARS CDP code from `tools/bear-armature/src/tools/chrome.rs`, or
   2. wrap `chrome-devtools-mcp`, or
   3. implement a thin MCP server over a smaller CDP helper.
 
@@ -157,7 +157,7 @@ Recommendation for first implementation: reuse/extract the existing BEARS Chrome
 
 ### Acceptance criteria
 
-- Host can run `bears-acp-adapter browser-bridge --listen ...` manually.
+- Host can run `bear-armature browser-bridge --listen ...` manually.
 - `/health` or equivalent diagnostic endpoint confirms readiness, if exposed outside MCP.
 - MCP `tools/list` returns only browser tools.
 - Non-browser tools are not present.
@@ -165,9 +165,9 @@ Recommendation for first implementation: reuse/extract the existing BEARS Chrome
 
 ### Implementation notes (current)
 
-Implemented in `tools/bears-acp-adapter`:
+Implemented in `tools/bear-armature`:
 
-- `bears-acp-adapter browser-bridge --bind 127.0.0.1:3766 --path /mcp --token <token>`
+- `bear-armature browser-bridge --bind 127.0.0.1:3766 --path /mcp --token <token>`
 - Environment fallbacks:
   - `BEARS_HOST_BROWSER_MCP_BIND`
   - `BEARS_HOST_BROWSER_MCP_PATH`

@@ -1,65 +1,52 @@
 # syntax=docker/dockerfile:1
 
-# Multi-stage build with cargo-chef so dependency compilation is cached in a
-# Docker layer that only invalidates when Cargo.lock / Cargo.toml / build.rs
-# dependency metadata changes — not when templates or other application sources
-# change. GitHub Actions imports/exports buildx cache; this structure makes
-# dependency layer reuse visible as a BuildKit `CACHED` step instead of running
-# `cargo chef cook` on every build and merely reporting Cargo artifacts as
-# `Fresh`.
-
 ARG RUST_VERSION=1.92.0
 
-FROM rust:${RUST_VERSION}-alpine AS rust-base
-WORKDIR /app
-RUN apk add --no-cache clang lld musl-dev git
-
-FROM rust-base AS chef-base
-RUN cargo install cargo-chef --version 0.1.71 --locked
-
-FROM chef-base AS planner
-# Workspace-aware recipe: `cargo chef prepare` runs `cargo metadata`, which needs
-# every workspace member's Cargo.toml present, so copy the whole context (minus
-# .dockerignore'd target/.git/etc.). `prepare` is cheap and this layer is not
-# reused across source edits anyway; the expensive dependency compile lives in
-# the `cacher` stage and is gated only by recipe.json, so build-time caching is
-# unaffected. (Per docs/roadmap/DEN_CRATE_SPLIT_PLAN.md the crate split made the
-# previous single-crate selective COPY brittle.)
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
-
-FROM chef-base AS cacher
-COPY --from=planner /app/recipe.json recipe.json
-COPY .cargo ./.cargo
-COPY Cargo.toml Cargo.lock build.rs ./
-# Keep dependency build artifacts in the committed layer at /app/target. Do not
-# put CARGO_TARGET_DIR behind a cache mount here: doing so makes CI rerun
-# `cargo chef cook` and print many `Fresh` lines instead of reusing this step as
-# a normal Docker layer. Registry/git cache mounts still avoid re-downloading
-# crates when this layer genuinely has to be rebuilt.
-RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git,sharing=locked \
-    cargo chef cook --release --recipe-path recipe.json
-
-FROM rust-base AS build
+FROM rust:${RUST_VERSION}-alpine AS build
 ARG APP_NAME=den
-ARG GIT_SHA=
 ARG DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
 ARG SQLX_OFFLINE=false
 ARG CARGO_BUILD_JOBS=2
-ENV GIT_SHA=${GIT_SHA}
+WORKDIR /app
+RUN apk add --no-cache clang lld musl-dev git
+
+# Pinned nightly toolchain, used ONLY to enable `-Z checksum-freshness`, which
+# makes Cargo decide rebuilds from file content hashes instead of mtimes. Docker
+# `COPY` rewrites every file's mtime on each build, so on stable Cargo recompiles
+# the entire workspace on every deploy. With checksum freshness, unchanged crates
+# are reused. Tracking issue: https://github.com/rust-lang/cargo/issues/14136
+#
+# REVERT TO STABLE when the feature stabilizes: set RUST_NIGHTLY to an empty
+# string and bump RUST_VERSION to the stable release that ships it. The build
+# then runs on stable with no `-Z` flag and keeps working — it just loses the
+# optimization until the stabilized config form (`[unstable]`/`[build]`
+# checksum-freshness) is wired in. Pinned by date for reproducibility; bump
+# freely, any recent nightly carries the feature.
+#
+# Caveat: files read by build scripts (e.g. minijinja-embed template embedding)
+# still use mtimes even with checksum-freshness, so template-embedding edge
+# crates may still recompile; the leaf crates get the benefit.
+ARG RUST_NIGHTLY=nightly-2026-06-01
+RUN if [ -n "${RUST_NIGHTLY}" ]; then \
+        rustup toolchain install "${RUST_NIGHTLY}" --profile minimal && \
+        rustup default "${RUST_NIGHTLY}"; \
+    fi
+
 COPY . .
-# Keep only Cargo registry/git caches in the final application build. Do not
-# mount or seed /app/target here: target fingerprints/artifacts can survive
-# source-only Docker rebuilds and produce stale deployed binaries. This makes
-# the final Den build slower than a target-seeded build, but deterministic: the
-# release binary is compiled from the source copied in this Docker layer.
+# BuildKit cache mounts persist Cargo state across deployments:
+#   registry/git — avoid re-downloading crate sources.
+#   target       — preserve compiled artifacts. External dependencies recompile
+#                  only when Cargo.lock changes; with `-Z checksum-freshness`
+#                  (above) unchanged workspace crates are reused across builds
+#                  instead of recompiling on every COPY-rewritten mtime.
 RUN --mount=type=cache,target=/usr/local/cargo/registry/,id=den-cargo-registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git/db,id=den-cargo-git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=den-build-target,sharing=locked \
     export DATABASE_URL="${DATABASE_URL}" SQLX_OFFLINE="${SQLX_OFFLINE}" && \
-    echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && echo "CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS" && \
-    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS}" cargo build --locked --release --features=production --message-format=short && \
-    cp "./target/release/${APP_NAME}" /bin/server
+    if [ -n "${RUST_NIGHTLY}" ]; then FRESHNESS="-Z checksum-freshness"; else FRESHNESS=""; fi && \
+    echo "DATABASE_URL=$DATABASE_URL" && echo "SQLX_OFFLINE=$SQLX_OFFLINE" && echo "CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS" && echo "FRESHNESS=${FRESHNESS:-<stable: none>}" && \
+    CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS}" cargo build ${FRESHNESS} --locked --release --features=production --message-format=short && \
+    cp "./target/release/${APP_NAME}" /tmp/server
 
 FROM alpine:3.18 AS final
 
@@ -74,7 +61,7 @@ RUN apk add --no-cache su-exec wget git \
     --uid "${UID}" \
     appuser
 
-COPY --from=build /bin/server /bin/
+COPY --from=build /tmp/server /bin/server
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
@@ -90,3 +77,15 @@ EXPOSE 3000
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["/bin/server"]
+
+# Sandbox provider variant (compose service `bears-sandbox-provider`): the
+# same server binary plus a docker CLI for driving the `bears-sandbox-engine`
+# dind daemon over DOCKER_HOST (TLS TCP). No docker daemon or socket in this
+# image, so the appuser drop needs no socket-group handling.
+# Build with `--target sandbox-provider`.
+FROM final AS sandbox-provider
+RUN apk add --no-cache docker-cli
+
+# Keep the plain server image as the default build target (the stage above
+# would otherwise become it, being last).
+FROM final

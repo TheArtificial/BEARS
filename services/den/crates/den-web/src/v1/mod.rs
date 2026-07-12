@@ -15,16 +15,9 @@ use serde::{Deserialize, Serialize};
 use tracing::Instrument;
 use uuid::Uuid;
 
+use crate::web::bear::create_support::model_catalog_select_context;
 use crate::{
     auth_backend::{AuthSession, Backend},
-    core::{
-        docket::{DocketService, PgDocketService},
-        tools::{
-            arguments::DenToolChannelContext, constants::DEN_CONVERSATION_SET_TITLE,
-            session::DenToolInvocationContext,
-        },
-        work_plans::{self, WorkPlanListFilter, WorkPlanStatus},
-    },
     errors::CustomError,
     observability::{
         chat_proxy_stream::{deep_chat_sse_body_for_assistant_text, BearChannelSseProxyStream},
@@ -33,13 +26,15 @@ use crate::{
     web::AppState,
     web_chat_runtime::WebChatRuntimeRequest,
 };
-use den_runtime::{
-    acp_sessions, archived_conversations,
+use den_llm::ModelOption;
+use den_protocol::ContextBudgetReport;
+use den_service::archived_conversations;
+use den_service::{
     bears::{
         db::{self as bears_db, role_is_bear_admin},
         BearProfile,
     },
-    conversation_persistence,
+    conversation::persistence as conversation_persistence,
 };
 
 pub fn router() -> Router<AppState> {
@@ -51,11 +46,12 @@ pub fn router() -> Router<AppState> {
             patch(chat_conversation_patch),
         )
         .route("/chat/history", get(chat_history))
+        .route("/chat/model", get(chat_model_get).patch(chat_model_patch))
         .route("/chat/send", post(chat_send))
         .route_layer(login_required!(Backend, login_url = "/login"))
 }
 
-/// Membership-filtered bears for the chat UI (no Letta agent id exposed).
+/// Membership-filtered bears for the chat UI (no provider ids exposed).
 #[derive(Serialize)]
 pub struct BearPublic {
     pub bear_id: Uuid,
@@ -116,6 +112,10 @@ pub struct ChatConversationRow {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_message_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_context_budget: Option<ContextBudgetReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_context_budget_updated_at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -151,11 +151,43 @@ pub struct ChatHistoryResponse {
     pub has_more: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_context_budget: Option<ContextBudgetReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_context_budget_updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatModelQuery {
+    pub bear_id: Uuid,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatModelPatchBody {
+    pub bear_id: Uuid,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub selection_mode: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ChatModelResponse {
+    pub selection_mode: String,
+    pub requested_model: Option<String>,
+    pub selected_model: Option<String>,
+    pub effective_model: String,
+    pub source: String,
+    pub model_options: Vec<ModelOption>,
 }
 
 /// `None` / empty / `default` → agent main conversation. Existing runtime conversations are `conv-...`.
-/// The web UI may also send a temporary `new-...` placeholder before Letta allocates the real
-/// conversation id; Codepool turns that into an SDK `createSession(agent_id)` call.
+/// The web UI may also send a temporary `new-...` placeholder before Den resolves the durable
+/// conversation id; Den resolves that into a durable native conversation.
 fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
         .map(str::trim)
@@ -203,6 +235,8 @@ async fn chat_conversations(
         id: "default".to_string(),
         title: "Main chat".to_string(),
         last_message_at: None,
+        latest_context_budget: None,
+        latest_context_budget_updated_at: None,
     };
 
     let archived_ids = archived_conversations::list_for_bear(state.sqlx_pool(), bear.id).await?;
@@ -232,6 +266,14 @@ async fn chat_conversations(
                             .format(&time::format_description::well_known::Rfc3339)
                             .ok()?,
                     ),
+                    latest_context_budget: row.latest_context_budget,
+                    latest_context_budget_updated_at: row
+                        .latest_context_budget_updated_at
+                        .and_then(|value| {
+                            value
+                                .format(&time::format_description::well_known::Rfc3339)
+                                .ok()
+                        }),
                 })
             })
             .collect::<Vec<_>>();
@@ -298,19 +340,12 @@ async fn chat_conversation_patch(
     }
 
     if body.deleted == Some(true) {
-        conversation_persistence::delete_conversation_for_external_id(
-            state.sqlx_pool(),
-            bear.id,
-            &conv_id,
-        )
-        .await?;
-        archived_conversations::set_archived(
+        conversation_persistence::delete_conversation_and_clear_archive(
             state.sqlx_pool(),
             bear.id,
             &conv_id,
             Some(user_id),
             "delete",
-            false,
         )
         .await?;
         return Ok(Json(ChatConversationPatchResponse { ok: true }));
@@ -318,14 +353,7 @@ async fn chat_conversation_patch(
 
     if let Some(title) = title {
         let title = title.chars().take(120).collect::<String>();
-        let _ = conversation_persistence::set_conversation_title(
-            state.sqlx_pool(),
-            bear.id,
-            &conv_id,
-            &title,
-        )
-        .await?;
-        let _ = acp_sessions::set_title_for_bear_conversation(
+        let _ = conversation_persistence::set_conversation_title_and_sync_client_sessions(
             state.sqlx_pool(),
             bear.id,
             &conv_id,
@@ -376,6 +404,8 @@ async fn chat_history(
             messages: vec![],
             has_more: false,
             next_before: None,
+            latest_context_budget: None,
+            latest_context_budget_updated_at: None,
         })
     };
 
@@ -415,6 +445,14 @@ async fn chat_history(
         messages,
         has_more,
         next_before,
+        latest_context_budget: conversation.latest_context_budget,
+        latest_context_budget_updated_at: conversation.latest_context_budget_updated_at.and_then(
+            |value| {
+                value
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .ok()
+            },
+        ),
     }))
 }
 
@@ -432,21 +470,21 @@ fn map_persisted_history_page(
 ) -> (Vec<ChatHistoryMessage>, bool, Option<String>) {
     let visible_rows: Vec<_> = rows
         .iter()
-        .filter(|row| row.is_transcript_visible())
+        .filter_map(|row| row.to_user_history_record().map(|message| (row, message)))
         .collect();
 
     let mut coalesced_desc: Vec<(i64, ChatHistoryMessage)> = Vec::new();
-    for row in visible_rows {
-        let storage_role = row.role.clone().unwrap_or_else(|| "assistant".to_string());
+    for (row, message) in visible_rows {
+        let storage_role = message.role.clone();
         if let Some((_, last)) = coalesced_desc.last_mut() {
             if last.role == client_chat_history_role(&storage_role)
                 && storage_role == "assistant"
                 && matches!(
                     row.storage_message_type(),
-                    Ok(den_runtime::conversation_message_types::ConversationMessageType::Assistant)
+                    Ok(den_service::conversation::message_types::ConversationMessageType::Assistant)
                 )
             {
-                last.text.push_str(&row.content_text);
+                last.text.push_str(&message.content);
                 last.text =
                     crate::observability::chat_proxy_stream::strip_ephemeral_status_suffixes(
                         &last.text,
@@ -455,13 +493,13 @@ fn map_persisted_history_page(
             }
         }
         let text = crate::observability::chat_proxy_stream::strip_ephemeral_status_suffixes(
-            &row.content_text,
+            &message.content,
         );
         if text.is_empty() {
             continue;
         }
         coalesced_desc.push((
-            row.sequence_no,
+            message.sequence_no,
             ChatHistoryMessage {
                 role: client_chat_history_role(&storage_role),
                 text,
@@ -534,23 +572,168 @@ fn chat_send_error_response(err: CustomError, request_id: Uuid) -> Response {
 }
 
 async fn web_chat_workboard_prompt_context(
-    pool: &sqlx::PgPool,
-    bear_id: Uuid,
-    user_id: i32,
+    _pool: &sqlx::PgPool,
+    _bear_id: Uuid,
+    _user_id: i32,
+    _conversation_id: &str,
+    _session_id: &str,
 ) -> Result<String, CustomError> {
-    let plans = PgDocketService::from_pool(pool)
-        .list_visible_work_plans(
-            bear_id,
-            BearProfile::Chat,
-            user_id,
-            WorkPlanListFilter {
-                statuses: Some(vec![WorkPlanStatus::Active, WorkPlanStatus::Blocked]),
-                owner_profile: None,
-                include_archived: false,
-            },
-        )
-        .await?;
-    Ok(work_plans::render_workboard_prompt_context(&plans))
+    // ponytail: local task-list lookup was removed with the Docket crate split; skip
+    // prompt workboard context rather than breaking chat/deploy. Upgrade path: render
+    // from Docket checkout/list APIs once conversation-scoped task lists are backed
+    // by the relational Docket model.
+    Ok(String::new())
+}
+
+async fn chat_model_response_for(
+    state: &AppState,
+    user_id: i32,
+    bear_id: Uuid,
+    conversation_id: Option<&str>,
+) -> Result<ChatModelResponse, CustomError> {
+    let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, bear_id).await?;
+    if !allowed {
+        return Err(CustomError::Authorization(
+            "you do not have access to this bear".to_string(),
+        ));
+    }
+    let bear = bears_db::get_bear(state.sqlx_pool(), bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let conv_id = normalize_client_conversation_id(conversation_id)?;
+    let (configured, model_options, fetch_error) = model_catalog_select_context(state).await;
+    if !configured || model_options.is_empty() {
+        return Err(CustomError::System(fetch_error.unwrap_or_else(|| {
+            "No Den model selection options are configured.".to_string()
+        })));
+    }
+
+    let base_model = bears_db::resolve_model_for_profile(
+        state.sqlx_pool(),
+        &bear,
+        BearProfile::Chat,
+        state.config.default_llm_model.as_str(),
+    )
+    .await?;
+
+    if conv_id.starts_with("new-") {
+        return Ok(ChatModelResponse {
+            selection_mode: "auto".to_string(),
+            requested_model: None,
+            selected_model: None,
+            effective_model: base_model,
+            source: "stance_or_bear_default".to_string(),
+            model_options,
+        });
+    }
+
+    let conversation = conversation_persistence::ensure_conversation_for_external_id(
+        state.sqlx_pool(),
+        bear.id,
+        Some(user_id),
+        &conv_id,
+        None,
+        None,
+    )
+    .await?;
+    let state_row =
+        conversation_persistence::get_conversation_model_state(state.sqlx_pool(), conversation.id)
+            .await?;
+    let effective = conversation_persistence::resolve_conversation_selected_model(
+        state.sqlx_pool(),
+        conversation.id,
+    )
+    .await?
+    .unwrap_or(base_model);
+    Ok(ChatModelResponse {
+        selection_mode: state_row
+            .as_ref()
+            .map(|row| row.selection_mode.clone())
+            .unwrap_or_else(|| "auto".to_string()),
+        requested_model: state_row
+            .as_ref()
+            .and_then(|row| row.requested_model.clone()),
+        selected_model: state_row
+            .as_ref()
+            .and_then(|row| row.selected_model.clone()),
+        effective_model: effective,
+        source: if state_row.as_ref().map(|row| row.selection_mode.as_str()) == Some("explicit") {
+            "conversation_explicit".to_string()
+        } else {
+            "stance_or_bear_default".to_string()
+        },
+        model_options,
+    })
+}
+
+async fn chat_model_get(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Query(q): Query<ChatModelQuery>,
+) -> Result<Json<ChatModelResponse>, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    Ok(Json(
+        chat_model_response_for(&state, user_id, q.bear_id, q.conversation_id.as_deref()).await?,
+    ))
+}
+
+async fn chat_model_patch(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Json(body): Json<ChatModelPatchBody>,
+) -> Result<Json<ChatModelResponse>, CustomError> {
+    let user_id = auth_session
+        .user
+        .as_ref()
+        .map(|u| u.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))?;
+    let allowed = bears_db::user_may_use_bear(state.sqlx_pool(), user_id, body.bear_id).await?;
+    if !allowed {
+        return Err(CustomError::Authorization(
+            "you do not have access to this bear".to_string(),
+        ));
+    }
+    let bear = bears_db::get_bear(state.sqlx_pool(), body.bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("bear not found".to_string()))?;
+    let conv_id = normalize_client_conversation_id(body.conversation_id.as_deref())?;
+    if conv_id.starts_with("new-") {
+        return Err(CustomError::ValidationError(
+            "choose a model after the conversation is created".to_string(),
+        ));
+    }
+    let (configured, model_options, fetch_error) = model_catalog_select_context(&state).await;
+    if !configured || model_options.is_empty() {
+        return Err(CustomError::System(fetch_error.unwrap_or_else(|| {
+            "No Den model selection options are configured.".to_string()
+        })));
+    }
+    let mode = body.selection_mode.as_deref().unwrap_or("auto").trim();
+    let conversation = conversation_persistence::ensure_conversation_for_external_id(
+        state.sqlx_pool(),
+        bear.id,
+        Some(user_id),
+        &conv_id,
+        None,
+        None,
+    )
+    .await?;
+    den_service::model_selection::apply_conversation_model_selection(
+        state.sqlx_pool(),
+        conversation.id,
+        mode,
+        body.model.as_deref(),
+        "human_selected",
+        "inherit_stance_or_bear_default",
+    )
+    .await?;
+    Ok(Json(
+        chat_model_response_for(&state, user_id, body.bear_id, Some(&conv_id)).await?,
+    ))
 }
 
 async fn chat_send(
@@ -591,13 +774,8 @@ fn parse_set_conversation_title_request(message: &str) -> Option<String> {
 }
 
 struct ConversationTitleRequest<'a> {
-    bear: &'a den_runtime::bears::Bear,
-    chat_agent_id: &'a str,
-    user_id: i32,
-    username: Option<&'a str>,
-    membership_role: Option<&'a str>,
+    bear: &'a den_service::bears::Bear,
     conv_id: &'a str,
-    session_id: &'a str,
     message: &'a str,
     request_id: Uuid,
 }
@@ -608,62 +786,22 @@ async fn maybe_handle_direct_set_conversation_title(
 ) -> Result<Option<Response>, CustomError> {
     let ConversationTitleRequest {
         bear,
-        chat_agent_id,
-        user_id,
-        username,
-        membership_role,
         conv_id,
-        session_id,
         message,
         request_id,
     } = request;
     let Some(title) = parse_set_conversation_title_request(message) else {
         return Ok(None);
     };
-    let context = DenToolInvocationContext {
-        bear_id: bear.id,
-        bear_slug: bear.slug.clone(),
-        binding_id: chat_agent_id.to_string(),
-        profile: Some(BearProfile::Chat),
-        user_id,
-        username: username.map(str::to_string),
-        membership_role: membership_role.map(str::to_string),
-        conversation_id: conv_id.to_string(),
-        session_id: session_id.to_string(),
-        acp_session_id: None,
-        conversation_selection: Some(conv_id.to_string()),
-        runtime_target: Some(conv_id.to_string()),
-        workspace_roots: Vec::new(),
-        session_policy: None,
-        activity: None,
-        runtime: None,
-        context_budget: None,
-        request_id: Some(request_id.to_string()),
-        channel: DenToolChannelContext {
-            family: Some("browser_chat".to_string()),
-            client: Some("den_web".to_string()),
-            protocol: Some("den_chat".to_string()),
-        },
-    };
-    let stores = den_runtime::memory::MemoryStoreManager::new(state.config.as_ref());
-    let invoker = den_runtime::native_runtime::tool_invoker().ok_or_else(|| {
-        CustomError::System("builtin Den tool runtime is not initialized".to_string())
-    })?;
-    let value = invoker
-        .invoke(
-            state.sqlx_pool(),
-            state.config.as_ref(),
-            &stores,
-            DEN_CONVERSATION_SET_TITLE,
-            serde_json::json!({ "title": title }),
-            context,
-        )
-        .await
-        .map_err(CustomError::from)?;
-    let text = value
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Conversation title updated.");
+    let title = title.chars().take(120).collect::<String>();
+    let _ = conversation_persistence::set_conversation_title_and_sync_client_sessions(
+        state.sqlx_pool(),
+        bear.id,
+        conv_id,
+        &title,
+    )
+    .await?;
+    let text = "Conversation title updated.";
     let body = deep_chat_sse_body_for_assistant_text(text);
     let request_id_header = HeaderValue::from_str(&request_id.to_string())
         .map_err(|_| CustomError::System("invalid request id for response header".to_string()))?;
@@ -692,20 +830,35 @@ fn direct_chat_sse_response(text: &str, request_id: Uuid) -> Result<Response, Cu
         .map_err(|err| CustomError::System(format!("response build: {err}")))
 }
 
+fn chat_turn_is_capabilities_meta_query(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    const PHRASES: &[&str] = &[
+        "list capabilities",
+        "list your capabilities",
+        "list tools",
+        "list your tools",
+        "what tools",
+        "what capabilities",
+        "which tools",
+        "which capabilities",
+    ];
+    PHRASES.iter().any(|phrase| lower.contains(phrase))
+}
+
 async fn maybe_handle_direct_capabilities_list(
     pool: &sqlx::PgPool,
     canonical_conversation_id: Uuid,
     message: &str,
     request_id: Uuid,
 ) -> Result<Option<Response>, CustomError> {
-    if !den_runtime::native_runtime::chat_turn_is_capabilities_meta_query(message.trim()) {
+    if !chat_turn_is_capabilities_meta_query(message.trim()) {
         return Ok(None);
     }
     let text = den_core::tools::descriptor::render_profile_tool_surface_blurb(BearProfile::Chat);
     conversation_persistence::append_message(
         pool,
         canonical_conversation_id,
-        &den_runtime::conversation_message_types::ConversationMessageWrite::assistant_turn(
+        &den_service::conversation::message_types::ConversationMessageWrite::assistant_turn(
             text.clone(),
             serde_json::json!({
                 "type": "assistant_output",
@@ -737,7 +890,7 @@ async fn resolve_chat_profile_binding_id(
             CustomError::System(if native_runtime {
                 "This bear has no chat profile runtime binding. Ask an operator to provision missing profiles in Admin → Bears.".to_string()
             } else {
-                "This bear is not provisioned in Letta yet (missing chat profile runtime)."
+                "This bear is not provisioned yet (missing chat profile runtime)."
                     .to_string()
             })
         })
@@ -765,7 +918,7 @@ async fn chat_send_native_inner(
     request_id: Uuid,
     user_id: i32,
     username: &str,
-    bear: den_runtime::bears::Bear,
+    bear: den_service::bears::Bear,
     chat_binding_id: &str,
     conv_id: String,
 ) -> Result<Response, CustomError> {
@@ -785,12 +938,7 @@ async fn chat_send_native_inner(
         &state,
         ConversationTitleRequest {
             bear: &bear,
-            chat_agent_id: chat_binding_id,
-            user_id,
-            username: Some(username),
-            membership_role: membership_role.as_deref(),
             conv_id: &conv_id,
-            session_id: &session_id,
             message: body.message.trim(),
             request_id,
         },
@@ -800,8 +948,14 @@ async fn chat_send_native_inner(
         return Ok(response);
     }
 
-    let workboard_context =
-        web_chat_workboard_prompt_context(state.sqlx_pool(), bear.id, user_id).await?;
+    let workboard_context = web_chat_workboard_prompt_context(
+        state.sqlx_pool(),
+        bear.id,
+        user_id,
+        &conv_id,
+        &session_id,
+    )
+    .await?;
     let upstream_message = format!("{}{}", body.message.trim(), workboard_context);
 
     let canonical_conversation = conversation_persistence::ensure_conversation_for_external_id(
@@ -816,7 +970,7 @@ async fn chat_send_native_inner(
     conversation_persistence::append_message(
         state.sqlx_pool(),
         canonical_conversation.id,
-        &den_runtime::conversation_message_types::ConversationMessageWrite::user_turn(
+        &den_service::conversation::message_types::ConversationMessageWrite::user_turn(
             body.message.trim(),
             serde_json::json!({
                 "type": "user_input",
@@ -923,7 +1077,7 @@ async fn chat_send_inner(
 #[cfg(test)]
 mod chat_history_map_tests {
     use super::*;
-    use den_runtime::conversation_persistence::PersistedConversationMessage;
+    use den_service::conversation::persistence::PersistedConversationMessage;
 
     fn persisted_row(
         sequence_no: i64,
@@ -937,6 +1091,7 @@ mod chat_history_map_tests {
             role: Some(role.to_string()),
             visibility: "default".to_string(),
             content_text: text.to_string(),
+            content_json: serde_json::Value::Null,
             provider_message_id: None,
             created_at: time::OffsetDateTime::now_utc(),
         }

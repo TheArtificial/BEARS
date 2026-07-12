@@ -2,13 +2,13 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{
-    conversation_events::{
-        canonical_persistence_context, spawn_persist_assistant_output,
-        spawn_persist_tool_request, spawn_persist_tool_result, ConversationEventProvenance,
-    },
-    llm::{ChatMessage, ChatToolCall},
+use den_service::conversation::events::{
+    canonical_persistence_context, spawn_persist_assistant_output, spawn_persist_tool_request,
+    spawn_persist_tool_result, CanonicalToolRequestRecord, CanonicalToolResultRecord,
+    ConversationEventProvenance,
 };
+
+use crate::llm::{ChatMessage, ChatToolCall};
 
 use super::{
     pending_tools::pending_tool_calls,
@@ -21,7 +21,7 @@ pub fn spawn_persist_native_agent_step(
     bear_id: Uuid,
     user_id: Option<i32>,
     conversation_id: String,
-    acp_session_id: String,
+    client_session_id: String,
     request_id: Option<String>,
     assistant_text: String,
     tool_calls: &[ChatToolCall],
@@ -29,15 +29,15 @@ pub fn spawn_persist_native_agent_step(
     if assistant_text.trim().is_empty() && tool_calls.is_empty() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(acp_session_id.clone());
+    let provenance = ConversationEventProvenance::client_session(client_session_id.clone());
     let context = canonical_persistence_context(
         pool,
         bear_id,
         user_id,
         conversation_id,
-        Some(acp_session_id.clone()),
+        Some(client_session_id.clone()),
         request_id.clone(),
-        acp_session_id,
+        client_session_id,
         false,
     );
     if !assistant_text.trim().is_empty() {
@@ -50,24 +50,27 @@ pub fn spawn_persist_native_agent_step(
         );
     }
     for call in tool_calls {
-        let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| {
-            Value::String(call.function.arguments.clone())
-        });
+        let args: Value = serde_json::from_str(&call.function.arguments)
+            .unwrap_or_else(|_| Value::String(call.function.arguments.clone()));
         let approval_required = provider_tool_requires_approval(&call.function.name);
         spawn_persist_tool_request(
             context.clone(),
-            call.function.name.clone(),
-            call.id.clone(),
-            request_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()),
-            None,
-            args,
-            approval_required,
-            if approval_required {
-                Some("native runtime policy".to_string())
-            } else {
-                None
-            },
-            "native_runtime".to_string(),
+            CanonicalToolRequestRecord::new(
+                call.function.name.clone(),
+                call.id.clone(),
+                request_id
+                    .clone()
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                None,
+                args,
+                approval_required,
+                if approval_required {
+                    Some("native runtime policy".to_string())
+                } else {
+                    None
+                },
+                "native_runtime".to_string(),
+            ),
             &provenance,
         );
     }
@@ -87,7 +90,7 @@ pub fn spawn_persist_web_chat_turn(
     if from_index >= messages.len() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(session_id.clone());
+    let provenance = ConversationEventProvenance::client_session(session_id.clone());
     let context = canonical_persistence_context(
         pool,
         bear_id,
@@ -112,18 +115,20 @@ pub fn spawn_persist_web_chat_turn(
                             provider_tool_requires_approval(&call.function.name);
                         spawn_persist_tool_request(
                             context.clone(),
-                            call.function.name.clone(),
-                            call.id.clone(),
-                            request_id.clone(),
-                            None,
-                            args,
-                            approval_required,
-                            if approval_required {
-                                Some("native runtime policy".to_string())
-                            } else {
-                                None
-                            },
-                            "native_web_chat".to_string(),
+                            CanonicalToolRequestRecord::new(
+                                call.function.name.clone(),
+                                call.id.clone(),
+                                request_id.clone(),
+                                None,
+                                args,
+                                approval_required,
+                                if approval_required {
+                                    Some("native runtime policy".to_string())
+                                } else {
+                                    None
+                                },
+                                "native_web_chat".to_string(),
+                            ),
                             &provenance,
                         );
                     }
@@ -141,17 +146,19 @@ pub fn spawn_persist_web_chat_turn(
                 };
                 spawn_persist_tool_result(
                     context.clone(),
-                    message.name.clone(),
-                    tool_call_id,
-                    None,
-                    status.to_string(),
-                    persisted_content,
-                    Value::Null,
-                    serde_json::json!({
-                        "component": "den.web_chat",
-                        "phase": "server_side_tool_result",
-                    }),
-                    Some(request_id.clone()),
+                    CanonicalToolResultRecord::new(
+                        message.name.clone(),
+                        tool_call_id,
+                        None,
+                        status,
+                        persisted_content,
+                        Value::Null,
+                        serde_json::json!({
+                            "component": "den.web_chat",
+                            "phase": "server_side_tool_result",
+                        }),
+                        Some(request_id.clone()),
+                    ),
                     &provenance,
                 );
             }
@@ -161,7 +168,7 @@ pub fn spawn_persist_web_chat_turn(
 }
 
 fn spawn_persist_incomplete_tool_results(
-    context: crate::conversation_events::ConversationPersistenceContext,
+    context: den_service::conversation::events::ConversationPersistenceContext,
     provenance: &ConversationEventProvenance,
     request_id: Option<String>,
     tool_calls: &[ChatToolCall],
@@ -171,19 +178,21 @@ fn spawn_persist_incomplete_tool_results(
     for call in tool_calls {
         spawn_persist_tool_result(
             context.clone(),
-            Some(call.function.name.clone()),
-            call.id.clone(),
-            None,
-            "incomplete".to_string(),
-            None,
-            Value::Null,
-            serde_json::json!({
-                "component": "den.agent_loop",
-                "phase": phase,
-                "reason": reason,
-                "tool_name": call.function.name,
-            }),
-            request_id.clone(),
+            CanonicalToolResultRecord::new(
+                Some(call.function.name.clone()),
+                call.id.clone(),
+                None,
+                den_core::tools::result_compaction::ToolResultStatus::Incomplete,
+                None,
+                Value::Null,
+                serde_json::json!({
+                    "component": "den.agent_loop",
+                    "phase": phase,
+                    "reason": reason,
+                    "tool_name": call.function.name,
+                }),
+                request_id.clone(),
+            ),
             provenance,
         );
     }
@@ -204,7 +213,7 @@ pub fn spawn_persist_web_chat_interrupted_turn(
     if from_index >= messages.len() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(session_id.clone());
+    let provenance = ConversationEventProvenance::client_session(session_id.clone());
     let context = canonical_persistence_context(
         pool.clone(),
         bear_id,
@@ -241,7 +250,7 @@ pub fn spawn_persist_incomplete_acp_tool_results(
     bear_id: Uuid,
     user_id: Option<i32>,
     conversation_id: String,
-    acp_session_id: String,
+    client_session_id: String,
     request_id: Option<String>,
     tool_calls: &[ChatToolCall],
     reason: &str,
@@ -249,15 +258,15 @@ pub fn spawn_persist_incomplete_acp_tool_results(
     if tool_calls.is_empty() {
         return;
     }
-    let provenance = ConversationEventProvenance::acp_session(acp_session_id.clone());
+    let provenance = ConversationEventProvenance::client_session(client_session_id.clone());
     let context = canonical_persistence_context(
         pool,
         bear_id,
         user_id,
         conversation_id,
-        Some(acp_session_id.clone()),
+        Some(client_session_id.clone()),
         request_id.clone(),
-        acp_session_id,
+        client_session_id,
         false,
     );
     spawn_persist_incomplete_tool_results(
@@ -266,6 +275,6 @@ pub fn spawn_persist_incomplete_acp_tool_results(
         request_id,
         tool_calls,
         reason,
-        "acp_interrupted_turn",
+        "client_interrupted_turn",
     );
 }

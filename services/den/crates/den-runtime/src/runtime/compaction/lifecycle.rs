@@ -11,9 +11,10 @@ use uuid::Uuid;
 
 use crate::{
     agent_loop::load_transcript_grouping_rows,
+    reflection::conductor::enqueue_archive_harvest_for_bear,
     runtime_compaction_observability::{
-        build_compaction_applied_event, build_compaction_skipped_event,
-        RuntimeCompactionEvent, RuntimeCompactionEventStatus,
+        build_compaction_applied_event, build_compaction_skipped_event, RuntimeCompactionEvent,
+        RuntimeCompactionEventStatus,
     },
     runtime_compaction_store::{list_runtime_compaction_events, record_runtime_compaction_event},
     runtime_conversations::{RuntimeCompactionTriggerKind, RuntimeSemanticGroup},
@@ -25,8 +26,8 @@ use super::{
     render::render_compacted_context_block,
     summarize::summarize_compacted_groups,
     {
-        artifact_ref_from_decision, choose_compaction_decision,
-        RuntimeCompactionDecision, RuntimeCompactionPolicy,
+        artifact_ref_from_decision, choose_compaction_decision, RuntimeCompactionDecision,
+        RuntimeCompactionPolicy,
     },
 };
 
@@ -158,8 +159,7 @@ pub async fn run_compaction_job(
                 "{conversation_id}:{}-{}",
                 decision.selected_group_start, decision.selected_group_end
             );
-            let artifact_ref =
-                artifact_ref_from_decision(artifact_id, decision, &policy);
+            let artifact_ref = artifact_ref_from_decision(artifact_id, decision, &policy);
             let event = build_compaction_applied_event(
                 conversation_id.to_string(),
                 decision,
@@ -176,8 +176,7 @@ pub async fn run_compaction_job(
                     &rows,
                     decision,
                 );
-                let (start_seq, end_seq) =
-                    sequence_span_for_group_range(&rows, &groups, decision)?;
+                let (start_seq, end_seq) = sequence_span_for_group_range(&rows, &groups, decision)?;
                 let _artifact_uuid = artifact_store::insert_iterative_summary_artifact(
                     pool,
                     bear_id,
@@ -190,6 +189,17 @@ pub async fn run_compaction_job(
                     &summary,
                 )
                 .await?;
+                if let Err(error) =
+                    enqueue_archive_harvest_for_bear(pool, bear_id, "compaction_artifact_created")
+                        .await
+                {
+                    tracing::warn!(
+                        bear_id = %bear_id,
+                        conversation_id,
+                        error = %error,
+                        "failed to enqueue archive_harvest after compaction artifact creation"
+                    );
+                }
                 let cutoff = Some(end_seq);
                 let context = Some(render_compacted_context_block(&summary));
                 (cutoff, context)
@@ -214,7 +224,11 @@ pub async fn run_compaction_job(
             let context = prior_summary
                 .as_ref()
                 .map(|record| render_compacted_context_block(&record.summary));
-            (event, prior_summary.map(|record| record.source_message_end_seq), context)
+            (
+                event,
+                prior_summary.map(|record| record.source_message_end_seq),
+                context,
+            )
         }
     };
 
@@ -389,7 +403,10 @@ fn sequence_span_for_group_range(
     Ok((start_seq, end_seq))
 }
 
-fn message_sequence(rows: &[super::TranscriptGroupingRow], message_id: Option<&str>) -> Option<i64> {
+fn message_sequence(
+    rows: &[super::TranscriptGroupingRow],
+    message_id: Option<&str>,
+) -> Option<i64> {
     let message_id = message_id?;
     rows.iter()
         .find(|row| row.message_id.as_deref() == Some(message_id))

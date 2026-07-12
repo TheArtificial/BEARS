@@ -1,14 +1,14 @@
 use bytes::Bytes;
 use futures::StreamExt;
 
+use den_protocol::{
+    RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
+};
 use den_runtime::{
     gateway_events::gateway_event_to_adapter_sse,
     native_runtime::openai_byte_stream_to_event_stream,
     runtime::bearwire_projection::{
         runtime_semantic_event_to_bearwire_gateway_events, runtime_stream_event_to_bearwire_sse,
-    },
-    runtime_contracts::{
-        RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
     },
 };
 

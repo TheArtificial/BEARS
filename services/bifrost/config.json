@@ -1,180 +1,19 @@
 {
-    "bears": {
-        "model_metadata_version": 1,
-        "models": [
-            {
-                "handle": "openai/gpt-5.1",
-                "provider": "openai",
-                "model": "gpt-5.1",
-                "display_name": "OpenAI GPT-5.1",
-                "context_window": 400000,
-                "max_output_tokens": 128000,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/gpt-5",
-                "provider": "openai",
-                "model": "gpt-5",
-                "display_name": "OpenAI GPT-5",
-                "context_window": 400000,
-                "max_output_tokens": 128000,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/gpt-5-mini",
-                "provider": "openai",
-                "model": "gpt-5-mini",
-                "display_name": "OpenAI GPT-5 mini",
-                "context_window": 400000,
-                "max_output_tokens": 128000,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/gpt-5-nano",
-                "provider": "openai",
-                "model": "gpt-5-nano",
-                "display_name": "OpenAI GPT-5 nano",
-                "context_window": 400000,
-                "max_output_tokens": 128000,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/gpt-4.1",
-                "provider": "openai",
-                "model": "gpt-4.1",
-                "display_name": "OpenAI GPT-4.1",
-                "context_window": 1047576,
-                "max_output_tokens": 32768,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/gpt-4.1-mini",
-                "provider": "openai",
-                "model": "gpt-4.1-mini",
-                "display_name": "OpenAI GPT-4.1 mini",
-                "context_window": 1047576,
-                "max_output_tokens": 32768,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/gpt-4.1-nano",
-                "provider": "openai",
-                "model": "gpt-4.1-nano",
-                "display_name": "OpenAI GPT-4.1 nano",
-                "context_window": 1047576,
-                "max_output_tokens": 32768,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/gpt-4o",
-                "provider": "openai",
-                "model": "gpt-4o",
-                "display_name": "OpenAI GPT-4o",
-                "context_window": 128000,
-                "max_output_tokens": 16384,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/gpt-4o-mini",
-                "provider": "openai",
-                "model": "gpt-4o-mini",
-                "display_name": "OpenAI GPT-4o mini",
-                "context_window": 128000,
-                "max_output_tokens": 16384,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/o4-mini",
-                "provider": "openai",
-                "model": "o4-mini",
-                "display_name": "OpenAI o4-mini",
-                "context_window": 200000,
-                "max_output_tokens": 100000,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/o3",
-                "provider": "openai",
-                "model": "o3",
-                "display_name": "OpenAI o3",
-                "context_window": 200000,
-                "max_output_tokens": 100000,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/o3-mini",
-                "provider": "openai",
-                "model": "o3-mini",
-                "display_name": "OpenAI o3-mini",
-                "context_window": 200000,
-                "max_output_tokens": 100000,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": false,
-                "enabled": true
-            },
-            {
-                "handle": "openai/o1",
-                "provider": "openai",
-                "model": "o1",
-                "display_name": "OpenAI o1",
-                "context_window": 200000,
-                "max_output_tokens": 100000,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": true,
-                "enabled": true
-            },
-            {
-                "handle": "openai/o1-mini",
-                "provider": "openai",
-                "model": "o1-mini",
-                "display_name": "OpenAI o1-mini",
-                "context_window": 128000,
-                "max_output_tokens": 65536,
-                "supports_tools": true,
-                "supports_responses_api": true,
-                "supports_vision": false,
-                "enabled": true
-            }
-        ]
-    },
+    "$schema": "https://www.getbifrost.ai/schema",
+    "source_of_truth": "config.json",
+    "encryption_key": "env.BIFROST_ENCRYPTION_KEY",
     "client": {
+        "enforce_auth_on_inference": true,
         "drop_excess_requests": false,
         "disable_db_pings_in_health": true
+    },
+    "governance": {
+        "auth_config": {
+            "is_enabled": true,
+            "admin_username": "env.BIFROST_ADMIN_USERNAME",
+            "admin_password": "env.BIFROST_ADMIN_PASSWORD",
+            "disable_auth_on_inference": false
+        }
     },
     "providers": {
         "openai": {
@@ -183,25 +22,55 @@
                     "name": "openai-primary",
                     "value": "env.OPENAI_API_KEY",
                     "models": [
+                        "gpt-5.5",
                         "gpt-5.1",
                         "gpt-5",
                         "gpt-5-mini",
-                        "gpt-5-nano",
                         "gpt-4.1",
-                        "gpt-4.1-mini",
-                        "gpt-4.1-nano",
-                        "gpt-4o",
-                        "gpt-4o-mini",
-                        "o4-mini",
-                        "o3",
-                        "o3-mini",
-                        "o1",
-                        "o1-mini",
-                        "text-embedding-3-small"
+                        "gpt-4.1-mini"
                     ],
                     "weight": 1.0
                 }
             ]
+        }
+    },
+    "vector_store": {
+        "enabled": true,
+        "type": "redis",
+        "config": {
+            "addr": "bears-bifrost-valkey:6379",
+            "db": 0,
+            "use_tls": false,
+            "pool_size": 10,
+            "max_active_conns": 10,
+            "min_idle_conns": 2,
+            "max_idle_conns": 10,
+            "dial_timeout": "5s",
+            "read_timeout": "3s",
+            "write_timeout": "3s",
+            "context_timeout": "10s"
+        }
+    },
+    "plugins": [
+        {
+            "enabled": true,
+            "name": "semantic_cache",
+            "config": {
+                "dimension": 1,
+                "ttl": "10m",
+                "conversation_history_threshold": 50,
+                "exclude_system_prompt": false,
+                "cache_by_model": true,
+                "cache_by_provider": true,
+                "vector_store_namespace": "BearsDirectCache"
+            }
+        }
+    ],
+    "config_store": {
+        "enabled": true,
+        "type": "sqlite",
+        "config": {
+            "path": "/app/data/config.db"
         }
     }
 }

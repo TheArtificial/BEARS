@@ -12,13 +12,13 @@ use uuid::Uuid;
 
 use crate::tools::{
     context::DenToolInvocationContext,
-    memory::source_acp_session_id,
+    memory::source_client_session_id,
     support::{clean_optional, validate_bounded_text, validate_optional_object},
 };
 
 use super::store::{
-    ApplyCoreUpdateRequest, MemoryReviewStore, ProposalProjection, RequestReviewRequest,
-    ResolveProposalRequest,
+    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ProposalProjection,
+    RequestReviewRequest, ResolveProposalRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -62,6 +62,14 @@ pub struct MemoryResolveProposalArguments {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct MemoryMarkLifecycleArguments {
+    pub memory_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct MemoryRequestReviewArguments {
     pub source_paths: Vec<String>,
     pub title: String,
@@ -84,18 +92,100 @@ pub struct MemoryRequestReviewArguments {
     pub proposed_patch: Option<String>,
 }
 
+fn normalize_suggested_action(value: Option<&str>) -> Result<String, DenError> {
+    let value = value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unspecified");
+    if matches!(
+        value,
+        "unspecified"
+            | "summarize_into_core"
+            | "promote_to_core"
+            | "cabinet_update"
+            | "skill_review"
+            | "retain_profile_local"
+            | "delete_after_review"
+            | "human_review"
+            | "archive_index"
+            | "task_context"
+    ) {
+        Ok(value.to_string())
+    } else {
+        Err(DenError::ValidationError(format!(
+            "suggested_action must be one of the supported memory review actions; got {value}"
+        )))
+    }
+}
+
+fn normalize_memory_sensitivity(value: Option<&str>) -> Result<String, DenError> {
+    let value = value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("normal");
+    if matches!(
+        value,
+        "normal" | "person" | "secret_risk" | "external_untrusted" | "unknown"
+    ) {
+        Ok(value.to_string())
+    } else {
+        Err(DenError::ValidationError(format!(
+            "sensitivity must be normal, person, secret_risk, external_untrusted, or unknown; got {value}"
+        )))
+    }
+}
+
+fn validate_optional_review_text(
+    field: &str,
+    value: Option<&str>,
+    max_len: usize,
+) -> Result<Option<String>, DenError> {
+    value
+        .map(|value| validate_bounded_text(field, value, 0, max_len))
+        .transpose()
+}
+
+fn normalize_proposal_status_filter(value: Option<&str>) -> Result<Option<String>, DenError> {
+    let Some(value) = value.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if matches!(
+        value,
+        "pending"
+            | "rejected"
+            | "retained_local"
+            | "deferred"
+            | "superseded"
+            | "needs_human_review"
+    ) {
+        Ok(Some(value.to_string()))
+    } else {
+        Err(DenError::ValidationError(format!(
+            "status must be pending, rejected, retained_local, deferred, superseded, or needs_human_review; got {value}"
+        )))
+    }
+}
+
+fn bounded_proposal_limit(value: Option<i64>) -> i64 {
+    value.unwrap_or(50).clamp(1, 200)
+}
+
 /// The `conversation_events` projection scope id for this invocation.
 fn projection_scope_id(
     context: &DenToolInvocationContext,
     bear_id: Uuid,
     role: BearProfile,
 ) -> String {
-    source_acp_session_id(context)
+    source_client_session_id(context)
         .or_else(|| clean_optional(&context.session_id))
         .unwrap_or_else(|| format!("bear:{}:role:{}", bear_id, role.as_str()))
 }
 
-fn projection(context: &DenToolInvocationContext, bear_id: Uuid, role: BearProfile) -> ProposalProjection {
+fn projection(
+    context: &DenToolInvocationContext,
+    bear_id: Uuid,
+    role: BearProfile,
+) -> ProposalProjection {
     ProposalProjection {
         user_id: context.user_id,
         conversation_id: clean_optional(&context.conversation_id),
@@ -133,6 +223,46 @@ pub async fn apply_core_update(
         .await
 }
 
+pub async fn mark_memory_lifecycle(
+    store: &impl MemoryReviewStore,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, DenError> {
+    if role != BearProfile::Curate {
+        return Err(DenError::Authorization(
+            "den.memory.mark_lifecycle is available only to curate".to_string(),
+        ));
+    }
+    let args: MemoryMarkLifecycleArguments = serde_json::from_value(arguments)?;
+    let memory_id = validate_bounded_text("memory_id", &args.memory_id, 1, 200)?;
+    let status = args.status.trim();
+    if !matches!(
+        status,
+        "active" | "stale" | "superseded" | "archived" | "archive-candidate"
+    ) {
+        return Err(DenError::ValidationError(
+            "status must be active, stale, superseded, archived, or archive-candidate".to_string(),
+        ));
+    }
+    let reason = args
+        .reason
+        .as_deref()
+        .map(|value| validate_bounded_text("reason", value, 0, 1_000))
+        .transpose()?;
+    let record = store
+        .mark_memory_lifecycle(MarkMemoryLifecycleRequest {
+            bear_id: context.bear_id,
+            reviewer_profile: role,
+            binding_id: context.binding_id.clone(),
+            memory_id,
+            status: status.to_string(),
+            reason,
+        })
+        .await?;
+    Ok(json!({ "bear_id": context.bear_id, "record": record }))
+}
+
 pub async fn list_memory_proposals(
     store: &impl MemoryReviewStore,
     context: &DenToolInvocationContext,
@@ -145,14 +275,9 @@ pub async fn list_memory_proposals(
         ));
     }
     let args: MemoryListProposalsArguments = serde_json::from_value(arguments)?;
-    let status = args
-        .status
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
+    let status = normalize_proposal_status_filter(args.status.as_deref())?;
     let proposals = store
-        .list_proposals(context.bear_id, status, args.limit.unwrap_or(50))
+        .list_proposals(context.bear_id, status, bounded_proposal_limit(args.limit))
         .await?;
     Ok(json!({ "bear_id": context.bear_id, "proposals": proposals }))
 }
@@ -255,24 +380,19 @@ pub async fn request_memory_review(
     let title = validate_bounded_text("title", &args.title, 1, 200)?;
     let summary = validate_bounded_text("summary", &args.summary, 1, 4_000)?;
     let rationale = validate_bounded_text("rationale", &args.rationale, 0, 4_000)?;
+    let proposed_content = validate_optional_review_text(
+        "proposed_content",
+        args.proposed_content.as_deref(),
+        20_000,
+    )?;
+    let proposed_patch =
+        validate_optional_review_text("proposed_patch", args.proposed_patch.as_deref(), 20_000)?;
     validate_optional_object("refs", &args.refs)?;
-    let suggested_action = args
-        .suggested_action
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("unspecified")
-        .to_string();
-    let sensitivity = args
-        .sensitivity
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("normal")
-        .to_string();
+    let suggested_action = normalize_suggested_action(args.suggested_action.as_deref())?;
+    let sensitivity = normalize_memory_sensitivity(args.sensitivity.as_deref())?;
     let source_refs = json!({
         "conversation_id": clean_optional(&context.conversation_id),
-        "session_id": source_acp_session_id(context).or_else(|| clean_optional(&context.session_id)),
+        "session_id": source_client_session_id(context).or_else(|| clean_optional(&context.session_id)),
         "request_id": context.request_id,
         "runtime_target": context.runtime_target,
     });
@@ -293,8 +413,8 @@ pub async fn request_memory_review(
             title,
             summary,
             rationale,
-            proposed_content: args.proposed_content,
-            proposed_patch: args.proposed_patch,
+            proposed_content,
+            proposed_patch,
             refs: args.refs.unwrap_or_else(|| json!({})),
             sensitivity,
             requires_human: args.requires_human,
@@ -306,4 +426,48 @@ pub async fn request_memory_review(
         "proposal": proposal,
         "note": "Review requested. Reflection/curate decides the final outcome; this did not write core, Cabinet, skills, tasks, observations, or run results."
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_review_defaults_to_safe_action_and_sensitivity() {
+        assert_eq!(normalize_suggested_action(None).unwrap(), "unspecified");
+        assert_eq!(
+            normalize_suggested_action(Some("  ")).unwrap(),
+            "unspecified"
+        );
+        assert_eq!(normalize_memory_sensitivity(None).unwrap(), "normal");
+        assert_eq!(normalize_memory_sensitivity(Some("  ")).unwrap(), "normal");
+    }
+
+    #[test]
+    fn memory_review_rejects_unknown_action_and_sensitivity() {
+        assert!(normalize_suggested_action(Some("archive-index")).is_err());
+        assert!(normalize_memory_sensitivity(Some("private")).is_err());
+    }
+
+    #[test]
+    fn memory_review_bounds_optional_large_text() {
+        assert_eq!(
+            validate_optional_review_text("proposed_content", Some("ok"), 2).unwrap(),
+            Some("ok".to_string())
+        );
+        assert!(validate_optional_review_text("proposed_content", Some("too long"), 3).is_err());
+    }
+
+    #[test]
+    fn list_proposals_validates_status_and_bounds_limit() {
+        assert_eq!(normalize_proposal_status_filter(None).unwrap(), None);
+        assert_eq!(
+            normalize_proposal_status_filter(Some(" pending ")).unwrap(),
+            Some("pending".to_string())
+        );
+        assert!(normalize_proposal_status_filter(Some("done")).is_err());
+        assert_eq!(bounded_proposal_limit(None), 50);
+        assert_eq!(bounded_proposal_limit(Some(-10)), 1);
+        assert_eq!(bounded_proposal_limit(Some(500)), 200);
+    }
 }

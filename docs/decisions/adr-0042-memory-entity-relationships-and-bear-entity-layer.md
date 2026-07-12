@@ -22,7 +22,7 @@ Two observations frame the decision:
 - **"Person" is the wrong unit to hard-code.** We will also want contacts, events, missions, domains, organizations, artifacts, places. Hard-coding `person` repeats the Letta mistake at a different layer.
 - **Relating memory to an entity is not one relationship, and "entity" is not one storage tier.** A note can be *about* an entity, *for* an entity's eyes only, *from* an entity, *involving* several entities, or *applicable when* an entity is in play. And the same real-world person ("Ryan") shows up as a doc mention, a Slack user, and a Cabinet author — identities that must be **resolved into one entity and stay correctable** (the Slack Ryan may turn out to be someone else).
 
-This sits cleanly in the [four-axis model](../architecture/interactive-profiles-and-role-axes.md): memory scope partitions by **trust profile** (Trust axis) and **work surface** (Resource axis). Entity-relatedness is **none of those axes** — it is a cross-cutting *relation on a record*, not a profile scope ([ADR-0039](adr-0039-trust-profiles-and-governance-modes.md)). It must therefore be modeled as typed relations, not as another `scope_*` partition.
+This sits cleanly in the [four-axis model](../architecture/interactive-stances-and-role-axes.md): memory scope partitions by **trust stance** (Trust axis) and **work surface** (Resource axis). Entity-relatedness is **none of those axes** — it is a cross-cutting *relation on a record*, not a profile scope ([ADR-0039](adr-0039-trust-profiles-and-governance-modes.md)). It must therefore be modeled as typed relations, not as another `scope_*` partition.
 
 The design must be **flexible for new relationship and entity types without becoming RDF**: no arbitrary predicates, no triple store, no inference.
 
@@ -105,6 +105,15 @@ Properties:
 ### 8. Anchors generalize beyond work surface (settled — "fork 5")
 
 Path anchors were never work-surface-specific; work surface was just the first entity type to earn them. **Resolved + salient** entities get projected anchors (`core/people/<id>/…`, `core/missions/<id>/…` alongside `core/work_surfaces/<slug>/…`); **transient / low-salience mentions stay query-derived views** over the relation layer. The promotion threshold is the same kind of "enough trusted signal + salience" decision used for work surfaces.
+
+**V1 anchor projection policy.** Entity anchors are explicit canonical memory records, not synthesized from arbitrary relation hits:
+
+- Entity must be `resolved` or `confirmed`.
+- Entity type must be descriptor `anchor_eligible`.
+- Salience threshold: at least one `subject`-linked memory record with `salience = high|critical`, or a `confirmed` entity with at least two `normal` `subject`-linked records.
+- Only relations whose descriptor has `anchor_projecting = true` count toward anchor promotion; in the v1 descriptor set this means `subject`.
+- Projection reads generated anchor paths only, such as `core/people/<anchor>/profile.md` or `core/missions/<anchor>/overview.md`. If no anchor file exists, the entity remains query-derived via `memory_links` and recall/search.
+- Derived fallback from `memory_links` into prompt projection is deferred until curation/consolidation policy is mature.
 
 ### 9. Portability
 

@@ -20,10 +20,21 @@ async fn main() {
 async fn run_main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("migrate") => {
+            den::migrate_only().await?;
+            Ok(())
+        }
+        Some("serve") => {
+            den::serve_without_migrations().await?;
+            Ok(())
+        }
         Some("seed") => run_seed(&args).await,
         Some("reindex") => den::reindex::run_reindex(den::reindex::parse_args(&args)?).await,
-        Some("import-memfs") => {
-            den::import_memfs::run_import_memfs(den::import_memfs::parse_args(&args)?).await
+        Some("import-legacy-memory") => {
+            den::import_legacy_memory::run_import_legacy_memory(
+                den::import_legacy_memory::parse_args(&args)?,
+            )
+            .await
         }
         _ => {
             den::run().await?;

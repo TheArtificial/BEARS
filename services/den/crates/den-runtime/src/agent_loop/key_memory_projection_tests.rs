@@ -2,15 +2,10 @@ use den_core::config::Config;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::{
-    agent_loop::key_memory_projection::{project_key_memory, KeyMemoryProjectionInput},
-    bears::{model::BearProfile, Bear},
-    memory::{
-        store::{append_memory_record, LogicalMemoryPath},
-        AccessContext, MemoryStoreManager,
-    },
-};
+use crate::agent_loop::key_memory_projection::{project_key_memory, KeyMemoryProjectionInput};
 use den_core::tools::work_surface::WorkSurfaceSessionHints;
+use den_memory::{append_memory_record, AccessContext, LogicalMemoryPath, MemoryStoreManager};
+use den_service::bears::{model::BearProfile, Bear};
 
 fn legacy_test_bear(bear_id: Uuid) -> Bear {
     let now = OffsetDateTime::now_utc();
@@ -20,12 +15,10 @@ fn legacy_test_bear(bear_id: Uuid) -> Bear {
         name: "Test Bear".to_string(),
         description: String::new(),
         default_model: None,
+        default_tool_budget_multiplier: None,
         tools_enabled: None,
-        letta_agent_type: None,
-        letta_tool_ids: sqlx::types::Json(Vec::new()),
         runtime_plan: None,
         context_profile: None,
-        memfs_repo_path: None,
         provisioning_version: 1,
         system_prompt: "You are a test bear.".to_string(),
         birthday: None,
@@ -68,6 +61,7 @@ async fn projects_shared_identity_anchors_without_work_surface() {
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -78,8 +72,6 @@ async fn projects_shared_identity_anchors_without_work_surface() {
     assert!(result.rendered_text.contains("## Shared anchors"));
     assert!(!result.rendered_text.contains("## Work surface:"));
 }
-
-
 
 #[tokio::test]
 async fn long_context_model_metadata_increases_projection_budget() {
@@ -100,6 +92,7 @@ async fn long_context_model_metadata_increases_projection_budget() {
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -107,11 +100,17 @@ async fn long_context_model_metadata_increases_projection_budget() {
 
     assert_eq!(result.diagnostic["global_char_cap"].as_u64(), Some(16_000));
     assert_eq!(
-        result.diagnostic.pointer("/model_metadata/key").and_then(|v| v.as_str()),
+        result
+            .diagnostic
+            .pointer("/model_metadata/key")
+            .and_then(|v| v.as_str()),
         Some("openai/gpt-4.1")
     );
     assert_eq!(
-        result.diagnostic.pointer("/model_metadata/context_window").and_then(|v| v.as_u64()),
+        result
+            .diagnostic
+            .pointer("/model_metadata/context_window")
+            .and_then(|v| v.as_u64()),
         Some(1_047_576)
     );
 }
@@ -138,6 +137,7 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
         session_hints: hints.clone(),
         work_surface_status_override: Some("candidate"),
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -174,6 +174,7 @@ async fn candidate_work_surface_requires_canonical_anchor_for_tier2() {
         session_hints: hints,
         work_surface_status_override: Some("candidate"),
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -217,6 +218,7 @@ async fn resolved_work_surface_includes_tier2_without_prior_anchor_proof() {
         },
         work_surface_status_override: Some("resolved"),
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -228,7 +230,7 @@ async fn resolved_work_surface_includes_tier2_without_prior_anchor_proof() {
 
 #[tokio::test]
 async fn access_bearing_relation_gates_record_out_of_projection() {
-    use crate::memory::store::{append_relation, resolve, Assertion, Resolution, Signal};
+    use den_memory::{append_relation, resolve, Assertion, Resolution, Signal};
 
     let bear_id = Uuid::new_v4();
     let bear = legacy_test_bear(bear_id);
@@ -288,6 +290,7 @@ async fn access_bearing_relation_gates_record_out_of_projection() {
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty(),
     })
     .await
@@ -311,6 +314,7 @@ async fn access_bearing_relation_gates_record_out_of_projection() {
         session_hints: WorkSurfaceSessionHints::default(),
         work_surface_status_override: None,
         native_runtime: true,
+        model_for_budget: None,
         access: AccessContext::empty().with_confinement([surface]),
     })
     .await

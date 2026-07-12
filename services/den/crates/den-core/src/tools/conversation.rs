@@ -9,13 +9,16 @@ use uuid::Uuid;
 
 use crate::DenError;
 
-use crate::tools::{arguments::SetConversationTitleArguments, context::DenToolInvocationContext, support::clean_optional};
+use crate::tools::{
+    arguments::SetConversationTitleArguments, context::DenToolInvocationContext,
+    support::clean_optional,
+};
 
 // Native async fn in trait: workspace-internal, consumed via generic bounds /
 // concrete impls only (never `dyn`), so Send flows through monomorphization.
 #[allow(async_fn_in_trait)]
 pub trait ConversationTitleOps: Send + Sync {
-    /// Set the title on the Bear conversation; returns synced ACP-session count.
+    /// Set the title on the Bear conversation; returns synced client-session count.
     async fn set_title(
         &self,
         bear_id: Uuid,
@@ -48,7 +51,9 @@ pub async fn set_conversation_title(
                 .to_string(),
         ));
     }
-    let synced_acp_sessions = ops.set_title(context.bear_id, &conversation_id, &title).await?;
+    let synced_acp_sessions = ops
+        .set_title(context.bear_id, &conversation_id, &title)
+        .await?;
     Ok(json!({
         "ok": true,
         "conversation_id": conversation_id,

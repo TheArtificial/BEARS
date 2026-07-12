@@ -2,7 +2,7 @@
 
 How **durable work resources** relate to **interactive sessions**, and why product copy should prefer *“start a conversation with this repository”* over *“check out this repo and work on it”* inside an open chat.
 
-**Related:** [ADR-0006 — Bear work surfaces](../decisions/adr-0006-bear-work-surfaces.md), [`bear-roles.md`](../architecture/bear-roles.md), [`interactive-profiles-and-role-axes.md`](../architecture/interactive-profiles-and-role-axes.md), [work-surface resolution plan](../roadmap/WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md)
+**Related:** [ADR-0006 — Bear work surfaces](../decisions/adr-0006-bear-work-surfaces.md), [`bear-stances.md`](../architecture/bear-stances.md), [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md), [work-surface resolution plan](../roadmap/WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md)
 
 ## Two layers (do not collapse them)
 
@@ -53,7 +53,7 @@ The Bear **remembers resources**; humans **open conversations to work on one of 
 
 ## How this interacts with `chat` vs `pair`
 
-See [`interactive-profiles-and-role-axes.md`](../architecture/interactive-profiles-and-role-axes.md) for the full split. Short version:
+See [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md) for the full split. Short version:
 
 | Profile | Human present? | Work surface on thread | Typical UX |
 |---------|----------------|------------------------|------------|
@@ -64,9 +64,9 @@ See [`interactive-profiles-and-role-axes.md`](../architecture/interactive-profil
 
 **`chat`** remains appropriate when the user is not entering an execution context — Q&A, priorities, task intents, references to a project by name without checkout/sandbox work.
 
-### Trust profile vs governance mode
+### Trust stance vs governance mode
 
-`chat`/`pair`/`curate`/`work`/`watch` are **trust profiles** (`Profile` in code) — durable trust-and-memory contracts. *How a run is supervised right now* is a separate **governance mode** (`Mode` in code) on the run / workspace session: `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. When a remote `pair` session loses its client, the run transitions `interactive → grace → autonomous_continuation` on the **same** work surface and workspace session — it does not flip the trust profile from `pair` to `work`. See [ADR-0039 — Trust profiles and governance modes](../decisions/adr-0039-trust-profiles-and-governance-modes.md).
+`chat`/`pair`/`curate`/`work`/`watch` are **trust stances** (`BearStance` in code; `BearProfile` remains a temporary compatibility alias) — durable trust-and-memory contracts. *How a run is supervised right now* is a separate **governance mode** (`Mode` in code) on the run / workspace session: `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. When a remote `pair` session loses its client, the run transitions `interactive → grace → autonomous_continuation` on the **same** work surface and workspace session — it does not flip the trust stance from `pair` to `work`. See [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance-modes.md).
 
 ## Rules of thumb for builders
 
@@ -102,4 +102,4 @@ See [`interactive-profiles-and-role-axes.md`](../architecture/interactive-profil
 - Work surface model and anchors: [ADR-0006](../decisions/adr-0006-bear-work-surfaces.md)
 - Resolution states and UX copy: [WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md](../roadmap/WORK_SURFACE_RESOLUTION_IMPLEMENTATION_PLAN.md)
 - `session_info` work-surface hints: Den `work_surface` tool module; active vs reference mode by role
-- Role vocabulary: [`bear-roles.md`](../architecture/bear-roles.md)
+- Stance vocabulary: [`bear-stances.md`](../architecture/bear-stances.md)

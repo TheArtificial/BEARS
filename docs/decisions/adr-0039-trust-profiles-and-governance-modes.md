@@ -9,7 +9,7 @@
 - [ADR-0034 — Jobs and tasks (Docket)](adr-0034-jobs-and-tasks-work-management.md)
 - [ADR-0026 — Work handoff and human escalation](adr-0026-work-handoff-and-human-escalation.md)
 - [ADR-0006 — Bear work surfaces](adr-0006-bear-work-surfaces.md)
-- [`interactive-profiles-and-role-axes.md`](../architecture/interactive-profiles-and-role-axes.md)
+- [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 - [`work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md)
 
 ## Context
@@ -74,7 +74,7 @@ EffectivePolicy = TrustProfile × GovernanceMode × Armature × RunAuthContext
 
 - **TrustProfile** — durable boundaries and defaults (this ADR / ADR-0036).
 - **GovernanceMode** — supervision dial (this ADR).
-- **Armature** — where actuators live: ACP client tools, Den sandbox, or none (`interactive-profiles-and-role-axes.md`).
+- **Armature** — where actuators live: ACP client tools, Den sandbox, or none (`interactive-stances-and-role-axes.md`).
 - **RunAuthContext** — git/auth/operation actor selection ([ADR-0037](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)).
 
 The model never *infers* this cross product. Den enforces the tool roster, memory write target, and approval class for the effective policy, and exposes the components through `session_info`.
@@ -147,10 +147,12 @@ The "keep the loop on-task" machinery from [ADR-0023 (Task focus supervisor)](ad
 
 Consequently, continuation bias is **governance-mode-driven, not trust-profile-driven**. ADR-0023's "`work` drives harder than `pair`" is re-expressed as: the trust profile *defaults* a run's governance mode (a `work` run typically starts more autonomous, a `pair`/`chat` run interactive), but a `pair` run in `autonomous_continuation` is driven just as hard. Focus nudges are governance-mode-aware and reference acceptance criteria as the success contract.
 
+The concrete budget/checkpoint machinery for this relationship is specified by [ADR-0050 (Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints)](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) and sequenced in [`AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md`](../roadmap/AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md): tool-call and wall-clock budgets, repeated-tool/ko detection, failure thresholds, runtime checkpoints, and task-list/Docket reconciliation are loop-control policy, while task/job state remains Docket-owned.
+
 ## Consequences
 
 - **`pair` ↔ `work` flipping largely disappears** as a runtime mechanism. Offline continuation, interrogation, and panic/resume are governance-mode transitions on a stable run + workspace session.
-- **Profiles keep their meaning** as durable trust contracts and prompt/tool defaults, and as product language (`bear-roles.md`). They stop being sandbox-lifetime identifiers.
+- **Profiles keep their meaning** as durable trust contracts and prompt/tool defaults, and as product language (`bear-stances.md`). They stop being sandbox-lifetime identifiers.
 - **Schema impact is additive.** Governance mode is a new run-scoped field plus a transition log; trust profile vocabulary and `bear_profile_bindings` are unchanged. ADR-0037 `run_mode` becomes a derived projection.
 - **`curate` and `watch` are unaffected**; they are not interactive runs and do not carry governance modes beyond a fixed autonomous supervision.
 - **UX can stay continuous** ("your session is still running") while ops truth stays honest (`governance_mode = autonomous_continuation`, executor-leaning effective policy on the same `workspace_session_id`).

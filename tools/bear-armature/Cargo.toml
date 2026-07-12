@@ -1,6 +1,6 @@
 [package]
 name = "bear-armature"
-version = "0.1.6"
+version = "0.1.8"
 edition = "2021"
 
 [[bin]]
@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 agent-client-protocol = { version = "0.11.1", features = ["unstable_auth_methods", "unstable_session_close", "unstable_session_resume"] }
 anyhow = "1.0"
+bearwire-protocol = { path = "../../services/den/crates/bearwire-protocol" }
 axum = { version = "0.8", features = ["macros"] }
 futures-util = "0.3"
 http = "1"
@@ -24,6 +25,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tokio-util = "0.7"
 tower-service = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2.1"
 uuid = { version = "1", features = ["v4"] }
 

@@ -9,7 +9,7 @@ pub struct AgentBlockRow {
     pub label: Option<String>,
     /// Rough size of the block payload for overview tables (characters).
     pub char_count: Option<usize>,
-    /// Block body from Letta (`value` / `content`), for read-only UI.
+    /// Block body from provider (`value` / `content`), for read-only UI.
     pub content: Option<String>,
 }
 
@@ -35,7 +35,7 @@ fn block_value_char_count(v: &Value) -> usize {
         .unwrap_or(0)
 }
 
-/// Text or JSON-serialized body from `value` / `content` on a Letta block object.
+/// Text or JSON-serialized body from `value` / `content` on a provider block object.
 fn block_body_text(b: &Value) -> Option<String> {
     fn from_field(block: &Value, key: &str) -> Option<String> {
         let v = block.get(key)?;

@@ -1,9 +1,14 @@
 a {
     color: var(--text-color);
+    background-color: var(--surface-color);
     text-decoration: underline;
+    text-decoration-thickness: var(--thin-line-unit);
+    text-underline-offset: 0.16em;
 }
 a:hover {
-    color: var(--accent-color);
+    background-color: var(--selected-color);
+    color: var(--selected-text-color);
+    text-decoration: none;
 }
 
 /* Text-entry controls (forms + bear chat): shared fill token */
@@ -34,14 +39,14 @@ button, .button-link, .button-action, .button-borderless {
 
     width: fit-content;
 
-    border: solid var(--thin-line-unit) var(--border-color);
-    /* border-radius: var(--spacing-unit); */
+    border: solid var(--chunky-line-unit) var(--border-color);
 
-    background-color: var(--page-color);
+    background-color: var(--surface-color);
     color: var(--text-color);
 
     text-transform: uppercase;
     text-decoration: none;
+    box-shadow: calc(var(--shadow-offset) / 2) calc(var(--shadow-offset) / 2) 0 0 var(--border-color);
 }
 .button-link {
     padding-right: 0.5rem;
@@ -180,7 +185,20 @@ form > .fields-grid {
     }
 }
 .box, .box-unpadded {
-    border: solid var(--spacing-unit) var(--border-color);
+    position: relative;
+    border: solid var(--chunky-line-unit) var(--border-color);
+    background-color: var(--surface-color);
+    box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0 var(--hatch-color);
+}
+.box::after, .box-unpadded::after {
+    content: "";
+    position: absolute;
+    inset: var(--shadow-offset) calc(-1 * var(--shadow-offset)) calc(-1 * var(--shadow-offset)) var(--shadow-offset);
+    z-index: -1;
+    background-image:
+        linear-gradient(45deg, transparent 45%, var(--page-color) 45%, var(--page-color) 55%, transparent 55%),
+        linear-gradient(-45deg, transparent 45%, var(--page-color) 45%, var(--page-color) 55%, transparent 55%);
+    background-size: 5px 5px;
 }
 .box, .box-borderless {
     padding: var(--spacing-unit);

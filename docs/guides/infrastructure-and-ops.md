@@ -5,17 +5,21 @@
 **This project** builds as **one Rust binary** (crate name defaults to **`newapp`**). At runtime you enable:
 
 - **Web** — `RUN_WEB=true` (port from `PORT`, default `3000`)
-- **API** — `RUN_API=true` (port from `API_PORT`, default `3001`); in the Bear Den stack this hosts the API-only ACP gateway and must have a public origin reachable by adapters (for example `api.bears.[domain]`, another hostname, or a published port on the web host)
+- **API** — `RUN_API=true` (port from `API_PORT`, default `3001`); in the Bear Den stack this hosts BearWire and must have a public origin reachable by armatures (for example `api.bears.[domain]`, another hostname, or a published port on the web host)
 - **Workers** — `RUN_WORKERS=true` (background tasks in the same process)
 
 Legacy `SERVER_MODE=web|api|both` may still be parsed for migration; prefer the `RUN_*` flags (see `src/config.rs`).
+
+Terminology note: Den distinguishes generic **clients**, conversation-only
+**channels**, trusted work-surface **armatures**, and protocol **adapters**. See
+[clients-channels-armatures.md](clients-channels-armatures.md).
 
 You can run any combination (e.g. web + workers only). If nothing is enabled, the process will warn and do little useful work.
 
 ## Configuration
 
 - **`DATABASE_URL`** — PostgreSQL (required for normal operation).
-- **Service toggles** — `RUN_WEB`, `RUN_API`, `RUN_WORKERS`, `ACP_GATEWAY_ENABLED`.
+- **Service toggles** — `RUN_WEB`, `RUN_API`, `RUN_WORKERS`.
 - **Templates / assets** — paths and production embedding follow `Config` and feature flags (`production`).
 
 Other variables (mail, OAuth, optional integrations) are defined on `Config` as needed for your deployment.
@@ -43,7 +47,7 @@ Structured logging via **tracing** with default filters wired in [`src/lib.rs`](
 | Web (`RUN_WEB`) | `GET /healthcheck` → `OK` | `GET /health/ready` → `OK` or **503** |
 | API (`RUN_API`) | `GET /healthcheck` → `API OK` | `GET /health/ready` → `OK` or **503** |
 
-When `ACP_GATEWAY_ENABLED=true`, the API also serves `POST /acp/bears/{slug}/sessions/{session_id}/prompt` on the API port. Assign the API port a public origin reachable by adapters (for example `api.bears.[domain]`, another hostname, or a published host+port URL) and set `API_SERVER_URL` to that origin.
+When `RUN_API=true`, the API also serves BearWire routes under `/bearwire`. Assign the API port a public origin reachable by armatures (for example `api.bears.[domain]`, another hostname, or a published host+port URL) and set `DEN_API_ORIGIN` to that origin in compose deployments.
 
 **Build identity:** `GET /version` (web and API) returns JSON with `built_at_utc` (RFC 3339 UTC) from when the build script last ran, plus `git_sha` when the image was built with `GIT_SHA`. Set `SOURCE_DATE_EPOCH` during the image build if you need a deterministic timestamp (reproducible builds).
 
@@ -61,7 +65,7 @@ Default runtime probes include:
 | Check | What it validates |
 | ----- | ----------------- |
 | Den PostgreSQL | `SELECT 1` against `DATABASE_URL` |
-| Bifrost | `GET /health` and metadata URL from `BIFROST_BASE_URL` / `BIFROST_METADATA_URL` |
+| Bifrost | `GET /health` from `BIFROST_BASE_URL` and live model catalog from `LLM_API_URL` (`/v1/models`) |
 | Config shape | `JWT_SECRET` when required, `DATABASE_URL` host/scheme, `WEB_SERVER_URL`, `LLM_API_URL` shape, `OPENAI_API_KEY` presence (warn if empty) |
 
 Optional **`GITHUB_PACKAGES_TOKEN`** (PAT with `read:packages`), **`GHCR_PACKAGES_OWNER`** (GitHub org or user that owns the images), and **`GHCR_PACKAGES_OWNER_KIND`** (`org` or `user`) populate GHCR tag / updated-at columns for Den image drift checks.

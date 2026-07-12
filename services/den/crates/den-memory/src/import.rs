@@ -14,33 +14,33 @@ const IMPORTED_AT_FIELD: &str = "imported_at";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum MemfsImportSource {
+pub enum LegacyMemoryImportSource {
     Bundle { path: String },
     GitDir { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
-pub struct MemfsImportOptions {
+pub struct LegacyMemoryImportOptions {
     pub dry_run: bool,
     pub include_workflow_artifacts: bool,
     pub import_history: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct MemfsImportReport {
+pub struct LegacyMemoryImportReport {
     pub bear_id: String,
-    pub source: MemfsImportSource,
+    pub source: LegacyMemoryImportSource,
     pub dry_run: bool,
     pub import_history: bool,
     pub imported_count: usize,
     pub skipped_count: usize,
     pub quarantined_count: usize,
-    pub branch_reports: Vec<MemfsBranchReport>,
+    pub branch_reports: Vec<LegacyMemoryBranchReport>,
     pub imported_paths_sample: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct MemfsBranchReport {
+pub struct LegacyMemoryBranchReport {
     pub branch: String,
     pub imported_count: usize,
     pub skipped_count: usize,
@@ -65,62 +65,63 @@ struct BranchMapping {
     author_profile: &'static str,
 }
 
-pub async fn import_memfs_bundle(
+pub async fn import_legacy_memory_bundle(
     store: &BearMemoryStore,
     bundle_path: &Path,
-    options: &MemfsImportOptions,
-) -> Result<MemfsImportReport, DenError> {
+    options: &LegacyMemoryImportOptions,
+) -> Result<LegacyMemoryImportReport, DenError> {
     if !bundle_path.exists() {
         return Err(DenError::NotFound(format!(
             "bundle not found: {}",
             bundle_path.display()
         )));
     }
-    let source = MemfsImportSource::Bundle {
+    let source = LegacyMemoryImportSource::Bundle {
         path: bundle_path.display().to_string(),
     };
-    import_memfs_source(store, &source, options).await
+    import_legacy_memory_source(store, &source, options).await
 }
 
-pub async fn import_memfs_git_dir(
+pub async fn import_legacy_memory_git_dir(
     store: &BearMemoryStore,
     git_dir: &Path,
-    options: &MemfsImportOptions,
-) -> Result<MemfsImportReport, DenError> {
+    options: &LegacyMemoryImportOptions,
+) -> Result<LegacyMemoryImportReport, DenError> {
     if !git_dir.exists() {
         return Err(DenError::NotFound(format!(
             "git dir not found: {}",
             git_dir.display()
         )));
     }
-    let source = MemfsImportSource::GitDir {
+    let source = LegacyMemoryImportSource::GitDir {
         path: git_dir.display().to_string(),
     };
-    import_memfs_source(store, &source, options).await
+    import_legacy_memory_source(store, &source, options).await
 }
 
-async fn import_memfs_source(
+async fn import_legacy_memory_source(
     store: &BearMemoryStore,
-    source: &MemfsImportSource,
-    options: &MemfsImportOptions,
-) -> Result<MemfsImportReport, DenError> {
-    let temp_repo = std::env::temp_dir().join(format!("den-memfs-import-{}", Uuid::new_v4()));
+    source: &LegacyMemoryImportSource,
+    options: &LegacyMemoryImportOptions,
+) -> Result<LegacyMemoryImportReport, DenError> {
+    let temp_repo =
+        std::env::temp_dir().join(format!("den-legacy-memory-import-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&temp_repo)
         .map_err(|err| DenError::System(format!("create temp import dir failed: {err}")))?;
 
-    let import_result = import_memfs_source_inner(store, source, &temp_repo, options).await;
+    let import_result = import_legacy_memory_source_inner(store, source, &temp_repo, options).await;
     if let Err(err) = std::fs::remove_dir_all(&temp_repo) {
-        tracing::warn!(path = %temp_repo.display(), error = %err, "cleanup temp memfs import dir failed");
+        tracing::warn!(path = %temp_repo.display(), error = %err, "cleanup temp legacy import dir failed");
     }
     import_result
 }
 
-async fn import_memfs_source_inner(
+async fn import_legacy_memory_source_inner(
     store: &BearMemoryStore,
-    source: &MemfsImportSource,
+    source: &LegacyMemoryImportSource,
     temp_repo: &Path,
-    options: &MemfsImportOptions,
-) -> Result<MemfsImportReport, DenError> {
+    options: &LegacyMemoryImportOptions,
+) -> Result<LegacyMemoryImportReport, DenError> {
     materialize_source_to_temp_repo(source, temp_repo)?;
 
     let branches = ordered_branches(temp_repo)?;
@@ -150,7 +151,7 @@ async fn import_memfs_source_inner(
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            let Some(normalized_path) = normalize_memfs_path(raw_path) else {
+            let Some(normalized_path) = normalize_legacy_memory_path(raw_path) else {
                 branch_skipped += 1;
                 continue;
             };
@@ -222,7 +223,7 @@ async fn import_memfs_source_inner(
 
                 let memory_id = deterministic_import_memory_id(&branch, &logical_path, &commit);
                 let mut metadata_json = json!({
-                    "memfs_import": {
+                    "legacy_memory_import": {
                         "branch": branch,
                         "path": normalized_path,
                         "commit": commit,
@@ -233,7 +234,7 @@ async fn import_memfs_source_inner(
                     }
                 });
                 if let Some(frontmatter) = frontmatter {
-                    metadata_json["memfs_import"]["frontmatter"] = frontmatter;
+                    metadata_json["legacy_memory_import"]["frontmatter"] = frontmatter;
                 }
 
                 let draft = ImportDraft {
@@ -283,7 +284,7 @@ async fn import_memfs_source_inner(
         imported_count += branch_imported;
         skipped_count += branch_skipped;
         quarantined_count += branch_quarantined;
-        branch_reports.push(MemfsBranchReport {
+        branch_reports.push(LegacyMemoryBranchReport {
             branch,
             imported_count: branch_imported,
             skipped_count: branch_skipped,
@@ -291,7 +292,7 @@ async fn import_memfs_source_inner(
         });
     }
 
-    Ok(MemfsImportReport {
+    Ok(LegacyMemoryImportReport {
         bear_id: store.bear_id().to_string(),
         source: source.clone(),
         dry_run: options.dry_run,
@@ -305,12 +306,12 @@ async fn import_memfs_source_inner(
 }
 
 fn materialize_source_to_temp_repo(
-    source: &MemfsImportSource,
+    source: &LegacyMemoryImportSource,
     temp_repo: &Path,
 ) -> Result<(), DenError> {
     git(None, &["init", "--quiet"], Some(temp_repo))?;
     match source {
-        MemfsImportSource::Bundle { path } => {
+        LegacyMemoryImportSource::Bundle { path } => {
             let bundle_path = Path::new(path);
             git(Some(temp_repo), &["bundle", "verify"], Some(bundle_path))?;
             git(
@@ -319,7 +320,7 @@ fn materialize_source_to_temp_repo(
                 None,
             )?;
         }
-        MemfsImportSource::GitDir { path } => {
+        LegacyMemoryImportSource::GitDir { path } => {
             git(
                 Some(temp_repo),
                 &["fetch", "--quiet", path, "refs/heads/*:refs/heads/*"],
@@ -446,7 +447,7 @@ fn normalize_git_timestamp(raw: &str) -> Result<String, DenError> {
 }
 
 fn deterministic_import_memory_id(branch: &str, logical_path: &str, commit: &str) -> String {
-    format!("memfs-import:{branch}:{commit}:{logical_path}")
+    format!("legacy-memory-import:{branch}:{commit}:{logical_path}")
 }
 
 fn strip_yaml_frontmatter(content: &str) -> (String, Option<Value>) {
@@ -467,7 +468,7 @@ fn strip_yaml_frontmatter(content: &str) -> (String, Option<Value>) {
     (body.to_string(), Some(frontmatter))
 }
 
-fn normalize_memfs_path(raw: &str) -> Option<String> {
+fn normalize_legacy_memory_path(raw: &str) -> Option<String> {
     let trimmed = raw.trim().trim_start_matches('/');
     if trimmed.is_empty() || trimmed == ".gitkeep" {
         return None;
@@ -476,7 +477,7 @@ fn normalize_memfs_path(raw: &str) -> Option<String> {
         .split('/')
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
-    if parts.is_empty() || parts.iter().any(|segment| *segment == "..") {
+    if parts.is_empty() || parts.contains(&"..") {
         return None;
     }
     let normalized = parts.join("/");
@@ -584,20 +585,22 @@ fn git_bytes(
 mod tests {
     use super::*;
     use crate::test_support::new_test_store;
-    use crate::{head_record_for_logical_path, list_records_for_logical_path, MemoryScopeType};
+    use crate::{
+        head_record_for_logical_path, list_record_history_for_logical_path, MemoryScopeType,
+    };
 
     #[test]
-    fn normalizes_and_rejects_memfs_paths() {
+    fn normalizes_and_rejects_legacy_memory_paths() {
         assert_eq!(
-            normalize_memfs_path("/pair/notes/test.md").as_deref(),
+            normalize_legacy_memory_path("/pair/notes/test.md").as_deref(),
             Some("pair/notes/test.md")
         );
         assert_eq!(
-            normalize_memfs_path("pair//notes///test.md").as_deref(),
+            normalize_legacy_memory_path("pair//notes///test.md").as_deref(),
             Some("pair/notes/test.md")
         );
-        assert!(normalize_memfs_path("pair/notes/test.txt").is_none());
-        assert!(normalize_memfs_path("pair/../secret.md").is_none());
+        assert!(normalize_legacy_memory_path("pair/notes/test.txt").is_none());
+        assert!(normalize_legacy_memory_path("pair/../secret.md").is_none());
     }
 
     #[test]
@@ -640,15 +643,21 @@ mod tests {
     #[tokio::test]
     async fn imports_bundle_heads_only_and_is_idempotent() {
         let store = new_test_store().await;
-        let fixture = MemfsFixture::new();
+        let fixture = LegacyMemoryFixture::new();
 
-        let report =
-            import_memfs_bundle(&store, &fixture.bundle_path, &MemfsImportOptions::default())
-                .await
-                .expect("import bundle");
+        let report = import_legacy_memory_bundle(
+            &store,
+            &fixture.bundle_path,
+            &LegacyMemoryImportOptions::default(),
+        )
+        .await
+        .expect("import bundle");
         assert_eq!(report.imported_count, 3);
         assert_eq!(report.quarantined_count, 2);
-        assert!(matches!(report.source, MemfsImportSource::Bundle { .. }));
+        assert!(matches!(
+            report.source,
+            LegacyMemoryImportSource::Bundle { .. }
+        ));
 
         let head = head_record_for_logical_path(&store, "core/bear-overview.md")
             .await
@@ -663,7 +672,7 @@ mod tests {
             .expect("pair head exists");
         assert_eq!(pair.content_text, "pair note\n");
         assert_eq!(
-            pair.metadata_json["memfs_import"]["frontmatter"]["title"],
+            pair.metadata_json["legacy_memory_import"]["frontmatter"]["title"],
             "Pair note"
         );
 
@@ -675,10 +684,13 @@ mod tests {
         assert_eq!(chat.kind, "log");
         assert_eq!(chat.scope_type, MemoryScopeType::ProfileLocal);
 
-        let rerun =
-            import_memfs_bundle(&store, &fixture.bundle_path, &MemfsImportOptions::default())
-                .await
-                .expect("reimport bundle");
+        let rerun = import_legacy_memory_bundle(
+            &store,
+            &fixture.bundle_path,
+            &LegacyMemoryImportOptions::default(),
+        )
+        .await
+        .expect("reimport bundle");
         assert_eq!(rerun.imported_count, 0);
         assert_eq!(rerun.skipped_count, 3);
     }
@@ -686,14 +698,14 @@ mod tests {
     #[tokio::test]
     async fn imports_git_dir_history_and_supersession_chain() {
         let store = new_test_store().await;
-        let fixture = MemfsFixture::new();
+        let fixture = LegacyMemoryFixture::new();
 
-        let report = import_memfs_git_dir(
+        let report = import_legacy_memory_git_dir(
             &store,
             &fixture.git_dir_path,
-            &MemfsImportOptions {
+            &LegacyMemoryImportOptions {
                 import_history: true,
-                ..MemfsImportOptions::default()
+                ..LegacyMemoryImportOptions::default()
             },
         )
         .await
@@ -701,9 +713,12 @@ mod tests {
 
         assert_eq!(report.imported_count, 4);
         assert!(report.import_history);
-        assert!(matches!(report.source, MemfsImportSource::GitDir { .. }));
+        assert!(matches!(
+            report.source,
+            LegacyMemoryImportSource::GitDir { .. }
+        ));
 
-        let history = list_records_for_logical_path(&store, "core/bear-overview.md", 10)
+        let history = list_record_history_for_logical_path(&store, "core/bear-overview.md", 10)
             .await
             .expect("list history");
         assert_eq!(history.len(), 2);
@@ -727,16 +742,16 @@ mod tests {
         assert_eq!(head.content_text, "# Bear v2\n");
     }
 
-    struct MemfsFixture {
+    struct LegacyMemoryFixture {
         _temp_root: std::path::PathBuf,
         bundle_path: std::path::PathBuf,
         git_dir_path: std::path::PathBuf,
     }
 
-    impl MemfsFixture {
+    impl LegacyMemoryFixture {
         fn new() -> Self {
-            let temp_root =
-                std::env::temp_dir().join(format!("den-memfs-import-test-{}", Uuid::new_v4()));
+            let temp_root = std::env::temp_dir()
+                .join(format!("den-legacy-memory-import-test-{}", Uuid::new_v4()));
             let repo_dir = temp_root.join("repo");
             let bundle_path = temp_root.join("fixture.bundle");
             std::fs::create_dir_all(&repo_dir).expect("create repo dir");

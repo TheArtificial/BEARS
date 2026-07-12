@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use url::Url;
 
@@ -17,6 +17,9 @@ const DEFAULT_PROD_API_ORIGIN: &str = "https://api.bears.artificial.design";
 
 /// Bifrost OpenAI-compatible API when `LLM_API_URL` is unset — matches Docker Compose `bears-bifrost:8080/v1`.
 pub const DEFAULT_LLM_API_URL: &str = "http://bears-bifrost:8080/v1";
+
+/// Sandbox provider host used by the default Docker Compose stack.
+const DEFAULT_SANDBOX_SERVER_HOST: &str = "bears-sandbox-provider";
 
 pub fn session_cookie_secure_from_env(default: bool) -> bool {
     std::env::var("SESSION_COOKIE_SECURE")
@@ -94,11 +97,17 @@ pub struct Config {
     /// queued `memory_curate` reflection runs.
     pub run_workers: bool,
 
-    /// Enable the API-only ACP gateway (`ACP_GATEWAY_ENABLED`).
-    pub acp_gateway_enabled: bool,
+    /// Enable the sandbox provider service (`RUN_SANDBOX`, default false).
+    ///
+    /// The sandbox server can run standalone on a separate host from the Den
+    /// instance using it; when it is the only enabled service the process does
+    /// not require `DATABASE_URL`.
+    pub run_sandbox: bool,
 
     pub web_port: u16,
     pub api_port: u16,
+    /// Port for the sandbox provider API (`SANDBOX_PORT`, default 3002).
+    pub sandbox_port: u16,
 
     /// Public base URL for the **web** service (no trailing slash). Links, redirects, CORS.
     pub web_server_url: String,
@@ -107,12 +116,22 @@ pub struct Config {
 
     /// Shared secret for internal API endpoints (`DEN_INTERNAL_TOKEN`). Empty = internal auth disabled.
     pub den_internal_token: String,
+    /// Secret used to encrypt Den-managed credentials at rest (`DEN_SECRET_ENCRYPTION_KEY`).
+    /// Empty means no new encrypted secret values can be stored.
+    pub den_secret_encryption_key: String,
 
     /// Bifrost gateway base URL (no trailing slash), e.g. `http://bears-bifrost:8080`. Empty = skip HTTP check.
     pub bifrost_base_url: String,
-    /// BEARS model metadata URL served by the Bifrost image, e.g. `http://bears-bifrost:8081/bears/models`.
-    /// Empty = derive from `bifrost_base_url` where possible or skip Bifrost metadata.
-    pub bifrost_metadata_url: String,
+    /// Bifrost management API base URL, e.g. `http://bears-bifrost:8080/api`.
+    pub bifrost_management_url: String,
+    /// Bifrost management admin username (`BIFROST_ADMIN_USERNAME`).
+    pub bifrost_admin_username: String,
+    /// Bifrost management admin password (`BIFROST_ADMIN_PASSWORD`).
+    pub bifrost_admin_password: String,
+    /// Seconds between background Bifrost model-catalog refreshes
+    /// (`BIFROST_CATALOG_REFRESH_SECS`, default 300). `0` warms once at startup
+    /// with no periodic refresh.
+    pub bifrost_catalog_refresh_secs: u64,
 
     /// OpenAI-compatible inference API (no trailing slash), e.g. `http://bears-bifrost:8080/v1`.
     /// Used by the Den-native agent loop. Defaults from `LLM_API_URL`, then `BIFROST_BASE_URL/v1`.
@@ -121,6 +140,9 @@ pub struct Config {
     pub llm_api_key: String,
     /// Default model handle for native runtime turns (`DEFAULT_LLM_MODEL`).
     pub default_llm_model: String,
+    /// Per-model native tool-budget multipliers (`BEARS_MODEL_TOOL_BUDGET_MULTIPLIERS`,
+    /// comma-separated `model=multiplier` pairs). Unknown models simply do not match.
+    pub model_tool_budget_multipliers: HashMap<String, f64>,
     /// Directory for per-Bear SQLite databases (`BEAR_SQLITE_DATA_DIR`, default `/var/lib/den/bear-sqlite`).
     pub bear_sqlite_data_dir: String,
 
@@ -151,7 +173,7 @@ pub struct Config {
 
     /// PAT with `read:packages` for `web::status` GHCR comparison (optional; when empty, registry columns show "not configured").
     pub github_packages_token: String,
-    /// GitHub org or username that owns `den` / `codepool` images on GHCR (e.g. `theartificial`).
+    /// GitHub org or username that owns BEARS images on GHCR (e.g. `theartificial`).
     pub ghcr_packages_owner: String,
     /// `org` or `user` — used with GitHub Packages REST paths.
     pub ghcr_packages_owner_kind: String,
@@ -173,10 +195,58 @@ pub struct Config {
     /// Embedding vector dimensions for the active standard (`EMBEDDING_DIMENSIONS`, default 1536).
     pub embedding_dimensions: u32,
 
+    /// Static bearer token protecting the sandbox provider API (`SANDBOX_SERVICE_TOKEN`).
+    /// Empty = auth disabled, same convention as `DEN_INTERNAL_TOKEN`.
+    pub sandbox_service_token: String,
+    /// Directory holding pristine clones, ephemeral sandbox workspaces, and
+    /// the persisted Den-managed config
+    /// (`SANDBOX_WORKSPACES_DIR`, default `./data/sandbox-workspaces`).
+    pub sandbox_workspaces_dir: String,
+    /// Directory holding the shipped sandbox-image build context
+    /// (`SANDBOX_BUILD_CONTEXT_DIR`). `None` disables the image-build
+    /// endpoints; pulls still work.
+    pub sandbox_build_context_dir: Option<String>,
+    /// Host-side path of `sandbox_workspaces_dir` when the provider itself
+    /// runs in a container (`SANDBOX_WORKSPACES_HOST_DIR`). Sibling-sandbox
+    /// bind sources are rewritten to this path because the host docker daemon
+    /// resolves them host-side. `None` = provider runs directly on the host.
+    pub sandbox_workspaces_host_dir: Option<String>,
+    /// Default container image for sandboxes (`SANDBOX_IMAGE`).
+    pub sandbox_default_image: String,
+    /// Maximum concurrently running sandboxes (`SANDBOX_MAX_CONCURRENT`, default 2).
+    pub sandbox_max_concurrent: usize,
+    /// Per-sandbox wall-clock timeout in seconds (`SANDBOX_DEFAULT_TIMEOUT_SECS`, default 900).
+    pub sandbox_default_timeout_secs: u64,
+    /// Cap on retained sandbox log bytes (`SANDBOX_MAX_LOG_BYTES`, default 2 MiB).
+    pub sandbox_max_log_bytes: u64,
+
+    /// Base URL of the sandbox provider this Den instance dispatches work to
+    /// (`SANDBOX_SERVER_URL`, no trailing slash). `None` disables work dispatch.
+    pub sandbox_server_url: Option<String>,
+    /// Bearer token for calls to `sandbox_server_url` (`SANDBOX_SERVER_TOKEN`).
+    pub sandbox_server_token: String,
+    /// Den API base URL as reachable from inside sandbox containers
+    /// (`SANDBOX_CALLBACK_API_URL`, e.g. `http://host.docker.internal:3001`).
+    /// Defaults to `api_server_url`.
+    pub sandbox_callback_api_url: String,
+    /// Auto-enqueue pending work-stance tasks for dispatch (`WORK_DISPATCH_AUTO`, default false).
+    pub work_dispatch_auto: bool,
+    /// Preserve sandbox workspaces of failed runs for debugging (`SANDBOX_PRESERVE_FAILED`).
+    pub sandbox_preserve_failed: bool,
+    /// Maximum run attempts per task before it stays blocked (`WORK_MAX_ATTEMPTS`, default 2).
+    pub work_max_attempts: u32,
+    /// Network posture requested for work sandboxes (`WORK_SANDBOX_NETWORK`:
+    /// `restricted` default — egress limited to a Den-only relay — or `open`).
+    pub work_sandbox_network: String,
+
     /// Compaction rollout mode (`COMPACTION_MODE`: `observe` default, `active`, `off`).
     pub compaction_mode: String,
     /// When compaction writes run (`COMPACTION_TIMING`: `async` default, `sync`).
     pub compaction_timing: String,
+    /// Agent loop control mode (`BEARS_AGENT_LOOP_CONTROL`: `enforce` default, `observe`, `off`).
+    pub agent_loop_control_mode: String,
+    /// Checkpoint artifact audit retention (`BEARS_CHECKPOINT_AUDIT`: `work` default, `off`, `all`).
+    pub checkpoint_audit_mode: String,
     ///
     /// This is a runtime selector, not a generic development mode switch. The named profile is
     /// only honored when the binary is compiled with the `web-ui-fixtures` Cargo feature.
@@ -261,8 +331,9 @@ impl Config {
                 parse_bool_env("RUN_WORKERS", false),
             )
         };
-
-        let acp_gateway_enabled = parse_bool_env("ACP_GATEWAY_ENABLED", false);
+        // Deliberately outside the SERVER_MODE shorthand: the sandbox provider is
+        // opted into explicitly, never via legacy mode aliases.
+        let run_sandbox = parse_bool_env("RUN_SANDBOX", false);
 
         let ui_fixture_profile = match std::env::var("UI_FIXTURE_PROFILE") {
             Ok(raw) => {
@@ -299,6 +370,14 @@ impl Config {
             .unwrap_or_else(|_| {
                 tracing::warn!("Invalid API_PORT environment variable. Defaulting to 3001");
                 3001
+            });
+
+        let sandbox_port = std::env::var("SANDBOX_PORT")
+            .unwrap_or_else(|_| "3002".to_string())
+            .parse::<u16>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid SANDBOX_PORT environment variable. Defaulting to 3002");
+                3002
             });
 
         let web_server_url = std::env::var("WEB_SERVER_URL").unwrap_or_else(|_| {
@@ -340,36 +419,69 @@ impl Config {
         });
 
         let den_internal_token = std::env::var("DEN_INTERNAL_TOKEN").unwrap_or_default();
+        let den_secret_encryption_key =
+            std::env::var("DEN_SECRET_ENCRYPTION_KEY").unwrap_or_default();
 
-        let bifrost_base_url = std::env::var("BIFROST_BASE_URL").unwrap_or_default();
-        let bifrost_base_url = bifrost_base_url.trim_end_matches('/').to_string();
-        let bifrost_metadata_url = std::env::var("BIFROST_METADATA_URL")
-            .unwrap_or_else(|_| {
-                if bifrost_base_url.is_empty() {
-                    String::new()
-                } else {
-                    bifrost_base_url.replace(":8080", ":8081") + "/bears/models"
-                }
-            })
-            .trim()
-            .to_string();
-
-        let llm_api_url = std::env::var("LLM_API_URL")
+        let bifrost_origin = std::env::var("BIFROST_ORIGIN")
             .ok()
-            .map(|v| v.trim_end_matches('/').to_string())
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| {
-                if bifrost_base_url.is_empty() {
-                    String::new()
-                } else {
-                    format!("{bifrost_base_url}/v1")
-                }
-            });
+            .map(|value| value.trim_end_matches('/').to_string())
+            .filter(|value| !value.is_empty());
+        let bifrost_base_url = if let Some(origin) = bifrost_origin.clone() {
+            origin
+        } else {
+            std::env::var("BIFROST_BASE_URL")
+                .ok()
+                .map(|value| value.trim_end_matches('/').to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_default()
+        };
+        let bifrost_management_url = if let Some(origin) = bifrost_origin.as_deref() {
+            format!("{origin}/api")
+        } else {
+            std::env::var("BIFROST_MANAGEMENT_URL")
+                .ok()
+                .map(|value| value.trim_end_matches('/').to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| {
+                    if bifrost_base_url.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{bifrost_base_url}/api")
+                    }
+                })
+        };
+        let bifrost_admin_username = std::env::var("BIFROST_ADMIN_USERNAME").unwrap_or_default();
+        let bifrost_admin_password = std::env::var("BIFROST_ADMIN_PASSWORD").unwrap_or_default();
+        let bifrost_catalog_refresh_secs = std::env::var("BIFROST_CATALOG_REFRESH_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(300);
+
+        let llm_api_url = if let Some(origin) = bifrost_origin.as_deref() {
+            format!("{origin}/v1")
+        } else {
+            std::env::var("LLM_API_URL")
+                .ok()
+                .map(|v| v.trim_end_matches('/').to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| {
+                    if bifrost_base_url.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{bifrost_base_url}/v1")
+                    }
+                })
+        };
         let llm_api_key = std::env::var("LLM_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .unwrap_or_default();
         let default_llm_model =
             std::env::var("DEFAULT_LLM_MODEL").unwrap_or_else(|_| "openai/gpt-4.1".to_string());
+        let model_tool_budget_multipliers = parse_model_tool_budget_multipliers_env(
+            std::env::var("BEARS_MODEL_TOOL_BUDGET_MULTIPLIERS")
+                .ok()
+                .as_deref(),
+        );
         let bear_sqlite_data_dir = std::env::var("BEAR_SQLITE_DATA_DIR")
             .unwrap_or_else(|_| "/var/lib/den/bear-sqlite".to_string());
 
@@ -463,16 +575,96 @@ impl Config {
                 1536
             });
 
-        let compaction_mode = std::env::var("COMPACTION_MODE")
-            .unwrap_or_else(|_| "observe".to_string());
+        let sandbox_service_token = std::env::var("SANDBOX_SERVICE_TOKEN").unwrap_or_default();
+        if std::env::var("SANDBOX_ROOTS_CONFIG").is_ok_and(|s| !s.trim().is_empty()) {
+            tracing::warn!(
+                "SANDBOX_ROOTS_CONFIG is deprecated and ignored: sandbox roots and the \
+                 image catalog are Den-managed (work surfaces + sandbox catalog, synced \
+                 to the provider); the file is no longer read"
+            );
+        }
+        let sandbox_workspaces_dir = std::env::var("SANDBOX_WORKSPACES_DIR")
+            .unwrap_or_else(|_| "./data/sandbox-workspaces".to_string());
+        let sandbox_build_context_dir = std::env::var("SANDBOX_BUILD_CONTEXT_DIR")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let sandbox_workspaces_host_dir = std::env::var("SANDBOX_WORKSPACES_HOST_DIR")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let sandbox_default_image = std::env::var("SANDBOX_IMAGE").unwrap_or_default();
+        let sandbox_max_concurrent = std::env::var("SANDBOX_MAX_CONCURRENT")
+            .unwrap_or_else(|_| "2".to_string())
+            .parse::<usize>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid SANDBOX_MAX_CONCURRENT, defaulting to 2");
+                2
+            })
+            .max(1);
+        let sandbox_default_timeout_secs = std::env::var("SANDBOX_DEFAULT_TIMEOUT_SECS")
+            .unwrap_or_else(|_| "900".to_string())
+            .parse::<u64>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid SANDBOX_DEFAULT_TIMEOUT_SECS, defaulting to 900");
+                900
+            });
+        let sandbox_max_log_bytes = std::env::var("SANDBOX_MAX_LOG_BYTES")
+            .unwrap_or_else(|_| (2 * 1024 * 1024).to_string())
+            .parse::<u64>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid SANDBOX_MAX_LOG_BYTES, defaulting to 2 MiB");
+                2 * 1024 * 1024
+            });
 
-        let compaction_timing = std::env::var("COMPACTION_TIMING")
-            .unwrap_or_else(|_| "async".to_string());
+        let sandbox_server_url = sandbox_server_url_from_env(
+            std::env::var("SANDBOX_SERVER_URL").ok(),
+            run_workers,
+            run_sandbox,
+            sandbox_port,
+        );
+        let sandbox_server_token = std::env::var("SANDBOX_SERVER_TOKEN").unwrap_or_default();
+        let sandbox_callback_api_url = std::env::var("SANDBOX_CALLBACK_API_URL")
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| api_server_url.clone());
+        let work_dispatch_auto = parse_bool_env("WORK_DISPATCH_AUTO", false);
+        let work_sandbox_network = std::env::var("WORK_SANDBOX_NETWORK")
+            .map(|value| value.trim().to_lowercase())
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "restricted".to_string());
+        let sandbox_preserve_failed = parse_bool_env("SANDBOX_PRESERVE_FAILED", false);
+        let work_max_attempts = std::env::var("WORK_MAX_ATTEMPTS")
+            .unwrap_or_else(|_| "2".to_string())
+            .parse::<u32>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid WORK_MAX_ATTEMPTS, defaulting to 2");
+                2
+            })
+            .max(1);
+
+        let compaction_mode =
+            std::env::var("COMPACTION_MODE").unwrap_or_else(|_| "observe".to_string());
+
+        let compaction_timing =
+            std::env::var("COMPACTION_TIMING").unwrap_or_else(|_| "async".to_string());
+        let agent_loop_control_mode = parse_choice_env(
+            "BEARS_AGENT_LOOP_CONTROL",
+            "enforce",
+            &["off", "observe", "enforce"],
+        );
+        let checkpoint_audit_mode =
+            parse_choice_env("BEARS_CHECKPOINT_AUDIT", "work", &["off", "work", "all"]);
 
         Config {
             templates_dir: std::env::var("TEMPLATES_DIR")
                 .unwrap_or_else(|_| "crates/den-web/src/templates".to_string()),
-            database_url: std::env::var("DATABASE_URL").expect("DATABASE_URL"),
+            // Required only when a DB-backed service runs; enforced by the
+            // binary's `validate_runtime_config`, not here, so a standalone
+            // sandbox server (RUN_SANDBOX only) can boot without Postgres.
+            database_url: std::env::var("DATABASE_URL").unwrap_or_default(),
 
             mailgun_api_key: std::env::var("MAILGUN_API_KEY").unwrap_or_default(),
             mailgun_domain: std::env::var("MAILGUN_DOMAIN").unwrap_or_default(),
@@ -490,17 +682,23 @@ impl Config {
             run_web,
             run_api,
             run_workers,
-            acp_gateway_enabled,
+            run_sandbox,
             web_port,
             api_port,
+            sandbox_port,
             web_server_url,
             api_server_url,
             den_internal_token,
+            den_secret_encryption_key,
             bifrost_base_url,
-            bifrost_metadata_url,
+            bifrost_management_url,
+            bifrost_admin_username,
+            bifrost_admin_password,
+            bifrost_catalog_refresh_secs,
             llm_api_url,
             llm_api_key,
             default_llm_model,
+            model_tool_budget_multipliers,
             bear_sqlite_data_dir,
             s3_endpoint,
             s3_bucket,
@@ -522,10 +720,140 @@ impl Config {
             embedding_standard,
             embedding_model,
             embedding_dimensions,
+            sandbox_service_token,
+            sandbox_build_context_dir,
+            sandbox_workspaces_dir,
+            sandbox_workspaces_host_dir,
+            sandbox_default_image,
+            sandbox_max_concurrent,
+            sandbox_default_timeout_secs,
+            sandbox_max_log_bytes,
+            sandbox_server_url,
+            sandbox_server_token,
+            sandbox_callback_api_url,
+            work_dispatch_auto,
+            sandbox_preserve_failed,
+            work_max_attempts,
+            work_sandbox_network,
             compaction_mode,
             compaction_timing,
+            agent_loop_control_mode,
+            checkpoint_audit_mode,
             ui_fixture_profile,
         }
+    }
+}
+
+fn sandbox_server_url_from_env(
+    raw: Option<String>,
+    run_workers: bool,
+    run_sandbox: bool,
+    sandbox_port: u16,
+) -> Option<String> {
+    match raw {
+        Some(value) => {
+            let value = value.trim().trim_end_matches('/').to_string();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        None if run_workers && !run_sandbox => Some(format!(
+            "http://{DEFAULT_SANDBOX_SERVER_HOST}:{sandbox_port}"
+        )),
+        None => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_server_url_defaults_for_worker_only_processes() {
+        assert_eq!(
+            sandbox_server_url_from_env(None, true, false, 3137).as_deref(),
+            Some("http://bears-sandbox-provider:3137")
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(Some("".into()), true, false, 3002),
+            None
+        );
+        assert_eq!(sandbox_server_url_from_env(None, false, true, 3002), None);
+        assert_eq!(
+            sandbox_server_url_from_env(Some(" http://sandbox:3002/ ".into()), true, false, 3002)
+                .as_deref(),
+            Some("http://sandbox:3002")
+        );
+    }
+
+    #[test]
+    fn parses_model_tool_budget_multipliers() {
+        let parsed = parse_model_tool_budget_multipliers_env(Some(
+            "openai/gpt-5=1.5, gpt-4.1 = 0.75, bad, empty=0, huge=99",
+        ));
+        assert_eq!(parsed.get("openai/gpt-5"), Some(&1.5));
+        assert_eq!(parsed.get("gpt-4.1"), Some(&0.75));
+        assert!(!parsed.contains_key("empty"));
+        assert!(!parsed.contains_key("huge"));
+    }
+}
+
+fn parse_model_tool_budget_multipliers_env(raw: Option<&str>) -> HashMap<String, f64> {
+    let mut multipliers = HashMap::new();
+    let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
+        return multipliers;
+    };
+
+    for entry in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let Some((model, multiplier)) = entry.split_once('=') else {
+            tracing::warn!(
+                "Ignoring invalid BEARS_MODEL_TOOL_BUDGET_MULTIPLIERS entry '{}'. Expected model=multiplier.",
+                entry
+            );
+            continue;
+        };
+        let model = model.trim();
+        let Ok(multiplier) = multiplier.trim().parse::<f64>() else {
+            tracing::warn!(
+                "Ignoring invalid tool-budget multiplier '{}' for model '{}'.",
+                multiplier.trim(),
+                model
+            );
+            continue;
+        };
+        if model.is_empty() || !multiplier.is_finite() || multiplier <= 0.0 || multiplier > 10.0 {
+            tracing::warn!(
+                "Ignoring invalid tool-budget multiplier entry '{}'. Model must be non-empty and multiplier must be in (0, 10].",
+                entry
+            );
+            continue;
+        }
+        multipliers.insert(model.to_string(), multiplier);
+    }
+
+    multipliers
+}
+
+fn parse_choice_env(name: &str, default: &str, allowed: &[&str]) -> String {
+    let value = std::env::var(name).unwrap_or_else(|_| default.to_string());
+    let normalized = value.trim().to_ascii_lowercase();
+    if allowed.contains(&normalized.as_str()) {
+        normalized
+    } else {
+        tracing::warn!(
+            "Invalid {} value '{}'. Expected one of {:?}. Defaulting to {}.",
+            name,
+            value,
+            allowed,
+            default
+        );
+        default.to_string()
     }
 }
 
@@ -566,17 +894,23 @@ impl Config {
             run_web: false,
             run_api: false,
             run_workers: false,
-            acp_gateway_enabled: false,
+            run_sandbox: false,
             web_port: 3000,
             api_port: 3001,
+            sandbox_port: 3002,
             web_server_url: "http://localhost:3000".into(),
             api_server_url: "http://localhost:3001".into(),
             den_internal_token: String::new(),
+            den_secret_encryption_key: String::new(),
             bifrost_base_url: String::new(),
-            bifrost_metadata_url: String::new(),
+            bifrost_management_url: String::new(),
+            bifrost_admin_username: String::new(),
+            bifrost_admin_password: String::new(),
+            bifrost_catalog_refresh_secs: 300,
             llm_api_url: String::new(),
             llm_api_key: String::new(),
             default_llm_model: "gpt-4.1".into(),
+            model_tool_budget_multipliers: HashMap::new(),
             bear_sqlite_data_dir: "/var/lib/den/bear-sqlite".into(),
             s3_endpoint: String::new(),
             s3_bucket: String::new(),
@@ -598,8 +932,25 @@ impl Config {
             embedding_standard: "bears-embed-v1".into(),
             embedding_model: "text-embedding-3-small".into(),
             embedding_dimensions: 1536,
+            sandbox_service_token: String::new(),
+            sandbox_build_context_dir: None,
+            sandbox_workspaces_dir: "./data/sandbox-workspaces".into(),
+            sandbox_workspaces_host_dir: None,
+            sandbox_default_image: String::new(),
+            sandbox_max_concurrent: 2,
+            sandbox_default_timeout_secs: 900,
+            sandbox_max_log_bytes: 2 * 1024 * 1024,
+            sandbox_server_url: None,
+            sandbox_server_token: String::new(),
+            sandbox_callback_api_url: "http://localhost:3001".into(),
+            work_dispatch_auto: false,
+            sandbox_preserve_failed: false,
+            work_max_attempts: 2,
+            work_sandbox_network: "restricted".into(),
             compaction_mode: "observe".into(),
             compaction_timing: "async".into(),
+            agent_loop_control_mode: "enforce".into(),
+            checkpoint_audit_mode: "work".into(),
             ui_fixture_profile: None,
         }
     }

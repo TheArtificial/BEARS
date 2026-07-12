@@ -4,7 +4,7 @@ use crate::core::{
         work_surface_scaffold_requests,
     },
 };
-use den_runtime::bears::BearProfile;
+use den_service::bears::BearProfile;
 
 #[test]
 fn normalize_work_surface_slug_collapses_non_alphanumeric_runs() {

@@ -7,20 +7,17 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::types::Json as SqlxJson;
 use uuid::Uuid;
 
 use crate::{
-    errors::CustomError,
-    web::AppState,
     core::user::db as user_db,
+    errors::CustomError,
+    web::{bear::create_support, AppState},
 };
-use den_runtime::{
-    bears::{
-            db::{self as bears_db, BearParams, MembershipRow},
-            model::Bear,
-            provision,
-        },
+use den_service::bears::{
+    db::{self as bears_db, BearParams, MembershipRow},
+    model::Bear,
+    provision,
 };
 
 pub fn router() -> Router<AppState> {
@@ -52,11 +49,8 @@ pub struct CreateBearRequest {
     description: String,
     system_prompt: String,
     default_model: Option<String>,
-    /// Deprecated: prefer `letta_tool_ids`. When set, stored as `bears.tools_enabled` for backward compatibility.
+    /// Deprecated legacy payload; ignored by Den-native provisioning.
     tools_enabled: Option<serde_json::Value>,
-    letta_agent_type: Option<String>,
-    #[serde(default)]
-    letta_tool_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -77,18 +71,27 @@ async fn create_bear(
             "bear slug already exists".to_string(),
         ));
     }
-    let tools = body.tools_enabled.map(SqlxJson);
-    let letta_tool_ids: Vec<String> = body
-        .letta_tool_ids
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    let letta_agent_type = body
-        .letta_agent_type
-        .as_ref()
-        .map(|s| s.trim().to_string())
+    let default_model = body
+        .default_model
+        .as_deref()
+        .map(str::trim)
         .filter(|s| !s.is_empty());
+    if let Some(model) = default_model {
+        let catalog_models =
+            den_service::model_selection::list_selectable_model_options(state.sqlx_pool()).await?;
+        if catalog_models.is_empty() {
+            return Err(CustomError::ValidationError(
+                "No Den model selection options are configured; cannot validate default_model"
+                    .to_string(),
+            ));
+        }
+        if !create_support::default_model_available_in_catalog(&catalog_models, model) {
+            return Err(CustomError::ValidationError(format!(
+                "default_model `{model}` is not configured as a selectable Den model"
+            )));
+        }
+    }
+    let _ = body.tools_enabled;
     let id = bears_db::create_bear(
         state.sqlx_pool(),
         BearParams {
@@ -96,25 +99,22 @@ async fn create_bear(
             name: body.name.trim(),
             description: body.description.trim(),
             system_prompt: body.system_prompt.trim(),
-            default_model: body
-                .default_model
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty()),
-            tools_enabled: tools,
-            letta_agent_type: letta_agent_type.as_deref(),
-            letta_tool_ids: SqlxJson(letta_tool_ids),
+            default_model,
+            tools_enabled: None,
             context_profile: None,
         },
     )
     .await?;
 
-    if let Err(e) = provision::provision_bear_if_configured(
-        state.sqlx_pool(),
-        state.config.as_ref(),
-        id,
-    )
-    .await
+    if let Err(e) = create_support::provision_bifrost_virtual_key_for_bear(&state, id, slug).await {
+        let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
+        return Err(CustomError::System(format!(
+            "Bifrost virtual key provisioning failed: {e}"
+        )));
+    }
+
+    if let Err(e) =
+        provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id).await
     {
         tracing::warn!(%id, "Bear provision failed after admin API create: {e}");
     }

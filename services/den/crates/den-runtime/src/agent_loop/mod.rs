@@ -2,14 +2,17 @@
 
 mod approvals;
 mod assembler;
+mod budget;
+mod checkpoints;
 mod context;
+mod control;
 mod key_memory_projection;
 #[cfg(test)]
 mod key_memory_projection_tests;
+mod overflow_retry;
 mod pending_tools;
 mod policy;
 mod runtime_context;
-mod overflow_retry;
 mod session_store;
 mod session_stream;
 mod step;
@@ -17,6 +20,8 @@ mod strategy;
 mod tool_outcome;
 mod tool_policy;
 mod transcript;
+
+pub use step::RUNTIME_CHECKPOINT_TOOL_NAME;
 
 pub use tool_outcome::{
     is_incomplete_tool_result, is_legacy_synthetic_interrupted_tool_result,
@@ -32,19 +37,44 @@ pub use approvals::{
 };
 pub use assembler::{
     assemble_native_turn, assemble_native_turn_for_bear, assemble_native_turn_messages,
-    assemble_native_turn_messages_for_bear, AssembledNativeTurn, AssembleTurnContext,
+    assemble_native_turn_messages_for_bear, projected_memory_session_diagnostic,
+    recalled_memory_session_diagnostic, AssembleTurnContext, AssembledNativeTurn,
 };
-pub use key_memory_projection::{project_key_memory, KeyMemoryProjectionCacheKey, KeyMemoryProjectionResult};
+pub use budget::{
+    classify_tool_budget_class, evaluate_turn_budget, tool_signature, tool_signature_from_call,
+    PostMutationVerificationWindow, ToolBudgetClass, ToolCallBudgetLimits, ToolCallBudgetUsage,
+    ToolContinuationObservation, TurnBudgetEvaluation, TurnBudgetPolicy, TurnBudgetState,
+    TurnBudgetStopReason, TurnBudgetWarning,
+};
+pub use checkpoints::{
+    list_checkpoints_for_run, list_checkpoints_for_session, record_checkpoint_request,
+    record_checkpoint_response, CheckpointArtifactInput, CheckpointArtifactRow,
+    CheckpointReplayPolicy, CheckpointResponseInput, CheckpointValidationStatus,
+    CheckpointVisibility,
+};
 pub use context::{
-    assemble_agent_messages, load_transcript_grouping_rows, prune_messages_for_native_chat,
-    repair_tool_call_message_chain,
+    assemble_agent_messages, load_transcript_grouping_rows, load_transcript_messages,
+    prune_messages_for_native_chat, repair_tool_call_message_chain,
+};
+pub use control::{
+    evaluate_checkpoint_trigger, pre_risk_checkpoint_trigger, resolve_agent_loop_control,
+    task_gate_checkpoint_trigger, validate_checkpoint_response, AgentLoopControlProfile,
+    AgentLoopControlResolutionInput, AgentLoopControlSource, CheckpointConfidence,
+    CheckpointEvaluation, CheckpointEvidenceRef, CheckpointField, CheckpointNextAction,
+    CheckpointPolicy, CheckpointReason, CheckpointResponseValidationError, CheckpointState,
+    CheckpointTaskContext, CheckpointThinkingPolicy, CheckpointTrigger, KoPolicy,
+    ResolvedAgentLoopControl, RuntimeCheckpointRequest, RuntimeCheckpointResponse, TaskGatePolicy,
+    TaskStateChangeIntent,
+};
+pub use key_memory_projection::{
+    project_key_memory, KeyMemoryProjectionCacheKey, KeyMemoryProjectionResult,
 };
 pub use overflow_retry::compact_session_messages_for_overflow;
-pub use session_store::{agent_loop_session_key, AgentLoopSession, AgentLoopSessionStore};
-pub use step::{run_agent_step_stream, AgentStepOverflowContext};
 pub use pending_tools::pending_tool_calls;
-pub use session_stream::{NativeToolDispatchMode, SessionTrackingStream};
 pub use policy::{select_strategy_profile, StrategyPolicyInput};
+pub use session_store::{agent_loop_session_key, AgentLoopSession, AgentLoopSessionStore};
+pub use session_stream::{NativeToolDispatchMode, SessionTrackingStream};
+pub use step::{native_llm_handshake_timeout, run_agent_step_stream, AgentStepOverflowContext};
 pub use strategy::StrategyProfile;
 pub use tool_policy::{
     maybe_pause_for_tool_approval, provider_tool_requires_approval,

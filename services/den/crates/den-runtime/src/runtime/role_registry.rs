@@ -5,9 +5,9 @@ use std::str::FromStr;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::runtime_contracts::{RoleProfileRegistry, RoleRuntimeBinding};
 use den_core::config::Config;
 use den_core::{BearProfile, DenError};
+use den_protocol::{RoleProfileRegistry, RoleRuntimeBinding};
 
 pub struct DenNativeProfileRegistry<'a> {
     pool: &'a PgPool,
@@ -24,7 +24,7 @@ impl<'a> DenNativeProfileRegistry<'a> {
         profile: BearProfile,
     ) -> Result<Option<RoleRuntimeBinding>, DenError> {
         // Inline lookup of the bear↔profile binding id. This intentionally duplicates
-        // the small `bears::db::profile_binding_id` query so den-runtime does not depend
+        // the small `den_service::bears::db::profile_binding_id` query so den-runtime does not depend
         // on the `den`-crate `bears` subsystem (a `den-runtime → den` cycle); the bears
         // subsystem keeps its own copy for the edge call sites until it, too, lands here.
         let row: Option<(String,)> = sqlx::query_as(
@@ -56,9 +56,8 @@ impl RoleProfileRegistry for DenNativeProfileRegistry<'_> {
         bear_id: Uuid,
         profile: &str,
     ) -> Result<Option<RoleRuntimeBinding>, DenError> {
-        let profile = BearProfile::from_str(profile).map_err(|_| {
-            DenError::ValidationError(format!("unknown bear profile: {profile}"))
-        })?;
+        let profile = BearProfile::from_str(profile)
+            .map_err(|_| DenError::ValidationError(format!("unknown bear profile: {profile}")))?;
         self.resolve_binding(bear_id, profile).await
     }
 }

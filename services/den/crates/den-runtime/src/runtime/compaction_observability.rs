@@ -71,9 +71,7 @@ mod tests {
         artifact_ref_from_decision, RuntimeCompactionDecision, RuntimeCompactionPolicy,
         RuntimeCompactionStrategy,
     };
-    use crate::runtime_conversations::{
-        RuntimeCompactionBoundary, RuntimeCompactionTriggerKind,
-    };
+    use crate::runtime_conversations::{RuntimeCompactionBoundary, RuntimeCompactionTriggerKind};
 
     #[test]
     fn applied_event_carries_decision_boundary_and_artifact_provenance() {

@@ -1,128 +1,134 @@
 # Capabilities and Skills
 
-> **Direction changed (2026-06).** Canonical skill state is no longer the Bear MemFS `skills/` namespace; git retains human-authored skills/prompts only, and Bear cognition is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)). Canonical target: [Den-Native Runtime](den-native-runtime.md) ([migration plan](../roadmap/DEN_NATIVE_RUNTIME_PLAN.md)).
+Capabilities describe what a Bear is allowed to do. Tools are concrete executable actions. Skills are reusable procedures or knowledge packages that help a Bear perform work consistently.
 
-Capabilities describe what a Bear is allowed to do. Tools are the concrete actions available to agents. Skills are reusable procedures or knowledge packages that help a Bear use its tools and memory well.
-
-For the canonical role model and current role names, see [bear roles](bear-roles.md). This document focuses on capability, tool, and skill concepts.
+This document explains the distinction and the governance boundary between them.
 
 ## Summary
 
 - A capability is a product-level permission or ability.
-- A tool is an executable action exposed to one or more bear roles.
-- A skill is reusable know-how installed for selected roles.
-- In Bear Den, durable skills are a **special class of Bear memory artifact**.
-- Den owns the canonical capability and skill configuration.
-- Durable skill learning happens through Reflection proposal and review, not raw self-installation.
+- A tool is a concrete operation exposed to one or more stances.
+- A skill is reusable know-how.
+- Capability discovery is the model-facing strategy for large tool and skill catalogs; see [ADR-0054](../decisions/adr-0054-capability-discovery-and-code-mode.md).
+- Den owns capability policy and tool exposure.
+- Durable skill learning is reviewed and governed; it is not arbitrary self-installation.
 
 ## Capabilities
 
-A capability is something a Bear can do from the user's or administrator's perspective.
+A capability is something a Bear can do from the human or operator perspective.
 
 Examples:
 
-- use GitHub,
-- post to Slack,
-- read a project repository,
-- create background tasks,
-- monitor a webhook,
-- use company conventions while coding.
+- use a GitHub integration;
+- read a repository through a trusted armature;
+- create background work;
+- inspect a deployment;
+- write to a particular external system;
+- use a team-specific engineering workflow.
 
-Capabilities should be described in product language. They may map to tools, skills, policies, credentials, or external integrations underneath.
+Capabilities are product language. They may map to tools, credentials, policies, prompt fragments, memory structures, or sandbox rights underneath.
+
+Large catalogs are presented to models through capability discovery rather than by listing every tool and schema in prompt. A discovery result may bundle concrete tools, skills, policies, memories, surfaces, and execution options such as direct invocation, Code Mode, or delegated runs.
 
 ## Tools
 
-A tool is a concrete action an agent can call.
+A tool is a concrete action the runtime can execute or request.
 
 Examples:
 
-- read or write allowed memory paths,
-- write a task intent,
-- approve a task intent,
-- post to an integration,
-- write an observation,
-- relay a client-side ACP tool call.
+- browse memory;
+- read or edit files through an armature;
+- fetch documentation from the web;
+- update a workboard plan;
+- request a task handoff;
+- write a memory entry;
+- inspect a browser page;
+- run a command in a sandbox.
 
-Tools are role-scoped. A tool that is safe for `work` may be unsafe for `chat`; a tool that is appropriate for `review` may be inappropriate for `watch`.
+Tool access is stance-scoped and policy-scoped. A tool that is safe for `pair` may be unsafe for `chat`; a tool that is valid for `work` may be invalid for `watch`.
 
 ## Skills
 
 A skill is reusable know-how.
 
-Skills can encode:
+Examples:
 
-- coding conventions,
-- integration procedures,
-- recurring workflows,
-- reflection patterns,
-- subscription parsing guidance,
-- or team-specific practices.
+- coding conventions;
+- integration playbooks;
+- recurring debugging procedures;
+- review checklists;
+- domain-specific interpretation guidance;
+- team-specific writing or planning conventions.
 
-In Bear Den, durable skills should be modeled as a **special kind of memory artifact**: they are part of what the Bear knows how to do in a reusable way, but they are governed differently from ordinary notes or summaries because they also need role assignment, dependency declarations, review state, and runtime materialization.
+Skills are not just raw local files and not just arbitrary memory snippets. They are governed reusable procedures with applicability and provenance.
 
-That means skills are **not merely anonymous local runtime files**, but they are also **not identical to every other memory object**. They are governed memory with execution-oriented metadata.
+## How skills are represented
 
-### Canonical skill format in Bear Den
+There are two important classes of skill material in Bear Den.
 
-The canonical durable representation of a Bear skill is a bundle under the Bear MemFS `skills/` namespace:
+### 1. Repository-authored skill material
 
-```text
-skills/
-  adr-drafting/
-    SKILL.md
-    bear.yaml
-```
+Human-authored prompts, procedures, and related reusable assets live in the repository as ordinary versioned artifacts. These are part of the operator/developer-managed configuration surface.
 
-- `SKILL.md` holds the portable skill content.
-- `bear.yaml` holds Bear Den-specific metadata such as lifecycle, review state, role applicability, provenance, dependencies, sharing policy, and sync/materialization state.
+Typical uses:
 
-The `skills/` namespace is flat at the skill-id level. Bear Den should not encode role or lifecycle semantics in nested path hierarchies.
+- prompt fragments
+- policy text
+- stance instructions
+- reusable procedural content packaged for runtime projection
 
-## Role applicability
+### 2. Bear-learned durable know-how
 
-Not every role should receive every skill or tool.
+When a Bear learns a reusable procedure through reflection or review, the durable canonical record belongs to Bear-governed state, not to an arbitrary local runtime path.
 
-| Role | Typical capability shape |
-|------|--------------------------|
-| `chat` | Conversation, task-intent capture, general user help. |
-| `pair` | Client-mediated collaboration and coding/design assistance. |
-| `review` | Reflection, review, memory integration, skill approval. |
-| `work` | Approved outbound execution with scoped integration tools. |
-| `watch` | Inbound event interpretation and observation writing. |
+That durable representation should carry:
 
-Role applicability keeps the Bear useful without giving every internal agent every power.
+- content or reference to content;
+- provenance;
+- review state;
+- stance applicability;
+- dependency or prerequisite metadata;
+- and any projection/runtime materialization metadata Den needs.
 
-For skills, role applicability should be metadata-driven rather than path-driven. A skill may be applicable to one, many, or all roles, and that assignment belongs in Bear Den metadata and Den policy.
+In other words: skills are governed Bear knowledge with execution-oriented metadata.
 
-## Skill proposals
+## Stance applicability
 
-Agents do not install durable skills directly. Skill learning belongs to the **adaptation** side of Bear Den Reflection system, but durable skill curation still overlaps strongly with memory curation because skills are a special memory artifact.
+Not every stance should receive every capability, tool, or skill.
 
-The normal skill-learning flow is:
+| Stance | Typical capability shape |
+|--------|--------------------------|
+| `chat` | user-facing conversational help and lightweight retrieval |
+| `pair` | trusted local collaboration and interactive planning |
+| `review` / `curate` | review, curation, memory integration, approval |
+| `work` | approved execution with scoped external effects |
+| `watch` | inbound event interpretation and observation writing |
 
-1. A role or Reflection lane identifies a reusable procedure, convention, failure mode, or checklist.
-2. The role or lane submits a skill proposal through Den or a Bear Den-governed review path.
-3. `review` or a future skill-review lane reviews the proposal.
-4. The reviewer chooses whether to approve it, which roles it applies to, and whether its dependency metadata is adequate.
-5. Den updates the Bear skill record only when policy allows.
-6. Den provisions or reconciles affected runtime views.
+Stance applicability is metadata and policy, not path hierarchy.
 
-High-risk adaptation, such as changing role prompts, tool permissions, global execution strategy, code-backed tools, or deployment/runtime configuration, should initially require human approval.
+## Skill proposals and approval
 
-This gives the Bear a way to learn without letting any one role mutate shared capability unchecked.
+Agents do not install durable skills directly.
+
+The normal flow is:
+
+1. a stance or reflection lane identifies a reusable procedure or convention;
+2. it proposes the skill through a Den-governed review path;
+3. review/curation evaluates the proposal;
+4. Den records the approved applicability, provenance, and projection metadata;
+5. affected stances receive the resulting skill material through Den-owned runtime configuration.
+
+High-risk capability changes remain human-governed when appropriate.
 
 ## What Den owns
 
 Den owns the canonical records for:
 
-- which capabilities a Bear has,
-- which tools each role may use,
-- which skills are installed,
-- which roles a skill applies to,
-- which dependency and curation metadata apply to a skill,
-- and whether runtime state matches the intended configuration.
-
-Agents may request capability changes. Den enforces and installs them.
+- which capabilities a Bear has;
+- which tools each stance can use;
+- which skills are approved;
+- which stances those skills apply to;
+- and whether runtime projection matches intended policy.
 
 ## Product language
 
@@ -131,8 +137,7 @@ Prefer:
 - “This Bear has the GitHub capability.”
 - “This skill applies to `chat` and `pair`.”
 - “The Bear proposed a new skill for review.”
-- “Den provisions tools and skills according to policy.”
-- “This skill is stored in Bear memory and materialized into the runtime.”
+- “Den projects tools and skills according to policy.”
 
 Avoid:
 
@@ -143,13 +148,9 @@ Avoid:
 
 ## Related docs
 
-- [Bear Den and Den](bears-and-den.md)
-- [bear roles](bear-roles.md)
-- [Memory model](memory-model.md)
-- [Reflection system](REFLECTION_SYSTEM.md)
-- [Tasks and autonomy](TASKS_AND_AUTONOMY.md)
-- [Observations and subscriptions](observations-and-subscriptions.md)
-- [Dynamic skills, reflection subagents, and bear configuration ADR](../architecture/adr/dynamic-skills-subagents.md)
-- [Multi-agent architecture ADR](../architecture/adr/multi-agent-architecture.md)
-- [Reflection System ADR](../architecture/adr/reflection-system.md)
-- [Den Bear spec](../../services/den/docs/bear-spec.md)
+- [ADR-0054: Capability Discovery and Code Mode](../decisions/adr-0054-capability-discovery-and-code-mode.md)
+- [bear stances](bear-stances.md)
+- [bears and den](bears-and-den.md)
+- [memory model](memory-model.md)
+- [reflection system](reflection-system.md)
+- [tasks and autonomy](tasks-and-autonomy.md)

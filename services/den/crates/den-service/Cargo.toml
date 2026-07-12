@@ -1,0 +1,39 @@
+[package]
+name = "den-service"
+version.workspace = true
+edition = "2021"
+
+# Shared concrete application/service state for Den HTTP edges.
+# This crate intentionally sits below den-runtime: app state, Bifrost metadata,
+# and process-local turn coordination live here; runtime execution remains in
+# den-runtime.
+
+[lints]
+workspace = true
+
+[features]
+production = ["den-core/production", "den-protocol/production"]
+test-util = ["den-core/test-util"]
+
+[dependencies]
+aes-gcm.workspace = true
+base64.workspace = true
+den-core = { path = "../den-core" }
+den-protocol = { path = "../den-protocol" }
+den-sandbox = { path = "../den-sandbox" }
+den-llm = { path = "../den-llm" }
+den-memory = { path = "../den-memory" }
+minijinja.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+sha2.workspace = true
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "time", "json", "uuid", "macros"] }
+time = { workspace = true, features = ["serde", "serde-well-known"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+den-core = { path = "../den-core", features = ["test-util"] }

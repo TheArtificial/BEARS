@@ -1,10 +1,10 @@
 # Memory curation plan
 
-> **Direction changed (2026-06).** The curation lanes stand, but the canonical store is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) — `memory_records`/`memory_promotions`/`memory_proposals` — not MemFS `core/`/role branches or Letta Archives. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest, consolidation by supersession, and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den-Native Runtime](../architecture/den-native-runtime.md) ([migration plan](DEN_NATIVE_RUNTIME_PLAN.md)).
+> **Direction changed (2026-06).** The curation lanes stand, but the canonical store is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) — `memory_records`/`memory_promotions`/`memory_proposals` — not MemFS `core/`/stance branches or Letta Archives. Semantic recall is a **derived Qdrant index** over SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); harvest, consolidation by supersession, and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 >
 > **Note.** `core/` paths denote logical-path projections over SQLite records, not files on a branch.
 
-For the canonical role model and current role names, see [bear roles](../architecture/bear-roles.md).
+For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
 Status: focused design plan. Implementation status and sequencing live in [Memory Automation Roadmap](MEMORY_AUTOMATION_ROADMAP.md).
 
 This plan designs how memories move between role-local branches and shared Bear memory. It focuses on the `memory_curate` lane of BEARS **Reflection** system and the `curate` role as the only role allowed to integrate role-local memory into shared `core/` memory or propose/promote Cabinet updates.
@@ -107,13 +107,13 @@ Proactively scan **un-mined** closed sessions and compaction artifacts and run a
 - **Idempotency:** record processed sources in `memory_harvest_marks` (source kind + ref + hash); never re-harvest unchanged sources.
 - **Triggers:** `session_archived`, `cumulative_salience_threshold`, and a throttled/adaptive heartbeat — not a fixed cron.
 - **Provenance:** every candidate links back to source `conversation_messages`.
-- **Quality filter:** drop low-confidence extractions before they become proposals (guards against hallucination propagation).
+- **Quality filter:** drop low-confidence extractions before they become proposals (guards against hallucination propagation). The current deterministic compaction-artifact filter keeps decisions/constraints/artifact refs, drops follow-up-only and goal/workflow-only summaries, tags artifact-only candidates as medium confidence, and routes person/secret/external-risk signals to human review; richer model-assisted confidence scoring is deferred until proposal quality metrics show a problem.
 
 ### Consolidation
 
 Before writing `core/`, reconcile candidates against existing canonical memory:
 
-- **Dedup** — semantically identical candidate ⇒ no-op (optionally bump salience).
+- **Dedup** — semantically identical candidate ⇒ no-op (optionally bump salience). Exact duplicate core updates already record a `dedupe_core_noop` promotion without writing a new memory record. Proposal creation now also adds human-review `consolidation_review` metadata when an exact normalized claim already exists at a different active logical path; broader model-assisted semantic dedup is deferred until duplicate proposals become a real review burden.
 - **Supersession, not overwrite** — a contradicting candidate writes a *new* record that sets `supersedes_memory_id` and encodes the transition ("previously X; now Y"); the old record is marked `invalid_at` and preserved as history. This is the bears-native form of temporal fact invalidation, without a graph database.
 - **Synthesis** — when cumulative `salience` over recent records crosses a threshold, synthesize a higher-level `reflection` record (Generative-Agents-style) and store it as retrievable memory.
 
@@ -189,7 +189,8 @@ Initial `den.memory.request_review` input shape:
 | `den.memory.read_proposal` | `memory_read_proposal` | Read one proposal with source pointers and status. |
 | `den.memory.resolve_proposal` | `memory_resolve_proposal` | Resolve a proposal as approved, rejected, retained local, deferred, superseded, or human-review-needed. |
 | `den.memory.apply_core_update` | `memory_apply_core_update` | Apply a reviewed shared memory update into `core/` with provenance. |
-| `den.memory.supersede_entry` | `memory_supersede_entry` | Mark or record that a role-local entry has been superseded by a core/Cabinet entry. |
+| `den.memory.mark_lifecycle` | `memory_mark_lifecycle` | Mark an existing memory record as `stale`, `superseded`, `archived`, `archive-candidate`, or back to `active` without rewriting content. |
+| `den.memory.supersede_entry` | `memory_supersede_entry` | Future specialized helper; current reviewed core updates write `supersedes_memory_id`, and `memory_mark_lifecycle` covers explicit lifecycle marking. |
 
 ### Cabinet tools
 

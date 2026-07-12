@@ -1,10 +1,10 @@
 # Bear Entity Layer — Implementation Plan
 
-**Status:** In progress — Phases 0–3 landed in `den-memory` (schema/model core); Phases 4–7 pending  
+**Status:** In progress — Phases 0–6 landed/partial; entity anchors, entity tools/governance, session entities, and Bear web entity browser landed; portability pending  
 **Architecture:** [ADR-0042 — Memory–Entity Relationships and the Bear Entity Layer](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md)  
 **Related:** [ADR-0031 — SQLite-first canonical store](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md), [ADR-0041 — Archival recall and async curation](../decisions/adr-0041-archival-recall-and-async-curation.md), [ADR-0038 — Derived recall index](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md), [ADR-0006 — Work surfaces](../decisions/adr-0006-bear-work-surfaces.md), [ADR-0040 — Connections](../decisions/adr-0040-connections-and-work-surface-presentation.md), [bear package](../guides/bear-package.md), [memory model](../architecture/memory-model.md)
 
-For the canonical role model and current names, see [bear roles](../architecture/bear-roles.md). "Role" = **trust profile**; `curate` is the curation profile.
+For the canonical stance model and current names, see [bear stances](../architecture/bear-stances.md). `curate` is the curation stance.
 
 ## Goal
 
@@ -56,7 +56,7 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 ## Phase 3 — Relation layer (two tables + view); retire `entity_ref`  ✅ landed (`den-memory/src/relations.rs`)
 
-- Migration: `memory_relations` (descriptive) and `memory_access_rules` (access-bearing), identical shape (`link_id`, `bear_id`, `sequence_no`, `src_memory_id`, `entity_id`, `relation`, `qualifiers_json`, `author_profile`, `author_agent_id`, `confidence`, `state`, `supersedes_link_id`, `created_at`); `memory_links` **view** = union with a `class` column.
+- Migration: `memory_relations` (descriptive) and `memory_access_rules` (access-bearing), identical shape (`link_id`, `bear_id`, `sequence_no`, `src_memory_id`, `entity_id`, `relation`, `qualifiers_json`, `author_stance`, `author_agent_id`, `confidence`, `state`, `supersedes_link_id`, `created_at`); `memory_links` **view** = union with a `class` column.
 - **Descriptor-routed writes**: the relation descriptor's class selects the table; writers never choose. Validate `qualifiers_json` against `allowed_qualifiers`. `memory_access_rules` enforces **target entity `resolution ≥ resolved`**.
 - Retire `memory_records.entity_ref` and the legacy `memory_links` base table.
 
@@ -83,30 +83,44 @@ Per-Bear SQLite (`den-memory` crate: `schema.sql`, `migrate.rs`, new `entity.rs`
 
 **Exit (gate slice, met):** projection tests — `confined_to` prevents cross-surface leakage, fail-closed by default, granting the scope surfaces it; building projection without `AccessContext` fails to compile. **Exit (entity-filter recall slice, met):** payload denormalization + entity-scoped retrieval proven end-to-end against live Qdrant. **Exit (vector boost + applies_when surfacing):** pending query-time entity resolution / Phase 6. **Exit (bounded-graph):** met (Phase 3.5).
 
-## Phase 5 — Anchors generalize
+## Phase 5 — Anchors generalize  🟡 explicit-anchor v1 landed
 
 - Extend logical-path projection (`logical_path.rs`) so **resolved + salient** entities get anchors: `core/people/<id>/…`, `core/missions/<id>/…` beside `core/work_surfaces/<slug>/…`.
 - Transient/low-salience mentions stay **query-derived** ("entity page" = `memory_links` view filtered by `entity_id`).
-- Pick a default **salience promotion threshold** (open item).
+- V1 salience promotion threshold is settled: at least one `subject`-linked `high|critical` record, or a `confirmed` entity with at least two `normal` `subject`-linked records.
+- V1 projection is explicit-anchor-only: project generated anchor paths when records exist; do not synthesize projection content from `memory_links` fallback yet.
 
-**Exit:** projection tests for entity anchors; entity-page derivation over the view.
+**Landed:** descriptor-owned anchor path helper, explicit-anchor eligibility query, key-memory projection wiring, and curate-only `entity_write_anchor` authoring flow. **Still open:** richer maintenance/refresh policy and optional derived fallback from relations.
 
-## Phase 6 — Tools + curation/governance
+**Exit:** projection tests for explicit entity anchors; entity-page derivation over the view.
 
-- Model-facing tools (descriptor-named): `entity_browse`, `entity_resolve`, plus relation writes for **descriptive** relations from `chat`/`pair`/`work`/`watch`.
-- Restricted to `curate`/Den: `entity_merge`, `entity_split`, weak-candidate promotion, and **all** `memory_access_rules` writes (differential write authz per table).
+## Phase 6 — Tools + curation/governance  ✅ v1 landed
+
+- ✅ Model-facing read tools (descriptor-named): `entity_browse`, `entity_resolve`.
+- ✅ Member-facing Bear web UI entity browser/detail pages: `/bear/{slug}/entities` and `/bear/{slug}/entities/{entity_id}`.
+- ✅ Descriptive relation writes from `chat`/`pair`/`work`/`watch`: `entity_link_memory`.
+- ✅ Restricted to `curate`/Den: `entity_merge`, `entity_split`, `entity_write_access_rule`, and `entity_write_anchor`.
 - `curate` Reflection lane(s) for candidate promotion, merge/split review, and access-rule authoring (consistent with ADR-0041 curation).
-- Expose resolved entities in `session_info`.
+- ✅ Expose resolved entities in `session_info.entities`.
 
 **Exit:** tool + authz tests — `chat` cannot write access rules; `curate` can; merge/split curate-only; audit trail present in `memory_access_rules`.
+
+**Durable implementation checklist:**
+
+1. ✅ Descriptive relation write tool (`subject`, `source`, `participant`, `applies_when`) for producer stances; reject access-bearing relations.
+2. ✅ Curate-only entity merge/split tools.
+3. ✅ Curate-only access-rule write tool (`audience`, `confined_to`).
+4. ✅ `session_info.entities` for trusted human and current work-surface entities.
+5. ✅ Entity anchor authoring/maintenance flow for explicit anchor records.
 
 ## Phase 7 — Portability (bear package)
 
 - Entity tables ship automatically in the **cognition export**; bump `memory_schema_version`.
 - Import: existing `bear_id` rewrite covers the new tables; `entity_id` stays stable; **re-link `canonical_ref`** against destination registries via strong handles; demote non-re-resolving entities to `provisional` (clear `canonical_ref`); access rules **inert until re-resolved** (fail-closed).
 - Optional manifest **entity summary** (counts by type, resolved vs provisional).
+- **Pre-export curation flush** (cross-cutting, not entity-specific — surfaced here because export/import lands in this phase): before an export snapshots `memory.sqlite`, drain the pending curation/harvest backlog so salient recent context is promoted into canonical memory instead of being stranded in the non-portable Den transcript (conversations stay Postgres-only per [bear package](../guides/bear-package.md)). Continuity after import rides on curated memory, never on shipping transcripts. Mechanism is the async curation / `archive_harvest` lane ([ADR-0041 — Archival recall and async curation](../decisions/adr-0041-archival-recall-and-async-curation.md), [MEMORY_AUTOMATION_ROADMAP.md](MEMORY_AUTOMATION_ROADMAP.md)); export blocks on — or at minimum reports — a drained/bounded backlog.
 
-**Exit:** export/import round-trip tests — cross-host `canonical_ref` re-link + demotion; access rules fail-closed after import; entity counts reported.
+**Exit:** export/import round-trip tests — cross-host `canonical_ref` re-link + demotion; access rules fail-closed after import; entity counts reported; **pre-export flush** drains pending harvest/curation so a fresh import reflects the last session's salient context with no transcript carried.
 
 ## Likely files
 
@@ -131,8 +145,8 @@ Identity and multi-profile hazards every phase must hold against.
 
 **Cross-profile safety (multi-agent overwrite / role drift)**
 
-- **No cross-branch overwrite:** a trust profile cannot mutate another profile's records or relations; `core/` is written only via `curate`; the bear-wide sequence allocator prevents concurrent clobber (append-only + supersession, never in-place edit).
-- **Authorship recorded:** every record/relation carries `author_profile`; access-rule writes are `curate`/Den-only and enforced, not advisory.
+- **No cross-branch overwrite:** a trust stance cannot mutate another stance's records or relations; `core/` is written only via `curate`; the bear-wide sequence allocator prevents concurrent clobber (append-only + supersession, never in-place edit).
+- **Authorship recorded:** every record/relation carries `author_stance`; access-rule writes are `curate`/Den-only and enforced, not advisory.
 
 **Visibility (fail-closed)**
 
