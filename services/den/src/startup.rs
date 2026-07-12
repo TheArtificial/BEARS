@@ -42,12 +42,8 @@ pub enum StartupError {
 /// `SQLX_MIGRATE_IGNORE_MISSING=true` only when you understand the risk.
 pub fn sqlx_migrate_ignore_missing_from_env() -> bool {
     std::env::var("SQLX_MIGRATE_IGNORE_MISSING")
-        .map(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
+        .ok()
+        .and_then(|value| value.trim().parse::<bool>().ok())
         .unwrap_or(false)
 }
 
