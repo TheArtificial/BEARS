@@ -102,20 +102,20 @@ pub fn cmp_runtime_conversation_row_newest_first(
     }
 }
 
-pub fn runtime_messages_top_array(value: &Value) -> &[Value] {
-    if let Some(a) = value.as_array() {
-        return a.as_slice();
+fn top_array_from_keys<'a>(value: &'a Value, keys: &[&str]) -> &'a [Value] {
+    if let Some(array) = value.as_array() {
+        return array.as_slice();
     }
-    if let Some(a) = value.get("messages").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = value.get("data").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = value.get("items").and_then(|x| x.as_array()) {
-        return a.as_slice();
+    for key in keys {
+        if let Some(array) = value.get(*key).and_then(Value::as_array) {
+            return array.as_slice();
+        }
     }
     &[]
+}
+
+pub fn runtime_messages_top_array(value: &Value) -> &[Value] {
+    top_array_from_keys(value, &["messages", "data", "items"])
 }
 
 pub fn summarize_runtime_messages(value: Option<&Value>) -> Vec<String> {
@@ -155,19 +155,7 @@ pub fn summarize_runtime_messages(value: Option<&Value>) -> Vec<String> {
 }
 
 pub fn runtime_conversations_top_array(value: &Value) -> &[Value] {
-    if let Some(a) = value.as_array() {
-        return a.as_slice();
-    }
-    if let Some(a) = value.get("conversations").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = value.get("data").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = value.get("items").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    &[]
+    top_array_from_keys(value, &["conversations", "data", "items"])
 }
 
 pub fn truncate_runtime_message(value: &str, max_chars: usize) -> String {
