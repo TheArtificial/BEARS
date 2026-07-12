@@ -198,7 +198,7 @@ pub async fn record_reflection_outcome_start(
     input_summary: Option<&str>,
 ) -> Result<(), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
-    if store::reflection_outcomes::reflection_outcome_exists(&store, run_id).await {
+    if store::reflection_outcomes::reflection_outcome_exists(&store, run_id).await? {
         return Ok(());
     }
     create_reflection_run_outcome(&store, run_id, lane, trigger, input_summary).await

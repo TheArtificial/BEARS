@@ -67,14 +67,17 @@ pub async fn complete_reflection_run_outcome(
     Ok(())
 }
 
-pub async fn reflection_outcome_exists(store: &BearMemoryStore, run_id: &str) -> bool {
-    sqlx::query_scalar::<_, i64>(
+pub async fn reflection_outcome_exists(
+    store: &BearMemoryStore,
+    run_id: &str,
+) -> Result<bool, DenError> {
+    let count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM reflection_run_outcomes WHERE bear_id = ? AND run_id = ?",
     )
     .bind(store.bear_id().to_string())
     .bind(run_id)
     .fetch_one(store.pool())
     .await
-    .unwrap_or(0)
-        > 0
+    .map_err(|e| DenError::System(format!("sqlite check reflection outcome failed: {e}")))?;
+    Ok(count > 0)
 }
