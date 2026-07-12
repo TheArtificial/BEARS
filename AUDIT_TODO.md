@@ -303,7 +303,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [ ] `src/config.rs:230-248` — local closures defined inside `load()` rather than as module-level helpers, inconsistent with rest of file.
 - [ ] `src/tools/environment/payloads.rs:45-60` — clones full `Option<Value>` just to read a few fields; `.as_ref()` + shadowing would avoid the clone in a hot path.
 - [ ] `src/tools/aliases.rs`, `constants.rs` — alias table and "is builtin" allowlist are hand-maintained matches over the same ~70 tool constants also duplicated in `descriptor/mod.rs`/`dispatch.rs` — same parallel-tables concern restated at the alias layer.
-- [ ] `src/profile.rs:56-63` `BearStance::tags_for_bear` builds `Vec<String>` via `format!` every call including a literal `.to_string()` — use a const slice instead.
+- [x] `src/profile.rs:56-63` `BearStance::tags_for_bear` builds `Vec<String>` via `format!` every call including a literal `.to_string()` — use a const slice instead. **DONE** (cleanup batch): added `COMMON_TAGS` const slice and reused a single `stance` binding while preserving the dynamic bear-scoped tags; `den-core` clippy green.
 - [ ] `src/profile.rs:88` `BearProfile` is a `pub type` alias for `BearStance` explicitly marked "deprecated," yet used as the crate's de facto vocabulary throughout `tools/*` — confusing for newcomers reading the deprecation note.
 - Overall: well-organized at module/trait-seam level (clear capability traits, consistent `DenError`, good docs), but the "tool registry" concern is spread redundantly across 5+ parallel tables that should be consolidated into one canonical per-tool table or macro.
 
