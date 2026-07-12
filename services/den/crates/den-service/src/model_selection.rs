@@ -78,6 +78,9 @@ pub async fn list_selectable_model_options(pool: &PgPool) -> Result<Vec<ModelOpt
 }
 
 fn simplify_model_option_label_for_acp(label: &str) -> String {
+    // ACP option labels have little horizontal space. Registry labels commonly append
+    // operator metadata as either ` — metadata unknown` or parenthesized token limits
+    // like `GPT-5 (1M ctx / 128k out)`; strip those suffixes for display only.
     label
         .trim()
         .strip_suffix(" — metadata unknown")
