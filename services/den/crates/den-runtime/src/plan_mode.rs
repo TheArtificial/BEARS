@@ -44,6 +44,31 @@ impl PlanModeState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClosedPlanModeState {
+    Approved,
+    Rejected,
+    Cancelled,
+}
+
+impl ClosedPlanModeState {
+    const fn as_state(self) -> PlanModeState {
+        match self {
+            Self::Approved => PlanModeState::Approved,
+            Self::Rejected => PlanModeState::Rejected,
+            Self::Cancelled => PlanModeState::Cancelled,
+        }
+    }
+
+    const fn event_type(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
 impl fmt::Display for PlanModeState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -464,8 +489,7 @@ pub async fn approve_plan_mode(
             client_session_id
         },
         plan_mode_id,
-        PlanModeState::Approved,
-        "approved",
+        ClosedPlanModeState::Approved,
     )
     .await
 }
@@ -490,8 +514,7 @@ pub async fn reject_plan_mode(
             client_session_id
         },
         plan_mode_id,
-        PlanModeState::Rejected,
-        "rejected",
+        ClosedPlanModeState::Rejected,
     )
     .await
 }
@@ -515,8 +538,7 @@ pub async fn cancel_plan_mode(
         bear_id,
         &current.client_session_id,
         current.id,
-        PlanModeState::Cancelled,
-        "cancelled",
+        ClosedPlanModeState::Cancelled,
     )
     .await
 }
@@ -527,14 +549,10 @@ async fn close_with_state(
     bear_id: Uuid,
     client_session_id: &str,
     plan_mode_id: Uuid,
-    state: PlanModeState,
-    event_type: &str,
+    state: ClosedPlanModeState,
 ) -> Result<PlanModeSessionRow, DenError> {
-    if matches!(state, PlanModeState::Active | PlanModeState::Submitted) {
-        return Err(DenError::System(
-            "close_with_state requires a closed state".to_string(),
-        ));
-    }
+    let event_type = state.event_type();
+    let state = state.as_state();
     let mut tx = pool.begin().await?;
     let query = format!(
         r"
