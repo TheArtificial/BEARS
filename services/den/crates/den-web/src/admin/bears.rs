@@ -642,7 +642,14 @@ pub async fn new_action(
         .await?;
 
         if let Err(e) = provision_bifrost_virtual_key_for_bear(&state, id, form.slug.trim()).await {
-            let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
+            if let Err(rollback_err) = bears_db::delete_bear(state.sqlx_pool(), id).await {
+                tracing::warn!(
+                    %id,
+                    provision_error = %e,
+                    error = %rollback_err,
+                    "failed to roll back Bear after Bifrost virtual key provisioning failure"
+                );
+            }
             tracing::warn!(%id, "Bifrost virtual key provision failed: {e}");
             let users = user_db::get_users(state.sqlx_pool()).await?;
             let page = admin_bear_new_form_context(&state, &form).await;

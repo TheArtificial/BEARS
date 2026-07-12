@@ -49,7 +49,7 @@ use crate::web::admin::bears::{
     BearMemberAdminRow, BearPlanModeRow, BearWebApprovalRow, BearWebFetchRow, BearWebSourceRow,
 };
 use crate::web::bear::create_support::{
-    all_model_catalog_options_context_for_bear, canonical_default_model_handle,
+    all_model_catalog_options_context_for_bear, bear_slug_base, canonical_default_model_handle,
     provision_bifrost_virtual_key_for_bear,
 };
 use den_llm::ModelOption;
@@ -500,29 +500,6 @@ fn sqlite_string_literal(path: &FsPath) -> Result<String, CustomError> {
     Ok(format!("'{}'", raw.replace('\'', "''")))
 }
 
-fn slug_base(raw: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in raw.trim().to_ascii_lowercase().chars() {
-        let mapped = if ch.is_ascii_alphanumeric() { ch } else { '-' };
-        if mapped == '-' {
-            if !last_dash && !out.is_empty() {
-                out.push('-');
-                last_dash = true;
-            }
-        } else {
-            out.push(mapped);
-            last_dash = false;
-        }
-    }
-    let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() {
-        "imported-bear".to_string()
-    } else {
-        trimmed
-    }
-}
-
 fn pretty_json(value: serde_json::Value) -> String {
     // `Value` serialization is expected to be infallible; fall back to compact JSON if the pretty
     // formatter ever errors so the admin page can still render diagnostic payloads.
@@ -770,7 +747,7 @@ async fn conversation_compaction_artifacts(
 }
 
 async fn unique_import_slug(pool: &sqlx::PgPool, requested: &str) -> Result<String, CustomError> {
-    let base = slug_base(requested);
+    let base = bear_slug_base(requested);
     if !bears_db::bear_slug_exists(pool, &base).await? {
         return Ok(base);
     }
@@ -990,7 +967,7 @@ async fn export_bear_bundle(
         .map_err(|err| CustomError::System(format!("serialize bear.yaml failed: {err}")))?;
     let memory_sqlite = snapshot_memory_sqlite(&state, bear.id).await?;
     let bundle = build_bear_bundle(&manifest_yaml, &memory_sqlite)?;
-    let filename = format!("{}.bear", slug_base(&bear.slug));
+    let filename = format!("{}.bear", bear_slug_base(&bear.slug));
 
     Response::builder()
         .status(StatusCode::OK)
@@ -1041,27 +1018,40 @@ async fn import_bear_bundle(
         .filter(|bytes| !bytes.is_empty())
         .ok_or_else(|| CustomError::ValidationError("please select a .bear bundle".to_string()))?;
     let (manifest, memory_sqlite) = read_bear_bundle(&bundle_bytes)?;
-    let slug = unique_import_slug(state.sqlx_pool(), &manifest.bear.slug).await?;
+    let BearBundleManifest {
+        bear:
+            BearBundleIdentity {
+                slug: imported_slug,
+                name,
+                description,
+                birthdate,
+                default_model,
+                tools_enabled,
+            },
+        prompts:
+            BearBundlePrompts {
+                system_prompt,
+                context_profile,
+            },
+        ..
+    } = manifest;
+    let slug = unique_import_slug(state.sqlx_pool(), &imported_slug).await?;
 
     let bear_id = bears_db::create_bear_with_context_profile(
         state.sqlx_pool(),
         bears_db::BearParams {
             slug: &slug,
-            name: &manifest.bear.name,
-            description: &manifest.bear.description,
-            system_prompt: &manifest.prompts.system_prompt,
-            default_model: manifest.bear.default_model.as_deref(),
-            tools_enabled: manifest.bear.tools_enabled.clone().map(sqlx::types::Json),
-            context_profile: manifest
-                .prompts
-                .context_profile
-                .clone()
-                .map(sqlx::types::Json),
+            name: &name,
+            description: &description,
+            system_prompt: &system_prompt,
+            default_model: default_model.as_deref(),
+            tools_enabled: tools_enabled.map(sqlx::types::Json),
+            context_profile: context_profile.map(sqlx::types::Json),
         },
     )
     .await?;
 
-    let birthdate = manifest.bear.birthdate.trim();
+    let birthdate = birthdate.trim();
     if !birthdate.is_empty() {
         sqlx::query("UPDATE bears SET birthday = $1::date, updated_at = NOW() WHERE id = $2")
             .bind(birthdate)

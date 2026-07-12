@@ -18,6 +18,44 @@ use den_service::bears::{
     Bear, BearProfile,
 };
 
+pub const BEAR_SLUG_VALIDATION_MESSAGE: &str =
+    "Use lowercase letters, numbers, and single hyphens.";
+
+pub fn bear_slug_base(raw: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in raw.trim().to_ascii_lowercase().chars() {
+        let mapped = if ch.is_ascii_alphanumeric() { ch } else { '-' };
+        if mapped == '-' {
+            if !last_dash && !out.is_empty() {
+                out.push('-');
+                last_dash = true;
+            }
+        } else {
+            out.push(mapped);
+            last_dash = false;
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "imported-bear".to_string()
+    } else {
+        trimmed
+    }
+}
+
+pub fn is_valid_bear_slug(raw: &str) -> bool {
+    let slug = raw.trim();
+    !slug.is_empty()
+        && slug.len() <= 120
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !slug.starts_with('-')
+        && !slug.ends_with('-')
+        && !slug.contains("--")
+}
+
 /// If the bear already has a `default_model` not returned by the catalog, keep it selectable (legacy / BYOK).
 pub fn ensure_stored_model_in_options_for_handle(
     stored_model: Option<&str>,

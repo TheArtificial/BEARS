@@ -141,6 +141,49 @@ fn field_error_messages(errors: &ValidationErrors, field: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn available_scope_names() -> Vec<String> {
+    OAuthScope::all()
+        .iter()
+        .map(|scope| scope.as_str().to_string())
+        .collect()
+}
+
+fn selected_oauth_scopes(scope_values: &[String]) -> Vec<OAuthScope> {
+    scope_values
+        .iter()
+        .filter_map(|scope| OAuthScope::from_str(scope))
+        .collect()
+}
+
+fn redirect_uris_from_form(redirect_uris: &str) -> Vec<String> {
+    redirect_uris
+        .lines()
+        .map(|uri| uri.trim().to_string())
+        .filter(|uri| !uri.is_empty())
+        .collect()
+}
+
+fn serialize_redirect_uris_error(err: impl std::fmt::Display) -> CustomError {
+    CustomError::Parsing(format!("Failed to serialize redirect URIs: {err}"))
+}
+
+fn scope_validation_error(err: impl std::fmt::Display) -> CustomError {
+    CustomError::ValidationError(format!("Scope validation failed: {err}"))
+}
+
+fn hash_client_secret_error(err: impl std::fmt::Display) -> CustomError {
+    CustomError::System(format!("Failed to hash client secret: {err}"))
+}
+
+fn hash_client_secret_for_admin(secret: &str) -> Result<String, CustomError> {
+    hash_client_secret(secret).map_err(hash_client_secret_error)
+}
+
+fn redirect_uris_json_from_form(redirect_uris: &str) -> Result<serde_json::Value, CustomError> {
+    serde_json::to_value(redirect_uris_from_form(redirect_uris))
+        .map_err(serialize_redirect_uris_error)
+}
+
 // Custom validation for redirect URIs
 fn validate_redirect_uris(redirect_uris: &str) -> Result<(), ValidationError> {
     if redirect_uris.trim().is_empty() {
@@ -227,10 +270,7 @@ async fn add_oauth_client_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let available_scopes: Vec<String> = OAuthScope::all()
-        .iter()
-        .map(|s| s.as_str().to_string())
-        .collect();
+    let available_scopes = available_scope_names();
 
     web::render_template(
         &state,
@@ -261,95 +301,11 @@ pub async fn add_oauth_client_action(
         tracing::warn!("Form validation failed: {:?}", form_validation_errors);
         validation_errors = form_validation_errors;
     }
-
-    if validation_errors.is_empty() {
-        // Generate client credentials
-        let client_id = generate_client_id();
-
-        // For public clients, don't generate a client secret
-        // For confidential clients, generate and hash the secret
-        let (client_secret, client_secret_hash) = if form.public {
-            (None, None)
-        } else {
-            let secret = generate_client_secret();
-            let hash = hash_client_secret(&secret)
-                .map_err(|e| CustomError::System(format!("Failed to hash client secret: {e}")))?;
-            (Some(secret), Some(hash))
-        };
-
-        // Parse redirect_uris into JSON array
-        let redirect_uris: Vec<String> = form
-            .redirect_uris
-            .lines()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        let redirect_uris_json = serde_json::to_value(redirect_uris)
-            .map_err(|e| CustomError::Parsing(format!("Failed to serialize redirect URIs: {e}")))?;
-
-        // Parse scopes
-        let scopes: Vec<OAuthScope> = form
-            .scopes
-            .iter()
-            .filter_map(|s| OAuthScope::from_str(s))
-            .collect();
-
-        // Enhanced scope validation with conflict detection
-        let scope_warnings = validate_scopes_with_conflict_detection(&scopes)
-            .map_err(|e| CustomError::ValidationError(format!("Scope validation failed: {}", e)))?;
-
-        // Log warnings but don't fail on them - warnings are informational only
-        if !scope_warnings.is_empty() {
-            tracing::warn!("Scope validation warnings: {:?}", scope_warnings);
-        }
-
-        tracing::info!(
-            "Creating OAuth client: name={}, client_id={}, public={}",
-            form.name,
-            client_id,
-            form.public
-        );
-
-        let client_db_id = oauth_db::create_oauth_client(
-            &state.sqlx_pool,
-            &client_id,
-            client_secret_hash.as_deref(),
-            &form.name,
-            &redirect_uris_json,
-            &scopes,
-            form.public,
-        )
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to create OAuth client: {:?}", e);
-            e
-        })?;
-
-        tracing::info!(
-            "Successfully created OAuth client: id={}, client_id={}, public={}",
-            client_db_id,
-            client_id,
-            form.public
-        );
-
-        // Redirect to view page with success message
-        // For public clients, don't show client_secret in URL
-        let redirect_url = if let Some(secret) = client_secret {
-            format!("/admin/oauth_clients/{client_db_id}?created=true&client_secret={secret}")
-        } else {
-            format!("/admin/oauth_clients/{client_db_id}?created=true")
-        };
-        Ok(Redirect::to(&redirect_url).into_response())
-    } else {
-        let available_scopes: Vec<String> = OAuthScope::all()
-            .iter()
-            .map(|s| s.as_str().to_string())
-            .collect();
-
+    if !validation_errors.is_empty() {
         let redirect_uris_errors = field_error_messages(&validation_errors, "redirect_uris");
         let scopes_errors = field_error_messages(&validation_errors, "scopes");
 
-        web::render_template(
+        return web::render_template(
             &state,
             "admin/oauth_clients/add.html",
             auth_session,
@@ -358,11 +314,77 @@ pub async fn add_oauth_client_action(
                 redirect_uris_errors,
                 scopes_errors,
                 client => form,
-                available_scopes
+                available_scopes => available_scope_names()
             },
         )
-        .await
+        .await;
     }
+
+    // Generate client credentials
+    let client_id = generate_client_id();
+
+    // For public clients, don't generate a client secret
+    // For confidential clients, generate and hash the secret
+    let (client_secret, client_secret_hash) = if form.public {
+        (None, None)
+    } else {
+        let secret = generate_client_secret();
+        let hash = hash_client_secret_for_admin(&secret)?;
+        (Some(secret), Some(hash))
+    };
+
+    // Parse redirect_uris into JSON array
+    let redirect_uris_json = redirect_uris_json_from_form(&form.redirect_uris)?;
+
+    // Parse scopes
+    let scopes = selected_oauth_scopes(&form.scopes);
+
+    // Enhanced scope validation with conflict detection
+    let scope_warnings =
+        validate_scopes_with_conflict_detection(&scopes).map_err(scope_validation_error)?;
+
+    // Log warnings but don't fail on them - warnings are informational only
+    if !scope_warnings.is_empty() {
+        tracing::warn!("Scope validation warnings: {:?}", scope_warnings);
+    }
+
+    tracing::info!(
+        "Creating OAuth client: name={}, client_id={}, public={}",
+        form.name,
+        client_id,
+        form.public
+    );
+
+    let client_db_id = oauth_db::create_oauth_client(
+        &state.sqlx_pool,
+        &client_id,
+        client_secret_hash.as_deref(),
+        &form.name,
+        &redirect_uris_json,
+        &scopes,
+        form.public,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create OAuth client: {:?}", e);
+        e
+    })?;
+
+    tracing::info!(
+        "Successfully created OAuth client: id={}, client_id={}, public={}",
+        client_db_id,
+        client_id,
+        form.public
+    );
+
+    // Redirect to view page with success message
+    // For public clients, don't show client_secret in URL
+    let redirect_url = if let Some(secret) = client_secret {
+        format!("/admin/oauth_clients/{client_db_id}?created=true&client_secret={secret}")
+    } else {
+        format!("/admin/oauth_clients/{client_db_id}?created=true")
+    };
+    Ok(Redirect::to(&redirect_url).into_response())
 }
 
 #[derive(Deserialize)]
@@ -427,10 +449,7 @@ async fn edit_oauth_client_view(
         .ok_or_else(|| CustomError::NotFound("OAuth client not found".to_string()))?;
 
     let client_form: OAuthClientForm = client.try_into()?;
-    let available_scopes: Vec<String> = OAuthScope::all()
-        .iter()
-        .map(|s| s.as_str().to_string())
-        .collect();
+    let available_scopes = available_scope_names();
 
     web::render_template(
         &state,
@@ -456,84 +475,11 @@ pub async fn edit_oauth_client_action(
     if let Err(form_validation_errors) = form.validate() {
         validation_errors = form_validation_errors;
     }
+    if !validation_errors.is_empty() {
+        let redirect_uris_errors = field_error_messages(&validation_errors, "redirect_uris");
+        let scopes_errors = field_error_messages(&validation_errors, "scopes");
 
-    if validation_errors.is_empty() {
-        // Parse redirect URIs into JSON array
-        let redirect_uris: Vec<String> = form
-            .redirect_uris
-            .lines()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        let redirect_uris_json = serde_json::to_value(redirect_uris)
-            .map_err(|e| CustomError::Parsing(format!("Failed to serialize redirect URIs: {e}")))?;
-
-        // Parse scopes
-        let scopes: Vec<OAuthScope> = form
-            .scopes
-            .iter()
-            .filter_map(|s| OAuthScope::from_str(s))
-            .collect();
-
-        // Enhanced scope validation with conflict detection
-        let scope_warnings = validate_scopes_with_conflict_detection(&scopes)
-            .map_err(|e| CustomError::ValidationError(format!("Scope validation failed: {}", e)))?;
-
-        // Log warnings but don't fail on them - warnings are informational only
-        if !scope_warnings.is_empty() {
-            tracing::warn!("Scope validation warnings: {:?}", scope_warnings);
-        }
-
-        oauth_db::update_oauth_client(
-            &state.sqlx_pool,
-            id,
-            &form.name,
-            &redirect_uris_json,
-            &scopes,
-        )
-        .await?;
-
-        Ok(Redirect::to(&format!("/admin/oauth_clients/{id}")).into_response())
-    } else {
-        let available_scopes: Vec<String> = OAuthScope::all()
-            .iter()
-            .map(|s| s.as_str().to_string())
-            .collect();
-
-        // Process validation errors for template (replacing map filter)
-        let redirect_uris_errors: Vec<String> = validation_errors
-            .field_errors()
-            .get("redirect_uris")
-            .map(|errors| {
-                errors
-                    .iter()
-                    .map(|e| {
-                        e.message
-                            .as_ref()
-                            .map(|m| m.to_string())
-                            .unwrap_or_else(|| "unknown error".to_string())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let scopes_errors: Vec<String> = validation_errors
-            .field_errors()
-            .get("scopes")
-            .map(|errors| {
-                errors
-                    .iter()
-                    .map(|e| {
-                        e.message
-                            .as_ref()
-                            .map(|m| m.to_string())
-                            .unwrap_or_else(|| "unknown error".to_string())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        web::render_template(
+        return web::render_template(
             &state,
             "admin/oauth_clients/edit.html",
             auth_session,
@@ -543,11 +489,37 @@ pub async fn edit_oauth_client_action(
                 redirect_uris_errors,
                 scopes_errors,
                 client => form,
-                available_scopes
+                available_scopes => available_scope_names()
             },
         )
-        .await
+        .await;
     }
+
+    // Parse redirect URIs into JSON array
+    let redirect_uris_json = redirect_uris_json_from_form(&form.redirect_uris)?;
+
+    // Parse scopes
+    let scopes = selected_oauth_scopes(&form.scopes);
+
+    // Enhanced scope validation with conflict detection
+    let scope_warnings =
+        validate_scopes_with_conflict_detection(&scopes).map_err(scope_validation_error)?;
+
+    // Log warnings but don't fail on them - warnings are informational only
+    if !scope_warnings.is_empty() {
+        tracing::warn!("Scope validation warnings: {:?}", scope_warnings);
+    }
+
+    oauth_db::update_oauth_client(
+        &state.sqlx_pool,
+        id,
+        &form.name,
+        &redirect_uris_json,
+        &scopes,
+    )
+    .await?;
+
+    Ok(Redirect::to(&format!("/admin/oauth_clients/{id}")).into_response())
 }
 
 async fn pkce_test_view(
@@ -732,8 +704,7 @@ pub async fn regenerate_client_secret_action(
 ) -> Result<Redirect, CustomError> {
     // Generate new client secret
     let new_client_secret = generate_client_secret();
-    let new_client_secret_hash = hash_client_secret(&new_client_secret)
-        .map_err(|e| CustomError::System(format!("Failed to hash client secret: {e}")))?;
+    let new_client_secret_hash = hash_client_secret_for_admin(&new_client_secret)?;
 
     // Update the client secret in database
     sqlx::query!(
@@ -870,10 +841,7 @@ async fn generate_token_view(
     .fetch_all(&state.sqlx_pool)
     .await?;
 
-    let available_scopes: Vec<String> = OAuthScope::all()
-        .iter()
-        .map(|s| s.as_str().to_string())
-        .collect();
+    let available_scopes = available_scope_names();
 
     web::render_template(
         &state,
@@ -901,79 +869,15 @@ pub async fn generate_token_action(
     if let Err(form_validation_errors) = form.validate() {
         validation_errors = form_validation_errors;
     }
+    if !validation_errors.is_empty() {
+        let client_id_errors = field_error_messages(&validation_errors, "client_id");
+        let user_id_errors = field_error_messages(&validation_errors, "user_id");
+        let scopes_errors = field_error_messages(&validation_errors, "scopes");
+        let expires_in_errors = field_error_messages(&validation_errors, "expires_in");
 
-    if validation_errors.is_empty() {
-        // Parse client_id and user_id
-        let client_id = form
-            .client_id
-            .parse::<i32>()
-            .map_err(|_| CustomError::ValidationError("Invalid client ID".to_string()))?;
-
-        let user_id = form
-            .user_id
-            .parse::<i32>()
-            .map_err(|_| CustomError::ValidationError("Invalid user ID".to_string()))?;
-
-        // Validate that the client exists and is active
-        let client = oauth_db::get_oauth_client_by_id(&state.sqlx_pool, client_id)
-            .await?
-            .ok_or_else(|| CustomError::NotFound("OAuth client not found".to_string()))?;
-
-        if !client.active {
-            return Err(CustomError::ValidationError(
-                "Client is not active".to_string(),
-            ));
-        }
-
-        // Validate that the user exists
-        let user_exists = sqlx::query_scalar::<_, bool>(
-            r"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND active = true)",
-        )
-        .bind(user_id)
-        .fetch_one(&state.sqlx_pool)
-        .await?;
-
-        if !user_exists {
-            return Err(CustomError::ValidationError("User not found".to_string()));
-        }
-
-        // Parse scopes
-        let scopes: Vec<OAuthScope> = form
-            .scopes
-            .iter()
-            .filter_map(|s| OAuthScope::from_str(s))
-            .collect();
-
-        // Validate scopes against client's allowed scopes
-        let client_scopes = scopes_from_json(&client.scopes)
-            .map_err(|_| CustomError::Parsing("Invalid client scopes format".to_string()))?;
-
-        if !den_oauth::oauth::utils::validate_scopes_for_client(&scopes, &client_scopes) {
-            return Err(CustomError::ValidationError(
-                "Requested scopes exceed client's allowed scopes".to_string(),
-            ));
-        }
-
-        // Generate token
-        let token = generate_access_token();
-
-        // Create the token in database
-        let token_id = oauth_db::create_admin_access_token(
-            &state.sqlx_pool,
-            &token,
-            client_id,
-            user_id,
-            &scopes,
-            form.expires_in,
-        )
-        .await?;
-
-        // Get the full token context for display
-        let generated_token = oauth_db::get_oauth_token_by_id(&state.sqlx_pool, token_id)
-            .await?
-            .ok_or_else(|| CustomError::System("Failed to retrieve generated token".to_string()))?;
-
-        web::render_template(&state, "admin/oauth_tokens/generate.html",
+        return web::render_template(
+            &state,
+            "admin/oauth_tokens/generate.html",
             auth_session,
             context! {
                 clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,
@@ -982,89 +886,7 @@ pub async fn generate_token_action(
                 )
                 .fetch_all(&state.sqlx_pool)
                 .await?,
-                available_scopes => OAuthScope::all().iter().map(|s| s.as_str().to_string()).collect::<Vec<String>>(),
-                form_data => Some(form),
-                errors => None::<Option<minijinja::value::Value>>,
-                generated_token => Some(generated_token),
-            },
-        )
-        .await
-    } else {
-        // Process validation errors for template
-        let client_id_errors: Vec<String> = validation_errors
-            .field_errors()
-            .get("client_id")
-            .map(|errors| {
-                errors
-                    .iter()
-                    .map(|e| {
-                        e.message
-                            .as_ref()
-                            .map(|m| m.to_string())
-                            .unwrap_or_else(|| "unknown error".to_string())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let user_id_errors: Vec<String> = validation_errors
-            .field_errors()
-            .get("user_id")
-            .map(|errors| {
-                errors
-                    .iter()
-                    .map(|e| {
-                        e.message
-                            .as_ref()
-                            .map(|m| m.to_string())
-                            .unwrap_or_else(|| "unknown error".to_string())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let scopes_errors: Vec<String> = validation_errors
-            .field_errors()
-            .get("scopes")
-            .map(|errors| {
-                errors
-                    .iter()
-                    .map(|e| {
-                        e.message
-                            .as_ref()
-                            .map(|m| m.to_string())
-                            .unwrap_or_else(|| "unknown error".to_string())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let expires_in_errors: Vec<String> = validation_errors
-            .field_errors()
-            .get("expires_in")
-            .map(|errors| {
-                errors
-                    .iter()
-                    .map(|e| {
-                        e.message
-                            .as_ref()
-                            .map(|m| m.to_string())
-                            .unwrap_or_else(|| "unknown error".to_string())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        web::render_template(&state, "admin/oauth_tokens/generate.html",
-            auth_session,
-            context! {
-                clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,
-                users => sqlx::query_as::<_, (i32, String, String, String)>(
-                    r"SELECT id, username, display_name, email FROM users WHERE active = true ORDER BY username"
-                )
-                .fetch_all(&state.sqlx_pool)
-                .await?,
-                available_scopes => OAuthScope::all().iter().map(|s| s.as_str().to_string()).collect::<Vec<String>>(),
+                available_scopes => available_scope_names(),
                 form_data => Some(form),
                 errors => Some(context! {
                     client_id => client_id_errors,
@@ -1075,6 +897,91 @@ pub async fn generate_token_action(
                 generated_token => None::<AccessTokenWithContext>,
             },
         )
-        .await
+        .await;
     }
+
+    // Parse client_id and user_id
+    let client_id = form
+        .client_id
+        .parse::<i32>()
+        .map_err(|_| CustomError::ValidationError("Invalid client ID".to_string()))?;
+
+    let user_id = form
+        .user_id
+        .parse::<i32>()
+        .map_err(|_| CustomError::ValidationError("Invalid user ID".to_string()))?;
+
+    // Validate that the client exists and is active
+    let client = oauth_db::get_oauth_client_by_id(&state.sqlx_pool, client_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("OAuth client not found".to_string()))?;
+
+    if !client.active {
+        return Err(CustomError::ValidationError(
+            "Client is not active".to_string(),
+        ));
+    }
+
+    // Validate that the user exists
+    let user_exists = sqlx::query_scalar::<_, bool>(
+        r"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND active = true)",
+    )
+    .bind(user_id)
+    .fetch_one(&state.sqlx_pool)
+    .await?;
+
+    if !user_exists {
+        return Err(CustomError::ValidationError("User not found".to_string()));
+    }
+
+    // Parse scopes
+    let scopes = selected_oauth_scopes(&form.scopes);
+
+    // Validate scopes against client's allowed scopes
+    let client_scopes = scopes_from_json(&client.scopes)
+        .map_err(|_| CustomError::Parsing("Invalid client scopes format".to_string()))?;
+
+    if !den_oauth::oauth::utils::validate_scopes_for_client(&scopes, &client_scopes) {
+        return Err(CustomError::ValidationError(
+            "Requested scopes exceed client's allowed scopes".to_string(),
+        ));
+    }
+
+    // Generate token
+    let token = generate_access_token();
+
+    // Create the token in database
+    let token_id = oauth_db::create_admin_access_token(
+        &state.sqlx_pool,
+        &token,
+        client_id,
+        user_id,
+        &scopes,
+        form.expires_in,
+    )
+    .await?;
+
+    // Get the full token context for display
+    let generated_token = oauth_db::get_oauth_token_by_id(&state.sqlx_pool, token_id)
+        .await?
+        .ok_or_else(|| CustomError::System("Failed to retrieve generated token".to_string()))?;
+
+    web::render_template(
+        &state,
+        "admin/oauth_tokens/generate.html",
+        auth_session,
+        context! {
+            clients => oauth_db::list_oauth_clients(&state.sqlx_pool).await?,
+            users => sqlx::query_as::<_, (i32, String, String, String)>(
+                r"SELECT id, username, display_name, email FROM users WHERE active = true ORDER BY username"
+            )
+            .fetch_all(&state.sqlx_pool)
+            .await?,
+            available_scopes => available_scope_names(),
+            form_data => Some(form),
+            errors => None::<Option<minijinja::value::Value>>,
+            generated_token => Some(generated_token),
+        },
+    )
+    .await
 }
