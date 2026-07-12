@@ -49,11 +49,7 @@ pub async fn create_proposal(
         &payload,
     )
     .await?;
-    Ok(sqlite_proposal_to_row(
-        params.bear_id,
-        &sqlite,
-        params.source_profile,
-    ))
+    sqlite_proposal_to_row(params.bear_id, &sqlite, params.source_profile)
 }
 
 pub async fn create_observation(
@@ -109,10 +105,9 @@ pub async fn list_proposals(
 ) -> Result<Vec<MemoryProposalRow>, DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     let rows = list_memory_proposals(&store, status, limit).await?;
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(|row| sqlite_proposal_to_row(bear_id, &row, BearProfile::Curate))
-        .collect())
+        .collect()
 }
 
 pub async fn get_proposal(
@@ -148,11 +143,7 @@ pub async fn resolve_proposal(
         &review_payload,
     )
     .await?;
-    Ok(sqlite_proposal_to_row(
-        params.bear_id,
-        &sqlite,
-        params.reviewer_profile,
-    ))
+    sqlite_proposal_to_row(params.bear_id, &sqlite, params.reviewer_profile)
 }
 
 pub async fn promote_core_content(
@@ -220,10 +211,16 @@ fn sqlite_proposal_to_row(
     bear_id: Uuid,
     sqlite: &SqliteMemoryProposal,
     source_profile: BearProfile,
-) -> MemoryProposalRow {
+) -> Result<MemoryProposalRow, DenError> {
     let p = &sqlite.payload_json;
-    MemoryProposalRow {
-        id: Uuid::parse_str(&sqlite.proposal_id).unwrap_or_else(|_| Uuid::new_v4()),
+    let id = Uuid::parse_str(&sqlite.proposal_id).map_err(|err| {
+        DenError::Parsing(format!(
+            "invalid memory proposal id {}: {err}",
+            sqlite.proposal_id
+        ))
+    })?;
+    Ok(MemoryProposalRow {
+        id,
         bear_id,
         source_profile: p
             .get("source_profile")
@@ -296,7 +293,7 @@ fn sqlite_proposal_to_row(
         result_commit: None,
         created_at: time::OffsetDateTime::now_utc(),
         reviewed_at: None,
-    }
+    })
 }
 
 fn sqlite_observation_to_row(
