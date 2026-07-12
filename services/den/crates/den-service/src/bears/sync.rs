@@ -26,18 +26,16 @@ pub struct BearSyncSummary {
 }
 
 impl BearSyncSummary {
-    pub fn failed_profiles(&self) -> Vec<&BearProfileSyncOutcome> {
+    pub fn failed_profiles(&self) -> impl Iterator<Item = &BearProfileSyncOutcome> + '_ {
         self.outcomes
             .iter()
             .filter(|o| o.status == BearProfileSyncStatus::Failed)
-            .collect()
     }
 
-    pub fn skipped_profiles(&self) -> Vec<&BearProfileSyncOutcome> {
+    pub fn skipped_profiles(&self) -> impl Iterator<Item = &BearProfileSyncOutcome> + '_ {
         self.outcomes
             .iter()
             .filter(|o| o.status == BearProfileSyncStatus::SkippedMissingBinding)
-            .collect()
     }
 
     pub fn synced_count(&self) -> usize {
@@ -48,12 +46,9 @@ impl BearSyncSummary {
     }
 
     pub fn diagnostic_message(&self) -> Option<String> {
-        let failed = self.failed_profiles();
-        if failed.is_empty() {
-            return None;
-        }
+        let mut failed = self.failed_profiles().peekable();
+        failed.peek()?;
         let parts = failed
-            .into_iter()
             .map(|o| {
                 format!(
                     "{} ({})",
