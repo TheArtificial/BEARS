@@ -54,6 +54,24 @@ pub struct PendingToolTurn {
     pub deadline_at: Instant,
 }
 
+impl From<&ToolTurn> for PendingToolTurn {
+    fn from(turn: &ToolTurn) -> Self {
+        Self {
+            user_id: turn.user_id,
+            bear_id: turn.bear_id,
+            bear_slug: turn.bear_slug.clone(),
+            client_session_id: turn.client_session_id.clone(),
+            request_id: turn.request_id,
+            tool_call_id: turn.tool_call_id.clone(),
+            tool_name: turn.tool_name.clone(),
+            approval_request_id: turn.approval_request_id.clone(),
+            status: "pending".to_string(),
+            registered_at: turn.registered_at,
+            deadline_at: turn.deadline_at,
+        }
+    }
+}
+
 impl PendingToolTurn {
     pub fn diagnostic(&self) -> serde_json::Value {
         serde_json::json!({
@@ -126,8 +144,8 @@ pub struct SettledToolResult {
     pub settled_at: Instant,
 }
 
-impl SettledToolResult {
-    fn from_turn(turn: &ToolTurn, body: &ToolResultRequest) -> Self {
+impl From<(&ToolTurn, &ToolResultRequest)> for SettledToolResult {
+    fn from((turn, body): (&ToolTurn, &ToolResultRequest)) -> Self {
         Self {
             user_id: turn.user_id,
             bear_id: turn.bear_id,
@@ -143,7 +161,9 @@ impl SettledToolResult {
             settled_at: Instant::now(),
         }
     }
+}
 
+impl SettledToolResult {
     pub fn diagnostic(&self) -> serde_json::Value {
         serde_json::json!({
             "request_id": self.request_id,
@@ -488,7 +508,7 @@ impl ToolTurnCoordinator {
         let request_id = turn.request_id;
         let bear_id = turn.bear_id;
         let tool_name = turn.tool_name.clone();
-        let cached = SettledToolResult::from_turn(turn, &body);
+        let cached = SettledToolResult::from((&*turn, &body));
         if let Some(result_tx) = turn.result_tx.take() {
             let _ = result_tx.send(body.clone());
         }
@@ -510,19 +530,7 @@ impl ToolTurnCoordinator {
         turns
             .iter()
             .filter(|(key, turn)| key.starts_with(&prefix) && !turn.settled)
-            .map(|(_, turn)| PendingToolTurn {
-                user_id: turn.user_id,
-                bear_id: turn.bear_id,
-                bear_slug: turn.bear_slug.clone(),
-                client_session_id: turn.client_session_id.clone(),
-                request_id: turn.request_id,
-                tool_call_id: turn.tool_call_id.clone(),
-                tool_name: turn.tool_name.clone(),
-                approval_request_id: turn.approval_request_id.clone(),
-                status: "pending".to_string(),
-                registered_at: turn.registered_at,
-                deadline_at: turn.deadline_at,
-            })
+            .map(|(_, turn)| PendingToolTurn::from(turn))
             .collect()
     }
 
@@ -565,7 +573,7 @@ impl ToolTurnCoordinator {
             }),
             ..Default::default()
         };
-        let cached = SettledToolResult::from_turn(turn, &body);
+        let cached = SettledToolResult::from((&*turn, &body));
         if let Some(result_tx) = turn.result_tx.take() {
             let _ = result_tx.send(body.clone());
         }
