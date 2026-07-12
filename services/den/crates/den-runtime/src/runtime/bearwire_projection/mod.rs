@@ -8,6 +8,20 @@ use den_protocol::{
 
 use crate::gateway_events::{gateway_event_to_adapter_sse, GatewayEvent};
 
+pub(crate) fn runtime_error_category_code(category: RuntimeErrorCategory) -> &'static str {
+    match category {
+        RuntimeErrorCategory::Unavailable => "runtime_unavailable",
+        RuntimeErrorCategory::Misconfigured => "runtime_misconfigured",
+        RuntimeErrorCategory::InvalidIdentity => "runtime_invalid_identity",
+        RuntimeErrorCategory::PermissionDenied => "runtime_permission_denied",
+        RuntimeErrorCategory::ConflictPendingApproval => "runtime_conflict_pending_approval",
+        RuntimeErrorCategory::Cancelled => "runtime_cancelled",
+        RuntimeErrorCategory::Timeout => "runtime_timeout",
+        RuntimeErrorCategory::BackendProtocol => "runtime_backend_protocol",
+        RuntimeErrorCategory::Internal => "runtime_internal",
+    }
+}
+
 #[derive(Debug)]
 pub enum RuntimeEventProjectionOutcome {
     Events(Vec<GatewayEvent>),
@@ -97,22 +111,7 @@ pub fn runtime_semantic_event_to_bearwire_gateway_events(
         } => vec![GatewayEvent::Error {
             message,
             detail: None,
-            error_type: Some(
-                match category {
-                    RuntimeErrorCategory::Unavailable => "runtime_unavailable",
-                    RuntimeErrorCategory::Misconfigured => "runtime_misconfigured",
-                    RuntimeErrorCategory::InvalidIdentity => "runtime_invalid_identity",
-                    RuntimeErrorCategory::PermissionDenied => "runtime_permission_denied",
-                    RuntimeErrorCategory::ConflictPendingApproval => {
-                        "runtime_conflict_pending_approval"
-                    }
-                    RuntimeErrorCategory::Cancelled => "runtime_cancelled",
-                    RuntimeErrorCategory::Timeout => "runtime_timeout",
-                    RuntimeErrorCategory::BackendProtocol => "runtime_backend_protocol",
-                    RuntimeErrorCategory::Internal => "runtime_internal",
-                }
-                .to_string(),
-            ),
+            error_type: Some(runtime_error_category_code(category).to_string()),
             request_id: None,
             context: None,
         }],

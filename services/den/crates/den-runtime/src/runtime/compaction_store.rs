@@ -1,5 +1,5 @@
 use sha2::{Digest, Sha256};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::runtime_compaction_observability::RuntimeCompactionEvent;
@@ -52,6 +52,69 @@ pub struct CompactionArtifactResponse {
     pub created_at: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct CompactionStatusRow {
+    status: String,
+    policy_version: String,
+    trigger: String,
+    source_group_start: Option<i32>,
+    source_group_end: Option<i32>,
+    diagnostic: Option<String>,
+    artifact: Option<serde_json::Value>,
+    created_at: String,
+}
+
+impl From<CompactionStatusRow> for CompactionStatusResponse {
+    fn from(row: CompactionStatusRow) -> Self {
+        Self {
+            status: row.status,
+            policy_version: row.policy_version,
+            trigger: Some(row.trigger),
+            created_at: Some(row.created_at),
+            source_group_start: row.source_group_start.map(|value| value as usize),
+            source_group_end: row.source_group_end.map(|value| value as usize),
+            diagnostic: row.diagnostic,
+            artifact: row.artifact,
+            context_envelope: None,
+            prompt_memory_diagnostic: None,
+            latest_artifact: None,
+        }
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct CompactionArtifactRow {
+    id: Uuid,
+    artifact_kind: String,
+    policy_version: String,
+    trigger: String,
+    source_message_start_seq: i64,
+    source_message_end_seq: i64,
+    source_group_start: Option<i32>,
+    source_group_end: Option<i32>,
+    artifact_json: serde_json::Value,
+    superseded_by: Option<Uuid>,
+    created_at: String,
+}
+
+impl From<CompactionArtifactRow> for CompactionArtifactResponse {
+    fn from(row: CompactionArtifactRow) -> Self {
+        Self {
+            id: row.id,
+            artifact_kind: row.artifact_kind,
+            policy_version: row.policy_version,
+            trigger: row.trigger,
+            source_message_start_seq: row.source_message_start_seq,
+            source_message_end_seq: row.source_message_end_seq,
+            source_group_start: row.source_group_start.map(|value| value as usize),
+            source_group_end: row.source_group_end.map(|value| value as usize),
+            artifact_json: row.artifact_json,
+            superseded_by: row.superseded_by,
+            created_at: row.created_at,
+        }
+    }
+}
+
 pub async fn record_runtime_compaction_event(
     pool: &PgPool,
     event: &RuntimeCompactionEvent,
@@ -100,7 +163,7 @@ pub async fn list_runtime_compaction_events(
     conversation_id: &str,
     limit: i64,
 ) -> Result<Vec<CompactionStatusResponse>, DenError> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, CompactionStatusRow>(
         r#"
         SELECT
             trigger,
@@ -123,57 +186,14 @@ pub async fn list_runtime_compaction_events(
     .await
     .map_err(|err| DenError::Database(format!("select runtime_compaction_events: {err}")))?;
 
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        let artifact = row
-            .try_get::<Option<serde_json::Value>, _>("artifact")
-            .map_err(|err| DenError::Database(format!("decode compaction artifact: {err}")))?;
-        items.push(CompactionStatusResponse {
-            status: row
-                .try_get::<String, _>("status")
-                .map_err(|err| DenError::Database(format!("decode compaction status: {err}")))?,
-            policy_version: row.try_get::<String, _>("policy_version").map_err(|err| {
-                DenError::Database(format!("decode compaction policy_version: {err}"))
-            })?,
-            trigger: Some(
-                row.try_get::<String, _>("trigger").map_err(|err| {
-                    DenError::Database(format!("decode compaction trigger: {err}"))
-                })?,
-            ),
-            created_at: Some(row.try_get::<String, _>("created_at").map_err(|err| {
-                DenError::Database(format!("decode compaction created_at: {err}"))
-            })?),
-            source_group_start: row
-                .try_get::<Option<i32>, _>("source_group_start")
-                .map_err(|err| {
-                    DenError::Database(format!("decode compaction source_group_start: {err}"))
-                })?
-                .map(|v| v as usize),
-            source_group_end: row
-                .try_get::<Option<i32>, _>("source_group_end")
-                .map_err(|err| {
-                    DenError::Database(format!("decode compaction source_group_end: {err}"))
-                })?
-                .map(|v| v as usize),
-            diagnostic: row
-                .try_get::<Option<String>, _>("diagnostic")
-                .map_err(|err| {
-                    DenError::Database(format!("decode compaction diagnostic: {err}"))
-                })?,
-            artifact,
-            context_envelope: None,
-            prompt_memory_diagnostic: None,
-            latest_artifact: None,
-        });
-    }
-    Ok(items)
+    Ok(rows.into_iter().map(Into::into).collect())
 }
 
 pub async fn latest_compaction_artifact_for_conversation(
     pool: &PgPool,
     conversation_uuid: Uuid,
 ) -> Result<Option<CompactionArtifactResponse>, DenError> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, CompactionArtifactRow>(
         r#"
         SELECT
             id,
@@ -199,53 +219,7 @@ pub async fn latest_compaction_artifact_for_conversation(
     .await
     .map_err(|err| DenError::Database(format!("select latest compaction artifact: {err}")))?;
 
-    let Some(row) = row else {
-        return Ok(None);
-    };
-
-    Ok(Some(CompactionArtifactResponse {
-        id: row
-            .try_get::<Uuid, _>("id")
-            .map_err(|err| DenError::Database(format!("decode compaction artifact id: {err}")))?,
-        artifact_kind: row
-            .try_get::<String, _>("artifact_kind")
-            .map_err(|err| DenError::Database(format!("decode compaction artifact_kind: {err}")))?,
-        policy_version: row.try_get::<String, _>("policy_version").map_err(|err| {
-            DenError::Database(format!("decode compaction artifact policy_version: {err}"))
-        })?,
-        trigger: row.try_get::<String, _>("trigger").map_err(|err| {
-            DenError::Database(format!("decode compaction artifact trigger: {err}"))
-        })?,
-        source_message_start_seq: row.try_get::<i64, _>("source_message_start_seq").map_err(
-            |err| DenError::Database(format!("decode compaction source_message_start_seq: {err}")),
-        )?,
-        source_message_end_seq: row
-            .try_get::<i64, _>("source_message_end_seq")
-            .map_err(|err| {
-                DenError::Database(format!("decode compaction source_message_end_seq: {err}"))
-            })?,
-        source_group_start: row
-            .try_get::<Option<i32>, _>("source_group_start")
-            .map_err(|err| {
-                DenError::Database(format!("decode compaction source_group_start: {err}"))
-            })?
-            .map(|v| v as usize),
-        source_group_end: row
-            .try_get::<Option<i32>, _>("source_group_end")
-            .map_err(|err| {
-                DenError::Database(format!("decode compaction source_group_end: {err}"))
-            })?
-            .map(|v| v as usize),
-        artifact_json: row
-            .try_get::<serde_json::Value, _>("artifact_json")
-            .map_err(|err| DenError::Database(format!("decode compaction artifact_json: {err}")))?,
-        superseded_by: row
-            .try_get::<Option<Uuid>, _>("superseded_by")
-            .map_err(|err| DenError::Database(format!("decode compaction superseded_by: {err}")))?,
-        created_at: row.try_get::<String, _>("created_at").map_err(|err| {
-            DenError::Database(format!("decode compaction artifact created_at: {err}"))
-        })?,
-    }))
+    Ok(row.map(Into::into))
 }
 
 fn runtime_compaction_event_hash(event: &RuntimeCompactionEvent) -> Result<String, DenError> {

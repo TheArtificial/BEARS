@@ -718,13 +718,13 @@ async fn persist_tool_call_requested_transactionally(
             request_id,
             tool_call_id,
             tool_name,
-            title,
-            kind,
+            title: title.as_deref(),
+            kind: kind.as_deref(),
             arguments,
-            approval_request_id,
+            approval_request_id: approval_request_id.as_deref(),
             approval_required,
-            approval_reason,
-            event_run_id,
+            approval_reason: approval_reason.as_deref(),
+            event_run_id: event_run_id.as_deref(),
         },
     )
     .await?;

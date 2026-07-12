@@ -77,13 +77,13 @@ pub struct PersistToolCallWaitInput<'a> {
     pub request_id: Uuid,
     pub tool_call_id: &'a str,
     pub tool_name: &'a str,
-    pub title: &'a Option<String>,
-    pub kind: &'a Option<String>,
+    pub title: Option<&'a str>,
+    pub kind: Option<&'a str>,
     pub arguments: &'a Value,
-    pub approval_request_id: &'a Option<String>,
+    pub approval_request_id: Option<&'a str>,
     pub approval_required: bool,
-    pub approval_reason: &'a Option<String>,
-    pub event_run_id: &'a Option<String>,
+    pub approval_reason: Option<&'a str>,
+    pub event_run_id: Option<&'a str>,
 }
 
 #[derive(Debug, Clone)]
@@ -228,7 +228,6 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
 ) -> Result<PersistedToolCallWait, DenError> {
     let has_permission_id = input
         .approval_request_id
-        .as_deref()
         .map(str::trim)
         .is_some_and(|id| !id.is_empty());
     if input.approval_required && !has_permission_id {
@@ -328,7 +327,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     }
 
     let obligation_row = if effective_approval_required {
-        let permission_id = input.approval_request_id.as_deref().unwrap_or_default();
+        let permission_id = input.approval_request_id.unwrap_or_default();
         if let Some(row) = sqlx::query(
             r"
             UPDATE turn_obligations
@@ -423,19 +422,19 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         .bind(input.session_id)
         .bind(turn_step_id)
         .bind(input.tool_call_id)
-        .bind(input.approval_request_id.as_deref())
+        .bind(input.approval_request_id)
         .bind(request_payload.clone())
         .fetch_one(&mut *tx)
         .await?)
     };
     let obligation = obligation_row.map(obligation_from_row);
 
-    let effective_kind = input.kind.clone().unwrap_or_else(|| "function".to_string());
+    let effective_kind = input.kind.unwrap_or("function");
     let tool_call = tool_call_wire(
         input.tool_call_id,
         input.tool_name,
-        input.title.as_deref(),
-        &effective_kind,
+        input.title,
+        effective_kind,
         input.arguments,
     );
     let mut event = if effective_approval_required {
@@ -445,7 +444,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
                 input.tool_name
             ))
         })?;
-        let permission_id = input.approval_request_id.clone().unwrap_or_default();
+        let permission_id = input.approval_request_id.unwrap_or_default().to_string();
         BearWireEvent::tool_call_waiting(ToolCallWaitingWire {
             expected_responder_action: Some("permission_decision".to_string()),
             expected_client_method: "client.permission.result".to_string(),
@@ -453,7 +452,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             tool_call,
             permission: ToolPermissionWire {
                 id: permission_id,
-                reason: input.approval_reason.clone(),
+                reason: input.approval_reason.map(str::to_string),
                 title: None,
                 target: None,
             },
@@ -468,8 +467,8 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             tool_call,
             approval_required: false,
             execution_target: execution_owner.to_wire(),
-            approval_request_id: input.approval_request_id.clone(),
-            reason: input.approval_reason.clone(),
+            approval_request_id: input.approval_request_id.map(str::to_string),
+            reason: input.approval_reason.map(str::to_string),
         })
     };
     event.bear_id = Some(input.bear_id.to_string());
@@ -477,7 +476,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     event.session_id = Some(input.session_id.to_string());
     event.run_id = input
         .event_run_id
-        .clone()
+        .map(str::to_string)
         .or_else(|| Some(input.run_id.to_string()));
     event.subject = Some(format!("resource/tool_call/{}", input.tool_call_id));
     event

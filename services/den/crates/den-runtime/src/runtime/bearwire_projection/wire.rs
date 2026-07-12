@@ -13,7 +13,9 @@ use den_core::{
         builtin_den_tool_descriptor_for_provider_name, den_tool_display_json_for_provider,
     },
 };
-use den_protocol::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent};
+use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+
+use super::runtime_error_category_code;
 
 pub fn tool_call_wire(
     tool_call_id: &str,
@@ -292,7 +294,7 @@ pub fn runtime_semantic_event_to_bearwire_events(
         } => vec![BearWireEvent::ephemeral(
             "run.failed",
             json!({
-                "reason": runtime_error_category_wire(&category),
+                "reason": runtime_error_category_code(category),
                 "message": message,
                 "turn": turn,
             }),
@@ -304,19 +306,5 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 "turn": turn,
             }),
         )],
-    }
-}
-
-fn runtime_error_category_wire(category: &RuntimeErrorCategory) -> &'static str {
-    match category {
-        RuntimeErrorCategory::Unavailable => "runtime_unavailable",
-        RuntimeErrorCategory::Misconfigured => "runtime_misconfigured",
-        RuntimeErrorCategory::InvalidIdentity => "runtime_invalid_identity",
-        RuntimeErrorCategory::PermissionDenied => "runtime_permission_denied",
-        RuntimeErrorCategory::ConflictPendingApproval => "runtime_conflict_pending_approval",
-        RuntimeErrorCategory::Cancelled => "runtime_cancelled",
-        RuntimeErrorCategory::Timeout => "runtime_timeout",
-        RuntimeErrorCategory::BackendProtocol => "runtime_backend_protocol",
-        RuntimeErrorCategory::Internal => "runtime_internal",
     }
 }
