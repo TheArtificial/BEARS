@@ -194,6 +194,21 @@ pub enum RuntimeSemanticGroupKind {
     SystemEvent,
 }
 
+impl RuntimeSemanticGroupKind {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::UserTurn => "UserTurn",
+            Self::AssistantReply => "AssistantReply",
+            Self::ToolInteraction => "ToolInteraction",
+            Self::ApprovalInteraction => "ApprovalInteraction",
+            Self::WorkflowUpdate => "WorkflowUpdate",
+            Self::ArtifactUpdate => "ArtifactUpdate",
+            Self::PriorCompactionArtifact => "PriorCompactionArtifact",
+            Self::SystemEvent => "SystemEvent",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeSemanticGroup {
     pub kind: RuntimeSemanticGroupKind,

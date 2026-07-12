@@ -220,8 +220,8 @@ pub fn merge_iterative_summary(
         };
 
         let label = format!(
-            "{:?}:{}:{}",
-            group.kind,
+            "{}:{}:{}",
+            group.kind.as_str(),
             group.start_message_id.as_deref().unwrap_or("start"),
             group.end_message_id.as_deref().unwrap_or("end")
         );
@@ -229,7 +229,7 @@ pub fn merge_iterative_summary(
         if group.protected {
             push_unique(
                 &mut summary.important_constraints,
-                format!("protected:{:?}", group.kind),
+                format!("protected:{}", group.kind.as_str()),
             );
         }
     }

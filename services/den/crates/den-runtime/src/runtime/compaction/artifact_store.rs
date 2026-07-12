@@ -122,7 +122,7 @@ pub async fn insert_iterative_summary_artifact(
     )
     .bind(conversation_uuid)
     .bind(&policy.policy_version)
-    .bind(format!("{trigger:?}"))
+    .bind(trigger.as_str())
     .bind(source_message_start_seq)
     .bind(source_message_end_seq)
     .bind(decision.selected_group_start as i32)
