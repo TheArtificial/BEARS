@@ -102,9 +102,8 @@ fn deterministic_summary(
     prior: Option<&RuntimeIterativeSummary>,
     compacted_groups: &[RuntimeSemanticGroup],
     rows: &[TranscriptGroupingRow],
-    decision: &RuntimeCompactionDecision,
+    _decision: &RuntimeCompactionDecision,
 ) -> RuntimeIterativeSummary {
-    let _ = decision;
     let mut summary = merge_iterative_summary(prior, compacted_groups);
     enrich_summary_from_rows(&mut summary, rows, compacted_groups);
     summary

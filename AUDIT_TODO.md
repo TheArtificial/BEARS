@@ -566,7 +566,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/runtime/compaction/mod.rs:240-244` `push_unique` duplicated verbatim in `summarize.rs:222-228` (3rd copy across the crate) — needs one shared helper.
 - [ ] `src/runtime/compaction/grouping.rs:109-124,132-155` `tool_call_id_from_row`/`is_approval_interaction_row` re-parse the same JSON payload multiple times per row via redundant `try_from` calls instead of parsing once.
 - [ ] `src/runtime/compaction/grouping.rs:157-171` — brittle string-matching on lowercased content for classification with magic strings repeated between functions and duplicated in `mod.rs:85-88`.
-- [ ] `src/runtime/compaction/summarize.rs:93` `let _ = decision;` — dead/unused parameter suggesting incomplete multi-strategy implementation.
+- [x] `src/runtime/compaction/summarize.rs:93` `let _ = decision;` — dead/unused parameter suggesting incomplete multi-strategy implementation. **DONE** (cleanup batch): made the parameter intentionally unused (`_decision`) and removed the dead statement; `den-runtime` clippy green.
 - [ ] `src/runtime/compaction/artifact_store.rs:1-183` — every SQL error wrapped with a bespoke `.map_err` closure ~10 times — needs a shared `db_err(context)` helper.
 - [ ] `src/runtime/compaction_store.rs:130-169,208-244` — manual `row.try_get(...)` field-by-field decode (~9 fields, done twice) instead of `sqlx::FromRow`/`query_as` used elsewhere in the same module family.
 - [ ] `src/runtime/bearwire_projection/mod.rs:30-175` vs `wire.rs:168-346` — two large parallel matches transcode the same `RuntimeSemanticEvent` into two wire formats with duplicated error-category-to-string mapping — share one `RuntimeErrorCategory -> &str` function.
