@@ -192,44 +192,61 @@ pub enum PermissionDecisionInput {
     TimedOut,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PermissionDecisionDescriptor {
+    raw: &'static str,
+    normalized: &'static str,
+}
+
+const PERMISSION_DECISION_DESCRIPTORS: [PermissionDecisionDescriptor; 15] = [
+    PermissionDecisionDescriptor { raw: "approved", normalized: "granted" },
+    PermissionDecisionDescriptor { raw: "approve", normalized: "granted" },
+    PermissionDecisionDescriptor { raw: "granted", normalized: "granted" },
+    PermissionDecisionDescriptor { raw: "allow", normalized: "granted" },
+    PermissionDecisionDescriptor { raw: "allow_once", normalized: "granted" },
+    PermissionDecisionDescriptor { raw: "allow_site_account", normalized: "granted" },
+    PermissionDecisionDescriptor { raw: "allow_host", normalized: "granted" },
+    PermissionDecisionDescriptor { raw: "denied", normalized: "denied" },
+    PermissionDecisionDescriptor { raw: "deny", normalized: "denied" },
+    PermissionDecisionDescriptor { raw: "rejected", normalized: "denied" },
+    PermissionDecisionDescriptor { raw: "reject", normalized: "denied" },
+    PermissionDecisionDescriptor { raw: "reject_once", normalized: "denied" },
+    PermissionDecisionDescriptor { raw: "reject_always", normalized: "denied" },
+    PermissionDecisionDescriptor { raw: "timeout", normalized: "expired" },
+    PermissionDecisionDescriptor { raw: "timed_out", normalized: "expired" },
+];
+
 impl PermissionDecisionInput {
-    pub fn normalized(self) -> &'static str {
+    const fn descriptor_index(self) -> usize {
         match self {
-            Self::Approved
-            | Self::Approve
-            | Self::Granted
-            | Self::Allow
-            | Self::AllowOnce
-            | Self::AllowSiteAccount
-            | Self::AllowHost => "granted",
-            Self::Denied
-            | Self::Deny
-            | Self::Rejected
-            | Self::Reject
-            | Self::RejectOnce
-            | Self::RejectAlways => "denied",
-            Self::Timeout | Self::TimedOut => "expired",
+            Self::Approved => 0,
+            Self::Approve => 1,
+            Self::Granted => 2,
+            Self::Allow => 3,
+            Self::AllowOnce => 4,
+            Self::AllowSiteAccount => 5,
+            Self::AllowHost => 6,
+            Self::Denied => 7,
+            Self::Deny => 8,
+            Self::Rejected => 9,
+            Self::Reject => 10,
+            Self::RejectOnce => 11,
+            Self::RejectAlways => 12,
+            Self::Timeout => 13,
+            Self::TimedOut => 14,
         }
     }
 
+    fn descriptor(self) -> &'static PermissionDecisionDescriptor {
+        &PERMISSION_DECISION_DESCRIPTORS[self.descriptor_index()]
+    }
+
+    pub fn normalized(self) -> &'static str {
+        self.descriptor().normalized
+    }
+
     pub fn raw(self) -> &'static str {
-        match self {
-            Self::Approved => "approved",
-            Self::Approve => "approve",
-            Self::Granted => "granted",
-            Self::Allow => "allow",
-            Self::AllowOnce => "allow_once",
-            Self::AllowSiteAccount => "allow_site_account",
-            Self::AllowHost => "allow_host",
-            Self::Denied => "denied",
-            Self::Deny => "deny",
-            Self::Rejected => "rejected",
-            Self::Reject => "reject",
-            Self::RejectOnce => "reject_once",
-            Self::RejectAlways => "reject_always",
-            Self::Timeout => "timeout",
-            Self::TimedOut => "timed_out",
-        }
+        self.descriptor().raw
     }
 }
 

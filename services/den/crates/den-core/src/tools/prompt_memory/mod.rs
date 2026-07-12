@@ -119,31 +119,30 @@ pub async fn prompt_memory_upsert(
         args.session_id.as_deref(),
     )?;
     let priority = args.priority.unwrap_or(0).clamp(-1000, 1000);
-    let metadata = args.metadata.unwrap_or_else(empty_json_object);
-    validate_optional_object("metadata", &Some(metadata.clone()))?;
+    validate_optional_object("metadata", &args.metadata)?;
     let write = PromptMemoryBlockWrite {
-        block_id: block_id.clone(),
+        block_id,
         bear_id: Some(bear_id),
         profile_slug: Some(role.as_str().to_string()),
         scope: args.scope,
         block_type: args.block_type,
         state: args.state,
-        work_surface: args.work_surface.clone(),
-        session_id: args.session_id.clone(),
-        title: title.clone(),
-        body: body.clone(),
+        work_surface: args.work_surface,
+        session_id: args.session_id,
+        title,
+        body,
         priority,
         created_by_user_id: Some(user_id),
-        supersedes_block_id: args.supersedes_block_id.clone(),
-        metadata: metadata.clone(),
+        supersedes_block_id: args.supersedes_block_id,
+        metadata: args.metadata.unwrap_or_else(empty_json_object),
     };
-    let conflicting_archived = if args.state == PromptMemoryBlockState::Active {
+    let conflicting_archived = if write.state == PromptMemoryBlockState::Active {
         store.archive_conflicting(&write).await?
     } else {
         0
     };
     store.upsert_block(&write).await?;
-    let superseded_archived = if let Some(supersedes_block_id) = args.supersedes_block_id.as_deref()
+    let superseded_archived = if let Some(supersedes_block_id) = write.supersedes_block_id.as_deref()
     {
         store
             .archive_superseded_by(bear_id, role.as_str(), supersedes_block_id)
@@ -153,18 +152,13 @@ pub async fn prompt_memory_upsert(
     };
     Ok(json!({
         "status": "ok",
-        "block_id": block_id,
-        "scope": args.scope,
-        "block_type": args.block_type,
-        "state": args.state,
-        "title": title,
-        "priority": priority,
-        "work_surface": args.work_surface,
-        "session_id": args.session_id,
-        "metadata": metadata,
-        "supersedes_block_id": args.supersedes_block_id,
-        "superseded_archived_count": superseded_archived,
-        "conflicting_archived_count": conflicting_archived,
+        "block_id": write.block_id,
+        "state": write.state,
+        "title": write.title,
+        "priority": write.priority,
+        "metadata": write.metadata,
+        "conflicting_archived": conflicting_archived,
+        "superseded_archived": superseded_archived,
         "source": "prompt_memory_blocks"
     }))
 }
@@ -229,28 +223,23 @@ pub async fn prompt_memory_patch(
     let body = validate_bounded_text("body", &args.body, 1, 50_000)?;
     let block_id = validate_bounded_text("block_id", &args.block_id, 1, 200)?;
     let priority = args.priority.unwrap_or(0).clamp(-1000, 1000);
-    let metadata = args.metadata.unwrap_or_else(empty_json_object);
-    validate_optional_object("metadata", &Some(metadata.clone()))?;
-    store
-        .patch_block(
-            &block_id,
-            &PromptMemoryBlockPatch {
-                state: args.state,
-                title: title.clone(),
-                body: body.clone(),
-                priority,
-                supersedes_block_id: args.supersedes_block_id.clone(),
-                metadata: metadata.clone(),
-            },
-        )
-        .await?;
+    validate_optional_object("metadata", &args.metadata)?;
+    let patch = PromptMemoryBlockPatch {
+        state: args.state,
+        title,
+        body,
+        priority,
+        supersedes_block_id: args.supersedes_block_id,
+        metadata: args.metadata.unwrap_or_else(empty_json_object),
+    };
+    store.patch_block(&block_id, &patch).await?;
     Ok(json!({
         "status": "ok",
         "block_id": block_id,
-        "state": args.state,
-        "title": title,
-        "priority": priority,
-        "metadata": metadata,
+        "state": patch.state,
+        "title": patch.title,
+        "priority": patch.priority,
+        "metadata": patch.metadata,
         "source": "prompt_memory_blocks"
     }))
 }

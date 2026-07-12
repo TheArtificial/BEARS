@@ -105,6 +105,17 @@ impl ClientToolResultRequest {
     }
 }
 
+fn require_settlement_result(
+    result: Option<turn_runs::TurnObligationResultRow>,
+    context: &'static str,
+) -> Result<turn_runs::TurnObligationResultRow, CustomError> {
+    result.ok_or_else(|| {
+        CustomError::System(format!(
+            "{context} should include persisted obligation result row"
+        ))
+    })
+}
+
 fn bearwire_finish_payload(input: &ClientToolResultInput, compacted: Value) -> ToolCallFinishWire {
     let error_message = (input.status != ToolResultStatus::Ok)
         .then(|| input.content.as_deref().or_else(|| input.error.as_str()))
@@ -754,7 +765,7 @@ pub(crate) async fn client_tool_result_result(
             open_obligations,
             result,
         } => {
-            let result = result.expect("record-and-settle tool outcome should include result row");
+            let result = require_settlement_result(result, "record-and-settle tool outcome")?;
             let mut event = BearWireEvent::tool_call_finished(event_payload.clone());
             event.bear_id = Some(bear.id.to_string());
             event.human_id = Some(user_id.to_string());
@@ -811,7 +822,7 @@ pub(crate) async fn client_tool_result_result(
             run: transitioned,
             result,
         } => {
-            let result = result.expect("record-and-settle tool outcome should include result row");
+            let result = require_settlement_result(result, "record-and-settle tool outcome")?;
             let mut event = BearWireEvent::tool_call_finished(event_payload.clone());
             event.bear_id = Some(bear.id.to_string());
             event.human_id = Some(user_id.to_string());
@@ -991,7 +1002,7 @@ pub(crate) async fn client_permission_result_result(
             args,
             result,
         } => {
-            let result = result.expect("record-and-settle permission outcome should include result row");
+            let result = require_settlement_result(result, "record-and-settle permission outcome")?;
             if normalized_decision == "granted" {
                 record_web_fetch_approval_from_permission(
                     &state.sqlx_pool,
@@ -1042,7 +1053,7 @@ pub(crate) async fn client_permission_result_result(
             }))
         }
         PermissionResultCoordinatorOutcome::ContinueModel { run: transitioned, result } => {
-            let result = result.expect("record-and-settle permission outcome should include result row");
+            let result = require_settlement_result(result, "record-and-settle permission outcome")?;
             if normalized_decision == "granted" {
                 record_web_fetch_approval_from_permission(
                     &state.sqlx_pool,
