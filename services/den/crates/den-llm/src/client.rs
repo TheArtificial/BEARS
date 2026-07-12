@@ -1015,38 +1015,41 @@ impl LlmClient {
         Ok(resp)
     }
 
-    pub async fn chat_completions_byte_stream(
+    async fn byte_stream_for_api_style(
         &self,
         request: &ChatCompletionRequest,
+        api_style: LlmApiStyle,
     ) -> Result<impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin, DenError> {
         let started = Instant::now();
-        let resp = self.chat_completions_stream(request).await?;
+        let resp = match api_style {
+            LlmApiStyle::ChatCompletionsStream => self.chat_completions_stream(request).await?,
+            LlmApiStyle::ResponsesStream => self.responses_stream(request).await?,
+        };
         let headers_received_at = Instant::now();
         Ok(TimedLlmByteStream::new(
             resp,
             request.telemetry.clone(),
             request.model.clone(),
-            LlmApiStyle::ChatCompletionsStream,
+            api_style,
             started,
             headers_received_at,
         ))
+    }
+
+    pub async fn chat_completions_byte_stream(
+        &self,
+        request: &ChatCompletionRequest,
+    ) -> Result<impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin, DenError> {
+        self.byte_stream_for_api_style(request, LlmApiStyle::ChatCompletionsStream)
+            .await
     }
 
     pub async fn responses_byte_stream(
         &self,
         request: &ChatCompletionRequest,
     ) -> Result<impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin, DenError> {
-        let started = Instant::now();
-        let resp = self.responses_stream(request).await?;
-        let headers_received_at = Instant::now();
-        Ok(TimedLlmByteStream::new(
-            resp,
-            request.telemetry.clone(),
-            request.model.clone(),
-            LlmApiStyle::ResponsesStream,
-            started,
-            headers_received_at,
-        ))
+        self.byte_stream_for_api_style(request, LlmApiStyle::ResponsesStream)
+            .await
     }
 }
 

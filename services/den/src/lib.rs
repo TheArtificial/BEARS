@@ -488,35 +488,28 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
 }
 
 fn init_tracing() -> Result<(), StartupError> {
-    let tracing_filter: String;
     #[cfg(feature = "production")]
-    {
-        tracing_filter = "den=info,\
-            den::web=info,\
-            den::api=info,\
-            tower_sessions=info,\
-            tower_http=info,\
-            axum=info,\
-            axum_login=info"
-            .to_string();
-    }
+    let default_tracing_filter = "den=info,\
+        den::web=info,\
+        den::api=info,\
+        tower_sessions=info,\
+        tower_http=info,\
+        axum=info,\
+        axum_login=info";
     #[cfg(not(feature = "production"))]
-    {
-        tracing_filter = "den=info,\
-            den::core=debug,\
-            den::web=debug,\
-            den::api=debug,\
-            tower_sessions=info,\
-            tower_http=info,\
-            axum=info,\
-            axum_login=info"
-            .to_string();
-    }
+    let default_tracing_filter = "den=info,\
+        den::core=debug,\
+        den::web=debug,\
+        den::api=debug,\
+        tower_sessions=info,\
+        tower_http=info,\
+        axum=info,\
+        axum_login=info";
+    let tracing_filter =
+        std::env::var("RUST_LOG").unwrap_or_else(|_| default_tracing_filter.to_string());
 
     tracing_subscriber::registry()
-        .with(EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or(tracing_filter),
-        ))
+        .with(EnvFilter::new(tracing_filter))
         .with(tracing_subscriber::fmt::layer())
         .try_init()
         .map_err(|e| StartupError::Tracing(e.to_string()))

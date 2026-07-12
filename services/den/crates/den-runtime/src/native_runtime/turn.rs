@@ -227,19 +227,20 @@ pub async fn record_native_client_tool_result(
         .await?;
     }
 
+    let tool_message = ChatMessage {
+        role: "tool".to_string(),
+        content: Some(content),
+        tool_call_id: Some(tool_call_id.to_string()),
+        name: None,
+        tool_calls: None,
+    };
     let session_key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE.update(&session_key, |session| {
         session.request_id = Some(request_id.to_string());
         session.run_id = run_id
             .map(str::to_string)
             .or_else(|| session.run_id.clone());
-        session.messages.push(ChatMessage {
-            role: "tool".to_string(),
-            content: Some(content.clone()),
-            tool_call_id: Some(tool_call_id.to_string()),
-            name: None,
-            tool_calls: None,
-        });
+        session.messages.push(tool_message.clone());
     });
     let Some(session) = SESSION_STORE.get(&session_key) else {
         return Err(DenError::System(
@@ -301,7 +302,7 @@ pub async fn record_native_client_tool_result(
             tool_call_id.to_string(),
             tool_name.clone(),
             status_label,
-            Some(content),
+            tool_message.content.clone(),
             serde_json::Value::Null,
             serde_json::Value::Null,
         ));
