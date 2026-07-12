@@ -24,6 +24,14 @@ use crate::{
 
 static VERIFY_TOKEN: &str = "send_token";
 
+fn session_user_id(auth_session: &AuthSession) -> Result<i32, CustomError> {
+    auth_session
+        .user
+        .as_ref()
+        .map(|user| user.id)
+        .ok_or_else(|| CustomError::Authentication("login required".to_string()))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(|| async { Redirect::permanent("/settings") }))
@@ -59,7 +67,7 @@ async fn edit_email_view(
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session.user.clone().unwrap().id;
+    let user_id = session_user_id(&auth_session)?;
     let sqlx_pool = state.sqlx_pool.clone();
 
     let user_email_settings = email_settings::settings_by_id(&sqlx_pool, user_id).await?;
@@ -81,7 +89,7 @@ pub async fn edit_email_action(
     auth_session: AuthSession,
     Form(email_form): Form<EmailForm>,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session.user.clone().unwrap().id;
+    let user_id = session_user_id(&auth_session)?;
     let sqlx_pool = state.sqlx_pool.clone();
 
     if let Err(form_validation_errors) = email_form.validate() {
@@ -113,7 +121,7 @@ async fn verify_email_view(
     auth_session: AuthSession,
     session: Session,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session.user.clone().unwrap().id;
+    let user_id = session_user_id(&auth_session)?;
     let sqlx_pool = state.sqlx_pool.clone();
 
     let user_email_settings = email_settings::settings_by_id(&sqlx_pool, user_id).await?;
@@ -156,15 +164,14 @@ async fn verify_email_action(
 ) -> Result<Response, CustomError> {
     if session
         .get::<String>(VERIFY_TOKEN)
-        .await
-        .unwrap()
+        .await?
         .unwrap_or_default()
         != token.token
     {
         tracing::warn!("Invalid verification sending token");
         return Ok(Redirect::to("/settings/email/verify").into_response());
     }
-    let user_id = auth_session.user.clone().unwrap().id;
+    let user_id = session_user_id(&auth_session)?;
     let sqlx_pool = state.sqlx_pool.clone();
 
     let email_sent_to =
@@ -188,7 +195,7 @@ async fn verify_email_process(
     auth_session: AuthSession,
     Path(code): Path<String>,
 ) -> Result<Response, CustomError> {
-    let user_id = auth_session.user.clone().unwrap().id;
+    let user_id = session_user_id(&auth_session)?;
     let sqlx_pool = state.sqlx_pool.clone();
 
     let verify_outcome = email_settings::mark_email_verified(&sqlx_pool, user_id, code).await?;
