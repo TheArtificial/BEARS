@@ -627,8 +627,8 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/reflection/archive_harvest.rs:191-193` `decode_summary` clones the whole `Value` just to call `from_value` — accept owned `Value` to skip the clone.
 - [ ] `src/reflection/mod.rs:1-6` — module doc mentions "conductor loop" but not `archive_harvest`, which is also declared here — stale doc.
 - [ ] `src/runtime/compaction/overflow.rs:31-35` `den_error_indicates_context_overflow` only special-cases 3 `DenError` variants with a silent catch-all `_ => false` — easy to miss when new variants carrying the same message are added.
-- [ ] `src/runtime/compaction/policy.rs:17-23,36-41` `CompactionMode::parse`/`CompactionTiming::parse` are hand-rolled parsers duplicating `impl FromStr` — use `FromStr` for idiomatic `.parse()` support.
-- [ ] `src/runtime/compaction/policy.rs:17-23` — unrecognized `COMPACTION_MODE` values silently become `Observe` rather than erroring/logging — could mask config typos.
+- [x] `src/runtime/compaction/policy.rs:17-23,36-41` `CompactionMode::parse`/`CompactionTiming::parse` are hand-rolled parsers duplicating `impl FromStr` — use `FromStr` for idiomatic `.parse()` support. **DONE** (typing batch): both enums implement `FromStr`; parse helpers delegate to `.parse()`; `den-runtime` clippy green.
+- [x] `src/runtime/compaction/policy.rs:17-23` — unrecognized `COMPACTION_MODE` values silently become `Observe` rather than erroring/logging — could mask config typos. **DONE** (observability batch): invalid mode/timing values now emit `tracing::warn!` before defaulting; `den-runtime` clippy green.
 - [ ] `src/runtime/compaction/policy.rs:45-72` `compaction_policy_for_profile` — 4 near-identical struct literals differing only in 3 numeric fields — use a small lookup table.
 - [ ] `src/runtime/compaction/render.rs:6-42` — six repetitive `if !summary.X.is_empty() { sections.push(...) }` blocks — data-driven loop would cut ~35 lines.
 - [ ] `src/runtime/compaction/render.rs:44-49` — `sections.len() == 1` used as a fragile implicit "nothing rendered" check.

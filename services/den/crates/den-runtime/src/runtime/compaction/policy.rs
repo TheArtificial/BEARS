@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use den_core::profile::BearProfile;
 
 use super::RuntimeCompactionPolicy;
@@ -13,13 +15,25 @@ pub enum CompactionMode {
     Active,
 }
 
+impl FromStr for CompactionMode {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "off" | "disabled" | "false" | "0" => Ok(Self::Off),
+            "observe" | "" => Ok(Self::Observe),
+            "active" | "on" | "true" | "1" => Ok(Self::Active),
+            other => Err(format!("unsupported compaction mode: {other}")),
+        }
+    }
+}
+
 impl CompactionMode {
     pub fn parse(raw: &str) -> Self {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "off" | "disabled" | "false" | "0" => Self::Off,
-            "active" | "on" | "true" | "1" => Self::Active,
-            _ => Self::Observe,
-        }
+        raw.parse().unwrap_or_else(|err| {
+            tracing::warn!(%err, "invalid COMPACTION_MODE; defaulting to observe");
+            Self::Observe
+        })
     }
 }
 
@@ -32,12 +46,24 @@ pub enum CompactionTiming {
     Async,
 }
 
+impl FromStr for CompactionTiming {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "sync" | "inline" | "turn_start" => Ok(Self::Sync),
+            "async" | "post_turn" | "" => Ok(Self::Async),
+            other => Err(format!("unsupported compaction timing: {other}")),
+        }
+    }
+}
+
 impl CompactionTiming {
     pub fn parse(raw: &str) -> Self {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "sync" | "inline" | "turn_start" => Self::Sync,
-            _ => Self::Async,
-        }
+        raw.parse().unwrap_or_else(|err| {
+            tracing::warn!(%err, "invalid COMPACTION_TIMING; defaulting to async");
+            Self::Async
+        })
     }
 }
 
