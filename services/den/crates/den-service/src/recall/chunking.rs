@@ -24,11 +24,7 @@ pub fn content_hash(text: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(text.as_bytes());
     let digest = hasher.finalize();
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    format!("{digest:x}")
 }
 
 /// Split `content` into overlapping chunks. Empty/whitespace-only input yields no chunks.
