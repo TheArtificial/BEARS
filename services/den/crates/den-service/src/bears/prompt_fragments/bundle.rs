@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use den_core::DenError;
 use serde::Deserialize;
 
-use super::registry::PromptFragmentRegistry;
+use super::{insert_unique, registry::PromptFragmentRegistry};
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct PromptBundle {
@@ -30,11 +30,7 @@ impl PromptBundleRegistry {
             })?;
             bundle.validate(source_name, fragments)?;
             let key = bundle.id.clone();
-            if bundles.insert(key.clone(), bundle).is_some() {
-                return Err(DenError::ValidationError(format!(
-                    "duplicate prompt bundle id {key:?}"
-                )));
-            }
+            insert_unique(&mut bundles, key, bundle, "prompt bundle")?;
         }
         Ok(Self { bundles })
     }

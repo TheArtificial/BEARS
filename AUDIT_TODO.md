@@ -697,7 +697,7 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - [ ] `src/client_sessions.rs:60-105` `trusted_workspace_context` — ~45-line chain of `.as_ref().and_then().and_then().map()...` — extract named helpers (`extract_roots`, `extract_cwd`).
 - [ ] `src/bears/prompt_fragments/render.rs:45-46,60-61` `render_turn_text`/`render_compile_time_text` construct a brand-new `minijinja::Environment` per call — cache/share if this is a hot path.
 - [ ] `src/bears/prompt_fragments/bundle.rs:26` — `DenError::Parsing` used here vs `DenError::ValidationError` used for the same "malformed input" family elsewhere (`frontmatter.rs`) — inconsistent error-variant choice.
-- [ ] `src/bears/prompt_fragments/registry.rs`, `bundle.rs` — both `PromptFragmentRegistry`/`PromptBundleRegistry` duplicate an identical "insert or error on duplicate key" pattern — share a generic `insert_unique` helper.
+- [x] `src/bears/prompt_fragments/registry.rs`, `bundle.rs` — both `PromptFragmentRegistry`/`PromptBundleRegistry` duplicate an identical "insert or error on duplicate key" pattern — share a generic `insert_unique` helper. **DONE** (duplication batch): added module-local generic `insert_unique` and reused it in fragment/bundle registries; `den-service` clippy green.
 - [ ] `src/model_selection.rs:226-239` `resolve_model_option` — silently falls through to the static registry on any DB error (not just "not found"), masking real failures as fallback-worthy.
 - [ ] `src/model_selection.rs:80-90` `simplify_model_option_label_for_acp` — dense string-processing chain with no comment explaining expected label formats.
 - `src/recall/qdrant.rs`, `src/archived_conversations.rs`, `tools/bear-armature/build.rs` — all clean/idiomatic, no significant findings.

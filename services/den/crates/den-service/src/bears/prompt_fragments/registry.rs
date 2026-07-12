@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use den_core::DenError;
 
-use super::frontmatter::{parse_frontmatter, PromptFragmentFrontmatter};
+use super::{
+    frontmatter::{parse_frontmatter, PromptFragmentFrontmatter},
+    insert_unique,
+};
 
 #[derive(Debug, Clone)]
 pub struct PromptFragment {
@@ -22,21 +25,16 @@ impl PromptFragmentRegistry {
         for (source_name, source) in sources {
             let (frontmatter, body) = parse_frontmatter(source_name, source)?;
             let key = frontmatter.id.clone();
-            if fragments
-                .insert(
-                    key.clone(),
-                    PromptFragment {
-                        source_name: (*source_name).to_string(),
-                        frontmatter,
-                        body,
-                    },
-                )
-                .is_some()
-            {
-                return Err(DenError::ValidationError(format!(
-                    "duplicate prompt fragment id {key:?}"
-                )));
-            }
+            insert_unique(
+                &mut fragments,
+                key,
+                PromptFragment {
+                    source_name: (*source_name).to_string(),
+                    frontmatter,
+                    body,
+                },
+                "prompt fragment",
+            )?;
         }
         Ok(Self { fragments })
     }
