@@ -313,41 +313,38 @@ fn is_uuid_like(s: &str) -> bool {
 }
 
 fn looks_like_machine_or_opaque_title(s: &str, conversation_id: &str) -> bool {
-    let t = s.trim();
-    if t == conversation_id {
-        return true;
+    let title = s.trim();
+    title_matches_conversation_id(title, conversation_id)
+        || title_is_uuid_or_conv_uuid(title)
+        || title_is_legacy_chat_id(title, conversation_id)
+        || title_is_long_hex_token(title)
+}
+
+fn title_matches_conversation_id(title: &str, conversation_id: &str) -> bool {
+    title == conversation_id || conversation_id.strip_prefix("conv-") == Some(title)
+}
+
+fn title_is_uuid_or_conv_uuid(title: &str) -> bool {
+    is_uuid_like(title) || title.strip_prefix("conv-").is_some_and(is_uuid_like)
+}
+
+fn title_is_legacy_chat_id(title: &str, conversation_id: &str) -> bool {
+    let Some(inner) = title
+        .strip_prefix("Chat (")
+        .and_then(|value| value.strip_suffix(')'))
+        .map(str::trim)
+    else {
+        return false;
+    };
+    is_uuid_like(inner) || conversation_id.strip_prefix("conv-") == Some(inner)
+}
+
+fn title_is_long_hex_token(title: &str) -> bool {
+    if title.len() < 24 || !title.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return false;
     }
-    if let Some(rest) = t.strip_prefix("conv-") {
-        if is_uuid_like(rest) {
-            return true;
-        }
-    }
-    if is_uuid_like(t) {
-        return true;
-    }
-    if conversation_id.starts_with("conv-") {
-        let suf = conversation_id
-            .strip_prefix("conv-")
-            .unwrap_or(conversation_id);
-        if t == suf {
-            return true;
-        }
-    }
-    // Legacy UI fallback: "Chat (uuid-fragment)"
-    if let Some(inner) = t.strip_prefix("Chat (").and_then(|x| x.strip_suffix(')')) {
-        let inner = inner.trim();
-        if is_uuid_like(inner) || inner == conversation_id.strip_prefix("conv-").unwrap_or("") {
-            return true;
-        }
-    }
-    // Long hex-only tokens (opaque ids)
-    if t.len() >= 24 && t.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-        let hexish = t.chars().filter(|c| c.is_ascii_hexdigit()).count();
-        if hexish * 10 >= t.len() * 7 {
-            return true;
-        }
-    }
-    false
+    let hexish = title.chars().filter(|c| c.is_ascii_hexdigit()).count();
+    hexish * 10 >= title.len() * 7
 }
 
 fn is_generic_thread_placeholder(s: &str) -> bool {
