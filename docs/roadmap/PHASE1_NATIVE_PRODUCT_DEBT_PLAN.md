@@ -1,6 +1,18 @@
 # Phase 1 native product debt plan
 
-**Status:** Active consolidation plan.
+**Status:** Active consolidation/index plan.
+
+This document is now the Phase 1 native product index. The broad workstreams are split into focused plan documents so implementation can proceed without treating "Phase 1 native" as one oversized bucket:
+
+- Operator console: [`PHASE1_OPERATOR_CONSOLE_PLAN.md`](PHASE1_OPERATOR_CONSOLE_PLAN.md)
+- Web chat and onboarding: [`PHASE1_WEB_CHAT_ONBOARDING_PLAN.md`](PHASE1_WEB_CHAT_ONBOARDING_PLAN.md)
+- Skills: [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md)
+- MCP catalog and attachments: [`PHASE1_MCP_CATALOG_ATTACHMENTS_PLAN.md`](PHASE1_MCP_CATALOG_ATTACHMENTS_PLAN.md)
+- Routines: [`PHASE1_ROUTINES_PLAN.md`](PHASE1_ROUTINES_PLAN.md)
+- Garage artifacts product surface: [`PHASE1_GARAGE_ARTIFACTS_PLAN.md`](PHASE1_GARAGE_ARTIFACTS_PLAN.md)
+- Task-list and workflow UX: [`PHASE1_TASK_LIST_WORKFLOW_UX_PLAN.md`](PHASE1_TASK_LIST_WORKFLOW_UX_PLAN.md)
+
+Keep this file as the native-aligned consolidation of historical Phase 1 decisions. Use the focused documents for delegation and implementation details.
 
 This document salvages the still-current product intent from these superseded roadmap documents:
 

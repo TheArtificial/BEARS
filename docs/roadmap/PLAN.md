@@ -41,7 +41,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 | **Capability discovery / Code Mode / Bear capability config** | Proposed: replace large static tool/skill prompt rosters with taxonomy-enabled capability discovery, a bounded recently-discovered working set, Code Mode as an execution option for composed workflows, and per-Bear capability/config/connection portability | [`CAPABILITY_DISCOVERY_AND_CODE_MODE_IMPLEMENTATION_PLAN.md`](CAPABILITY_DISCOVERY_AND_CODE_MODE_IMPLEMENTATION_PLAN.md), [`BEAR_CAPABILITY_CONFIGURATION_AND_PORTABILITY_PLAN.md`](BEAR_CAPABILITY_CONFIGURATION_AND_PORTABILITY_PLAN.md), [ADR-0054](../decisions/adr-0054-capability-discovery-and-code-mode.md), [ADR-0055](../decisions/adr-0055-bear-capability-configuration-connections-and-portability.md) |
 | **Channels** | Draft first-party channel layer; web chat exists as Den surface, Slack/WhatsApp/macOS channel adapters planned; channels must not inherit armature/local-tool assumptions | [`DEN_CHANNELS_IMPLEMENTATION_PLAN.md`](DEN_CHANNELS_IMPLEMENTATION_PLAN.md), [`MACOS_BEARS_CLIENT_APP_PLAN.md`](MACOS_BEARS_CLIENT_APP_PLAN.md) |
 | **Prompt registry** | Proposed ADR-0046 extraction of long-lived prompt prose into file-backed fragments while preserving `bear_compiled_configs` as runtime hot-path contract | [`PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md`](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md), [`PROMPT_TEXT_HARDCODE_AUDIT.md`](PROMPT_TEXT_HARDCODE_AUDIT.md) |
-| **Phase 1 product** | Native product debt consolidated: operator console, onboarding, Garage artifacts, routines, MCP, task-list UX, and Skills | [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md), [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) |
+| **Phase 1 product** | Native product debt split into focused slices: operator console, web chat/onboarding, MCP catalog, routines, Garage artifacts, task-list/workflow UX, and Skills | [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md), [`PHASE1_OPERATOR_CONSOLE_PLAN.md`](PHASE1_OPERATOR_CONSOLE_PLAN.md), [`PHASE1_WEB_CHAT_ONBOARDING_PLAN.md`](PHASE1_WEB_CHAT_ONBOARDING_PLAN.md), [`PHASE1_MCP_CATALOG_ATTACHMENTS_PLAN.md`](PHASE1_MCP_CATALOG_ATTACHMENTS_PLAN.md), [`PHASE1_ROUTINES_PLAN.md`](PHASE1_ROUTINES_PLAN.md), [`PHASE1_GARAGE_ARTIFACTS_PLAN.md`](PHASE1_GARAGE_ARTIFACTS_PLAN.md), [`PHASE1_TASK_LIST_WORKFLOW_UX_PLAN.md`](PHASE1_TASK_LIST_WORKFLOW_UX_PLAN.md), [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) |
 
 ### What is working today
 
@@ -65,7 +65,7 @@ Canonical dashboard for `docs/roadmap/`. Four questions:
 7. **Schema/UI naming cleanup** — retire residual transitional Letta/MemFS names as ordinary cleanup, not migration/backfill work.
 8. **Prompt fragment registry** — extract durable prompt prose per ADR-0046 without changing the runtime compiled-prompt contract.
 9. **Channel layer** — keep first-party channels separate from armatures; web chat, Slack/WhatsApp/Twilio, and macOS app chat share Den run services, not ACP assumptions.
-10. **Phase 1 product debt** — operator console, onboarding, routines, MCP catalog, Garage artifacts, task-list UX, plus native Skills ([`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)).
+10. **Phase 1 product debt** — focused native product slices for operator console, web chat/onboarding, routines, MCP catalog, Garage artifacts, task-list/workflow UX, plus native Skills ([`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) index; slice plans linked there).
 11. **Stance-scoped delegated runs** — keep as a designed-but-delayable follow-up until artifact refs are available; implement ADR-0053's brokered delegation, scoped capabilities, parent/child communication, UI cards, and model affordances when background-subagent UX becomes the bottleneck ([`STANCE_SCOPED_DELEGATED_RUNS_IMPLEMENTATION_PLAN.md`](STANCE_SCOPED_DELEGATED_RUNS_IMPLEMENTATION_PLAN.md)).
 
 ### Important contradictions resolved here
@@ -105,7 +105,15 @@ See [`DEN_RUNTIME_PLAN.md`](DEN_RUNTIME_PLAN.md):
 
 ### 5. Phase 1 operator/product (native-aligned)
 
-Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): it salvages the still-current operator/product intent from the superseded Phase 1, multi-role, and task-system plans while dropping Letta Code, Codepool, and MemFS assumptions. For Skills, use [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) as the detailed canonical plan.
+Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) as the native Phase 1 index: it salvages the still-current operator/product intent from the superseded Phase 1, multi-role, and task-system plans while dropping Letta Code, Codepool, and MemFS assumptions. Implement from the focused slice plans:
+
+- [`PHASE1_OPERATOR_CONSOLE_PLAN.md`](PHASE1_OPERATOR_CONSOLE_PLAN.md)
+- [`PHASE1_WEB_CHAT_ONBOARDING_PLAN.md`](PHASE1_WEB_CHAT_ONBOARDING_PLAN.md)
+- [`PHASE1_MCP_CATALOG_ATTACHMENTS_PLAN.md`](PHASE1_MCP_CATALOG_ATTACHMENTS_PLAN.md)
+- [`PHASE1_ROUTINES_PLAN.md`](PHASE1_ROUTINES_PLAN.md)
+- [`PHASE1_GARAGE_ARTIFACTS_PLAN.md`](PHASE1_GARAGE_ARTIFACTS_PLAN.md)
+- [`PHASE1_TASK_LIST_WORKFLOW_UX_PLAN.md`](PHASE1_TASK_LIST_WORKFLOW_UX_PLAN.md)
+- [`SKILLS_IMPLEMENTATION_PLAN.md`](SKILLS_IMPLEMENTATION_PLAN.md) for Skills.
 
 ## Planning document index
 
@@ -141,7 +149,13 @@ Use [`PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md`](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md): 
 - [Den string hygiene roadmap](DEN_STRING_HYGIENE_ROADMAP.md)
 - [Prompt fragment registry](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md)
 - [Prompt text hardcode audit](PROMPT_TEXT_HARDCODE_AUDIT.md)
-- [Phase 1 native product debt](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md)
+- [Phase 1 native product debt](PHASE1_NATIVE_PRODUCT_DEBT_PLAN.md) — index/consolidation
+- [Phase 1 operator console](PHASE1_OPERATOR_CONSOLE_PLAN.md)
+- [Phase 1 web chat and onboarding](PHASE1_WEB_CHAT_ONBOARDING_PLAN.md)
+- [Phase 1 MCP catalog and attachments](PHASE1_MCP_CATALOG_ATTACHMENTS_PLAN.md)
+- [Phase 1 routines](PHASE1_ROUTINES_PLAN.md)
+- [Phase 1 Garage artifacts product](PHASE1_GARAGE_ARTIFACTS_PLAN.md)
+- [Phase 1 task-list and workflow UX](PHASE1_TASK_LIST_WORKFLOW_UX_PLAN.md)
 - [Skills implementation](SKILLS_IMPLEMENTATION_PLAN.md)
 - [Live dev stack](LIVE_DEV_STACK_PLAN.md)
 - [Pair reflection and work memory](PAIR_REFLECTION_AND_WORK_MEMORY_PLAN.md)
