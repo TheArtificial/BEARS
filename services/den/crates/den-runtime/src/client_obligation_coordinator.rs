@@ -447,37 +447,7 @@ pub async fn settle_permission_result(
 
     if normalized_decision == "granted" && !obligation_is_den_web_fetch(&obligation.request_payload)
     {
-        let Some(tool_call_id) = obligation.tool_call_id.clone() else {
-            return Err(DenError::ValidationError(
-                "granted armature-local permission obligation missing tool_call_id".to_string(),
-            ));
-        };
-        let Some(tool_obligation) =
-            turn_obligations::mark_waiting_for_tool_result(pool, obligation.id).await?
-        else {
-            return Ok(PermissionResultCoordinatorOutcome::IgnoredLateResult {
-                run_state: run.state.clone(),
-                obligation_state: obligation.state.clone(),
-            });
-        };
-        let transitioned = turn_runs::transition_run(
-            pool,
-            &run.run_id,
-            turn_runs::TurnRunState::WaitingForToolResult,
-            None,
-        )
-        .await?;
-        let payload = local_tool_request_payload(&obligation.request_payload)?;
-        let tool_name = payload.tool_name;
-        let args = payload.arguments;
-        return Ok(PermissionResultCoordinatorOutcome::DispatchLocalTool {
-            run: transitioned,
-            tool_obligation: Box::new(tool_obligation),
-            tool_call_id,
-            tool_name,
-            args,
-            result: None,
-        });
+        return dispatch_local_tool_after_grant(pool, run, obligation).await;
     }
 
     let transitioned =
@@ -490,6 +460,42 @@ pub async fn settle_permission_result(
     }
     Ok(PermissionResultCoordinatorOutcome::ContinueModel {
         run: transitioned,
+        result: None,
+    })
+}
+
+async fn dispatch_local_tool_after_grant(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+) -> Result<PermissionResultCoordinatorOutcome, DenError> {
+    let Some(tool_call_id) = obligation.tool_call_id.clone() else {
+        return Err(DenError::ValidationError(
+            "granted armature-local permission obligation missing tool_call_id".to_string(),
+        ));
+    };
+    let Some(tool_obligation) =
+        turn_obligations::mark_waiting_for_tool_result(pool, obligation.id).await?
+    else {
+        return Ok(PermissionResultCoordinatorOutcome::IgnoredLateResult {
+            run_state: run.state.clone(),
+            obligation_state: obligation.state.clone(),
+        });
+    };
+    let transitioned = turn_runs::transition_run(
+        pool,
+        &run.run_id,
+        turn_runs::TurnRunState::WaitingForToolResult,
+        None,
+    )
+    .await?;
+    let payload = local_tool_request_payload(&obligation.request_payload)?;
+    Ok(PermissionResultCoordinatorOutcome::DispatchLocalTool {
+        run: transitioned,
+        tool_obligation: Box::new(tool_obligation),
+        tool_call_id,
+        tool_name: payload.tool_name,
+        args: payload.arguments,
         result: None,
     })
 }
