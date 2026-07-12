@@ -437,8 +437,8 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - Overall: all three files functionally solid and well-tested, but share a "stringly-typed JSON plus anyhow-string-errors" style producing long deeply-nested single-purpose functions; would benefit most from typed event/config structs and splitting `bearwire.rs`.
 
 ### tools/bear-armature — chrome.rs, update.rs, git.rs, process.rs, terminal.rs, tool_tasks.rs, json_rpc.rs, adapter_env.rs, web.rs, command_policy.rs, paths.rs, rtk.rs
-- [ ] `src/tools/process.rs:420`, `src/tools/terminal.rs:31`, `src/tools/rtk.rs:65` — identical `output_excerpt` function copy-pasted verbatim in 3 places — share one helper.
-- [ ] `src/tools/process.rs:383-393`, `src/tools/terminal.rs:116-126` — identical `rtk_available()` duplicated verbatim.
+- [x] `src/tools/process.rs:420`, `src/tools/terminal.rs:31`, `src/tools/rtk.rs:65` — identical `output_excerpt` function copy-pasted verbatim in 3 places — share one helper. **DONE** (duplication batch): extracted shared `tools::common::output_excerpt` for `process.rs`, `terminal.rs`, and `rtk.rs`; `bear-armature` cargo check green. Note: strict clippy is currently blocked by broader pre-existing `bear-armature` lints outside this extraction batch.
+- [x] `src/tools/process.rs:383-393`, `src/tools/terminal.rs:116-126` — identical `rtk_available()` duplicated verbatim. **DONE** (duplication batch): extracted shared `tools::common::rtk_available`; `bear-armature` cargo check green. Note: strict clippy is currently blocked by broader pre-existing `bear-armature` lints outside this extraction batch.
 - [ ] `src/tools/process.rs:395-418`, `src/tools/terminal.rs:90-114` — nearly identical `reduce_*_output_with_rtk` wrappers — extract shared generic helper.
 - [ ] `src/tools/process.rs`, `src/tools/terminal.rs` — both build `effective_command`/`effective_args` for rtk-wrap case with same logic — extract `build_rtk_invocation(...)`.
 - [ ] `src/tools/process.rs:507-564` vs `src/tools/terminal.rs:436-465` — "looks secret-like" env-key check (`SECRET`/`TOKEN`/`PASSWORD`/`KEY`) copy-pasted rather than shared.

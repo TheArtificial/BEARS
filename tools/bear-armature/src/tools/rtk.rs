@@ -1,3 +1,5 @@
+use super::common::output_excerpt;
+
 use serde_json::{json, Value};
 use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncWriteExt, process::Command};
@@ -60,18 +62,6 @@ pub(crate) fn rtk_reducer_enabled(env_name: &str) -> bool {
             "1" | "true" | "yes" | "on"
         )
     })
-}
-
-fn output_excerpt(raw: &str, max_chars: usize) -> String {
-    if raw.chars().count() <= max_chars {
-        raw.to_string()
-    } else {
-        let omitted = raw.chars().count().saturating_sub(max_chars);
-        format!(
-            "{}\n... truncated, omitted {omitted} characters",
-            raw.chars().take(max_chars).collect::<String>()
-        )
-    }
 }
 
 pub(crate) async fn reduce_with_rtk_summary(env_name: &str, input: String) -> Option<RtkReduction> {

@@ -4,6 +4,7 @@ use crate::{
     },
     tools::{
         command_policy::rtk_wrap_allowed,
+        common::{command_line, output_excerpt, rtk_available},
         rtk::{reduce_with_rtk_summary, ReducerMode, RtkReduction},
     },
     SessionContext, ToolPolicy,
@@ -383,18 +384,6 @@ pub(crate) async fn handle_process_run(
     }))
 }
 
-async fn rtk_available() -> bool {
-    Command::new("rtk")
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .status()
-        .await
-        .is_ok_and(|status| status.success())
-}
-
 async fn reduce_process_output_with_rtk(
     reducer_mode: ReducerMode,
     executed_via_rtk: bool,
@@ -414,22 +403,10 @@ async fn reduce_process_output_with_rtk(
     }
     let raw = format!(
         "command: {}\ncwd: {cwd}\nexit_code: {}\ntimed_out: {timed_out}\n\nSTDOUT:\n{stdout}\n\nSTDERR:\n{stderr}\n",
-        if args.is_empty() { command.to_string() } else { format!("{} {}", command, args.join(" ")) },
+        command_line(command, args),
         exit_code.map(|code| code.to_string()).unwrap_or_else(|| "null".to_string()),
     );
     reduce_with_rtk_summary("BEARS_PROCESS_RUN_RTK", raw).await
-}
-
-fn output_excerpt(raw: &str, max_chars: usize) -> String {
-    if raw.chars().count() <= max_chars {
-        raw.to_string()
-    } else {
-        let omitted = raw.chars().count().saturating_sub(max_chars);
-        format!(
-            "{}\n... truncated, omitted {omitted} characters",
-            raw.chars().take(max_chars).collect::<String>()
-        )
-    }
 }
 
 struct ProcessResult<'a> {
