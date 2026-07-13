@@ -98,7 +98,7 @@ This plan fulfills ADR-0004 by implementing:
 
 - [ ] Allow conversation events/messages to cite artifact refs for attachments and generated outputs.
 - [ ] Add generic artifact link/attachment records for Den subjects, including at least conversation, job, task, run, criterion, and delegated-run anchors.
-- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `input`, `source`, `output`, `evidence`, `test_report`, `diff`, or `completion_receipt`.
+- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `input`, `source`, `output`, `evidence`, `test_report`, `diff`, `runtime_checkpoint`, or `completion_receipt`.
 - [ ] Add run/task provenance when artifacts are created by work/runtime activity.
 - [ ] Render artifact refs in task/run completion receipts.
 - [ ] Keep criterion/task/job state separate from artifact presence; completion decisions cite evidence refs but are not implied by them.
@@ -128,6 +128,19 @@ This plan fulfills ADR-0004 by implementing:
 - [ ] Add a small check that a work-surface-produced artifact records provenance and can be resolved after the workspace path changes.
 
 **Exit gate:** Work surfaces can produce artifacts and consume uploaded artifacts without treating paths as artifact identity.
+
+### Runtime checkpoint artifacts
+
+Agent loop-control checkpoints should revisit this artifact-ref plan when checkpoint retention is implemented. Runtime checkpoint reports are artifacts rather than status reports: durable audit/debug payloads attached primarily to runs, optionally linked to focused Jobs/tasks as audit evidence, and never task/job status transitions by themselves.
+
+Expected shape:
+
+- artifact kind: `runtime_checkpoint`;
+- primary link: `subject_kind = run`, `role = checkpoint`;
+- optional links: focused Job/task with an audit/evidence role;
+- checkpoint presence does not imply task completion, blockage, waiver, cancellation, or Docket history-visible progress.
+
+If loop-control lands before artifact refs, any temporary checkpoint table should include a migration path to `runtime_checkpoint` artifact refs instead of becoming a permanent competing store.
 
 ## Human UI affordances
 

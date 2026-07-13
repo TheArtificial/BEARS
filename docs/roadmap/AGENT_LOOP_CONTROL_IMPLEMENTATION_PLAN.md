@@ -359,7 +359,21 @@ Do not force learned facts and uncertainty into required JSON arrays. Keep model
 
 **Goal:** make checkpoints useful for `work` run audit without polluting conversation history or Docket task events.
 
-Introduce a run-scoped checkpoint artifact store or event stream. Preferred shape:
+Checkpoint reports are artifacts, not status reports. They are durable audit/debug payloads attached to a run, not user-facing progress prose, conversation history, model replay context, or Docket task/job events.
+
+Preferred final shape: store checkpoint request/response payloads through the artifact-ref system as artifact kind `runtime_checkpoint`, then attach them with generic artifact links:
+
+```text
+artifact_links
+- artifact_ref
+- subject_kind = run
+- subject_id = run_id
+- role = checkpoint
+```
+
+When useful for audit/query, the same checkpoint artifact may also be linked to the focused Job or current task with an evidence/audit role. These links are evidence references only; they do not mutate task state and do not imply completion, blockage, waiver, or cancellation.
+
+Until artifact refs exist, a small temporary `bear_run_checkpoints` table is acceptable, but it should be shaped as a mechanical migration path to artifact refs rather than a competing permanent checkpoint store:
 
 ```text
 bear_run_checkpoints
@@ -372,24 +386,24 @@ bear_run_checkpoints
 - request jsonb not null
 - response jsonb nullable
 - validation_status text not null -- requested | valid | invalid | superseded
-- visibility text not null -- audit_only | live_ephemeral | model_visible_hidden
-- replay_policy text not null -- none | summary_once | until_superseded
+- replay_policy text not null -- none by default
 - related_task_list_id text nullable
 - related_task_item_id text nullable
 - related_docket_task_id uuid nullable
+- future_artifact_ref text nullable
 - created_at timestamptz not null
 ```
 
 Retention rules:
 
 - `pair` default: live/debug telemetry or short retention unless needed for recovery.
-- `work` default: audit-retained run artifact.
+- `work` default: audit-retained `runtime_checkpoint` artifact linked to the run.
 - Docket report-visible history still requires Docket/task events.
 - Model replay uses only explicit replay policies, never raw checkpoint prose by default.
 
 | Task | Done when |
 | --- | --- |
-| Add checkpoint artifact schema/service | Runtime can persist request/response artifacts by run id. |
+| Add checkpoint artifact API | Runtime can persist request/response payloads by run id, preferably as `runtime_checkpoint` artifact refs. |
 | Keep artifact outside Docket events | Checkpoints do not appear as `bear_task_events` or `bear_job_events`. |
 | Add `work` audit retention | `work` runs retain valid checkpoint artifacts with task refs where available. |
 | Add pair/chat retention policy | Interactive stances avoid durable clutter unless recovery policy requires it. |
