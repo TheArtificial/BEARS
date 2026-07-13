@@ -373,6 +373,7 @@ struct ReflectionAdminRow {
     candidate_count: Option<i64>,
     dropped_followup_count: Option<i64>,
     proposal_count: Option<i64>,
+    proposal_links: Vec<String>,
     payload_json: String,
 }
 
@@ -794,10 +795,12 @@ async fn reflection_rows_for_bear(
         .into_iter()
         .map(
             |(created_at, event_type, session_id, conversation_id, conversation_title, payload)| {
-                let proposal_count = payload
+                let proposal_ids = payload
                     .get("proposal_ids")
                     .and_then(serde_json::Value::as_array)
-                    .and_then(|items| i64::try_from(items.len()).ok());
+                    .cloned()
+                    .unwrap_or_default();
+                let proposal_count = i64::try_from(proposal_ids.len()).ok();
                 let status = payload
                     .get("status")
                     .and_then(serde_json::Value::as_str)
@@ -832,6 +835,11 @@ async fn reflection_rows_for_bear(
                     candidate_count,
                     dropped_followup_count,
                     proposal_count,
+                    proposal_links: proposal_ids
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect(),
                     payload_json: pretty_json(payload),
                 }
             },

@@ -28,7 +28,16 @@
         <br><small>{{ reflection.status_explanation | e }}</small>
         {% if reflection.skipped_reason %}<br><small><code>{{ reflection.skipped_reason | e }}</code></small>{% endif %}
       </td>
-      <td>{{ reflection.counts_label | e }}</td>
+      <td>
+        {{ reflection.counts_label | e }}
+        {% if reflection.proposal_links and reflection.proposal_links | length > 0 %}
+          <br><small>Proposals:
+          {% for proposal_id in reflection.proposal_links %}
+            <a href="/bear/{{ bear.slug | e }}/memory/proposals/{{ proposal_id | e }}">{{ loop.index }}</a>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+          </small>
+        {% endif %}
+      </td>
     </tr>
     <tr>
       <td colspan="6"><details><summary>Payload</summary><pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ reflection.payload_json | e }}</pre></details></td>
