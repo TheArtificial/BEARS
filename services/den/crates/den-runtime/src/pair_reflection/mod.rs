@@ -20,6 +20,8 @@ pub struct PairReflectionProposalOutput {
     pub candidate_count: usize,
     pub dropped_followup_count: usize,
     pub skipped_reason: Option<&'static str>,
+    pub source_message_start_seq: Option<i64>,
+    pub source_message_end_seq: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +76,8 @@ async fn create_pair_reflection_proposals_for_artifact(
         candidate_count: candidates.len(),
         dropped_followup_count: artifact.summary.unresolved_followups.len(),
         skipped_reason: None,
+        source_message_start_seq: Some(artifact.source_message_start_seq),
+        source_message_end_seq: Some(artifact.source_message_end_seq),
         created_proposal_ids: Vec::new(),
     };
 
@@ -173,12 +177,7 @@ fn candidates_from_summary(summary: &RuntimeIterativeSummary) -> Vec<PairReflect
         );
     }
     for value in &summary.active_user_goals {
-        push_candidate(
-            &mut candidates,
-            "goal",
-            value,
-            "Pair reflection goal",
-        );
+        push_candidate(&mut candidates, "goal", value, "Pair reflection goal");
     }
     for value in &summary.workflow_state_refs {
         push_candidate(

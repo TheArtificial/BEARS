@@ -101,6 +101,20 @@
 <p><em>No compaction events recorded for this conversation.</em></p>
 {% endif %}
 
+<h3>Reflection watermark</h3>
+<p class="form-hint">This shows how far pair reflection has processed the transcript, so repeated reflection runs are easier to reason about and duplicate proposal concerns are visible.</p>
+<dl>
+  <dt>Latest message</dt>
+  <dd>{% if reflection_watermark.latest_message_sequence_no is not none %}#{{ reflection_watermark.latest_message_sequence_no }}{% else %}<em>none</em>{% endif %}</dd>
+  <dt>Last reflected</dt>
+  <dd>{% if reflection_watermark.last_reflected_at %}{{ reflection_watermark.last_reflected_at }}{% else %}<em>never</em>{% endif %}</dd>
+  <dt>Reflected through</dt>
+  <dd>{% if reflection_watermark.reflected_through_sequence_no is not none %}#{{ reflection_watermark.reflected_through_sequence_no }}{% else %}<em>unknown</em>{% endif %}</dd>
+  <dt>New messages since reflection</dt>
+  <dd>{% if reflection_watermark.new_message_count is not none %}{{ reflection_watermark.new_message_count }}{% else %}<em>unknown</em>{% endif %}</dd>
+</dl>
+<p class="form-hint">{{ reflection_watermark.explanation | e }}</p>
+
 <h3>Reflections</h3>
 {% if reflections and reflections | length > 0 %}
 <table>

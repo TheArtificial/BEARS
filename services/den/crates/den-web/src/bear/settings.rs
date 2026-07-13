@@ -380,6 +380,8 @@ struct ReflectionAdminRow {
     dropped_followup_count: Option<i64>,
     proposal_count: Option<i64>,
     proposal_links: Vec<String>,
+    source_message_start_seq: Option<i64>,
+    source_message_end_seq: Option<i64>,
     payload_json: String,
 }
 
@@ -401,6 +403,15 @@ struct ConversationTimelineRow {
     kind: String,
     label: String,
     details: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReflectionWatermarkAdmin {
+    latest_message_sequence_no: Option<i64>,
+    last_reflected_at: Option<String>,
+    reflected_through_sequence_no: Option<i64>,
+    new_message_count: Option<i64>,
+    explanation: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -846,11 +857,42 @@ async fn reflection_rows_for_bear(
                         .filter_map(serde_json::Value::as_str)
                         .map(str::to_string)
                         .collect(),
+                    source_message_start_seq: json_i64(&payload, "source_message_start_seq"),
+                    source_message_end_seq: json_i64(&payload, "source_message_end_seq"),
                     payload_json: pretty_json(payload),
                 }
             },
         )
         .collect())
+}
+
+fn reflection_watermark_admin(
+    latest_message_sequence_no: Option<i64>,
+    reflections: &[ReflectionAdminRow],
+) -> ReflectionWatermarkAdmin {
+    let latest_reflection = reflections.first();
+    let reflected_through_sequence_no =
+        latest_reflection.and_then(|row| row.source_message_end_seq);
+    let new_message_count = latest_message_sequence_no
+        .zip(reflected_through_sequence_no)
+        .map(|(latest, reflected_through)| latest.saturating_sub(reflected_through));
+    let explanation = match latest_reflection {
+        None => "This conversation has not been reflected yet.".to_string(),
+        Some(row) if reflected_through_sequence_no.is_some() => {
+            "Reflection events carry a source-message watermark, so repeated runs can show whether new transcript content exists.".to_string()
+        }
+        Some(row) => format!(
+            "Last reflected at {}; this older event has no source-message watermark, so duplicate-prevention visibility is timestamp-only.",
+            row.created_at
+        ),
+    };
+    ReflectionWatermarkAdmin {
+        latest_message_sequence_no,
+        last_reflected_at: latest_reflection.map(|row| row.created_at.clone()),
+        reflected_through_sequence_no,
+        new_message_count,
+        explanation,
+    }
 }
 
 fn conversation_timeline_rows(
@@ -2686,6 +2728,8 @@ async fn conversation_detail_view(
     let reflections =
         reflection_rows_for_bear(state.sqlx_pool(), bear.id, Some(conversation_id), 20).await?;
     let processing_timeline = conversation_timeline_rows(&compaction_events, &reflections);
+    let reflection_watermark =
+        reflection_watermark_admin(messages.iter().map(|m| m.sequence_no).max(), &reflections);
     let message_rows: Vec<MessageAdminRow> = messages
         .into_iter()
         .rev()
@@ -2712,6 +2756,7 @@ async fn conversation_detail_view(
             checkpoint_artifacts,
             reflections,
             processing_timeline,
+            reflection_watermark,
             can_manage_bear,
             native_runtime => true,
             live_reflection_enabled => bear.live_reflection_enabled,
@@ -3187,6 +3232,8 @@ async fn reflect_persisted_conversation(
             "candidate_count": output.candidate_count,
             "dropped_followup_count": output.dropped_followup_count,
             "proposal_ids": output.created_proposal_ids,
+            "source_message_start_seq": output.source_message_start_seq,
+            "source_message_end_seq": output.source_message_end_seq,
         }
     });
     let mut event = BearWireEvent::ephemeral("session.reflected", payload);

@@ -111,6 +111,8 @@ async fn reflect_pair_session(
         "candidate_count": output.candidate_count,
         "dropped_followup_count": output.dropped_followup_count,
         "proposal_ids": output.created_proposal_ids,
+        "source_message_start_seq": output.source_message_start_seq,
+        "source_message_end_seq": output.source_message_end_seq,
     }))
 }
 
