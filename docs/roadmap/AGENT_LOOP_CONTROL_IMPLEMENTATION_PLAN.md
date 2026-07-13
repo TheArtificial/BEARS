@@ -446,7 +446,18 @@ Focused Job behavior:
 - `work` dispatch requires a focused Job before autonomous continuation begins;
 - `pair` may designate a focused Job explicitly through conversation or client command;
 - focused Job does not itself mark tasks complete, blocked, cancelled, or waived;
+- Jobs are mutatable by default, so an executing agent may update the task tree through task/Docket tools;
+- a mutable focused Job with no tasks means the next work is defining the executable task tree, not declaring the Job complete;
+- a static/frozen Job with no tasks, or only blocked/non-actionable tasks, is an exception that should be flagged before execution continues;
 - task focus is derived from Docket/task-list state and remains ephemeral.
+
+Task focus derivation:
+
+- any `in_progress` task wins before pending work is considered;
+- if multiple tasks are `in_progress`, choose the first in depth-first task-tree order and emit a diagnostic;
+- otherwise choose the first actionable `pending` task in depth-first task-tree order;
+- siblings are ordered by `sibling_order`, then creation time, then task id;
+- parent tasks are actionable even when they have children unless their own state says otherwise.
 
 Checkpoint requests should include focused Job and active task context when available:
 

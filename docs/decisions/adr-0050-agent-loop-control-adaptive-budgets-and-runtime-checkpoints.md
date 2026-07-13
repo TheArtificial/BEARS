@@ -76,6 +76,10 @@ Do not model this as `job_focus_mode` or a generic `focus_target` yet. YAGNI: th
 
 A focused Job changes next-action selection, not trust boundaries. While one is present, Den prompts the model toward the next logical incomplete, unblocked task for that Job until the Job is complete, blocked, cancelled, focus is cleared, or loop-control budgets/checkpoints stop the run. Task focus remains an ephemeral projection derived from governance, focused Job, acceptance criteria, task state, budgets, and recent runtime events.
 
+Jobs are mutatable by default. An agent executing a focused Job may update the Job's task tree during execution through the appropriate task/Docket tools. Therefore, a focused Job with no tasks does not automatically mean "nothing to do"; in the default mutable state, the first work is to define an executable task tree. A static/frozen Job with no tasks, or with only blocked/non-actionable tasks, is an exception and should be flagged before execution continues.
+
+Task focus derivation is deterministic: any `in_progress` task wins before pending work is considered; if multiple tasks are `in_progress`, choose the first in depth-first task-tree order and emit a diagnostic. Otherwise choose the first actionable `pending` task in depth-first task-tree order, sorting siblings by `sibling_order`, then creation time, then task id. Parent tasks are actionable even when they have children unless their own state says otherwise.
+
 Default shape:
 
 | Stance/use | Governance | Focused Job |
