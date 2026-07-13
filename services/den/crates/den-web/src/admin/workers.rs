@@ -5,7 +5,7 @@ use crate::errors::CustomError;
 use crate::web::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route_with_tsr("/", get(index))
+    Router::new().route("/", get(index))
 }
 
 pub async fn index(state: State<AppState>) -> Result<Response, CustomError> {
