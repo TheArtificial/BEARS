@@ -1,5 +1,4 @@
 use axum::{extract::State, response::Response, routing::get, Router};
-use axum_extra::routing::RouterExt;
 
 use crate::errors::CustomError;
 use crate::web::AppState;

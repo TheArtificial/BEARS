@@ -11,7 +11,6 @@ pub mod workers;
 
 use axum::response::Response;
 use axum::{extract::State, routing::get, Router};
-use axum_extra::routing::RouterExt;
 use minijinja::context;
 
 use crate::errors::CustomError;
