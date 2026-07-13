@@ -146,6 +146,8 @@ struct DomainQuery {
     message: Option<String>,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    compaction: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -208,6 +210,8 @@ struct LiveReflectionForm {
 struct ReflectConversationsForm {
     #[serde(default)]
     conversation_ids: Vec<Uuid>,
+    #[serde(default)]
+    bulk_action: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2522,7 +2526,7 @@ async fn conversations_view(
             })
             .collect()
         };
-    let conversations: Vec<ConversationAdminRow> = rows
+    let mut conversations: Vec<ConversationAdminRow> = rows
         .into_iter()
         .map(|c| {
             let external_id = c
@@ -2560,6 +2564,20 @@ async fn conversations_view(
             }
         })
         .collect();
+    let compaction_filter = query.compaction.as_deref().unwrap_or("all");
+    if compaction_filter != "all" {
+        conversations.retain(|c| match compaction_filter {
+            "none" => c.compaction_event_count == 0,
+            "skipped" => c.compaction_status.eq_ignore_ascii_case("skipped"),
+            "applied" => c.compaction_status.eq_ignore_ascii_case("applied"),
+            // ponytail: this is a latest-event filter; upgrade to durable
+            // reflected-through watermarks when duplicate-prevention state lands.
+            "needs_action" => {
+                c.compaction_event_count == 0 || c.compaction_status.eq_ignore_ascii_case("skipped")
+            }
+            _ => true,
+        });
+    }
     let live_reflection_status = live_reflection_status_for_bear(
         state.sqlx_pool(),
         bear.id,
@@ -2579,6 +2597,7 @@ async fn conversations_view(
             live_reflection_enabled => bear.live_reflection_enabled,
             message => query.message,
             error => query.error,
+            compaction_filter,
             ..bear_nav_context(&bear, "activity"),
         },
     )
@@ -2942,16 +2961,17 @@ async fn reflect_conversations_post(
         Ok(b) => b,
         Err(r) => return Ok(r.into_response()),
     };
-    if form.conversation_ids.is_empty() {
+    let selected_ids = conversation_ids_for_reflection_action(&state, bear.id, &form).await?;
+    if selected_ids.is_empty() {
         return Ok(Redirect::to(&format!(
             "/bear/{}/conversations?message={}",
             bear.slug,
-            urlencoding::encode("Select at least one conversation to reflect.")
+            urlencoding::encode("No conversations matched that reflection action.")
         ))
         .into_response());
     }
     let mut processed = 0usize;
-    for conversation_id in form.conversation_ids.into_iter().take(25) {
+    for conversation_id in selected_ids.into_iter().take(25) {
         let conv = match conversation_persistence::get_conversation_by_id(
             state.sqlx_pool(),
             conversation_id,
@@ -3009,6 +3029,60 @@ async fn reflect_conversation_post(
         bear.slug, conversation_id
     ))
     .into_response())
+}
+
+async fn conversation_ids_for_reflection_action(
+    state: &AppState,
+    bear_id: Uuid,
+    form: &ReflectConversationsForm,
+) -> Result<Vec<Uuid>, CustomError> {
+    match form.bulk_action.as_str() {
+        "all_no_compaction" => sqlx::query_scalar::<_, Uuid>(
+            r"
+            SELECT c.id
+            FROM conversations c
+            WHERE c.bear_id = $1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM runtime_compaction_events e
+                  WHERE e.conversation_id = c.external_conversation_id
+              )
+            ORDER BY c.updated_at DESC
+            LIMIT 25
+            ",
+        )
+        .bind(bear_id)
+        .fetch_all(state.sqlx_pool())
+        .await
+        .map_err(|err| {
+            CustomError::Database(format!("select conversations without compaction: {err}"))
+        }),
+        "all_skipped_compaction" => sqlx::query_scalar::<_, Uuid>(
+            r"
+            SELECT c.id
+            FROM conversations c
+            JOIN LATERAL (
+                SELECT e.status
+                FROM runtime_compaction_events e
+                WHERE e.conversation_id = c.external_conversation_id
+                ORDER BY e.created_at DESC
+                LIMIT 1
+            ) latest ON TRUE
+            WHERE c.bear_id = $1
+              AND lower(latest.status) = 'skipped'
+            ORDER BY c.updated_at DESC
+            LIMIT 25
+            ",
+        )
+        .bind(bear_id)
+        .fetch_all(state.sqlx_pool())
+        .await
+        .map_err(|err| {
+            CustomError::Database(format!("select skipped-compaction conversations: {err}"))
+        }),
+        "selected" | "" => Ok(form.conversation_ids.clone()),
+        _ => Ok(Vec::new()),
+    }
 }
 
 async fn reflect_persisted_conversation(
