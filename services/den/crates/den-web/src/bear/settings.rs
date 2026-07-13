@@ -376,6 +376,8 @@ struct ReflectionAdminRow {
     status_label: String,
     status_explanation: String,
     counts_label: String,
+    needs_attention: bool,
+    retry_href: Option<String>,
     candidate_count: Option<i64>,
     dropped_followup_count: Option<i64>,
     proposal_count: Option<i64>,
@@ -689,6 +691,20 @@ fn reflection_status_copy(
     }
 }
 
+fn reflection_needs_attention(status: Option<&str>, skipped_reason: Option<&str>) -> bool {
+    matches!(status, Some("failed") | Some("error"))
+        || matches!(
+            skipped_reason,
+            Some(reason)
+                if !matches!(
+                    reason,
+                    "below_compaction_threshold"
+                        | "no_uncompacted_content"
+                        | "live_reflection_disabled"
+                )
+        )
+}
+
 async fn live_reflection_status_for_bear(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
@@ -834,6 +850,8 @@ async fn reflection_rows_for_bear(
                     candidate_count,
                     proposal_count,
                 );
+                let needs_attention =
+                    reflection_needs_attention(status.as_deref(), skipped_reason.as_deref());
                 ReflectionAdminRow {
                     created_at: created_at.to_string(),
                     event_type,
@@ -849,6 +867,8 @@ async fn reflection_rows_for_bear(
                     status_label,
                     status_explanation,
                     counts_label,
+                    needs_attention,
+                    retry_href: conversation_id.map(|id| format!("conversations/{id}/reflect")),
                     candidate_count,
                     dropped_followup_count,
                     proposal_count,

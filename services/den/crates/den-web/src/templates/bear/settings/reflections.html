@@ -9,7 +9,7 @@
 
 {% if reflections and reflections | length > 0 %}
 <table>
-  <thead><tr><th>When</th><th>Conversation</th><th>Session</th><th>Event</th><th>Status</th><th>Counts</th></tr></thead>
+  <thead><tr><th>When</th><th>Conversation</th><th>Session</th><th>Event</th><th>Status</th><th>Counts</th><th>Action</th></tr></thead>
   <tbody>
   {% for reflection in reflections %}
     <tr>
@@ -40,9 +40,21 @@
           <br><small><a href="/bear/{{ bear.slug | e }}/memory">Open Memory review queue</a></small>
         {% endif %}
       </td>
+      <td>
+        {% if reflection.needs_attention %}
+          <strong>Needs attention</strong>
+          {% if can_manage_bear and reflection.retry_href %}
+          <form method="post" action="/bear/{{ bear.slug | e }}/{{ reflection.retry_href | e }}">
+            <button type="submit">Retry now</button>
+          </form>
+          {% endif %}
+        {% else %}
+          —
+        {% endif %}
+      </td>
     </tr>
     <tr>
-      <td colspan="6"><details><summary>Payload</summary><pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ reflection.payload_json | e }}</pre></details></td>
+      <td colspan="7"><details><summary>Payload</summary><pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ reflection.payload_json | e }}</pre></details></td>
     </tr>
   {% endfor %}
   </tbody>
