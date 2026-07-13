@@ -201,14 +201,17 @@ pub fn recalled_memory_session_diagnostic(recall: Option<&Value>) -> Value {
 
 fn objective_orientation_input(
     active_activity_plan: Option<&TaskListProjection>,
+    work_enabled: bool,
 ) -> ObjectiveOrientationResolutionInput {
     ObjectiveOrientationResolutionInput {
         focused_job_id: active_activity_plan.and_then(|plan| plan.source_ref.docket_job_id.clone()),
         focused_job_mutable: true,
         active_task_ref: active_activity_plan.and_then(active_orientation_task_ref),
-        // ponytail: freeform task definition is closed until a caller supplies a policy surface;
-        // upgrade path is to thread FreeformPolicy from turn/session request policy into assembly.
-        freeform_policy: FreeformPolicy::closed(),
+        freeform_policy: if work_enabled {
+            FreeformPolicy::task_definition_permitted()
+        } else {
+            FreeformPolicy::closed()
+        },
     }
 }
 
@@ -384,6 +387,7 @@ pub async fn assemble_native_turn_for_bear(
     let active_activity_plan = load_active_activity_plan(&ctx).await?;
     let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
         active_activity_plan.as_ref(),
+        bear.work_enabled,
     ));
 
     let mut system_text = compiled_prompt;
