@@ -19,6 +19,8 @@ In scope:
 - progressive agent loop control levels (`light`, `standard`, `careful`, `strict`),
 - governance as the continuation-pressure input (`interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`),
 - focused Job as the Docket objective input for long-running continuation,
+- objective orientation as the current outcome state (`freeform`, task-`oriented`, Job-`focused`),
+- freeform task-definition policy that controls whether the model may be told it can define a task and leave freeform mode,
 - model default control levels,
 - Bear-level and stance-level overrides mirroring model selection,
 - task/run escalation for risk, difficulty, or governance,
@@ -247,6 +249,86 @@ When focused:
 
 **Exit gate:** ACP-style clients can show/request Focus, but cannot select it as an ordinary permissions mode or use it to alter trust boundaries.
 
+## Phase 2c — Objective orientation and freeform task-definition policy
+
+**Goal:** make the loop controller consume an explicit objective-orientation state before budget/grace enforcement depends on it.
+
+Objective orientation answers one question: **what concrete outcome, if any, is this run currently pursuing?** It is distinct from governance/trust. Orientation may change steering strength, budget/grace profiles, task-list affordances, and prompt construction, but it must never expand authority, approvals, memory access, outbound auth, or destructive-action permissions by itself.
+
+Use exactly three orientation states:
+
+1. **`focused`** — a Docket Job is defined and centered. The loop's top priority is to complete the Job. Steering is strong and budget/grace are lenient while progress is evident. If the Job is mutable, child tasks can be added without a runtime-oriented cap; immutable/static Jobs reject or escalate decomposition.
+2. **`oriented`** — a Task is defined and is being worked on, but no focused Job is active. Steering and budget/grace are similar to focused but separately tunable. Task-scoped affordances may be available. Child task creation is capped: initially 6 children and 1 level below the oriented task.
+3. **`freeform`** — no outcome is defined. Budget/grace limits are strict. The model is just chatting unless the freeform policy permits task definition.
+
+Do **not** add a fourth orientation for "freeform but may orient/delegate." That is transition policy on `freeform`, not a different current-objective state. Orienting and delegation are locked behind the same gate: whether the model may define a task-shaped outcome.
+
+Suggested minimal shape:
+
+```rust
+pub enum ObjectiveOrientation {
+    Freeform { policy: FreeformPolicy },
+    Oriented(TaskOrientation),
+    Focused(JobOrientation),
+}
+
+pub struct FreeformPolicy {
+    pub may_define_task: bool,
+}
+
+pub struct TaskOrientation {
+    pub task_ref: OrientationTaskRef,
+    pub child_policy: OrientedChildTaskPolicy,
+}
+
+pub struct JobOrientation {
+    pub job_id: JobId,
+    pub mutability: JobMutability,
+    pub derived_task_ref: Option<OrientationTaskRef>,
+}
+
+pub enum OrientationTaskRef {
+    SessionTaskListItem(TaskListItemId),
+    DocketTask { job_id: Option<JobId>, task_id: TaskId },
+}
+
+pub struct OrientedChildTaskPolicy {
+    pub max_children: u8,
+    pub max_depth_below_oriented_task: u8,
+}
+
+pub const DEFAULT_ORIENTED_MAX_CHILDREN: u8 = 6;
+pub const DEFAULT_ORIENTED_MAX_DEPTH: u8 = 1;
+```
+
+Resolution order is deterministic:
+
+1. if a focused Job exists, resolve `Focused`;
+2. else if there is an explicit active/current task, resolve `Oriented`;
+3. else resolve `Freeform` with the run's resolved `FreeformPolicy`.
+
+The freeform task-definition policy affects both runtime legality and model-visible affordances:
+
+- `may_define_task: false`: do not tell the model that task definition, orientation, or delegation is possible. The runtime still defensively rejects task-definition/delegation attempts from this freeform run. The model should answer, ask a clarifying question, or stop within strict freeform limits.
+- `may_define_task: true`: the prompt may say the model can define a concrete task with completion criteria when the request needs sustained work. Defining a task can lead to local `oriented` continuation or to delegation/handoff through existing Docket/task-list paths, subject to governance and approval policy.
+
+ponytail: keep `may_define_task` as a single boolean until another real state is needed. Do not split `may_orient` and `may_delegate` while they are locked together.
+
+| Task | Done when |
+| --- | --- |
+| Add orientation types | Runtime has typed `ObjectiveOrientation`, `FreeformPolicy`, `TaskOrientation`, `JobOrientation`, and oriented child-task constants. |
+| Resolve orientation per run | Runs resolve to exactly one of `freeform`, `oriented`, or `focused`; focused Job wins over active/current task. |
+| Keep freeform prompt gated | Prompt construction includes task-definition/orientation/delegation affordances only when `FreeformPolicy.may_define_task` is true. |
+| Defensively enforce freeform policy | Runtime rejects task-definition/delegation attempts from freeform runs where `may_define_task` is false, even though the prompt should not expose that option. |
+| Apply orientation budget profiles | Freeform uses strict budget/grace; oriented and focused use separately tunable lenient-while-progressing profiles. |
+| Enforce oriented child cap | Oriented runs can create at most 6 child tasks and only 1 level below the oriented task; attempts beyond the cap require finishing, focusing a Job, or handoff/escalation. |
+| Preserve focused Job decomposition | Mutable focused Jobs are not subject to the oriented cap; immutable/static focused Jobs reject or escalate child-task creation. |
+| Preserve trust boundaries | Orientation never grants tools, approvals, memory access, outbound auth, or destructive-action permission beyond effective governance/trust/armature policy. |
+| Add diagnostics | Run diagnostics include orientation kind, relevant task/job refs, `may_define_task` for freeform, and child-policy summary without leaking hidden gate internals. |
+| Add tests | Cover freeform closed prompt, freeform open → oriented, runtime rejection when closed, oriented child cap/depth cap, focused precedence over active task, focused mutable decomposition, and immutable focused Job rejection/escalation. |
+
+**Exit gate:** loop control has explicit objective orientation and can gate freeform task-definition affordances before budget/grace enforcement is tuned around orientation.
+
 ## Phase 3 — Budget/ko/failure integration
 
 **Goal:** initialize loop budgets from the resolved control profile.
@@ -449,19 +531,26 @@ When a trigger fires:
 
 **Exit gate:** checkpoints are part of runtime continuation, not merely diagnostics, and a checkpoint report prevents immediate re-triggering of the same checkpoint while preserving budget/ko authority.
 
-## Phase 8 — Optional checkpoint thinking-level escalation
+## Phase 8 — Model-task routing and reasoning effort
 
-**Goal:** pair checkpoint turns with higher reasoning effort when policy/provider support allows.
+**Goal:** route loop-control model calls through the model tasks layer, with reasoning effort as one provider-neutral request-profile field.
+
+Loop control classifies the call, but it does not select raw provider/model identifiers directly. For foreground agent-loop calls, it passes `agent_primary` step metadata such as `ordinary_turn`, `planning`, `task_selection`, `execution`, `checkpoint`, `pre_risk_review`, `summarization`, or `cheap_probe` to the model tasks layer. The model tasks layer resolves an approved `ModelRequestProfile` from the Bear model library, registry capabilities, loop-control policy, risk, budget, governance, and objective orientation.
+
+Reasoning effort is one optional routing dimension, not a separate control path. Unsupported provider-specific thinking metadata degrades to diagnostics only; runtime enforcement remains dominant.
+
+Bounded delegation is allowed only through approved symbolic model refs. Capable controller/checkpoint models may recommend delegating routine scoped work to weaker or cheaper models; weaker models may request escalation. Runtime/model-task policy validates model eligibility, scope, risk, tools/files, and budget before any route changes.
 
 | Task | Done when |
 | --- | --- |
-| Add thinking metadata type | Provider request metadata can carry low/medium/high or provider-equivalent effort. |
-| Add capability detection | Model/provider support is known or safely treated as best-effort. |
-| Apply only on checkpoint/pre-risk turns | Escalation is bounded to the inference that needs synthesis unless profile says otherwise. |
-| Emit diagnostics | Run diagnostics include applied/skipped thinking override and reason. |
-| Add tests | Supported provider receives metadata; unsupported provider degrades without failure; enforcement remains independent. |
+| Add `agent_primary` step metadata | Loop-control calls can classify ordinary turns, planning, task selection, execution, checkpoints, pre-risk review, summaries, and cheap probes without new top-level task classes. |
+| Resolve `ModelRequestProfile` through model tasks | Runtime receives approved model ref plus optional reasoning effort and request parameters; it does not branch on raw provider model names. |
+| Add capability detection | Model/provider support for reasoning effort is known or safely treated as best-effort. |
+| Add bounded delegation/escalation checks | Delegation targets are Bear-library and registry approved, scoped, risk-aware, budgeted, and audited. |
+| Emit diagnostics | Run diagnostics include requested/resolved model profile, applied/skipped reasoning override, delegation/escalation reason, and provider support status. |
+| Add tests | Routing uses model-task policy; unsupported reasoning metadata degrades without failure; model recommendations cannot bypass budget, ko, task gates, trust policy, or permission checks. |
 
-**Exit gate:** checkpoint turns can request elevated thinking without changing budget/ko/task-gate authority.
+**Exit gate:** checkpoint/pre-risk and delegated foreground calls are routed through model-task policy, and reasoning effort/model delegation never changes budget/ko/task-gate authority.
 
 ## Phase 9 — Task-list/Docket integration
 
