@@ -1571,8 +1571,8 @@ pub(crate) async fn run_start_result(
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, stance)
         .await?
         .ok_or_else(|| {
-            CustomError::NotFound(format!(
-                "Bear {} profile binding not found",
+            CustomError::System(format!(
+                "Bear {} profile binding not configured",
                 stance.as_str()
             ))
         })?;

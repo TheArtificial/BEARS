@@ -712,7 +712,9 @@ pub(crate) async fn client_tool_result_result(
         &session_id,
     )
     .await?
-    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    .ok_or_else(|| {
+        CustomError::Session("BearWire session disappeared during run continuation".to_string())
+    })?;
     let continuation_conversation_id = continuation_conversation_id(&session);
     if !den_runtime::native_runtime::native_client_session_exists(
         &continuation_conversation_id,
@@ -728,7 +730,9 @@ pub(crate) async fn client_tool_result_result(
     }
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
-        .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
+        .ok_or_else(|| {
+            CustomError::System("Bear pair profile binding not configured".to_string())
+        })?;
     let coordinator_outcome = client_obligation_coordinator::record_and_settle_tool_result(
         &state.sqlx_pool,
         &run,
@@ -945,7 +949,9 @@ pub(crate) async fn client_permission_result_result(
         &session_id,
     )
     .await?
-    .ok_or_else(|| CustomError::NotFound("BearWire session not found".to_string()))?;
+    .ok_or_else(|| {
+        CustomError::Session("BearWire session disappeared during run continuation".to_string())
+    })?;
     let continuation_conversation_id = continuation_conversation_id(&session);
     if !den_runtime::native_runtime::native_client_session_exists(
         &continuation_conversation_id,
@@ -961,7 +967,9 @@ pub(crate) async fn client_permission_result_result(
     }
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, BearProfile::Pair)
         .await?
-        .ok_or_else(|| CustomError::NotFound("Bear pair profile binding not found".to_string()))?;
+        .ok_or_else(|| {
+            CustomError::System("Bear pair profile binding not configured".to_string())
+        })?;
     let coordinator_outcome = client_obligation_coordinator::record_and_settle_permission_result(
         &state.sqlx_pool,
         &run,
