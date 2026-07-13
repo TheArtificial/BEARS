@@ -8,6 +8,7 @@ use den_core::tools::{
 use std::sync::{Arc, LazyLock};
 
 use den_memory::MemoryStoreManager;
+use den_docket::TaskListProjection;
 use den_protocol::{
     ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
     RuntimeConversationRef, RuntimeErrorCategory, RuntimeEventStream, RuntimeHistoryPage,
@@ -37,12 +38,14 @@ use crate::{
         evaluate_checkpoint_trigger, evaluate_turn_budget, projected_memory_session_diagnostic,
         provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
         record_approval_decision, record_checkpoint_request, resolve_agent_loop_control,
-        run_agent_step_stream, tool_result_content_indicates_error, tool_signature_from_call,
-        AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
-        AgentStepOverflowContext, AssembleTurnContext, CheckpointArtifactInput, CheckpointField,
-        CheckpointReplayPolicy, CheckpointTaskContext, CheckpointTrigger, CheckpointVisibility,
-        NativeToolDispatchMode, RuntimeCheckpointRequest, SessionTrackingStream,
-        ToolContinuationObservation, TurnBudgetStopReason, TurnBudgetWarning,
+        resolve_objective_orientation, run_agent_step_stream, tool_result_content_indicates_error,
+        tool_signature_from_call, AgentLoopControlResolutionInput, AgentLoopSession,
+        AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
+        CheckpointArtifactInput, CheckpointField, CheckpointReplayPolicy, CheckpointTaskContext,
+        CheckpointTrigger, CheckpointVisibility, FreeformPolicy, NativeToolDispatchMode,
+        ObjectiveOrientationResolutionInput, OrientationTaskRef, RuntimeCheckpointRequest,
+        SessionTrackingStream, ToolContinuationObservation, TurnBudgetStopReason,
+        TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
@@ -561,6 +564,51 @@ struct BuildSessionInput<'a> {
     tool_messages: Vec<ChatMessage>,
 }
 
+fn objective_orientation_input(
+    active_activity_plan: Option<&TaskListProjection>,
+) -> ObjectiveOrientationResolutionInput {
+    let active_task_ref = active_activity_plan.and_then(active_orientation_task_ref);
+    let focused_job_id = active_activity_plan
+        .and_then(|plan| plan.source_ref.docket_job_id.clone());
+
+    ObjectiveOrientationResolutionInput {
+        focused_job_id,
+        focused_job_mutable: true,
+        active_task_ref,
+        freeform_policy: FreeformPolicy::closed(),
+    }
+}
+
+fn active_orientation_task_ref(plan: &TaskListProjection) -> Option<OrientationTaskRef> {
+    let item = plan.current_item.as_ref().or_else(|| {
+        plan.items.iter().find(|item| {
+            matches!(
+                item.status,
+                den_docket::TaskListItemStatus::InProgress
+                    | den_docket::TaskListItemStatus::Pending
+            )
+        })
+    })?;
+
+    if let Some(task_id) = item.source_ref.docket_task_id.clone() {
+        return Some(OrientationTaskRef::DocketTask {
+            job_id: item
+                .source_ref
+                .docket_job_id
+                .clone()
+                .or_else(|| plan.source_ref.docket_job_id.clone()),
+            task_id,
+            title: Some(item.title.clone()),
+        });
+    }
+
+    Some(OrientationTaskRef::TaskListItem {
+        task_list_id: plan.id.to_string(),
+        item_id: item.id.clone(),
+        title: Some(item.title.clone()),
+    })
+}
+
 async fn build_session(
     deps: &NativeRuntimeDeps<'_>,
     input: BuildSessionInput<'_>,
@@ -698,6 +746,9 @@ async fn build_session(
         profile: agent_loop_control.profile.with_budget(profile.turn_budget),
         ..agent_loop_control
     };
+    let objective_orientation = resolve_objective_orientation(
+        objective_orientation_input(active_activity_plan.as_ref()),
+    );
     tracing::info!(
         bear_id = %bear_id,
         profile = %profile.profile.as_str(),
@@ -736,6 +787,7 @@ async fn build_session(
         turn_budget: agent_loop_control.profile.budget,
         turn_budget_state: Default::default(),
         agent_loop_control,
+        objective_orientation,
         checkpoint_state: Default::default(),
         pending_checkpoint_request: None,
         pending_checkpoint_task_action: None,
@@ -1623,6 +1675,12 @@ mod tests {
         })
     }
 
+    fn freeform_orientation() -> crate::agent_loop::ObjectiveOrientation {
+        crate::agent_loop::ObjectiveOrientation::Freeform {
+            policy: FreeformPolicy::closed(),
+        }
+    }
+
     #[test]
     fn bear_id_from_native_binding_parses_den_native_format() {
         let bear_id = Uuid::new_v4();
@@ -1666,6 +1724,7 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            objective_orientation: freeform_orientation(),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,
@@ -1800,6 +1859,7 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            objective_orientation: freeform_orientation(),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,
@@ -1912,6 +1972,7 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            objective_orientation: freeform_orientation(),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,
@@ -2073,6 +2134,7 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            objective_orientation: freeform_orientation(),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,
@@ -2226,6 +2288,7 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            objective_orientation: freeform_orientation(),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,

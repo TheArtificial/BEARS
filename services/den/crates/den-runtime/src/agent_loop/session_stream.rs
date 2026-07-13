@@ -1629,6 +1629,9 @@ mod tests {
                 focused_job: false,
                 pre_risk: false,
             }),
+            objective_orientation: crate::agent_loop::ObjectiveOrientation::Freeform {
+                policy: crate::agent_loop::FreeformPolicy::closed(),
+            },
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,

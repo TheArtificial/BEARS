@@ -317,6 +317,130 @@ pub enum CheckpointResponseValidationError {
     MissingRequiredField(CheckpointField),
 }
 
+pub const DEFAULT_ORIENTED_MAX_CHILDREN: u8 = 6;
+pub const DEFAULT_ORIENTED_MAX_DEPTH: u8 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FreeformPolicy {
+    pub may_define_task: bool,
+}
+
+impl FreeformPolicy {
+    pub const fn closed() -> Self {
+        Self {
+            may_define_task: false,
+        }
+    }
+
+    pub const fn task_definition_permitted() -> Self {
+        Self {
+            may_define_task: true,
+        }
+    }
+}
+
+impl Default for FreeformPolicy {
+    fn default() -> Self {
+        Self::closed()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrientedChildTaskPolicy {
+    pub max_children: u8,
+    pub max_depth_below_oriented_task: u8,
+}
+
+impl Default for OrientedChildTaskPolicy {
+    fn default() -> Self {
+        Self {
+            max_children: DEFAULT_ORIENTED_MAX_CHILDREN,
+            max_depth_below_oriented_task: DEFAULT_ORIENTED_MAX_DEPTH,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OrientationTaskRef {
+    TaskListItem {
+        task_list_id: String,
+        item_id: String,
+        title: Option<String>,
+    },
+    DocketTask {
+        job_id: Option<String>,
+        task_id: String,
+        title: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskOrientation {
+    pub task_ref: OrientationTaskRef,
+    pub child_policy: OrientedChildTaskPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobOrientation {
+    pub job_id: String,
+    pub active_task_ref: Option<OrientationTaskRef>,
+    pub mutable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ObjectiveOrientation {
+    Freeform { policy: FreeformPolicy },
+    Oriented { task: TaskOrientation },
+    Focused { job: JobOrientation },
+}
+
+impl ObjectiveOrientation {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Freeform { .. } => "freeform",
+            Self::Oriented { .. } => "oriented",
+            Self::Focused { .. } => "focused",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectiveOrientationResolutionInput {
+    pub focused_job_id: Option<String>,
+    pub focused_job_mutable: bool,
+    pub active_task_ref: Option<OrientationTaskRef>,
+    pub freeform_policy: FreeformPolicy,
+}
+
+pub fn resolve_objective_orientation(
+    input: ObjectiveOrientationResolutionInput,
+) -> ObjectiveOrientation {
+    if let Some(job_id) = input.focused_job_id {
+        return ObjectiveOrientation::Focused {
+            job: JobOrientation {
+                job_id,
+                active_task_ref: input.active_task_ref,
+                mutable: input.focused_job_mutable,
+            },
+        };
+    }
+
+    if let Some(task_ref) = input.active_task_ref {
+        return ObjectiveOrientation::Oriented {
+            task: TaskOrientation {
+                task_ref,
+                child_policy: OrientedChildTaskPolicy::default(),
+            },
+        };
+    }
+
+    ObjectiveOrientation::Freeform {
+        policy: input.freeform_policy,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedAgentLoopControl {
     pub level: AgentLoopControlLevel,
@@ -766,6 +890,81 @@ mod tests {
             class,
             failed,
         }
+    }
+
+    #[test]
+    fn objective_orientation_resolver_prefers_focused_job_over_task() {
+        let task_ref = OrientationTaskRef::DocketTask {
+            job_id: Some("job-from-task".to_string()),
+            task_id: "task-1".to_string(),
+            title: Some("Implement the thing".to_string()),
+        };
+
+        let resolved = resolve_objective_orientation(ObjectiveOrientationResolutionInput {
+            focused_job_id: Some("job-1".to_string()),
+            focused_job_mutable: true,
+            active_task_ref: Some(task_ref.clone()),
+            freeform_policy: FreeformPolicy::task_definition_permitted(),
+        });
+
+        assert_eq!(
+            resolved,
+            ObjectiveOrientation::Focused {
+                job: JobOrientation {
+                    job_id: "job-1".to_string(),
+                    active_task_ref: Some(task_ref),
+                    mutable: true,
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn objective_orientation_resolver_orients_to_task_before_freeform() {
+        let task_ref = OrientationTaskRef::TaskListItem {
+            task_list_id: "list-1".to_string(),
+            item_id: "item-1".to_string(),
+            title: Some("Document task orientation".to_string()),
+        };
+
+        let resolved = resolve_objective_orientation(ObjectiveOrientationResolutionInput {
+            focused_job_id: None,
+            focused_job_mutable: true,
+            active_task_ref: Some(task_ref.clone()),
+            freeform_policy: FreeformPolicy::task_definition_permitted(),
+        });
+
+        assert_eq!(
+            resolved,
+            ObjectiveOrientation::Oriented {
+                task: TaskOrientation {
+                    task_ref,
+                    child_policy: OrientedChildTaskPolicy {
+                        max_children: DEFAULT_ORIENTED_MAX_CHILDREN,
+                        max_depth_below_oriented_task: DEFAULT_ORIENTED_MAX_DEPTH,
+                    },
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn objective_orientation_resolver_preserves_closed_freeform_policy() {
+        let resolved = resolve_objective_orientation(ObjectiveOrientationResolutionInput {
+            focused_job_id: None,
+            focused_job_mutable: true,
+            active_task_ref: None,
+            freeform_policy: FreeformPolicy::closed(),
+        });
+
+        assert_eq!(
+            resolved,
+            ObjectiveOrientation::Freeform {
+                policy: FreeformPolicy {
+                    may_define_task: false,
+                }
+            }
+        );
     }
 
     #[test]

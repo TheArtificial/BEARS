@@ -58,13 +58,16 @@ pub use context::{
 };
 pub use control::{
     evaluate_checkpoint_trigger, pre_risk_checkpoint_trigger, resolve_agent_loop_control,
-    task_gate_checkpoint_trigger, validate_checkpoint_response, AgentLoopControlProfile,
-    AgentLoopControlResolutionInput, AgentLoopControlSource, CheckpointConfidence,
-    CheckpointEvaluation, CheckpointEvidenceRef, CheckpointField, CheckpointNextAction,
-    CheckpointPolicy, CheckpointReason, CheckpointResponseValidationError, CheckpointState,
-    CheckpointTaskContext, CheckpointThinkingPolicy, CheckpointTrigger, KoPolicy,
-    ResolvedAgentLoopControl, RuntimeCheckpointRequest, RuntimeCheckpointResponse, TaskGatePolicy,
-    TaskStateChangeIntent,
+    resolve_objective_orientation, task_gate_checkpoint_trigger, validate_checkpoint_response,
+    AgentLoopControlProfile, AgentLoopControlResolutionInput, AgentLoopControlSource,
+    CheckpointConfidence, CheckpointEvaluation, CheckpointEvidenceRef, CheckpointField,
+    CheckpointNextAction, CheckpointPolicy, CheckpointReason, CheckpointResponseValidationError,
+    CheckpointState, CheckpointTaskContext, CheckpointThinkingPolicy, CheckpointTrigger,
+    FreeformPolicy, JobOrientation, KoPolicy, ObjectiveOrientation,
+    ObjectiveOrientationResolutionInput, OrientedChildTaskPolicy, OrientationTaskRef,
+    ResolvedAgentLoopControl, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
+    TaskGatePolicy, TaskOrientation, TaskStateChangeIntent, DEFAULT_ORIENTED_MAX_CHILDREN,
+    DEFAULT_ORIENTED_MAX_DEPTH,
 };
 pub use key_memory_projection::{
     project_key_memory, KeyMemoryProjectionCacheKey, KeyMemoryProjectionResult,
