@@ -36,6 +36,7 @@ use den_runtime::{
     bearwire_events,
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
+    runtime::compaction_observability::RuntimeCompactionEventStatus,
 };
 use den_service::prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile;
 use den_service::{
@@ -212,6 +213,14 @@ struct ReflectConversationsForm {
     conversation_ids: Vec<Uuid>,
     #[serde(default)]
     bulk_action: String,
+}
+
+#[derive(Debug, Default)]
+struct ManualReflectionResult {
+    compaction_applied: bool,
+    compaction_skipped: bool,
+    proposals_created: usize,
+    skipped_reason: Option<&'static str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2971,6 +2980,10 @@ async fn reflect_conversations_post(
         .into_response());
     }
     let mut processed = 0usize;
+    let mut compaction_applied = 0usize;
+    let mut compaction_skipped = 0usize;
+    let mut proposals_created = 0usize;
+    let mut reflection_skipped = 0usize;
     for conversation_id in selected_ids.into_iter().take(25) {
         let conv = match conversation_persistence::get_conversation_by_id(
             state.sqlx_pool(),
@@ -2981,7 +2994,7 @@ async fn reflect_conversations_post(
             Some(conv) if conv.bear_id == bear.id => conv,
             _ => continue,
         };
-        reflect_persisted_conversation(
+        let result = reflect_persisted_conversation(
             &state,
             auth_session.user.as_ref().map(|u| u.id),
             &bear,
@@ -2990,12 +3003,16 @@ async fn reflect_conversations_post(
         )
         .await?;
         processed += 1;
+        compaction_applied += usize::from(result.compaction_applied);
+        compaction_skipped += usize::from(result.compaction_skipped);
+        proposals_created += result.proposals_created;
+        reflection_skipped += usize::from(result.skipped_reason.is_some());
     }
     Ok(Redirect::to(&format!(
         "/bear/{}/conversations?message={}",
         bear.slug,
         urlencoding::encode(&format!(
-            "Reflection requested for {processed} conversation(s)."
+            "Manual reflection complete: {processed} conversation(s) processed; {compaction_applied} checkpoint(s) created; {compaction_skipped} compaction check(s) skipped; {proposals_created} proposal(s) created; {reflection_skipped} reflection run(s) skipped."
         ))
     ))
     .into_response())
@@ -3016,7 +3033,7 @@ async fn reflect_conversation_post(
     if conv.bear_id != bear.id {
         return Err(CustomError::NotFound("conversation not found".to_string()));
     }
-    reflect_persisted_conversation(
+    let result = reflect_persisted_conversation(
         &state,
         auth_session.user.as_ref().map(|u| u.id),
         &bear,
@@ -3025,8 +3042,21 @@ async fn reflect_conversation_post(
     )
     .await?;
     Ok(Redirect::to(&format!(
-        "/bear/{}/conversations/{}",
-        bear.slug, conversation_id
+        "/bear/{}/conversations/{}?message={}",
+        bear.slug,
+        conversation_id,
+        urlencoding::encode(&format!(
+            "Manual reflection complete: {} checkpoint; {} proposal(s) created; reflection {}.",
+            if result.compaction_applied {
+                "created"
+            } else if result.compaction_skipped {
+                "skipped"
+            } else {
+                "not needed"
+            },
+            result.proposals_created,
+            result.skipped_reason.unwrap_or("processed")
+        ))
     ))
     .into_response())
 }
@@ -3091,7 +3121,7 @@ async fn reflect_persisted_conversation(
     bear: &den_service::bears::Bear,
     conv: &conversation_persistence::ConversationRecord,
     trigger: &str,
-) -> Result<(), CustomError> {
+) -> Result<ManualReflectionResult, CustomError> {
     let conversation_external_id = conv
         .external_conversation_id
         .as_deref()
@@ -3104,7 +3134,7 @@ async fn reflect_persisted_conversation(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(conversation_external_id);
-    prepare_turn_compaction(
+    let compaction_state = prepare_turn_compaction(
         state.sqlx_pool(),
         &state.config,
         bear.id,
@@ -3113,6 +3143,7 @@ async fn reflect_persisted_conversation(
         TurnCompactionTrigger::Manual,
     )
     .await?;
+    let compaction_status = compaction_state.as_ref().map(|state| &state.event.status);
     let memory_stores = MemoryStoreManager::new(&state.config);
     let output = create_pair_reflection_proposals_from_latest_summary(
         state.sqlx_pool(),
@@ -3148,7 +3179,18 @@ async fn reflect_persisted_conversation(
         event,
     )
     .await?;
-    Ok(())
+    Ok(ManualReflectionResult {
+        compaction_applied: matches!(
+            compaction_status,
+            Some(RuntimeCompactionEventStatus::Applied)
+        ),
+        compaction_skipped: matches!(
+            compaction_status,
+            Some(RuntimeCompactionEventStatus::Skipped)
+        ),
+        proposals_created: output.created_proposal_ids.len(),
+        skipped_reason: output.skipped_reason,
+    })
 }
 
 async fn grant_member_action(
