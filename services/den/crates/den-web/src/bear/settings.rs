@@ -364,6 +364,18 @@ struct ReflectionAdminRow {
 }
 
 #[derive(Debug, Serialize)]
+struct LiveReflectionStatusAdmin {
+    enabled: bool,
+    workers_enabled: bool,
+    status_label: String,
+    status_explanation: String,
+    last_event_at: Option<String>,
+    checked_24h: i64,
+    processed_24h: i64,
+    skipped_24h: i64,
+}
+
+#[derive(Debug, Serialize)]
 struct CompactionEventAdminRow {
     trigger: String,
     status: String,
@@ -636,6 +648,72 @@ fn reflection_status_copy(
             ),
         ),
     }
+}
+
+async fn live_reflection_status_for_bear(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    enabled: bool,
+    workers_enabled: bool,
+) -> Result<LiveReflectionStatusAdmin, CustomError> {
+    let row = sqlx::query_as::<_, (Option<time::OffsetDateTime>, i64, i64, i64)>(
+        r#"
+        SELECT MAX(created_at) AS last_event_at,
+               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::bigint AS checked_24h,
+               COUNT(*) FILTER (
+                   WHERE created_at > NOW() - INTERVAL '24 hours'
+                     AND COALESCE(event_json->'data'->'pair_reflection'->>'status', event_json->'data'->>'status') = 'processed'
+               )::bigint AS processed_24h,
+               COUNT(*) FILTER (
+                   WHERE created_at > NOW() - INTERVAL '24 hours'
+                     AND COALESCE(event_json->'data'->'pair_reflection'->>'status', event_json->'data'->>'status') = 'skipped'
+               )::bigint AS skipped_24h
+        FROM bearwire_events
+        WHERE bear_id = $1
+          AND event_type = 'session.reflected'
+          AND COALESCE(event_json->'data'->'pair_reflection'->>'trigger', event_json->'data'->>'trigger') = 'open-session-stale'
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("live reflection status: {err}")))?;
+
+    let (status_label, status_explanation) = if !enabled {
+        (
+            "Off".to_string(),
+            "This Bear will not proactively spend tokens reflecting open conversations."
+                .to_string(),
+        )
+    } else if !workers_enabled {
+        (
+            "Configured on; worker not running".to_string(),
+            "RUN_WORKERS is off for this Den process, so proactive sweeps will not run here."
+                .to_string(),
+        )
+    } else if row.0.is_some() {
+        (
+            "On".to_string(),
+            "The background worker has recorded live reflection sweep activity for this Bear."
+                .to_string(),
+        )
+    } else {
+        (
+            "On; waiting for first sweep".to_string(),
+            "The background worker is enabled, but no live reflection event has been recorded for this Bear yet.".to_string(),
+        )
+    };
+
+    Ok(LiveReflectionStatusAdmin {
+        enabled,
+        workers_enabled,
+        status_label,
+        status_explanation,
+        last_event_at: row.0.map(|value| value.to_string()),
+        checked_24h: row.1,
+        processed_24h: row.2,
+        skipped_24h: row.3,
+    })
 }
 
 async fn reflection_rows_for_bear(
@@ -2444,12 +2522,20 @@ async fn conversations_view(
             }
         })
         .collect();
+    let live_reflection_status = live_reflection_status_for_bear(
+        state.sqlx_pool(),
+        bear.id,
+        bear.live_reflection_enabled,
+        state.config.run_workers,
+    )
+    .await?;
     web::render_template(
         &state,
         "bear/settings/conversations.html",
         auth_session,
         context! {
             conversations,
+            live_reflection_status,
             can_manage_bear,
             native_runtime => true,
             live_reflection_enabled => bear.live_reflection_enabled,

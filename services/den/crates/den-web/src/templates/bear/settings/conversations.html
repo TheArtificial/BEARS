@@ -7,14 +7,27 @@
 <h2>Activity</h2>
 <p class="form-hint">What this Bear has done, on this Den: conversations now, jobs and Cabinet activity as they land. The record stays here — the Bear's memory is what travels.</p>
 
+<h3>Live reflection</h3>
+<dl>
+  <dt>Status</dt>
+  <dd><strong>{{ live_reflection_status.status_label | e }}</strong><br><small>{{ live_reflection_status.status_explanation | e }}</small></dd>
+  <dt>Bear setting</dt>
+  <dd>{% if live_reflection_status.enabled %}On{% else %}Off{% endif %}</dd>
+  <dt>Background worker</dt>
+  <dd>{% if live_reflection_status.workers_enabled %}Running in this Den process{% else %}Not running in this Den process{% endif %}</dd>
+  <dt>Last live sweep event</dt>
+  <dd>{% if live_reflection_status.last_event_at %}{{ live_reflection_status.last_event_at }}{% else %}<em>none recorded</em>{% endif %}</dd>
+  <dt>Last 24 hours</dt>
+  <dd>{{ live_reflection_status.checked_24h }} checked, {{ live_reflection_status.processed_24h }} reflected, {{ live_reflection_status.skipped_24h }} skipped</dd>
+</dl>
+
 <h3>Conversations</h3>
 
 {% if message %}<p><strong>{{ message | e }}</strong></p>{% endif %}
 {% if error %}<p><strong>{{ error | e }}</strong></p>{% endif %}
 
 <p class="form-hint">
-  Live reflection is {% if live_reflection_enabled %}<strong>on</strong>{% else %}<strong>off</strong>{% endif %} for this Bear.
-  When on, open conversations are periodically checked; compaction artifacts are only generated when normal context-pressure rules say summarization is useful. Manual reflection below forces a compaction checkpoint first.
+  Live reflection periodically checks open conversations when the Bear setting and Den worker are on. Manual reflection below forces a compaction checkpoint first.
 </p>
 
 {% if conversations and conversations | length > 0 %}
