@@ -23,7 +23,7 @@
 </dl>
 
 <h3>Live reflection</h3>
-<p class="form-hint">When enabled, Den may spend background tokens to compact active conversations and propose memories from them. Turn this off to save tokens; closed-session reflection still runs normally.</p>
+<p class="form-hint"><strong>Live reflection</strong> is a conservative background sweep: when this Bear and the Den worker are enabled, open conversations are checked and reflected if normal context-pressure policy has produced a summary. <strong>Manual reflection checkpoints</strong> are separate: the Activity page buttons force a checkpoint for selected conversations before mining it for memory proposals.</p>
 <form method="post" action="/bear/{{ bear.slug | e }}/advanced/live-reflection">
   <label>
     <input type="checkbox" name="enabled" value="1" {% if bear.live_reflection_enabled %}checked{% endif %} {% if not can_manage_bear %}disabled{% endif %}>

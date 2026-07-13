@@ -10,7 +10,7 @@
 <form method="post" action="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}/reflect">
   <p><button type="submit">Reflect this conversation now</button></p>
 </form>
-<p class="form-hint">Manual reflection forces a compaction checkpoint first, then mines that summary for memory proposals.</p>
+<p class="form-hint"><strong>Manual reflection checkpoint:</strong> this forces a fresh checkpoint first, then mines that checkpoint for memory proposals. Background live reflection may only check this conversation unless normal context-pressure policy creates a summary.</p>
 {% endif %}
 
 <dl>
