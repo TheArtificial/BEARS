@@ -9,6 +9,7 @@
 - [ADR-0034 — Jobs and tasks (Docket)](adr-0034-jobs-and-tasks-work-management.md)
 - [ADR-0026 — Work handoff and human escalation](adr-0026-work-handoff-and-human-escalation.md)
 - [ADR-0006 — Bear work surfaces](adr-0006-bear-work-surfaces.md)
+- [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
 - [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 - [`work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md)
 
@@ -143,9 +144,11 @@ The "keep the loop on-task" machinery from [ADR-0023 (Task focus supervisor)](ad
 |----------|-------|
 | What counts as finished / on-task? | **Acceptance criteria** (`bear_job_criteria`, ADR-0034) — durable definition of done; `command` criteria are hard completion gates. |
 | How hard to drive, when to yield, who is watching? | **Governance mode** (this ADR) — `interactive` yields/asks, `autonomous_continuation` drives to completion, `grace` transitions, `frozen` stops, `observational` never nudges. |
-| Is *this* candidate yield premature right now? | **Task focus** — an ephemeral projection of `(governance mode × acceptance-criteria state × run/task status)`, evaluated as a phase of the native loop, **not** a fourth state machine. |
+| Is *this* candidate yield premature right now? | **Task focus** — an ephemeral projection of `(governance × focused Job × acceptance-criteria state × run/task status)`, evaluated as a phase of the native loop, **not** a fourth state machine. |
 
-Consequently, continuation bias is **governance-mode-driven, not trust-profile-driven**. ADR-0023's "`work` drives harder than `pair`" is re-expressed as: the trust profile *defaults* a run's governance mode (a `work` run typically starts more autonomous, a `pair`/`chat` run interactive), but a `pair` run in `autonomous_continuation` is driven just as hard. Focus nudges are governance-mode-aware and reference acceptance criteria as the success contract.
+Consequently, continuation bias is **governance-driven, not trust-profile-driven**. ADR-0023's "`work` drives harder than `pair`" is re-expressed as: the trust profile *defaults* a run's governance mode (a `work` run typically starts more autonomous, a `pair`/`chat` run interactive), but a `pair` run in `autonomous_continuation` is driven just as hard. Focus nudges are governance-aware and reference acceptance criteria as the success contract.
+
+A **focused Job** is the Docket Job designated as the durable objective for a run. `work` normally requires one; `pair` normally has none, but may designate one explicitly through Bear conversation or a client command. While a focused Job is active, Den asks the model to address the next logical incomplete, unblocked task for that Job until the Job completes, blocks, is cancelled, focus is cleared, or loop-control checkpoints/budgets stop the run. This is intentionally not generalized into `focus_target` yet; the only supported durable focus object is a Docket Job.
 
 The concrete budget/checkpoint machinery for this relationship is specified by [ADR-0050 (Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints)](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) and sequenced in [`AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md`](../roadmap/AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md): tool-call and wall-clock budgets, repeated-tool/ko detection, failure thresholds, runtime checkpoints, and task-list/Docket reconciliation are loop-control policy, while task/job state remains Docket-owned.
 

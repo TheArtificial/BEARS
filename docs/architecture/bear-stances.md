@@ -14,6 +14,8 @@ For the post-Letta split between **trust**, **armature**, and **work surfaces** 
 
 The five stances are durable trust-and-memory contracts (`BearStance` in code; `BearProfile` remains a temporary compatibility alias). How a particular run is *supervised right now* (live, disconnected, autonomous, inspected, frozen) is a separate, orthogonal **governance mode** (`Mode` in code) on the run / workspace session. A Bear going offline mid-session is a governance-mode transition, not a switch from `pair` to `work`. See [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance-modes.md).
 
+Long-running continuation also has an objective axis: the **focused Job**. `work` normally requires a designated Docket Job and drives the next logical incomplete task for that Job under autonomous-continuation governance. `pair` normally has no focused Job, but can enter focused-Job behavior explicitly through Bear conversation or client command while keeping the `pair` trust stance. The loop-control details live in [ADR-0050](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md).
+
 For how **work surfaces** relate to **conversations** (including “start a conversation with this repository”), see [`../guides/work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md).
 
 It is not the implementation spec for provisioning, prompt hashes, tool ids, runtime lifecycle, or database reconciliation. Those details live in the Den spec. It is also not the decision record explaining why the architecture was chosen. That rationale lives in ADRs.

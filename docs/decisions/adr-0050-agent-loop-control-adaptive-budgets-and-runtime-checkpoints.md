@@ -2,7 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-07-04  
-**Updated:** 2026-07-06  
+**Updated:** 2026-07-13  
 **Deciders:** Hans
 
 **Related:**
@@ -22,6 +22,8 @@
 > 2. **§7d** allows optional **cheap-model classifier signals** for the residual intent/similarity judgment calls, strictly advisory and ledgered, and deferred behind the measurement foundation.
 > 3. **§11** promotes **context/token budget** (previously deferred entirely to [ADR-0047](adr-0047-context-window-budget-and-token-estimation.md)) to a first-class loop-control dimension owned by the loop controller, and defines checkpoint-then-compact sequencing.
 > 4. The **Initial policy shape** now launches in **advisory mode** with a persisted budget ledger and offline replay, because Bear Den cannot fine-tune this policy without an automated measurement loop. Sequencing lives in [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md).
+>
+> **2026-07-13 terminology update.** Loop control separates **governance** (how hard the runtime drives or yields) from the **focused Job** (the Docket Job, if any, that must remain centered). `work` normally requires a focused Job and drives it under autonomous-continuation governance. `pair` normally has no focused Job, but may designate one explicitly through conversation or client command.
 
 ## Context
 
@@ -62,6 +64,28 @@ Control-level selection should mirror model selection:
 4. task/run policy may request an escalation for risk, difficulty, or governance mode, but runtime receives a resolved typed profile rather than hardcoding model names or inferring risk from prose.
 
 This lets a more tool-disciplined model run with lighter checkpointing by default, while a model known to over-explore or retry poorly can default to `standard` or `careful`. Bear and stance overrides preserve operator intent and local experience without scattering per-model conditionals throughout the runtime.
+
+### 1a. Governance and focused Job are separate loop inputs
+
+Agent loop control consumes two orthogonal runtime facts:
+
+- **Governance** — how the run is supervised right now: `interactive`, `grace`, `autonomous_continuation`, `observational`, or `frozen`.
+- **Focused Job** — the Docket Job designated as the durable objective for this run, if any.
+
+Do not model this as `job_focus_mode` or a generic `focus_target` yet. YAGNI: the only durable focus object with the lifecycle and completion semantics needed by loop control is a Docket Job. If another object later needs equivalent semantics, generalize then.
+
+A focused Job changes next-action selection, not trust boundaries. While one is present, Den prompts the model toward the next logical incomplete, unblocked task for that Job until the Job is complete, blocked, cancelled, focus is cleared, or loop-control budgets/checkpoints stop the run. Task focus remains an ephemeral projection derived from governance, focused Job, acceptance criteria, task state, budgets, and recent runtime events.
+
+Default shape:
+
+| Stance/use | Governance | Focused Job |
+| --- | --- | --- |
+| Normal `pair` | `interactive` | none |
+| `pair` with explicit focused Job | `interactive`, or `autonomous_continuation` if explicitly requested | required while focus is active |
+| Normal `work` | `autonomous_continuation` | required |
+| `watch` inspecting a Job | `observational` | optional |
+
+`work` dispatch must designate a focused Job before the model is prompted to drive. `pair` may enter focused-Job behavior only when the user designates a Job through Bear conversation or a client command; exact UX is intentionally left to implementation plans.
 
 Control levels may also specify a **checkpoint thinking policy**. When provider/model configuration exposes a thinking level or reasoning-effort control, a checkpoint turn may optionally request a different thinking level than ordinary continuation turns. For example, `light` may keep the model's default thinking level, `standard` may request moderate reasoning for checkpoint turns, and `careful`/`strict` may request higher reasoning for checkpoint or pre-risk turns. This is a quality/cost tuning knob, not a safety boundary: loop continuation, task gates, budgets, and ko enforcement remain runtime-authoritative even if a provider ignores or lacks thinking-level controls.
 
@@ -250,6 +274,8 @@ Classifier invocation should be bounded to trigger boundaries (a checkpoint firi
 
 `work` is expected to support materially longer runs than `pair`, `chat`, or `watch`.
 
+A normal `work` run is also expected to have a **focused Job**. The focused Job is the durable Docket objective that bounds autonomous continuation and supplies the next logical incomplete task. If no Job is designated, the runtime should not ask the model to "just keep working"; it should stop before model invocation or request a job designation/handoff, depending on dispatch context.
+
 The runtime therefore must support materially larger wall-clock budgets, total tool-call budgets, and class-specific budgets for `work`, while still applying the same ko/failure protections.
 
 ### 9. The decision is core runtime policy, not edge behavior
@@ -312,6 +338,7 @@ Compaction remains subordinate to the same boundaries as checkpoints: it is cont
 - Checkpoints remain subordinate to task-list/Docket state instead of becoming informal task records.
 - Grounding probes (§7c) let checkpoints synthesize against surface-native ground truth and give §7a's "meaningful mutation" judgment an objective arbiter, while degrading cleanly on surfaces that declare no probes.
 - Context/token budget (§11) is evaluated in the same controller as ko, failure, and wall-clock, and checkpoint-then-compact turns a forced synthesis into a high-fidelity compaction seed.
+- **Focused Job gives long-running continuation a durable center.** `work` can drive the next logical task without inventing its own objective, and `pair` can opt into the same behavior explicitly without changing trust stance.
 - Advisory-first rollout with a persisted ledger and offline replay lets a single-maintainer project tune thresholds against recorded runs at near-zero cost, without a live eval platform.
 - Optional cheap-model classifier signals (§7d) can fill the residual intent/similarity judgment calls (gate evasion, semantic ko, no-probe coherence, checkpoint adherence) without displacing the deterministic and objective signals that remain authoritative.
 

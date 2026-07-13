@@ -4,7 +4,7 @@
 
 Planned. Implements the 2026-07-06 amendment to [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) (§7c grounding probes, §11 context/token budget as a loop dimension, and the advisory-first Initial policy shape).
 
-This plan is a **companion to** [AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md](AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md), which delivers the core control levels, profiles, budgets, ko/failure state, and structured checkpoints. Read that plan first; this one adds three capabilities on top of it and tightens its rollout into an advisory-first, measurable loop. Where the two overlap, the phase mapping is called out inline.
+This plan is a **companion to** [AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md](AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md), which delivers the core control levels, governance/focused-Job inputs, profiles, budgets, ko/failure state, structured checkpoints, and client **Focus** projection. Read that plan first; this one adds three capabilities on top of it and tightens its rollout into an advisory-first, measurable loop. Where the two overlap, the phase mapping is called out inline.
 
 Depends on:
 

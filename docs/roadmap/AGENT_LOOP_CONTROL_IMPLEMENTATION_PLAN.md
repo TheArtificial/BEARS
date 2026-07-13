@@ -17,6 +17,8 @@ The implementation must make Bear runs more efficient and auditable without lett
 In scope:
 
 - progressive agent loop control levels (`light`, `standard`, `careful`, `strict`),
+- governance as the continuation-pressure input (`interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`),
+- focused Job as the Docket objective input for long-running continuation,
 - model default control levels,
 - Bear-level and stance-level overrides mirroring model selection,
 - task/run escalation for risk, difficulty, or governance mode,
@@ -152,6 +154,58 @@ Task/run escalation may raise intensity, but should not silently downgrade opera
 | Add tests | Model default, Bear override, stance override, unknown model fallback, and escalation precedence are covered. |
 
 **Exit gate:** runs can resolve and report a control profile without behavior changes.
+
+## Phase 2a — Governance and focused Job inputs
+
+**Goal:** make the loop controller consume explicit supervision and objective inputs before enforcement uses them.
+
+Suggested shape:
+
+```rust
+pub enum Governance {
+    Interactive,
+    Grace,
+    AutonomousContinuation,
+    Observational,
+    Frozen,
+}
+
+pub struct LoopControlContext {
+    pub governance: Governance,
+    pub focused_job_id: Option<JobId>,
+}
+```
+
+Do **not** introduce a generic `FocusTarget` enum yet. The only supported durable focus object is a Docket Job.
+
+| Task | Done when |
+| --- | --- |
+| Rename docs/projections toward governance | New runtime prose says **governance** for the supervision axis, while preserving existing `Mode` code/API compatibility where already decided by ADR-0039. |
+| Add focused Job to run context | Runtime context can carry `focused_job_id: Option<JobId>` independently from governance. |
+| Enforce `work` designation | A `work` run must have a focused Job before model-driving continuation begins; missing Job stops before model invocation or requests handoff/designation. |
+| Allow explicit `pair` focus | `pair` can designate a focused Job through Bear conversation or a client command without changing trust stance. |
+| Derive task focus | Given governance + focused Job + Docket/task-list state, runtime derives the next logical incomplete/unblocked task as ephemeral task focus. |
+| Add diagnostics | Run diagnostics include governance, focused Job id if any, and derived task-focus refs without leaking hidden task-gate internals. |
+| Add tests | Normal `pair` has no focused Job; focused `pair` keeps `pair` trust stance; `work` without focused Job is rejected; `work` with focused Job derives a next task. |
+
+**Exit gate:** loop control has explicit governance and focused-Job inputs, but no generic focus-target abstraction.
+
+## Phase 2b — Client projection for Focus
+
+**Goal:** let UI-providing clients expose focused-Job state without pretending it is a user-selectable approval preset.
+
+UI-providing clients such as ACP should project focused-Job behavior as a special permissions/presentation mode named **Focus**. Focus is **not UI-selectable** as an ordinary permissions mode. It can be entered through Bear conversation or slash commands after Den designates a Job. Exact UX is TBD.
+
+| Task | Done when |
+| --- | --- |
+| Define Focus projection | BearWire/ACP can project `Focus` as a special non-selectable state tied to `focused_job_id`. |
+| Keep Den authoritative | Clients display Focus and may provide commands to request it, but Den validates/designates/clears the focused Job. |
+| Add slash-command hook | ACP/client command plumbing can request focus/clear-focus with a Job id or Job selector; final command names are TBD. |
+| Prevent permission laundering | Focus does not grant tools, approvals, memory access, or outbound auth beyond the effective policy from trust stance + governance + armature. |
+| Add UX copy placeholder | Documentation says exact UX is TBD and avoids freezing button labels or command names. |
+| Add projection tests | Focus appears when a focused Job is active, cannot be selected directly from normal permission UI, and clears when Den clears focus. |
+
+**Exit gate:** ACP-style clients can show/request Focus, but cannot select it as an ordinary permissions mode or use it to alter trust boundaries.
 
 ## Phase 3 — Budget/ko/failure integration
 
@@ -346,12 +400,21 @@ When a trigger fires:
 
 ## Phase 9 — Task-list/Docket integration
 
-**Goal:** weave checkpoints elegantly into task management without conflicting with history-visible task records.
+**Goal:** weave checkpoints, focused Job, and task management together without conflicting with history-visible task records.
 
-Checkpoint requests should include active task context when available:
+Focused Job behavior:
+
+- `focused_job_id` identifies the Docket Job that should remain centered across model/tool steps;
+- `work` dispatch requires a focused Job before autonomous continuation begins;
+- `pair` may designate a focused Job explicitly through conversation or client command;
+- focused Job does not itself mark tasks complete, blocked, cancelled, or waived;
+- task focus is derived from Docket/task-list state and remains ephemeral.
+
+Checkpoint requests should include focused Job and active task context when available:
 
 ```json
 {
+  "focused_job_id": "...",
   "task_list_id": "...",
   "task_list_version": 12,
   "active_item_id": "...",
@@ -366,6 +429,7 @@ Checkpoint requests should include active task context when available:
 
 Required behavior:
 
+- focused Job is runtime objective context, not Docket task state;
 - checkpoint `task_state_change_needed` is advisory intent only;
 - task-state changes require `update_task_list`, `sync_task_list`, or `request_task_list_handoff`;
 - Docket-backed changes follow source/sync policy;
