@@ -354,6 +354,9 @@ struct ReflectionAdminRow {
     trigger: Option<String>,
     status: Option<String>,
     skipped_reason: Option<String>,
+    status_label: String,
+    status_explanation: String,
+    counts_label: String,
     candidate_count: Option<i64>,
     dropped_followup_count: Option<i64>,
     proposal_count: Option<i64>,
@@ -582,6 +585,59 @@ fn json_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
     })
 }
 
+fn reflection_status_copy(
+    status: Option<&str>,
+    skipped_reason: Option<&str>,
+    candidate_count: Option<i64>,
+    proposal_count: Option<i64>,
+) -> (String, String, String) {
+    match skipped_reason {
+        Some("no_compaction_artifact") => (
+            "Not inspected".to_string(),
+            "No compaction artifact exists yet, so reflection did not inspect conversation content. Trigger manual reflection to force a checkpoint first.".to_string(),
+            "not extracted".to_string(),
+        ),
+        Some("below_compaction_threshold") => (
+            "Below threshold".to_string(),
+            "Live reflection checked this conversation, but normal compaction rules decided a summary would squeeze the transcript too aggressively right now.".to_string(),
+            "not extracted".to_string(),
+        ),
+        Some("no_uncompacted_content") => (
+            "No new content".to_string(),
+            "The latest compaction artifact already covers the available transcript; reflection is waiting for new conversation content.".to_string(),
+            "not extracted".to_string(),
+        ),
+        Some("live_reflection_disabled") => (
+            "Live reflection disabled".to_string(),
+            "This Bear is configured not to proactively spend tokens on live/open conversation reflection.".to_string(),
+            "not extracted".to_string(),
+        ),
+        Some(reason) => (
+            "Skipped".to_string(),
+            format!("Reflection skipped this run: {reason}."),
+            "not extracted".to_string(),
+        ),
+        None if matches!(status, Some("processed")) && candidate_count == Some(0) => (
+            "Inspected, no memories found".to_string(),
+            "Reflection inspected a compaction artifact and did not find durable memory candidates.".to_string(),
+            format!("candidates 0, proposals {}", proposal_count.unwrap_or(0)),
+        ),
+        None => (
+            status.unwrap_or("unknown").to_string(),
+            "Reflection inspected a compaction artifact.".to_string(),
+            format!(
+                "candidates {}, proposals {}",
+                candidate_count
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".to_string()),
+                proposal_count
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".to_string())
+            ),
+        ),
+    }
+}
+
 async fn reflection_rows_for_bear(
     pool: &sqlx::PgPool,
     bear_id: Uuid,
@@ -643,6 +699,22 @@ async fn reflection_rows_for_bear(
                     .get("proposal_ids")
                     .and_then(serde_json::Value::as_array)
                     .and_then(|items| i64::try_from(items.len()).ok());
+                let status = payload
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                let skipped_reason = payload
+                    .get("skipped_reason")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                let candidate_count = json_i64(&payload, "candidate_count");
+                let dropped_followup_count = json_i64(&payload, "dropped_followup_count");
+                let (status_label, status_explanation, counts_label) = reflection_status_copy(
+                    status.as_deref(),
+                    skipped_reason.as_deref(),
+                    candidate_count,
+                    proposal_count,
+                );
                 ReflectionAdminRow {
                     created_at: created_at.to_string(),
                     event_type,
@@ -653,16 +725,13 @@ async fn reflection_rows_for_bear(
                         .get("trigger")
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_string),
-                    status: payload
-                        .get("status")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string),
-                    skipped_reason: payload
-                        .get("skipped_reason")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string),
-                    candidate_count: json_i64(&payload, "candidate_count"),
-                    dropped_followup_count: json_i64(&payload, "dropped_followup_count"),
+                    status,
+                    skipped_reason,
+                    status_label,
+                    status_explanation,
+                    counts_label,
+                    candidate_count,
+                    dropped_followup_count,
                     proposal_count,
                     payload_json: pretty_json(payload),
                 }

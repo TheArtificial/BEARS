@@ -24,23 +24,11 @@
       <td><code>{{ reflection.session_id | e }}</code></td>
       <td>{{ reflection.event_type | e }}{% if reflection.trigger %}<br><small>{{ reflection.trigger | e }}</small>{% endif %}</td>
       <td>
-        {% if reflection.status %}{{ reflection.status | e }}{% else %}<em>unknown</em>{% endif %}
-        {% if reflection.skipped_reason == "no_compaction_artifact" %}
-          <br><strong>No compaction artifact</strong>
-          <br><small>Reflection did not inspect conversation content.</small>
-        {% elif reflection.skipped_reason %}
-          <br><small>{{ reflection.skipped_reason | e }}</small>
-        {% endif %}
+        <strong>{{ reflection.status_label | e }}</strong>
+        <br><small>{{ reflection.status_explanation | e }}</small>
+        {% if reflection.skipped_reason %}<br><small><code>{{ reflection.skipped_reason | e }}</code></small>{% endif %}
       </td>
-      <td>
-        {% if reflection.skipped_reason %}
-          <em>not extracted</em>
-        {% else %}
-          candidates {% if reflection.candidate_count is not none %}{{ reflection.candidate_count }}{% else %}—{% endif %},
-          dropped {% if reflection.dropped_followup_count is not none %}{{ reflection.dropped_followup_count }}{% else %}—{% endif %},
-          proposals {% if reflection.proposal_count is not none %}{{ reflection.proposal_count }}{% else %}—{% endif %}
-        {% endif %}
-      </td>
+      <td>{{ reflection.counts_label | e }}</td>
     </tr>
     <tr>
       <td colspan="6"><details><summary>Payload</summary><pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ reflection.payload_json | e }}</pre></details></td>
