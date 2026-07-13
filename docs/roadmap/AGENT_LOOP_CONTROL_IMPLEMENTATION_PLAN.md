@@ -39,11 +39,13 @@ Out of scope:
 
 ## Core invariants
 
-1. **Runtime controls continuation; task tools control task state.** Checkpoints may identify that task state should change, but only `update_task_list`, `sync_task_list`, `checkout_task_list`, `request_task_list_handoff`, or Docket service APIs may mutate session task-list/Docket state.
-2. **Checkpoints are structured artifacts, not informal prose.** A checkpoint report should arrive as a runtime-owned `checkpoint` tool call whose arguments are parsed into typed fields. Assistant prose/JSON fallback is degraded and never the primary control path.
-3. **Checkpoint artifacts can be auditable without becoming Docket events.** `work` runs may retain checkpoint artifacts as run audit evidence, but Docket `bear_task_events`/`bear_job_events` remain the report-visible source of task progress, blockers, completion, and criteria evaluation.
-4. **Thinking effort is a quality knob, not a safety boundary.** Budget, ko, task-gate, and stop enforcement remain runtime-authoritative even if a provider ignores thinking-level metadata.
-5. **Runtime code consumes resolved typed profiles.** Model names and provider quirks belong in registry/configuration; the runtime must not scatter model-name `match` arms.
+1. **Loop control is stance-wide, not focus-specific.** The same runtime regime governs freeform, task-oriented, focused, and autonomous runs. Focus is one objective-orientation state on a spectrum of freedom/grace; it is not a separate loop-control flavor.
+2. **Runtime controls continuation; task tools control task state.** Checkpoints may identify that task state should change, but only `update_task_list`, `sync_task_list`, `checkout_task_list`, `request_task_list_handoff`, or Docket service APIs may mutate session task-list/Docket state.
+3. **Checkpoints are structured artifacts, not informal prose.** A checkpoint report should arrive as a runtime-owned `checkpoint` tool call whose arguments are parsed into typed fields. Assistant prose/JSON fallback is degraded and never the primary control path.
+4. **Checkpoint artifacts can be auditable without becoming Docket events.** `work` runs may retain checkpoint artifacts as run audit evidence, but Docket `bear_task_events`/`bear_job_events` remain the report-visible source of task progress, blockers, completion, and criteria evaluation.
+5. **Checkpoint advice cannot expand authority.** Checkpoint reports are advisory inputs to runtime policy. They cannot expand budgets, reset stop conditions, bypass trust gates, or authorize actions the resolved loop-control profile disallows.
+6. **Thinking effort is a quality knob, not a safety boundary.** Budget, ko, task-gate, and stop enforcement remain runtime-authoritative even if a provider ignores thinking-level metadata.
+7. **Runtime code consumes resolved typed profiles.** Model names and provider quirks belong in registry/configuration; the runtime must not scatter model-name `match` arms.
 
 ## Conceptual model
 
@@ -414,7 +416,18 @@ Retention rules:
 
 ## Phase 7 — Checkpoint enforcement in the loop
 
-**Goal:** make checkpoint triggers affect continuation.
+**Goal:** make checkpoint triggers affect continuation without making checkpoint advice authoritative.
+
+Runtime enforcement is dominant. A checkpoint report may choose among actions still allowed by the resolved loop-control profile, but it cannot expand a budget, reset an exhausted stop condition, bypass a trust/task gate, or authorize a risky action that runtime policy disallows. Runtime may always downgrade a checkpoint recommendation to a safer action such as bounded retry, reconciliation, stop, or human/operator review.
+
+This enforcement model is not focus-specific. The same control regime applies across a spectrum of objective orientation:
+
+- **freeform**: broad interactive conversation with lighter task pressure and more grace;
+- **task-oriented**: an explicit task or acceptance target is in play, but no durable focused Job is active;
+- **focused**: a Docket Job is centered across turns/runs;
+- **autonomous work**: focused Job plus `work` stance, with no user-interaction path and stricter pre-model gates.
+
+Each point on the spectrum can tune freedom, grace, checkpoint thresholds, and reconciliation strictness through the resolved profile/governance, but the same runtime enforcement rules apply.
 
 When a trigger fires:
 
@@ -422,17 +435,17 @@ When a trigger fires:
 2. optional checkpoint thinking policy is resolved,
 3. next model inference should call the runtime-owned `checkpoint` tool before more exploration/risky action,
 4. runtime validates the tool arguments and records an advisory/audit artifact,
-5. runtime continues according to deterministic loop signals plus advisory `next_action`/task-gate state.
+5. runtime computes the effective next action from deterministic loop signals plus advisory `next_action`/task-gate state, with runtime policy winning conflicts.
 
 | Task | Done when |
 | --- | --- |
-| Enforce over-exploration checkpoints | Read/search threshold forces checkpoint before more read/search. |
-| Enforce failure checkpoints | Consecutive failures force checkpoint before retry. |
-| Enforce same-signature checkpoint | Near-ko repeated signature forces different action or checkpoint. |
-| Enforce task-gate checkpoint | First/repeated gate rejection can require checkpoint before stronger gate behavior. |
-| Enforce pre-risk checkpoint | `careful`/`strict` can require checkpoint before broad/destructive actions. |
+| Enforce over-exploration checkpoints | Read/search threshold forces checkpoint before more read/search; the checkpoint can justify only a bounded fresh window, not unlimited exploration. |
+| Enforce failure checkpoints | Consecutive failures force checkpoint before retry; retry is allowed only if runtime policy still permits it. |
+| Enforce same-signature checkpoint | Near-ko repeated signature forces different action or checkpoint; ko exhaustion still stops even if the checkpoint recommends retry. |
+| Enforce task-gate checkpoint | First/repeated gate rejection can require checkpoint before stronger gate behavior; checkpoint advice cannot satisfy the gate without task/Docket evidence. |
+| Enforce pre-risk checkpoint | `careful`/`strict` can require checkpoint before broad/destructive actions; checkpoint advice cannot bypass trust policy or permission requirements. |
 | Reset checkpoint observation window | A valid or degraded checkpoint report clears only checkpoint-trigger counters, giving the model a bounded fresh read/search or recovery window without resetting authoritative budgets/ko/fuses. |
-| Add loop tests | Simulated turns prove checkpoint tool calls are handled internally, invalid checkpoint reports degrade without killing the run, valid reports can require task-tool follow-through, and checkpoint reports open a fresh checkpoint-observation window. |
+| Add loop tests | Simulated turns prove checkpoint tool calls are handled internally, invalid checkpoint reports degrade without killing the run, valid reports can require task-tool follow-through, checkpoint reports open a fresh checkpoint-observation window, and checkpoint advice never expands budget/stop authority. |
 
 **Exit gate:** checkpoints are part of runtime continuation, not merely diagnostics, and a checkpoint report prevents immediate re-triggering of the same checkpoint while preserving budget/ko authority.
 

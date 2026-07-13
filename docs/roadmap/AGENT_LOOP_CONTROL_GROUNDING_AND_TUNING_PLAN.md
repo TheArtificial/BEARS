@@ -21,7 +21,7 @@ Make ADR-0050's adaptive loop control **grounded** (evidence, not self-report), 
 
 Comparative review against OpenCode, Cursor, Letta Code, and Claude Code surfaced three gaps in the original ADR-0050:
 
-1. **No environment-grounded feedback.** OpenCode feeds LSP diagnostics back after each edit; ADR-0050 checkpoints relied on model self-report. We want that grounding without assuming every Bear works on code.
+1. **No policy-requested environment-grounded feedback.** OpenCode feeds LSP diagnostics back after each edit; ADR-0050 checkpoints relied on model self-report. We want policy-triggered grounding without assuming every Bear works on code or probing every mutation.
 2. **Context budget lived outside the controller.** Claude Code treats compaction as loop control; ADR-0050 deferred it to ADR-0047 as a "future extension," so the two most important end-of-turn behaviors (checkpoint, compact) could not coordinate.
 3. **Best-when-tuned, but no tuning machinery.** The typed design shines fine-tuned, yet Bear Den is a personal project with no eval platform. Without automated measurement the complexity is unjustified.
 
@@ -114,29 +114,31 @@ pub enum GroundingSignal {
 
 **Exit gate:** grounding profiles resolve per surface without executing anything.
 
-### A2 — Probe execution after mutation
+### A2 — Policy-requested probe execution
+
+Grounding probes are not an unconditional post-mutation hook. The controller executes them only when requested by the resolved loop-control profile, checkpoint policy, or explicit verification/task criteria. A mutative step may therefore produce no probe if current policy does not need one.
 
 | Task | Done when |
 | --- | --- |
-| Hook post-mutation execution | After a mutative tool step, the controller runs the surface's ordered probes (cheap-first, short-circuit on hard fail where sensible). |
+| Gate probe execution through policy | After a relevant event, the controller asks the resolved policy whether a grounding probe is required before running the surface's ordered probes. |
 | Budget and time-bound probes | Probe spend counts against tool-class budgets; a probe exceeding `timeout_ms` yields `NoSignal`, not a hang. |
 | Never fail the turn on probe error | Probe crash/timeout degrades to `NoSignal` with a reason; the turn continues. |
-| Emit probe diagnostics | Runtime emits `grounding_probe_result` diagnostics with probe id, signal, and duration. |
-| Add tests | Passing, failing, timeout, error, and no-probe paths each produce the correct signal without turn failure. |
+| Emit probe diagnostics | Runtime emits `grounding_probe_result` diagnostics with probe id, signal, duration, and requesting policy reason. |
+| Add tests | Not-requested, passing, failing, timeout, error, and no-probe paths each produce the correct signal without turn failure. |
 
-**Exit gate:** probes run, are bounded, and produce typed signals with zero turn-failure risk.
+**Exit gate:** probes run only when policy requests them, are bounded, and produce typed signals with zero turn-failure risk.
 
 ### A3 — Wire grounding into §7a replenishment and §7b checkpoints
 
 | Task | Done when |
 | --- | --- |
-| Arbitrate meaningful mutation | A `Pass` over a non-empty diff marks the mutation meaningful and opens the bounded §7a verification window; a `Fail` does not, and feeds §7 consecutive-failure state instead. |
+| Arbitrate meaningful mutation when requested | When policy requests a probe, a `Pass` over a non-empty diff marks the mutation meaningful and opens the bounded §7a verification window; a `Fail` does not, and feeds §7 consecutive-failure state instead. |
 | Guard against no-op windows | A no-op/empty-diff mutation never earns a fresh exploration window regardless of probe outcome. |
 | Attach findings as checkpoint evidence | Checkpoint requests (base plan Phase 5) carry recent `GroundingFinding`s as `evidence_refs`. |
 | Fall back cleanly | `NoSignal` reverts §7a to prior heuristic behavior and §7b to self-report only. |
-| Add tests | Replenishment fires only on `Pass`+non-empty diff; checkpoint requests include probe evidence when present. |
+| Add tests | Replenishment fires only on requested `Pass`+non-empty diff; checkpoint requests include probe evidence when present. |
 
-**Exit gate:** grounding is the arbiter for "meaningful mutation" and enriches checkpoint synthesis, degrading safely where absent.
+**Exit gate:** grounding can arbitrate "meaningful mutation" and enrich checkpoint synthesis when policy requests it, degrading safely where absent or not requested.
 
 ### A4 — Initial probe sets
 

@@ -93,6 +93,8 @@ Default shape:
 
 Focused Job ownership is **conversation-scoped**. The conversation's current `focused_job_id`, if any, is the durable source of truth across turns and reconnects. Live sessions project that state as their Focused UI state/title, and each run receives a snapshot in its run context. Work runs may record the focused Job they were launched under for auditability, but they do not own focus. Governance remains run-scoped resolution, not durable conversation identity.
 
+Focus is one point on the broader loop-control spectrum, not its own special control regime. Freeform, task-oriented, focused, and autonomous work runs all use the same runtime enforcement machinery with different freedom, grace, checkpoint, and reconciliation settings.
+
 The first command surface is `/focus [job]`:
 
 - exact Job ID: focus that Job and begin execution immediately;
@@ -238,7 +240,7 @@ Checkpoint thinking-level escalation must remain bounded to the checkpoint/pre-r
 
 ### 7c. Grounding probes make post-mutation quality checkable per work surface
 
-Checkpoints as defined in §7b ask the model to report an advisory decision through the `checkpoint` tool. Self-report is weak evidence: a drifting model can choose plausible `summary` text and `next_action` values. The runtime should, where the work surface allows, pair that advisory report with **grounding probes** — cheap, automatic, surface-native validators run after a mutative action, whose typed findings feed the loop controller.
+Checkpoints as defined in §7b ask the model to report an advisory decision through the `checkpoint` tool. Self-report is weak evidence: a drifting model can choose plausible `summary` text and `next_action` values. The runtime should, where policy requests and the work surface allows, pair that advisory report with **grounding probes** — cheap, policy-requested, surface-native validators whose typed findings feed the loop controller.
 
 This generalizes the useful idea behind editor/LSP feedback loops without assuming every Bear works on code. A Bear is "more than code," so grounding must be **work-surface dependent** (per [ADR-0006](adr-0006-bear-work-surfaces.md)) rather than a blind attempt to quality-review any artifact:
 
@@ -263,6 +265,7 @@ Probe results are typed runtime signals, not prose. They serve two jobs:
 
 Guardrails:
 
+- probes run only when requested by the resolved loop-control profile, checkpoint policy, or explicit verification/task criteria; there is no blanket post-mutation probe hook;
 - probes are budgeted like any other tool-class spend and must not themselves become an unbounded loop; a probe that times out or errors degrades to "no grounding signal," never to a hard failure of the turn;
 - probes must not mutate the work surface;
 - probe selection resolves from typed work-surface metadata, not from prose or hardcoded per-surface conditionals in the runtime;
