@@ -322,6 +322,7 @@ struct ReflectionAdminRow {
     conversation_title: Option<String>,
     trigger: Option<String>,
     status: Option<String>,
+    skipped_reason: Option<String>,
     candidate_count: Option<i64>,
     dropped_followup_count: Option<i64>,
     proposal_count: Option<i64>,
@@ -602,6 +603,10 @@ async fn reflection_rows_for_bear(
                         .map(str::to_string),
                     status: payload
                         .get("status")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    skipped_reason: payload
+                        .get("skipped_reason")
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_string),
                     candidate_count: json_i64(&payload, "candidate_count"),

@@ -19,6 +19,7 @@ pub struct PairReflectionProposalOutput {
     pub created_proposal_ids: Vec<Uuid>,
     pub candidate_count: usize,
     pub dropped_followup_count: usize,
+    pub skipped_reason: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +43,10 @@ pub async fn create_pair_reflection_proposals_from_latest_summary(
 ) -> Result<PairReflectionProposalOutput, DenError> {
     let Some(artifact) = load_latest_iterative_summary(pool, bear_id, conversation_id).await?
     else {
-        return Ok(PairReflectionProposalOutput::default());
+        return Ok(PairReflectionProposalOutput {
+            skipped_reason: Some("no_compaction_artifact"),
+            ..PairReflectionProposalOutput::default()
+        });
     };
     create_pair_reflection_proposals_for_artifact(
         pool,
@@ -69,6 +73,7 @@ async fn create_pair_reflection_proposals_for_artifact(
     let mut output = PairReflectionProposalOutput {
         candidate_count: candidates.len(),
         dropped_followup_count: artifact.summary.unresolved_followups.len(),
+        skipped_reason: None,
         created_proposal_ids: Vec::new(),
     };
 
@@ -167,9 +172,33 @@ fn candidates_from_summary(summary: &RuntimeIterativeSummary) -> Vec<PairReflect
             "Pair reflection artifact",
         );
     }
-    // ponytail: pair reflection v1 treats goals/workflow/follow-ups as continuation state,
-    // not durable memory. Upgrade path is model-assisted scoring that can promote explicit
-    // user preferences or project conventions from those buckets with source turn refs.
+    for value in &summary.active_user_goals {
+        push_candidate(
+            &mut candidates,
+            "goal",
+            value,
+            "Pair reflection goal",
+        );
+    }
+    for value in &summary.workflow_state_refs {
+        push_candidate(
+            &mut candidates,
+            "workflow_state",
+            value,
+            "Pair reflection workflow state",
+        );
+    }
+    for value in &summary.unresolved_followups {
+        push_candidate(
+            &mut candidates,
+            "followup",
+            value,
+            "Pair reflection follow-up",
+        );
+    }
+    // ponytail: pair reflection v1 promotes every non-empty summary bucket to a proposal,
+    // with transient buckets routed to human review. Ceiling: noisy summaries create noisy
+    // proposals; upgrade path is model-assisted scoring with source turn refs.
     candidates
 }
 
@@ -259,16 +288,16 @@ mod tests {
     }
 
     #[test]
-    fn candidates_keep_durable_pair_reflection_buckets() {
+    fn candidates_include_all_non_empty_summary_buckets() {
         let candidates = candidates_from_summary(&summary());
 
-        assert_eq!(candidates.len(), 3);
+        assert_eq!(candidates.len(), 6);
         assert!(candidates.iter().any(|c| c.kind == "decision"));
         assert!(candidates.iter().any(|c| c.kind == "constraint"));
         assert!(candidates.iter().any(|c| c.kind == "artifact"));
-        assert!(!candidates
-            .iter()
-            .any(|c| c.text.contains("finish the task") || c.text.contains("rerun tests")));
+        assert!(candidates.iter().any(|c| c.kind == "goal"));
+        assert!(candidates.iter().any(|c| c.kind == "workflow_state"));
+        assert!(candidates.iter().any(|c| c.kind == "followup"));
     }
 
     #[test]

@@ -105,8 +105,9 @@ async fn reflect_pair_session(
     .await
     .map_err(CustomError::from)?;
     Ok(json!({
-        "status": "processed",
+        "status": if output.skipped_reason.is_some() { "skipped" } else { "processed" },
         "trigger": trigger,
+        "skipped_reason": output.skipped_reason,
         "candidate_count": output.candidate_count,
         "dropped_followup_count": output.dropped_followup_count,
         "proposal_ids": output.created_proposal_ids,
