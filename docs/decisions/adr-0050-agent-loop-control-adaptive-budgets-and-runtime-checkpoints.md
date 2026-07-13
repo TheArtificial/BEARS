@@ -85,7 +85,19 @@ Default shape:
 | Normal `work` | `autonomous_continuation` | required |
 | `watch` inspecting a Job | `observational` | optional |
 
-`work` dispatch must designate a focused Job before the model is prompted to drive. `pair` may enter focused-Job behavior only when the user designates a Job through Bear conversation or a client command; exact UX is intentionally left to implementation plans.
+`work` dispatch must designate a focused Job before the model is prompted to drive. `pair` may enter focused-Job behavior only when the user designates a Job through Bear conversation or a client command.
+
+Focused Job ownership is **conversation-scoped**. The conversation's current `focused_job_id`, if any, is the durable source of truth across turns and reconnects. Live sessions project that state as their Focused UI state/title, and each run receives a snapshot in its run context. Work runs may record the focused Job they were launched under for auditability, but they do not own focus. Governance remains run-scoped resolution, not durable conversation identity.
+
+The first command surface is `/focus [job]`:
+
+- exact Job ID: focus that Job and begin execution immediately;
+- non-empty text: search existing Jobs; if exactly one high-confidence match exists, focus it and begin execution immediately; otherwise elicit a selection from possible matches or let the user begin defining a new Job;
+- empty: show recent Jobs and elicit a selection or new-Job definition.
+
+Selection uses one model-visible elicitation tool. Client adapters decide whether to render native elicitation UI or numbered text options; the model does not branch on client capability.
+
+UI-providing clients project active focus as **Focused** in the permission/mode label and session title. Focused is not selectable as an ordinary permission preset. Changing client mode away from Focused clears conversation focus. While focused, the conversation title is updated to `[Job name] - [current task]`, with simple blocked/complete/selection fallbacks.
 
 Control levels may also specify a **checkpoint thinking policy**. When provider/model configuration exposes a thinking level or reasoning-effort control, a checkpoint turn may optionally request a different thinking level than ordinary continuation turns. For example, `light` may keep the model's default thinking level, `standard` may request moderate reasoning for checkpoint turns, and `careful`/`strict` may request higher reasoning for checkpoint or pre-risk turns. This is a quality/cost tuning knob, not a safety boundary: loop continuation, task gates, budgets, and ko enforcement remain runtime-authoritative even if a provider ignores or lacks thinking-level controls.
 
@@ -274,7 +286,7 @@ Classifier invocation should be bounded to trigger boundaries (a checkpoint firi
 
 `work` is expected to support materially longer runs than `pair`, `chat`, or `watch`.
 
-A normal `work` run is also expected to have a **focused Job**. The focused Job is the durable Docket objective that bounds autonomous continuation and supplies the next logical incomplete task. If no Job is designated, the runtime should not ask the model to "just keep working"; it should stop before model invocation or request a job designation/handoff, depending on dispatch context.
+A normal `work` run is also expected to have a **focused Job**. The focused Job is the durable Docket objective that bounds autonomous continuation and supplies the next logical incomplete task. There is no user-interaction path inside the `work` stance, so `work` can only be invoked by specifying a Job. If no Job is designated, the runtime must hard-reject before model invocation rather than asking for handoff/designation or letting the model "just keep working".
 
 The runtime therefore must support materially larger wall-clock budgets, total tool-call budgets, and class-specific budgets for `work`, while still applying the same ko/failure protections.
 

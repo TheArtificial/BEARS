@@ -21,7 +21,7 @@ In scope:
 - focused Job as the Docket objective input for long-running continuation,
 - model default control levels,
 - Bear-level and stance-level overrides mirroring model selection,
-- task/run escalation for risk, difficulty, or governance mode,
+- task/run escalation for risk, difficulty, or governance,
 - profile-owned budgets, ko/failure thresholds, checkpoint triggers, and task-gate behavior,
 - optional checkpoint-turn thinking-level escalation,
 - structured checkpoint artifacts/events,
@@ -178,11 +178,26 @@ pub struct LoopControlContext {
 
 Do **not** introduce a generic `FocusTarget` enum yet. The only supported durable focus object is a Docket Job.
 
+Focused Job ownership is conversation-scoped. The durable source of truth is the conversation's current focused Job; live sessions project that state into their UI, and each run receives a snapshot in `LoopControlContext`. Work runs should also record the focused Job they were launched under for auditability, but they do not own focus. Governance is resolved per run and is not the same durable state as the focused Job.
+
+Minimal first shape:
+
+```rust
+pub struct ConversationFocusState {
+    pub focused_job_id: Option<JobId>,
+}
+```
+
+If debugging needs it, add timestamps/source later; do not build a broader focus subsystem up front.
+
 | Task | Done when |
 | --- | --- |
 | Rename docs/projections toward governance | New runtime prose says **governance** for the supervision axis, while preserving existing `Mode` code/API compatibility where already decided by ADR-0039. |
+| Persist conversation focus | The conversation can durably store `focused_job_id: Option<JobId>` as the source of truth for focus across turns and reconnects. |
+| Project focus to sessions | Live sessions derive their displayed Focused state and title from conversation focus. |
+| Snapshot focus into runs | Each run receives governance and the current focused Job as `LoopControlContext`; work runs persist the launched-under Job for audit. |
 | Add focused Job to run context | Runtime context can carry `focused_job_id: Option<JobId>` independently from governance. |
-| Enforce `work` designation | A `work` run must have a focused Job before model-driving continuation begins; missing Job stops before model invocation or requests handoff/designation. |
+| Enforce `work` designation | A `work` run must have a focused Job before model-driving continuation begins; missing Job is a hard rejection before model invocation. |
 | Allow explicit `pair` focus | `pair` can designate a focused Job through Bear conversation or a client command without changing trust stance. |
 | Derive task focus | Given governance + focused Job + Docket/task-list state, runtime derives the next logical incomplete/unblocked task as ephemeral task focus. |
 | Add diagnostics | Run diagnostics include governance, focused Job id if any, and derived task-focus refs without leaking hidden task-gate internals. |
@@ -194,16 +209,39 @@ Do **not** introduce a generic `FocusTarget` enum yet. The only supported durabl
 
 **Goal:** let UI-providing clients expose focused-Job state without pretending it is a user-selectable approval preset.
 
-UI-providing clients such as ACP should project focused-Job behavior as a special permissions/presentation mode named **Focus**. Focus is **not UI-selectable** as an ordinary permissions mode. It can be entered through Bear conversation or slash commands after Den designates a Job. Exact UX is TBD.
+UI-providing clients such as ACP should project focused-Job behavior as a special permissions/presentation state. The command and feature are called **Focus**; the visible permission/mode label while active is **Focused**. Focused is **not UI-selectable** as an ordinary permissions mode. It can be entered through Bear conversation or slash commands after Den designates a Job.
+
+Command shape:
+
+```text
+/focus [job]
+```
+
+`[job]` resolution:
+
+- exact Job ID: focus that Job and begin execution immediately;
+- other text: search existing Jobs; if exactly one high-confidence match exists, focus it and begin execution immediately; otherwise show possible matches and ask the user to select one or begin defining a new Job;
+- empty: show recent Jobs and ask the user to select one or begin defining a new Job.
+
+Selection is mediated through one model-visible elicitation tool. The model should not know whether the client rendered a native picker or sent numbered text options. Clients without elicitation UI present numbered options and ask the user to reply with a number; the runtime normalizes the result as the same elicitation response.
+
+When focused:
+
+- the client permission/mode label is **Focused**;
+- the session title reflects focus;
+- the conversation title is updated to `[Job name] - [current task]` with simple fallbacks such as `[Job name]`, `[Job name] - selecting next task`, `[Job name] - blocked`, or `[Job name] - complete`;
+- changing the client mode away from Focused clears conversation focus and stops focused continuation.
 
 | Task | Done when |
 | --- | --- |
-| Define Focus projection | BearWire/ACP can project `Focus` as a special non-selectable state tied to `focused_job_id`. |
+| Define Focus projection | BearWire/ACP can project **Focused** as a special non-selectable state tied to conversation `focused_job_id`. |
 | Keep Den authoritative | Clients display Focus and may provide commands to request it, but Den validates/designates/clears the focused Job. |
-| Add slash-command hook | ACP/client command plumbing can request focus/clear-focus with a Job id or Job selector; final command names are TBD. |
+| Add slash-command hook | ACP/client command plumbing can handle `/focus [job]` with exact-id, search, ambiguous-selection, empty-recent, and define-new paths. |
+| Add elicitation path | Job selection uses one model-visible elicitation tool; client adapters choose native UI or numbered text fallback without exposing that choice to the model. |
+| Clear on mode change | If a client changes mode away from **Focused**, Den clears the conversation focused Job. |
+| Update focused titles | Focused conversations/sessions update title as `[Job name] - [current task]` with blocked/complete/selection fallbacks. |
 | Prevent permission laundering | Focus does not grant tools, approvals, memory access, or outbound auth beyond the effective policy from trust stance + governance + armature. |
-| Add UX copy placeholder | Documentation says exact UX is TBD and avoids freezing button labels or command names. |
-| Add projection tests | Focus appears when a focused Job is active, cannot be selected directly from normal permission UI, and clears when Den clears focus. |
+| Add projection tests | Focused appears when a focused Job is active, cannot be selected directly from normal permission UI, clears when Den clears focus, and clears when the client mode changes. |
 
 **Exit gate:** ACP-style clients can show/request Focus, but cannot select it as an ordinary permissions mode or use it to alter trust boundaries.
 
