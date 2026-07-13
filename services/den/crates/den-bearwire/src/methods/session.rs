@@ -48,6 +48,8 @@ pub async fn reflect_open_sessions_once(state: &DenState) -> Result<usize, Custo
                         "bear_slug": session.bear_slug,
                         "trigger": candidate.reflection_trigger,
                         "event_count": candidate.event_count,
+                        "latest_compaction_source_end_seq": candidate.latest_compaction_source_end_seq,
+                        "last_reflected_source_end_seq": candidate.last_reflected_source_end_seq,
                         "pair_reflection": reflection_payload,
                     }),
                 );

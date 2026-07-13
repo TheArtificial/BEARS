@@ -317,6 +317,10 @@ pub struct OpenReflectionCandidateRow {
     pub event_count: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_reflected_at: Option<OffsetDateTime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_compaction_source_end_seq: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_reflected_source_end_seq: Option<i64>,
     pub reflection_trigger: String,
 }
 
@@ -348,11 +352,9 @@ impl OpenReflectionCandidateRow {
 
 /// Finds open sessions eligible for automatic pair reflection.
 ///
-/// ponytail: event-count eligibility uses total session event count and a
-/// last-reflection timestamp inferred from prior reflection events. The ceiling
-/// is duplicate reflection if historical reflection events are missing or
-/// unrelated events dominate the count. Upgrade path: persist a reflected event
-/// sequence watermark per reflection run.
+/// ponytail: event-count eligibility uses total session event count. The ceiling
+/// is unrelated events dominating the count; source-message watermarks from
+/// compaction/reflection prevent skipped reflections from hiding later summaries.
 pub async fn list_open_reflection_candidates(
     pool: &PgPool,
     params: OpenReflectionCandidatesParams,
@@ -366,6 +368,8 @@ pub async fn list_open_reflection_candidates(
             SELECT s.*,
                    COALESCE(events.event_count, 0)::bigint AS event_count,
                    reflected.last_reflected_at,
+                   latest_compaction.source_message_end_seq AS latest_compaction_source_end_seq,
+                   reflected.last_reflected_source_end_seq,
                    COALESCE(b.live_reflection_stale_after_minutes, $1)::bigint AS stale_after_minutes,
                    COALESCE(b.live_reflection_activity_threshold, $2)::bigint AS activity_threshold,
                    COALESCE(b.live_reflection_sweep_limit, $3)::bigint AS sweep_limit,
@@ -383,13 +387,32 @@ pub async fn list_open_reflection_candidates(
                   AND e.user_id = s.user_id
             ) events ON TRUE
             LEFT JOIN LATERAL (
-                SELECT MAX(e.created_at) AS last_reflected_at
+                SELECT MAX(e.created_at) AS last_reflected_at,
+                       MAX(
+                           CASE
+                               WHEN e.event_json #>> '{data,pair_reflection,status}' = 'processed'
+                                AND e.event_json #>> '{data,pair_reflection,source_message_end_seq}' ~ '^[0-9]+$'
+                                   THEN (e.event_json #>> '{data,pair_reflection,source_message_end_seq}')::bigint
+                               ELSE NULL
+                           END
+                       ) AS last_reflected_source_end_seq
                 FROM bearwire_events e
                 WHERE e.session_id = s.client_session_id
                   AND e.bear_id = s.bear_id
                   AND e.user_id = s.user_id
                   AND e.event_type = 'session.reflected'
             ) reflected ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT a.source_message_end_seq
+                FROM conversations c
+                INNER JOIN conversation_compaction_artifacts a ON a.conversation_id = c.id
+                WHERE c.bear_id = s.bear_id
+                  AND c.external_conversation_id = COALESCE(NULLIF(s.resolved_conversation_id, ''), s.conversation_id)
+                  AND a.artifact_kind = 'iterative_summary'
+                  AND a.superseded_by IS NULL
+                ORDER BY a.created_at DESC
+                LIMIT 1
+            ) latest_compaction ON TRUE
             WHERE s.closed_at IS NULL
               AND s.archived_at IS NULL
               AND b.live_reflection_enabled IS TRUE
@@ -399,12 +422,16 @@ pub async fn list_open_reflection_candidates(
             FROM open_sessions
             WHERE (updated_at <= NOW() - (stale_after_minutes * INTERVAL '1 minute')
                    OR event_count >= activity_threshold)
-              AND (last_reflected_at IS NULL OR last_reflected_at < updated_at)
+              AND (
+                  (last_reflected_at IS NULL AND last_reflected_source_end_seq IS NULL)
+                  OR latest_compaction_source_end_seq > COALESCE(last_reflected_source_end_seq, 0)
+              )
         )
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at, event_count, last_reflected_at,
+               latest_compaction_source_end_seq, last_reflected_source_end_seq,
                reflection_trigger
         FROM eligible_sessions
         WHERE bear_sweep_rank <= sweep_limit
@@ -616,6 +643,253 @@ pub async fn mark_archived(pool: &PgPool, id: Uuid) -> Result<(), DenError> {
     .execute(pool)
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod reflection_candidate_tests {
+    use super::*;
+    use serde_json::json;
+
+    async fn insert_test_user(pool: &PgPool) -> i32 {
+        let suffix = Uuid::new_v4().simple().to_string();
+        let (user_id,): (i32,) = sqlx::query_as(
+            r#"
+            INSERT INTO users (email, username, display_name, passhash)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+            "#,
+        )
+        .bind(format!("reflection-{suffix}@example.test"))
+        .bind(format!("reflection{}", &suffix[..16]))
+        .bind("Reflection Test User")
+        .bind("unused")
+        .fetch_one(pool)
+        .await
+        .expect("insert user");
+        user_id
+    }
+
+    async fn insert_test_bear(pool: &PgPool) -> (Uuid, String) {
+        let suffix = Uuid::new_v4().simple().to_string();
+        let slug = format!("reflection-bear-{}", &suffix[..12]);
+        let (bear_id,): (Uuid,) = sqlx::query_as(
+            r#"
+            INSERT INTO bears (slug, name, description, system_prompt, live_reflection_enabled)
+            VALUES ($1, 'Reflection Test Bear', 'test', 'test', TRUE)
+            RETURNING id
+            "#,
+        )
+        .bind(&slug)
+        .fetch_one(pool)
+        .await
+        .expect("insert bear");
+        (bear_id, slug)
+    }
+
+    async fn insert_open_session(
+        pool: &PgPool,
+        user_id: i32,
+        bear_id: Uuid,
+        bear_slug: &str,
+        session_id: &str,
+        conversation_id: &str,
+    ) {
+        upsert_session(
+            pool,
+            UpsertClientSession {
+                user_id,
+                bear_id,
+                bear_slug: bear_slug.to_string(),
+                client_session_id: session_id.to_string(),
+                runtime_session_id: format!("runtime-{session_id}"),
+                conversation_id: conversation_id.to_string(),
+                resolved_conversation_id: None,
+                client: "test".to_string(),
+                cwd: None,
+                current_mode: Some("ask".to_string()),
+            },
+        )
+        .await
+        .expect("insert session");
+        sqlx::query("UPDATE client_sessions SET updated_at = NOW() - INTERVAL '1 hour' WHERE client_session_id = $1")
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .expect("age session");
+    }
+
+    async fn insert_compaction_artifact(
+        pool: &PgPool,
+        bear_id: Uuid,
+        conversation_id: &str,
+        end_seq: i64,
+    ) {
+        let canonical_id = if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>(
+            r#"
+            SELECT id
+            FROM conversations
+            WHERE bear_id = $1 AND external_conversation_id = $2
+            "#,
+        )
+        .bind(bear_id)
+        .bind(conversation_id)
+        .fetch_optional(pool)
+        .await
+        .expect("select conversation")
+        {
+            id
+        } else {
+            let (id,): (Uuid,) = sqlx::query_as(
+                r#"
+                INSERT INTO conversations (bear_id, external_conversation_id)
+                VALUES ($1, $2)
+                RETURNING id
+                "#,
+            )
+            .bind(bear_id)
+            .bind(conversation_id)
+            .fetch_one(pool)
+            .await
+            .expect("insert conversation");
+            id
+        };
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_compaction_artifacts (
+                conversation_id, artifact_kind, policy_version, trigger,
+                source_message_start_seq, source_message_end_seq, artifact_json
+            )
+            VALUES ($1, 'iterative_summary', 'test', 'test', 1, $2, '{}'::jsonb)
+            "#,
+        )
+        .bind(canonical_id)
+        .bind(end_seq)
+        .execute(pool)
+        .await
+        .expect("insert artifact");
+    }
+
+    async fn insert_reflection_event(
+        pool: &PgPool,
+        user_id: i32,
+        bear_id: Uuid,
+        session_id: &str,
+        status: &str,
+        source_end_seq: Option<i64>,
+    ) {
+        let mut pair_reflection = json!({ "status": status });
+        if let Some(source_end_seq) = source_end_seq {
+            pair_reflection["source_message_end_seq"] = json!(source_end_seq);
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)
+            VALUES ($1, $2, $3, 'session.reflected', $4)
+            "#,
+        )
+        .bind(session_id)
+        .bind(bear_id)
+        .bind(user_id)
+        .bind(json!({ "data": { "pair_reflection": pair_reflection } }))
+        .execute(pool)
+        .await
+        .expect("insert reflection event");
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn skipped_reflection_does_not_hide_later_compaction(pool: PgPool) {
+        let user_id = insert_test_user(&pool).await;
+        let (bear_id, bear_slug) = insert_test_bear(&pool).await;
+        insert_open_session(
+            &pool,
+            user_id,
+            bear_id,
+            &bear_slug,
+            "session-skipped",
+            "conv-skipped",
+        )
+        .await;
+        insert_reflection_event(&pool, user_id, bear_id, "session-skipped", "skipped", None).await;
+        insert_compaction_artifact(&pool, bear_id, "conv-skipped", 25).await;
+
+        let candidates = list_open_reflection_candidates(
+            &pool,
+            OpenReflectionCandidatesParams {
+                stale_after_minutes: 30,
+                activity_threshold: 20,
+                limit: 25,
+            },
+        )
+        .await
+        .expect("list candidates");
+
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.client_session_id == "session-skipped")
+            .expect("session remains eligible after later compaction");
+        assert_eq!(candidate.latest_compaction_source_end_seq, Some(25));
+        assert_eq!(candidate.last_reflected_source_end_seq, None);
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn processed_reflection_waits_for_newer_compaction(pool: PgPool) {
+        let user_id = insert_test_user(&pool).await;
+        let (bear_id, bear_slug) = insert_test_bear(&pool).await;
+        insert_open_session(
+            &pool,
+            user_id,
+            bear_id,
+            &bear_slug,
+            "session-processed",
+            "conv-processed",
+        )
+        .await;
+        insert_reflection_event(
+            &pool,
+            user_id,
+            bear_id,
+            "session-processed",
+            "processed",
+            Some(25),
+        )
+        .await;
+        insert_compaction_artifact(&pool, bear_id, "conv-processed", 25).await;
+
+        let candidates = list_open_reflection_candidates(
+            &pool,
+            OpenReflectionCandidatesParams {
+                stale_after_minutes: 30,
+                activity_threshold: 20,
+                limit: 25,
+            },
+        )
+        .await
+        .expect("list candidates");
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| candidate.client_session_id != "session-processed"),
+            "already-reflected compaction should not be eligible again"
+        );
+
+        insert_compaction_artifact(&pool, bear_id, "conv-processed", 30).await;
+        let candidates = list_open_reflection_candidates(
+            &pool,
+            OpenReflectionCandidatesParams {
+                stale_after_minutes: 30,
+                activity_threshold: 20,
+                limit: 25,
+            },
+        )
+        .await
+        .expect("list candidates");
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.client_session_id == "session-processed")
+            .expect("newer compaction should be eligible");
+        assert_eq!(candidate.latest_compaction_source_end_seq, Some(30));
+        assert_eq!(candidate.last_reflected_source_end_seq, Some(25));
+    }
 }
 
 #[cfg(test)]

@@ -25,6 +25,10 @@ fn test_bear(profile: Option<BearContextProfile>) -> Bear {
         birthday: None,
         created_at: OffsetDateTime::UNIX_EPOCH,
         updated_at: OffsetDateTime::UNIX_EPOCH,
+        live_reflection_enabled: true,
+        live_reflection_stale_after_minutes: 30,
+        live_reflection_activity_threshold: 20,
+        live_reflection_sweep_limit: 25,
     }
 }
 
