@@ -38,8 +38,9 @@ pub enum TurnCompactionTrigger {
     TurnStart,
     /// After a user-visible turn completes (async worker).
     PostTurn,
-    /// Open-session reflection checkpoint. Non-forcing; only compacts when normal pressure exists.
-    LiveReflection,
+    /// Conversation review checkpoint. It may create an iterative summary artifact below normal
+    /// prompt-pressure thresholds so memory discovery is not starved by bucket size.
+    ConversationReview,
     /// Operator or API request.
     Manual,
     /// Context overflow recovery (sync emergency).
@@ -50,7 +51,7 @@ impl TurnCompactionTrigger {
     pub fn as_runtime_trigger(self) -> RuntimeCompactionTriggerKind {
         match self {
             Self::TurnStart | Self::PostTurn => RuntimeCompactionTriggerKind::SemanticGroupCount,
-            Self::LiveReflection => RuntimeCompactionTriggerKind::LiveReflection,
+            Self::ConversationReview => RuntimeCompactionTriggerKind::ConversationReview,
             Self::Manual => RuntimeCompactionTriggerKind::Manual,
             Self::ModelSafetyMargin => RuntimeCompactionTriggerKind::ModelSafetyMargin,
         }
@@ -241,9 +242,9 @@ pub async fn run_compaction_job(
                 }
             } else if matches!(
                 runtime_trigger,
-                RuntimeCompactionTriggerKind::LiveReflection
+                RuntimeCompactionTriggerKind::ConversationReview
             ) {
-                "live reflection skipped compaction; transcript below compaction thresholds"
+                "conversation review skipped; no eligible groups outside protected floor"
             } else {
                 "no eligible history groups outside protected floors"
             };
@@ -343,7 +344,7 @@ pub async fn prepare_turn_compaction(
             on_turn_assemble_compaction(pool, config, bear_id, conversation_id, profile).await
         }
         TurnCompactionTrigger::PostTurn
-        | TurnCompactionTrigger::LiveReflection
+        | TurnCompactionTrigger::ConversationReview
         | TurnCompactionTrigger::Manual
         | TurnCompactionTrigger::ModelSafetyMargin => {
             run_compaction_job(pool, config, bear_id, conversation_id, profile, trigger).await

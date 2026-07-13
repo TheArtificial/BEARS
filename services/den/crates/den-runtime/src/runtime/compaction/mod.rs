@@ -71,10 +71,14 @@ pub fn choose_compaction_decision(
         trigger,
         RuntimeCompactionTriggerKind::ModelSafetyMargin | RuntimeCompactionTriggerKind::Manual
     );
+    let conversation_review = matches!(trigger, RuntimeCompactionTriggerKind::ConversationReview);
     if groups.is_empty() {
         return None;
     }
-    if !force && groups.len() <= policy.max_groups_before_compaction {
+    // ponytail: ConversationReview reuses the iterative-summary pass for memory discovery even
+    // below prompt-pressure thresholds. Ceiling: it still uses compaction artifact storage and the
+    // protected recent floor; upgrade path is a first-class conversation-review artifact/watermark.
+    if !force && !conversation_review && groups.len() <= policy.max_groups_before_compaction {
         return None;
     }
 

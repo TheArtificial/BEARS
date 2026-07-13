@@ -122,6 +122,48 @@ fn continuation_probe_iterative_merge_accumulates_constraints() {
 }
 
 #[test]
+fn conversation_review_creates_summary_decision_below_pressure_threshold() {
+    let rows = vec![
+        TranscriptGroupingRow::new("user", "remember this project preference", json!({}))
+            .with_message_id("m1")
+            .with_sequence_no(1),
+        TranscriptGroupingRow::new("assistant", "got it", json!({}))
+            .with_message_id("m2")
+            .with_sequence_no(2),
+        TranscriptGroupingRow::new("user", "keep the newest group protected", json!({}))
+            .with_message_id("m3")
+            .with_sequence_no(3),
+    ];
+    let groups = semantic_groups_from_conversation_messages(&rows);
+    let policy = super::RuntimeCompactionPolicy {
+        policy_version: "review-v1".into(),
+        protected_recent_group_count: 1,
+        max_groups_before_compaction: 8,
+        max_transcript_chars: 4_000,
+    };
+
+    assert!(
+        choose_compaction_decision(
+            &groups,
+            RuntimeCompactionTriggerKind::SemanticGroupCount,
+            &policy,
+        )
+        .is_none(),
+        "normal compaction should still wait for the bucket threshold"
+    );
+
+    let decision = choose_compaction_decision(
+        &groups,
+        RuntimeCompactionTriggerKind::ConversationReview,
+        &policy,
+    )
+    .expect("conversation review should summarize eligible history below pressure threshold");
+
+    assert_eq!(decision.selected_group_start, 0);
+    assert_eq!(decision.selected_group_end, groups.len() - policy.protected_recent_group_count - 1);
+}
+
+#[test]
 fn chat_policy_allows_more_groups_before_compaction_than_pair() {
     let pair = compaction_policy_for_profile(BearProfile::Pair);
     let chat = compaction_policy_for_profile(BearProfile::Chat);

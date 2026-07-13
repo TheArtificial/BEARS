@@ -93,7 +93,7 @@ async fn reflect_pair_session(
         session.bear_id,
         &conversation_id,
         BearProfile::Pair,
-        TurnCompactionTrigger::LiveReflection,
+        TurnCompactionTrigger::ConversationReview,
     )
     .await?;
     let output = create_pair_reflection_proposals_from_latest_summary(
