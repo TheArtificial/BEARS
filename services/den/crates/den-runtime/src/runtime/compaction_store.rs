@@ -120,8 +120,7 @@ pub async fn record_runtime_compaction_event(
     event: &RuntimeCompactionEvent,
 ) -> Result<(), DenError> {
     let event_hash = runtime_compaction_event_hash(event)?;
-    let boundary = serde_json::to_value(&event.boundary)
-        .map_err(|err| DenError::System(format!("serialize compaction boundary: {err}")))?;
+    let boundary = runtime_compaction_boundary_json(event)?;
     let artifact = event
         .artifact
         .as_ref()
@@ -226,6 +225,17 @@ pub async fn latest_compaction_artifact_for_conversation(
     Ok(row.map(Into::into))
 }
 
+fn runtime_compaction_boundary_json(
+    event: &RuntimeCompactionEvent,
+) -> Result<Option<serde_json::Value>, DenError> {
+    event
+        .boundary
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(|err| DenError::System(format!("serialize compaction boundary: {err}")))
+}
+
 fn runtime_compaction_event_hash(event: &RuntimeCompactionEvent) -> Result<String, DenError> {
     let payload = serde_json::json!({
         "conversation_id": event.conversation_id,
@@ -243,4 +253,54 @@ fn runtime_compaction_event_hash(event: &RuntimeCompactionEvent) -> Result<Strin
     })?;
     let digest = Sha256::digest(bytes);
     Ok(format!("{:x}", digest))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        runtime_compaction_observability::RuntimeCompactionEventStatus,
+        runtime_conversations::{RuntimeCompactionBoundary, RuntimeCompactionTriggerKind},
+    };
+
+    fn event_with_boundary(boundary: Option<RuntimeCompactionBoundary>) -> RuntimeCompactionEvent {
+        RuntimeCompactionEvent {
+            conversation_id: "conv-1".to_string(),
+            trigger: RuntimeCompactionTriggerKind::Manual,
+            policy_version: "policy-v1".to_string(),
+            status: RuntimeCompactionEventStatus::Skipped,
+            boundary,
+            source_group_start: None,
+            source_group_end: None,
+            artifact: None,
+            diagnostic: Some("below threshold".to_string()),
+        }
+    }
+
+    #[test]
+    fn missing_compaction_boundary_binds_as_sql_null_not_json_null() {
+        let boundary = runtime_compaction_boundary_json(&event_with_boundary(None)).unwrap();
+        assert!(boundary.is_none());
+    }
+
+    #[test]
+    fn present_compaction_boundary_binds_as_json_object() {
+        let event = event_with_boundary(Some(RuntimeCompactionBoundary {
+            retained_group_count: 2,
+            compacted_group_count: 3,
+        }));
+        let boundary = runtime_compaction_boundary_json(&event).unwrap().unwrap();
+        assert_eq!(
+            boundary
+                .get("retained_group_count")
+                .and_then(|v| v.as_u64()),
+            Some(2)
+        );
+        assert_eq!(
+            boundary
+                .get("compacted_group_count")
+                .and_then(|v| v.as_u64()),
+            Some(3)
+        );
+    }
 }

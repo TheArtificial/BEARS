@@ -25,6 +25,9 @@ fn legacy_test_bear(bear_id: Uuid) -> Bear {
         created_at: now,
         updated_at: now,
         live_reflection_enabled: true,
+        live_reflection_stale_after_minutes: 30,
+        live_reflection_activity_threshold: 20,
+        live_reflection_sweep_limit: 25,
     }
 }
 
