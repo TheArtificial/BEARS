@@ -357,17 +357,20 @@ pub async fn list_open_reflection_candidates(
     pool: &PgPool,
     params: OpenReflectionCandidatesParams,
 ) -> Result<Vec<OpenReflectionCandidateRow>, DenError> {
-    let stale_after_minutes = params.stale_after_minutes.max(1);
-    let activity_threshold = params.activity_threshold.max(1);
-    let limit = params.limit.clamp(1, 100);
+    let default_stale_after_minutes = params.stale_after_minutes.max(1);
+    let default_activity_threshold = params.activity_threshold.max(1);
+    let default_limit = params.limit.clamp(1, 100);
     let rows = sqlx::query_as::<_, OpenReflectionCandidateRow>(
         r#"
         WITH open_sessions AS (
             SELECT s.*,
                    COALESCE(events.event_count, 0)::bigint AS event_count,
                    reflected.last_reflected_at,
+                   COALESCE(b.live_reflection_stale_after_minutes, $1)::bigint AS stale_after_minutes,
+                   COALESCE(b.live_reflection_activity_threshold, $2)::bigint AS activity_threshold,
+                   COALESCE(b.live_reflection_sweep_limit, $3)::bigint AS sweep_limit,
                    CASE
-                       WHEN s.updated_at <= NOW() - ($1 * INTERVAL '1 minute') THEN 'stale_open_sweep'
+                       WHEN s.updated_at <= NOW() - (COALESCE(b.live_reflection_stale_after_minutes, $1) * INTERVAL '1 minute') THEN 'stale_open_sweep'
                        ELSE 'activity_threshold_sweep'
                    END AS reflection_trigger
             FROM client_sessions s
@@ -390,23 +393,28 @@ pub async fn list_open_reflection_candidates(
             WHERE s.closed_at IS NULL
               AND s.archived_at IS NULL
               AND b.live_reflection_enabled IS TRUE
+        ), eligible_sessions AS (
+            SELECT *,
+                   ROW_NUMBER() OVER (PARTITION BY bear_id ORDER BY updated_at ASC, id ASC) AS bear_sweep_rank
+            FROM open_sessions
+            WHERE (updated_at <= NOW() - (stale_after_minutes * INTERVAL '1 minute')
+                   OR event_count >= activity_threshold)
+              AND (last_reflected_at IS NULL OR last_reflected_at < updated_at)
         )
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
                closed_at, archived_at, created_at, updated_at, event_count, last_reflected_at,
                reflection_trigger
-        FROM open_sessions
-        WHERE (updated_at <= NOW() - ($1 * INTERVAL '1 minute')
-               OR event_count >= $2)
-          AND (last_reflected_at IS NULL OR last_reflected_at < updated_at)
+        FROM eligible_sessions
+        WHERE bear_sweep_rank <= sweep_limit
         ORDER BY updated_at ASC, id ASC
         LIMIT $3
         "#,
     )
-    .bind(stale_after_minutes)
-    .bind(activity_threshold)
-    .bind(limit)
+    .bind(default_stale_after_minutes)
+    .bind(default_activity_threshold)
+    .bind(default_limit)
     .fetch_all(pool)
     .await?;
 

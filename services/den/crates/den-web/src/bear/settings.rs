@@ -205,6 +205,12 @@ struct BearModelsForm {
 struct LiveReflectionForm {
     #[serde(default)]
     enabled: String,
+    #[serde(default)]
+    stale_after_minutes: i32,
+    #[serde(default)]
+    activity_threshold: i32,
+    #[serde(default)]
+    sweep_limit: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2954,11 +2960,19 @@ async fn live_reflection_post(
         Err(r) => return Ok(r.into_response()),
     };
     let enabled = matches!(form.enabled.as_str(), "1" | "true" | "on" | "yes");
-    bears_db::update_live_reflection_enabled(state.sqlx_pool(), bear.id, enabled).await?;
+    bears_db::update_live_reflection_settings(
+        state.sqlx_pool(),
+        bear.id,
+        enabled,
+        form.stale_after_minutes,
+        form.activity_threshold,
+        form.sweep_limit,
+    )
+    .await?;
     let message = if enabled {
-        "Live reflection enabled."
+        "Live reflection settings saved."
     } else {
-        "Live reflection disabled."
+        "Live reflection disabled; sweep settings saved."
     };
     Ok(Redirect::to(&format!(
         "/bear/{}/advanced?message={}",

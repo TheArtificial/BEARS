@@ -29,8 +29,23 @@
     <input type="checkbox" name="enabled" value="1" {% if bear.live_reflection_enabled %}checked{% endif %} {% if not can_manage_bear %}disabled{% endif %}>
     Reflect on live/open conversations
   </label>
+  <p>
+    <label>Idle before sweep, minutes<br>
+      <input type="number" name="stale_after_minutes" min="1" max="1440" value="{{ bear.live_reflection_stale_after_minutes }}" {% if not can_manage_bear %}disabled{% endif %}>
+    </label>
+  </p>
+  <p>
+    <label>Activity threshold, events<br>
+      <input type="number" name="activity_threshold" min="1" max="1000" value="{{ bear.live_reflection_activity_threshold }}" {% if not can_manage_bear %}disabled{% endif %}>
+    </label>
+  </p>
+  <p>
+    <label>Maximum conversations per sweep<br>
+      <input type="number" name="sweep_limit" min="1" max="100" value="{{ bear.live_reflection_sweep_limit }}" {% if not can_manage_bear %}disabled{% endif %}>
+    </label>
+  </p>
   {% if can_manage_bear %}
-  <p><button type="submit">Save live reflection setting</button></p>
+  <p><button type="submit">Save live reflection settings</button></p>
   {% endif %}
 </form>
 

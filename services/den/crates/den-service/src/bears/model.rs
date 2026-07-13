@@ -39,10 +39,28 @@ pub struct Bear {
     pub updated_at: OffsetDateTime,
     #[serde(default = "default_live_reflection_enabled")]
     pub live_reflection_enabled: bool,
+    #[serde(default = "default_live_reflection_stale_after_minutes")]
+    pub live_reflection_stale_after_minutes: i32,
+    #[serde(default = "default_live_reflection_activity_threshold")]
+    pub live_reflection_activity_threshold: i32,
+    #[serde(default = "default_live_reflection_sweep_limit")]
+    pub live_reflection_sweep_limit: i32,
 }
 
 fn default_live_reflection_enabled() -> bool {
     true
+}
+
+fn default_live_reflection_stale_after_minutes() -> i32 {
+    30
+}
+
+fn default_live_reflection_activity_threshold() -> i32 {
+    20
+}
+
+fn default_live_reflection_sweep_limit() -> i32 {
+    25
 }
 
 fn default_provisioning_version() -> i32 {
