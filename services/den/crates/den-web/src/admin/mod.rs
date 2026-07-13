@@ -28,7 +28,7 @@ pub fn router() -> Router<AppState> {
         .merge(sandbox_images::router())
         .nest("/workers", workers::router())
         .nest("/api", api::router())
-        .route_with_tsr("/", get(admin_home))
+        .route("/", get(admin_home))
 }
 
 async fn admin_home(
