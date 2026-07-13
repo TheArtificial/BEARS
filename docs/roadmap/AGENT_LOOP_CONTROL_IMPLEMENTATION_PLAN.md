@@ -317,6 +317,35 @@ The freeform task-definition policy affects both runtime legality and model-visi
 
 ponytail: keep `may_define_task` as a single boolean until another real state is needed. Do not split `may_orient` and `may_delegate` while they are locked together.
 
+### Boundary with checkpoints
+
+Task orientation is state; checkpoints are interrupts. When orientation and checkpoint behavior overlap, prefer task orientation as the enforcement regime.
+
+Orientation owns the current objective and the policies that directly follow from it:
+
+- whether the run is `freeform`, `oriented`, or `focused`;
+- whether freeform may define a task-shaped outcome;
+- whether the model sees task-definition/orientation/delegation affordances;
+- which budget/grace profile applies for freeform vs oriented vs focused work;
+- whether child-task creation is allowed;
+- the oriented child cap and depth cap;
+- focused Job mutability/static-scope decomposition policy.
+
+Checkpoints should not infer, select, or launder the current objective. Do not keep a separate "task gate" or "plan-mode gate" whose job is to decide that freeform work has become task-shaped. That decision belongs to `ObjectiveOrientation` plus `FreeformPolicy.may_define_task` and the task-definition transition path.
+
+Checkpoints remain useful only as pause/continue/control boundaries, using the resolved orientation as context. Keep checkpoint triggers for boundaries such as:
+
+- low or exhausted budget;
+- stalled progress or repeated failures;
+- risky, destructive, or externally visible actions;
+- unresolved ambiguity that cannot be resolved locally;
+- long-running autonomous continuation;
+- attempted scope expansion beyond the current orientation policy;
+- attempted child-task creation beyond the oriented cap;
+- attempted decomposition of an immutable/static focused Job.
+
+Cleanup rule: if a checkpoint reason duplicates orientation enforcement, delete it, rename it, or fold it into orientation/task-definition policy. If it is a real pause point, keep it, but include the resolved orientation, relevant task/job refs, and policy violation details in the checkpoint context.
+
 | Task | Done when |
 | --- | --- |
 | Add orientation types | Runtime has typed `ObjectiveOrientation`, `FreeformPolicy`, `TaskOrientation`, `JobOrientation`, and oriented child-task constants. |
