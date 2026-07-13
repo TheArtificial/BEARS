@@ -122,7 +122,11 @@ pub async fn record_runtime_compaction_event(
     let event_hash = runtime_compaction_event_hash(event)?;
     let boundary = serde_json::to_value(&event.boundary)
         .map_err(|err| DenError::System(format!("serialize compaction boundary: {err}")))?;
-    let artifact = serde_json::to_value(&event.artifact)
+    let artifact = event
+        .artifact
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()
         .map_err(|err| DenError::System(format!("serialize compaction artifact: {err}")))?;
     sqlx::query(
         r"
