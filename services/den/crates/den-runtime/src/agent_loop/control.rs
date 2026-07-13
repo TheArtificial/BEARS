@@ -625,15 +625,13 @@ fn checkpoint_field_missing(field: CheckpointField, response: &RuntimeCheckpoint
 }
 
 pub fn task_gate_checkpoint_trigger(
-    profile: &AgentLoopControlProfile,
+    _profile: &AgentLoopControlProfile,
 ) -> Option<CheckpointTrigger> {
-    profile
-        .checkpoints
-        .require_on_task_gate_rejection
-        .then(|| checkpoint_trigger(
-            CheckpointReason::TaskGateRejection,
-            "Loop checkpoint: the final answer did not satisfy the active task gate; continue or update task state with evidence.",
-        ))
+    // ponytail: task-orientation is now the enforcement regime for task-shaped work, so this
+    // legacy checkpoint gate is intentionally disabled. Ceiling: the compatibility enum/profile
+    // fields still exist; upgrade path is to delete TaskGateRejection,
+    // require_on_task_gate_rejection, and TaskGatePolicy after callers stop referencing them.
+    None
 }
 
 pub fn pre_risk_checkpoint_trigger(profile: &AgentLoopControlProfile) -> Option<CheckpointTrigger> {
@@ -1162,15 +1160,12 @@ mod tests {
     }
 
     #[test]
-    fn task_gate_and_pre_risk_triggers_follow_profile_policy() {
+    fn task_gate_checkpoint_is_legacy_noop_and_pre_risk_follows_profile_policy() {
         let light = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Light);
         let careful = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
 
         assert!(task_gate_checkpoint_trigger(&light).is_none());
-        assert_eq!(
-            task_gate_checkpoint_trigger(&careful).map(|trigger| trigger.reason),
-            Some(CheckpointReason::TaskGateRejection)
-        );
+        assert!(task_gate_checkpoint_trigger(&careful).is_none());
         assert!(pre_risk_checkpoint_trigger(&light).is_none());
         assert_eq!(
             pre_risk_checkpoint_trigger(&careful).map(|trigger| trigger.reason),
