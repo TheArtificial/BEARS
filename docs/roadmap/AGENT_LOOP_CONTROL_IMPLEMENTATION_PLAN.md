@@ -346,6 +346,20 @@ Checkpoints remain useful only as pause/continue/control boundaries, using the r
 
 Cleanup rule: if a checkpoint reason duplicates orientation enforcement, delete it, rename it, or fold it into orientation/task-definition policy. If it is a real pause point, keep it, but include the resolved orientation, relevant task/job refs, and policy violation details in the checkpoint context.
 
+### BearWire / ACP plan projection
+
+A currently oriented task should be visible to armature clients through BearWire as an ACP plan. The projection is a client-facing view of the current working level, not a new source of task state.
+
+ACP plan surfaces are treated as flat for this phase. If ACP has no native task-hierarchy concept, do not flatten an entire Docket tree into one visible plan and do not expose hidden descendants as peer items. Instead, project the plan at the level of the currently oriented task:
+
+- the ACP plan title/objective represents the current working task, or the focused Job's derived current task when focused work is task-scoped;
+- visible plan items are the current working task and its siblings at the same parent level;
+- direct children of the oriented task remain Docket/task-list structure and may be exposed only through future explicit hierarchy support or a deliberate drill-down projection;
+- when orientation changes, BearWire emits the corresponding plan replacement/update so the visible ACP plan follows the current working level;
+- ACP plan edits/status changes must round-trip through the existing task-list/Docket mutation paths, not mutate orientation or Docket state by projection side effect.
+
+This keeps the user-visible plan aligned with the current objective while avoiding a misleading flattened hierarchy. When in doubt, the oriented task's level is the projection boundary.
+
 | Task | Done when |
 | --- | --- |
 | Add orientation types | Runtime has typed `ObjectiveOrientation`, `FreeformPolicy`, `TaskOrientation`, `JobOrientation`, and oriented child-task constants. |

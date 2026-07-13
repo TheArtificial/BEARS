@@ -24,7 +24,6 @@ pub enum CheckpointReason {
     OverExploration,
     ConsecutiveFailure,
     SameSignatureNearKo,
-    TaskGateRejection,
     LowBudget,
     PreRiskMutation,
 }
@@ -35,7 +34,6 @@ impl CheckpointReason {
             Self::OverExploration => "over_exploration",
             Self::ConsecutiveFailure => "consecutive_failure",
             Self::SameSignatureNearKo => "same_signature_near_ko",
-            Self::TaskGateRejection => "task_gate_rejection",
             Self::LowBudget => "low_budget",
             Self::PreRiskMutation => "pre_risk_mutation",
         }
@@ -54,15 +52,8 @@ pub struct CheckpointPolicy {
     pub exploration_without_mutation_threshold: Option<u32>,
     pub consecutive_failure_threshold: Option<u32>,
     pub same_signature_warning_threshold: Option<u32>,
-    pub require_on_task_gate_rejection: bool,
     pub require_on_low_budget: bool,
     pub require_before_broad_mutation: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskGatePolicy {
-    pub checkpoint_on_first_rejection: bool,
-    pub max_same_gate_rejections: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +68,6 @@ pub struct AgentLoopControlProfile {
     pub budget: TurnBudgetPolicy,
     pub ko: KoPolicy,
     pub checkpoints: CheckpointPolicy,
-    pub task_gate: TaskGatePolicy,
     pub thinking: CheckpointThinkingPolicy,
 }
 
@@ -624,16 +614,6 @@ fn checkpoint_field_missing(field: CheckpointField, response: &RuntimeCheckpoint
     }
 }
 
-pub fn task_gate_checkpoint_trigger(
-    _profile: &AgentLoopControlProfile,
-) -> Option<CheckpointTrigger> {
-    // ponytail: task-orientation is now the enforcement regime for task-shaped work, so this
-    // legacy checkpoint gate is intentionally disabled. Ceiling: the compatibility enum/profile
-    // fields still exist; upgrade path is to delete TaskGateRejection,
-    // require_on_task_gate_rejection, and TaskGatePolicy after callers stop referencing them.
-    None
-}
-
 pub fn pre_risk_checkpoint_trigger(profile: &AgentLoopControlProfile) -> Option<CheckpointTrigger> {
     profile
         .checkpoints
@@ -708,7 +688,6 @@ impl AgentLoopControlProfile {
                     exploration_without_mutation_threshold: Some(8),
                     consecutive_failure_threshold: Some(2),
                     same_signature_warning_threshold: Some(2),
-                    require_on_task_gate_rejection: false,
                     require_on_low_budget: true,
                     require_before_broad_mutation: false,
                 },
@@ -733,7 +712,6 @@ impl AgentLoopControlProfile {
                     exploration_without_mutation_threshold: Some(5),
                     consecutive_failure_threshold: Some(2),
                     same_signature_warning_threshold: Some(2),
-                    require_on_task_gate_rejection: true,
                     require_on_low_budget: true,
                     require_before_broad_mutation: false,
                 },
@@ -758,7 +736,6 @@ impl AgentLoopControlProfile {
                     exploration_without_mutation_threshold: Some(3),
                     consecutive_failure_threshold: Some(1),
                     same_signature_warning_threshold: Some(1),
-                    require_on_task_gate_rejection: true,
                     require_on_low_budget: true,
                     require_before_broad_mutation: true,
                 },
@@ -783,7 +760,6 @@ impl AgentLoopControlProfile {
                     exploration_without_mutation_threshold: Some(2),
                     consecutive_failure_threshold: Some(1),
                     same_signature_warning_threshold: Some(1),
-                    require_on_task_gate_rejection: true,
                     require_on_low_budget: true,
                     require_before_broad_mutation: true,
                 },
@@ -803,7 +779,7 @@ impl AgentLoopControlProfile {
     }
 
     fn new(
-        level: AgentLoopControlLevel,
+        _level: AgentLoopControlLevel,
         budget: TurnBudgetPolicy,
         checkpoints: CheckpointPolicy,
         thinking: CheckpointThinkingPolicy,
@@ -815,14 +791,6 @@ impl AgentLoopControlProfile {
                 max_same_tool_signature_repeats: budget.max_same_tool_signature_repeats,
             },
             checkpoints,
-            task_gate: TaskGatePolicy {
-                checkpoint_on_first_rejection: !matches!(level, AgentLoopControlLevel::Light),
-                max_same_gate_rejections: match level {
-                    AgentLoopControlLevel::Light | AgentLoopControlLevel::Standard => 3,
-                    AgentLoopControlLevel::Careful => 2,
-                    AgentLoopControlLevel::Strict => 1,
-                },
-            },
             thinking,
         }
     }
@@ -1160,12 +1128,10 @@ mod tests {
     }
 
     #[test]
-    fn task_gate_checkpoint_is_legacy_noop_and_pre_risk_follows_profile_policy() {
+    fn pre_risk_checkpoint_follows_profile_policy() {
         let light = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Light);
         let careful = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
 
-        assert!(task_gate_checkpoint_trigger(&light).is_none());
-        assert!(task_gate_checkpoint_trigger(&careful).is_none());
         assert!(pre_risk_checkpoint_trigger(&light).is_none());
         assert_eq!(
             pre_risk_checkpoint_trigger(&careful).map(|trigger| trigger.reason),

@@ -15,18 +15,16 @@ use crate::runtime::turn_state::{
 use crate::{
     agent_loop::{
         approvals::create_native_approval,
-        record_checkpoint_request, record_checkpoint_response, run_agent_step_stream,
+        record_checkpoint_response, run_agent_step_stream,
         session_store::AgentLoopSessionStore,
         step::RUNTIME_CHECKPOINT_TOOL_NAME,
-        task_gate_checkpoint_trigger, tool_call_finished_event_for_content,
+        tool_call_finished_event_for_content,
         tool_policy::{
             maybe_pause_for_tool_approval, provider_tool_is_den_web_fetch,
             provider_tool_requires_approval, provider_tool_supports_unilateral_execution,
         },
-        validate_checkpoint_response, AgentStepOverflowContext, CheckpointArtifactInput,
-        CheckpointField, CheckpointReplayPolicy, CheckpointResponseInput, CheckpointTaskContext,
-        CheckpointTrigger, CheckpointValidationStatus, CheckpointVisibility,
-        RuntimeCheckpointRequest, RuntimeCheckpointResponse,
+        validate_checkpoint_response, AgentStepOverflowContext, CheckpointResponseInput,
+        CheckpointValidationStatus, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     runtime_compaction::enqueue_compaction_after_turn,
@@ -540,13 +538,6 @@ impl SessionTrackingStream {
         });
     }
 
-    fn observe_checkpoint_triggers(&self) -> bool {
-        matches!(
-            self.config.agent_loop_control_mode.as_str(),
-            "observe" | "enforce"
-        )
-    }
-
     fn enforce_checkpoint_responses(&self) -> bool {
         self.config.agent_loop_control_mode == "enforce"
     }
@@ -563,120 +554,6 @@ impl SessionTrackingStream {
             "work" => self.profile == BearProfile::Work,
             _ => false,
         }
-    }
-
-    fn task_gate_checkpoint_request(
-        &self,
-        trigger: &CheckpointTrigger,
-        next_task: &str,
-    ) -> Option<RuntimeCheckpointRequest> {
-        let session = self.store.get(&self.session_key)?;
-        let run_id = session.run_id.clone()?;
-        let task_context = session.active_activity_plan.as_ref().map(|plan| {
-            let active_item = plan.current_item.as_ref().or_else(|| {
-                plan.items.iter().find(|item| {
-                    matches!(
-                        item.status,
-                        den_docket::TaskListItemStatus::Pending
-                            | den_docket::TaskListItemStatus::InProgress
-                    )
-                })
-            });
-            CheckpointTaskContext {
-                task_list_id: Some(plan.id.to_string()),
-                task_list_version: None,
-                active_item_id: active_item.map(|item| item.id.clone()),
-                active_item_title: active_item.map(|item| item.title.clone()),
-                docket_job_id: plan.source_ref.docket_job_id.clone(),
-                docket_task_id: active_item.and_then(|item| item.source_ref.docket_task_id.clone()),
-            }
-        });
-        Some(RuntimeCheckpointRequest {
-            checkpoint_id: format!(
-                "ckpt-{}-{}",
-                session.step.saturating_add(1),
-                trigger.reason.as_str()
-            ),
-            run_id,
-            reason: trigger.reason,
-            control_level: session.agent_loop_control.level,
-            active_objective: Some(next_task.to_string()),
-            task_context,
-            evidence_refs: Vec::new(),
-            required_fields: vec![
-                CheckpointField::ActiveObjective,
-                CheckpointField::MoreExplorationJustified,
-                CheckpointField::NextAction,
-                CheckpointField::TaskStateChangeNeeded,
-            ],
-        })
-    }
-
-    fn checkpoint_nudge_text(
-        request: &RuntimeCheckpointRequest,
-        trigger: &CheckpointTrigger,
-    ) -> String {
-        let request_json = serde_json::to_string_pretty(request)
-            .unwrap_or_else(|_| "{\"error\":\"checkpoint_request_unavailable\"}".to_string());
-        format!(
-            "Runtime checkpoint required: {}\n\nCall the `checkpoint` tool before continuing. Do not answer with checkpoint JSON in assistant text. The tool schema validates the decision fields. Use `summary` for a short free-text synthesis; keep structure only for `more_exploration_justified`, `next_action`, `task_state_change_needed`, and `evidence_refs`.\n\nAllowed `next_action` values: `call_tool`, `edit`, `validate`, `update_task_list`, `sync_task_list`, `request_handoff`, `final_if_gate_allows`, `stop_blocked`. If task state should change, choose `update_task_list`, `sync_task_list`, or `request_handoff`, then call the corresponding task tool with evidence after the checkpoint.\n\nCheckpoint request:\n```json\n{request_json}\n```",
-            trigger.message
-        )
-    }
-
-    fn apply_checkpoint_nudge(
-        &self,
-        request: RuntimeCheckpointRequest,
-        trigger: &CheckpointTrigger,
-    ) {
-        let message = Self::checkpoint_nudge_text(&request, trigger);
-        self.store.update(&self.session_key, |session| {
-            if session.messages.last().is_some_and(|message| {
-                message.role == "system"
-                    && message
-                        .content
-                        .as_deref()
-                        .is_some_and(|content| content.starts_with("Runtime checkpoint required:"))
-            }) {
-                session.messages.pop();
-            }
-            session.pending_checkpoint_request = Some(request.clone());
-            session.messages.push(ChatMessage {
-                role: "system".to_string(),
-                content: Some(message.clone()),
-                tool_call_id: None,
-                name: None,
-                tool_calls: None,
-            });
-        });
-    }
-
-    fn record_checkpoint_request_if_audited(&self, request: RuntimeCheckpointRequest) {
-        if !self.checkpoint_audit_enabled() {
-            return;
-        }
-        let pool = self.pool.clone();
-        let session_id = self.client_session_id.clone();
-        tokio::spawn(async move {
-            if let Err(err) = record_checkpoint_request(
-                &pool,
-                CheckpointArtifactInput {
-                    run_id: request.run_id.clone(),
-                    turn_step_id: None,
-                    request,
-                    visibility: CheckpointVisibility::AuditOnly,
-                    replay_policy: CheckpointReplayPolicy::None,
-                },
-            )
-            .await
-            {
-                tracing::warn!(
-                    error = %err,
-                    session_id = %session_id,
-                    "failed to record task-gate checkpoint request artifact"
-                );
-            }
-        });
     }
 
     fn parse_checkpoint_response_text(text: &str) -> Result<RuntimeCheckpointResponse, DenError> {
@@ -1375,58 +1252,6 @@ impl Stream for SessionTrackingStream {
                             .next_incomplete_task_title
                         })
                         .unwrap_or_else(|| "the next incomplete task".to_string());
-                    if let Some(session) = self.store.get(&self.session_key) {
-                        if let Some(trigger) =
-                            task_gate_checkpoint_trigger(&session.agent_loop_control.profile)
-                        {
-                            if self.observe_checkpoint_triggers() {
-                                if let Some(request) =
-                                    self.task_gate_checkpoint_request(&trigger, &next_task)
-                                {
-                                    self.record_checkpoint_request_if_audited(request.clone());
-                                    if self.enforce_checkpoint_responses() {
-                                        self.apply_checkpoint_nudge(request, &trigger);
-                                        self.begin_checkpoint_continuation();
-                                        self.pending_pause_after_tool =
-                                            Some(RuntimeSemanticEvent::RunProgress {
-                                                kind: "runtime_checkpoint_required".to_string(),
-                                                text: Some(trigger.message.clone()),
-                                                phase: Some("agent_loop_control".to_string()),
-                                                detail: Some(serde_json::json!({
-                                                    "reason": trigger.reason,
-                                                    "mode": "enforce",
-                                                    "next_task": next_task.clone(),
-                                                })),
-                                            });
-                                        return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
-                                            RuntimeSemanticEvent::StatusText {
-                                                text: "Required a structured checkpoint before continuing the active task gate.".to_string(),
-                                            },
-                                        ))));
-                                    }
-                                    self.begin_final_gate_continuation(&next_task);
-                                    self.pending_pause_after_tool =
-                                        Some(RuntimeSemanticEvent::RunProgress {
-                                            kind: "runtime_checkpoint_would_trigger".to_string(),
-                                            text: Some(trigger.message.clone()),
-                                            phase: Some("agent_loop_control".to_string()),
-                                            detail: Some(serde_json::json!({
-                                                "reason": trigger.reason,
-                                                "mode": "observe_only",
-                                                "next_task": next_task.clone(),
-                                            })),
-                                        });
-                                    return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
-                                        RuntimeSemanticEvent::StatusText {
-                                            text: format!(
-                                                "Observed a task-gate checkpoint trigger; continuing with {next_task}."
-                                            ),
-                                        },
-                                    ))));
-                                }
-                            }
-                        }
-                    }
                     tracing::info!(
                         client_session_id = %self.client_session_id,
                         profile = %self.profile.as_str(),
@@ -1680,7 +1505,7 @@ mod tests {
         RuntimeCheckpointRequest {
             checkpoint_id: checkpoint_id.to_string(),
             run_id: "run-test".to_string(),
-            reason: crate::agent_loop::CheckpointReason::TaskGateRejection,
+            reason: crate::agent_loop::CheckpointReason::OverExploration,
             control_level: den_core::AgentLoopControlLevel::Careful,
             active_objective: Some("Update task state".to_string()),
             task_context: None,
