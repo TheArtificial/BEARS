@@ -225,7 +225,9 @@ Command shape:
 
 - exact Job ID: focus that Job and begin execution immediately;
 - other text: search existing Jobs; if exactly one high-confidence match exists, focus it and begin execution immediately; otherwise show possible matches and ask the user to select one or begin defining a new Job;
-- empty: show recent Jobs and ask the user to select one or begin defining a new Job.
+- empty: show the 5 most recent Jobs and ask the user to select one or begin defining a new Job.
+
+High-confidence focus matching is intentionally narrow. Exact Job IDs and explicit continuation references to the current focused Job qualify. Otherwise, a match needs strong lexical/semantic overlap plus recency, with no competing plausible Job. Ambiguous matches must elicit a choice. `work` requires an explicit focused Job and must not fuzzy-attach to a Job before model-driven continuation. `pair` may use conversational focus to suggest a Job, but must ask before making Docket-affecting focus/task updates. If no high-confidence match exists and the request is task-like, stay freeform or session-local and ask before creating a durable Job.
 
 Selection is mediated through one model-visible elicitation tool. The model should not know whether the client rendered a native picker or sent numbered text options. Clients without elicitation UI present numbered options and ask the user to reply with a number; the runtime normalizes the result as the same elicitation response.
 
@@ -241,6 +243,7 @@ When focused:
 | Define Focus projection | BearWire/ACP can project **Focused** as a special non-selectable state tied to conversation `focused_job_id`. |
 | Keep Den authoritative | Clients display Focus and may provide commands to request it, but Den validates/designates/clears the focused Job. |
 | Add slash-command hook | ACP/client command plumbing can handle `/focus [job]` with exact-id, search, ambiguous-selection, empty-recent, and define-new paths. |
+| Add focus matching policy | Focus matching considers at most 5 recent Jobs by default, auto-matches only exact/explicit or single high-confidence candidates, requires elicitation on ambiguity, and asks before durable Job creation or Docket-affecting `pair` attachment. |
 | Add elicitation path | Job selection uses one model-visible elicitation tool; client adapters choose native UI or numbered text fallback without exposing that choice to the model. |
 | Clear on mode change | If a client changes mode away from **Focused**, Den clears the conversation focused Job. |
 | Update focused titles | Focused conversations/sessions update title as `[Job name] - [current task]` with blocked/complete/selection fallbacks. |

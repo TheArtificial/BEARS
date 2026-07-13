@@ -99,7 +99,9 @@ The first command surface is `/focus [job]`:
 
 - exact Job ID: focus that Job and begin execution immediately;
 - non-empty text: search existing Jobs; if exactly one high-confidence match exists, focus it and begin execution immediately; otherwise elicit a selection from possible matches or let the user begin defining a new Job;
-- empty: show recent Jobs and elicit a selection or new-Job definition.
+- empty: show the 5 most recent Jobs and elicit a selection or new-Job definition.
+
+High-confidence focus matching is deliberately conservative. Exact Job IDs and explicit continuation references to the current focused Job qualify. Other matches require strong lexical/semantic overlap plus recency, with no competing plausible Job. Ambiguity requires elicitation. `work` dispatch must designate a focused Job explicitly before model-driven continuation; it does not fuzzy-attach. `pair` can suggest a matching Job from conversational focus, but asks before making Docket-affecting focus/task updates. If no high-confidence match exists and the request is task-like, Den stays freeform or session-local unless the user confirms durable Job creation.
 
 Selection uses one model-visible elicitation tool. Client adapters decide whether to render native elicitation UI or numbered text options; the model does not branch on client capability.
 
