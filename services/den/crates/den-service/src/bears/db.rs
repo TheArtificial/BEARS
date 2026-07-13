@@ -41,7 +41,7 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
         r"
         SELECT id, slug, name, description, default_model, default_tool_budget_multiplier, tools_enabled,
-               runtime_plan, context_profile,
+               work_enabled, runtime_plan, context_profile,
                provisioning_version, system_prompt, birthday, created_at, updated_at,
                live_reflection_enabled, live_reflection_stale_after_minutes,
                live_reflection_activity_threshold, live_reflection_sweep_limit
@@ -58,7 +58,7 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError>
     sqlx::query_as::<_, Bear>(
         r"
         SELECT id, slug, name, description, default_model, default_tool_budget_multiplier, tools_enabled,
-               runtime_plan, context_profile,
+               work_enabled, runtime_plan, context_profile,
                provisioning_version, system_prompt, birthday, created_at, updated_at,
                live_reflection_enabled, live_reflection_stale_after_minutes,
                live_reflection_activity_threshold, live_reflection_sweep_limit
@@ -327,7 +327,7 @@ pub async fn list_bears_for_user(
     sqlx::query_as::<_, BearWithMembership>(
         r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier, b.tools_enabled,
-               b.runtime_plan, b.context_profile,
+               b.work_enabled, b.runtime_plan, b.context_profile,
                b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
                b.live_reflection_enabled, b.live_reflection_stale_after_minutes,
                b.live_reflection_activity_threshold, b.live_reflection_sweep_limit,
@@ -353,7 +353,7 @@ pub async fn bear_for_user_by_slug(
     sqlx::query_as::<_, Bear>(
         r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier, b.tools_enabled,
-               b.runtime_plan, b.context_profile,
+               b.work_enabled, b.runtime_plan, b.context_profile,
                b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
                b.live_reflection_enabled, b.live_reflection_stale_after_minutes,
                b.live_reflection_activity_threshold, b.live_reflection_sweep_limit

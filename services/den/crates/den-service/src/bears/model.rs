@@ -26,6 +26,7 @@ pub struct Bear {
     pub default_model: Option<String>,
     pub default_tool_budget_multiplier: Option<f64>,
     pub tools_enabled: Option<Json<serde_json::Value>>,
+    pub work_enabled: bool,
     /// Optional runtime plan JSON.
     pub runtime_plan: Option<Json<serde_json::Value>>,
     /// Optional profile-aware context composition profile.
