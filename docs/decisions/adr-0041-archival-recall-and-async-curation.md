@@ -132,7 +132,7 @@ The Qdrant passage registry and vector lifecycle remain as specified in ADR-0038
 | Per-item importance signal | **salience** |
 | Background, off-hot-path curation posture | **sleep-time** curation |
 
-"Governance" remains reserved for runtime context management; memory review is **curation** ([ADR-0039](adr-0039-trust-profiles-and-governance-modes.md), `AGENTS.md`).
+"Governance" remains reserved for runtime context management; memory review is **curation** ([ADR-0039](adr-0039-trust-profiles-and-governance.md), `AGENTS.md`).
 
 ## Follow-ups (not decided here)
 

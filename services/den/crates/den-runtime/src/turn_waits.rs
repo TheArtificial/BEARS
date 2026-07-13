@@ -110,7 +110,8 @@ pub struct PersistedSurfaceObligation {
     pub obligation: turn_obligations::TurnObligationRow,
 }
 
-const STEP_RETURNING_COLUMNS: &str = "id, run_id, step_index, state, provider_response_id, opened_at, closed_at";
+const STEP_RETURNING_COLUMNS: &str =
+    "id, run_id, step_index, state, provider_response_id, opened_at, closed_at";
 const ACTIVE_STEP_STATES_SQL: &str = "'streaming_model', 'waiting_for_client', 'ready_to_continue'";
 const OBLIGATION_RETURNING_COLUMNS: &str = "id, run_id, session_id, kind, expected_responder_action, tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload, created_at, updated_at, completed_at";
 const OBLIGATION_RETURNING_COLUMNS_WITH_RESPONDER: &str = "id, run_id, session_id, kind, expected_responder_action, tool_call_id, permission_id, responder_ref_id, state, turn_step_id, request_payload, result_payload, created_at, updated_at, completed_at";
@@ -209,17 +210,15 @@ pub async fn persist_surface_obligation_transactionally(
 
     let turn_step_id = ensure_waiting_turn_step(&mut tx, input.run_id, true).await?;
 
-    let row = sqlx::query(
-        &format!(
-            r"
+    let row = sqlx::query(&format!(
+        r"
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             responder_ref_id, state, request_payload
         ) VALUES ($1, $2, $3, $4, $5, $6, 'waiting_for_client', $7)
         RETURNING {OBLIGATION_RETURNING_COLUMNS_WITH_RESPONDER}
         "
-        ),
-    )
+    ))
     .bind(input.run_id)
     .bind(input.session_id)
     .bind(turn_step_id)
@@ -294,9 +293,12 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         .await?;
     }
 
-    let turn_step_id =
-        ensure_waiting_turn_step(&mut tx, input.run_id, !den_owned || effective_approval_required)
-            .await?;
+    let turn_step_id = ensure_waiting_turn_step(
+        &mut tx,
+        input.run_id,
+        !den_owned || effective_approval_required,
+    )
+    .await?;
 
     let obligation_row = if effective_approval_required {
         let permission_id = input.approval_request_id.unwrap_or_default();

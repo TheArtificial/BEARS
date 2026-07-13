@@ -4,7 +4,7 @@
 
 Planned. Implements [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md), and depends on the task-list/Docket boundaries in [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md) and [ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md).
 
-> **Companion plan (2026-07-06):** [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md) delivers the ADR-0050 amendment — surface-declared grounding probes (§7c), context/token budget as a loop dimension (§11), and an advisory-first rollout with a persisted replayable ledger and offline tuning harness. That plan reframes this plan's Phase 11 rollout as advisory-first and adds grounding as the arbiter for the "meaningful mutation" judgment in Phases 3–5. Land the companion plan's ledger + advisory foundation early; it is the measurement loop the rest of this plan is tuned against.
+> **Companion plan (2026-07-06, revised 2026-07-13):** [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md) delivers the ADR-0050 amendment — surface-declared grounding probes (§7c), context/token budget as a loop dimension (§11), and a persisted replayable ledger/offline tuning harness. Because Den is still pre-release, development is staged but completed loop-control slices are active by default once tested; feature flags and long observation-only rollout periods are not the normal delivery mechanism. Land the companion plan's ledger foundation early; it is the measurement loop the rest of this plan is tuned against.
 
 ## Goal
 
@@ -196,7 +196,7 @@ If debugging needs it, add timestamps/source later; do not build a broader focus
 
 | Task | Done when |
 | --- | --- |
-| Rename docs/projections toward governance | New runtime prose says **governance** for the supervision axis, while preserving existing `Mode` code/API compatibility where already decided by ADR-0039. |
+| Rename docs/projections toward governance | New runtime prose says **governance** for the supervision axis, while preserving existing `Governance` code/API compatibility where already decided by ADR-0039. |
 | Persist conversation focus | The conversation can durably store `focused_job_id: Option<JobId>` as the source of truth for focus across turns and reconnects. |
 | Project focus to sessions | Live sessions derive their displayed Focused state and title from conversation focus. |
 | Snapshot focus into runs | Each run receives governance and the current focused Job as `LoopControlContext`; work runs persist the launched-under Job for audit. |
@@ -643,25 +643,29 @@ Visibility defaults:
 
 **Exit gate:** humans can understand why a run checkpointed, but task history and transcript remain clean.
 
-## Phase 11 — Rollout
+## Phase 11 — Pre-release delivery posture
 
-Recommended rollout flags:
+Den is pre-release, so loop control should be implemented aggressively. Development may still be staged for reviewability and testability, but completed slices are active by default once their tests pass. Do not make feature flags or long observation-only periods the primary safety mechanism. Safety comes from typed profiles, hard invariants, runtime-dominant enforcement, replayable ledgers, and tests.
 
-```text
-BEARS_AGENT_LOOP_CONTROL=off|observe|enforce
-BEARS_AGENT_LOOP_CHECKPOINTS=off|on
-BEARS_CHECKPOINT_THINKING=off|on
-BEARS_CHECKPOINT_AUDIT=off|work|all
-```
+Default control levels:
 
-Rollout order:
+| Context | Default level |
+| --- | --- |
+| `pair`/`chat` freeform | `standard` |
+| `pair` task-oriented | `standard` |
+| `pair` focused Job | `careful` |
+| `work` focused Job | `careful` |
+| pre-risk/destructive/external mutation | `strict` gate, regardless of base level |
 
-1. **Observe:** resolve profiles and emit diagnostics; no enforcement.
-2. **Checkpoint observe:** trigger would-checkpoint events and validate policy thresholds.
-3. **Checkpoint enforce for failures/over-exploration:** enable `standard` for `pair`/`chat` and `work`.
-4. **Checkpoint audit for `work`:** retain structured checkpoint request/response artifacts by run/job/task refs.
-5. **Thinking escalation:** enable checkpoint/pre-risk thinking overrides for supported models.
-6. **Strict/careful pre-risk:** enable broader `careful`/`strict` behaviors for high-risk workflows.
+Implementation order:
+
+1. **Types + resolver:** add typed profiles, resolution precedence, and diagnostics.
+2. **Hard invariants:** immediately enforce `work` focused-Job/context requirements, static/frozen Job blockers, trust/permission gates, and global fuses.
+3. **Checkpoint protocol + artifacts:** add runtime-owned checkpoint calls and artifact-ref-style retention, especially for `work`.
+4. **Checkpoint enforcement:** enforce repeated failure, over-exploration, task-state reconciliation, and bounded retry rules as each trigger class lands.
+5. **Grounding probes:** execute only when requested by policy/checkpoint/task criteria; feed evidence without expanding budgets or bypassing stop conditions.
+6. **Model-task routing:** resolve per-step `ModelRequestProfile` through ADR-0033; add reasoning effort and later bounded delegation.
+7. **Tune thresholds:** adjust profile constants from dogfooding, replay ledgers, Reflection assessments, and tests rather than rollout flags.
 
 ## Validation matrix
 
@@ -679,13 +683,13 @@ Rollout order:
 
 ## First implementation slice
 
-The safest first slice is:
+The first implementation slice is:
 
 1. add typed control levels/profiles;
 2. add resolver with model default + Bear/stance override support;
 3. emit `agent_loop_control_resolved` diagnostics;
-4. add checkpoint request/response DTOs behind an observe-only flag;
-5. add checkpoint artifact schema/service but retain only in `work` observe mode;
+4. enforce the already-decided hard invariants (`work` requires a focused Job/context; trust/permission gates and global fuses dominate);
+5. add checkpoint request/response DTOs and checkpoint artifact retention for `work`;
 6. add tests proving checkpoint artifacts are not conversation history, not model replay, and not Docket events.
 
-This slice creates the typed foundation and audit model before enforcement changes model behavior.
+This slice creates the typed foundation and audit model while enforcing the hard boundaries that are already product decisions.

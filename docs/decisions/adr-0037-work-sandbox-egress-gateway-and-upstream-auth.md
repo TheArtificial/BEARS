@@ -5,7 +5,7 @@
 **Related:**
 - [ADR-0035 — Den-native in-process agent runtime](adr-0035-den-native-in-process-agent-runtime.md)
 - [ADR-0036 — Bear profile registry](adr-0036-bear-profile-registry.md)
-- [ADR-0039 — Trust profiles and governance modes](adr-0039-trust-profiles-and-governance-modes.md)
+- [ADR-0039 — Trust profiles and governance](adr-0039-trust-profiles-and-governance.md)
 - [ADR-0034 — Jobs and tasks (Docket)](adr-0034-jobs-and-tasks-work-management.md)
 - [ADR-0006 — Bear work surfaces](adr-0006-bear-work-surfaces.md)
 - [ADR-0040 — Connections and user-facing work-surface presentation](adr-0040-connections-and-work-surface-presentation.md)
@@ -249,7 +249,7 @@ RunAuthContext {
   origin_id
   bear_service_identity_id    // from origin binding (§6, §8)
   sandbox_profile
-  run_mode                    // interactive | autonomous — coarse projection of governance mode (ADR-0039)
+  run_mode                    // interactive | autonomous — coarse projection of governance (ADR-0039)
   operations: {
     read:        ActorSelection
     push:        ActorSelection

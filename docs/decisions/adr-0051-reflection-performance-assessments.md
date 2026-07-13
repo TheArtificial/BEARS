@@ -8,7 +8,7 @@
 
 - [ADR-0018: Reflection system](adr-0018-reflection-system.md)
 - [ADR-0050: Agent loop control, adaptive budgets, and runtime checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
-- [ADR-0039: Trust profiles and governance modes](adr-0039-trust-profiles-and-governance-modes.md)
+- [ADR-0039: Trust profiles and governance](adr-0039-trust-profiles-and-governance.md)
 - [ADR-0036: Bear profile registry](adr-0036-bear-profile-registry.md)
 - [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md)
 - [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md)

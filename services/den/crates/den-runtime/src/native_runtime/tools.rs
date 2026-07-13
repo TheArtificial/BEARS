@@ -76,12 +76,7 @@ pub fn chat_turn_needs_full_tool_surface(prompt: Option<&str>) -> bool {
         return false;
     }
     let lower = prompt.to_ascii_lowercase();
-    const PHRASES: &[&str] = &[
-        "work plan",
-        "rename conversation",
-        "plan mode",
-        "https://",
-    ];
+    const PHRASES: &[&str] = &["work plan", "rename conversation", "plan mode", "https://"];
     const WORDS: &[&str] = &[
         "memory",
         "remember",
@@ -400,9 +395,15 @@ mod tests {
 
     #[test]
     fn chat_prompt_keyword_matching_avoids_substring_false_positives() {
-        assert!(!chat_turn_needs_full_tool_surface(Some("research preview webhook ideas")));
-        assert!(chat_turn_needs_full_tool_surface(Some("please search memory")));
-        assert!(chat_turn_needs_full_tool_surface(Some("fetch https://example.com")));
+        assert!(!chat_turn_needs_full_tool_surface(Some(
+            "research preview webhook ideas"
+        )));
+        assert!(chat_turn_needs_full_tool_surface(Some(
+            "please search memory"
+        )));
+        assert!(chat_turn_needs_full_tool_surface(Some(
+            "fetch https://example.com"
+        )));
     }
 
     #[test]

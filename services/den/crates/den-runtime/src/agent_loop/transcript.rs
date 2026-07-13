@@ -113,7 +113,8 @@ pub fn spawn_persist_web_chat_turn(
                 if let Some(calls) = &message.tool_calls {
                     for call in calls {
                         let args = parse_tool_arguments(&call.function.arguments);
-                        let approval_required = provider_tool_requires_approval(&call.function.name);
+                        let approval_required =
+                            provider_tool_requires_approval(&call.function.name);
                         spawn_persist_tool_request(
                             context.clone(),
                             CanonicalToolRequestRecord::new(

@@ -239,7 +239,10 @@ pub async fn run_compaction_job(
                 } else {
                     "no transcript groups to evaluate"
                 }
-            } else if matches!(runtime_trigger, RuntimeCompactionTriggerKind::LiveReflection) {
+            } else if matches!(
+                runtime_trigger,
+                RuntimeCompactionTriggerKind::LiveReflection
+            ) {
                 "live reflection skipped compaction; transcript below compaction thresholds"
             } else {
                 "no eligible history groups outside protected floors"

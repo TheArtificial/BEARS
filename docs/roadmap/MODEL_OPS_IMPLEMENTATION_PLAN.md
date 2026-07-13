@@ -539,7 +539,7 @@ Candidate signals:
 - Bifrost fallback occurred,
 - expensive model used for trivial task,
 - user explicitly asks for deeper reasoning/coding/architecture,
-- governance mode shifts to autonomous continuation.
+- governance shifts to autonomous continuation.
 
 Near-term outputs:
 
@@ -641,7 +641,7 @@ Exit:
 
 ### Phase 3 — Bear-scoped Bifrost virtual keys ⬅ next
 
-Goal: use Bifrost's governance model directly by giving each Bear a Bifrost virtual key. Bifrost then owns hard enforcement, usage accounting, budgets, rate limits, and gateway routing at Bear scope; Den owns stable model-selection UX and Bear-aware policy.
+Goal: use Bifrost's governancel directly by giving each Bear a Bifrost virtual key. Bifrost then owns hard enforcement, usage accounting, budgets, rate limits, and gateway routing at Bear scope; Den owns stable model-selection UX and Bear-aware policy.
 
 Ownership:
 

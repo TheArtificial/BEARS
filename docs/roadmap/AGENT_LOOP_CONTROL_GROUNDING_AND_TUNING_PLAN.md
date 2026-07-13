@@ -2,9 +2,9 @@
 
 ## Status
 
-Planned. Implements the 2026-07-06 amendment to [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) (§7c grounding probes, §11 context/token budget as a loop dimension, and the advisory-first Initial policy shape).
+Planned. Implements the 2026-07-06 amendment to [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) (§7c grounding probes, §11 context/token budget as a loop dimension, and the replayable ledger/tuning loop).
 
-This plan is a **companion to** [AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md](AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md), which delivers the core control levels, governance/focused-Job inputs, profiles, budgets, ko/failure state, structured checkpoints, and client **Focus** projection. Read that plan first; this one adds three capabilities on top of it and tightens its rollout into an advisory-first, measurable loop. Where the two overlap, the phase mapping is called out inline.
+This plan is a **companion to** [AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md](AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md), which delivers the core control levels, governance/focused-Job inputs, profiles, budgets, ko/failure state, structured checkpoints, and client **Focus** projection. Read that plan first; this one adds three capabilities on top of it and keeps loop-control tuning measurable through replayable ledgers and Reflection assessments. Den is pre-release: staged development is sensible, but completed slices are active by default once tested rather than spending a long observe-only rollout period. Where the two plans overlap, the phase mapping is called out inline.
 
 Depends on:
 
@@ -15,7 +15,7 @@ Depends on:
 
 ## Goal
 
-Make ADR-0050's adaptive loop control **grounded** (evidence, not self-report), **context-aware** (compaction is a loop decision, not a side channel), and **tunable** (advisory-first with an offline replay harness), so the policy's complexity is justified by measured behavior rather than intuition. A fourth, **deferred** capability (Part D) adds optional cheap-model classifier signals for the residual in-run judgment calls — strictly advisory and ledgered. A fifth (Part E) gives the tuning loop its **owner**: since a small, non-technical userbase has no maintainer to read ledgers, Reflection's `curate` role runs the [ADR-0051](../decisions/adr-0051-reflection-performance-assessments.md) `observe → assess → propose → apply` pipeline — producing longitudinal performance assessments (valuable on their own) and, under governance, proposing per-model profile deltas.
+Make ADR-0050's adaptive loop control **grounded** (evidence, not self-report), **context-aware** (compaction is a loop decision, not a side channel), and **tunable** (a replayable ledger plus offline replay harness), so the policy's complexity is justified by measured behavior rather than intuition. A fourth, **deferred** capability (Part D) adds optional cheap-model classifier signals for the residual in-run judgment calls — strictly advisory and ledgered. A fifth (Part E) gives the tuning loop its **owner**: since a small, non-technical userbase has no maintainer to read ledgers, Reflection's `curate` role runs the [ADR-0051](../decisions/adr-0051-reflection-performance-assessments.md) `observe → assess → propose → apply` pipeline — producing longitudinal performance assessments (valuable on their own) and, under governance, proposing per-model profile deltas.
 
 ## Why this plan exists
 
@@ -32,7 +32,7 @@ Comparative review against OpenCode, Cursor, Letta Code, and Claude Code surface
 3. **Probes are budgeted and time-bounded.** A probe that errors or times out yields `NoSignal`, never a turn failure, and its spend counts against normal tool-class budgets.
 4. **Context budget is read, not recomputed.** The loop controller consumes the ADR-0047 budget report; it does not re-implement tokenization.
 5. **Checkpoint-then-compact is a preference, not an invariant.** When the window is too tight to afford a checkpoint turn, compaction runs first.
-6. **Advisory mode is the default.** Only ko and the emergency hard-step fuse stop the loop until replay evidence justifies enforcing a given trigger class.
+6. **Completed slices are active by default.** Debug/kill switches are acceptable during development, but Den is pre-release; normal delivery should not depend on long observe-only rollout periods. Ko, focused-`work` requirements, trust/permission gates, and the emergency hard-step fuse are always enforced.
 7. **The ledger is replayable without model calls.** Persist typed signals, not transcript content, so any recorded turn can be re-scored against alternative profiles offline and cheaply.
 
 ## Conceptual model
@@ -57,7 +57,8 @@ flowchart TD
     Ledger --> Eval{Trigger eval}
     Eval -- context pressure --> CkC[Checkpoint then compact §11]
     Eval -- other triggers --> Ck[Checkpoint §7b\ncarries probe findings as evidence]
-    Eval -- advisory mode --> Diag[[would_* diagnostics only]]
+    Eval -- implemented + tested --> Enforce[[enforce trigger]]
+    Eval -- debug shadow mode --> Diag[[would_* diagnostics only]]
 
     Ledger --> Persist[(Persisted ledger\nno transcript content)]
     Persist --> Replay[Offline replay harness\nre-score vs alt profiles]
@@ -168,7 +169,7 @@ Extends the base plan's Phase 3 (budget integration) and Phase 7 (checkpoint enf
 | Respect precision labeling | Approximate estimates widen safety margins; diagnostics record precision. |
 | Add tests | Context near/low thresholds fire per level; approximate estimates behave conservatively. |
 
-**Exit gate:** context pressure is a first-class trigger evaluated in the controller, in advisory mode.
+**Exit gate:** context pressure is a first-class trigger evaluated in the controller, with enforcement active once the trigger implementation is tested.
 
 ### B2 — Checkpoint-then-compact sequencing
 
@@ -184,21 +185,21 @@ Extends the base plan's Phase 3 (budget integration) and Phase 7 (checkpoint enf
 
 ---
 
-## Part C — Advisory mode, ledger persistence, and offline tuning
+## Part C — Ledger persistence and offline tuning
 
-Tightens the base plan's Phase 11 (rollout) into a measurable, single-maintainer loop. This is the prerequisite that justifies the whole policy's complexity.
+Tightens the base plan's Phase 11 into a measurable, single-maintainer loop. This is the prerequisite that justifies the whole policy's complexity. It is not a long observe-only rollout plan: Den is pre-release, so completed trigger classes should enforce by default once tested. Debug shadow/observe modes are still useful for development and replay comparison.
 
-### C1 — Advisory (observe/enforce) mode
+### C1 — Active-by-default trigger implementation
 
 | Task | Done when |
 | --- | --- |
-| Add mode flag per trigger class | `BEARS_AGENT_LOOP_CONTROL=off|observe|enforce`, with per-trigger granularity (ko/fuse always enforced). |
-| Evaluate-but-don't-act in observe | In `observe`, all triggers compute and emit `would_stop` / `would_checkpoint` diagnostics; only ko and emergency fuse stop. |
-| Reduce launch levels | Only `standard` and `careful` are wired by default; `light`/`strict` defined but gated off. |
-| Add diagnostics | Every advisory decision is logged with reason, threshold, and observed ledger values. |
-| Add tests | Observe mode never stops except ko/fuse; enforce mode acts; per-trigger toggles work. |
+| Add debug shadow mode per trigger class | A development-only `observe`/shadow setting can emit `would_stop` / `would_checkpoint` diagnostics for comparison, but normal pre-release behavior is enforce-once-tested. |
+| Enforce completed triggers | Each trigger class enforces when its implementation and tests land; ko, focused-`work` requirements, trust/permission gates, and emergency fuse are always enforced. |
+| Wire all launch levels | `light`, `standard`, `careful`, and `strict` are available; product defaults choose `standard`/`careful`/strict gates as defined in the base plan. |
+| Add diagnostics | Every decision is logged with reason, threshold, profile source, and observed ledger values. |
+| Add tests | Enforced trigger classes act; debug shadow mode does not alter behavior; always-on floors cannot be disabled. |
 
-**Exit gate:** the controller can run against real traffic changing nothing but the diagnostics stream.
+**Exit gate:** the controller can enforce implemented trigger classes in normal pre-release runs while still producing replayable diagnostics.
 
 ### C2 — Persisted replayable ledger
 
@@ -257,24 +258,24 @@ bear_loop_ledger_turns
 
 **Exit gate:** a tuning trend line exists without human annotation.
 
-### C5 — Graduation criteria (advisory → enforce)
+### C5 — Threshold tuning criteria
 
-Enforce a trigger class only when replay over the accumulated corpus shows it would have improved outcomes:
+Replay over the accumulated corpus should tune trigger thresholds after they land:
 
-| Trigger class | Graduate to enforce when |
+| Trigger class | Tune using |
 | --- | --- |
-| Over-exploration checkpoint | `would_checkpoint` correlates with `likely_false_negative` tails and low probe-`Pass` density; false-positive rate under target. |
-| Consecutive-failure stop | `would_stop` reliably precedes runs the user abandoned or re-asked; near-zero productive-run cuts in replay. |
-| Task-gate rejection escalation | Repeated identical gate-rejection signatures dominate the flagged turns. |
-| Low-context checkpoint | Context-pressure checkpoints precede compaction cleanly without cutting productive work. |
+| Over-exploration checkpoint | correlation with `likely_false_negative` tails, probe-`Pass` density, and false-positive rate |
+| Consecutive-failure stop | whether stops precede abandoned/re-asked runs and avoid productive-run cuts |
+| Task-gate rejection escalation | repeated identical gate-rejection signatures and successful reconciliation rates |
+| Low-context checkpoint | whether context-pressure checkpoints precede compaction cleanly without cutting productive work |
 
 | Task | Done when |
 | --- | --- |
 | Document target rates | Concrete false-positive/false-negative targets per trigger class are recorded here and in run diagnostics. |
-| Wire graduation toggles | Each trigger class can be independently promoted from `observe` to `enforce`. |
-| Add tests | Promotion of one class does not force others; ko/fuse remain always-on. |
+| Wire profile updates | Threshold changes are profile/config updates, not rollout toggles. |
+| Add tests | Profile changes alter thresholds deterministically; ko/fuse floors remain always-on. |
 
-**Exit gate:** enforcement is unlocked per trigger class from evidence, not intuition.
+**Exit gate:** enforcement stays active while thresholds are tuned from evidence rather than intuition.
 
 ---
 
@@ -422,18 +423,18 @@ pub struct PerformanceAssessment {
 
 ---
 
-## Rollout order
+## Delivery order
 
-1. **Ledger + advisory** (C1–C2): persist replayable ledgers; run everything in `observe`. Zero behavior change beyond diagnostics.
+1. **Ledger + enforcement diagnostics** (C1–C2): persist replayable ledgers while enforcing completed trigger classes by default.
 2. **Replay + labels** (C3–C4): stand up offline scoring and heuristic labels over the growing corpus.
-3. **Context dimension** (B1): add context pressure as an advisory trigger; watch rates.
-4. **Grounding, repository + floor** (A1–A3, A4 repository): arbitrate §7a and enrich checkpoint evidence, still advisory.
-5. **Graduate first enforcers** (C5): promote consecutive-failure and over-exploration where replay supports it.
+3. **Context dimension** (B1): add context pressure as an enforced trigger once tested.
+4. **Grounding, repository + floor** (A1–A3, A4 repository): arbitrate §7a and enrich checkpoint evidence.
+5. **Threshold tuning** (C5): tune consecutive-failure, over-exploration, task-gate, and context thresholds from replay.
 6. **Checkpoint-then-compact** (B2): coordinate compaction with checkpoints.
-7. **Additional grounding surfaces** (A4 document/media) and **additional levels** (`light`/`strict`) as evidence accrues.
-8. **Assessment lane** (E1–E2): `curate` produces run/session/model assessments from the ledger — standalone longitudinal value, no behavior change. Can start as early as replay (step 2) is usable.
+7. **Additional grounding surfaces** (A4 document/media) and level refinements as evidence accrues.
+8. **Assessment lane** (E1–E2): `curate` produces run/session/model assessments from the ledger — standalone longitudinal value. Can start as early as replay (step 2) is usable.
 9. **Cheap-model classifier signals** (D1–D2, advisory): only after replay is mature; feed verdicts as advisory signals, ledgered.
-10. **Graduate classifier kinds** (D3): promote per kind where recorded verdicts show value.
+10. **Classifier-backed trigger tuning** (D3): tune/promote per kind where recorded verdicts show value, while preserving deterministic authority.
 11. **Tuning proposals** (E3): turn assessments into inert, cited per-model profile deltas.
 12. **Governed apply** (E4): bounded, reversible, escalation-gated application of accepted proposals.
 

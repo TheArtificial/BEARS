@@ -12,7 +12,7 @@ Product language also settled on **`chat`** (not `talk`) and **`curate`** (not `
 ## Decision
 
 1. **Vocabulary**
-   - **Profile** — one of `chat`, `pair`, `curate`, `work`, `watch` (capability + trust boundary). [ADR-0039](adr-0039-trust-profiles-and-governance-modes.md) renames this concept to **trust profile** in documentation; the code shorthand `Profile` (`BearProfile`, `bear_profile_bindings.profile`) is unchanged. A trust profile is distinct from a **governance mode** (`Mode`), the run-scoped supervision dial.
+   - **Profile** — one of `chat`, `pair`, `curate`, `work`, `watch` (capability + trust boundary). [ADR-0039](adr-0039-trust-profiles-and-governance.md) renames this concept to **trust profile** in documentation; the code shorthand `Profile` (`BearProfile`, `bear_profile_bindings.profile`) is unchanged. A trust profile is distinct from a **governance** (`Governance`), the run-scoped supervision dial.
    - **Memory branch** — logical path prefix (`chat/`, `pair/`, `core/`, …); unchanged.
    - **Binding** — Den-owned runtime identity for a profile on a Bear (`binding_id`).
 

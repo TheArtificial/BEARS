@@ -10,7 +10,7 @@
 - [ADR-0010: Dynamic skills, reflection subagents, and bear configuration](adr-0010-dynamic-skills-subagents.md)
 - [ADR-0014: Multi-role runtime architecture](adr-0014-multi-role-runtime-architecture.md)
 - [ADR-0034: Jobs and Tasks Work-Management Model](adr-0034-jobs-and-tasks-work-management.md)
-- [ADR-0039: Trust profiles and governance modes](adr-0039-trust-profiles-and-governance-modes.md)
+- [ADR-0039: Trust profiles and governance](adr-0039-trust-profiles-and-governance.md)
 - [ADR-0041: Archival recall and async curation](adr-0041-archival-recall-and-async-curation.md)
 - [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md)
 - [ADR-0050: Agent loop control, adaptive budgets, and runtime checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)

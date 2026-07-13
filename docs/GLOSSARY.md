@@ -7,7 +7,7 @@ a conversation, background run, etc.
 a bundle of capability boundaries
 used to enforce the Rule of Two
 
-**governance mode**
+**governance**
 the run-scoped supervision contract for a
 runtime session: how it is supervised right now
 (interactive, grace, autonomous_continuation,
@@ -31,7 +31,7 @@ Connections. See ADR-0006 and ADR-0040.
 a Den-level, owner-scoped authenticated link to an
 external provider (GitHub, Figma, Google, SSH).
 Set up once, reusable across resources, Bears, trust
-stances, and governance modes. A work surface is
+stances, and governance states. A work surface is
 reached through a connection when externally backed.
 See ADR-0037 and ADR-0040.
 

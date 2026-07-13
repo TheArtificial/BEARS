@@ -754,15 +754,18 @@ fn lookup_field<'a>(
     sources: &[Option<&'a serde_json::Value>],
     paths: &[&[&str]],
 ) -> Option<&'a serde_json::Value> {
-    sources.iter().filter_map(|source| *source).find_map(|source| {
-        paths.iter().find_map(|path| {
-            let mut value = source;
-            for segment in *path {
-                value = value.get(*segment)?;
-            }
-            Some(value)
+    sources
+        .iter()
+        .filter_map(|source| *source)
+        .find_map(|source| {
+            paths.iter().find_map(|path| {
+                let mut value = source;
+                for segment in *path {
+                    value = value.get(*segment)?;
+                }
+                Some(value)
+            })
         })
-    })
 }
 
 fn tool_call_id(
@@ -772,11 +775,7 @@ fn tool_call_id(
 ) -> Option<String> {
     lookup_field(
         &[tool_call, Some(inner), Some(event)],
-        &[
-            &["tool_call_id"],
-            &["id"],
-            &["function", "tool_call_id"],
-        ],
+        &[&["tool_call_id"], &["id"], &["function", "tool_call_id"]],
     )
     .and_then(|v| v.as_str())
     .map(str::to_string)

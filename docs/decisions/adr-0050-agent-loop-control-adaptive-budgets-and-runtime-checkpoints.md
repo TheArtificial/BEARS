@@ -10,7 +10,7 @@
 - [ADR-0006: Bear work surfaces for planning and work activity](adr-0006-bear-work-surfaces.md)
 - [ADR-0032: Den context compaction architecture](adr-0032-den-context-compaction-architecture.md)
 - [ADR-0035: Den-native in-process agent runtime](adr-0035-den-native-in-process-agent-runtime.md)
-- [ADR-0039: Trust profiles and governance modes](adr-0039-trust-profiles-and-governance-modes.md)
+- [ADR-0039: Trust profiles and governance states](adr-0039-trust-profiles-and-governance.md)
 - [ADR-0047: Context window budget and token estimation](adr-0047-context-window-budget-and-token-estimation.md)
 - [ADR-0048: Core turn/client-obligation coordinator](adr-0048-core-turn-client-obligation-coordinator.md)
 - [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md)
@@ -21,7 +21,7 @@
 > 1. **§7c** introduces surface-declared **grounding probes** so post-mutation feedback is grounded in the work surface's own validators rather than only in model self-report, without assuming every surface is a code repository.
 > 2. **§7d** allows optional **cheap-model classifier signals** for the residual intent/similarity judgment calls, strictly advisory and ledgered, and deferred behind the measurement foundation.
 > 3. **§11** promotes **context/token budget** (previously deferred entirely to [ADR-0047](adr-0047-context-window-budget-and-token-estimation.md)) to a first-class loop-control dimension owned by the loop controller, and defines checkpoint-then-compact sequencing.
-> 4. The **Initial policy shape** now launches in **advisory mode** with a persisted budget ledger and offline replay, because Bear Den cannot fine-tune this policy without an automated measurement loop. Sequencing lives in [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md).
+> 4. The **Initial policy shape** now uses a persisted budget ledger and offline replay, but because Den is pre-release, completed loop-control slices are active by default once tested rather than hidden behind long advisory/observe rollout periods. Sequencing lives in [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md).
 >
 > **2026-07-13 terminology update.** Loop control separates **governance** (how hard the runtime drives or yields) from the **focused Job** (the Docket Job, if any, that must remain centered). `work` normally requires a focused Job and drives it under autonomous-continuation governance. `pair` normally has no focused Job, but may designate one explicitly through conversation or client command.
 
@@ -61,7 +61,7 @@ Control-level selection should mirror model selection:
 1. the model registry provides a default agent-loop-control level for each model or model capability profile;
 2. a Bear-level configuration may override that default for the Bear;
 3. a stance-level configuration may override the Bear/model default for a specific stance such as `pair`, `chat`, or `work`;
-4. task/run policy may request an escalation for risk, difficulty, or governance mode, but runtime receives a resolved typed profile rather than hardcoding model names or inferring risk from prose.
+4. task/run policy may request an escalation for risk, difficulty, or governance, but runtime receives a resolved typed profile rather than hardcoding model names or inferring risk from prose.
 
 This lets a more tool-disciplined model run with lighter checkpointing by default, while a model known to over-explore or retry poorly can default to `standard` or `careful`. Bear and stance overrides preserve operator intent and local experience without scattering per-model conditionals throughout the runtime.
 
@@ -351,14 +351,14 @@ Compaction remains subordinate to the same boundaries as checkpoints: it is cont
 - Repeated same-call churn is blocked explicitly instead of being indirectly caught only by a coarse step limit.
 - Failure loops are treated separately from exploratory progress.
 - Adaptive checkpoints can force concise synthesis before more exploration or risky mutation.
-- Control levels let Den tune checkpoint intensity and optional checkpoint-turn thinking level for different models, Bears, stances, task risks, and governance modes without changing checkpoint semantics.
+- Control levels let Den tune checkpoint intensity and optional checkpoint-turn thinking level for different models, Bears, stances, task risks, and governance states without changing checkpoint semantics.
 - The policy remains typed and role-owned.
 - Interactive verification after a real mutation is less likely to be cut off as false-positive read churn.
 - Checkpoints remain subordinate to task-list/Docket state instead of becoming informal task records.
 - Grounding probes (§7c) let checkpoints synthesize against surface-native ground truth and give §7a's "meaningful mutation" judgment an objective arbiter, while degrading cleanly on surfaces that declare no probes.
 - Context/token budget (§11) is evaluated in the same controller as ko, failure, and wall-clock, and checkpoint-then-compact turns a forced synthesis into a high-fidelity compaction seed.
 - **Focused Job gives long-running continuation a durable center.** `work` can drive the next logical task without inventing its own objective, and `pair` can opt into the same behavior explicitly without changing trust stance.
-- Advisory-first rollout with a persisted ledger and offline replay lets a single-maintainer project tune thresholds against recorded runs at near-zero cost, without a live eval platform.
+- A persisted ledger and offline replay let a single-maintainer project tune thresholds against recorded runs at near-zero cost, without requiring long pre-release observe-only rollout periods.
 - Optional cheap-model classifier signals (§7d) can fill the residual intent/similarity judgment calls (gate evasion, semantic ko, no-probe coherence, checkpoint adherence) without displacing the deterministic and objective signals that remain authoritative.
 
 ### Negative / tradeoffs
@@ -372,28 +372,28 @@ Compaction remains subordinate to the same boundaries as checkpoints: it is cont
 - Grounding probes add per-surface maintenance: each work-surface kind needs a declared, maintained probe set, and probes cost spend and latency of their own; a slow or flaky probe must degrade to "no grounding signal" rather than stalling or failing the turn.
 - Promoting context budget into the loop controller couples it to ADR-0047's estimation accuracy; a mis-estimated budget now influences checkpoint/compaction timing directly, so precision labeling and calibration matter more.
 - A cheap-model classifier (§7d) adds a nondeterministic, latency- and cost-bearing signal source and risks inverted competence if ever made authoritative; it is safe only while advisory, ledgered, bounded to trigger points, and kept away from correctness evaluation.
-- The policy is deliberately complex and performs best fine-tuned, yet Bear Den is a personal project: without the advisory-mode ledger and replay harness there is no feedback loop to justify the complexity, so that measurement machinery is a prerequisite, not an optional nicety.
+- The policy is deliberately complex and performs best fine-tuned. Bear Den should keep the replayable ledger and assessment loop so tuning is evidence-backed, but Den is pre-release: completed enforcement slices should be active by default once tested rather than hidden behind a long advisory rollout.
 
 ## Initial policy shape
 
-Because the policy performs best when tuned and Bear Den has no live evaluation platform, the first implementation deliberately **launches in advisory mode with a narrow tunable surface** and earns additional dimensions from recorded evidence rather than shipping the fully-tuned end state on day one.
+Because Den is pre-release, the first implementation should exercise loop control assertively: development is staged, but completed slices are active by default once tested. The ledger/replay harness remains required for tuning, regression checks, and Reflection assessments; it is not a reason to hide normal behavior behind a long observe-only rollout.
 
 The first implementation should use:
 
-- **advisory (observe/log-only) mode by default.** The controller resolves the profile, maintains the full budget ledger, and evaluates every trigger, but only ko and the emergency hard-step fuse actually stop the loop. All other triggers emit `would_*` diagnostics without changing behavior until real-usage rates justify enforcement;
+- **active enforcement for completed trigger classes by default.** The controller resolves the profile, maintains the full budget ledger, evaluates every trigger, and enforces trigger classes that have landed with tests. Ko, trust/permission gates, work focused-Job/context requirements, and the emergency hard-step fuse are always enforced;
 - a **persisted per-turn budget ledger** (tool signatures, tool classes, timestamps, failure flags, gate-rejection signatures, context-budget snapshots — no transcript content required), so any recorded turn can be **replayed offline against alternative control profiles with zero model calls**. This replay harness is the project's tuning loop;
-- **two launch levels, not four:** `standard` and `careful`, with generous thresholds. `light` and `strict` are defined but deferred until replay evidence shows they behave better than a well-chosen `standard`/`careful`;
+- **four defined levels:** `light`, `standard`, `careful`, and `strict`, with aggressive defaults: `pair`/`chat` freeform and task-oriented runs default to `standard`, focused `pair` and focused `work` default to `careful`, and pre-risk/destructive/external mutation uses a `strict` gate regardless of base level;
 - model-registry defaults plus Bear-level and stance-level overrides that resolve before turn execution;
 - a resolved profile-owned wall-clock budget, total and per-class tool-call budgets, consecutive-failure cutoff, ko-style repeated-signature cutoff, and ko-style repeated task-gate-rejection cutoff;
 - context/token budget consumed from ADR-0047 as a first-class ledger dimension (§11);
-- checkpoint triggers for over-exploration, repeated failure, task-gate rejection, and low remaining wall-clock/tool/context budget, evaluated in advisory mode first;
-- grounding probes (§7c) for at least the repository work-surface kind and the generic non-empty-diff floor, with other surface kinds added incrementally;
-- optional checkpoint thinking policy per control level, kept off at launch and enabled per level once checkpoint enforcement is on;
+- checkpoint triggers for over-exploration, repeated failure, task-gate rejection, and low remaining wall-clock/tool/context budget, enforced as each trigger class is implemented and tested;
+- grounding probes (§7c) executed only when requested by policy, checkpoint policy, or explicit verification/task criteria;
+- optional checkpoint model-task routing/reasoning-effort policy per control level, enabled through ADR-0033 routing when supported by the selected model profile;
 - a high emergency hard-step fuse.
 
 Cheap outcome labeling should accompany the ledger so replay has a signal to optimize against: a stop immediately followed by the user re-asking or saying "continue" is a probable false positive; a normal end after a long read-only tail with no mutation is a probable false negative. Heuristic labels over the run log give a tuning trend line without human annotation.
 
-Enforcement, additional levels, per-class thinking escalation, and additional grounding surfaces are unlocked from this advisory baseline as evidence accrues, per [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](../roadmap/AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md). Because Bear Den's userbase is small and non-technical, the party that reads this ledger and learns per-model tuning is not a human maintainer but Reflection's `curate` role, via the `observe → assess → propose → apply` pipeline in [ADR-0051](adr-0051-reflection-performance-assessments.md); loop-control assessments produced there must never be made model-visible or allowed to tune the hard safety floor (rule-of-ko, emergency fuse).
+Threshold tuning, additional grounding surfaces, model-routing refinements, and classifier-derived signals evolve from this active baseline using the replay ledger and Reflection's `curate` assessments. Because Bear Den's userbase is small and non-technical, the party that reads this ledger and learns per-model tuning is not a human maintainer but Reflection's `curate` role, via the `observe → assess → propose → apply` pipeline in [ADR-0051](adr-0051-reflection-performance-assessments.md); loop-control assessments produced there must never be made model-visible or allowed to tune the hard safety floor (rule-of-ko, emergency fuse).
 
 ## Implementation notes
 
@@ -411,7 +411,7 @@ Enforcement, additional levels, per-class thinking escalation, and additional gr
 - Thinking-level controls should be modeled as provider/model request metadata, separate from loop-control enforcement state, so unsupported providers can degrade gracefully.
 - Grounding profiles should resolve from work-surface metadata (ADR-0006) the same way control levels resolve from model/Bear/stance config; a surface with no declared profile uses only the generic non-empty-diff/parse floor. Probe execution should reuse existing tool-class budgeting and time out into a "no signal" result rather than failing the turn.
 - The context-budget dimension should be read from the ADR-0047 budget report object rather than recomputed; the loop controller stores the latest snapshot in `TurnBudgetState` and compares against level-tuned thresholds. Checkpoint-then-compact ordering should be a preference the controller can abandon when the window is already too tight to afford a checkpoint turn.
-- The budget ledger should be persisted in a form replayable offline against alternative profiles without any model calls; keep transcript content out of it so replay stays cheap and privacy-preserving. Advisory (`observe`) vs `enforce` should be a runtime flag so enforcement is switched on per trigger class as evidence accrues.
+- The budget ledger should be persisted in a form replayable offline against alternative profiles without any model calls; keep transcript content out of it so replay stays cheap and privacy-preserving. Implementation may include debug-only kill switches for development, but normal pre-release behavior should not depend on long observe-only rollout flags.
 
 ## Non-goals
 
@@ -425,5 +425,5 @@ Enforcement, additional levels, per-class thinking escalation, and additional gr
 - No reliance on thinking-level escalation as a substitute for budget, ko, checkpoint, or task-gate enforcement.
 - No grounding probe that mutates the work surface, performs LLM "is this good?" review, or blocks a task by itself; probes are objective validators whose findings are runtime evidence, and absent a declared profile the surface simply has no grounding signal.
 - No re-implementation of context/token estimation in the loop controller; §11 consumes the ADR-0047 budget report and only governs how the loop reacts to it.
-- No enforcement of adaptive triggers before advisory-mode replay evidence supports the specific trigger class; ko and the emergency hard-step fuse remain the only always-on stops.
+- No long advisory-only rollout as the normal pre-release delivery path; completed loop-control slices should be active by default once tested. Debug kill switches are acceptable, but they are not the product rollout plan.
 - No authoritative cheap-model overseer: classifier signals (§7d) may advise and feed the ledger but must never overrule deterministic budget/ko/failure decisions, veto the primary model's action, run per step, gate behavior without a recorded replayable verdict, or evaluate correctness of the primary model's work.

@@ -64,9 +64,9 @@ See [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances
 
 **`chat`** remains appropriate when the user is not entering an execution context — Q&A, priorities, task intents, references to a project by name without checkout/sandbox work.
 
-### Trust stance vs governance mode
+### Trust stance vs governance
 
-`chat`/`pair`/`curate`/`work`/`watch` are **trust stances** (`BearStance` in code; `BearProfile` remains a temporary compatibility alias) — durable trust-and-memory contracts. *How a run is supervised right now* is a separate **governance mode** (`Mode` in code) on the run / workspace session: `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. When a remote `pair` session loses its client, the run transitions `interactive → grace → autonomous_continuation` on the **same** work surface and workspace session — it does not flip the trust stance from `pair` to `work`. See [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance-modes.md).
+`chat`/`pair`/`curate`/`work`/`watch` are **trust stances** (`BearStance` in code; `BearProfile` remains a temporary compatibility alias) — durable trust-and-memory contracts. *How a run is supervised right now* is a separate **governance** (`Governance` in code) on the run / workspace session: `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. When a remote `pair` session loses its client, the run transitions `interactive → grace → autonomous_continuation` on the **same** work surface and workspace session — it does not flip the trust stance from `pair` to `work`. See [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance.md).
 
 ## Rules of thumb for builders
 
