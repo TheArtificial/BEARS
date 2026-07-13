@@ -33,9 +33,11 @@
         {% if reflection.proposal_links and reflection.proposal_links | length > 0 %}
           <br><small>Proposals:
           {% for proposal_id in reflection.proposal_links %}
-            <a href="/bear/{{ bear.slug | e }}/memory/proposals/{{ proposal_id | e }}">{{ loop.index }}</a>{% if not loop.last %}, {% endif %}
+            <a href="/bear/{{ bear.slug | e }}/memory/proposals/{{ proposal_id | e }}">review {{ loop.index }}</a>{% if not loop.last %}, {% endif %}
           {% endfor %}
           </small>
+        {% elif reflection.proposal_count > 0 %}
+          <br><small><a href="/bear/{{ bear.slug | e }}/memory">Open Memory review queue</a></small>
         {% endif %}
       </td>
     </tr>
