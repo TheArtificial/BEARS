@@ -595,6 +595,7 @@ pub fn composed_system_prompt_for_profile_json(
         birthday: None,
         created_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        live_reflection_enabled: true,
     };
     den_service::bears::compose_role_context(&bear, BearProfile::Chat, None)
         .map(|context| context.composed_prompt)

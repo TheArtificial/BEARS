@@ -22,6 +22,18 @@
   <dd>{{ bear.updated_at | datetimeformat(format="short") }}</dd>
 </dl>
 
+<h3>Live reflection</h3>
+<p class="form-hint">When enabled, Den may spend background tokens to compact active conversations and propose memories from them. Turn this off to save tokens; closed-session reflection still runs normally.</p>
+<form method="post" action="/bear/{{ bear.slug | e }}/advanced/live-reflection">
+  <label>
+    <input type="checkbox" name="enabled" value="1" {% if bear.live_reflection_enabled %}checked{% endif %} {% if not can_manage_bear %}disabled{% endif %}>
+    Reflect on live/open conversations
+  </label>
+  {% if can_manage_bear %}
+  <p><button type="submit">Save live reflection setting</button></p>
+  {% endif %}
+</form>
+
 {% if stats %}
 <h3>SQLite memory file</h3>
 <dl>

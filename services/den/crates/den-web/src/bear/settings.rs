@@ -91,6 +91,10 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bear/{slug}/context", get(context_view))
         .route_with_tsr("/bear/{slug}/resources", get(policy_view))
         .route_with_tsr("/bear/{slug}/advanced", get(advanced_view))
+        .route_with_tsr(
+            "/bear/{slug}/advanced/live-reflection",
+            post(live_reflection_post),
+        )
         .route_with_tsr("/bear/{slug}/export.bear", get(export_bear_bundle))
         .route_with_tsr("/bears/import", post(import_bear_bundle))
         .route_with_tsr("/bear/{slug}/members/grant", post(grant_member_action))
@@ -178,6 +182,12 @@ struct BearModelsForm {
     bifrost_virtual_key_value: String,
     #[serde(default)]
     bifrost_virtual_key_clear: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveReflectionForm {
+    #[serde(default)]
+    enabled: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2648,6 +2658,31 @@ async fn advanced_view(
         },
     )
     .await
+}
+
+async fn live_reflection_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<LiveReflectionForm>,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(b) => b,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let enabled = matches!(form.enabled.as_str(), "1" | "true" | "on" | "yes");
+    bears_db::update_live_reflection_enabled(state.sqlx_pool(), bear.id, enabled).await?;
+    let message = if enabled {
+        "Live reflection enabled."
+    } else {
+        "Live reflection disabled."
+    };
+    Ok(Redirect::to(&format!(
+        "/bear/{}/advanced?message={}",
+        bear.slug,
+        urlencoding::encode(message)
+    ))
+    .into_response())
 }
 
 async fn grant_member_action(

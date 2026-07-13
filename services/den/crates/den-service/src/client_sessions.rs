@@ -371,6 +371,7 @@ pub async fn list_open_reflection_candidates(
                        ELSE 'activity_threshold_sweep'
                    END AS reflection_trigger
             FROM client_sessions s
+            INNER JOIN bears b ON b.id = s.bear_id
             LEFT JOIN LATERAL (
                 SELECT COUNT(*)::bigint AS event_count
                 FROM bearwire_events e
@@ -388,6 +389,7 @@ pub async fn list_open_reflection_candidates(
             ) reflected ON TRUE
             WHERE s.closed_at IS NULL
               AND s.archived_at IS NULL
+              AND b.live_reflection_enabled IS TRUE
         )
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,

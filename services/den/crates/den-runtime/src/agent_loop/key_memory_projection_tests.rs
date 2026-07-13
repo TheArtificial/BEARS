@@ -24,6 +24,7 @@ fn legacy_test_bear(bear_id: Uuid) -> Bear {
         birthday: None,
         created_at: now,
         updated_at: now,
+        live_reflection_enabled: true,
     }
 }
 

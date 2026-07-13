@@ -42,7 +42,8 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
         r"
         SELECT id, slug, name, description, default_model, default_tool_budget_multiplier, tools_enabled,
                runtime_plan, context_profile,
-               provisioning_version, system_prompt, birthday, created_at, updated_at
+               provisioning_version, system_prompt, birthday, created_at, updated_at,
+               live_reflection_enabled
         FROM bears
         ORDER BY slug
         ",
@@ -57,7 +58,8 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError>
         r"
         SELECT id, slug, name, description, default_model, default_tool_budget_multiplier, tools_enabled,
                runtime_plan, context_profile,
-               provisioning_version, system_prompt, birthday, created_at, updated_at
+               provisioning_version, system_prompt, birthday, created_at, updated_at,
+               live_reflection_enabled
         FROM bears
         WHERE id = $1
         ",
@@ -325,6 +327,7 @@ pub async fn list_bears_for_user(
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier, b.tools_enabled,
                b.runtime_plan, b.context_profile,
                b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
+               b.live_reflection_enabled,
                ub.role AS membership_role
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
@@ -348,7 +351,8 @@ pub async fn bear_for_user_by_slug(
         r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier, b.tools_enabled,
                b.runtime_plan, b.context_profile,
-               b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at
+               b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
+               b.live_reflection_enabled
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1 AND b.slug = $2
@@ -1163,4 +1167,27 @@ mod model_setting_tests {
             Some("strict")
         );
     }
+}
+
+pub async fn update_live_reflection_enabled(
+    pool: &PgPool,
+    bear_id: Uuid,
+    enabled: bool,
+) -> Result<(), DenError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE bears
+        SET live_reflection_enabled = $2,
+            updated_at = NOW()
+        WHERE id = $1
+        "#,
+    )
+    .bind(bear_id)
+    .bind(enabled)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(DenError::NotFound("bear not found".to_string()));
+    }
+    Ok(())
 }

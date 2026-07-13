@@ -38,6 +38,8 @@ pub enum TurnCompactionTrigger {
     TurnStart,
     /// After a user-visible turn completes (async worker).
     PostTurn,
+    /// Open-session reflection checkpoint. Non-forcing; only compacts when normal pressure exists.
+    LiveReflection,
     /// Operator or API request.
     Manual,
     /// Context overflow recovery (sync emergency).
@@ -48,6 +50,7 @@ impl TurnCompactionTrigger {
     pub fn as_runtime_trigger(self) -> RuntimeCompactionTriggerKind {
         match self {
             Self::TurnStart | Self::PostTurn => RuntimeCompactionTriggerKind::SemanticGroupCount,
+            Self::LiveReflection => RuntimeCompactionTriggerKind::LiveReflection,
             Self::Manual => RuntimeCompactionTriggerKind::Manual,
             Self::ModelSafetyMargin => RuntimeCompactionTriggerKind::ModelSafetyMargin,
         }
@@ -130,16 +133,36 @@ pub async fn run_compaction_job(
         return Ok(None);
     }
 
-    let rows = load_transcript_grouping_rows(pool, bear_id, conversation_id).await?;
-    let groups = super::semantic_groups_from_conversation_messages(&rows);
-    let policy = compaction_policy_for_profile(profile);
     let runtime_trigger = trigger.as_runtime_trigger();
-
     let prior_summary = if mode == CompactionMode::Active {
         artifact_store::load_latest_iterative_summary(pool, bear_id, conversation_id).await?
     } else {
         None
     };
+    let prior_cutoff = prior_summary
+        .as_ref()
+        .map(|record| record.source_message_end_seq)
+        .filter(|_| {
+            !matches!(
+                runtime_trigger,
+                RuntimeCompactionTriggerKind::Manual
+                    | RuntimeCompactionTriggerKind::ModelSafetyMargin
+            )
+        });
+    let all_rows = load_transcript_grouping_rows(pool, bear_id, conversation_id).await?;
+    let rows = if let Some(cutoff) = prior_cutoff {
+        // ponytail: sequence cutoffs skip already-summarized persisted rows for normal/live
+        // compaction. The ceiling is out-of-order or sequence-less transcript imports; upgrade
+        // path is explicit per-message compaction watermarks.
+        all_rows
+            .into_iter()
+            .filter(|row| row.sequence_no.is_some_and(|seq| seq > cutoff))
+            .collect::<Vec<_>>()
+    } else {
+        all_rows
+    };
+    let groups = super::semantic_groups_from_conversation_messages(&rows);
+    let policy = compaction_policy_for_profile(profile);
 
     let mut decision = choose_compaction_decision(&groups, runtime_trigger.clone(), &policy);
     if decision.is_none() && mode == CompactionMode::Active {
@@ -211,7 +234,13 @@ pub async fn run_compaction_job(
         }
         None => {
             let diagnostic = if groups.is_empty() {
-                "no transcript groups to evaluate"
+                if prior_cutoff.is_some() {
+                    "no uncompacted transcript groups to evaluate"
+                } else {
+                    "no transcript groups to evaluate"
+                }
+            } else if matches!(runtime_trigger, RuntimeCompactionTriggerKind::LiveReflection) {
+                "live reflection skipped compaction; transcript below compaction thresholds"
             } else {
                 "no eligible history groups outside protected floors"
             };
@@ -310,7 +339,12 @@ pub async fn prepare_turn_compaction(
         TurnCompactionTrigger::TurnStart => {
             on_turn_assemble_compaction(pool, config, bear_id, conversation_id, profile).await
         }
-        _ => run_compaction_job(pool, config, bear_id, conversation_id, profile, trigger).await,
+        TurnCompactionTrigger::PostTurn
+        | TurnCompactionTrigger::LiveReflection
+        | TurnCompactionTrigger::Manual
+        | TurnCompactionTrigger::ModelSafetyMargin => {
+            run_compaction_job(pool, config, bear_id, conversation_id, profile, trigger).await
+        }
     }
 }
 

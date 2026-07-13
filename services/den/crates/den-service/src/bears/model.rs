@@ -37,6 +37,12 @@ pub struct Bear {
     pub birthday: Option<time::Date>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
+    #[serde(default = "default_live_reflection_enabled")]
+    pub live_reflection_enabled: bool,
+}
+
+fn default_live_reflection_enabled() -> bool {
+    true
 }
 
 fn default_provisioning_version() -> i32 {

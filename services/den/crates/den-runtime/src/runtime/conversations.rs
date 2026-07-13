@@ -223,6 +223,7 @@ pub struct RuntimeCompactionArtifactRef {
 pub enum RuntimeCompactionTriggerKind {
     TokenPressure,
     SemanticGroupCount,
+    LiveReflection,
     Manual,
     ModelSafetyMargin,
 }
@@ -232,6 +233,7 @@ impl RuntimeCompactionTriggerKind {
         match self {
             Self::TokenPressure => "TokenPressure",
             Self::SemanticGroupCount => "SemanticGroupCount",
+            Self::LiveReflection => "LiveReflection",
             Self::Manual => "Manual",
             Self::ModelSafetyMargin => "ModelSafetyMargin",
         }
