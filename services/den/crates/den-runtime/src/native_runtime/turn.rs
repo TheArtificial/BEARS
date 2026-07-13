@@ -37,16 +37,18 @@ use crate::{
         evaluate_checkpoint_trigger, evaluate_turn_budget, projected_memory_session_diagnostic,
         provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
         record_approval_decision, record_checkpoint_request, resolve_agent_loop_control,
-        run_agent_step_stream, tool_result_content_indicates_error,
-        tool_signature_from_call, AgentLoopControlResolutionInput, AgentLoopSession,
-        AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
-        CheckpointArtifactInput, CheckpointField, CheckpointReplayPolicy, CheckpointTaskContext,
-        CheckpointTrigger, CheckpointVisibility, NativeToolDispatchMode,
-        RuntimeCheckpointRequest, SessionTrackingStream, ToolContinuationObservation,
-        TurnBudgetStopReason, TurnBudgetWarning,
+        run_agent_step_stream, tool_result_content_indicates_error, tool_signature_from_call,
+        AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
+        AgentStepOverflowContext, AssembleTurnContext, CheckpointArtifactInput, CheckpointField,
+        CheckpointReplayPolicy, CheckpointTaskContext, CheckpointTrigger, CheckpointVisibility,
+        NativeToolDispatchMode, RuntimeCheckpointRequest, SessionTrackingStream,
+        ToolContinuationObservation, TurnBudgetStopReason, TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
-    native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
+    native_runtime::{
+        profile::NativeCapabilityProfile,
+        tools::{is_work_tool_provider_name, merge_den_and_client_tools},
+    },
     turn_runner::{
         materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest,
     },
@@ -630,13 +632,26 @@ async fn build_session(
     let budget_components = assembled.budget_components;
     let active_activity_plan = assembled.active_activity_plan;
     let objective_orientation = assembled.objective_orientation;
-    if profile.profile == BearProfile::Work && active_activity_plan.is_none() {
-        return Err(DenError::ValidationError(
-            "Work stance requires an active task list before execution can continue".to_string(),
-        ));
+    if profile.profile == BearProfile::Work {
+        if !bear.work_enabled {
+            return Err(DenError::ValidationError(
+                "Work stance is not enabled for this Bear".to_string(),
+            ));
+        }
+        if active_activity_plan.is_none() {
+            return Err(DenError::ValidationError(
+                "Work stance requires an active task list before execution can continue"
+                    .to_string(),
+            ));
+        }
     }
-    let tools =
-        merge_den_and_client_tools(deps.config, profile.profile, client_tools, human_message)?;
+    let tools = merge_den_and_client_tools(
+        deps.config,
+        profile.profile,
+        bear.work_enabled,
+        client_tools,
+        human_message,
+    )?;
     let session_key = agent_loop_session_key(conversation_id, client_session_id);
     let conversation_model = match conversation_persistence::get_conversation_for_external_id(
         deps.pool,
@@ -1319,6 +1334,16 @@ async fn execute_approved_den_tool_for_session(
     let canonical = builtin_den_tool_descriptor_for_provider_name(&call.function.name)
         .map(|descriptor| descriptor.name.to_string())
         .unwrap_or_else(|| call.function.name.clone());
+    if is_work_tool_provider_name(&call.function.name) || is_work_tool_provider_name(&canonical) {
+        let bear = den_service::bears::db::get_bear(request.sqlx_pool, session.bear_id)
+            .await?
+            .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
+        if !bear.work_enabled {
+            return Err(DenError::ValidationError(
+                "work is not enabled for this Bear".to_string(),
+            ));
+        }
+    }
     let args = parse_args_or_empty_object(&call.function.arguments);
     let context = DenToolInvocationContext {
         bear_id: session.bear_id,

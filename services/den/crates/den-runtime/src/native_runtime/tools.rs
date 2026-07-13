@@ -1,4 +1,17 @@
-use den_core::{config::Config, DenError};
+use den_core::{
+    config::Config,
+    tools::constants::{
+        DEN_JOB_CREATE_PROVIDER, DEN_JOB_EVALUATE_CRITERION_PROVIDER, DEN_JOB_EXECUTE_PROVIDER,
+        DEN_JOB_GET_PROVIDER, DEN_JOB_LIST_PROVIDER, DEN_JOB_UPDATE_PROVIDER,
+        DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_GET_STATUS_PROVIDER, DEN_TASK_LISTS_LIST_PROVIDER,
+        DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
+        DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_TASK_LIST_SYNC_PROVIDER,
+        DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TASK_UPDATE_PROVIDER,
+        DEN_WORK_CATALOG_PROVIDER, DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_RUN_CANCEL_PROVIDER,
+        DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST_PROVIDER,
+    },
+    DenError,
+};
 use serde_json::Value;
 
 use crate::llm::LlmToolDefinition;
@@ -34,6 +47,33 @@ pub fn den_tools_for_profile(role: BearProfile) -> Vec<LlmToolDefinition> {
         .into_iter()
         .map(|descriptor| den_tool_to_llm_definition(&descriptor, true))
         .collect()
+}
+
+pub fn is_work_tool_provider_name(name: &str) -> bool {
+    matches!(
+        name,
+        DEN_TASK_LISTS_LIST_PROVIDER
+            | DEN_TASK_LISTS_GET_STATUS_PROVIDER
+            | DEN_TASK_LISTS_UPDATE_PROVIDER
+            | DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER
+            | DEN_JOB_CREATE_PROVIDER
+            | DEN_JOB_LIST_PROVIDER
+            | DEN_JOB_GET_PROVIDER
+            | DEN_JOB_UPDATE_PROVIDER
+            | DEN_JOB_EXECUTE_PROVIDER
+            | DEN_JOB_EVALUATE_CRITERION_PROVIDER
+            | DEN_TASK_CREATE_PROVIDER
+            | DEN_TASK_LIST_PROVIDER
+            | DEN_TASK_UPDATE_PROVIDER
+            | DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER
+            | DEN_TASK_LIST_SYNC_PROVIDER
+            | DEN_TASK_LIST_CHECKOUT_PROVIDER
+            | DEN_WORK_DISPATCH_PROVIDER
+            | DEN_WORK_RUN_LIST_PROVIDER
+            | DEN_WORK_RUN_GET_PROVIDER
+            | DEN_WORK_RUN_CANCEL_PROVIDER
+            | DEN_WORK_CATALOG_PROVIDER
+    )
 }
 
 /// Collapse duplicate forwarded MCP tools that share the same action suffix, e.g.
@@ -144,6 +184,7 @@ pub fn chat_turn_is_capabilities_meta_query(message: &str) -> bool {
 pub fn merge_den_and_client_tools(
     _config: &Config,
     role: BearProfile,
+    work_enabled: bool,
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
 ) -> Result<Vec<LlmToolDefinition>, DenError> {
@@ -158,6 +199,9 @@ pub fn merge_den_and_client_tools(
     } else {
         den_tools_for_profile(role)
     };
+    if !work_enabled {
+        merged.retain(|tool| !is_work_tool_provider_name(&tool.name));
+    }
     if role == BearProfile::Chat {
         return Ok(merged);
     }
@@ -252,6 +296,7 @@ mod tests {
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Pair,
+            true,
             Some(&client_tools),
             Some("click the browser page button"),
         )
@@ -273,6 +318,7 @@ mod tests {
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Pair,
+            true,
             Some(&client_tools),
             Some("what do you know about me?"),
         )
@@ -296,6 +342,7 @@ mod tests {
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Pair,
+            true,
             Some(&client_tools),
             Some("please read README.md"),
         )
@@ -319,6 +366,7 @@ mod tests {
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Pair,
+            true,
             Some(&client_tools),
             Some("please edit the file src/lib.rs"),
         )
@@ -341,6 +389,7 @@ mod tests {
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Pair,
+            true,
             Some(&client_tools),
             Some("please build the project and inspect errors"),
         )
@@ -356,7 +405,8 @@ mod tests {
     #[test]
     fn curate_profile_includes_proposal_and_core_tools() {
         let config = native_test_config();
-        let merged = merge_den_and_client_tools(&config, BearProfile::Curate, None, None).unwrap();
+        let merged =
+            merge_den_and_client_tools(&config, BearProfile::Curate, true, None, None).unwrap();
         let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"memory_list_proposals"));
         assert!(names.contains(&"memory_read_proposal"));
@@ -366,11 +416,30 @@ mod tests {
     }
 
     #[test]
+    fn disabled_work_bear_omits_task_job_and_work_tools() {
+        let config = native_test_config();
+        let merged = merge_den_and_client_tools(
+            &config,
+            BearProfile::Pair,
+            false,
+            None,
+            Some("please create a job"),
+        )
+        .unwrap();
+        let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"session_info"));
+        assert!(!names.contains(&"create_job"));
+        assert!(!names.contains(&"list_task_lists"));
+        assert!(!names.contains(&"dispatch_work"));
+    }
+
+    #[test]
     fn chat_capabilities_query_omits_den_tools() {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Chat,
+            true,
             None,
             Some("list your capabilities"),
         )
@@ -384,6 +453,7 @@ mod tests {
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Chat,
+            true,
             None,
             Some("search memory for deployment notes"),
         )
@@ -412,6 +482,7 @@ mod tests {
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Chat,
+            true,
             None,
             Some("search memory for deployment notes"),
         )
