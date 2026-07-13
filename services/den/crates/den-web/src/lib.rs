@@ -447,28 +447,28 @@ pub async fn render_template(
                 })?
                 .render_block(block_name)
                 .map_err(|e| {
-                    CustomError::Render(format!(
-                        "Unable to render block '{template_id}': {e:?}"
-                    ))
+                    CustomError::Render(format!("Unable to render block '{template_id}': {e:?}"))
                 })?;
             Ok(Html(rendered).into_response())
         }
-        TemplateRenderTarget::Template(template_name) => match template_env.get_template(template_name) {
-            Ok(template) => match template.render(merged_ctx) {
-                Ok(rendered) => Ok(Html(rendered).into_response()),
-                Err(e) => {
-                    tracing::error!("Error rendering template: {:#}", e);
+        TemplateRenderTarget::Template(template_name) => {
+            match template_env.get_template(template_name) {
+                Ok(template) => match template.render(merged_ctx) {
+                    Ok(rendered) => Ok(Html(rendered).into_response()),
+                    Err(e) => {
+                        tracing::error!("Error rendering template: {:#}", e);
+                        Err(CustomError::Render(format!(
+                            "Error rendering template '{template_id}'"
+                        )))
+                    }
+                },
+                Err(_) => {
+                    tracing::error!("Template `{}` not found", template_id);
                     Err(CustomError::Render(format!(
-                        "Error rendering template '{template_id}'"
+                        "Template `{template_id}` not found"
                     )))
                 }
-            },
-            Err(_) => {
-                tracing::error!("Template `{}` not found", template_id);
-                Err(CustomError::Render(format!(
-                    "Template `{template_id}` not found"
-                )))
             }
-        },
+        }
     }
 }

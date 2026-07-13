@@ -1,4 +1,9 @@
-use axum::{extract::State, response::{Html, IntoResponse, Response}, routing::get, Router};
+use axum::{
+    extract::State,
+    response::{Html, IntoResponse, Response},
+    routing::get,
+    Router,
+};
 use sqlx::Row as _;
 
 use crate::errors::CustomError;
@@ -25,7 +30,9 @@ pub async fn index(State(state): State<AppState>) -> Result<Response, CustomErro
     .fetch_all(state.sqlx_pool())
     .await?;
 
-    let mut body = String::from(r#"<!doctype html><html><head><meta charset=\"utf-8\"><title>Reflection health</title></head><body><main><h1>Reflection health</h1><p><a href=\"/admin\">Admin</a></p><table><thead><tr><th>Bear</th><th>Mode</th><th>Sessions</th><th>Open</th><th>Last updated</th></tr></thead><tbody>"#);
+    let mut body = String::from(
+        r#"<!doctype html><html><head><meta charset=\"utf-8\"><title>Reflection health</title></head><body><main><h1>Reflection health</h1><p><a href=\"/admin\">Admin</a></p><table><thead><tr><th>Bear</th><th>Mode</th><th>Sessions</th><th>Open</th><th>Last updated</th></tr></thead><tbody>"#,
+    );
 
     for row in rows {
         let bear_slug: String = row.try_get("bear_slug")?;

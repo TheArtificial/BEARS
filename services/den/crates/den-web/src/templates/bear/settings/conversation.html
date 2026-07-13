@@ -6,6 +6,12 @@
 <div class="box">
 <h2>Conversation</h2>
 <p class="form-hint"><a href="/bear/{{ bear.slug | e }}/activity">Back to activity</a></p>
+{% if can_manage_bear %}
+<form method="post" action="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}/reflect">
+  <p><button type="submit">Reflect this conversation now</button></p>
+</form>
+<p class="form-hint">Manual reflection forces a compaction checkpoint first, then mines that summary for memory proposals.</p>
+{% endif %}
 
 <dl>
   <dt>Id</dt>

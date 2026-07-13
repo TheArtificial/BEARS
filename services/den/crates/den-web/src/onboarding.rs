@@ -15,9 +15,10 @@ use crate::{
     errors::CustomError,
     web::{
         bear::create_support::{
-            bear_new_form_context, build_context_profile_json_for_template, is_valid_bear_slug,
-            insert_new_bear_row_with_context_profile, provision_bifrost_virtual_key_for_bear,
-            validate_default_model_for_catalog, NewBearForm, BEAR_SLUG_VALIDATION_MESSAGE,
+            bear_new_form_context, build_context_profile_json_for_template,
+            insert_new_bear_row_with_context_profile, is_valid_bear_slug,
+            provision_bifrost_virtual_key_for_bear, validate_default_model_for_catalog,
+            NewBearForm, BEAR_SLUG_VALIDATION_MESSAGE,
         },
         render_template, AppState,
     },

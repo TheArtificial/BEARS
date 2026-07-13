@@ -11,6 +11,7 @@ use axum::{
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
 use axum_login::tower_sessions::Session;
+use bearwire_protocol::wire::BearWireEvent;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -31,6 +32,11 @@ use crate::{
 use den_core::{AgentLoopControlLevel, DenError};
 use den_memory::{bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager};
 use den_protocol::ContextBudgetReport;
+use den_runtime::{
+    bearwire_events,
+    pair_reflection::create_pair_reflection_proposals_from_latest_summary,
+    runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
+};
 use den_service::prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile;
 use den_service::{
     bears::{
@@ -83,10 +89,18 @@ pub fn router() -> Router<AppState> {
         )
         .route_with_tsr("/bear/{slug}/activity", get(conversations_view))
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
+        .route_with_tsr(
+            "/bear/{slug}/conversations/reflect",
+            post(reflect_conversations_post),
+        )
         .route_with_tsr("/bear/{slug}/reflections", get(reflections_view))
         .route_with_tsr(
             "/bear/{slug}/conversations/{conversation_id}",
             get(conversation_detail_view),
+        )
+        .route_with_tsr(
+            "/bear/{slug}/conversations/{conversation_id}/reflect",
+            post(reflect_conversation_post),
         )
         .route_with_tsr("/bear/{slug}/context", get(context_view))
         .route_with_tsr("/bear/{slug}/resources", get(policy_view))
@@ -188,6 +202,12 @@ struct BearModelsForm {
 struct LiveReflectionForm {
     #[serde(default)]
     enabled: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReflectConversationsForm {
+    #[serde(default)]
+    conversation_ids: Vec<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -309,6 +329,7 @@ struct ConversationAdminRow {
     compaction_status: String,
     compaction_event_count: i64,
     latest_compaction_at: Option<String>,
+    compaction_explanation: String,
     latest_context_budget: Option<ContextBudgetReport>,
     latest_context_budget_updated_at: Option<String>,
     latest_context_budget_summary: Option<String>,
@@ -393,6 +414,27 @@ fn context_budget_summary(report: &ContextBudgetReport) -> String {
             "{} tokens estimated (reserve {})",
             report.estimated_total_tokens, report.reserved_output_tokens
         ),
+    }
+}
+
+fn compaction_status_explanation(
+    status: Option<&str>,
+    budget: Option<&ContextBudgetReport>,
+) -> String {
+    match status {
+        Some("Applied") | Some("applied") => {
+            "A compaction artifact exists; reflection can mine the compacted summary.".to_string()
+        }
+        Some("Skipped") | Some("skipped") => {
+            "Compaction evaluated this conversation but did not create an artifact, usually because the visible transcript is still below the configured context-pressure thresholds.".to_string()
+        }
+        Some(other) => format!("Latest compaction event status: {other}."),
+        None => match budget.and_then(|b| b.context_window.map(|limit| (b.estimated_total_tokens, limit))) {
+            Some((used, limit)) => format!(
+                "No compaction event yet. Latest context estimate is {used}/{limit} tokens, so proactive/live reflection may wait until threshold pressure unless you trigger reflection manually."
+            ),
+            None => "No compaction event yet. This usually means proactive processing has not touched this conversation since tracking was added, or the conversation has no context budget record yet.".to_string(),
+        },
     }
 }
 
@@ -2254,6 +2296,7 @@ async fn stance_model_post(
 
 async fn conversations_view(
     Path(slug): Path<String>,
+    Query(query): Query<DomainQuery>,
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
@@ -2317,6 +2360,10 @@ async fn conversations_view(
                     .unwrap_or_else(|| "none".to_string()),
                 compaction_event_count: stats.map(|(count, _, _)| *count).unwrap_or(0),
                 latest_compaction_at: stats.map(|(_, _, created_at)| created_at.to_string()),
+                compaction_explanation: compaction_status_explanation(
+                    stats.map(|(_, status, _)| status.as_str()),
+                    c.latest_context_budget.as_ref(),
+                ),
                 latest_context_budget_updated_at: c
                     .latest_context_budget_updated_at
                     .map(|value| value.to_string()),
@@ -2336,6 +2383,9 @@ async fn conversations_view(
             conversations,
             can_manage_bear,
             native_runtime => true,
+            live_reflection_enabled => bear.live_reflection_enabled,
+            message => query.message,
+            error => query.error,
             ..bear_nav_context(&bear, "activity"),
         },
     )
@@ -2360,6 +2410,7 @@ async fn reflections_view(
             reflections,
             can_manage_bear,
             native_runtime => true,
+            live_reflection_enabled => bear.live_reflection_enabled,
             ..bear_nav_context(&bear, "reflections"),
         },
     )
@@ -2426,6 +2477,7 @@ async fn conversation_detail_view(
             reflections,
             can_manage_bear,
             native_runtime => true,
+            live_reflection_enabled => bear.live_reflection_enabled,
             ..bear_nav_context(&bear, "activity"),
         },
     )
@@ -2683,6 +2735,151 @@ async fn live_reflection_post(
         urlencoding::encode(message)
     ))
     .into_response())
+}
+
+async fn reflect_conversations_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<ReflectConversationsForm>,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(b) => b,
+        Err(r) => return Ok(r.into_response()),
+    };
+    if form.conversation_ids.is_empty() {
+        return Ok(Redirect::to(&format!(
+            "/bear/{}/conversations?message={}",
+            bear.slug,
+            urlencoding::encode("Select at least one conversation to reflect.")
+        ))
+        .into_response());
+    }
+    let mut processed = 0usize;
+    for conversation_id in form.conversation_ids.into_iter().take(25) {
+        let conv = match conversation_persistence::get_conversation_by_id(
+            state.sqlx_pool(),
+            conversation_id,
+        )
+        .await?
+        {
+            Some(conv) if conv.bear_id == bear.id => conv,
+            _ => continue,
+        };
+        reflect_persisted_conversation(
+            &state,
+            auth_session.user.as_ref().map(|u| u.id),
+            &bear,
+            &conv,
+            "manual_bulk",
+        )
+        .await?;
+        processed += 1;
+    }
+    Ok(Redirect::to(&format!(
+        "/bear/{}/conversations?message={}",
+        bear.slug,
+        urlencoding::encode(&format!(
+            "Reflection requested for {processed} conversation(s)."
+        ))
+    ))
+    .into_response())
+}
+
+async fn reflect_conversation_post(
+    Path((slug, conversation_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(b) => b,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let conv = conversation_persistence::get_conversation_by_id(state.sqlx_pool(), conversation_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("conversation not found".to_string()))?;
+    if conv.bear_id != bear.id {
+        return Err(CustomError::NotFound("conversation not found".to_string()));
+    }
+    reflect_persisted_conversation(
+        &state,
+        auth_session.user.as_ref().map(|u| u.id),
+        &bear,
+        &conv,
+        "manual",
+    )
+    .await?;
+    Ok(Redirect::to(&format!(
+        "/bear/{}/conversations/{}",
+        bear.slug, conversation_id
+    ))
+    .into_response())
+}
+
+async fn reflect_persisted_conversation(
+    state: &AppState,
+    user_id: Option<i32>,
+    bear: &den_service::bears::Bear,
+    conv: &conversation_persistence::ConversationRecord,
+    trigger: &str,
+) -> Result<(), CustomError> {
+    let conversation_external_id = conv
+        .external_conversation_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            CustomError::ValidationError("conversation has no external id".to_string())
+        })?;
+    let session_id = conv
+        .source_client_session_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(conversation_external_id);
+    prepare_turn_compaction(
+        state.sqlx_pool(),
+        &state.config,
+        bear.id,
+        conversation_external_id,
+        BearProfile::Pair,
+        TurnCompactionTrigger::Manual,
+    )
+    .await?;
+    let memory_stores = MemoryStoreManager::new(&state.config);
+    let output = create_pair_reflection_proposals_from_latest_summary(
+        state.sqlx_pool(),
+        &state.config,
+        &memory_stores,
+        bear.id,
+        conversation_external_id,
+        session_id,
+    )
+    .await?;
+    let payload = json!({
+        "session_id": session_id,
+        "bear_slug": bear.slug,
+        "trigger": trigger,
+        "pair_reflection": {
+            "status": if output.skipped_reason.is_some() { "skipped" } else { "processed" },
+            "trigger": trigger,
+            "skipped_reason": output.skipped_reason,
+            "candidate_count": output.candidate_count,
+            "dropped_followup_count": output.dropped_followup_count,
+            "proposal_ids": output.created_proposal_ids,
+        }
+    });
+    let mut event = BearWireEvent::ephemeral("session.reflected", payload);
+    event.bear_id = Some(bear.id.to_string());
+    event.human_id = user_id.map(|id| id.to_string());
+    event.session_id = Some(session_id.to_string());
+    bearwire_events::append_bearwire_event(
+        state.sqlx_pool(),
+        session_id,
+        Some(bear.id),
+        user_id,
+        event,
+    )
+    .await?;
+    Ok(())
 }
 
 async fn grant_member_action(

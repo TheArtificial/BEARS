@@ -891,6 +891,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "axum-login",
+ "bearwire-protocol",
  "bytes",
  "den-core",
  "den-docket",

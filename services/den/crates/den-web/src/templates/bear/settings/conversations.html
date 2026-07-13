@@ -9,12 +9,23 @@
 
 <h3>Conversations</h3>
 
+{% if message %}<p><strong>{{ message | e }}</strong></p>{% endif %}
+{% if error %}<p><strong>{{ error | e }}</strong></p>{% endif %}
+
+<p class="form-hint">
+  Live reflection is {% if live_reflection_enabled %}<strong>on</strong>{% else %}<strong>off</strong>{% endif %} for this Bear.
+  When on, open conversations are periodically checked; compaction artifacts are only generated when normal context-pressure rules say summarization is useful. Manual reflection below forces a compaction checkpoint first.
+</p>
+
 {% if conversations and conversations | length > 0 %}
+<form method="post" action="/bear/{{ bear.slug }}/conversations/reflect">
+<p><button type="submit">Reflect selected conversations</button></p>
 <table>
-  <thead><tr><th>Title</th><th>External id</th><th>Client session</th><th>Context budget</th><th>Compaction</th><th>Updated</th><th></th></tr></thead>
+  <thead><tr><th>Select</th><th>Title</th><th>External id</th><th>Client session</th><th>Context budget</th><th>Compaction</th><th>Updated</th><th></th></tr></thead>
   <tbody>
   {% for c in conversations %}
     <tr>
+      <td><input type="checkbox" name="conversation_ids" value="{{ c.id }}" aria-label="Select {{ c.title | e }}"></td>
       <td>{{ c.title | e }}</td>
       <td><code>{{ c.external_id | e }}</code></td>
       <td>{% if c.source_session != "—" %}<code>{{ c.source_session | e }}</code>{% else %}<em>none</em>{% endif %}</td>
@@ -29,17 +40,22 @@
       <td>
         {% if c.compaction_event_count > 0 %}
           {{ c.compaction_status | e }} · {{ c.compaction_event_count }} event{% if c.compaction_event_count != 1 %}s{% endif %}<br>
-          <small>{{ c.latest_compaction_at }}</small>
+          <small>{{ c.latest_compaction_at }}</small><br>
         {% else %}
-          <em>none</em>
+          <em>none</em><br>
         {% endif %}
+        <small>{{ c.compaction_explanation | e }}</small>
       </td>
       <td>{{ c.updated_at }}</td>
-      <td><a href="/bear/{{ bear.slug }}/conversations/{{ c.id }}">Open</a></td>
+      <td>
+        <a href="/bear/{{ bear.slug }}/conversations/{{ c.id }}">Open</a>
+        <button type="submit" name="conversation_ids" value="{{ c.id }}">Reflect</button>
+      </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+</form>
 {% else %}
 <p><em>No persisted conversations yet.</em></p>
 {% endif %}
