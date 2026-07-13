@@ -174,6 +174,16 @@ pub fn native_client_session_exists(conversation_id: &str, client_session_id: &s
     SESSION_STORE.get(&key).is_some()
 }
 
+pub fn native_client_session_active_activity_plan(
+    conversation_id: &str,
+    client_session_id: &str,
+) -> Option<den_docket::TaskListProjection> {
+    let key = agent_loop_session_key(conversation_id, client_session_id);
+    SESSION_STORE
+        .get(&key)
+        .and_then(|session| session.active_activity_plan)
+}
+
 async fn persisted_tool_call_exists(
     pool: &PgPool,
     bear_id: Uuid,

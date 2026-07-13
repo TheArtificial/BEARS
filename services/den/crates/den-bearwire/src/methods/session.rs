@@ -13,7 +13,10 @@ use den_runtime::{
     runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
     turn_obligations,
 };
-use den_service::{bears::BearProfile, client_sessions, DenState};
+use den_service::{
+    bears::{db as bears_db, BearProfile},
+    client_sessions, DenState,
+};
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
 use crate::methods::{parse_params, DEFAULT_CLIENT};
@@ -129,6 +132,7 @@ fn resolved_or_stored_conversation_id(session: &client_sessions::ClientSessionRo
 async fn session_state_payload(
     state: &DenState,
     session: client_sessions::ClientSessionRow,
+    work_enabled: bool,
 ) -> Result<Value, CustomError> {
     let conversation_external_id = resolved_or_stored_conversation_id(&session);
     let conversation_runtime_id = conversation_external_id.to_string();
@@ -145,6 +149,15 @@ async fn session_state_payload(
         &conversation_runtime_id,
         &session.client_session_id,
     );
+    let active_activity_plan = if work_enabled {
+        den_runtime::native_runtime::native_client_session_active_activity_plan(
+            &conversation_runtime_id,
+            &session.client_session_id,
+        )
+        .map(active_activity_plan_projection)
+    } else {
+        None
+    };
     let open_obligations = turn_obligations::open_client_obligations_for_session(
         &state.sqlx_pool,
         &session.client_session_id,
@@ -194,9 +207,32 @@ async fn session_state_payload(
             "trusted_workspace": trusted_workspace,
             "runtime_conversation_id": conversation_runtime_id,
             "runtime_session_live": runtime_session_live,
+            "active_activity_plan": active_activity_plan,
             "open_obligations": open_obligations,
         }
     }))
+}
+
+fn active_activity_plan_projection(plan: den_docket::TaskListProjection) -> Value {
+    json!({
+        "schema": "den.acp_plan_projection.v1",
+        "source": "native_agent_loop_active_activity_plan",
+        "projection": "flat_current_level",
+        "id": plan.id,
+        "title": plan.title,
+        "status": plan.status,
+        "version": plan.version,
+        "current_item_id": plan.current_item.as_ref().map(|item| item.id.clone()),
+        "items": plan.items.into_iter().map(|item| json!({
+            "id": item.id,
+            "title": item.title,
+            "summary": item.summary,
+            "status": item.status,
+            "blocked_reason": item.blocked_reason,
+            "source_ref": item.source_ref,
+            "sync_state": item.sync_state,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 pub(crate) async fn session_open_result(
@@ -423,6 +459,9 @@ pub(crate) async fn session_state_result(
         }));
     };
     let user_id = authenticate_for_bear_slug(state, headers, bear_slug).await?;
+    let bear = bears_db::bear_for_user_by_slug(&state.sqlx_pool, user_id, bear_slug)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("Bear not found or token lacks access".to_string()))?;
     if let Some(session_id) = request
         .session_id
         .as_deref()
@@ -440,7 +479,7 @@ pub(crate) async fn session_state_result(
             "kind": "single",
             "bear_slug": bear_slug,
             "session": match session {
-                Some(session) => Some(session_state_payload(state, session).await?),
+                Some(session) => Some(session_state_payload(state, session, bear.work_enabled).await?),
                 None => None,
             },
         }));
@@ -463,7 +502,7 @@ pub(crate) async fn session_state_result(
     .await?;
     let mut sessions_payload = Vec::with_capacity(sessions.len());
     for session in sessions {
-        sessions_payload.push(session_state_payload(state, session).await?);
+        sessions_payload.push(session_state_payload(state, session, bear.work_enabled).await?);
     }
     Ok(json!({
         "kind": "list",
