@@ -1,4 +1,4 @@
-use den_core::{AgentLoopControlLevel, ThinkingEffort};
+use den_core::{AgentLoopControlLevel, BearStance, ThinkingEffort};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{
@@ -9,10 +9,12 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentLoopControlSource {
+    ContextDefault,
     ModelDefault,
     BearOverride,
     StanceOverride,
     TaskEscalation,
+    PreRiskEscalation,
     SystemDefault,
 }
 
@@ -330,18 +332,29 @@ pub struct AgentLoopControlResolutionInput<'a> {
     pub bear_override: Option<AgentLoopControlLevel>,
     pub stance_override: Option<AgentLoopControlLevel>,
     pub task_escalation: Option<AgentLoopControlLevel>,
+    pub stance: Option<BearStance>,
+    pub focused_job: bool,
+    pub pre_risk: bool,
 }
 
 pub fn resolve_agent_loop_control(
     input: AgentLoopControlResolutionInput<'_>,
 ) -> ResolvedAgentLoopControl {
+    let context_default = context_agent_loop_control_default(input.stance, input.focused_job);
     let (mut level, mut source) = if let Some(level) = input.model_default {
-        (level, AgentLoopControlSource::ModelDefault)
-    } else if let Some(model_handle) = input.model_handle {
         (
-            den_llm::model_registry::default_agent_loop_control_for_model(model_handle),
+            context_default.map_or(level, |default| level.max(default)),
             AgentLoopControlSource::ModelDefault,
         )
+    } else if let Some(model_handle) = input.model_handle {
+        let model_default =
+            den_llm::model_registry::default_agent_loop_control_for_model(model_handle);
+        (
+            context_default.map_or(model_default, |default| model_default.max(default)),
+            AgentLoopControlSource::ModelDefault,
+        )
+    } else if let Some(context_default) = context_default {
+        (context_default, AgentLoopControlSource::ContextDefault)
     } else {
         (
             AgentLoopControlLevel::default(),
@@ -364,12 +377,30 @@ pub fn resolve_agent_loop_control(
             source = AgentLoopControlSource::TaskEscalation;
         }
     }
+    if input.pre_risk {
+        let escalated = level.max(AgentLoopControlLevel::Strict);
+        if escalated != level {
+            level = escalated;
+            source = AgentLoopControlSource::PreRiskEscalation;
+        }
+    }
 
     ResolvedAgentLoopControl {
         level,
         source,
         model_handle: input.model_handle.map(str::to_string),
         profile: AgentLoopControlProfile::for_level(level),
+    }
+}
+
+fn context_agent_loop_control_default(
+    stance: Option<BearStance>,
+    focused_job: bool,
+) -> Option<AgentLoopControlLevel> {
+    match (stance, focused_job) {
+        (Some(BearStance::Pair | BearStance::Work), true) => Some(AgentLoopControlLevel::Careful),
+        (Some(BearStance::Chat | BearStance::Pair), false) => Some(AgentLoopControlLevel::Standard),
+        _ => None,
     }
 }
 
@@ -786,6 +817,9 @@ mod tests {
             bear_override: None,
             stance_override: None,
             task_escalation: None,
+            stance: None,
+            focused_job: false,
+            pre_risk: false,
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Light);
         assert_eq!(resolved.source, AgentLoopControlSource::ModelDefault);
@@ -796,6 +830,9 @@ mod tests {
             bear_override: Some(AgentLoopControlLevel::Standard),
             stance_override: Some(AgentLoopControlLevel::Careful),
             task_escalation: Some(AgentLoopControlLevel::Strict),
+            stance: None,
+            focused_job: false,
+            pre_risk: false,
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Strict);
         assert_eq!(resolved.source, AgentLoopControlSource::TaskEscalation);
@@ -1070,6 +1107,59 @@ mod tests {
     }
 
     #[test]
+    fn context_defaults_are_aggressive_for_pre_release() {
+        let pair_freeform = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/gpt-5.5"),
+            model_default: None,
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearStance::Pair),
+            focused_job: false,
+            pre_risk: false,
+        });
+        assert_eq!(pair_freeform.level, AgentLoopControlLevel::Standard);
+        assert_eq!(pair_freeform.source, AgentLoopControlSource::ModelDefault);
+
+        let focused_pair = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/gpt-5.5"),
+            model_default: None,
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearStance::Pair),
+            focused_job: true,
+            pre_risk: false,
+        });
+        assert_eq!(focused_pair.level, AgentLoopControlLevel::Careful);
+
+        let focused_work = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/gpt-5.5"),
+            model_default: None,
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearStance::Work),
+            focused_job: true,
+            pre_risk: false,
+        });
+        assert_eq!(focused_work.level, AgentLoopControlLevel::Careful);
+
+        let pre_risk = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/gpt-5.5"),
+            model_default: None,
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearStance::Pair),
+            focused_job: true,
+            pre_risk: true,
+        });
+        assert_eq!(pre_risk.level, AgentLoopControlLevel::Strict);
+        assert_eq!(pre_risk.source, AgentLoopControlSource::PreRiskEscalation);
+    }
+
+    #[test]
     fn escalation_never_downgrades_operator_override() {
         let resolved = resolve_agent_loop_control(AgentLoopControlResolutionInput {
             model_handle: Some("unknown-model"),
@@ -1077,6 +1167,9 @@ mod tests {
             bear_override: Some(AgentLoopControlLevel::Careful),
             stance_override: None,
             task_escalation: Some(AgentLoopControlLevel::Light),
+            stance: None,
+            focused_job: false,
+            pre_risk: false,
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Careful);
         assert_eq!(resolved.source, AgentLoopControlSource::BearOverride);

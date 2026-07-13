@@ -690,6 +690,9 @@ async fn build_session(
         bear_override: bear_loop_control_override,
         stance_override: stance_loop_control_override,
         task_escalation: None,
+        stance: Some(profile.profile),
+        focused_job: false,
+        pre_risk: false,
     });
     let agent_loop_control = crate::agent_loop::ResolvedAgentLoopControl {
         profile: agent_loop_control.profile.with_budget(profile.turn_budget),
@@ -1614,6 +1617,9 @@ mod tests {
             bear_override: None,
             stance_override: None,
             task_escalation: None,
+            stance: Some(BearProfile::Pair),
+            focused_job: false,
+            pre_risk: false,
         })
     }
 
