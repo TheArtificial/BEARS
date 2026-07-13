@@ -11,6 +11,8 @@ use den_service::prompt_memory_blocks::{
     compile_prompt_memory_blocks, render_prompt_memory_block_context, PromptMemoryCompilationInput,
 };
 
+use crate::agent_loop::ObjectiveOrientation;
+
 pub fn runtime_context_already_includes_den_owned_blocks(runtime_context: &str) -> bool {
     let trimmed = runtime_context.trim();
     !trimmed.is_empty()
@@ -19,37 +21,42 @@ pub fn runtime_context_already_includes_den_owned_blocks(runtime_context: &str) 
             || trimmed.contains("Den objective orientation is Den-owned"))
 }
 
-fn active_task_for_orientation(plan: &TaskListProjection) -> Option<&den_docket::TaskListItem> {
-    plan.current_item.as_ref().or_else(|| {
-        plan.items.iter().find(|item| {
-            matches!(
-                item.status,
-                den_docket::TaskListItemStatus::InProgress
-                    | den_docket::TaskListItemStatus::Pending
+fn render_objective_orientation_context(orientation: &ObjectiveOrientation) -> String {
+    match orientation {
+        ObjectiveOrientation::Freeform { policy } => {
+            let task_definition_guidance = if policy.may_define_task {
+                " If the request needs sustained work, define a concrete task with completion criteria; the runtime may then continue task-oriented or delegate through available execution policy."
+            } else {
+                ""
+            };
+            format!(
+                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=freeform may_define_task={}. No concrete task or Job outcome is active. Keep the turn bounded: answer directly, ask a clarifying question, or stop.{}\n</system-reminder>",
+                policy.may_define_task,
+                task_definition_guidance
             )
-        })
-    })
-}
-
-fn render_objective_orientation_context(plan: Option<&TaskListProjection>) -> String {
-    let Some(plan) = plan else {
-        // ponytail: freeform task definition is closed until a caller supplies a policy surface;
-        // upgrade path is to thread FreeformPolicy into this runtime-context compilation path.
-        return "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=freeform may_define_task=false. No concrete task or Job outcome is active. Keep the turn bounded: answer directly, ask a clarifying question, or stop.\n</system-reminder>".to_string();
-    };
-
-    let task = active_task_for_orientation(plan)
-        .map(|item| item.title.as_str())
-        .unwrap_or("the next actionable task");
-    if let Some(job_id) = plan.source_ref.docket_job_id.as_deref() {
-        return format!(
-            "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=focused job_id={job_id}. Your top priority is to complete the Docket Job. Continue through the active task: {task}. Child tasks may be added when useful unless the Job is immutable.\n</system-reminder>"
-        );
+        }
+        ObjectiveOrientation::Oriented { task } => {
+            let task_ref = serde_json::to_string(&task.task_ref)
+                .unwrap_or_else(|_| "{\"kind\":\"unknown\"}".to_string());
+            format!(
+                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=oriented task_ref={task_ref}. A concrete task is active. Complete that task before final-answering. If you decompose it, stay within {} child tasks and {} level below the oriented task.\n</system-reminder>",
+                task.child_policy.max_children,
+                task.child_policy.max_depth_below_oriented_task
+            )
+        }
+        ObjectiveOrientation::Focused { job } => {
+            let active_task_ref = job
+                .active_task_ref
+                .as_ref()
+                .and_then(|task| serde_json::to_string(task).ok())
+                .unwrap_or_else(|| "null".to_string());
+            format!(
+                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=focused job_id={} job_mutable={} active_task_ref={active_task_ref}. Your top priority is to complete the Docket Job. Continue through the active task. Child tasks may be added when useful unless the Job is immutable.\n</system-reminder>",
+                job.job_id,
+                job.mutable
+            )
+        }
     }
-
-    format!(
-        "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=oriented. A concrete task is active: {task}. Complete that task before final-answering. If you decompose it, stay within 6 child tasks and 1 level below the oriented task.\n</system-reminder>"
-    )
 }
 
 async fn load_prompt_memory_runtime_text(
@@ -102,10 +109,11 @@ pub async fn assemble_den_owned_runtime_supplement(
     profile_slug: &str,
     session_id: &str,
     workspace_roots: &[String],
-    active_activity_plan: Option<&TaskListProjection>,
+    _active_activity_plan: Option<&TaskListProjection>,
+    objective_orientation: &ObjectiveOrientation,
 ) -> Result<String, DenError> {
     let mut parts = Vec::new();
-    parts.push(render_objective_orientation_context(active_activity_plan));
+    parts.push(render_objective_orientation_context(objective_orientation));
     let prompt_memory =
         load_prompt_memory_runtime_text(pool, bear_id, profile_slug, session_id, workspace_roots)
             .await?;

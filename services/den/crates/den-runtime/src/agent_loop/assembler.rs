@@ -27,6 +27,7 @@ use super::{
     runtime_context::{
         assemble_den_owned_runtime_supplement, runtime_context_already_includes_den_owned_blocks,
     },
+    FreeformPolicy, ObjectiveOrientation, ObjectiveOrientationResolutionInput, OrientationTaskRef,
 };
 use crate::context_budget::AssembledTurnBudgetComponents;
 use crate::runtime::compaction::{
@@ -92,6 +93,7 @@ pub struct AssembledNativeTurn {
     pub recall_diagnostic: Option<Value>,
     pub budget_components: AssembledTurnBudgetComponents,
     pub active_activity_plan: Option<TaskListProjection>,
+    pub objective_orientation: ObjectiveOrientation,
 }
 
 async fn load_active_activity_plan(
@@ -195,6 +197,49 @@ pub fn recalled_memory_session_diagnostic(recall: Option<&Value>) -> Value {
             "next_surface": "memory_search / future recall diagnostic",
         }),
     }
+}
+
+fn objective_orientation_input(
+    active_activity_plan: Option<&TaskListProjection>,
+) -> ObjectiveOrientationResolutionInput {
+    ObjectiveOrientationResolutionInput {
+        focused_job_id: active_activity_plan.and_then(|plan| plan.source_ref.docket_job_id.clone()),
+        focused_job_mutable: true,
+        active_task_ref: active_activity_plan.and_then(active_orientation_task_ref),
+        // ponytail: freeform task definition is closed until a caller supplies a policy surface;
+        // upgrade path is to thread FreeformPolicy from turn/session request policy into assembly.
+        freeform_policy: FreeformPolicy::closed(),
+    }
+}
+
+fn active_orientation_task_ref(plan: &TaskListProjection) -> Option<OrientationTaskRef> {
+    let item = plan.current_item.as_ref().or_else(|| {
+        plan.items.iter().find(|item| {
+            matches!(
+                item.status,
+                den_docket::TaskListItemStatus::InProgress
+                    | den_docket::TaskListItemStatus::Pending
+            )
+        })
+    })?;
+
+    if let Some(task_id) = item.source_ref.docket_task_id.clone() {
+        return Some(OrientationTaskRef::DocketTask {
+            job_id: item
+                .source_ref
+                .docket_job_id
+                .clone()
+                .or_else(|| plan.source_ref.docket_job_id.clone()),
+            task_id,
+            title: Some(item.title.clone()),
+        });
+    }
+
+    Some(OrientationTaskRef::TaskListItem {
+        task_list_id: plan.id.to_string(),
+        item_id: item.id.clone(),
+        title: Some(item.title.clone()),
+    })
 }
 
 /// Best-effort `## Recalled memory` section (ADR-0038 Phase 2). Returns the rendered block and
@@ -337,6 +382,9 @@ pub async fn assemble_native_turn_for_bear(
     )
     .await?;
     let active_activity_plan = load_active_activity_plan(&ctx).await?;
+    let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
+        active_activity_plan.as_ref(),
+    ));
 
     let mut system_text = compiled_prompt;
     if let Some(block) = render_key_memory_projection_block(&projection) {
@@ -374,6 +422,7 @@ pub async fn assemble_native_turn_for_bear(
             session_id,
             &roots,
             active_activity_plan.as_ref(),
+            &objective_orientation,
         )
         .await?;
         if !supplement.trim().is_empty() {
@@ -477,5 +526,6 @@ pub async fn assemble_native_turn_for_bear(
         recall_diagnostic,
         budget_components,
         active_activity_plan,
+        objective_orientation,
     })
 }

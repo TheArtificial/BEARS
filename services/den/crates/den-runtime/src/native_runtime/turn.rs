@@ -8,7 +8,6 @@ use den_core::tools::{
 use std::sync::{Arc, LazyLock};
 
 use den_memory::MemoryStoreManager;
-use den_docket::TaskListProjection;
 use den_protocol::{
     ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
     RuntimeConversationRef, RuntimeErrorCategory, RuntimeEventStream, RuntimeHistoryPage,
@@ -38,14 +37,13 @@ use crate::{
         evaluate_checkpoint_trigger, evaluate_turn_budget, projected_memory_session_diagnostic,
         provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
         record_approval_decision, record_checkpoint_request, resolve_agent_loop_control,
-        resolve_objective_orientation, run_agent_step_stream, tool_result_content_indicates_error,
+        run_agent_step_stream, tool_result_content_indicates_error,
         tool_signature_from_call, AgentLoopControlResolutionInput, AgentLoopSession,
         AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
         CheckpointArtifactInput, CheckpointField, CheckpointReplayPolicy, CheckpointTaskContext,
-        CheckpointTrigger, CheckpointVisibility, FreeformPolicy, NativeToolDispatchMode,
-        ObjectiveOrientationResolutionInput, OrientationTaskRef, RuntimeCheckpointRequest,
-        SessionTrackingStream, ToolContinuationObservation, TurnBudgetStopReason,
-        TurnBudgetWarning,
+        CheckpointTrigger, CheckpointVisibility, NativeToolDispatchMode,
+        RuntimeCheckpointRequest, SessionTrackingStream, ToolContinuationObservation,
+        TurnBudgetStopReason, TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
@@ -564,51 +562,6 @@ struct BuildSessionInput<'a> {
     tool_messages: Vec<ChatMessage>,
 }
 
-fn objective_orientation_input(
-    active_activity_plan: Option<&TaskListProjection>,
-) -> ObjectiveOrientationResolutionInput {
-    let active_task_ref = active_activity_plan.and_then(active_orientation_task_ref);
-    let focused_job_id = active_activity_plan
-        .and_then(|plan| plan.source_ref.docket_job_id.clone());
-
-    ObjectiveOrientationResolutionInput {
-        focused_job_id,
-        focused_job_mutable: true,
-        active_task_ref,
-        freeform_policy: FreeformPolicy::closed(),
-    }
-}
-
-fn active_orientation_task_ref(plan: &TaskListProjection) -> Option<OrientationTaskRef> {
-    let item = plan.current_item.as_ref().or_else(|| {
-        plan.items.iter().find(|item| {
-            matches!(
-                item.status,
-                den_docket::TaskListItemStatus::InProgress
-                    | den_docket::TaskListItemStatus::Pending
-            )
-        })
-    })?;
-
-    if let Some(task_id) = item.source_ref.docket_task_id.clone() {
-        return Some(OrientationTaskRef::DocketTask {
-            job_id: item
-                .source_ref
-                .docket_job_id
-                .clone()
-                .or_else(|| plan.source_ref.docket_job_id.clone()),
-            task_id,
-            title: Some(item.title.clone()),
-        });
-    }
-
-    Some(OrientationTaskRef::TaskListItem {
-        task_list_id: plan.id.to_string(),
-        item_id: item.id.clone(),
-        title: Some(item.title.clone()),
-    })
-}
-
 async fn build_session(
     deps: &NativeRuntimeDeps<'_>,
     input: BuildSessionInput<'_>,
@@ -676,6 +629,7 @@ async fn build_session(
     let messages = assembled.messages;
     let budget_components = assembled.budget_components;
     let active_activity_plan = assembled.active_activity_plan;
+    let objective_orientation = assembled.objective_orientation;
     if profile.profile == BearProfile::Work && active_activity_plan.is_none() {
         return Err(DenError::ValidationError(
             "Work stance requires an active task list before execution can continue".to_string(),
@@ -746,9 +700,6 @@ async fn build_session(
         profile: agent_loop_control.profile.with_budget(profile.turn_budget),
         ..agent_loop_control
     };
-    let objective_orientation = resolve_objective_orientation(
-        objective_orientation_input(active_activity_plan.as_ref()),
-    );
     tracing::info!(
         bear_id = %bear_id,
         profile = %profile.profile.as_str(),
@@ -1628,7 +1579,7 @@ pub async fn continue_native_client_turn_event_stream(
 mod tests {
     use super::*;
     use crate::agent_loop::{
-        resolve_agent_loop_control, AgentLoopControlResolutionInput,
+        resolve_agent_loop_control, AgentLoopControlResolutionInput, FreeformPolicy,
         PostMutationVerificationWindow, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
     };
 
