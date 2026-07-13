@@ -344,7 +344,7 @@ struct MessageAdminRow {
     preview: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct ReflectionAdminRow {
     created_at: String,
     event_type: String,
@@ -373,6 +373,14 @@ struct LiveReflectionStatusAdmin {
     checked_24h: i64,
     processed_24h: i64,
     skipped_24h: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct ConversationTimelineRow {
+    created_at: String,
+    kind: String,
+    label: String,
+    details: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -816,6 +824,36 @@ async fn reflection_rows_for_bear(
             },
         )
         .collect())
+}
+
+fn conversation_timeline_rows(
+    compaction_events: &[CompactionEventAdminRow],
+    reflections: &[ReflectionAdminRow],
+) -> Vec<ConversationTimelineRow> {
+    let mut rows = Vec::new();
+    rows.extend(compaction_events.iter().map(|event| {
+        ConversationTimelineRow {
+            created_at: event.created_at.clone(),
+            kind: "Compaction".to_string(),
+            label: event.status.clone(),
+            details: event
+                .diagnostic
+                .clone()
+                .unwrap_or_else(|| format!("{} · {}", event.trigger, event.policy_version)),
+        }
+    }));
+    rows.extend(
+        reflections
+            .iter()
+            .map(|reflection| ConversationTimelineRow {
+                created_at: reflection.created_at.clone(),
+                kind: "Reflection".to_string(),
+                label: reflection.status_label.clone(),
+                details: reflection.status_explanation.clone(),
+            }),
+    );
+    rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    rows
 }
 
 async fn conversation_compaction_events(
@@ -2605,6 +2643,7 @@ async fn conversation_detail_view(
     .await?;
     let reflections =
         reflection_rows_for_bear(state.sqlx_pool(), bear.id, Some(conversation_id), 20).await?;
+    let processing_timeline = conversation_timeline_rows(&compaction_events, &reflections);
     let message_rows: Vec<MessageAdminRow> = messages
         .into_iter()
         .rev()
@@ -2630,6 +2669,7 @@ async fn conversation_detail_view(
             compaction_artifacts,
             checkpoint_artifacts,
             reflections,
+            processing_timeline,
             can_manage_bear,
             native_runtime => true,
             live_reflection_enabled => bear.live_reflection_enabled,

@@ -26,6 +26,25 @@
   <dd>{{ conv.updated_at }}</dd>
 </dl>
 
+<h3>Processing timeline</h3>
+{% if processing_timeline and processing_timeline | length > 0 %}
+<table>
+  <thead><tr><th>When</th><th>Kind</th><th>Result</th><th>Details</th></tr></thead>
+  <tbody>
+  {% for item in processing_timeline %}
+    <tr>
+      <td>{{ item.created_at }}</td>
+      <td>{{ item.kind | e }}</td>
+      <td>{{ item.label | e }}</td>
+      <td>{{ item.details | e }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No compaction or reflection processing recorded yet.</em></p>
+{% endif %}
+
 <h3>Latest Context Budget</h3>
 {% if conv.latest_context_budget %}
 <dl>
