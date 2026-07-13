@@ -648,9 +648,12 @@ async fn build_session(
                 "Work stance is not enabled for this Bear".to_string(),
             ));
         }
-        if active_activity_plan.is_none() {
+        if !matches!(
+            objective_orientation,
+            crate::agent_loop::ObjectiveOrientation::Focused { .. }
+        ) {
             return Err(DenError::ValidationError(
-                "Work stance requires an active task list before execution can continue"
+                "Work stance requires a focused Docket Job before execution can continue"
                     .to_string(),
             ));
         }
@@ -718,7 +721,7 @@ async fn build_session(
         stance_override: stance_loop_control_override,
         task_escalation: None,
         stance: Some(profile.profile),
-        focused_job: false,
+        objective_orientation: Some(&objective_orientation),
         pre_risk: false,
     });
     let agent_loop_control = crate::agent_loop::ResolvedAgentLoopControl {
@@ -1656,7 +1659,7 @@ mod tests {
             stance_override: None,
             task_escalation: None,
             stance: Some(BearProfile::Pair),
-            focused_job: false,
+            objective_orientation: None,
             pre_risk: false,
         })
     }

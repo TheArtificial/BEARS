@@ -447,14 +447,15 @@ pub struct AgentLoopControlResolutionInput<'a> {
     pub stance_override: Option<AgentLoopControlLevel>,
     pub task_escalation: Option<AgentLoopControlLevel>,
     pub stance: Option<BearStance>,
-    pub focused_job: bool,
+    pub objective_orientation: Option<&'a ObjectiveOrientation>,
     pub pre_risk: bool,
 }
 
 pub fn resolve_agent_loop_control(
     input: AgentLoopControlResolutionInput<'_>,
 ) -> ResolvedAgentLoopControl {
-    let context_default = context_agent_loop_control_default(input.stance, input.focused_job);
+    let context_default =
+        context_agent_loop_control_default(input.stance, input.objective_orientation);
     let (mut level, mut source) = if let Some(level) = input.model_default {
         (
             context_default.map_or(level, |default| level.max(default)),
@@ -509,8 +510,12 @@ pub fn resolve_agent_loop_control(
 
 fn context_agent_loop_control_default(
     stance: Option<BearStance>,
-    focused_job: bool,
+    objective_orientation: Option<&ObjectiveOrientation>,
 ) -> Option<AgentLoopControlLevel> {
+    let focused_job = matches!(
+        objective_orientation,
+        Some(ObjectiveOrientation::Focused { .. })
+    );
     match (stance, focused_job) {
         (Some(BearStance::Pair | BearStance::Work), true) => Some(AgentLoopControlLevel::Careful),
         (Some(BearStance::Chat | BearStance::Pair), false) => Some(AgentLoopControlLevel::Standard),
@@ -983,7 +988,7 @@ mod tests {
             stance_override: None,
             task_escalation: None,
             stance: None,
-            focused_job: false,
+            objective_orientation: None,
             pre_risk: false,
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Light);
@@ -996,7 +1001,7 @@ mod tests {
             stance_override: Some(AgentLoopControlLevel::Careful),
             task_escalation: Some(AgentLoopControlLevel::Strict),
             stance: None,
-            focused_job: false,
+            objective_orientation: None,
             pre_risk: false,
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Strict);
@@ -1266,6 +1271,16 @@ mod tests {
         );
     }
 
+    fn focused_orientation() -> ObjectiveOrientation {
+        ObjectiveOrientation::Focused {
+            job: JobOrientation {
+                job_id: "job-1".to_string(),
+                active_task_ref: None,
+                mutable: true,
+            },
+        }
+    }
+
     #[test]
     fn context_defaults_are_aggressive_for_pre_release() {
         let pair_freeform = resolve_agent_loop_control(AgentLoopControlResolutionInput {
@@ -1275,7 +1290,7 @@ mod tests {
             stance_override: None,
             task_escalation: None,
             stance: Some(BearStance::Pair),
-            focused_job: false,
+            objective_orientation: None,
             pre_risk: false,
         });
         assert_eq!(pair_freeform.level, AgentLoopControlLevel::Standard);
@@ -1288,7 +1303,7 @@ mod tests {
             stance_override: None,
             task_escalation: None,
             stance: Some(BearStance::Pair),
-            focused_job: true,
+            objective_orientation: Some(&focused_orientation()),
             pre_risk: false,
         });
         assert_eq!(focused_pair.level, AgentLoopControlLevel::Careful);
@@ -1300,7 +1315,7 @@ mod tests {
             stance_override: None,
             task_escalation: None,
             stance: Some(BearStance::Work),
-            focused_job: true,
+            objective_orientation: Some(&focused_orientation()),
             pre_risk: false,
         });
         assert_eq!(focused_work.level, AgentLoopControlLevel::Careful);
@@ -1312,7 +1327,7 @@ mod tests {
             stance_override: None,
             task_escalation: None,
             stance: Some(BearStance::Pair),
-            focused_job: true,
+            objective_orientation: Some(&focused_orientation()),
             pre_risk: true,
         });
         assert_eq!(pre_risk.level, AgentLoopControlLevel::Strict);
@@ -1328,7 +1343,7 @@ mod tests {
             stance_override: None,
             task_escalation: Some(AgentLoopControlLevel::Light),
             stance: None,
-            focused_job: false,
+            objective_orientation: None,
             pre_risk: false,
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Careful);

@@ -1451,7 +1451,7 @@ mod tests {
                 stance_override: None,
                 task_escalation: None,
                 stance: Some(BearProfile::Pair),
-                focused_job: false,
+                objective_orientation: None,
                 pre_risk: false,
             }),
             objective_orientation: crate::agent_loop::ObjectiveOrientation::Freeform {
