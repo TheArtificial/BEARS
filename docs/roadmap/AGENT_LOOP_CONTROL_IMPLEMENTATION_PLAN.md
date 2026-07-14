@@ -2,9 +2,37 @@
 
 ## Status
 
-Planned. Implements [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md), and depends on the task-list/Docket boundaries in [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md) and [ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md).
+In progress. Implements [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md), and depends on the task-list/Docket boundaries in [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md) and [ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md).
 
 > **Companion plan (2026-07-06, revised 2026-07-13):** [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md) delivers the ADR-0050 amendment — surface-declared grounding probes (§7c), context/token budget as a loop dimension (§11), and a persisted replayable ledger/offline tuning harness. Because Den is still pre-release, development is staged but completed loop-control slices are active by default once tested; feature flags and long observation-only rollout periods are not the normal delivery mechanism. Land the companion plan's ledger foundation early; it is the measurement loop the rest of this plan is tuned against.
+
+### Current implementation status — 2026-07-14
+
+Recent slices have moved the plan through the governance/focus/orientation foundation, but not yet into policy-driven budget enforcement:
+
+- **Phase 2 / 2a partially complete:** runtime sessions carry governance, session info exposes governance/orientation/focus snapshots, final-gate continuations now mark governance as `autonomous_continuation`, and `work` stance is rejected before model invocation unless objective orientation is `focused`.
+- **Phase 2a focus persistence is intentionally minimal:** the current durable focus source is the conversation-linked Docket execution session (`docket_execution_sessions`) restored by live session id, ACP/client session id, then conversation id. Do not add a separate conversation-focus table unless we need history labels, explicit clear reasons, multi-job focus stacks, or richer title provenance.
+- **Phase 2b minimal UX is live:** armature has `/focus <job_id>` for exact UUID focus through the existing `execute_job` path. Search/matching, elicitation, title updates, and clear-on-mode-change remain undone.
+- **Phase 2c partially complete:** runtime has objective-orientation-derived prompt/session diagnostics and derives task snapshots from orientation. Focused work takes precedence where wired. Freeform task-definition policy, oriented child caps, immutable-focused decomposition handling, and budget-profile differences are still incomplete.
+- **Diagnostics/history improved:** armature `/status` shows runtime focus/orientation/governance, Docket task create/update events include task definitions, focus selection is logged as a lightweight Docket job event, and BearWire conversation history surfaces focus/task-definition diagnostics. Orientation history is still snapshot-only; persist orientation transitions as logged events next if diagnostic replay needs more than live state.
+- **Checkpoint protocol exists enough to exercise:** runtime can request structured `checkpoint` tool calls with typed next-action fields. Artifact retention, enforcement, and budget/ko integration are still future phases.
+
+### Implementation review and adjustments
+
+- Prefer **events over new state tables** for diagnostics. Focus and task-definition history fit well as existing Docket events; orientation transitions should use an existing conversation/BearWire event stream or similarly lightweight log rather than a new heavy table.
+- Keep **durable focus** and **diagnostic history** separate. The current Docket execution-session record can remain the focus source of truth; event logs explain how focus/orientation changed over time.
+- Treat `/focus` matching as a UX layer, not a runtime primitive. Exact-id focus is enough for now; fuzzy search and elicitation should be added only after the projection/clear/title semantics are stable.
+- Do not build a generic `FocusTarget`. The implementation experience still supports the existing constraint: durable focus is a Docket Job; task focus is derived and ephemeral.
+- Move orientation-transition logging ahead of broad budget work. It is the smallest next slice that closes the known diagnostics gap and will make later budget/checkpoint tuning auditable.
+- Reconcile this plan with the grounding/tuning companion before Phase 3/4 enforcement. Budget changes without the replayable ledger will be harder to tune and explain.
+
+Recommended next slices:
+
+1. **Persist orientation transitions as events.** Log objective-orientation changes/snapshots through the smallest existing event path, include conversation/session/run/job/task refs where available, and project those persisted events into `conversation.surface_history`.
+2. **Finish Focus projection semantics.** Add clear-on-mode-change, focused title updates, and Den-authoritative Focus projection before fuzzy `/focus` search. Exact-id focus already covers the simplest path.
+3. **Close freeform policy enforcement.** Ensure closed freeform prompt construction does not expose task-definition affordances and defensively rejects task-definition/delegation attempts when `may_define_task = false`.
+4. **Add oriented/focused decomposition limits.** Enforce oriented child count/depth caps and immutable-focused decomposition rejection before tuning budget leniency around those states.
+5. **Land replay/ledger support before broad budget changes.** Use the companion grounding/tuning ledger to make Phase 3/4 threshold changes measurable instead of anecdotal.
 
 ## Goal
 
