@@ -647,15 +647,43 @@ fn docket_job_card_content(
     lines.join("\n")
 }
 
+fn human_task_status_label(status: &str) -> &'static str {
+    match status {
+        "pending" => "pending",
+        "in_progress" => "in progress",
+        "done" => "done",
+        "blocked" => "blocked",
+        "cancelled" => "cancelled",
+        _ => "updated",
+    }
+}
+
 fn task_status_card_content(
     task: &docket::DocketTaskProjection,
     status: &str,
     status_report: Option<&DocketJobStatusReport>,
 ) -> String {
+    let status_label = human_task_status_label(status);
     let mut lines = vec![
-        format!("Task: {}", task.task.title),
-        format!("Status: {status}"),
+        format!("Task marked {status_label}: {}", task.task.title),
+        format!("Status: {status_label}"),
     ];
+    if let Some(result_summary) = task
+        .run_state
+        .as_ref()
+        .and_then(|state| state.result_summary.as_deref())
+        .filter(|summary| !summary.trim().is_empty())
+    {
+        lines.push(format!("Result: {result_summary}"));
+    }
+    if task
+        .run_state
+        .as_ref()
+        .and_then(|state| state.result_refs.as_ref())
+        .is_some()
+    {
+        lines.push("Result references recorded.".to_string());
+    }
     if let Some(report) = status_report {
         let counts = &report.task_counts;
         lines.push(format!("Job next action: {}", report.next_action));
@@ -1358,14 +1386,18 @@ pub(crate) async fn update_current_task_status(
         .as_ref()
         .map(|job| den_docket::task_list_projection_from_docket_job(job, None));
     let status = task_projection_status(&task).to_string();
+    let status_label = human_task_status_label(&status);
     let content = task_status_card_content(&task, &status, status_report.as_ref());
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "content": content,
-        "summary": format!("Task '{}' is now {status}.", task.task.title),
+        "summary": format!("Task '{}' is now {status_label}.", task.task.title),
         "task_title": task.task.title,
         "task_status": status,
+        "task_status_label": status_label,
+        "result_summary": task.run_state.as_ref().and_then(|state| state.result_summary.as_deref()),
+        "has_result_refs": task.run_state.as_ref().and_then(|state| state.result_refs.as_ref()).is_some(),
         "task_counts": status_report.as_ref().map(|report| &report.task_counts),
         "next_action": status_report.as_ref().map(|report| report.next_action.as_str()),
         "item_counts": task_list.as_ref().map(task_list_item_counts),

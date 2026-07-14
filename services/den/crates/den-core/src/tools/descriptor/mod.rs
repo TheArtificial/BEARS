@@ -1430,6 +1430,15 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &[],
             approval_summary: "Read Docket task definitions and current run state.",
         },
+        DEN_TASK_UPDATE_CURRENT_STATUS => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Marking task status",
+            complete_verb: "Marked task status",
+            target_arg_keys: &["status", "task_id", "result_summary"],
+            sensitive_arg_keys: &["result_refs", "result_summary"],
+            approval_summary: "Record this task's run-scoped status and result.",
+        },
         DEN_TASK_UPDATE => ToolDisplayDescriptor {
             label,
             category: "docket",
