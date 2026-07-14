@@ -150,9 +150,9 @@ pub struct TurnBudgetState {
     pub consecutive_tool_failures: u32,
     pub last_batch_signature: Option<String>,
     pub same_batch_signature_repeats: u32,
-    /// A one-shot escape hatch after a just-completed tool result pushes the turn over a
-    /// tool-count budget. The model gets one finalization continuation to consume the result and
-    /// answer without tools; another over-budget tool continuation hard-stops the turn.
+    /// A one-shot escape hatch after a just-completed tool result pushes the turn over a budget.
+    /// The model gets one finalization continuation to consume the result and answer without
+    /// tools; another over-budget tool continuation hard-stops the turn.
     pub budget_finalization_grace_used: bool,
 }
 
@@ -452,22 +452,23 @@ pub fn evaluate_turn_budget(
         None
     };
 
-    let over_tool_budget = matches!(
+    let finalization_grace_stop = matches!(
         stop_candidate,
         Some(
-            TurnBudgetStopReason::TotalToolCallLimit { .. }
+            TurnBudgetStopReason::WallClockLimit { .. }
+                | TurnBudgetStopReason::TotalToolCallLimit { .. }
                 | TurnBudgetStopReason::ToolClassCallLimit { .. }
         )
     );
-    let stop_reason = if over_tool_budget && !prior_state.budget_finalization_grace_used {
+    let stop_reason = if finalization_grace_stop && !prior_state.budget_finalization_grace_used {
         next_state.budget_finalization_grace_used = true;
         None
     } else {
-        stop_candidate
+        stop_candidate.clone()
     };
 
     let warning = if stop_reason.is_none() {
-        budget_warning(policy, step, elapsed_ms, &next_state, over_tool_budget)
+        budget_warning(policy, step, elapsed_ms, &next_state, stop_candidate.as_ref())
     } else {
         None
     };
@@ -484,12 +485,25 @@ fn budget_warning(
     step: u32,
     elapsed_ms: u64,
     state: &TurnBudgetState,
-    over_tool_budget_finalization: bool,
+    finalization_stop: Option<&TurnBudgetStopReason>,
 ) -> Option<TurnBudgetWarning> {
-    if over_tool_budget_finalization {
-        return Some(TurnBudgetWarning {
-            code: "tool_budget_finalization_warning",
-            message: "Budget advisory: this turn has exceeded a tool budget after recording the latest tool result. Do not call more tools in this turn; provide the best final answer now.".to_string(),
+    if let Some(reason) = finalization_stop {
+        return Some(match reason {
+            TurnBudgetStopReason::WallClockLimit {
+                elapsed_ms,
+                limit_ms,
+            } => TurnBudgetWarning {
+                code: "wall_clock_finalization_warning",
+                message: format!(
+                    "Budget advisory: this turn reached its wall-clock limit after recording the latest tool result (elapsed={elapsed_ms}ms/limit={limit_ms}ms). Do not call more tools in this turn; provide the best final answer now."
+                ),
+            },
+            TurnBudgetStopReason::TotalToolCallLimit { .. }
+            | TurnBudgetStopReason::ToolClassCallLimit { .. } => TurnBudgetWarning {
+                code: "tool_budget_finalization_warning",
+                message: "Budget advisory: this turn has exceeded a tool budget after recording the latest tool result. Do not call more tools in this turn; provide the best final answer now.".to_string(),
+            },
+            _ => return None,
         });
     }
 
@@ -791,12 +805,33 @@ mod tests {
     }
 
     #[test]
-    fn wall_clock_budget_stops_even_when_tool_counts_are_low() {
+    fn wall_clock_budget_gets_one_finalization_warning() {
         let evaluation = evaluate_turn_budget(
             policy(),
             2,
             60_000,
             &state(),
+            &[observation("memory_read", r#"{"path":"a"}"#, false)],
+        );
+
+        assert!(evaluation.stop_reason.is_none());
+        assert!(evaluation.next_state.budget_finalization_grace_used);
+        assert_eq!(
+            evaluation.warning.as_ref().map(|warning| warning.code),
+            Some("wall_clock_finalization_warning")
+        );
+    }
+
+    #[test]
+    fn wall_clock_budget_stops_after_finalization_grace_is_used() {
+        let mut prior = state();
+        prior.budget_finalization_grace_used = true;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            60_000,
+            &prior,
             &[observation("memory_read", r#"{"path":"a"}"#, false)],
         );
 
