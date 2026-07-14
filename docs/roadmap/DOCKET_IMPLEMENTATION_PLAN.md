@@ -1,10 +1,10 @@
 # Docket Implementation Plan
 
-> **Note (2026-06).** Docket (ADR-0034) is part of the current direction and stays canonical for tasks/jobs in Den Postgres. Where this doc says Bear memory/runtime is "still Letta-backed", that is superseded: memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) and the runtime is the in-process Den loop. See [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)). Session task-list checkout/sync semantics are specified in [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md).
+> **Note (2026-07).** Docket (ADR-0034) is part of the current direction and stays canonical for tasks/jobs in Den Postgres. Where this doc says Bear memory/runtime is "still Letta-backed", that is superseded: memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)) and the runtime is the in-process Den loop. See [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)). Conversation-linked Docket objectives are the current target for task-list orientation; older session-checkout language from [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md) should be read through that ownership model.
 
 Docket is the Den control-plane subsystem for work management: the system of record for all tasks and the orchestrator for jobs. Its canonical model is specified in [ADR-0034: Jobs and Tasks Work-Management Model](../decisions/adr-0034-jobs-and-tasks-work-management.md). This document plans how that model is realized in the Den Rust source tree and how the bear/Den/Docket separation is enforced in code.
 
-For the storage boundary rationale (memory is bear-canonical SQLite; tasks/jobs are Docket-canonical Postgres), see ADR-0034 and the scope amendment in [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md). For the relationship between session-visible task lists and Docket task hierarchies, see [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md).
+For the storage boundary rationale (memory is bear-canonical SQLite; structured work state is Docket-canonical Postgres), see ADR-0034 and the scope amendment in [ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md). ADR-0045 remains useful background on checkout/sync projection, but the active direction is to make conversation-linked Docket objectives the normal owner for mutable task lists rather than creating session-owned task containers.
 
 ## Subsystem shape
 
@@ -102,44 +102,51 @@ Phases 0–4 are complete/retired in the current runtime. They remain below as t
 
 **Exit gate:** New turns do not create, read, or update raw legacy work-plan rows; compatibility code is removed from active runtime paths.
 
-### Phase 5 — Runtime dispatch and operator UX — remaining
+### Phase 5 — Conversation objectives, runtime dispatch, and operator UX — remaining
 
-**Goal:** Use Docket jobs/tasks for durable execution while keeping session task lists as the working view.
+**Goal:** Use Docket for structured work state while keeping the conversation task list as the Bear/human working view.
 
 | Task | Done when |
 | --- | --- |
-| Implement `TaskDispatcher` integration | Docket can dispatch ready tasks to `work` runtime through the runtime-owned dispatch trait. |
-| Checkout Docket tasks into sessions | `pair`/`work` can check out a Docket job/task subtree into a session task list. |
-| Sync task-list changes to Docket | Authorized completion, edits, new subtasks, blockers, and evidence update Docket task/run state. |
-| Operator UI reflects both views | Operators can see Docket job/task state and current session task-list projections without confusing their ownership. |
+| Implement conversation-linked objectives | A conversation that enters task orientation has one mutable Docket-backed objective representing the structured work state for that conversation. |
+| Project active task context | Runtime orientation projects the active top-level task/subtree from the conversation objective instead of owning separate session task state. |
+| Implement `TaskDispatcher` integration | Docket can dispatch ready durable tasks to `work` runtime through the runtime-owned dispatch trait. |
+| Sync task-list changes through Docket | Authorized completion, edits, new subtasks, blockers, and evidence update the conversation objective's Docket task tree. |
+| Operator UI reflects projection vs ownership | Operators can see the conversation task list, top-level task/subtree focus, durable Docket jobs, and run state without confusing projection with ownership. |
 
-**Exit gate:** A Bear can check out a Docket parent task’s children, work them in-session, and sync authorized changes back to Docket.
+**Exit gate:** A Bear can evolve a conversation-linked Docket objective across turns, work the active task/subtree in-session, and have runtime/UI projections recover from Docket rather than session-owned task state.
 
-### Session task-list checkout and sync
+### Conversation-linked task-list objectives
 
-A session **task list** is the Bear/human working view used by `pair` or `work` stance during a session/run. It is not merely scratch state and not automatically a Docket task table row. It can contain:
+A conversation **task list** is the Bear/human working view for structured work in a conversation. It is Docket-backed once task orientation is invoked; the session/runtime projects it, but does not own it. The target invariant is:
 
-- **local-only task-list items** for session focus, investigation, or emerging work not yet promoted to Docket;
-- **Docket-backed task-list items** checked out from a Docket job/task subtree, commonly the children of a parent Docket task.
+- at most one mutable conversation-linked objective per conversation;
+- top-level tasks under that objective represent the apparent "projects" or "jobs" that occur during the conversation;
+- nested subtasks represent the current working decomposition;
+- the active task/subtree is projection state over the Docket objective, not a separate source of truth;
+- sessions, reconnects, and adapter bindings do not create separate objectives.
 
 The intended flow is effectiveness-first:
 
-1. `pair` or `work` checks out a Docket job/task subtree into a session task list.
-2. The Bear works the task list in the session, updating statuses, editing task text, splitting items, adding subtasks, recording blockers, and attaching evidence.
-3. Docket-backed items preserve `source_ref` / sync metadata so authorized changes can sync back to Docket.
-4. Local-only items remain local until explicitly synced, handed off, promoted, or discarded.
+1. Normal chat has no Docket objective.
+2. When a conversation enters task orientation, Docket creates or reuses that conversation's mutable objective.
+3. The Bear works the task list by updating statuses, editing task text, splitting items, adding subtasks, recording blockers, and attaching evidence.
+4. Runtime and UI surfaces project the active top-level task/subtree as the current focus.
 5. Conflicts surface in the task list rather than being silently overwritten.
 
-Docket remains canonical for durable jobs, task identity, task hierarchy, run state, criteria, and audit. Session task lists are the working projection and sync surface. This boundary exists to preserve source-of-truth, concurrency, audit, and dispatch semantics — not to prevent Bears from effectively working Docket tasks through a task list.
+Docket remains canonical for structured work state, task identity, task hierarchy, run state, criteria, evidence, and audit. Conversation task lists are the working projection and mutation surface. This boundary exists to preserve source-of-truth, recovery, audit, and dispatch semantics — not to prevent Bears from effectively working through a lightweight task list.
 
-Session task lists are session- and stance-local by default. Passive prompt context should include only the current session/conversation's task list for the current stance. Cross-stance visibility belongs to explicit read tools (`list_task_lists`, Docket job/task tools) or to Docket-backed/promoted work, not automatic prompt injection.
+Conversation-linked objectives are conversation-local by default. Passive prompt context should include only the current conversation's active task/subtree for the current stance. Cross-conversation visibility belongs to explicit read tools (`list_task_lists`, Docket job/task tools) or to durable/promoted jobs, not automatic prompt injection.
+
+Promotion to durable Jobs is future work. The likely shape is promoting a top-level task/subtree out of the conversation objective into a durable Docket Job while leaving a source link or transferred stub behind. Do not build that general promotion graph until a current workflow needs it.
 
 Target Docket service capabilities should therefore include:
 
-- checkout: create/refresh a session task list from a Docket job, parent task's children, roadmap section, or local checklist;
-- sync: apply authorized task-list changes back to linked Docket tasks/jobs;
-- handoff/review: request review or promotion of local-only task-list items or unsynced changes;
-- conflict detection: identify stale task-list projections when Docket changed since checkout.
+- get-or-create: create/reuse the conversation-linked objective when task orientation starts;
+- project: return the active task/subtree and one-level-at-a-time views for runtime/UI;
+- mutate: apply authorized task-list changes to the conversation objective's task tree;
+- handoff/review: request review or future promotion of a top-level task/subtree;
+- conflict detection: identify stale projections when Docket changed since the caller's view was produced.
 
 ### Storage namespacing
 
@@ -151,7 +158,7 @@ The one runtime touch-point between Docket and the bear is task dispatch. The de
 
 - The bear runtime side owns a `dispatch` trait (e.g. `TaskDispatcher`).
 - Docket emits "task T is ready to dispatch" and invokes the dispatcher; it never imports or holds an executor and never runs a task `body` itself.
-- Pair/work session task lists may project and update Docket-backed tasks, but execution still flows through the Bear runtime via this dispatcher seam.
+- Pair/work task-list projections may update conversation-objective-backed or durable-job-backed Docket tasks, but execution still flows through the Bear runtime via this dispatcher seam.
 - This direction-of-dependency mechanically prevents Docket from executing task content, enforcing the ADR-0034 execution invariant at compile time within the module structure.
 
 ### Symmetric treatment for bear memory
