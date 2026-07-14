@@ -396,6 +396,14 @@ impl ObjectiveOrientation {
     }
 }
 
+pub fn objective_orientation_allowed_for_stance(
+    stance: BearStance,
+    objective_orientation: &ObjectiveOrientation,
+) -> bool {
+    !matches!(stance, BearStance::Work)
+        || matches!(objective_orientation, ObjectiveOrientation::Focused { .. })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectiveOrientationResolutionInput {
     pub focused_job_id: Option<String>,
@@ -1279,6 +1287,26 @@ mod tests {
                 mutable: true,
             },
         }
+    }
+
+    #[test]
+    fn objective_orientation_gate_requires_focused_work() {
+        let freeform = ObjectiveOrientation::Freeform {
+            policy: FreeformPolicy::task_definition_permitted(),
+        };
+
+        assert!(!objective_orientation_allowed_for_stance(
+            BearStance::Work,
+            &freeform
+        ));
+        assert!(objective_orientation_allowed_for_stance(
+            BearStance::Work,
+            &focused_orientation()
+        ));
+        assert!(objective_orientation_allowed_for_stance(
+            BearStance::Pair,
+            &freeform
+        ));
     }
 
     #[test]

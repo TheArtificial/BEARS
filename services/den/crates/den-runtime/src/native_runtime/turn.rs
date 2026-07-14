@@ -34,7 +34,8 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 use crate::{
     agent_loop::{
         agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
-        evaluate_checkpoint_trigger, evaluate_turn_budget, projected_memory_session_diagnostic,
+        evaluate_checkpoint_trigger, evaluate_turn_budget,
+        objective_orientation_allowed_for_stance, projected_memory_session_diagnostic,
         provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
         record_approval_decision, record_checkpoint_request, resolve_agent_loop_control,
         run_agent_step_stream, tool_result_content_indicates_error, tool_signature_from_call,
@@ -658,10 +659,7 @@ async fn build_session(
                 "Work stance is not enabled for this Bear".to_string(),
             ));
         }
-        if !matches!(
-            objective_orientation,
-            crate::agent_loop::ObjectiveOrientation::Focused { .. }
-        ) {
+        if !objective_orientation_allowed_for_stance(profile.profile, &objective_orientation) {
             return Err(DenError::ValidationError(
                 "Work stance requires a focused Docket Job before execution can continue"
                     .to_string(),

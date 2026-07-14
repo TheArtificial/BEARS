@@ -57,17 +57,17 @@ pub use context::{
     prune_messages_for_native_chat, repair_tool_call_message_chain,
 };
 pub use control::{
-    evaluate_checkpoint_trigger, pre_risk_checkpoint_trigger, resolve_agent_loop_control,
-    resolve_objective_orientation, validate_checkpoint_response,
-    AgentLoopControlProfile, AgentLoopControlResolutionInput, AgentLoopControlSource,
-    CheckpointConfidence, CheckpointEvaluation, CheckpointEvidenceRef, CheckpointField,
-    CheckpointNextAction, CheckpointPolicy, CheckpointReason, CheckpointResponseValidationError,
-    CheckpointState, CheckpointTaskContext, CheckpointThinkingPolicy, CheckpointTrigger,
-    FreeformPolicy, JobOrientation, KoPolicy, ObjectiveOrientation,
-    ObjectiveOrientationResolutionInput, OrientedChildTaskPolicy, OrientationTaskRef,
-    ResolvedAgentLoopControl, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
-    TaskOrientation, TaskStateChangeIntent, DEFAULT_ORIENTED_MAX_CHILDREN,
-    DEFAULT_ORIENTED_MAX_DEPTH,
+    evaluate_checkpoint_trigger, objective_orientation_allowed_for_stance,
+    pre_risk_checkpoint_trigger, resolve_agent_loop_control, resolve_objective_orientation,
+    validate_checkpoint_response, AgentLoopControlProfile, AgentLoopControlResolutionInput,
+    AgentLoopControlSource, CheckpointConfidence, CheckpointEvaluation, CheckpointEvidenceRef,
+    CheckpointField, CheckpointNextAction, CheckpointPolicy, CheckpointReason,
+    CheckpointResponseValidationError, CheckpointState, CheckpointTaskContext,
+    CheckpointThinkingPolicy, CheckpointTrigger, FreeformPolicy, JobOrientation, KoPolicy,
+    ObjectiveOrientation, ObjectiveOrientationResolutionInput, OrientationTaskRef,
+    OrientedChildTaskPolicy, ResolvedAgentLoopControl, RuntimeCheckpointRequest,
+    RuntimeCheckpointResponse, TaskOrientation, TaskStateChangeIntent,
+    DEFAULT_ORIENTED_MAX_CHILDREN, DEFAULT_ORIENTED_MAX_DEPTH,
 };
 pub use key_memory_projection::{
     project_key_memory, KeyMemoryProjectionCacheKey, KeyMemoryProjectionResult,
