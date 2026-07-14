@@ -6,9 +6,10 @@ use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
     DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
-    DocketJobStatus, DocketService, DocketTaskDefinitionPatch, DocketTaskDifficulty,
-    DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
-    DocketTaskUpdate, PgDocketService, TaskDispatcher, TaskListSyncRequest, TaskListVisibility,
+    DocketJobStatus, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate,
+    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, TaskDispatcher,
+    TaskListSyncRequest, TaskListVisibility,
 };
 
 async fn test_pool() -> Option<PgPool> {
@@ -109,6 +110,63 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
             },
         ],
     }
+}
+
+#[tokio::test]
+async fn creates_session_anchored_task_without_job() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket integration test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "session-task").await;
+    let service = PgDocketService::from_pool(&pool);
+    let (session_anchor_id,): (Uuid,) = sqlx::query_as(
+        r#"
+        INSERT INTO client_sessions (
+            user_id, bear_id, bear_slug, client_session_id, runtime_session_id, conversation_id, client
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id
+        "#,
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind("docket-session-task")
+    .bind("session-task-client")
+    .bind("session-task-runtime")
+    .bind("session-task-conversation")
+    .bind("test")
+    .fetch_one(&pool)
+    .await
+    .expect("seed client session");
+
+    let task = service
+        .create_task(DocketTaskCreate {
+            bear_id,
+            job_id: None,
+            session_anchor_id: Some(session_anchor_id),
+            parent_task_id: None,
+            sibling_order: 0,
+            kind: DocketTaskKind::Investigation,
+            scope: DocketTaskScope::Run,
+            title: "Session anchored task".to_string(),
+            body: "Confirm jobless task creation works".to_string(),
+            completion_criteria: vec!["Task row is inserted".to_string()],
+            difficulty: Some(DocketTaskDifficulty::Trivial),
+            effort_hint: Some(DocketEffortHint::Low),
+            assigned_to_role: Some(BearProfile::Pair),
+            created_by_role: "pair".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: None,
+        })
+        .await
+        .expect("create session-anchored task");
+
+    assert_eq!(task.job_id, None);
+    assert_eq!(task.session_anchor_id, Some(session_anchor_id));
+    assert_eq!(task.body, "Confirm jobless task creation works");
+    assert_eq!(task.completion_criteria.0, vec!["Task row is inserted"]);
 }
 
 #[tokio::test]
