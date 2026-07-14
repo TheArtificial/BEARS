@@ -107,11 +107,7 @@ async fn load_active_activity_plan(
         .get_active_execution_session(
             ctx.bear_id,
             ctx.profile,
-            DocketExecutionLookup {
-                session_id: ctx.session_id.map(str::to_string),
-                source_conversation_id: Some(ctx.conversation_id.to_string()),
-                source_client_session_id: ctx.session_id.map(str::to_string),
-            },
+            active_execution_lookup(ctx.session_id, ctx.conversation_id),
         )
         .await?
     else {
@@ -130,6 +126,19 @@ async fn load_active_activity_plan(
             },
         )
         .await
+}
+
+fn active_execution_lookup(
+    session_id: Option<&str>,
+    conversation_id: &str,
+) -> DocketExecutionLookup {
+    DocketExecutionLookup {
+        session_id: session_id.map(str::to_string),
+        // ponytail: conversation-scoped focus is the durable restore path for now; upgrade to an
+        // explicit conversation focus record if focus needs history, labels, or multi-job stacks.
+        source_conversation_id: Some(conversation_id.to_string()),
+        source_client_session_id: session_id.map(str::to_string),
+    }
 }
 
 pub fn projected_memory_session_diagnostic(projection: &KeyMemoryProjectionResult) -> Value {
@@ -531,4 +540,36 @@ pub async fn assemble_native_turn_for_bear(
         active_activity_plan,
         objective_orientation,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_execution_lookup_keeps_conversation_restore_path() {
+        let lookup = active_execution_lookup(Some("session-1"), "conversation-1");
+
+        assert_eq!(lookup.session_id.as_deref(), Some("session-1"));
+        assert_eq!(
+            lookup.source_client_session_id.as_deref(),
+            Some("session-1")
+        );
+        assert_eq!(
+            lookup.source_conversation_id.as_deref(),
+            Some("conversation-1")
+        );
+    }
+
+    #[test]
+    fn active_execution_lookup_restores_without_live_session() {
+        let lookup = active_execution_lookup(None, "conversation-1");
+
+        assert!(lookup.session_id.is_none());
+        assert!(lookup.source_client_session_id.is_none());
+        assert_eq!(
+            lookup.source_conversation_id.as_deref(),
+            Some("conversation-1")
+        );
+    }
 }
