@@ -1468,8 +1468,13 @@ async fn dashboard_view(
         .collect();
 
     let proposals = list_dashboard_proposals(&state, &manager, id, None, 10).await;
-    let pending_proposals =
+    let mut pending_proposals =
         list_dashboard_proposals(&state, &manager, id, Some("pending"), 10).await;
+    pending_proposals.extend(
+        list_dashboard_proposals(&state, &manager, id, Some("needs_human_review"), 10).await,
+    );
+    pending_proposals.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    pending_proposals.truncate(10);
     let pair_reflection_runs = pair_reflection::list_recent_for_bear(state.sqlx_pool(), id, 8)
         .await
         .unwrap_or_default();
