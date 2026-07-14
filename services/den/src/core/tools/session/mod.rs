@@ -49,6 +49,8 @@ async fn invoke_workflow_tool(
     arguments: Value,
     context: &DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
+    reject_closed_freeform_task_definition(tool_name, context)?;
+
     let role = context.profile.unwrap_or(BearProfile::Pair);
     let value = match tool_name {
         DEN_TASK_LISTS_LIST => {
@@ -117,6 +119,40 @@ async fn invoke_workflow_tool(
     Ok(value)
 }
 
+fn reject_closed_freeform_task_definition(
+    tool_name: &str,
+    context: &DenToolInvocationContext,
+) -> Result<(), CustomError> {
+    if closed_freeform_disallows_task_definition(tool_name, context.runtime.as_ref()) {
+        return Err(CustomError::ValidationError(
+            "task definition tools are unavailable in closed freeform orientation; focus or orient to a task before defining durable work"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn closed_freeform_disallows_task_definition(tool_name: &str, runtime: Option<&Value>) -> bool {
+    if !matches!(
+        tool_name,
+        DEN_JOB_CREATE | DEN_TASK_CREATE | DEN_TASK_UPDATE | DEN_TASK_LIST_SYNC
+    ) {
+        return false;
+    }
+
+    let Some(orientation) = runtime.and_then(|runtime| runtime.get("objective_orientation")) else {
+        return false;
+    };
+
+    orientation.get("kind").and_then(Value::as_str) == Some("freeform")
+        && orientation
+            .get("policy")
+            .and_then(|policy| policy.get("may_define_task"))
+            .and_then(Value::as_bool)
+            == Some(false)
+}
+
 pub(crate) struct DenConversationTitleOps<'a> {
     pub(crate) pool: &'a PgPool,
 }
@@ -140,3 +176,32 @@ impl den_core::tools::conversation::ConversationTitleOps for DenConversationTitl
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod freeform_policy_tests {
+    use super::*;
+
+    fn closed_freeform_runtime() -> Value {
+        serde_json::json!({
+            "objective_orientation": {
+                "kind": "freeform",
+                "policy": { "may_define_task": false }
+            }
+        })
+    }
+
+    #[test]
+    fn closed_freeform_rejects_task_definition_but_allows_status_updates() {
+        let runtime = closed_freeform_runtime();
+
+        assert!(closed_freeform_disallows_task_definition(
+            DEN_TASK_CREATE,
+            Some(&runtime)
+        ));
+        assert!(!closed_freeform_disallows_task_definition(
+            DEN_TASK_UPDATE_CURRENT_STATUS,
+            Some(&runtime)
+        ));
+    }
+}
+
