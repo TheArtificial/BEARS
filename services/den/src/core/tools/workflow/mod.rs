@@ -490,6 +490,51 @@ fn docket_job_summary(job: &DocketJobProjection) -> String {
     )
 }
 
+fn docket_job_card_content(
+    job: &DocketJobProjection,
+    status_report: &DocketJobStatusReport,
+) -> String {
+    let tasks = &status_report.task_counts;
+    let criteria = &status_report.criteria_counts;
+    let mut lines = vec![
+        format!("Job: {}", job.job.goal),
+        format!("Status: {}", status_report.job_status),
+        format!(
+            "Tasks: {} pending, {} in progress, {} done, {} blocked, {} cancelled",
+            tasks.pending, tasks.in_progress, tasks.done, tasks.blocked, tasks.cancelled
+        ),
+        format!(
+            "Criteria: {} unmet, {} met, {} waived",
+            criteria.unmet, criteria.met, criteria.waived
+        ),
+        format!("Next action: {}", status_report.next_action),
+    ];
+    if let Some(title) = status_report.current_task_title.as_deref() {
+        lines.push(format!("Current task: {title}"));
+    }
+    lines.join("\n")
+}
+
+fn task_status_card_content(
+    task: &docket::DocketTaskProjection,
+    status: &str,
+    status_report: Option<&DocketJobStatusReport>,
+) -> String {
+    let mut lines = vec![
+        format!("Task: {}", task.task.title),
+        format!("Status: {status}"),
+    ];
+    if let Some(report) = status_report {
+        let counts = &report.task_counts;
+        lines.push(format!("Job next action: {}", report.next_action));
+        lines.push(format!(
+            "Job tasks: {} pending, {} in progress, {} done, {} blocked, {} cancelled",
+            counts.pending, counts.in_progress, counts.done, counts.blocked, counts.cancelled
+        ));
+    }
+    lines.join("\n")
+}
+
 fn docket_job_rows_summary(jobs: &[docket::DocketJobRow]) -> String {
     if jobs.is_empty() {
         "No Docket jobs matched the filters.".to_string()
@@ -809,14 +854,34 @@ pub(crate) async fn get_job(
         .as_ref()
         .map(docket_job_summary)
         .unwrap_or_else(|| format!("No Docket job found for {}.", args.job_id));
+    let content = job
+        .as_ref()
+        .zip(status_report.as_ref())
+        .map(|(job, report)| docket_job_card_content(job, report))
+        .unwrap_or_else(|| summary.clone());
+    let task_counts = status_report.as_ref().map(|report| &report.task_counts);
+    let criteria_counts = status_report.as_ref().map(|report| &report.criteria_counts);
+    let next_action = status_report
+        .as_ref()
+        .map(|report| report.next_action.as_str());
+    let current_task_title = status_report
+        .as_ref()
+        .and_then(|report| report.current_task_title.as_deref());
 
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
+        "content": content,
         "summary": summary,
         "found": job.is_some(),
+        "job_status": status_report.as_ref().map(|report| report.job_status.as_str()),
+        "task_counts": task_counts,
+        "criteria_counts": criteria_counts,
+        "next_action": next_action,
+        "current_task_title": current_task_title,
         "job": job,
         "task_list": task_list,
+        "item_counts": task_list.as_ref().map(task_list_item_counts),
         "status_report": status_report,
         "work_runs": work_runs,
         "work_attention": work_attention,
@@ -1160,10 +1225,17 @@ pub(crate) async fn update_current_task_status(
         .as_ref()
         .map(|job| den_docket::task_list_projection_from_docket_job(job, None));
     let status = task_projection_status(&task).to_string();
+    let content = task_status_card_content(&task, &status, status_report.as_ref());
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
+        "content": content,
         "summary": format!("Task '{}' is now {status}.", task.task.title),
+        "task_title": task.task.title,
+        "task_status": status,
+        "task_counts": status_report.as_ref().map(|report| &report.task_counts),
+        "next_action": status_report.as_ref().map(|report| report.next_action.as_str()),
+        "item_counts": task_list.as_ref().map(task_list_item_counts),
         "task": task,
         "docket": {
             "active_job_id": execution.job_id,
