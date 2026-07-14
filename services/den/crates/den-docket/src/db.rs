@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -166,6 +166,23 @@ pub(super) async fn create_job(
     })
 }
 
+fn docket_task_definition_payload(task: &DocketTaskRow) -> Value {
+    json!({
+        "task_id": task.id,
+        "job_id": task.job_id,
+        "parent_task_id": task.parent_task_id,
+        "sibling_order": task.sibling_order,
+        "kind": task.kind,
+        "scope": task.scope,
+        "title": task.title,
+        "body": task.body,
+        "completion_criteria": task.completion_criteria.0,
+        "difficulty": task.difficulty,
+        "effort_hint": task.effort_hint,
+        "assigned_to_role": task.assigned_to_role,
+    })
+}
+
 fn resolve_parent_task_id(
     task: &DocketTaskInput,
     task_ids_by_client_key: &HashMap<String, Uuid>,
@@ -253,8 +270,7 @@ async fn insert_task_for_job(
     .bind(create.created_by_user_id)
     .bind(json!({
         "job_id": row.job_id,
-        "parent_task_id": row.parent_task_id,
-        "scope": row.scope,
+        "definition": docket_task_definition_payload(&row),
     }))
     .execute(&mut **tx)
     .await?;
@@ -271,9 +287,7 @@ async fn insert_task_for_job(
     .bind(create.created_by_role.trim())
     .bind(create.created_by_user_id)
     .bind(json!({
-        "title": row.title,
-        "parent_task_id": row.parent_task_id,
-        "scope": row.scope,
+        "definition": docket_task_definition_payload(&row),
     }))
     .execute(&mut **tx)
     .await?;
@@ -818,14 +832,22 @@ impl ExecutionSessionRef<'_> {
 }
 
 fn non_empty_ref(value: &Option<String>) -> Option<&str> {
-    value.as_deref().map(str::trim).filter(|value| !value.is_empty())
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn execution_session_ref(request: &DocketJobExecuteRequest) -> Option<ExecutionSessionRef<'_>> {
     non_empty_ref(&request.session_id)
         .map(ExecutionSessionRef::Explicit)
-        .or_else(|| non_empty_ref(&request.source_client_session_id).map(ExecutionSessionRef::AcpClientSession))
-        .or_else(|| non_empty_ref(&request.source_conversation_id).map(ExecutionSessionRef::Conversation))
+        .or_else(|| {
+            non_empty_ref(&request.source_client_session_id)
+                .map(ExecutionSessionRef::AcpClientSession)
+        })
+        .or_else(|| {
+            non_empty_ref(&request.source_conversation_id).map(ExecutionSessionRef::Conversation)
+        })
 }
 
 fn execution_session_id(request: &DocketJobExecuteRequest) -> Option<String> {
@@ -847,7 +869,7 @@ async fn record_execution_session(
         DocketExecutionSessionUpsert {
             bear_id: request.bear_id,
             owner_profile: request.actor_role,
-            session_id,
+            session_id: session_id.clone(),
             source_conversation_id: request.source_conversation_id.clone(),
             source_client_session_id: request.source_client_session_id.clone(),
             job_id: request.job_id,
@@ -856,6 +878,26 @@ async fn record_execution_session(
             state: state.to_string(),
         },
     )
+    .await?;
+    sqlx::query(
+        r"
+        INSERT INTO bear_job_events (job_id, run_id, event_type, task_id, by_role, by_agent_id, by_user_id, payload)
+        VALUES ($1, $2, 'focus_selected', $3, $4, $5, $6, $7::jsonb)
+        ",
+    )
+    .bind(request.job_id)
+    .bind(run_id)
+    .bind(task_id)
+    .bind(request.actor_role.as_str())
+    .bind(request.actor_agent_id.as_deref())
+    .bind(request.actor_user_id)
+    .bind(json!({
+        "session_id": session_id,
+        "source_conversation_id": request.source_conversation_id,
+        "source_client_session_id": request.source_client_session_id,
+        "state": state,
+    }))
+    .execute(pool)
     .await?;
     Ok(())
 }
@@ -1436,9 +1478,7 @@ async fn append_task_updated_events(
     .bind(update.actor_agent_id.as_deref())
     .bind(update.actor_user_id)
     .bind(json!({
-        "title": task.title,
-        "parent_task_id": task.parent_task_id,
-        "scope": task.scope,
+        "definition": docket_task_definition_payload(task),
     }))
     .execute(&mut **tx)
     .await?;

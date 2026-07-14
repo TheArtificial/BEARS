@@ -162,6 +162,46 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     assert_eq!(active_execution.task_id, Some(first_task_id));
     assert_eq!(active_execution.state, "active");
 
+    let (focus_event_count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT count(*)
+        FROM bear_job_events
+        WHERE job_id = $1
+          AND run_id = $2
+          AND task_id = $3
+          AND event_type = 'focus_selected'
+          AND payload->>'session_id' = 'pair-integration-session'
+          AND payload->>'source_client_session_id' = 'pair-integration-session'
+          AND payload->>'state' = 'active'
+        "#,
+    )
+    .bind(created.job.id)
+    .bind(run_id)
+    .bind(first_task_id)
+    .fetch_one(&pool)
+    .await
+    .expect("query focus event");
+    assert_eq!(focus_event_count, 1);
+
+    let (task_definition_count,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT count(*)
+        FROM bear_task_events
+        WHERE task_id = $1
+          AND run_id = $2
+          AND event_type = 'created'
+          AND payload->'definition'->>'title' = 'First task'
+          AND payload->'definition'->>'body' = 'Do first task'
+          AND payload->'definition'->'completion_criteria'->>0 = 'First task is actually done'
+        "#,
+    )
+    .bind(first_task_id)
+    .bind(run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("query task definition event");
+    assert_eq!(task_definition_count, 1);
+
     let missing_summary = service
         .update_task(DocketTaskUpdate {
             bear_id,
