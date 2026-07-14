@@ -20,6 +20,28 @@ const REPOSITORY_PROMPT_SOURCES: &[(&str, &str)] = &[
         "fragments/runtime/docket_execution_active.md",
         include_str!("../../../../../prompts/fragments/runtime/docket_execution_active.md"),
     ),
+    (
+        "fragments/runtime/objective_freeform.md",
+        include_str!("../../../../../prompts/fragments/runtime/objective_freeform.md"),
+    ),
+    (
+        "fragments/runtime/objective_oriented.md",
+        include_str!("../../../../../prompts/fragments/runtime/objective_oriented.md"),
+    ),
+    (
+        "fragments/runtime/objective_focused.md",
+        include_str!("../../../../../prompts/fragments/runtime/objective_focused.md"),
+    ),
+    (
+        "fragments/runtime/budget_warning.md",
+        include_str!("../../../../../prompts/fragments/runtime/budget_warning.md"),
+    ),
+    (
+        "fragments/runtime/task_list_final_gate_continuation.md",
+        include_str!(
+            "../../../../../prompts/fragments/runtime/task_list_final_gate_continuation.md"
+        ),
+    ),
 ];
 
 const REPOSITORY_BUNDLE_SOURCES: &[(&str, &str)] = &[(

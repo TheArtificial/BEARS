@@ -96,6 +96,11 @@ impl CheckpointState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointTrigger {
+    // Steering pattern reminder: keep reusable checkpoint prompt prose in prompt
+    // fragments or named renderers. Loop-control source should choose *when* a
+    // fragment applies and pass structured state; avoid scattering human-facing
+    // steering literals here because compiled context needs one auditable place
+    // to suppress stale or contradictory instructions.
     pub reason: CheckpointReason,
     pub message: String,
 }
