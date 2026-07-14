@@ -9,8 +9,8 @@ use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent}
 use futures::Stream;
 
 use crate::runtime::turn_state::{
-    autonomous_execution_gate_for_task_list, detect_task_focus_loop,
-    should_allow_terminal_response_for_task_list,
+    autonomous_execution_gate_for_task_list, classify_autonomous_final_response,
+    detect_task_focus_loop, AutonomousExecutionGate,
 };
 use crate::{
     agent_loop::{
@@ -72,6 +72,13 @@ const FINAL_GATE_CONTINUATION_GUIDANCE: &str =
 
 fn render_final_gate_continuation_guidance(next_task: &str) -> String {
     format!("{FINAL_GATE_CONTINUATION_GUIDANCE} {next_task}.")
+}
+
+fn should_force_final_gate_continuation(
+    budget_finalization_grace_used: bool,
+    gate: &AutonomousExecutionGate,
+) -> bool {
+    !budget_finalization_grace_used && gate.has_incomplete_unblocked_items && !gate.may_stop
 }
 
 fn recent_tool_result_matches(messages: &[ChatMessage], tool_call_id: &str) -> bool {
@@ -1217,15 +1224,19 @@ impl Stream for SessionTrackingStream {
                     .store
                     .get(&self.session_key)
                     .and_then(|session| session.active_activity_plan);
+                let autonomous_gate = autonomous_execution_gate_for_task_list(
+                    self.profile,
+                    active_activity_plan.as_ref(),
+                    classify_autonomous_final_response(&self.assistant_text),
+                );
                 // ponytail: budget landing beats autonomous task-focus continuation; upgrade by
                 // tracking an explicit finalization-mode reason instead of this budget-state bit.
-                if !self.budget_finalization_grace_used()
-                    && !should_allow_terminal_response_for_task_list(
-                        self.profile,
-                        active_activity_plan.as_ref(),
-                        &self.assistant_text,
-                    )
-                {
+                // ponytail: only force continuation when there is a concrete next item;
+                // upgrade by refreshing active_activity_plan from Docket before gating.
+                if should_force_final_gate_continuation(
+                    self.budget_finalization_grace_used(),
+                    &autonomous_gate,
+                ) {
                     let recent_texts = self
                         .store
                         .get(&self.session_key)
@@ -1255,18 +1266,8 @@ impl Stream for SessionTrackingStream {
                             RuntimeSemanticEvent::TurnCompleted { turn: None },
                         ))));
                     }
-                    let next_task = active_activity_plan
-                        .as_ref()
-                        .and_then(|plan| {
-                            autonomous_execution_gate_for_task_list(
-                                self.profile,
-                                Some(plan),
-                                crate::runtime::turn_state::classify_autonomous_final_response(
-                                    &self.assistant_text,
-                                ),
-                            )
-                            .next_incomplete_task_title
-                        })
+                    let next_task = autonomous_gate
+                        .next_incomplete_task_title
                         .unwrap_or_else(|| "the next incomplete task".to_string());
                     tracing::info!(
                         client_session_id = %self.client_session_id,
@@ -1574,6 +1575,35 @@ mod tests {
             session.profile,
             NativeToolDispatchMode::DeferToClient,
         )
+    }
+
+    #[test]
+    fn final_gate_does_not_force_continuation_without_incomplete_work() {
+        let gate = AutonomousExecutionGate {
+            is_active_autonomous_task: true,
+            has_incomplete_unblocked_items: false,
+            acceptance_criteria_met: false,
+            has_hard_blocker: false,
+            may_stop: false,
+            next_incomplete_task_title: None,
+        };
+
+        assert!(!should_force_final_gate_continuation(false, &gate));
+    }
+
+    #[test]
+    fn final_gate_forces_continuation_only_for_actionable_incomplete_work() {
+        let gate = AutonomousExecutionGate {
+            is_active_autonomous_task: true,
+            has_incomplete_unblocked_items: true,
+            acceptance_criteria_met: false,
+            has_hard_blocker: false,
+            may_stop: false,
+            next_incomplete_task_title: Some("finish the task".to_string()),
+        };
+
+        assert!(should_force_final_gate_continuation(false, &gate));
+        assert!(!should_force_final_gate_continuation(true, &gate));
     }
 
     #[tokio::test]
