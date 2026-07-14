@@ -99,7 +99,10 @@ impl AgentLoopSession {
                     )
                 })
             })
-            .map(|item| item.title.clone());
+            .map(|item| item.title.clone())
+            .or_else(|| orientation_active_task_title(&self.objective_orientation));
+        let task_focus_active = self.active_activity_plan.is_some()
+            || !matches!(self.objective_orientation, ObjectiveOrientation::Freeform { .. });
         json!({
             "schema": "den.runtime_state.v1",
             "state": "active",
@@ -159,18 +162,18 @@ impl AgentLoopSession {
                 "last_batch_signature_present": self.turn_budget_state.last_batch_signature.is_some(),
             },
             "task_focus": {
-                "active": self.active_activity_plan.is_some(),
+                "active": task_focus_active,
                 "plan_id": self.active_activity_plan.as_ref().map(|plan| plan.id.to_string()),
                 "plan_title": self.active_activity_plan.as_ref().map(|plan| plan.title.clone()),
                 "plan_status": self.active_activity_plan.as_ref().map(|plan| plan.status.clone()),
                 "next_incomplete_task_title": next_incomplete_task,
-                "continuation_policy": if self.active_activity_plan.is_some() {
+                "continuation_policy": if task_focus_active {
                     "continue_until_complete_or_blocked"
                 } else {
                     "inactive"
                 },
             },
-            "docket": docket_context_json(self.active_activity_plan.as_ref()),
+            "docket": docket_context_json(self.active_activity_plan.as_ref(), &self.objective_orientation),
             "last_budget_advisory": last_system_advisory(&self.messages, "Budget advisory:"),
             "last_task_focus_advisory": last_system_advisory(&self.messages, "You are in autonomous implementation mode."),
         })
@@ -184,6 +187,18 @@ fn focused_job_id(orientation: &ObjectiveOrientation) -> Option<&str> {
     }
 }
 
+fn orientation_active_task_title(orientation: &ObjectiveOrientation) -> Option<String> {
+    let task_ref = match orientation {
+        ObjectiveOrientation::Focused { job } => job.active_task_ref.as_ref()?,
+        ObjectiveOrientation::Oriented { task } => Some(&task.task_ref)?,
+        ObjectiveOrientation::Freeform { .. } => return None,
+    };
+    match task_ref {
+        crate::agent_loop::OrientationTaskRef::TaskListItem { title, .. }
+        | crate::agent_loop::OrientationTaskRef::DocketTask { title, .. } => title.clone(),
+    }
+}
+
 fn pending_tool_call_count(messages: &[ChatMessage]) -> usize {
     messages
         .iter()
@@ -192,7 +207,10 @@ fn pending_tool_call_count(messages: &[ChatMessage]) -> usize {
         .unwrap_or(0)
 }
 
-fn docket_context_json(plan: Option<&TaskListProjection>) -> Value {
+fn docket_context_json(
+    plan: Option<&TaskListProjection>,
+    orientation: &ObjectiveOrientation,
+) -> Value {
     let active_task = plan
         .and_then(|plan| plan.current_item.as_ref())
         .or_else(|| {
@@ -206,15 +224,40 @@ fn docket_context_json(plan: Option<&TaskListProjection>) -> Value {
                 })
             })
         });
+    let orientation_task_ref = match orientation {
+        ObjectiveOrientation::Focused { job } => job.active_task_ref.as_ref(),
+        ObjectiveOrientation::Oriented { task } => Some(&task.task_ref),
+        ObjectiveOrientation::Freeform { .. } => None,
+    };
     json!({
         "active_job_id": plan
             .and_then(|plan| plan.source_ref.docket_job_id.clone())
+            .or_else(|| focused_job_id(orientation).map(str::to_string))
             .or_else(|| plan.map(|plan| plan.id.to_string())),
         "active_run_id": Value::Null,
-        "active_task_id": active_task.and_then(|item| item.source_ref.docket_task_id.clone()),
-        "active_task_title": active_task.map(|item| item.title.clone()),
-        "source": if plan.is_some() { "task_focus_projection" } else { "none" },
+        "active_task_id": active_task
+            .and_then(|item| item.source_ref.docket_task_id.clone())
+            .or_else(|| orientation_docket_task_id(orientation_task_ref)),
+        "active_task_title": active_task
+            .map(|item| item.title.clone())
+            .or_else(|| orientation_active_task_title(orientation)),
+        "source": if plan.is_some() {
+            "task_focus_projection"
+        } else if !matches!(orientation, ObjectiveOrientation::Freeform { .. }) {
+            "objective_orientation"
+        } else {
+            "none"
+        },
     })
+}
+
+fn orientation_docket_task_id(
+    task_ref: Option<&crate::agent_loop::OrientationTaskRef>,
+) -> Option<String> {
+    match task_ref? {
+        crate::agent_loop::OrientationTaskRef::DocketTask { task_id, .. } => Some(task_id.clone()),
+        crate::agent_loop::OrientationTaskRef::TaskListItem { .. } => None,
+    }
 }
 
 fn last_system_advisory(messages: &[ChatMessage], prefix: &str) -> Option<Value> {
@@ -422,5 +465,33 @@ mod tests {
 
         assert_eq!(run["objective_orientation_kind"], "focused");
         assert_eq!(run["focused_job_id"], "job-123");
+        assert_eq!(snapshot["task_focus"]["active"], true);
+        assert_eq!(snapshot["docket"]["active_job_id"], "job-123");
+        assert_eq!(snapshot["docket"]["source"], "objective_orientation");
+    }
+
+    #[test]
+    fn runtime_snapshot_uses_orientation_task_without_plan() {
+        let session = test_session(ObjectiveOrientation::Oriented {
+            task: crate::agent_loop::TaskOrientation {
+                task_ref: crate::agent_loop::OrientationTaskRef::DocketTask {
+                    job_id: Some("job-123".to_string()),
+                    task_id: "task-456".to_string(),
+                    title: Some("Ship the smallest slice".to_string()),
+                },
+                child_policy: Default::default(),
+            },
+        });
+
+        let snapshot = session.session_info_runtime_snapshot();
+
+        assert_eq!(snapshot["task_focus"]["active"], true);
+        assert_eq!(
+            snapshot["task_focus"]["next_incomplete_task_title"],
+            "Ship the smallest slice"
+        );
+        assert_eq!(snapshot["docket"]["active_task_id"], "task-456");
+        assert_eq!(snapshot["docket"]["active_task_title"], "Ship the smallest slice");
+        assert_eq!(snapshot["docket"]["source"], "objective_orientation");
     }
 }
