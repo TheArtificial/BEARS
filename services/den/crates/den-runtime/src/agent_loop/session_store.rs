@@ -311,3 +311,116 @@ impl AgentLoopSessionStore {
 pub fn agent_loop_session_key(conversation_id: &str, client_session_id: &str) -> String {
     format!("{conversation_id}:{client_session_id}")
 }
+
+#[cfg(test)]
+mod tests {
+    use den_core::profile::BearProfile;
+
+    use crate::agent_loop::{
+        resolve_agent_loop_control, AgentLoopControlResolutionInput, FreeformPolicy,
+        JobOrientation, ObjectiveOrientation, PostMutationVerificationWindow, StrategyProfile,
+        ToolCallBudgetLimits,
+    };
+
+    use super::*;
+
+    fn test_session(objective_orientation: ObjectiveOrientation) -> AgentLoopSession {
+        AgentLoopSession {
+            session_key: "den-conv-test:client-test".to_string(),
+            bear_id: Uuid::nil(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(7),
+            conversation_id: "den-conv-test".to_string(),
+            client_session_id: "client-test".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            request_id: Some("request-test".to_string()),
+            run_id: Some("run-test".to_string()),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 0,
+            turn_budget: TurnBudgetPolicy {
+                max_wall_clock_ms: 60_000,
+                emergency_hard_steps: 16,
+                tool_call_limits: ToolCallBudgetLimits {
+                    total: 8,
+                    read: 6,
+                    search: 4,
+                    fetch: 2,
+                    execute: 2,
+                    write: 2,
+                    destructive: 1,
+                    other: 2,
+                },
+                max_consecutive_tool_failures: 2,
+                max_same_tool_signature_repeats: 1,
+                post_mutation_verification_window: Some(PostMutationVerificationWindow {
+                    replenish_read: 2,
+                    replenish_search: 1,
+                }),
+            },
+            turn_budget_state: Default::default(),
+            agent_loop_control: resolve_agent_loop_control(AgentLoopControlResolutionInput {
+                model_handle: Some("openai/test"),
+                model_default: None,
+                bear_override: None,
+                stance_override: None,
+                task_escalation: None,
+                stance: Some(BearProfile::Pair),
+                objective_orientation: Some(&objective_orientation),
+                pre_risk: false,
+            }),
+            objective_orientation,
+            checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
+            pending_checkpoint_task_action: None,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: true,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
+            active_activity_plan: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        }
+    }
+
+    #[test]
+    fn runtime_snapshot_includes_run_orientation_without_focus() {
+        let session = test_session(ObjectiveOrientation::Freeform {
+            policy: FreeformPolicy::closed(),
+        });
+
+        let snapshot = session.session_info_runtime_snapshot();
+        let run = &snapshot["run"];
+
+        assert_eq!(run["run_id"], "run-test");
+        assert_eq!(run["stance"], "pair");
+        assert_eq!(run["objective_orientation_kind"], "freeform");
+        assert!(run["focused_job_id"].is_null());
+    }
+
+    #[test]
+    fn runtime_snapshot_includes_focused_job_id() {
+        let session = test_session(ObjectiveOrientation::Focused {
+            job: JobOrientation {
+                job_id: "job-123".to_string(),
+                active_task_ref: None,
+                mutable: true,
+            },
+        });
+
+        let snapshot = session.session_info_runtime_snapshot();
+        let run = &snapshot["run"];
+
+        assert_eq!(run["objective_orientation_kind"], "focused");
+        assert_eq!(run["focused_job_id"], "job-123");
+    }
+}
