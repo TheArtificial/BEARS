@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use den_core::profile::BearProfile;
+use den_core::{governance::Governance, profile::BearProfile};
 use den_docket::TaskListProjection;
 use den_protocol::ContextBudgetReport;
 use serde_json::{json, Value};
@@ -110,6 +110,7 @@ impl AgentLoopSession {
             "run": {
                 "run_id": self.run_id.as_deref(),
                 "stance": self.profile.as_str(),
+                "governance": Governance::Interactive.as_str(),
                 "objective_orientation_kind": self.objective_orientation.kind(),
                 "focused_job_id": focused_job_id(&self.objective_orientation),
             },
@@ -446,6 +447,7 @@ mod tests {
 
         assert_eq!(run["run_id"], "run-test");
         assert_eq!(run["stance"], "pair");
+        assert_eq!(run["governance"], "interactive");
         assert_eq!(run["objective_orientation_kind"], "freeform");
         assert!(run["focused_job_id"].is_null());
     }
