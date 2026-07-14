@@ -18,12 +18,14 @@ const FREEFORM_BASE_GUIDANCE: &str =
     "No concrete task or Job outcome is active. Keep the turn bounded: answer directly, ask a clarifying question, or stop.";
 const FREEFORM_TASK_DEFINITION_GUIDANCE: &str =
     "If the request needs sustained work, define a concrete task with completion criteria; the runtime may then continue task-oriented or delegate through available execution policy.";
+const FREEFORM_CLOSED_TASK_POLICY_GUIDANCE: &str =
+    "Task-definition tools are unavailable in closed freeform orientation; answer directly or ask before defining durable work.";
 const PAIR_FREEFORM_TASK_ORIENTATION_HINT: &str =
     "Pair task-orientation hint: For work-like requests, proactively define concrete task(s) with completion criteria and move toward oriented work. If the user points you at a plan, roadmap, issue list, or repository checklist, capture it as a task list rather than only choosing the next task. Prefer task lists; create a Job only when durable job-level criteria, delegation, handoff, or commit/work-branch tracking are needed. Do not taskify ordinary Q&A; ask one clarifying question if the outcome is unclear.";
 const ORIENTED_TASK_GUIDANCE: &str =
     "A concrete task is active. Keep working toward its completion criteria, but pause when the user asked only to plan or when proceeding would exceed the requested scope. Do not claim completion until criteria are met. Ask necessary clarifying questions; otherwise proceed within the task boundary.";
 const ORIENTED_DECOMPOSITION_GUIDANCE: &str =
-    "If you decompose it, stay within {max_children} child tasks and {max_depth} level below the oriented task.";
+    "Task creation is bounded to oriented_root_task_id={root_task_id}, max_children={max_children}, and max_depth_below_oriented_task={max_depth}.";
 const FOCUSED_JOB_PROGRESS_GUIDANCE_PREFIX: &str =
     "Keep working toward the Job's completion criteria by";
 const FOCUSED_COMPLETION_GUIDANCE: &str =
@@ -33,10 +35,17 @@ const FOCUSED_MUTABLE_NEXT_TASK_GUIDANCE: &str = "choosing or creating the next 
 const FOCUSED_IMMUTABLE_NEXT_TASK_GUIDANCE: &str = "choosing the next existing concrete task";
 const FOCUSED_MUTABLE_STRUCTURE_GUIDANCE: &str = "Add child tasks when useful.";
 const FOCUSED_IMMUTABLE_STRUCTURE_GUIDANCE: &str =
-    "Do not create or restructure tasks unless explicitly asked.";
+    "Task-definition edits are unavailable while focused job_mutable=false; choose existing tasks and update status/results instead.";
 
 fn system_reminder(body: String) -> String {
     format!("<system-reminder>\n{body}\n</system-reminder>")
+}
+
+fn oriented_root_task_id(task_ref: &crate::agent_loop::OrientationTaskRef) -> &str {
+    match task_ref {
+        crate::agent_loop::OrientationTaskRef::TaskListItem { item_id, .. } => item_id,
+        crate::agent_loop::OrientationTaskRef::DocketTask { task_id, .. } => task_id,
+    }
 }
 
 pub fn runtime_context_already_includes_den_owned_blocks(runtime_context: &str) -> bool {
@@ -53,10 +62,15 @@ fn render_objective_orientation_context(
 ) -> String {
     match orientation {
         ObjectiveOrientation::Freeform { policy } => {
-            let task_definition_guidance = if policy.may_define_task {
-                format!(" {FREEFORM_TASK_DEFINITION_GUIDANCE}")
+            let task_definition_tools = if policy.may_define_task {
+                "available"
             } else {
-                String::new()
+                "unavailable"
+            };
+            let task_definition_guidance = if policy.may_define_task {
+                FREEFORM_TASK_DEFINITION_GUIDANCE
+            } else {
+                FREEFORM_CLOSED_TASK_POLICY_GUIDANCE
             };
             let pair_task_orientation_guidance = if profile_slug == "pair" && policy.may_define_task
             {
@@ -65,14 +79,16 @@ fn render_objective_orientation_context(
                 String::new()
             };
             system_reminder(format!(
-                "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=freeform may_define_task={}. {FREEFORM_BASE_GUIDANCE}{}{}",
-                policy.may_define_task, task_definition_guidance, pair_task_orientation_guidance
+                "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=freeform may_define_task={} task_definition_tools={task_definition_tools}. {FREEFORM_BASE_GUIDANCE} {task_definition_guidance}{}",
+                policy.may_define_task, pair_task_orientation_guidance
             ))
         }
         ObjectiveOrientation::Oriented { task } => {
             let task_ref = serde_json::to_string(&task.task_ref)
                 .unwrap_or_else(|_| "{\"kind\":\"unknown\"}".to_string());
+            let root_task_id = oriented_root_task_id(&task.task_ref);
             let decomposition_guidance = ORIENTED_DECOMPOSITION_GUIDANCE
+                .replace("{root_task_id}", root_task_id)
                 .replace(
                     "{max_children}",
                     &task.child_policy.max_children.to_string(),
@@ -82,7 +98,9 @@ fn render_objective_orientation_context(
                     &task.child_policy.max_depth_below_oriented_task.to_string(),
                 );
             system_reminder(format!(
-                "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=oriented task_ref={task_ref}. {ORIENTED_TASK_GUIDANCE} {decomposition_guidance}"
+                "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=oriented task_ref={task_ref} oriented_root_task_id={root_task_id} max_children={} max_depth_below_oriented_task={}. {ORIENTED_TASK_GUIDANCE} {decomposition_guidance}",
+                task.child_policy.max_children,
+                task.child_policy.max_depth_below_oriented_task
             ))
         }
         ObjectiveOrientation::Focused { job } => {
@@ -103,8 +121,9 @@ fn render_objective_orientation_context(
             } else {
                 FOCUSED_IMMUTABLE_STRUCTURE_GUIDANCE
             };
+            let task_definition_tools = if job.mutable { "available" } else { "unavailable" };
             system_reminder(format!(
-                "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=focused job_id={} job_mutable={} active_task_ref={active_task_ref}. {FOCUSED_JOB_PROGRESS_GUIDANCE_PREFIX} {task_guidance}. {FOCUSED_COMPLETION_GUIDANCE} {structure_guidance}",
+                "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=focused job_id={} job_mutable={} task_definition_tools={task_definition_tools} active_task_ref={active_task_ref}. {FOCUSED_JOB_PROGRESS_GUIDANCE_PREFIX} {task_guidance}. {FOCUSED_COMPLETION_GUIDANCE} {structure_guidance}",
                 job.job_id,
                 job.mutable
             ))
@@ -220,6 +239,10 @@ mod tests {
             },
         );
         assert!(!pair_closed.contains("Pair task-orientation hint"));
+        assert!(pair_closed.contains("task_definition_tools=unavailable"));
+        assert!(pair_closed.contains(
+            "Task-definition tools are unavailable in closed freeform orientation"
+        ));
     }
 
     #[test]
@@ -268,8 +291,10 @@ mod tests {
             },
         );
         assert!(no_active_immutable.contains("by choosing the next existing concrete task"));
-        assert!(no_active_immutable
-            .contains("Do not create or restructure tasks unless explicitly asked."));
+        assert!(no_active_immutable.contains("task_definition_tools=unavailable"));
+        assert!(no_active_immutable.contains(
+            "Task-definition edits are unavailable while focused job_mutable=false"
+        ));
     }
 
     #[test]
@@ -293,5 +318,8 @@ mod tests {
 
         assert!(oriented.contains("pause when the user asked only to plan"));
         assert!(oriented.contains("exceed the requested scope"));
+        assert!(oriented.contains("oriented_root_task_id=task-1"));
+        assert!(oriented.contains("max_children=3"));
+        assert!(oriented.contains("max_depth_below_oriented_task=1"));
     }
 }
