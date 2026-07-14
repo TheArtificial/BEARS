@@ -1,6 +1,10 @@
 use std::time::Instant;
 
+use den_service::bears::prompt_fragments::{
+    render_turn_fragment, repository_prompt_fragment_registry,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::llm::ChatToolCall;
 
@@ -486,6 +490,16 @@ pub fn evaluate_turn_budget(
     }
 }
 
+fn render_budget_warning_message(budget: Value, fallback: String) -> String {
+    // Keep reusable budget steering prose in the fragment registry. Rust should
+    // only decide which warning applies and pass structured state to the
+    // renderer so loop-control prompts stay auditable with other fragments.
+    let rendered = repository_prompt_fragment_registry()
+        .and_then(|fragments| fragments.require("runtime_budget_warning").cloned())
+        .and_then(|fragment| render_turn_fragment(&fragment, &json!({ "budget": budget })));
+    rendered.unwrap_or(fallback)
+}
+
 fn budget_warning(
     policy: TurnBudgetPolicy,
     step: u32,
@@ -498,28 +512,52 @@ fn budget_warning(
             TurnBudgetStopReason::WallClockLimit {
                 elapsed_ms,
                 limit_ms,
-            } => TurnBudgetWarning {
-                code: "wall_clock_finalization_warning",
-                message: format!(
-                    "Budget advisory: this turn reached its wall-clock limit after recording the latest tool result (elapsed={elapsed_ms}ms/limit={limit_ms}ms). Do not call more tools in this turn; provide the best final answer now."
-                ),
-            },
+            } => {
+                let code = "wall_clock_finalization_warning";
+                TurnBudgetWarning {
+                    code,
+                    message: render_budget_warning_message(
+                        json!({
+                            "code": code,
+                            "elapsed_ms": elapsed_ms,
+                            "limit_ms": limit_ms,
+                        }),
+                        format!(
+                            "Budget advisory: this turn reached its wall-clock limit after recording the latest tool result (elapsed={elapsed_ms}ms/limit={limit_ms}ms). Do not call more tools in this turn; provide the best final answer now."
+                        ),
+                    ),
+                }
+            }
             TurnBudgetStopReason::TotalToolCallLimit { .. }
-            | TurnBudgetStopReason::ToolClassCallLimit { .. } => TurnBudgetWarning {
-                code: "tool_budget_finalization_warning",
-                message: "Budget advisory: this turn has exceeded a tool budget after recording the latest tool result. Do not call more tools in this turn; provide the best final answer now.".to_string(),
-            },
+            | TurnBudgetStopReason::ToolClassCallLimit { .. } => {
+                let code = "tool_budget_finalization_warning";
+                TurnBudgetWarning {
+                    code,
+                    message: render_budget_warning_message(
+                        json!({ "code": code }),
+                        "Budget advisory: this turn has exceeded a tool budget after recording the latest tool result. Do not call more tools in this turn; provide the best final answer now.".to_string(),
+                    ),
+                }
+            }
             _ => return None,
         });
     }
 
     if step + 1 >= policy.emergency_hard_steps {
+        let code = "emergency_hard_step_warning";
         return Some(TurnBudgetWarning {
-            code: "emergency_hard_step_warning",
-            message: format!(
-                "Budget advisory: this turn is at the end of its emergency continuation fuse (next step would reach {}/{}). If you already have enough information, stop calling tools and provide the best final answer now.",
-                step + 1,
-                policy.emergency_hard_steps
+            code,
+            message: render_budget_warning_message(
+                json!({
+                    "code": code,
+                    "next_step": step + 1,
+                    "limit": policy.emergency_hard_steps,
+                }),
+                format!(
+                    "Budget advisory: this turn is at the end of its emergency continuation fuse (next step would reach {}/{}). If you already have enough information, stop calling tools and provide the best final answer now.",
+                    step + 1,
+                    policy.emergency_hard_steps
+                ),
             ),
         });
     }
@@ -528,33 +566,57 @@ fn budget_warning(
     if remaining_wall_clock_ms <= 15_000
         || elapsed_ms.saturating_mul(100) >= policy.max_wall_clock_ms.saturating_mul(85)
     {
+        let code = "wall_clock_warning";
         return Some(TurnBudgetWarning {
-            code: "wall_clock_warning",
-            message: format!(
-                "Budget advisory: this turn is close to its wall-clock limit (remaining={}ms). Prefer a final answer over more tool calls unless one more call is strictly necessary.",
-                remaining_wall_clock_ms
+            code,
+            message: render_budget_warning_message(
+                json!({
+                    "code": code,
+                    "remaining_ms": remaining_wall_clock_ms,
+                }),
+                format!(
+                    "Budget advisory: this turn is close to its wall-clock limit (remaining={}ms). Prefer a final answer over more tool calls unless one more call is strictly necessary.",
+                    remaining_wall_clock_ms
+                ),
             ),
         });
     }
 
     if state.tool_usage.total >= policy.tool_call_limits.total {
+        let code = "total_tool_budget_warning";
+        let fragment_code = "total_tool_budget_full_warning";
         return Some(TurnBudgetWarning {
-            code: "total_tool_budget_warning",
-            message: format!(
-                "Budget advisory: this turn has fully used its emergency total tool-call fuse ({}/{} tool calls used). Any further tool call will stop the turn. Provide the best final answer now unless you explicitly need a fresh turn.",
-                state.tool_usage.total,
-                policy.tool_call_limits.total
+            code,
+            message: render_budget_warning_message(
+                json!({
+                    "code": fragment_code,
+                    "used": state.tool_usage.total,
+                    "limit": policy.tool_call_limits.total,
+                }),
+                format!(
+                    "Budget advisory: this turn has fully used its emergency total tool-call fuse ({}/{} tool calls used). Any further tool call will stop the turn. Provide the best final answer now unless you explicitly need a fresh turn.",
+                    state.tool_usage.total,
+                    policy.tool_call_limits.total
+                ),
             ),
         });
     }
 
     if state.tool_usage.total + 1 >= policy.tool_call_limits.total {
+        let code = "total_tool_budget_warning";
         return Some(TurnBudgetWarning {
-            code: "total_tool_budget_warning",
-            message: format!(
-                "Budget advisory: this turn is close to its emergency total tool-call fuse ({}/{} tool calls used). Prefer a final answer over more tool calls unless one more call is strictly necessary.",
-                state.tool_usage.total,
-                policy.tool_call_limits.total
+            code,
+            message: render_budget_warning_message(
+                json!({
+                    "code": code,
+                    "used": state.tool_usage.total,
+                    "limit": policy.tool_call_limits.total,
+                }),
+                format!(
+                    "Budget advisory: this turn is close to its emergency total tool-call fuse ({}/{} tool calls used). Prefer a final answer over more tool calls unless one more call is strictly necessary.",
+                    state.tool_usage.total,
+                    policy.tool_call_limits.total
+                ),
             ),
         });
     }
@@ -566,49 +628,84 @@ fn budget_warning(
             continue;
         }
         if count >= limit {
+            let code = "tool_class_budget_warning";
+            let fragment_code = "tool_class_budget_full_warning";
             return Some(TurnBudgetWarning {
-                code: "tool_class_budget_warning",
-                message: format!(
-                    "Budget advisory: this turn has fully used its {} tool budget ({}/{} used). Any further {} call will stop the turn. Provide the best final answer now unless you explicitly need a fresh turn.",
-                    class.label(),
-                    count,
-                    limit,
-                    class.label()
+                code,
+                message: render_budget_warning_message(
+                    json!({
+                        "code": fragment_code,
+                        "class_label": class.label(),
+                        "used": count,
+                        "limit": limit,
+                    }),
+                    format!(
+                        "Budget advisory: this turn has fully used its {} tool budget ({}/{} used). Any further {} call will stop the turn. Provide the best final answer now unless you explicitly need a fresh turn.",
+                        class.label(),
+                        count,
+                        limit,
+                        class.label()
+                    ),
                 ),
             });
         }
         if count + 1 >= limit {
+            let code = "tool_class_budget_warning";
             return Some(TurnBudgetWarning {
-                code: "tool_class_budget_warning",
-                message: format!(
-                    "Budget advisory: this turn is close to its {} tool budget ({}/{} used). Prefer a final answer over more tool calls unless one more {} call is strictly necessary.",
-                    class.label(),
-                    count,
-                    limit,
-                    class.label()
+                code,
+                message: render_budget_warning_message(
+                    json!({
+                        "code": code,
+                        "class_label": class.label(),
+                        "used": count,
+                        "limit": limit,
+                    }),
+                    format!(
+                        "Budget advisory: this turn is close to its {} tool budget ({}/{} used). Prefer a final answer over more tool calls unless one more {} call is strictly necessary.",
+                        class.label(),
+                        count,
+                        limit,
+                        class.label()
+                    ),
                 ),
             });
         }
     }
 
     if state.consecutive_tool_failures + 1 >= policy.max_consecutive_tool_failures {
+        let code = "failure_budget_warning";
         return Some(TurnBudgetWarning {
-            code: "failure_budget_warning",
-            message: format!(
-                "Budget advisory: this turn is close to its repeated-failure limit ({}/{} consecutive failed tool batches). Do not retry the same failing action unless you have new evidence.",
-                state.consecutive_tool_failures,
-                policy.max_consecutive_tool_failures
+            code,
+            message: render_budget_warning_message(
+                json!({
+                    "code": code,
+                    "failures": state.consecutive_tool_failures,
+                    "limit": policy.max_consecutive_tool_failures,
+                }),
+                format!(
+                    "Budget advisory: this turn is close to its repeated-failure limit ({}/{} consecutive failed tool batches). Do not retry the same failing action unless you have new evidence.",
+                    state.consecutive_tool_failures,
+                    policy.max_consecutive_tool_failures
+                ),
             ),
         });
     }
 
     if state.same_batch_signature_repeats >= policy.max_same_tool_signature_repeats {
+        let code = "rule_of_ko_warning";
         return Some(TurnBudgetWarning {
-            code: "rule_of_ko_warning",
-            message: format!(
-                "Budget advisory: this turn is close to its loop-ko limit ({}/{} repeated tool batches). Do not repeat the same tool call pattern again; either answer now or choose a materially different next step.",
-                state.same_batch_signature_repeats,
-                policy.max_same_tool_signature_repeats
+            code,
+            message: render_budget_warning_message(
+                json!({
+                    "code": code,
+                    "repeats": state.same_batch_signature_repeats,
+                    "limit": policy.max_same_tool_signature_repeats,
+                }),
+                format!(
+                    "Budget advisory: this turn is close to its loop-ko limit ({}/{} repeated tool batches). Do not repeat the same tool call pattern again; either answer now or choose a materially different next step.",
+                    state.same_batch_signature_repeats,
+                    policy.max_same_tool_signature_repeats
+                ),
             ),
         });
     }
