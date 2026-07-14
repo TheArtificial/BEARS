@@ -34,6 +34,18 @@
         <h4>Review notes</h4>
         <p>{{ proposal.review_notes | e }}</p>
         {% endif %}
+
+        <h4>Proposed memory content</h4>
+        {% if proposal.proposed_content %}
+        <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ proposal.proposed_content | e }}</pre>
+        {% else %}
+        <p class="form-hint">No proposed content recorded.</p>
+        {% endif %}
+
+        {% if proposal.proposed_patch %}
+        <h4>Proposed patch</h4>
+        <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ proposal.proposed_patch | e }}</pre>
+        {% endif %}
     </section>
 
     <section class="box full-width">
@@ -50,6 +62,10 @@
         {% if proposal.source_refs and proposal.source_refs.conversation_id %}
         <p class="form-hint">Formed in conversation <code>{{ proposal.source_refs.conversation_id | e }}</code>.</p>
         {% endif %}
+        <h4>Source references</h4>
+        <pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ proposal.source_refs | tojson(indent=2) }}</pre>
+        <h4>Memory references</h4>
+        <pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ proposal.refs | tojson(indent=2) }}</pre>
     </section>
 
     {% if can_manage_bear %}
