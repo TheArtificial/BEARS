@@ -34,6 +34,6 @@ pub use turn::{
     native_client_session_runtime_state, record_native_client_tool_result,
     run_native_profile_turn_collect_assistant_text, start_native_client_turn_event_stream,
     start_native_profile_turn_event_stream, start_native_web_chat_turn_event_stream,
-    take_session_overflow_compaction_recovered, NativeRuntimeConversationBackend,
-    NativeRuntimeDeps, NativeWebChatTurnParams,
+    take_session_overflow_compaction_recovered, update_native_client_session_active_activity_plan,
+    NativeRuntimeConversationBackend, NativeRuntimeDeps, NativeWebChatTurnParams,
 };

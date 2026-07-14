@@ -6,8 +6,9 @@ use den_docket::{
     TaskListProjection,
 };
 use den_memory::MemoryStoreManager;
-use den_service::bears::{
-    db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear,
+use den_service::{
+    bears::{db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear},
+    client_sessions,
 };
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -134,9 +135,20 @@ async fn load_session_anchored_activity_plan(
     ctx: &AssembleTurnContext<'_>,
     service: &PgDocketService,
 ) -> Result<Option<TaskListProjection>, DenError> {
-    let Some(session_anchor_id) = ctx.session_id.and_then(|session_id| Uuid::parse_str(session_id).ok()) else {
+    let (Some(user_id), Some(client_session_id)) = (ctx.user_id, ctx.session_id) else {
         return Ok(None);
     };
+    let Some(session) = client_sessions::find_for_user_bear_session_id(
+        ctx.pool,
+        user_id,
+        ctx.bear_id,
+        client_session_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let session_anchor_id = session.id;
     let tasks = service
         .list_tasks(
             ctx.bear_id,

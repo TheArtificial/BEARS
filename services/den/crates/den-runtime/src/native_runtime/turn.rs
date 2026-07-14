@@ -185,6 +185,17 @@ pub fn native_client_session_active_activity_plan(
         .and_then(|session| session.active_activity_plan)
 }
 
+pub fn update_native_client_session_active_activity_plan(
+    conversation_id: &str,
+    client_session_id: &str,
+    active_activity_plan: Option<den_docket::TaskListProjection>,
+) {
+    let key = agent_loop_session_key(conversation_id, client_session_id);
+    SESSION_STORE.update(&key, |session| {
+        session.active_activity_plan = active_activity_plan;
+    })
+}
+
 pub fn native_client_session_runtime_state(
     conversation_id: &str,
     client_session_id: &str,

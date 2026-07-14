@@ -326,23 +326,91 @@ pub(crate) async fn list_task_lists(
 }
 
 pub(crate) async fn get_task_list_status(
-    _pool: &PgPool,
+    pool: &PgPool,
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
     activity_payload: fn(Option<&docket::TaskListLocalProjection>) -> Value,
 ) -> Result<Value, CustomError> {
     let _ignored_arguments: Value = serde_json::from_value(arguments)?;
+    let session_anchor_id = match context.client_session_id.as_deref() {
+        Some(client_session_id) => client_sessions::find_for_user_bear_session_id(
+            pool,
+            context.user_id,
+            context.bear_id,
+            client_session_id,
+        )
+        .await?
+        .map(|session| session.id),
+        None => None,
+    };
+
+    let tasks = if let Some(session_anchor_id) = session_anchor_id {
+        PgDocketService::from_pool(pool)
+            .list_tasks(
+                context.bear_id,
+                DocketTaskListFilter {
+                    job_id: None,
+                    session_anchor_id: Some(session_anchor_id),
+                    parent_task_id: None,
+                    include_descendants: false,
+                    limit: 500,
+                },
+            )
+            .await?
+    } else {
+        Vec::new()
+    };
+
+    let task_list = session_anchor_id.and_then(|session_anchor_id| {
+        docket::task_list_projection_from_session_tasks(
+            context.bear_id,
+            role,
+            clean_optional(&context.conversation_id)
+                .as_deref()
+                .unwrap_or(""),
+            session_anchor_id,
+            &tasks,
+        )
+    });
+
+    let summary = task_list
+        .as_ref()
+        .map(task_list_summary)
+        .unwrap_or_else(|| {
+            if session_anchor_id.is_some() {
+                "Current session has no anchored tasks.".to_string()
+            } else {
+                "No current client session anchor is available for session tasks.".to_string()
+            }
+        });
+    let item_counts = task_list
+        .as_ref()
+        .map(task_list_item_counts)
+        .unwrap_or_else(|| {
+            json!({
+                "total": 0,
+                "pending": 0,
+                "in_progress": 0,
+                "blocked": 0,
+                "completed": 0,
+                "cancelled": 0,
+            })
+        });
+
     Ok(json!({
         "domain": "activity",
         "bear_id": context.bear_id,
         "viewer_role": role.as_str(),
-        "task_list": null,
+        "summary": summary,
+        "found": task_list.is_some(),
+        "count": tasks.len(),
+        "item_counts": item_counts,
+        "task_list": task_list,
         "activity": activity_payload(None),
-        "plan": null,
-        "summary": "No active session task list is checked out. Use Docket job/task tools for durable task and job state.",
+        "plan": task_list,
         "notes": [
-            "Use Docket job/task tools for durable task and job state."
+            "Session-anchored tasks are durable Docket tasks associated with the current client session."
         ]
     }))
 }
@@ -519,6 +587,52 @@ fn task_list_item_counts(task_list: &TaskListProjection) -> Value {
         "completed": completed,
         "cancelled": cancelled,
     })
+}
+
+async fn session_anchored_task_list_projection(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    session_anchor_id: Uuid,
+) -> Result<Option<TaskListProjection>, CustomError> {
+    let tasks = PgDocketService::from_pool(pool)
+        .list_tasks(
+            context.bear_id,
+            DocketTaskListFilter {
+                job_id: None,
+                session_anchor_id: Some(session_anchor_id),
+                parent_task_id: None,
+                include_descendants: false,
+                limit: 500,
+            },
+        )
+        .await?;
+    Ok(docket::task_list_projection_from_session_tasks(
+        context.bear_id,
+        role,
+        clean_optional(&context.conversation_id)
+            .as_deref()
+            .unwrap_or(""),
+        session_anchor_id,
+        &tasks,
+    ))
+}
+
+fn refresh_runtime_session_activity_plan(
+    context: &DenToolInvocationContext,
+    task_list: Option<TaskListProjection>,
+) {
+    let (Some(conversation_id), Some(client_session_id)) = (
+        clean_optional(&context.conversation_id),
+        context.client_session_id.as_deref(),
+    ) else {
+        return;
+    };
+    den_runtime::native_runtime::update_native_client_session_active_activity_plan(
+        &conversation_id,
+        client_session_id,
+        task_list,
+    );
 }
 
 async fn update_focused_conversation_title(
@@ -892,11 +1006,25 @@ pub(crate) async fn create_task(
             created_in_run_id: args.created_in_run_id,
         })
         .await?;
+    let task_list = if args.job_id.is_none() {
+        if let Some(session_anchor_id) = session_anchor_id {
+            session_anchored_task_list_projection(pool, context, role, session_anchor_id).await?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if args.job_id.is_none() {
+        refresh_runtime_session_activity_plan(context, task_list.clone());
+    }
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "summary": docket_task_row_summary(&task),
         "task": task,
+        "task_list": task_list,
+        "item_counts": task_list.as_ref().map(task_list_item_counts),
         "notes": [
             "Created durable Docket task definition. Status and results remain run-scoped."
         ]
