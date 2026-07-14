@@ -7,8 +7,9 @@ use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
     DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
     DocketJobStatus, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
-    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate,
-    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, TaskDispatcher,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
+    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus, DocketTaskUpdate,
+    PgDocketService, TaskDispatcher,
     TaskListSyncRequest, TaskListVisibility,
 };
 
@@ -167,6 +168,100 @@ async fn creates_session_anchored_task_without_job() {
     assert_eq!(task.session_anchor_id, Some(session_anchor_id));
     assert_eq!(task.body, "Confirm jobless task creation works");
     assert_eq!(task.completion_criteria.0, vec!["Task row is inserted"]);
+}
+
+#[tokio::test]
+async fn lists_session_anchored_task_with_latest_run_state() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket integration test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "session-task-state").await;
+    let service = PgDocketService::from_pool(&pool);
+    let (session_anchor_id,): (Uuid,) = sqlx::query_as(
+        r#"
+        INSERT INTO client_sessions (
+            user_id, bear_id, bear_slug, client_session_id, runtime_session_id, conversation_id, client
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id
+        "#,
+    )
+    .bind(user_id)
+    .bind(bear_id)
+    .bind("docket-session-task-state")
+    .bind("session-task-state-client")
+    .bind("session-task-state-runtime")
+    .bind("session-task-state-conversation")
+    .bind("test")
+    .fetch_one(&pool)
+    .await
+    .expect("seed client session");
+    let job = service
+        .create_job(DocketJobCreate {
+            tasks: vec![],
+            ..two_task_job(user_id, bear_id)
+        })
+        .await
+        .expect("create run source job");
+    let run_id = job.job.current_run_id.expect("current run");
+    let task = service
+        .create_task(DocketTaskCreate {
+            bear_id,
+            job_id: None,
+            session_anchor_id: Some(session_anchor_id),
+            parent_task_id: None,
+            sibling_order: 0,
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Run,
+            title: "Session task with state".to_string(),
+            body: "Confirm session task status projection works".to_string(),
+            completion_criteria: vec!["Task status is projected".to_string()],
+            difficulty: Some(DocketTaskDifficulty::Trivial),
+            effort_hint: Some(DocketEffortHint::Low),
+            assigned_to_role: Some(BearProfile::Pair),
+            created_by_role: "pair".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: None,
+        })
+        .await
+        .expect("create session task");
+    service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            task_id: task.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Done,
+                result_refs: None,
+                result_summary: Some("Verified status projection".to_string()),
+            }),
+        })
+        .await
+        .expect("mark session task done");
+
+    let tasks = service
+        .list_tasks(
+            bear_id,
+            DocketTaskListFilter {
+                session_anchor_id: Some(session_anchor_id),
+                ..DocketTaskListFilter::default()
+            },
+        )
+        .await
+        .expect("list session tasks");
+
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].task.id, task.id);
+    assert_eq!(
+        tasks[0].run_state.as_ref().map(|state| state.status.as_str()),
+        Some("done")
+    );
 }
 
 #[tokio::test]

@@ -1265,23 +1265,51 @@ async fn current_run_states_for_tasks(
     job_id: Option<Uuid>,
     tasks: &[DocketTaskRow],
 ) -> Result<HashMap<Uuid, DocketTaskRunStateRow>, DenError> {
-    let Some(job_id) = job_id.or_else(|| tasks.iter().find_map(|task| task.job_id)) else {
+    if tasks.is_empty() {
         return Ok(HashMap::new());
-    };
-    let run_id =
-        sqlx::query_as::<_, (Option<Uuid>,)>(r"SELECT current_run_id FROM bear_jobs WHERE id = $1")
-            .bind(job_id)
-            .fetch_optional(pool)
-            .await?
-            .and_then(|row| row.0);
-    let Some(run_id) = run_id else {
-        return Ok(HashMap::new());
-    };
-    Ok(list_task_run_states(pool, run_id)
+    }
+
+    if let Some(job_id) = job_id.or_else(|| tasks.iter().find_map(|task| task.job_id)) {
+        let run_id = sqlx::query_as::<_, (Option<Uuid>,)>(
+            r"SELECT current_run_id FROM bear_jobs WHERE id = $1",
+        )
+        .bind(job_id)
+        .fetch_optional(pool)
         .await?
-        .into_iter()
-        .map(|state| (state.task_id, state))
-        .collect())
+        .and_then(|row| row.0);
+        if let Some(run_id) = run_id {
+            return Ok(list_task_run_states(pool, run_id)
+                .await?
+                .into_iter()
+                .map(|state| (state.task_id, state))
+                .collect());
+        }
+    }
+
+    // ponytail: session-anchored tasks do not have a job current_run_id to join
+    // through. Use the latest recorded state per task; if session tasks ever
+    // support multiple simultaneously visible runs, thread the desired run id
+    // through DocketTaskListFilter instead.
+    let task_ids: Vec<Uuid> = tasks.iter().map(|task| task.id).collect();
+    sqlx::query_as::<_, DocketTaskRunStateRow>(
+        r"
+        SELECT DISTINCT ON (task_id)
+               run_id, task_id, status, result_refs, result_summary, started_at, finished_at, updated_at
+        FROM bear_task_run_state
+        WHERE task_id = ANY($1)
+        ORDER BY task_id, updated_at DESC
+        ",
+    )
+    .bind(&task_ids)
+    .fetch_all(pool)
+    .await
+    .map(|states| {
+        states
+            .into_iter()
+            .map(|state| (state.task_id, state))
+            .collect()
+    })
+    .map_err(Into::into)
 }
 
 pub(super) async fn update_task(
