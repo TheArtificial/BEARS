@@ -18,10 +18,18 @@ use crate::{
 pub struct PairReflectionProposalOutput {
     pub created_proposal_ids: Vec<Uuid>,
     pub candidate_count: usize,
+    pub discarded_count: usize,
+    pub discarded_reasons: Vec<String>,
     pub dropped_followup_count: usize,
     pub skipped_reason: Option<&'static str>,
     pub source_message_start_seq: Option<i64>,
     pub source_message_end_seq: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PairReflectionExtraction {
+    candidates: Vec<PairReflectionCandidate>,
+    discarded: Vec<PairReflectionDiscard>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +41,14 @@ struct PairReflectionCandidate {
     target_ref: Option<&'static str>,
     sensitivity: &'static str,
     requires_human: bool,
+    confidence: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PairReflectionDiscard {
+    kind: &'static str,
+    reason: &'static str,
+    text: String,
 }
 
 pub async fn create_pair_reflection_proposals_from_latest_summary(
@@ -71,9 +87,16 @@ async fn create_pair_reflection_proposals_for_artifact(
     session_id: &str,
     artifact: &CompactionArtifactRecord,
 ) -> Result<PairReflectionProposalOutput, DenError> {
-    let candidates = candidates_from_summary(&artifact.summary);
+    let extraction = extract_candidates_from_summary(&artifact.summary);
+    let candidates = extraction.candidates;
+    let discarded = extraction.discarded;
     let mut output = PairReflectionProposalOutput {
         candidate_count: candidates.len(),
+        discarded_count: discarded.len(),
+        discarded_reasons: discarded
+            .iter()
+            .map(|discard| format!("{}:{}", discard.kind, discard.reason))
+            .collect(),
         dropped_followup_count: artifact.summary.unresolved_followups.len(),
         skipped_reason: None,
         source_message_start_seq: Some(artifact.source_message_start_seq),
@@ -95,9 +118,15 @@ async fn create_pair_reflection_proposals_for_artifact(
         let refs = serde_json::json!({
             "pair_reflection": true,
             "candidate_kind": candidate.kind,
+            "discarded_candidates": discarded.iter().map(|discard| serde_json::json!({
+                "kind": discard.kind,
+                "reason": discard.reason,
+                "text": discard.text,
+            })).collect::<Vec<_>>(),
             "quality": {
-                "confidence": if candidate.kind == "artifact" { "medium" } else { "high" },
-                "detector": "pair-reflection-summary-v1"
+                "confidence": candidate.confidence,
+                "detector": "pair-reflection-extraction-v2",
+                "adr": "ADR-0041"
             }
         });
         let rationale = format!(
@@ -150,8 +179,9 @@ async fn create_pair_reflection_proposals_for_artifact(
     Ok(output)
 }
 
-fn candidates_from_summary(summary: &RuntimeIterativeSummary) -> Vec<PairReflectionCandidate> {
+fn extract_candidates_from_summary(summary: &RuntimeIterativeSummary) -> PairReflectionExtraction {
     let mut candidates = Vec::new();
+    let mut discarded = Vec::new();
     for value in &summary.decisions_made {
         push_candidate(
             &mut candidates,
@@ -168,37 +198,36 @@ fn candidates_from_summary(summary: &RuntimeIterativeSummary) -> Vec<PairReflect
             "Pair reflection constraint",
         );
     }
-    for value in &summary.artifact_refs {
-        push_candidate(
-            &mut candidates,
-            "artifact",
-            value,
-            "Pair reflection artifact",
-        );
-    }
     for value in &summary.active_user_goals {
-        push_candidate(&mut candidates, "goal", value, "Pair reflection goal");
+        push_goal_candidate(&mut candidates, &mut discarded, value);
     }
     for value in &summary.workflow_state_refs {
-        push_candidate(
-            &mut candidates,
+        push_discard(
+            &mut discarded,
             "workflow_state",
+            "transient_workflow_state",
             value,
-            "Pair reflection workflow state",
+        );
+    }
+    for value in &summary.artifact_refs {
+        push_discard(
+            &mut discarded,
+            "artifact",
+            "reference_without_semantic_claim",
+            value,
         );
     }
     for value in &summary.unresolved_followups {
-        push_candidate(
-            &mut candidates,
-            "followup",
-            value,
-            "Pair reflection follow-up",
-        );
+        push_discard(&mut discarded, "followup", "transient_followup", value);
     }
-    // ponytail: pair reflection v1 promotes every non-empty summary bucket to a proposal,
-    // with transient buckets routed to human review. Ceiling: noisy summaries create noisy
-    // proposals; upgrade path is model-assisted scoring with source turn refs.
-    candidates
+    // ponytail: extraction v2 only trusts summary buckets that already encode a durable
+    // semantic claim. Ceiling: artifact refs and unresolved follow-ups can contain real
+    // memories; upgrade path is source-turn-aware/model-assisted extraction instead of
+    // bucket promotion.
+    PairReflectionExtraction {
+        candidates,
+        discarded,
+    }
 }
 
 fn push_candidate(
@@ -216,15 +245,73 @@ fn push_candidate(
         kind,
         text: text.to_string(),
         title: format!("{title_prefix}: {}", truncate_chars(text, 80)),
-        suggested_action: if kind == "constraint" || kind == "decision" {
-            "retain_profile_local"
-        } else {
-            "human_review"
-        },
+        suggested_action: "retain_profile_local",
         target_ref: None,
         sensitivity,
         requires_human: sensitivity != "normal",
+        confidence: "high",
     });
+}
+
+fn push_goal_candidate(
+    candidates: &mut Vec<PairReflectionCandidate>,
+    discarded: &mut Vec<PairReflectionDiscard>,
+    value: &str,
+) {
+    let text = value.trim();
+    if text.is_empty() {
+        return;
+    }
+    if !looks_durable_goal(text) {
+        push_discard(discarded, "goal", "transient_goal", text);
+        return;
+    }
+    let sensitivity = sensitivity_for_text(text);
+    candidates.push(PairReflectionCandidate {
+        kind: "goal",
+        text: text.to_string(),
+        title: format!("Pair reflection goal: {}", truncate_chars(text, 80)),
+        suggested_action: "retain_profile_local",
+        target_ref: None,
+        sensitivity,
+        requires_human: sensitivity != "normal",
+        confidence: "medium",
+    });
+}
+
+fn push_discard(
+    discarded: &mut Vec<PairReflectionDiscard>,
+    kind: &'static str,
+    reason: &'static str,
+    value: &str,
+) {
+    let text = value.trim();
+    if text.is_empty() {
+        return;
+    }
+    discarded.push(PairReflectionDiscard {
+        kind,
+        reason,
+        text: text.to_string(),
+    });
+}
+
+fn looks_durable_goal(text: &str) -> bool {
+    let haystack = text.to_ascii_lowercase();
+    contains_any(
+        &haystack,
+        &[
+            "remember",
+            "durable",
+            "long-term",
+            "long term",
+            "ongoing",
+            "always",
+            "prefer",
+            "preference",
+            "policy",
+        ],
+    )
 }
 
 fn sensitivity_for_text(text: &str) -> &'static str {
@@ -287,21 +374,57 @@ mod tests {
     }
 
     #[test]
-    fn candidates_include_all_non_empty_summary_buckets() {
-        let candidates = candidates_from_summary(&summary());
+    fn extraction_keeps_only_durable_semantic_candidates() {
+        let extraction = extract_candidates_from_summary(&summary());
+        let candidates = extraction.candidates;
 
-        assert_eq!(candidates.len(), 6);
+        assert_eq!(candidates.len(), 2);
         assert!(candidates.iter().any(|c| c.kind == "decision"));
         assert!(candidates.iter().any(|c| c.kind == "constraint"));
-        assert!(candidates.iter().any(|c| c.kind == "artifact"));
-        assert!(candidates.iter().any(|c| c.kind == "goal"));
-        assert!(candidates.iter().any(|c| c.kind == "workflow_state"));
-        assert!(candidates.iter().any(|c| c.kind == "followup"));
+        assert_eq!(extraction.discarded.len(), 4);
+        assert!(extraction
+            .discarded
+            .iter()
+            .any(|d| d.kind == "followup" && d.reason == "transient_followup"));
+        assert!(extraction
+            .discarded
+            .iter()
+            .any(|d| d.kind == "artifact" && d.reason == "reference_without_semantic_claim"));
+    }
+
+    #[test]
+    fn extraction_discards_assistant_reply_like_followups() {
+        let summary = RuntimeIterativeSummary {
+            unresolved_followups: vec![
+                "Yeah, that sounds plausible — and the symptom chain makes sense".to_string(),
+            ],
+            ..RuntimeIterativeSummary::default()
+        };
+        let extraction = extract_candidates_from_summary(&summary);
+
+        assert!(extraction.candidates.is_empty());
+        assert_eq!(extraction.discarded[0].reason, "transient_followup");
+    }
+
+    #[test]
+    fn extraction_keeps_explicit_durable_goals() {
+        let summary = RuntimeIterativeSummary {
+            active_user_goals: vec![
+                "Remember the user's preference for ADR-first memory extraction.".to_string(),
+            ],
+            ..RuntimeIterativeSummary::default()
+        };
+        let extraction = extract_candidates_from_summary(&summary);
+        let candidates = extraction.candidates;
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].kind, "goal");
+        assert_eq!(candidates[0].confidence, "medium");
     }
 
     #[test]
     fn candidates_route_pair_decisions_to_profile_local_review() {
-        let candidates = candidates_from_summary(&summary());
+        let candidates = extract_candidates_from_summary(&summary()).candidates;
         let decision = candidates.iter().find(|c| c.kind == "decision").unwrap();
 
         assert_eq!(decision.suggested_action, "retain_profile_local");
@@ -315,7 +438,8 @@ mod tests {
             decisions_made: vec!["The user prefers not to share the API key.".to_string()],
             ..RuntimeIterativeSummary::default()
         };
-        let candidates = candidates_from_summary(&summary);
+        let extraction = extract_candidates_from_summary(&summary);
+        let candidates = extraction.candidates;
 
         assert_eq!(candidates[0].sensitivity, "secret_risk");
         assert!(candidates[0].requires_human);

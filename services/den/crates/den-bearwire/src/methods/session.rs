@@ -115,6 +115,8 @@ async fn reflect_pair_session(
         "trigger": trigger,
         "skipped_reason": output.skipped_reason,
         "candidate_count": output.candidate_count,
+        "discarded_count": output.discarded_count,
+        "discarded_reasons": output.discarded_reasons,
         "dropped_followup_count": output.dropped_followup_count,
         "proposal_ids": output.created_proposal_ids,
         "source_message_start_seq": output.source_message_start_seq,

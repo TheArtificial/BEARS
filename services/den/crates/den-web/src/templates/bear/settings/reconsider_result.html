@@ -21,12 +21,16 @@
   <dt>Source messages</dt>
   <dd>{% if result.source_message_start_seq is not none and result.source_message_end_seq is not none %}#{{ result.source_message_start_seq }}–#{{ result.source_message_end_seq }}{% else %}<em>none</em>{% endif %}</dd>
   <dt>Candidates</dt>
-  <dd>{{ result.candidate_count }} candidate(s); {{ result.dropped_followup_count }} follow-up bucket item(s)</dd>
+  <dd>{{ result.candidate_count }} candidate(s); {{ result.discarded_count }} discarded item(s); {{ result.dropped_followup_count }} follow-up bucket item(s)</dd>
   <dt>Proposals created</dt>
   <dd>{{ result.proposals_created }}</dd>
   <dt>Reflection event</dt>
   <dd>{% if result.reflection_event_id %}<code>{{ result.reflection_event_id }}</code>{% if result.reflection_event_sequence_no is not none %} · sequence #{{ result.reflection_event_sequence_no }}{% endif %}{% else %}<em>not recorded</em>{% endif %}</dd>
 </dl>
+
+{% if result.discarded_reasons and result.discarded_reasons | length > 0 %}
+<p class="form-hint">Discarded reasons: {% for reason in result.discarded_reasons %}<code>{{ reason | e }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+{% endif %}
 
 {% if result.proposal_ids and result.proposal_ids | length > 0 %}
 <h3>Memory proposals</h3>
