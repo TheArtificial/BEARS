@@ -49,8 +49,20 @@ fn render_objective_orientation_context(orientation: &ObjectiveOrientation) -> S
                 .as_ref()
                 .and_then(|task| serde_json::to_string(task).ok())
                 .unwrap_or_else(|| "null".to_string());
+            let task_guidance = if job.active_task_ref.is_some() {
+                "advancing the active task"
+            } else if job.mutable {
+                "choosing or creating the next concrete task"
+            } else {
+                "choosing the next existing concrete task"
+            };
+            let structure_guidance = if job.mutable {
+                "Add child tasks when useful."
+            } else {
+                "Do not create or restructure tasks unless explicitly asked."
+            };
             format!(
-                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=focused job_id={} job_mutable={} active_task_ref={active_task_ref}. Your top priority is to complete the Docket Job. Continue through the active task. Child tasks may be added when useful unless the Job is immutable.\n</system-reminder>",
+                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=focused job_id={} job_mutable={} active_task_ref={active_task_ref}. Keep working toward the Job's completion criteria by {task_guidance}. Do not claim Job completion until criteria are met. Ask only necessary clarifying questions; otherwise proceed within the Job boundary. {structure_guidance}\n</system-reminder>",
                 job.job_id,
                 job.mutable
             )
@@ -124,6 +136,7 @@ pub async fn assemble_den_owned_runtime_supplement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_loop::{JobOrientation, OrientationTaskRef};
 
     #[test]
     fn runtime_context_already_includes_den_owned_blocks_detects_compaction() {
@@ -133,5 +146,47 @@ mod tests {
         assert!(!runtime_context_already_includes_den_owned_blocks(
             "plain runtime notes"
         ));
+    }
+
+    #[test]
+    fn focused_guidance_branches_on_active_task_and_mutability() {
+        let active_task = OrientationTaskRef::DocketTask {
+            job_id: Some("job-1".to_string()),
+            task_id: "task-1".to_string(),
+            title: Some("Do it".to_string()),
+        };
+
+        let active_mutable = render_objective_orientation_context(&ObjectiveOrientation::Focused {
+            job: JobOrientation {
+                job_id: "job-1".to_string(),
+                active_task_ref: Some(active_task),
+                mutable: true,
+            },
+        });
+        assert!(active_mutable.contains("by advancing the active task"));
+        assert!(active_mutable.contains("Add child tasks when useful."));
+        assert!(!active_mutable.contains("If active_task_ref"));
+
+        let no_active_mutable = render_objective_orientation_context(&ObjectiveOrientation::Focused {
+            job: JobOrientation {
+                job_id: "job-1".to_string(),
+                active_task_ref: None,
+                mutable: true,
+            },
+        });
+        assert!(no_active_mutable.contains("by choosing or creating the next concrete task"));
+        assert!(no_active_mutable.contains("Add child tasks when useful."));
+
+        let no_active_immutable =
+            render_objective_orientation_context(&ObjectiveOrientation::Focused {
+                job: JobOrientation {
+                    job_id: "job-1".to_string(),
+                    active_task_ref: None,
+                    mutable: false,
+                },
+            });
+        assert!(no_active_immutable.contains("by choosing the next existing concrete task"));
+        assert!(no_active_immutable
+            .contains("Do not create or restructure tasks unless explicitly asked."));
     }
 }
