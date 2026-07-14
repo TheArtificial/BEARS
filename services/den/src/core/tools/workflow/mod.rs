@@ -409,6 +409,7 @@ pub(crate) async fn get_task_list_status(
         "domain": "activity",
         "bear_id": context.bear_id,
         "viewer_role": role.as_str(),
+        "content": task_list.as_ref().map(task_list_card_content).unwrap_or_else(|| summary.clone()),
         "summary": summary,
         "found": task_list.is_some(),
         "count": tasks.len(),
@@ -742,6 +743,36 @@ fn docket_tasks_summary(tasks: &[docket::DocketTaskProjection]) -> String {
     }
 }
 
+fn docket_tasks_card_content(tasks: &[docket::DocketTaskProjection]) -> String {
+    if tasks.is_empty() {
+        return "No Docket tasks matched the filters.".to_string();
+    }
+    let counts = docket_task_counts(tasks);
+    let mut lines = vec![format!(
+        "Found {}.",
+        count_label(tasks.len(), "Docket task", "Docket tasks")
+    )];
+    lines.push(format!(
+        "Status: {} pending, {} in progress, {} done, {} blocked, {} cancelled.",
+        counts["pending"],
+        counts["in_progress"],
+        counts["done"],
+        counts["blocked"],
+        counts["cancelled"]
+    ));
+    for task in tasks.iter().take(5) {
+        lines.push(format!(
+            "- {} — {}",
+            task.task.title,
+            human_task_status_label(task_projection_status(task))
+        ));
+    }
+    if tasks.len() > 5 {
+        lines.push(format!("…and {} more.", tasks.len() - 5));
+    }
+    lines.join("\n")
+}
+
 fn docket_task_counts(tasks: &[docket::DocketTaskProjection]) -> Value {
     let mut pending = 0usize;
     let mut in_progress = 0usize;
@@ -774,6 +805,26 @@ fn task_list_summary(task_list: &TaskListProjection) -> String {
         task_list.status,
         count_label(task_list.items.len(), "item", "items")
     )
+}
+
+fn task_list_card_content(task_list: &TaskListProjection) -> String {
+    let counts = task_list_item_counts(task_list);
+    let mut lines = vec![task_list_summary(task_list)];
+    lines.push(format!(
+        "Items: {} pending, {} in progress, {} completed, {} blocked, {} cancelled.",
+        counts["pending"],
+        counts["in_progress"],
+        counts["completed"],
+        counts["blocked"],
+        counts["cancelled"]
+    ));
+    if task_list.status == "planned" {
+        lines.push("Execution has not started.".to_string());
+    }
+    if let Some(item) = &task_list.current_item {
+        lines.push(format!("Current item: {} — {}.", item.title, item.status));
+    }
+    lines.join("\n")
 }
 
 fn task_list_item_counts(task_list: &TaskListProjection) -> Value {
@@ -1266,6 +1317,7 @@ pub(crate) async fn create_task(
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
+        "content": summary,
         "summary": summary,
         "task": task,
         "task_list": task_list,
@@ -1303,9 +1355,11 @@ pub(crate) async fn list_tasks(
             },
         )
         .await?;
+    let content = docket_tasks_card_content(&tasks);
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
+        "content": content,
         "summary": docket_tasks_summary(&tasks),
         "count": tasks.len(),
         "counts": docket_task_counts(&tasks),
@@ -1659,6 +1713,58 @@ mod test {
             },
             run_state: None,
         }
+    }
+
+    #[test]
+    fn docket_tasks_card_content_includes_counts_and_titles() {
+        let mut task = task_projection(Uuid::new_v4(), None);
+        task.task.title = "Improve cards".to_string();
+        let content = docket_tasks_card_content(&[task]);
+
+        assert!(content.contains("Found 1 Docket task."));
+        assert!(content.contains("1 pending"));
+        assert!(content.contains("Improve cards"));
+    }
+
+    #[test]
+    fn task_list_card_content_marks_planned_lists_as_not_started() {
+        let now = time::OffsetDateTime::now_utc();
+        let item = den_docket::TaskListItem {
+            id: "item-1".to_string(),
+            title: "Review plan".to_string(),
+            summary: None,
+            status: den_docket::TaskListItemStatus::Pending,
+            blocked_reason: None,
+            source_ref: den_docket::TaskListSourceRef::local(vec!["local:item-1".to_string()]),
+            sync_state: den_docket::TaskListSyncState::Clean,
+        };
+        let task_list = TaskListProjection {
+            id: Uuid::new_v4(),
+            bear_id: Uuid::nil(),
+            title: "Session tasks".to_string(),
+            summary: "Tasks anchored to the current client session".to_string(),
+            owner_profile: "pair".to_string(),
+            visibility: "private_to_profile".to_string(),
+            status: "planned".to_string(),
+            version: 1,
+            source_ref: den_docket::TaskListSourceRef::local(vec![
+                "session_anchor:test".to_string()
+            ]),
+            items: vec![item.clone()],
+            current_item: Some(item),
+            source_conversation_id: None,
+            source_client_session_id: None,
+            handoff_intent_path: None,
+            handoff_task_id: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let content = task_list_card_content(&task_list);
+
+        assert!(content.contains("Task list 'Session tasks' is planned"));
+        assert!(content.contains("1 pending"));
+        assert!(content.contains("Execution has not started."));
+        assert!(content.contains("Review plan"));
     }
 
     mod state_tests {
