@@ -135,7 +135,8 @@ pub async fn run_compaction_job(
     }
 
     let runtime_trigger = trigger.as_runtime_trigger();
-    let prior_summary = if mode == CompactionMode::Active {
+    let persist_artifact = should_persist_compaction_artifact(mode, &runtime_trigger);
+    let prior_summary = if persist_artifact {
         artifact_store::load_latest_iterative_summary(pool, bear_id, conversation_id).await?
     } else {
         None
@@ -191,7 +192,7 @@ pub async fn run_compaction_job(
                 artifact_ref,
             );
 
-            let (cutoff, context) = if mode == CompactionMode::Active {
+            let (cutoff, context) = if persist_artifact {
                 let compacted_groups =
                     &groups[decision.selected_group_start..=decision.selected_group_end];
                 let summary = summarize_compacted_groups(
@@ -410,6 +411,14 @@ async fn latest_compaction_event_or_placeholder(
     ))
 }
 
+fn should_persist_compaction_artifact(
+    mode: CompactionMode,
+    trigger: &RuntimeCompactionTriggerKind,
+) -> bool {
+    mode == CompactionMode::Active
+        || matches!(trigger, RuntimeCompactionTriggerKind::ConversationReview)
+}
+
 fn estimate_transcript_chars(rows: &[super::TranscriptGroupingRow]) -> usize {
     rows.iter()
         .map(|row| row.content_text.chars().count())
@@ -456,6 +465,22 @@ mod tests {
         assert_eq!(CompactionTiming::parse("async"), CompactionTiming::Async);
         assert_eq!(CompactionTiming::parse(""), CompactionTiming::Async);
         assert_eq!(CompactionTiming::parse("sync"), CompactionTiming::Sync);
+    }
+
+    #[test]
+    fn conversation_review_persists_artifact_even_in_observe_mode() {
+        assert!(should_persist_compaction_artifact(
+            CompactionMode::Observe,
+            &RuntimeCompactionTriggerKind::ConversationReview
+        ));
+        assert!(!should_persist_compaction_artifact(
+            CompactionMode::Observe,
+            &RuntimeCompactionTriggerKind::Manual
+        ));
+        assert!(should_persist_compaction_artifact(
+            CompactionMode::Active,
+            &RuntimeCompactionTriggerKind::Manual
+        ));
     }
 
     #[test]

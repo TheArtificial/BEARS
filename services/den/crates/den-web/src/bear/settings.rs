@@ -3280,7 +3280,7 @@ async fn reflect_persisted_conversation(
         bear.id,
         conversation_external_id,
         BearProfile::Pair,
-        TurnCompactionTrigger::Manual,
+        TurnCompactionTrigger::ConversationReview,
     )
     .await?;
     let compaction_status = compaction_state.as_ref().map(|state| &state.event.status);
