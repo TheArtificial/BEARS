@@ -103,7 +103,10 @@ impl AgentLoopSession {
             .map(|item| item.title.clone())
             .or_else(|| orientation_active_task_title(&self.objective_orientation));
         let task_focus_active = self.active_activity_plan.is_some()
-            || !matches!(self.objective_orientation, ObjectiveOrientation::Freeform { .. });
+            || !matches!(
+                self.objective_orientation,
+                ObjectiveOrientation::Freeform { .. }
+            );
         json!({
             "schema": "den.runtime_state.v1",
             "state": "active",
@@ -507,7 +510,10 @@ mod tests {
             "Ship the smallest slice"
         );
         assert_eq!(snapshot["docket"]["active_task_id"], "task-456");
-        assert_eq!(snapshot["docket"]["active_task_title"], "Ship the smallest slice");
+        assert_eq!(
+            snapshot["docket"]["active_task_title"],
+            "Ship the smallest slice"
+        );
         assert_eq!(snapshot["docket"]["source"], "objective_orientation");
     }
 }

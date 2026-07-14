@@ -178,11 +178,8 @@ pub fn render_managed_role_prompt_with_registry(
         })
         .unwrap_or_else(|| profile.role_contracts.get(role).trim().to_string());
     let role_contract_key = managed_space_block_key(role);
-    let role_contract = render_compile_time_text(
-        &role_contract_key,
-        &role_contract,
-        &compile_context,
-    )?;
+    let role_contract =
+        render_compile_time_text(&role_contract_key, &role_contract, &compile_context)?;
 
     let user_steering = render_compile_time_text(
         "context_profile.user_steering",

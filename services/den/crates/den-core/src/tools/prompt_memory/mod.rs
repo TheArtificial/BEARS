@@ -142,14 +142,14 @@ pub async fn prompt_memory_upsert(
         0
     };
     store.upsert_block(&write).await?;
-    let superseded_archived = if let Some(supersedes_block_id) = write.supersedes_block_id.as_deref()
-    {
-        store
-            .archive_superseded_by(bear_id, role.as_str(), supersedes_block_id)
-            .await?
-    } else {
-        0
-    };
+    let superseded_archived =
+        if let Some(supersedes_block_id) = write.supersedes_block_id.as_deref() {
+            store
+                .archive_superseded_by(bear_id, role.as_str(), supersedes_block_id)
+                .await?
+        } else {
+            0
+        };
     Ok(json!({
         "status": "ok",
         "block_id": write.block_id,

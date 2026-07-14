@@ -199,21 +199,66 @@ struct PermissionDecisionDescriptor {
 }
 
 const PERMISSION_DECISION_DESCRIPTORS: [PermissionDecisionDescriptor; 15] = [
-    PermissionDecisionDescriptor { raw: "approved", normalized: "granted" },
-    PermissionDecisionDescriptor { raw: "approve", normalized: "granted" },
-    PermissionDecisionDescriptor { raw: "granted", normalized: "granted" },
-    PermissionDecisionDescriptor { raw: "allow", normalized: "granted" },
-    PermissionDecisionDescriptor { raw: "allow_once", normalized: "granted" },
-    PermissionDecisionDescriptor { raw: "allow_site_account", normalized: "granted" },
-    PermissionDecisionDescriptor { raw: "allow_host", normalized: "granted" },
-    PermissionDecisionDescriptor { raw: "denied", normalized: "denied" },
-    PermissionDecisionDescriptor { raw: "deny", normalized: "denied" },
-    PermissionDecisionDescriptor { raw: "rejected", normalized: "denied" },
-    PermissionDecisionDescriptor { raw: "reject", normalized: "denied" },
-    PermissionDecisionDescriptor { raw: "reject_once", normalized: "denied" },
-    PermissionDecisionDescriptor { raw: "reject_always", normalized: "denied" },
-    PermissionDecisionDescriptor { raw: "timeout", normalized: "expired" },
-    PermissionDecisionDescriptor { raw: "timed_out", normalized: "expired" },
+    PermissionDecisionDescriptor {
+        raw: "approved",
+        normalized: "granted",
+    },
+    PermissionDecisionDescriptor {
+        raw: "approve",
+        normalized: "granted",
+    },
+    PermissionDecisionDescriptor {
+        raw: "granted",
+        normalized: "granted",
+    },
+    PermissionDecisionDescriptor {
+        raw: "allow",
+        normalized: "granted",
+    },
+    PermissionDecisionDescriptor {
+        raw: "allow_once",
+        normalized: "granted",
+    },
+    PermissionDecisionDescriptor {
+        raw: "allow_site_account",
+        normalized: "granted",
+    },
+    PermissionDecisionDescriptor {
+        raw: "allow_host",
+        normalized: "granted",
+    },
+    PermissionDecisionDescriptor {
+        raw: "denied",
+        normalized: "denied",
+    },
+    PermissionDecisionDescriptor {
+        raw: "deny",
+        normalized: "denied",
+    },
+    PermissionDecisionDescriptor {
+        raw: "rejected",
+        normalized: "denied",
+    },
+    PermissionDecisionDescriptor {
+        raw: "reject",
+        normalized: "denied",
+    },
+    PermissionDecisionDescriptor {
+        raw: "reject_once",
+        normalized: "denied",
+    },
+    PermissionDecisionDescriptor {
+        raw: "reject_always",
+        normalized: "denied",
+    },
+    PermissionDecisionDescriptor {
+        raw: "timeout",
+        normalized: "expired",
+    },
+    PermissionDecisionDescriptor {
+        raw: "timed_out",
+        normalized: "expired",
+    },
 ];
 
 impl PermissionDecisionInput {

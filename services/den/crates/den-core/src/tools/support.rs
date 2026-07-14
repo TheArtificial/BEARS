@@ -518,7 +518,8 @@ impl ConfirmationToken {
         category: &str,
     ) -> String {
         let expires_at_secs = current_unix_secs().saturating_add(Self::TTL_SECS);
-        let payload_hash = memory_confirmation_payload_hash(args, context, category, expires_at_secs);
+        let payload_hash =
+            memory_confirmation_payload_hash(args, context, category, expires_at_secs);
         Self {
             category: category.to_string(),
             expires_at_secs,

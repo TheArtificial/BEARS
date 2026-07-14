@@ -160,7 +160,10 @@ fn conversation_review_creates_summary_decision_below_pressure_threshold() {
     .expect("conversation review should summarize eligible history below pressure threshold");
 
     assert_eq!(decision.selected_group_start, 0);
-    assert_eq!(decision.selected_group_end, groups.len() - policy.protected_recent_group_count - 1);
+    assert_eq!(
+        decision.selected_group_end,
+        groups.len() - policy.protected_recent_group_count - 1
+    );
 }
 
 #[test]

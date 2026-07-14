@@ -898,16 +898,28 @@ pub async fn list_messages_page(
     rows.into_iter()
         .map(|row| {
             Ok(PersistedConversationMessage {
-                sequence_no: row.try_get("sequence_no").map_err(db_decode("message sequence_no"))?,
-                message_type: row.try_get("message_type").map_err(db_decode("message message_type"))?,
+                sequence_no: row
+                    .try_get("sequence_no")
+                    .map_err(db_decode("message sequence_no"))?,
+                message_type: row
+                    .try_get("message_type")
+                    .map_err(db_decode("message message_type"))?,
                 role: row.try_get("role").map_err(db_decode("message role"))?,
-                visibility: row.try_get("visibility").map_err(db_decode("message visibility"))?,
-                content_text: row.try_get("content_text").map_err(db_decode("message content_text"))?,
-                content_json: row.try_get("content_json").map_err(db_decode("message content_json"))?,
+                visibility: row
+                    .try_get("visibility")
+                    .map_err(db_decode("message visibility"))?,
+                content_text: row
+                    .try_get("content_text")
+                    .map_err(db_decode("message content_text"))?,
+                content_json: row
+                    .try_get("content_json")
+                    .map_err(db_decode("message content_json"))?,
                 provider_message_id: row
                     .try_get("provider_message_id")
                     .map_err(db_decode("message provider_message_id"))?,
-                created_at: row.try_get("created_at").map_err(db_decode("message created_at"))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(db_decode("message created_at"))?,
             })
         })
         .collect()
@@ -945,7 +957,8 @@ pub async fn append_message(
         .bind(source_event_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(db_err("lookup conversation message source_event_id"))? {
+        .map_err(db_err("lookup conversation message source_event_id"))?
+        {
             rollback_append_message_tx(tx).await?;
             return Ok(existing_sequence_no);
         }
@@ -1035,7 +1048,9 @@ pub async fn append_message(
         if let Some(existing_sequence_no) = duplicate_sequence_no {
             return Ok(existing_sequence_no);
         }
-        return Err(DenError::Database(format!("append conversation message: {err}")));
+        return Err(DenError::Database(format!(
+            "append conversation message: {err}"
+        )));
     }
 
     tx.commit()

@@ -73,13 +73,13 @@ fn render_objective_orientation_context(
             let task_ref = serde_json::to_string(&task.task_ref)
                 .unwrap_or_else(|_| "{\"kind\":\"unknown\"}".to_string());
             let decomposition_guidance = ORIENTED_DECOMPOSITION_GUIDANCE
-                .replace("{max_children}", &task.child_policy.max_children.to_string())
+                .replace(
+                    "{max_children}",
+                    &task.child_policy.max_children.to_string(),
+                )
                 .replace(
                     "{max_depth}",
-                    &task
-                        .child_policy
-                        .max_depth_below_oriented_task
-                        .to_string(),
+                    &task.child_policy.max_depth_below_oriented_task.to_string(),
                 );
             system_reminder(format!(
                 "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=oriented task_ref={task_ref}. {ORIENTED_TASK_GUIDANCE} {decomposition_guidance}"
