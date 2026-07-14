@@ -468,7 +468,13 @@ pub fn evaluate_turn_budget(
     };
 
     let warning = if stop_reason.is_none() {
-        budget_warning(policy, step, elapsed_ms, &next_state, stop_candidate.as_ref())
+        budget_warning(
+            policy,
+            step,
+            elapsed_ms,
+            &next_state,
+            stop_candidate.as_ref(),
+        )
     } else {
         None
     };

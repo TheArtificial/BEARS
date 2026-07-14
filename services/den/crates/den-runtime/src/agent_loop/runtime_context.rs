@@ -121,7 +121,11 @@ fn render_objective_orientation_context(
             } else {
                 FOCUSED_IMMUTABLE_STRUCTURE_GUIDANCE
             };
-            let task_definition_tools = if job.mutable { "available" } else { "unavailable" };
+            let task_definition_tools = if job.mutable {
+                "available"
+            } else {
+                "unavailable"
+            };
             system_reminder(format!(
                 "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=focused job_id={} job_mutable={} task_definition_tools={task_definition_tools} active_task_ref={active_task_ref}. {FOCUSED_JOB_PROGRESS_GUIDANCE_PREFIX} {task_guidance}. {FOCUSED_COMPLETION_GUIDANCE} {structure_guidance}",
                 job.job_id,
@@ -240,9 +244,8 @@ mod tests {
         );
         assert!(!pair_closed.contains("Pair task-orientation hint"));
         assert!(pair_closed.contains("task_definition_tools=unavailable"));
-        assert!(pair_closed.contains(
-            "Task-definition tools are unavailable in closed freeform orientation"
-        ));
+        assert!(pair_closed
+            .contains("Task-definition tools are unavailable in closed freeform orientation"));
     }
 
     #[test]
@@ -292,9 +295,8 @@ mod tests {
         );
         assert!(no_active_immutable.contains("by choosing the next existing concrete task"));
         assert!(no_active_immutable.contains("task_definition_tools=unavailable"));
-        assert!(no_active_immutable.contains(
-            "Task-definition edits are unavailable while focused job_mutable=false"
-        ));
+        assert!(no_active_immutable
+            .contains("Task-definition edits are unavailable while focused job_mutable=false"));
     }
 
     #[test]

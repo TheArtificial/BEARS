@@ -563,6 +563,12 @@ impl SessionTrackingStream {
         }
     }
 
+    fn budget_finalization_grace_used(&self) -> bool {
+        self.store
+            .get(&self.session_key)
+            .is_some_and(|session| session.turn_budget_state.budget_finalization_grace_used)
+    }
+
     fn parse_checkpoint_response_text(text: &str) -> Result<RuntimeCheckpointResponse, DenError> {
         let trimmed = text.trim();
         let json_text = if let Some(rest) = trimmed.strip_prefix("```json") {
@@ -1211,11 +1217,15 @@ impl Stream for SessionTrackingStream {
                     .store
                     .get(&self.session_key)
                     .and_then(|session| session.active_activity_plan);
-                if !should_allow_terminal_response_for_task_list(
-                    self.profile,
-                    active_activity_plan.as_ref(),
-                    &self.assistant_text,
-                ) {
+                // ponytail: budget landing beats autonomous task-focus continuation; upgrade by
+                // tracking an explicit finalization-mode reason instead of this budget-state bit.
+                if !self.budget_finalization_grace_used()
+                    && !should_allow_terminal_response_for_task_list(
+                        self.profile,
+                        active_activity_plan.as_ref(),
+                        &self.assistant_text,
+                    )
+                {
                     let recent_texts = self
                         .store
                         .get(&self.session_key)
