@@ -398,9 +398,9 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
-            session_id: None,
+            session_id: Some("pair-integration-session".to_string()),
             source_conversation_id: None,
-            source_client_session_id: None,
+            source_client_session_id: Some("pair-integration-session".to_string()),
         })
         .await
         .expect("execute second");
@@ -431,9 +431,9 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
-            session_id: None,
+            session_id: Some("pair-integration-session".to_string()),
             source_conversation_id: None,
-            source_client_session_id: None,
+            source_client_session_id: Some("pair-integration-session".to_string()),
         })
         .await
         .expect("blocked before criteria");
@@ -463,9 +463,9 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
             actor_agent_id: None,
-            session_id: None,
+            session_id: Some("pair-integration-session".to_string()),
             source_conversation_id: None,
-            source_client_session_id: None,
+            source_client_session_id: Some("pair-integration-session".to_string()),
         })
         .await
         .expect("complete job");
@@ -475,6 +475,19 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         completed.job.current_run.as_ref().unwrap().state,
         "completed"
     );
+    let stale_execution = service
+        .get_active_execution_session(
+            bear_id,
+            BearProfile::Pair,
+            DocketExecutionLookup {
+                session_id: None,
+                source_conversation_id: None,
+                source_client_session_id: Some("pair-integration-session".to_string()),
+            },
+        )
+        .await
+        .expect("lookup stale execution");
+    assert!(stale_execution.is_none());
 }
 
 #[tokio::test]

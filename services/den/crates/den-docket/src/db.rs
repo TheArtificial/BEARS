@@ -854,6 +854,50 @@ fn execution_session_id(request: &DocketJobExecuteRequest) -> Option<String> {
     execution_session_ref(request).map(ExecutionSessionRef::into_session_id)
 }
 
+fn execution_session_state_is_active_like(state: &str) -> bool {
+    matches!(state, "active" | "blocked" | "completing" | "paused")
+}
+
+async fn retire_active_execution_session(
+    pool: &PgPool,
+    request: &DocketJobExecuteRequest,
+    session_id: &str,
+    run_id: Uuid,
+    task_id: Option<Uuid>,
+    state: &str,
+) -> Result<bool, DenError> {
+    // ponytail: one execution session can have at most one active-like row today via the partial
+    // unique index; update all matching rows anyway so future repair/backfill duplicates clear too.
+    let result = sqlx::query(
+        r"
+        UPDATE docket_execution_sessions
+        SET source_conversation_id = $4,
+            source_client_session_id = $5,
+            job_id = $6,
+            run_id = $7,
+            task_id = $8,
+            state = $9,
+            updated_at = NOW()
+        WHERE bear_id = $1
+          AND owner_profile = $2
+          AND session_id = $3
+          AND state IN ('active', 'blocked', 'completing', 'paused')
+        ",
+    )
+    .bind(request.bear_id)
+    .bind(request.actor_role.as_str())
+    .bind(session_id)
+    .bind(request.source_conversation_id.as_ref())
+    .bind(request.source_client_session_id.as_ref())
+    .bind(request.job_id)
+    .bind(run_id)
+    .bind(task_id)
+    .bind(state)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 async fn record_execution_session(
     pool: &PgPool,
     request: &DocketJobExecuteRequest,
@@ -864,21 +908,28 @@ async fn record_execution_session(
     let Some(session_id) = execution_session_id(request) else {
         return Ok(());
     };
-    upsert_execution_session(
-        pool,
-        DocketExecutionSessionUpsert {
-            bear_id: request.bear_id,
-            owner_profile: request.actor_role,
-            session_id: session_id.clone(),
-            source_conversation_id: request.source_conversation_id.clone(),
-            source_client_session_id: request.source_client_session_id.clone(),
-            job_id: request.job_id,
-            run_id,
-            task_id,
-            state: state.to_string(),
-        },
-    )
-    .await?;
+    let retired_active = if execution_session_state_is_active_like(state) {
+        false
+    } else {
+        retire_active_execution_session(pool, request, &session_id, run_id, task_id, state).await?
+    };
+    if !retired_active {
+        upsert_execution_session(
+            pool,
+            DocketExecutionSessionUpsert {
+                bear_id: request.bear_id,
+                owner_profile: request.actor_role,
+                session_id: session_id.clone(),
+                source_conversation_id: request.source_conversation_id.clone(),
+                source_client_session_id: request.source_client_session_id.clone(),
+                job_id: request.job_id,
+                run_id,
+                task_id,
+                state: state.to_string(),
+            },
+        )
+        .await?;
+    }
     sqlx::query(
         r"
         INSERT INTO bear_job_events (job_id, run_id, event_type, task_id, by_role, by_agent_id, by_user_id, payload)
