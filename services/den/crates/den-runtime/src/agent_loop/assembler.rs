@@ -1,8 +1,9 @@
 use den_core::config::Config;
 use den_core::DenError;
 use den_docket::{
-    DocketExecutionLookup, DocketService, PgDocketService, TaskListCheckoutRequest,
-    TaskListCheckoutSource, TaskListProjection,
+    task_list_projection_from_session_tasks, DocketExecutionLookup, DocketService,
+    DocketTaskListFilter, PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource,
+    TaskListProjection,
 };
 use den_memory::MemoryStoreManager;
 use den_service::bears::{
@@ -104,29 +105,56 @@ async fn load_active_activity_plan(
         return Ok(None);
     };
     let service = PgDocketService::from_pool(ctx.pool);
-    let Some(execution) = service
+    if let Some(execution) = service
         .get_active_execution_session(
             ctx.bear_id,
             ctx.profile,
             active_execution_lookup(ctx.session_id, ctx.conversation_id),
         )
         .await?
-    else {
+    {
+        return service
+            .checkout_task_list(
+                ctx.bear_id,
+                ctx.profile,
+                user_id,
+                TaskListCheckoutRequest {
+                    source: TaskListCheckoutSource::DocketJob {
+                        job_id: execution.job_id,
+                        parent_task_id: None,
+                    },
+                },
+            )
+            .await;
+    }
+    load_session_anchored_activity_plan(ctx, &service).await
+}
+
+async fn load_session_anchored_activity_plan(
+    ctx: &AssembleTurnContext<'_>,
+    service: &PgDocketService,
+) -> Result<Option<TaskListProjection>, DenError> {
+    let Some(session_anchor_id) = ctx.session_id.and_then(|session_id| Uuid::parse_str(session_id).ok()) else {
         return Ok(None);
     };
-    service
-        .checkout_task_list(
+    let tasks = service
+        .list_tasks(
             ctx.bear_id,
-            ctx.profile,
-            user_id,
-            TaskListCheckoutRequest {
-                source: TaskListCheckoutSource::DocketJob {
-                    job_id: execution.job_id,
-                    parent_task_id: None,
-                },
+            DocketTaskListFilter {
+                session_anchor_id: Some(session_anchor_id),
+                include_descendants: false,
+                limit: 100,
+                ..DocketTaskListFilter::default()
             },
         )
-        .await
+        .await?;
+    Ok(task_list_projection_from_session_tasks(
+        ctx.bear_id,
+        ctx.profile,
+        ctx.conversation_id,
+        session_anchor_id,
+        &tasks,
+    ))
 }
 
 fn active_execution_lookup(

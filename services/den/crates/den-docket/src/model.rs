@@ -1359,6 +1359,46 @@ pub fn task_list_projection_from_docket_job(
     }
 }
 
+pub fn task_list_projection_from_session_tasks(
+    bear_id: Uuid,
+    owner_profile: BearProfile,
+    conversation_id: &str,
+    session_anchor_id: Uuid,
+    tasks: &[DocketTaskProjection],
+) -> Option<TaskListProjection> {
+    let first_task = tasks.first()?;
+    let items = tasks
+        .iter()
+        .map(|projection| {
+            task_list_item_from_docket_task(&projection.task, projection.run_state.as_ref())
+        })
+        .collect::<Vec<_>>();
+    let current_item = current_task_list_item(&items).cloned();
+    Some(TaskListProjection {
+        id: session_anchor_id,
+        bear_id,
+        title: "Session tasks".to_string(),
+        summary: "Tasks anchored to the current client session".to_string(),
+        owner_profile: owner_profile.as_str().to_string(),
+        visibility: "private_to_profile".to_string(),
+        status: "active".to_string(),
+        version: 1,
+        source_ref: TaskListSourceRef::local(vec![format!("session_anchor:{session_anchor_id}")]),
+        items,
+        current_item,
+        source_conversation_id: Some(conversation_id.to_string()),
+        source_client_session_id: Some(session_anchor_id.to_string()),
+        handoff_intent_path: None,
+        handoff_task_id: None,
+        created_at: first_task.task.created_at,
+        updated_at: tasks
+            .iter()
+            .map(|projection| projection.task.updated_at)
+            .max()
+            .unwrap_or(first_task.task.updated_at),
+    })
+}
+
 enum DocketSourceRef {
     Job(Uuid),
     ParentTask(Uuid),
