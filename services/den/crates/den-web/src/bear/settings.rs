@@ -103,6 +103,10 @@ pub fn router() -> Router<AppState> {
             "/bear/{slug}/conversations/{conversation_id}/reflect",
             post(reflect_conversation_post),
         )
+        .route_with_tsr(
+            "/bear/{slug}/conversations/{conversation_id}/reconsider",
+            post(reconsider_conversation_post),
+        )
         .route_with_tsr("/bear/{slug}/context", get(context_view))
         .route_with_tsr("/bear/{slug}/resources", get(policy_view))
         .route_with_tsr("/bear/{slug}/advanced", get(advanced_view))
@@ -221,12 +225,23 @@ struct ReflectConversationsForm {
     bulk_action: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 struct ManualReflectionResult {
     compaction_applied: bool,
     compaction_skipped: bool,
+    compaction_status: String,
+    compaction_diagnostic: Option<String>,
+    compaction_artifact_json: String,
+    candidate_count: usize,
+    dropped_followup_count: usize,
     proposals_created: usize,
+    proposal_ids: Vec<Uuid>,
     skipped_reason: Option<&'static str>,
+    source_message_start_seq: Option<i64>,
+    source_message_end_seq: Option<i64>,
+    reflection_event_id: Option<Uuid>,
+    reflection_event_sequence_no: Option<i64>,
+    reflection_payload_json: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3148,6 +3163,44 @@ async fn reflect_conversation_post(
     .into_response())
 }
 
+async fn reconsider_conversation_post(
+    Path((slug, conversation_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(b) => b,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let conv = conversation_persistence::get_conversation_by_id(state.sqlx_pool(), conversation_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("conversation not found".to_string()))?;
+    if conv.bear_id != bear.id {
+        return Err(CustomError::NotFound("conversation not found".to_string()));
+    }
+    let result = reflect_persisted_conversation(
+        &state,
+        auth_session.user.as_ref().map(|u| u.id),
+        &bear,
+        &conv,
+        "manual_reconsider",
+    )
+    .await?;
+    web::render_template(
+        &state,
+        "bear/settings/reconsider_result.html",
+        auth_session,
+        context! {
+            conv,
+            result,
+            can_manage_bear => true,
+            native_runtime => true,
+            ..bear_nav_context(&bear, "activity"),
+        },
+    )
+    .await
+}
+
 async fn conversation_ids_for_reflection_action(
     state: &AppState,
     bear_id: Uuid,
@@ -3256,11 +3309,13 @@ async fn reflect_persisted_conversation(
             "source_message_end_seq": output.source_message_end_seq,
         }
     });
+    let reflection_payload_json =
+        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
     let mut event = BearWireEvent::ephemeral("session.reflected", payload);
     event.bear_id = Some(bear.id.to_string());
     event.human_id = user_id.map(|id| id.to_string());
     event.session_id = Some(session_id.to_string());
-    bearwire_events::append_bearwire_event(
+    let persisted_event = bearwire_events::append_bearwire_event(
         state.sqlx_pool(),
         session_id,
         Some(bear.id),
@@ -3268,6 +3323,7 @@ async fn reflect_persisted_conversation(
         event,
     )
     .await?;
+    let proposals_created = output.created_proposal_ids.len();
     Ok(ManualReflectionResult {
         compaction_applied: matches!(
             compaction_status,
@@ -3277,8 +3333,28 @@ async fn reflect_persisted_conversation(
             compaction_status,
             Some(RuntimeCompactionEventStatus::Skipped)
         ),
-        proposals_created: output.created_proposal_ids.len(),
+        compaction_status: compaction_status
+            .map(RuntimeCompactionEventStatus::as_str)
+            .unwrap_or("Not run")
+            .to_string(),
+        compaction_diagnostic: compaction_state
+            .as_ref()
+            .and_then(|state| state.event.diagnostic.clone()),
+        compaction_artifact_json: compaction_state
+            .as_ref()
+            .and_then(|state| state.event.artifact.as_ref())
+            .and_then(|artifact| serde_json::to_string_pretty(artifact).ok())
+            .unwrap_or_default(),
+        candidate_count: output.candidate_count,
+        dropped_followup_count: output.dropped_followup_count,
+        proposals_created,
+        proposal_ids: output.created_proposal_ids,
         skipped_reason: output.skipped_reason,
+        source_message_start_seq: output.source_message_start_seq,
+        source_message_end_seq: output.source_message_end_seq,
+        reflection_event_id: Some(persisted_event.id),
+        reflection_event_sequence_no: Some(persisted_event.sequence_no),
+        reflection_payload_json,
     })
 }
 

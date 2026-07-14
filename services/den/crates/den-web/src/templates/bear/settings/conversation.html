@@ -10,7 +10,10 @@
 <form method="post" action="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}/reflect">
   <p><button type="submit">Reflect this conversation now</button></p>
 </form>
-<p class="form-hint"><strong>Manual reflection checkpoint:</strong> this forces a fresh checkpoint first, then mines that checkpoint for memory proposals. Background live reflection may only check this conversation unless normal context-pressure policy creates a summary.</p>
+<form method="post" action="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}/reconsider">
+  <p><button type="submit">Reconsider for memory</button></p>
+</form>
+<p class="form-hint"><strong>Manual reflection checkpoint:</strong> this forces a fresh checkpoint first, then mines that checkpoint for memory proposals. <strong>Reconsider for memory</strong> runs the same synchronous curation path and then shows the detailed output instead of returning here.</p>
 {% endif %}
 
 <dl>
