@@ -1454,6 +1454,7 @@ mod tests {
                 objective_orientation: None,
                 pre_risk: false,
             }),
+            governance: den_core::governance::Governance::Interactive,
             objective_orientation: crate::agent_loop::ObjectiveOrientation::Freeform {
                 policy: crate::agent_loop::FreeformPolicy::closed(),
             },

@@ -42,6 +42,7 @@ pub struct AgentLoopSession {
     pub turn_budget: TurnBudgetPolicy,
     pub turn_budget_state: TurnBudgetState,
     pub agent_loop_control: ResolvedAgentLoopControl,
+    pub governance: Governance,
     pub objective_orientation: ObjectiveOrientation,
     pub checkpoint_state: CheckpointState,
     pub pending_checkpoint_request: Option<RuntimeCheckpointRequest>,
@@ -110,7 +111,7 @@ impl AgentLoopSession {
             "run": {
                 "run_id": self.run_id.as_deref(),
                 "stance": self.profile.as_str(),
-                "governance": Governance::Interactive.as_str(),
+                "governance": self.governance.as_str(),
                 "objective_orientation_kind": self.objective_orientation.kind(),
                 "focused_job_id": focused_job_id(&self.objective_orientation),
             },
@@ -419,6 +420,7 @@ mod tests {
                 objective_orientation: Some(&objective_orientation),
                 pre_risk: false,
             }),
+            governance: Governance::Interactive,
             objective_orientation,
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
@@ -450,6 +452,18 @@ mod tests {
         assert_eq!(run["governance"], "interactive");
         assert_eq!(run["objective_orientation_kind"], "freeform");
         assert!(run["focused_job_id"].is_null());
+    }
+
+    #[test]
+    fn runtime_snapshot_uses_session_governance() {
+        let mut session = test_session(ObjectiveOrientation::Freeform {
+            policy: FreeformPolicy::closed(),
+        });
+        session.governance = Governance::AutonomousContinuation;
+
+        let snapshot = session.session_info_runtime_snapshot();
+
+        assert_eq!(snapshot["run"]["governance"], "autonomous_continuation");
     }
 
     #[test]
