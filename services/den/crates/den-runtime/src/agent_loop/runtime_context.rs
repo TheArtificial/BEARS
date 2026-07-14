@@ -21,7 +21,7 @@ const FREEFORM_TASK_DEFINITION_GUIDANCE: &str =
 const PAIR_FREEFORM_TASK_ORIENTATION_HINT: &str =
     "Pair task-orientation hint: For work-like requests, proactively define concrete task(s) with completion criteria and move toward oriented work. If the user points you at a plan, roadmap, issue list, or repository checklist, capture it as a task list rather than only choosing the next task. Prefer task lists; create a Job only when durable job-level criteria, delegation, handoff, or commit/work-branch tracking are needed. Do not taskify ordinary Q&A; ask one clarifying question if the outcome is unclear.";
 const ORIENTED_TASK_GUIDANCE: &str =
-    "A concrete task is active. Keep working toward its completion criteria. Do not claim completion until they are met. Ask only necessary clarifying questions; otherwise proceed within the task boundary.";
+    "A concrete task is active. Keep working toward its completion criteria, but pause when the user asked only to plan or when proceeding would exceed the requested scope. Do not claim completion until criteria are met. Ask necessary clarifying questions; otherwise proceed within the task boundary.";
 const ORIENTED_DECOMPOSITION_GUIDANCE: &str =
     "If you decompose it, stay within {max_children} child tasks and {max_depth} level below the oriented task.";
 const FOCUSED_JOB_PROGRESS_GUIDANCE_PREFIX: &str =
@@ -270,5 +270,28 @@ mod tests {
         assert!(no_active_immutable.contains("by choosing the next existing concrete task"));
         assert!(no_active_immutable
             .contains("Do not create or restructure tasks unless explicitly asked."));
+    }
+
+    #[test]
+    fn oriented_guidance_allows_planning_pause() {
+        let oriented = render_objective_orientation_context(
+            "pair",
+            &ObjectiveOrientation::Oriented {
+                task: crate::agent_loop::TaskOrientation {
+                    task_ref: OrientationTaskRef::DocketTask {
+                        job_id: None,
+                        task_id: "task-1".to_string(),
+                        title: Some("Plan the work".to_string()),
+                    },
+                    child_policy: crate::agent_loop::OrientedChildTaskPolicy {
+                        max_children: 3,
+                        max_depth_below_oriented_task: 1,
+                    },
+                },
+            },
+        );
+
+        assert!(oriented.contains("pause when the user asked only to plan"));
+        assert!(oriented.contains("exceed the requested scope"));
     }
 }
