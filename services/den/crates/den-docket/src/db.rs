@@ -714,11 +714,11 @@ pub(super) async fn get_active_execution_session(
     owner_profile: BearProfile,
     lookup: DocketExecutionLookup,
 ) -> Result<Option<DocketExecutionSessionRow>, DenError> {
-    let row = if let Some(source_client_session_id) = lookup.source_client_session_id {
-        sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_ACP_SESSION)
+    let row = if let Some(source_conversation_id) = lookup.source_conversation_id {
+        sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_CONVERSATION)
             .bind(bear_id)
             .bind(owner_profile.as_str())
-            .bind(source_client_session_id)
+            .bind(source_conversation_id)
             .fetch_optional(pool)
             .await?
     } else if let Some(session_id) = lookup.session_id {
@@ -728,11 +728,11 @@ pub(super) async fn get_active_execution_session(
             .bind(session_id)
             .fetch_optional(pool)
             .await?
-    } else if let Some(source_conversation_id) = lookup.source_conversation_id {
-        sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_CONVERSATION)
+    } else if let Some(source_client_session_id) = lookup.source_client_session_id {
+        sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_ACP_SESSION)
             .bind(bear_id)
             .bind(owner_profile.as_str())
-            .bind(source_conversation_id)
+            .bind(source_client_session_id)
             .fetch_optional(pool)
             .await?
     } else {
@@ -839,14 +839,12 @@ fn non_empty_ref(value: &Option<String>) -> Option<&str> {
 }
 
 fn execution_session_ref(request: &DocketJobExecuteRequest) -> Option<ExecutionSessionRef<'_>> {
-    non_empty_ref(&request.session_id)
-        .map(ExecutionSessionRef::Explicit)
+    non_empty_ref(&request.source_conversation_id)
+        .map(ExecutionSessionRef::Conversation)
+        .or_else(|| non_empty_ref(&request.session_id).map(ExecutionSessionRef::Explicit))
         .or_else(|| {
             non_empty_ref(&request.source_client_session_id)
                 .map(ExecutionSessionRef::AcpClientSession)
-        })
-        .or_else(|| {
-            non_empty_ref(&request.source_conversation_id).map(ExecutionSessionRef::Conversation)
         })
 }
 

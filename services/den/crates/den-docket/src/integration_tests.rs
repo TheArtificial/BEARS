@@ -8,9 +8,8 @@ use crate::{
     DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
     DocketJobStatus, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
     DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
-    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus, DocketTaskUpdate,
-    PgDocketService, TaskDispatcher,
-    TaskListSyncRequest, TaskListVisibility,
+    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService,
+    TaskDispatcher, TaskListSyncRequest, TaskListVisibility,
 };
 
 async fn test_pool() -> Option<PgPool> {
@@ -259,7 +258,10 @@ async fn lists_session_anchored_task_with_latest_run_state() {
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0].task.id, task.id);
     assert_eq!(
-        tasks[0].run_state.as_ref().map(|state| state.status.as_str()),
+        tasks[0]
+            .run_state
+            .as_ref()
+            .map(|state| state.status.as_str()),
         Some("done")
     );
 }
@@ -488,6 +490,85 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .await
         .expect("lookup stale execution");
     assert!(stale_execution.is_none());
+}
+
+#[tokio::test]
+async fn docket_execution_focus_prefers_conversation_over_client_session() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket conversation focus test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "conversation-focus").await;
+    let service = PgDocketService::from_pool(&pool);
+    let created = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create job");
+    let run_id = created.job.current_run_id.expect("current run");
+    let first_task_id = created.tasks[0].id;
+
+    let selected = service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id: created.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: Some("adapter-session-1".to_string()),
+            source_conversation_id: Some("conversation-1".to_string()),
+            source_client_session_id: Some("client-session-1".to_string()),
+        })
+        .await
+        .expect("execute first");
+    assert_eq!(selected.selected_task_id, Some(first_task_id));
+
+    let active_execution = service
+        .get_active_execution_session(
+            bear_id,
+            BearProfile::Pair,
+            DocketExecutionLookup {
+                session_id: None,
+                source_conversation_id: Some("conversation-1".to_string()),
+                source_client_session_id: Some("client-session-2".to_string()),
+            },
+        )
+        .await
+        .expect("lookup active execution")
+        .expect("conversation-bound active execution");
+    assert_eq!(active_execution.session_id, "conversation:conversation-1");
+    assert_eq!(active_execution.job_id, created.job.id);
+    assert_eq!(active_execution.run_id, run_id);
+    assert_eq!(active_execution.task_id, Some(first_task_id));
+
+    service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id: created.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: Some("adapter-session-2".to_string()),
+            source_conversation_id: Some("conversation-1".to_string()),
+            source_client_session_id: Some("client-session-2".to_string()),
+        })
+        .await
+        .expect("execute after reconnect");
+
+    let (active_rows,): (i64,) = sqlx::query_as(
+        r#"
+        SELECT count(*)
+        FROM docket_execution_sessions
+        WHERE bear_id = $1
+          AND owner_profile = 'pair'
+          AND source_conversation_id = 'conversation-1'
+          AND state IN ('active', 'blocked', 'completing', 'paused')
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count active conversation rows");
+    assert_eq!(active_rows, 1);
 }
 
 #[tokio::test]
