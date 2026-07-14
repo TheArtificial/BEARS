@@ -567,14 +567,6 @@ async fn enforce_oriented_task_create_policy(
         )
         .into());
     };
-    if new_child_depth > policy.max_depth_below_oriented_task {
-        return Err(DenError::ValidationError(format!(
-            "oriented task decomposition allows at most {} level(s) below the oriented task",
-            policy.max_depth_below_oriented_task
-        ))
-        .into());
-    }
-
     let direct_children = docket
         .list_tasks(
             context.bear_id,
@@ -587,12 +579,27 @@ async fn enforce_oriented_task_create_policy(
             },
         )
         .await?;
-    if direct_children.len() >= policy.max_children {
+    validate_oriented_child_capacity(policy, new_child_depth, direct_children.len())?;
+
+    Ok(())
+}
+
+fn validate_oriented_child_capacity(
+    policy: OrientedTaskCreatePolicy,
+    new_child_depth: usize,
+    direct_child_count: usize,
+) -> Result<(), DenError> {
+    if new_child_depth > policy.max_depth_below_oriented_task {
+        return Err(DenError::ValidationError(format!(
+            "oriented task decomposition allows at most {} level(s) below the oriented task",
+            policy.max_depth_below_oriented_task
+        )));
+    }
+    if direct_child_count >= policy.max_children {
         return Err(DenError::ValidationError(format!(
             "oriented task decomposition allows at most {} child tasks under the selected parent",
             policy.max_children
-        ))
-        .into());
+        )));
     }
 
     Ok(())
@@ -1542,6 +1549,29 @@ mod test {
             oriented_new_child_depth(root, grandchild_parent, &descendants),
             Some(3)
         );
+    }
+
+    #[test]
+    fn oriented_capacity_rejects_child_count_and_depth_caps() {
+        let policy = OrientedTaskCreatePolicy {
+            root_task_id: Uuid::new_v4(),
+            max_children: 2,
+            max_depth_below_oriented_task: 1,
+        };
+
+        assert!(validate_oriented_child_capacity(policy, 1, 1).is_ok());
+
+        let child_cap_error = validate_oriented_child_capacity(policy, 1, 2)
+            .expect_err("child count at cap should reject");
+        assert!(child_cap_error
+            .to_string()
+            .contains("at most 2 child tasks"));
+
+        let depth_cap_error = validate_oriented_child_capacity(policy, 2, 0)
+            .expect_err("depth beyond cap should reject");
+        assert!(depth_cap_error
+            .to_string()
+            .contains("at most 1 level(s)"));
     }
 
     fn task_projection(id: Uuid, parent_task_id: Option<Uuid>) -> den_docket::DocketTaskProjection {
