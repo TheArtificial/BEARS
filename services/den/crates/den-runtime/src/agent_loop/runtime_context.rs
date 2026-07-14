@@ -20,7 +20,10 @@ pub fn runtime_context_already_includes_den_owned_blocks(runtime_context: &str) 
             || trimmed.contains("Den objective orientation is Den-owned"))
 }
 
-fn render_objective_orientation_context(orientation: &ObjectiveOrientation) -> String {
+fn render_objective_orientation_context(
+    profile_slug: &str,
+    orientation: &ObjectiveOrientation,
+) -> String {
     match orientation {
         ObjectiveOrientation::Freeform { policy } => {
             let task_definition_guidance = if policy.may_define_task {
@@ -28,10 +31,17 @@ fn render_objective_orientation_context(orientation: &ObjectiveOrientation) -> S
             } else {
                 ""
             };
+            let pair_task_orientation_guidance = if profile_slug == "pair" && policy.may_define_task
+            {
+                " Pair task-orientation hint: For work-like requests, proactively define concrete task(s) with completion criteria and move toward oriented work. If the user points you at a plan, roadmap, issue list, or repository checklist, capture it as a task list rather than only choosing the next task. Prefer task lists; create a Job only when durable job-level criteria, delegation, handoff, or commit/work-branch tracking are needed. Do not taskify ordinary Q&A; ask one clarifying question if the outcome is unclear."
+            } else {
+                ""
+            };
             format!(
-                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=freeform may_define_task={}. No concrete task or Job outcome is active. Keep the turn bounded: answer directly, ask a clarifying question, or stop.{}\n</system-reminder>",
+                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=freeform may_define_task={}. No concrete task or Job outcome is active. Keep the turn bounded: answer directly, ask a clarifying question, or stop.{}{}\n</system-reminder>",
                 policy.may_define_task,
-                task_definition_guidance
+                task_definition_guidance,
+                pair_task_orientation_guidance
             )
         }
         ObjectiveOrientation::Oriented { task } => {
@@ -123,7 +133,10 @@ pub async fn assemble_den_owned_runtime_supplement(
     objective_orientation: &ObjectiveOrientation,
 ) -> Result<String, DenError> {
     let mut parts = Vec::new();
-    parts.push(render_objective_orientation_context(objective_orientation));
+    parts.push(render_objective_orientation_context(
+        profile_slug,
+        objective_orientation,
+    ));
     let prompt_memory =
         load_prompt_memory_runtime_text(pool, bear_id, profile_slug, session_id, workspace_roots)
             .await?;
@@ -136,7 +149,7 @@ pub async fn assemble_den_owned_runtime_supplement(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_loop::{JobOrientation, OrientationTaskRef};
+    use crate::agent_loop::{FreeformPolicy, JobOrientation, OrientationTaskRef};
 
     #[test]
     fn runtime_context_already_includes_den_owned_blocks_detects_compaction() {
@@ -149,6 +162,35 @@ mod tests {
     }
 
     #[test]
+    fn pair_freeform_guidance_prefers_task_lists_over_jobs() {
+        let pair = render_objective_orientation_context(
+            "pair",
+            &ObjectiveOrientation::Freeform {
+                policy: FreeformPolicy::task_definition_permitted(),
+            },
+        );
+        assert!(pair.contains("Pair task-orientation hint"));
+        assert!(pair.contains("capture it as a task list"));
+        assert!(pair.contains("Prefer task lists; create a Job only when durable job-level criteria, delegation, handoff, or commit/work-branch tracking are needed."));
+
+        let chat = render_objective_orientation_context(
+            "chat",
+            &ObjectiveOrientation::Freeform {
+                policy: FreeformPolicy::task_definition_permitted(),
+            },
+        );
+        assert!(!chat.contains("Pair task-orientation hint"));
+
+        let pair_closed = render_objective_orientation_context(
+            "pair",
+            &ObjectiveOrientation::Freeform {
+                policy: FreeformPolicy::closed(),
+            },
+        );
+        assert!(!pair_closed.contains("Pair task-orientation hint"));
+    }
+
+    #[test]
     fn focused_guidance_branches_on_active_task_and_mutability() {
         let active_task = OrientationTaskRef::DocketTask {
             job_id: Some("job-1".to_string()),
@@ -156,35 +198,43 @@ mod tests {
             title: Some("Do it".to_string()),
         };
 
-        let active_mutable = render_objective_orientation_context(&ObjectiveOrientation::Focused {
-            job: JobOrientation {
-                job_id: "job-1".to_string(),
-                active_task_ref: Some(active_task),
-                mutable: true,
+        let active_mutable = render_objective_orientation_context(
+            "pair",
+            &ObjectiveOrientation::Focused {
+                job: JobOrientation {
+                    job_id: "job-1".to_string(),
+                    active_task_ref: Some(active_task),
+                    mutable: true,
+                },
             },
-        });
+        );
         assert!(active_mutable.contains("by advancing the active task"));
         assert!(active_mutable.contains("Add child tasks when useful."));
         assert!(!active_mutable.contains("If active_task_ref"));
 
-        let no_active_mutable = render_objective_orientation_context(&ObjectiveOrientation::Focused {
-            job: JobOrientation {
-                job_id: "job-1".to_string(),
-                active_task_ref: None,
-                mutable: true,
+        let no_active_mutable = render_objective_orientation_context(
+            "pair",
+            &ObjectiveOrientation::Focused {
+                job: JobOrientation {
+                    job_id: "job-1".to_string(),
+                    active_task_ref: None,
+                    mutable: true,
+                },
             },
-        });
+        );
         assert!(no_active_mutable.contains("by choosing or creating the next concrete task"));
         assert!(no_active_mutable.contains("Add child tasks when useful."));
 
-        let no_active_immutable =
-            render_objective_orientation_context(&ObjectiveOrientation::Focused {
+        let no_active_immutable = render_objective_orientation_context(
+            "pair",
+            &ObjectiveOrientation::Focused {
                 job: JobOrientation {
                     job_id: "job-1".to_string(),
                     active_task_ref: None,
                     mutable: false,
                 },
-            });
+            },
+        );
         assert!(no_active_immutable.contains("by choosing the next existing concrete task"));
         assert!(no_active_immutable
             .contains("Do not create or restructure tasks unless explicitly asked."));

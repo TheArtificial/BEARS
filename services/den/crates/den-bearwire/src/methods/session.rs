@@ -1,4 +1,5 @@
 use axum::http::HeaderMap;
+use den_docket::{TaskListItem, TaskListItemStatus};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -219,6 +220,7 @@ async fn session_state_payload(
 }
 
 fn active_activity_plan_projection(plan: den_docket::TaskListProjection) -> Value {
+    let current_item_id = plan.current_item.as_ref().map(|item| item.id.clone());
     json!({
         "schema": "den.acp_plan_projection.v1",
         "source": "native_agent_loop_active_activity_plan",
@@ -227,17 +229,33 @@ fn active_activity_plan_projection(plan: den_docket::TaskListProjection) -> Valu
         "title": plan.title,
         "status": plan.status,
         "version": plan.version,
-        "current_item_id": plan.current_item.as_ref().map(|item| item.id.clone()),
-        "items": plan.items.into_iter().map(|item| json!({
-            "id": item.id,
-            "title": item.title,
-            "summary": item.summary,
-            "status": item.status,
-            "blocked_reason": item.blocked_reason,
-            "source_ref": item.source_ref,
-            "sync_state": item.sync_state,
-        })).collect::<Vec<_>>(),
+        "current_item_id": current_item_id,
+        "items": plan.items.into_iter().map(|item| {
+            let status = acp_plan_item_status(&item, current_item_id.as_deref());
+            json!({
+                "id": item.id,
+                "title": item.title,
+                "summary": item.summary,
+                "status": status,
+                "blocked_reason": item.blocked_reason,
+                "source_ref": item.source_ref,
+                "sync_state": item.sync_state,
+            })
+        }).collect::<Vec<_>>(),
     })
+}
+
+fn acp_plan_item_status(item: &TaskListItem, current_item_id: Option<&str>) -> &'static str {
+    if current_item_id == Some(item.id.as_str()) {
+        return "in_progress";
+    }
+    match item.status {
+        TaskListItemStatus::Completed => "completed",
+        TaskListItemStatus::InProgress => "in_progress",
+        TaskListItemStatus::Pending
+        | TaskListItemStatus::Blocked
+        | TaskListItemStatus::Cancelled => "pending",
+    }
 }
 
 pub(crate) async fn session_open_result(
