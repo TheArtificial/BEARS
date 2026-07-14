@@ -40,7 +40,7 @@ use den_core::tools::{
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_json_tool_result, compact_json_tool_result_with_artifact},
 };
-use den_core::{config::Config, profile::BearProfile, DenError};
+use den_core::{config::Config, governance::Governance, profile::BearProfile, DenError};
 
 use super::session_store::AgentLoopSession;
 use super::transcript::{
@@ -840,6 +840,7 @@ impl SessionTrackingStream {
             "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet. Continue with: {next_task}."
         );
         self.store.update(&self.session_key, |session| {
+            session.governance = Governance::AutonomousContinuation;
             session.messages.push(ChatMessage {
                 role: "system".to_string(),
                 content: Some(model_message),
@@ -1558,6 +1559,26 @@ mod tests {
             session.profile,
             NativeToolDispatchMode::DeferToClient,
         )
+    }
+
+    #[tokio::test]
+    async fn final_gate_continuation_marks_session_autonomous() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.governance = Governance::Interactive;
+        let mut stream = test_tracking_stream_with_session(&session);
+
+        stream.begin_final_gate_continuation("finish the task");
+
+        let stored = stream
+            .store
+            .get(&stream.session_key)
+            .expect("stored session after continuation");
+        assert_eq!(stored.governance, Governance::AutonomousContinuation);
+        assert!(stored
+            .messages
+            .last()
+            .and_then(|message| message.content.as_deref())
+            .is_some_and(|content| content.contains("autonomous implementation mode")));
     }
 
     #[test]
