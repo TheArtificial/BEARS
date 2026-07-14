@@ -6,6 +6,9 @@ use std::task::{Context, Poll};
 
 use den_memory::MemoryStoreManager;
 use den_protocol::{RuntimeEventStream, RuntimeSemanticEvent, RuntimeStreamEvent};
+use den_service::bears::prompt_fragments::{
+    render_turn_fragment, repository_prompt_fragment_registry,
+};
 use futures::Stream;
 
 use crate::runtime::turn_state::{
@@ -67,11 +70,19 @@ type ServerToolFuture = Pin<
 type FinalGateContinuationFuture =
     Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 
-const FINAL_GATE_CONTINUATION_GUIDANCE: &str =
-    "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet. Continue with:";
-
-fn render_final_gate_continuation_guidance(next_task: &str) -> String {
-    format!("{FINAL_GATE_CONTINUATION_GUIDANCE} {next_task}.")
+fn render_final_gate_continuation_guidance(next_task: &str) -> Result<String, DenError> {
+    // Keep reusable final-gate steering in the fragment registry; this helper is
+    // only the structured-state adapter for loop-control code.
+    let fragments = repository_prompt_fragment_registry()?;
+    let fragment = fragments.require("runtime_task_list_final_gate_continuation")?;
+    render_turn_fragment(
+        fragment,
+        &serde_json::json!({
+            "gate": {
+                "next_task": next_task,
+            }
+        }),
+    )
 }
 
 fn should_force_final_gate_continuation(
@@ -856,7 +867,15 @@ impl SessionTrackingStream {
     }
 
     fn begin_final_gate_continuation(&mut self, next_task: &str) {
-        let model_message = render_final_gate_continuation_guidance(next_task);
+        let model_message = render_final_gate_continuation_guidance(next_task).unwrap_or_else(|err| {
+            tracing::warn!(
+                error = %err,
+                "failed to render final-gate continuation fragment; using fallback guidance"
+            );
+            format!(
+                "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet. Continue with: {next_task}."
+            )
+        });
         self.store.update(&self.session_key, |session| {
             session.governance = Governance::AutonomousContinuation;
             session.messages.push(ChatMessage {
