@@ -34,6 +34,13 @@ use den_service::{
 
 const FOCUSED_CONVERSATION_TITLE_MAX_CHARS: usize = 120;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OrientedTaskCreatePolicy {
+    root_task_id: Uuid,
+    max_children: usize,
+    max_depth_below_oriented_task: usize,
+}
+
 pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
@@ -471,6 +478,124 @@ fn focused_conversation_title(goal: &str, status_report: &DocketJobStatusReport)
         None => goal.to_string(),
     };
     truncate_focused_conversation_title(&title)
+}
+
+fn oriented_task_create_policy(runtime: Option<&Value>) -> Option<OrientedTaskCreatePolicy> {
+    let orientation = runtime?.get("objective_orientation")?;
+    if orientation.get("kind").and_then(Value::as_str) != Some("oriented") {
+        return None;
+    }
+
+    let task = orientation.get("task")?;
+    let task_ref = task.get("task_ref")?;
+    let root_task_id = task_ref
+        .get("task_id")
+        .or_else(|| task_ref.get("item_id"))
+        .and_then(Value::as_str)
+        .and_then(|task_id| Uuid::parse_str(task_id).ok())?;
+    let child_policy = task.get("child_policy")?;
+    Some(OrientedTaskCreatePolicy {
+        root_task_id,
+        max_children: child_policy
+            .get("max_children")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+        max_depth_below_oriented_task: child_policy
+            .get("max_depth_below_oriented_task")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+    })
+}
+
+fn oriented_new_child_depth(
+    root_task_id: Uuid,
+    parent_task_id: Uuid,
+    descendants: &[den_docket::DocketTaskProjection],
+) -> Option<usize> {
+    if parent_task_id == root_task_id {
+        return Some(1);
+    }
+
+    let mut depth = 1;
+    let mut current_parent_id = parent_task_id;
+    // ponytail: the oriented decomposition tree is deliberately tiny; if the
+    // cap grows large, replace this linear ancestor walk with an id->parent map.
+    loop {
+        let parent = descendants
+            .iter()
+            .find(|task| task.task.id == current_parent_id)?;
+        depth += 1;
+        match parent.task.parent_task_id {
+            Some(grandparent_id) if grandparent_id == root_task_id => return Some(depth),
+            Some(grandparent_id) => current_parent_id = grandparent_id,
+            None => return None,
+        }
+    }
+}
+
+async fn enforce_oriented_task_create_policy(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    args: &DocketTaskCreateArguments,
+) -> Result<(), CustomError> {
+    let Some(parent_task_id) = args.parent_task_id else {
+        return Ok(());
+    };
+    let Some(policy) = oriented_task_create_policy(context.runtime.as_ref()) else {
+        return Ok(());
+    };
+
+    let docket = PgDocketService::from_pool(pool);
+    let descendants = docket
+        .list_tasks(
+            context.bear_id,
+            DocketTaskListFilter {
+                job_id: None,
+                session_anchor_id: None,
+                parent_task_id: Some(policy.root_task_id),
+                include_descendants: true,
+                limit: 500,
+            },
+        )
+        .await?;
+    let Some(new_child_depth) =
+        oriented_new_child_depth(policy.root_task_id, parent_task_id, &descendants)
+    else {
+        return Err(DenError::ValidationError(
+            "oriented task decomposition can only create child tasks under the oriented task"
+                .to_string(),
+        )
+        .into());
+    };
+    if new_child_depth > policy.max_depth_below_oriented_task {
+        return Err(DenError::ValidationError(format!(
+            "oriented task decomposition allows at most {} level(s) below the oriented task",
+            policy.max_depth_below_oriented_task
+        ))
+        .into());
+    }
+
+    let direct_children = docket
+        .list_tasks(
+            context.bear_id,
+            DocketTaskListFilter {
+                job_id: None,
+                session_anchor_id: None,
+                parent_task_id: Some(parent_task_id),
+                include_descendants: false,
+                limit: (policy.max_children as i64).saturating_add(1).max(1),
+            },
+        )
+        .await?;
+    if direct_children.len() >= policy.max_children {
+        return Err(DenError::ValidationError(format!(
+            "oriented task decomposition allows at most {} child tasks under the selected parent",
+            policy.max_children
+        ))
+        .into());
+    }
+
+    Ok(())
 }
 
 fn count_label(count: usize, singular: &str, plural: &str) -> String {
@@ -1050,6 +1175,7 @@ pub(crate) async fn create_task(
 ) -> Result<Value, CustomError> {
     let args: DocketTaskCreateArguments = serde_json::from_value(arguments)?;
     let session_anchor_id = default_task_session_anchor_id(pool, context, &args).await?;
+    enforce_oriented_task_create_policy(pool, context, &args).await?;
     let task = PgDocketService::from_pool(pool)
         .create_task(DocketTaskCreate {
             bear_id: context.bear_id,
@@ -1367,6 +1493,84 @@ mod test {
         let report = status_report_with(Some("Task"), "continue");
         let title = focused_conversation_title(&"g".repeat(200), &report);
         assert_eq!(title.chars().count(), FOCUSED_CONVERSATION_TITLE_MAX_CHARS);
+    }
+
+    #[test]
+    fn oriented_task_create_policy_parses_runtime_snapshot() {
+        let task_id = Uuid::new_v4();
+        let runtime = json!({
+            "objective_orientation": {
+                "kind": "oriented",
+                "task": {
+                    "task_ref": {
+                        "kind": "docket_task",
+                        "job_id": null,
+                        "task_id": task_id.to_string(),
+                        "title": "Root"
+                    },
+                    "child_policy": {
+                        "max_children": 3,
+                        "max_depth_below_oriented_task": 1
+                    }
+                }
+            }
+        });
+
+        assert_eq!(
+            oriented_task_create_policy(Some(&runtime)),
+            Some(OrientedTaskCreatePolicy {
+                root_task_id: task_id,
+                max_children: 3,
+                max_depth_below_oriented_task: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn oriented_new_child_depth_counts_depth_below_root() {
+        let root = Uuid::new_v4();
+        let child = Uuid::new_v4();
+        let grandchild_parent = Uuid::new_v4();
+        let descendants = vec![
+            task_projection(child, Some(root)),
+            task_projection(grandchild_parent, Some(child)),
+        ];
+
+        assert_eq!(oriented_new_child_depth(root, root, &descendants), Some(1));
+        assert_eq!(oriented_new_child_depth(root, child, &descendants), Some(2));
+        assert_eq!(
+            oriented_new_child_depth(root, grandchild_parent, &descendants),
+            Some(3)
+        );
+    }
+
+    fn task_projection(id: Uuid, parent_task_id: Option<Uuid>) -> den_docket::DocketTaskProjection {
+        let now = time::OffsetDateTime::now_utc();
+        den_docket::DocketTaskProjection {
+            task: den_docket::DocketTaskRow {
+                id,
+                bear_id: Uuid::nil(),
+                job_id: None,
+                session_anchor_id: None,
+                parent_task_id,
+                sibling_order: 0,
+                kind: "execution".to_string(),
+                scope: "template".to_string(),
+                title: "Task".to_string(),
+                body: "Body".to_string(),
+                completion_criteria: sqlx::types::Json(vec!["Done".to_string()]),
+                difficulty: None,
+                effort_hint: None,
+                assigned_to_role: None,
+                created_by_role: "pair".to_string(),
+                created_by_user_id: None,
+                created_by_agent_id: None,
+                created_in_run_id: None,
+                created_at: now,
+                updated_at: now,
+            },
+            run_state: None,
+        }
     }
 
     mod state_tests {
