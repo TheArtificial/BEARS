@@ -184,6 +184,19 @@ Policy shape:
 
 This preserves the value of the continuation gate without creating an obstinate self-loop. It also keeps reasoned non-action distinct from failure: if the remaining task is blocked, not applicable, waived, or permission-gated with evidence, the terminal response should be allowed by the task gate rather than counted as a rejection.
 
+### 6b. Permission/task-orientation mismatch is a typed loop-control condition
+
+A run may be task-oriented or focused while its resolved permission envelope is read-only or otherwise non-mutative. This is valid for investigation, planning, review, and diagnosis, but invalid for blind execution.
+
+Loop control must treat this as an explicit runtime condition, not leave the model to infer it from repeated tool denial. When a focused or task-oriented run is non-mutative:
+
+- the model-facing instruction envelope must say that the deliverable is analysis, diagnosis, plan, proposed patch, or explicit blocker status, not direct completion by mutation;
+- task gates must allow terminal answers that mark execution as permission-blocked with evidence;
+- repeated attempts to call denied mutative or externally visible tools count as a typed permission-mismatch ko signal;
+- after the threshold, Den stops forcing continuation and surfaces the permission mismatch to the user/operator.
+
+Permission denial is still enforced by tool governance, but loop control should prevent "head against the wall" retry loops by aligning task orientation with the actual permission envelope before the model starts driving.
+
 ### 7. Repeated failures have their own budget
 
 Den separately tracks consecutive failed tool batches.

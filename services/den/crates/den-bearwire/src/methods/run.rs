@@ -148,6 +148,23 @@ fn client_tool_descriptors_from_context(
     json!(descriptors)
 }
 
+fn read_only_task_orientation_runtime_context(requested_mode: Option<&str>) -> Option<String> {
+    let policy = den_core::client_tools::resolve_session_policy_for_mode(
+        requested_mode.unwrap_or("ask"),
+        None,
+    );
+    if policy.tool_enablement.enables_non_read_tools() {
+        return None;
+    }
+
+    Some(format!(
+        "AUTHORITATIVE RUNTIME PERMISSION ENVELOPE for this turn: permission_mode=`{}`; tool_enablement=`read_only`; allowed_tool_classes={:?}; denied_tool_classes={:?}; state_authority=current turn capabilities override prior task orientation.\n\nYou are in a read-only/non-mutative run. Do not attempt workspace edits, file creation/deletion, commits, shell/process execution, browser actions with side effects, or other externally visible actions. If the user or focused task asks for execution that requires mutation, deliver analysis, diagnosis, a plan, a proposed patch, or an explicit permission-blocked status with evidence instead of repeatedly trying denied tools.",
+        policy.mode_label,
+        policy.allowed_tool_classes(),
+        policy.denied_tool_classes()
+    ))
+}
+
 fn workspace_roots_from_client_context(client_context: Option<&Value>) -> Vec<String> {
     client_context
         .and_then(|context| context.get("workspace_roots"))
@@ -1557,6 +1574,8 @@ pub(crate) async fn run_start_result(
     let requested_mode = request.requested_mode;
     let client_tools =
         client_tool_descriptors_from_context(client_context.as_ref(), requested_mode.as_deref());
+    let read_only_runtime_context =
+        read_only_task_orientation_runtime_context(requested_mode.as_deref());
     // Stance signal: a session bound to a live work run via `work.checkout`
     // runs in the Work stance; every other BearWire session stays Pair.
     let stance =
@@ -1674,6 +1693,7 @@ pub(crate) async fn run_start_result(
     let conversation_for_task = conversation_id.clone();
     let upstream_target_for_task = upstream_target.clone();
     let prompt_for_task = prompt.clone();
+    let read_only_runtime_context_for_task = read_only_runtime_context.clone();
     let run_id_for_task = run_id.clone();
     let client_tools_for_task = client_tools.clone();
     let api_style_for_task = resolved_model.api_style;
@@ -1764,8 +1784,11 @@ pub(crate) async fn run_start_result(
                 prompt: &prompt_for_task,
                 prompt_context: prompt_context.clone(),
                 client_tools: Some(client_tools_for_task),
-                runtime_context: None,
-                runtime_context_len: 0,
+                runtime_context: read_only_runtime_context_for_task.as_deref(),
+                runtime_context_len: read_only_runtime_context_for_task
+                    .as_deref()
+                    .map(str::len)
+                    .unwrap_or(0),
                 stream_tokens: true,
                 api_style: Some(api_style_for_task),
             },
