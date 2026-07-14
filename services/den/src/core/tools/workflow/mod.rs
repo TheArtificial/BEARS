@@ -28,7 +28,7 @@ use crate::{
 };
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
 use den_runtime::plan_mode;
-use den_service::bears::BearProfile;
+use den_service::{bears::BearProfile, client_sessions};
 
 pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
     matches!(
@@ -638,6 +638,40 @@ pub(crate) async fn evaluate_criterion(
     }))
 }
 
+async fn default_task_session_anchor_id(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    args: &DocketTaskCreateArguments,
+) -> Result<Option<Uuid>, CustomError> {
+    if args.job_id.is_some() || args.session_anchor_id.is_some() {
+        return Ok(args.session_anchor_id);
+    }
+
+    let Some(client_session_id) = context.client_session_id.as_deref() else {
+        return Err(DenError::ValidationError(
+            "create_task without job_id needs the current client session, but no client session id is available in this tool context".to_string(),
+        )
+        .into());
+    };
+
+    let Some(session) = client_sessions::find_for_user_bear_session_id(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+    )
+    .await?
+    else {
+        return Err(DenError::ValidationError(
+            "create_task without job_id could not resolve the current client session anchor"
+                .to_string(),
+        )
+        .into());
+    };
+
+    Ok(Some(session.id))
+}
+
 pub(crate) async fn create_task(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -645,11 +679,12 @@ pub(crate) async fn create_task(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskCreateArguments = serde_json::from_value(arguments)?;
+    let session_anchor_id = default_task_session_anchor_id(pool, context, &args).await?;
     let task = PgDocketService::from_pool(pool)
         .create_task(DocketTaskCreate {
             bear_id: context.bear_id,
             job_id: args.job_id,
-            session_anchor_id: args.session_anchor_id,
+            session_anchor_id,
             parent_task_id: args.parent_task_id,
             sibling_order: args.sibling_order,
             kind: args.kind,
