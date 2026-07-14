@@ -106,6 +106,42 @@ pub async fn latest_event_sequence(
     Ok(row.get("sequence_no"))
 }
 
+pub async fn latest_bearwire_event_of_type(
+    pool: &PgPool,
+    session_id: &str,
+    event_type: &str,
+) -> Result<Option<BearWireEventRow>, DenError> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, sequence_no, session_id, event_type, event_json, created_at
+        FROM bearwire_events
+        WHERE session_id = $1
+          AND event_type = $2
+        ORDER BY sequence_no DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(event_type)
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(|row| {
+        let event_json: serde_json::Value = row.get("event_json");
+        let event: BearWireEvent = serde_json::from_value(event_json)
+            .map_err(|err| DenError::System(format!("decode BearWire event failed: {err}")))?;
+        Ok(BearWireEventRow {
+            id: row.get("id"),
+            sequence_no: row.get("sequence_no"),
+            session_id: row.get("session_id"),
+            event_type: row.get("event_type"),
+            event,
+            created_at: row.get("created_at"),
+        })
+    })
+    .transpose()
+}
+
 pub async fn list_bearwire_events_after(
     pool: &PgPool,
     session_id: &str,

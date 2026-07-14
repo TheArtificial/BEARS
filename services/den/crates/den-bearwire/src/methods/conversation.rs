@@ -105,6 +105,32 @@ fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Valu
     }
 }
 
+fn orientation_diagnostic_text(data: &Value) -> String {
+    let kind = data
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let orientation = data.get("orientation").unwrap_or(&Value::Null);
+    let focused_job = orientation
+        .pointer("/job/job_id")
+        .and_then(Value::as_str)
+        .unwrap_or("none");
+    let task_ref = orientation
+        .pointer("/task/task_ref")
+        .or_else(|| orientation.pointer("/job/active_task_ref"));
+    let task = task_ref
+        .and_then(|task| {
+            task.get("task_id")
+                .or_else(|| task.get("item_id"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("none");
+    format!(
+        "Runtime orientation: kind={} focused_job={} task={}",
+        kind, focused_job, task
+    )
+}
+
 fn trimmed_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .filter_map(|key| value.get(*key).and_then(Value::as_str))
@@ -336,35 +362,6 @@ async fn conversation_history_like_result(
                 }),
             );
 
-            // ponytail: orientation diagnostics are a current live-session snapshot, not a
-            // replayed history of every orientation transition. Promote orientation changes to
-            // persisted BearWire events if we need full transition history.
-            if let Some(runtime_state) =
-                den_runtime::native_runtime::native_client_session_runtime_state(
-                    &conversation_id,
-                    &session.client_session_id,
-                )
-            {
-                let orientation = runtime_state
-                    .pointer("/run/objective_orientation_kind")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                let focused_job = runtime_state
-                    .pointer("/run/focused_job_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("none");
-                messages.push(json!(SurfaceHistoryEvent::Message {
-                    id: Some(format!("runtime-orientation:{}", session.client_session_id)),
-                    role: "system".to_string(),
-                    text: format!(
-                        "Runtime orientation snapshot: kind={} focused_job={}",
-                        orientation, focused_job
-                    ),
-                    resources: Vec::<SurfaceResourceRef>::new(),
-                    created_at: Some(session.updated_at.to_string()),
-                }));
-            }
-
             let surface_event_rows = bearwire_events::list_bearwire_events_after(
                 &state.sqlx_pool,
                 &session.client_session_id,
@@ -373,6 +370,21 @@ async fn conversation_history_like_result(
             )
             .await?;
             for row in surface_event_rows {
+                if row.event_type == "runtime.objective_orientation" {
+                    let event_id = row
+                        .event
+                        .event_id
+                        .unwrap_or_else(|| format!("bearwire:{}", row.id));
+                    messages.push(json!(SurfaceHistoryEvent::Message {
+                        id: Some(event_id),
+                        role: "system".to_string(),
+                        text: orientation_diagnostic_text(&row.event.data),
+                        resources: Vec::<SurfaceResourceRef>::new(),
+                        created_at: Some(row.created_at.to_string()),
+                    }));
+                    continue;
+                }
+
                 if row.event_type == "session_info_update" {
                     let title = row
                         .event

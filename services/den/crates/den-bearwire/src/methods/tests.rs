@@ -1932,6 +1932,36 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .execute(&pool)
     .await
     .expect("insert task definition event");
+    bearwire_events::append_bearwire_event(
+        &pool,
+        &session_id,
+        Some(bear_id),
+        Some(user_id),
+        bearwire_protocol::wire::BearWireEvent::ephemeral(
+            "runtime.objective_orientation",
+            json!({
+                "source": "turn_assembly",
+                "profile": "pair",
+                "conversation_id": conversation_id,
+                "kind": "focused",
+                "orientation": {
+                    "kind": "focused",
+                    "job": {
+                        "job_id": docket_job_id.to_string(),
+                        "active_task_ref": {
+                            "kind": "docket_task",
+                            "job_id": docket_job_id.to_string(),
+                            "task_id": docket_task_id.to_string(),
+                            "title": "Diagnostic task"
+                        },
+                        "mutable": true
+                    }
+                }
+            }),
+        ),
+    )
+    .await
+    .expect("persist orientation diagnostic event");
 
     let surface_response = rpc_value(
         test_state(pool),
@@ -2053,6 +2083,21 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                     .is_some_and(|text| text.contains("Docket task created: Diagnostic task"))
         }),
         "surface history should expose Docket task definition diagnostics: {surface_response}"
+    );
+    assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("message")
+                && event.get("role").and_then(Value::as_str) == Some("system")
+                && event
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| {
+                        text.contains("Runtime orientation: kind=focused")
+                            && text.contains(&format!("focused_job={docket_job_id}"))
+                            && text.contains(&format!("task={docket_task_id}"))
+                    })
+        }),
+        "surface history should expose persisted orientation diagnostics: {surface_response}"
     );
 }
 

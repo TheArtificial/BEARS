@@ -13,6 +13,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::llm::ChatMessage;
+use bearwire_protocol::wire::BearWireEvent;
 use den_core::tools::work_surface::WorkSurfaceSessionHints;
 
 use super::{
@@ -208,6 +209,62 @@ pub fn recalled_memory_session_diagnostic(recall: Option<&Value>) -> Value {
     }
 }
 
+fn objective_orientation_event_payload(
+    profile: BearProfile,
+    conversation_id: &str,
+    orientation: &ObjectiveOrientation,
+) -> Result<Value, DenError> {
+    Ok(json!({
+        "source": "turn_assembly",
+        "profile": profile.as_str(),
+        "conversation_id": conversation_id,
+        "kind": orientation.kind(),
+        "orientation": serde_json::to_value(orientation).map_err(|err| {
+            DenError::System(format!("serialize objective orientation failed: {err}"))
+        })?,
+    }))
+}
+
+async fn record_objective_orientation_event(
+    ctx: &AssembleTurnContext<'_>,
+    orientation: &ObjectiveOrientation,
+) -> Result<(), DenError> {
+    let Some(session_id) = ctx.session_id else {
+        return Ok(());
+    };
+    let payload =
+        objective_orientation_event_payload(ctx.profile, ctx.conversation_id, orientation)?;
+    let latest = crate::bearwire_events::latest_bearwire_event_of_type(
+        ctx.pool,
+        session_id,
+        "runtime.objective_orientation",
+    )
+    .await?;
+    // ponytail: de-dupe only against the latest same-session orientation event. If we need
+    // cross-session coalescing or strict transition semantics, add a conversation-scoped key.
+    if latest
+        .as_ref()
+        .map(|row| row.event.data == payload)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    let mut event = BearWireEvent::ephemeral("runtime.objective_orientation", payload);
+    event.bear_id = Some(ctx.bear_id.to_string());
+    event.role = Some(ctx.profile.as_str().to_string());
+    event.human_id = ctx.user_id.map(|id| id.to_string());
+    crate::bearwire_events::append_bearwire_event(
+        ctx.pool,
+        session_id,
+        Some(ctx.bear_id),
+        ctx.user_id,
+        event,
+    )
+    .await?;
+    Ok(())
+}
+
 fn objective_orientation_input(
     active_activity_plan: Option<&TaskListProjection>,
     work_enabled: bool,
@@ -398,6 +455,7 @@ pub async fn assemble_native_turn_for_bear(
         active_activity_plan.as_ref(),
         bear.work_enabled,
     ));
+    record_objective_orientation_event(&ctx, &objective_orientation).await?;
 
     let mut system_text = compiled_prompt;
     if let Some(block) = render_key_memory_projection_block(&projection) {
