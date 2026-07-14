@@ -67,6 +67,13 @@ type ServerToolFuture = Pin<
 type FinalGateContinuationFuture =
     Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 
+const FINAL_GATE_CONTINUATION_GUIDANCE: &str =
+    "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet. Continue with:";
+
+fn render_final_gate_continuation_guidance(next_task: &str) -> String {
+    format!("{FINAL_GATE_CONTINUATION_GUIDANCE} {next_task}.")
+}
+
 fn recent_tool_result_matches(messages: &[ChatMessage], tool_call_id: &str) -> bool {
     messages.last().is_some_and(|last| {
         last.role == "tool" && last.tool_call_id.as_deref() == Some(tool_call_id)
@@ -836,9 +843,7 @@ impl SessionTrackingStream {
     }
 
     fn begin_final_gate_continuation(&mut self, next_task: &str) {
-        let model_message = format!(
-            "You are in autonomous implementation mode. The active task list still has incomplete, unblocked work. Do not final-answer yet. Continue with: {next_task}."
-        );
+        let model_message = render_final_gate_continuation_guidance(next_task);
         self.store.update(&self.session_key, |session| {
             session.governance = Governance::AutonomousContinuation;
             session.messages.push(ChatMessage {

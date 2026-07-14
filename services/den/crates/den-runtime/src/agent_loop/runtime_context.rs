@@ -12,6 +12,33 @@ use den_service::prompt_memory_blocks::{
 
 use crate::agent_loop::ObjectiveOrientation;
 
+const OBJECTIVE_ORIENTATION_PREAMBLE: &str =
+    "Den objective orientation is Den-owned runtime context.";
+const FREEFORM_BASE_GUIDANCE: &str =
+    "No concrete task or Job outcome is active. Keep the turn bounded: answer directly, ask a clarifying question, or stop.";
+const FREEFORM_TASK_DEFINITION_GUIDANCE: &str =
+    "If the request needs sustained work, define a concrete task with completion criteria; the runtime may then continue task-oriented or delegate through available execution policy.";
+const PAIR_FREEFORM_TASK_ORIENTATION_HINT: &str =
+    "Pair task-orientation hint: For work-like requests, proactively define concrete task(s) with completion criteria and move toward oriented work. If the user points you at a plan, roadmap, issue list, or repository checklist, capture it as a task list rather than only choosing the next task. Prefer task lists; create a Job only when durable job-level criteria, delegation, handoff, or commit/work-branch tracking are needed. Do not taskify ordinary Q&A; ask one clarifying question if the outcome is unclear.";
+const ORIENTED_TASK_GUIDANCE: &str =
+    "A concrete task is active. Keep working toward its completion criteria. Do not claim completion until they are met. Ask only necessary clarifying questions; otherwise proceed within the task boundary.";
+const ORIENTED_DECOMPOSITION_GUIDANCE: &str =
+    "If you decompose it, stay within {max_children} child tasks and {max_depth} level below the oriented task.";
+const FOCUSED_JOB_PROGRESS_GUIDANCE_PREFIX: &str =
+    "Keep working toward the Job's completion criteria by";
+const FOCUSED_COMPLETION_GUIDANCE: &str =
+    "Do not claim Job completion until criteria are met. Ask only necessary clarifying questions; otherwise proceed within the Job boundary.";
+const FOCUSED_ACTIVE_TASK_GUIDANCE: &str = "advancing the active task";
+const FOCUSED_MUTABLE_NEXT_TASK_GUIDANCE: &str = "choosing or creating the next concrete task";
+const FOCUSED_IMMUTABLE_NEXT_TASK_GUIDANCE: &str = "choosing the next existing concrete task";
+const FOCUSED_MUTABLE_STRUCTURE_GUIDANCE: &str = "Add child tasks when useful.";
+const FOCUSED_IMMUTABLE_STRUCTURE_GUIDANCE: &str =
+    "Do not create or restructure tasks unless explicitly asked.";
+
+fn system_reminder(body: String) -> String {
+    format!("<system-reminder>\n{body}\n</system-reminder>")
+}
+
 pub fn runtime_context_already_includes_den_owned_blocks(runtime_context: &str) -> bool {
     let trimmed = runtime_context.trim();
     !trimmed.is_empty()
@@ -27,31 +54,36 @@ fn render_objective_orientation_context(
     match orientation {
         ObjectiveOrientation::Freeform { policy } => {
             let task_definition_guidance = if policy.may_define_task {
-                " If the request needs sustained work, define a concrete task with completion criteria; the runtime may then continue task-oriented or delegate through available execution policy."
+                format!(" {FREEFORM_TASK_DEFINITION_GUIDANCE}")
             } else {
-                ""
+                String::new()
             };
             let pair_task_orientation_guidance = if profile_slug == "pair" && policy.may_define_task
             {
-                " Pair task-orientation hint: For work-like requests, proactively define concrete task(s) with completion criteria and move toward oriented work. If the user points you at a plan, roadmap, issue list, or repository checklist, capture it as a task list rather than only choosing the next task. Prefer task lists; create a Job only when durable job-level criteria, delegation, handoff, or commit/work-branch tracking are needed. Do not taskify ordinary Q&A; ask one clarifying question if the outcome is unclear."
+                format!(" {PAIR_FREEFORM_TASK_ORIENTATION_HINT}")
             } else {
-                ""
+                String::new()
             };
-            format!(
-                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=freeform may_define_task={}. No concrete task or Job outcome is active. Keep the turn bounded: answer directly, ask a clarifying question, or stop.{}{}\n</system-reminder>",
-                policy.may_define_task,
-                task_definition_guidance,
-                pair_task_orientation_guidance
-            )
+            system_reminder(format!(
+                "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=freeform may_define_task={}. {FREEFORM_BASE_GUIDANCE}{}{}",
+                policy.may_define_task, task_definition_guidance, pair_task_orientation_guidance
+            ))
         }
         ObjectiveOrientation::Oriented { task } => {
             let task_ref = serde_json::to_string(&task.task_ref)
                 .unwrap_or_else(|_| "{\"kind\":\"unknown\"}".to_string());
-            format!(
-                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=oriented task_ref={task_ref}. A concrete task is active. Keep working toward its completion criteria. Do not claim completion until they are met. Ask only necessary clarifying questions; otherwise proceed within the task boundary. If you decompose it, stay within {} child tasks and {} level below the oriented task.\n</system-reminder>",
-                task.child_policy.max_children,
-                task.child_policy.max_depth_below_oriented_task
-            )
+            let decomposition_guidance = ORIENTED_DECOMPOSITION_GUIDANCE
+                .replace("{max_children}", &task.child_policy.max_children.to_string())
+                .replace(
+                    "{max_depth}",
+                    &task
+                        .child_policy
+                        .max_depth_below_oriented_task
+                        .to_string(),
+                );
+            system_reminder(format!(
+                "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=oriented task_ref={task_ref}. {ORIENTED_TASK_GUIDANCE} {decomposition_guidance}"
+            ))
         }
         ObjectiveOrientation::Focused { job } => {
             let active_task_ref = job
@@ -60,22 +92,22 @@ fn render_objective_orientation_context(
                 .and_then(|task| serde_json::to_string(task).ok())
                 .unwrap_or_else(|| "null".to_string());
             let task_guidance = if job.active_task_ref.is_some() {
-                "advancing the active task"
+                FOCUSED_ACTIVE_TASK_GUIDANCE
             } else if job.mutable {
-                "choosing or creating the next concrete task"
+                FOCUSED_MUTABLE_NEXT_TASK_GUIDANCE
             } else {
-                "choosing the next existing concrete task"
+                FOCUSED_IMMUTABLE_NEXT_TASK_GUIDANCE
             };
             let structure_guidance = if job.mutable {
-                "Add child tasks when useful."
+                FOCUSED_MUTABLE_STRUCTURE_GUIDANCE
             } else {
-                "Do not create or restructure tasks unless explicitly asked."
+                FOCUSED_IMMUTABLE_STRUCTURE_GUIDANCE
             };
-            format!(
-                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=focused job_id={} job_mutable={} active_task_ref={active_task_ref}. Keep working toward the Job's completion criteria by {task_guidance}. Do not claim Job completion until criteria are met. Ask only necessary clarifying questions; otherwise proceed within the Job boundary. {structure_guidance}\n</system-reminder>",
+            system_reminder(format!(
+                "{OBJECTIVE_ORIENTATION_PREAMBLE} orientation=focused job_id={} job_mutable={} active_task_ref={active_task_ref}. {FOCUSED_JOB_PROGRESS_GUIDANCE_PREFIX} {task_guidance}. {FOCUSED_COMPLETION_GUIDANCE} {structure_guidance}",
                 job.job_id,
                 job.mutable
-            )
+            ))
         }
     }
 }
