@@ -104,6 +104,12 @@ impl AgentLoopSession {
             "schema": "den.runtime_state.v1",
             "state": "active",
             "source": "native_agent_loop_session",
+            "run": {
+                "run_id": self.run_id.as_deref(),
+                "stance": self.profile.as_str(),
+                "objective_orientation_kind": self.objective_orientation.kind(),
+                "focused_job_id": focused_job_id(&self.objective_orientation),
+            },
             "active_turn": {
                 "present": true,
                 "step": self.step,
@@ -168,6 +174,13 @@ impl AgentLoopSession {
             "last_budget_advisory": last_system_advisory(&self.messages, "Budget advisory:"),
             "last_task_focus_advisory": last_system_advisory(&self.messages, "You are in autonomous implementation mode."),
         })
+    }
+}
+
+fn focused_job_id(orientation: &ObjectiveOrientation) -> Option<&str> {
+    match orientation {
+        ObjectiveOrientation::Focused { job } => Some(job.job_id.as_str()),
+        ObjectiveOrientation::Freeform { .. } | ObjectiveOrientation::Oriented { .. } => None,
     }
 }
 
