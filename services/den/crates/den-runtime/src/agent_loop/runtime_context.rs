@@ -38,7 +38,7 @@ fn render_objective_orientation_context(orientation: &ObjectiveOrientation) -> S
             let task_ref = serde_json::to_string(&task.task_ref)
                 .unwrap_or_else(|_| "{\"kind\":\"unknown\"}".to_string());
             format!(
-                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=oriented task_ref={task_ref}. A concrete task is active. Complete that task before final-answering. If you decompose it, stay within {} child tasks and {} level below the oriented task.\n</system-reminder>",
+                "<system-reminder>\nDen objective orientation is Den-owned runtime context. orientation=oriented task_ref={task_ref}. A concrete task is active. Keep working toward its completion criteria. Do not claim completion until they are met. Ask only necessary clarifying questions; otherwise proceed within the task boundary. If you decompose it, stay within {} child tasks and {} level below the oriented task.\n</system-reminder>",
                 task.child_policy.max_children,
                 task.child_policy.max_depth_below_oriented_task
             )
