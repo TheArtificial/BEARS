@@ -590,6 +590,7 @@ pub fn composed_system_prompt_for_profile_json(
         tools_enabled: None,
         runtime_plan: None,
         context_profile: Some(context_profile.clone()),
+        work_enabled: true,
         provisioning_version: 1,
         system_prompt: String::new(),
         birthday: None,
