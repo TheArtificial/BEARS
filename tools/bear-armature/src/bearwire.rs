@@ -94,6 +94,44 @@ fn default_tool_status_summary(tool_name: &str, failed: bool) -> String {
     }
 }
 
+fn normalized_tool_arguments(data: &Value) -> Option<Value> {
+    const ARGUMENT_POINTERS: &[&str] = &[
+        "/args",
+        "/arguments",
+        "/input",
+        "/raw_input",
+        "/data/args",
+        "/data/arguments",
+        "/data/input",
+        "/data/raw_input",
+        "/tool_call/args",
+        "/tool_call/arguments",
+        "/tool_call/input",
+        "/tool_call/raw_input",
+        "/data/tool_call/args",
+        "/data/tool_call/arguments",
+        "/data/tool_call/input",
+        "/data/tool_call/raw_input",
+    ];
+
+    ARGUMENT_POINTERS.iter().find_map(|pointer| {
+        let candidate = data.pointer(pointer)?;
+        match candidate {
+            Value::String(raw) => serde_json::from_str(raw).ok(),
+            Value::Object(_) => Some(candidate.clone()),
+            _ => None,
+        }
+    })
+}
+
+fn display_command_arg(arg: &str) -> String {
+    if arg.chars().any(char::is_whitespace) {
+        serde_json::to_string(arg).unwrap_or_else(|_| arg.to_string())
+    } else {
+        arg.to_string()
+    }
+}
+
 fn command_name_from_tool_event(data: &Value) -> Option<String> {
     let tool_name = data.get("tool_name").and_then(Value::as_str)?;
     if !matches!(
@@ -102,16 +140,15 @@ fn command_name_from_tool_event(data: &Value) -> Option<String> {
     ) {
         return None;
     }
-    let command = data
-        .get("args")
-        .and_then(|args| args.get("command"))
+    let arguments = normalized_tool_arguments(data)?;
+    let command = arguments
+        .get("command")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|command| !command.is_empty())
         .map(str::to_string)?;
-    let arg_list = data
+    let arg_list = arguments
         .get("args")
-        .and_then(|args| args.get("args"))
         .and_then(Value::as_array)
         .map(|items| {
             items
@@ -121,16 +158,18 @@ fn command_name_from_tool_event(data: &Value) -> Option<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let summary = match command.as_str() {
-        "git" | "cargo" => arg_list
-            .first()
-            .map(|subcommand| format!("{command} {subcommand}"))
-            .unwrap_or(command),
-        "python" | "python3" if arg_list.first().is_some_and(|arg| arg == "-m") => arg_list
-            .get(1)
-            .map(|module| format!("{command} -m {module}"))
-            .unwrap_or(command),
-        _ => command,
+    let summary = if arg_list.is_empty() {
+        command
+    } else {
+        format!(
+            "{} {}",
+            command,
+            arg_list
+                .iter()
+                .map(|arg| display_command_arg(arg))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
     };
     Some(summary)
 }
@@ -2428,7 +2467,34 @@ mod tests {
         let summary = tool_call_finished_summary(&data, "process_run", false);
 
         assert!(summary.contains("Run process completed."), "{summary}");
-        assert!(summary.contains("Command: `git status`."), "{summary}");
+        assert!(
+            summary.contains("Command: `git status --short`."),
+            "{summary}"
+        );
+    }
+
+    #[test]
+    fn tool_argument_normalization_covers_known_event_shapes() {
+        let cases = [
+            json!({ "args": { "command": "cargo", "args": ["test"] } }),
+            json!({ "arguments": { "command": "cargo", "args": ["test"] } }),
+            json!({ "input": { "command": "cargo", "args": ["test"] } }),
+            json!({ "raw_input": { "command": "cargo", "args": ["test"] } }),
+            json!({ "data": { "args": { "command": "cargo", "args": ["test"] } } }),
+            json!({ "tool_call": { "arguments": { "command": "cargo", "args": ["test"] } } }),
+            json!({ "data": { "tool_call": { "raw_input": { "command": "cargo", "args": ["test"] } } } }),
+            json!({ "tool_call": { "arguments": r#"{"command":"cargo","args":["test"]}"# } }),
+        ];
+
+        for mut data in cases {
+            data["tool_name"] = json!("run_command");
+            data["summary"] = json!("Tool completed.");
+            let summary = tool_call_finished_summary(&data, "run_command", false);
+            assert!(
+                summary.contains("Command: `cargo test`."),
+                "{data}: {summary}"
+            );
+        }
     }
 
     #[test]
