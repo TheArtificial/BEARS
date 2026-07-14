@@ -1,5 +1,4 @@
 use den_core::DenError;
-use den_docket::TaskListProjection;
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -109,7 +108,6 @@ pub async fn assemble_den_owned_runtime_supplement(
     profile_slug: &str,
     session_id: &str,
     workspace_roots: &[String],
-    _active_activity_plan: Option<&TaskListProjection>,
     objective_orientation: &ObjectiveOrientation,
 ) -> Result<String, DenError> {
     let mut parts = Vec::new();

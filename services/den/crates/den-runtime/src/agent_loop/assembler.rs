@@ -425,7 +425,6 @@ pub async fn assemble_native_turn_for_bear(
             ctx.profile.as_str(),
             session_id,
             &roots,
-            active_activity_plan.as_ref(),
             &objective_orientation,
         )
         .await?;
