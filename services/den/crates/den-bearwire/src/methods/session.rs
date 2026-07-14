@@ -158,6 +158,10 @@ async fn session_state_payload(
     } else {
         None
     };
+    let runtime_state = den_runtime::native_runtime::native_client_session_runtime_state(
+        &conversation_runtime_id,
+        &session.client_session_id,
+    );
     let open_obligations = turn_obligations::open_client_obligations_for_session(
         &state.sqlx_pool,
         &session.client_session_id,
@@ -207,6 +211,7 @@ async fn session_state_payload(
             "trusted_workspace": trusted_workspace,
             "runtime_conversation_id": conversation_runtime_id,
             "runtime_session_live": runtime_session_live,
+            "runtime_state": runtime_state,
             "active_activity_plan": active_activity_plan,
             "open_obligations": open_obligations,
         }

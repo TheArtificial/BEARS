@@ -184,6 +184,16 @@ pub fn native_client_session_active_activity_plan(
         .and_then(|session| session.active_activity_plan)
 }
 
+pub fn native_client_session_runtime_state(
+    conversation_id: &str,
+    client_session_id: &str,
+) -> Option<serde_json::Value> {
+    let key = agent_loop_session_key(conversation_id, client_session_id);
+    SESSION_STORE
+        .get(&key)
+        .map(|session| session.session_info_runtime_snapshot())
+}
+
 async fn persisted_tool_call_exists(
     pool: &PgPool,
     bear_id: Uuid,

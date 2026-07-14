@@ -5703,6 +5703,32 @@ async fn status_report(
     let mut report = render_status_report(&environment, &tasks);
     report.push_str("\n- Debug: ");
     report.push_str(bear_debug_mode().as_str());
+    if let (Some(http), Some(config)) = (http, config) {
+        match timeout(
+            LOCAL_DEN_INSPECTION_TIMEOUT,
+            fetch_den_runtime_state(http, config, session_id),
+        )
+        .await
+        {
+            Ok(Ok(runtime_state)) => {
+                for line in render_den_runtime_status(&runtime_state) {
+                    report.push('\n');
+                    report.push_str(&line);
+                }
+            }
+            Ok(Err(err)) => {
+                report.push_str(&format!("\n- Run: unavailable ({err:#})"));
+            }
+            Err(_) => {
+                report.push_str(&format!(
+                    "\n- Run: unavailable (timed out after {}ms)",
+                    LOCAL_DEN_INSPECTION_TIMEOUT.as_millis()
+                ));
+            }
+        }
+    } else {
+        report.push_str("\n- Run: unavailable (adapter is not configured for Den)");
+    }
     let bearwire_status = if let (Some(http), Some(config)) = (http, config) {
         bearwire::protocol_status(http, config).await
     } else {
@@ -5716,6 +5742,54 @@ async fn status_report(
 fn compact_json_for_status(value: &Value) -> String {
     let text = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
     truncate_for_log(&text, 600)
+}
+
+fn status_scalar(value: &Value, path: &str) -> Option<String> {
+    match value.pointer(path)? {
+        Value::String(text) => Some(text.clone()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Null => None,
+        other => Some(compact_json_for_status(other)),
+    }
+}
+
+fn render_den_runtime_status(runtime_state_response: &Value) -> Vec<String> {
+    let Some(session) = runtime_state_response.pointer("/session") else {
+        return vec!["- Run: unavailable (no BearWire session state)".to_string()];
+    };
+    let live = status_scalar(session, "/diagnostics/runtime_session_live")
+        .unwrap_or_else(|| "unknown".to_string());
+    let Some(runtime) = session.pointer("/diagnostics/runtime_state") else {
+        return vec![format!("- Run: live={live} runtime_state=<none>")];
+    };
+    let run_id = status_scalar(runtime, "/run/run_id").unwrap_or_else(|| "<none>".to_string());
+    let stance = status_scalar(runtime, "/run/stance").unwrap_or_else(|| "unknown".to_string());
+    let governance =
+        status_scalar(runtime, "/run/governance").unwrap_or_else(|| "unknown".to_string());
+    let orientation = status_scalar(runtime, "/run/objective_orientation_kind")
+        .unwrap_or_else(|| "unknown".to_string());
+    let focused_job =
+        status_scalar(runtime, "/run/focused_job_id").unwrap_or_else(|| "<none>".to_string());
+    let loop_level = status_scalar(runtime, "/agent_loop_control/level")
+        .unwrap_or_else(|| "unknown".to_string());
+    let task_active =
+        status_scalar(runtime, "/task_focus/active").unwrap_or_else(|| "unknown".to_string());
+    let next_task = status_scalar(runtime, "/task_focus/next_incomplete_task_title")
+        .unwrap_or_else(|| "<none>".to_string());
+    let docket_job =
+        status_scalar(runtime, "/docket/active_job_id").unwrap_or_else(|| "<none>".to_string());
+    let docket_task =
+        status_scalar(runtime, "/docket/active_task_id").unwrap_or_else(|| "<none>".to_string());
+    let docket_source =
+        status_scalar(runtime, "/docket/source").unwrap_or_else(|| "unknown".to_string());
+    vec![
+        format!(
+            "- Run: live={live} id={run_id} stance={stance} governance={governance} orientation={orientation} focused_job={focused_job} loop={loop_level}"
+        ),
+        format!("- Focus: active={task_active} next={next_task}"),
+        format!("- Docket: job={docket_job} task={docket_task} source={docket_source}"),
+    ]
 }
 
 async fn runtime_report(
@@ -11001,6 +11075,49 @@ mod tests {
         let paths = paths.lock().await.clone();
         assert_eq!(paths, vec!["/bearwire/v1/rpc"]);
         assert!(!paths.iter().any(|path| path.contains("/acp/")));
+    }
+
+    #[test]
+    fn render_den_runtime_status_includes_orientation_and_governance() {
+        let runtime_state = json!({
+            "session": {
+                "diagnostics": {
+                    "runtime_session_live": true,
+                    "runtime_state": {
+                        "run": {
+                            "run_id": "run-123",
+                            "stance": "pair",
+                            "governance": "interactive",
+                            "objective_orientation_kind": "focused",
+                            "focused_job_id": "job-123"
+                        },
+                        "agent_loop_control": { "level": "careful" },
+                        "task_focus": {
+                            "active": true,
+                            "next_incomplete_task_title": "Ship status command"
+                        },
+                        "docket": {
+                            "active_job_id": "job-123",
+                            "active_task_id": "task-456",
+                            "source": "objective_orientation"
+                        }
+                    }
+                }
+            }
+        });
+
+        let lines = render_den_runtime_status(&runtime_state);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].contains("live=true"));
+        assert!(lines[0].contains("governance=interactive"));
+        assert!(lines[0].contains("orientation=focused"));
+        assert!(lines[0].contains("focused_job=job-123"));
+        assert!(lines[0].contains("loop=careful"));
+        assert!(lines[1].contains("active=true"));
+        assert!(lines[1].contains("next=Ship status command"));
+        assert!(lines[2].contains("job=job-123"));
+        assert!(lines[2].contains("task=task-456"));
+        assert!(lines[2].contains("source=objective_orientation"));
     }
 
     #[test]
