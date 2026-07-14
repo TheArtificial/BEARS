@@ -330,7 +330,7 @@ async fn insert_task(
             title, body, completion_criteria, difficulty, effort_hint, assigned_to_role, created_by_role,
             created_by_user_id, created_by_agent_id, created_in_run_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17)
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
