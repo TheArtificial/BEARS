@@ -559,7 +559,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_UPDATE,
             "Update task list",
-            "Deprecated compatibility tool: update_task_list no longer writes session-local task lists. For new durable work use create_job. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status, which infers the active run. Do not call this tool to create visible progress UI.",
+            "Use durable Docket job/task tools for task and job state. For new task lists, create session-anchored tasks with create_task or create a Docket job when job-level tracking is needed. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status, which infers the active run. Do not call this tool to create visible progress UI.",
             "bear.activity",
             &["task_list.write"],
             TASK_LIST_UPDATE_PROFILES,
@@ -586,7 +586,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_LIST,
             "List Docket jobs",
-            "List durable Docket jobs for the current Bear. Use for canonical job status, not session-local task-list focus.",
+            "List durable Docket jobs for the current Bear. Use for canonical job status.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,

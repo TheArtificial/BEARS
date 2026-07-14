@@ -56,7 +56,7 @@ fn task_list_update_descriptor_includes_active_work_state_guidance() {
     assert!(descriptor.description.contains("session_info"));
     assert!(descriptor
         .description
-        .contains("Deprecated compatibility tool"));
+        .contains("Use durable Docket job/task tools"));
     assert!(descriptor.description.contains("checkout_task_list"));
 }
 
