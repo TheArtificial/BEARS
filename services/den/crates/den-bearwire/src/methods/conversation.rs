@@ -21,6 +21,8 @@ struct DocketDiagnosticEventRow {
     event_type: String,
     payload: Value,
     job_id: Option<Uuid>,
+    job_goal: Option<String>,
+    job_status: Option<String>,
     task_id: Option<Uuid>,
 }
 
@@ -38,19 +40,25 @@ async fn list_docket_diagnostic_events(
             WHERE bear_id = $1
               AND source_conversation_id = $2
         ), docket_events AS (
-            SELECT id, created_at, event_type, payload, job_id, NULL::uuid AS task_id
-            FROM bear_job_events
-            WHERE job_id IN (SELECT job_id FROM focused_jobs)
-              AND event_type = 'focus_selected'
+            SELECT events.id, events.created_at, events.event_type, events.payload,
+                   events.job_id, jobs.goal AS job_goal, jobs.status AS job_status,
+                   NULL::uuid AS task_id
+            FROM bear_job_events events
+            JOIN bear_jobs jobs ON jobs.id = events.job_id
+            WHERE events.job_id IN (SELECT job_id FROM focused_jobs)
+              AND events.event_type = 'focus_selected'
             UNION ALL
-            SELECT events.id, events.created_at, events.event_type, events.payload, tasks.job_id, events.task_id
+            SELECT events.id, events.created_at, events.event_type, events.payload,
+                   tasks.job_id, jobs.goal AS job_goal, jobs.status AS job_status,
+                   events.task_id
             FROM bear_task_events events
             JOIN bear_tasks tasks ON tasks.id = events.task_id
+            JOIN bear_jobs jobs ON jobs.id = tasks.job_id
             WHERE tasks.job_id IN (SELECT job_id FROM focused_jobs)
               AND events.event_type IN ('created', 'updated')
               AND events.payload ? 'definition'
         )
-        SELECT id, created_at, event_type, payload, job_id, task_id
+        SELECT id, created_at, event_type, payload, job_id, job_goal, job_status, task_id
         FROM docket_events
         ORDER BY created_at ASC
         LIMIT $3
@@ -70,8 +78,10 @@ fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Valu
             id: Some(format!("docket:{}", row.id)),
             role: "system".to_string(),
             text: format!(
-                "Docket focus selected: job={} state={}",
+                "Docket focus selected: job={} goal={} status={} state={}",
                 row.job_id?,
+                row.job_goal.as_deref().unwrap_or("unknown"),
+                row.job_status.as_deref().unwrap_or("unknown"),
                 row.payload
                     .get("state")
                     .and_then(Value::as_str)

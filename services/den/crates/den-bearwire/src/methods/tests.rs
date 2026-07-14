@@ -2069,7 +2069,11 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                 && event
                     .get("text")
                     .and_then(Value::as_str)
-                    .is_some_and(|text| text.contains("Docket focus selected"))
+                    .is_some_and(|text| {
+                        text.contains("Docket focus selected")
+                            && text.contains("goal=Surface diagnostics job")
+                            && text.contains("status=running")
+                    })
         }),
         "surface history should expose Docket focus diagnostics: {surface_response}"
     );
