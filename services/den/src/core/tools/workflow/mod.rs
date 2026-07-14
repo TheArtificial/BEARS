@@ -412,12 +412,18 @@ pub(crate) async fn get_task_list_status(
         "summary": summary,
         "found": task_list.is_some(),
         "count": tasks.len(),
+        "phase": task_list.as_ref().map(|task_list| task_list.status.as_str()),
+        "status": task_list.as_ref().map(|task_list| task_list.status.as_str()),
+        "execution_allowed": task_list
+            .as_ref()
+            .is_some_and(|task_list| task_list.status != "planned"),
         "item_counts": item_counts,
         "task_list": task_list,
         "activity": activity_payload(None),
         "plan": task_list,
         "notes": [
-            "Session-anchored tasks are durable Docket tasks associated with the current client session."
+            "Session-anchored tasks are durable Docket tasks associated with the current client session.",
+            "A planned session task list is visible for review but is not an instruction to start execution."
         ]
     }))
 }
@@ -763,8 +769,9 @@ fn docket_task_counts(tasks: &[docket::DocketTaskProjection]) -> Value {
 
 fn task_list_summary(task_list: &TaskListProjection) -> String {
     format!(
-        "Task list '{}' has {}.",
+        "Task list '{}' is {} with {}.",
         task_list.title,
+        task_list.status,
         count_label(task_list.items.len(), "item", "items")
     )
 }
@@ -1244,16 +1251,37 @@ pub(crate) async fn create_task(
     if args.job_id.is_none() {
         refresh_runtime_session_activity_plan(context, task_list.clone());
     }
+    let task_list_phase = task_list
+        .as_ref()
+        .map(|task_list| task_list.status.as_str());
+    let execution_allowed = task_list_phase.is_some_and(|phase| phase != "planned");
+    let summary = if args.job_id.is_none() && matches!(task_list_phase, Some("planned")) {
+        format!(
+            "Planned Docket task '{}'. Execution has not started.",
+            task.title
+        )
+    } else {
+        docket_task_row_summary(&task)
+    };
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
-        "summary": docket_task_row_summary(&task),
+        "summary": summary,
         "task": task,
         "task_list": task_list,
+        "task_list_phase": task_list_phase,
+        "execution_allowed": execution_allowed,
         "item_counts": task_list.as_ref().map(task_list_item_counts),
-        "notes": [
-            "Created durable Docket task definition. Status and results remain run-scoped."
-        ]
+        "notes": if args.job_id.is_none() && matches!(task_list_phase, Some("planned")) {
+            vec![
+                "Created a durable session-anchored Docket task definition.",
+                "The session task list is planned; wait for an explicit start/activation request before executing pending tasks."
+            ]
+        } else {
+            vec![
+                "Created durable Docket task definition. Status and results remain run-scoped."
+            ]
+        }
     }))
 }
 
@@ -1601,9 +1629,7 @@ mod test {
 
         let depth_cap_error = validate_oriented_child_capacity(policy, 2, 0)
             .expect_err("depth beyond cap should reject");
-        assert!(depth_cap_error
-            .to_string()
-            .contains("at most 1 level(s)"));
+        assert!(depth_cap_error.to_string().contains("at most 1 level(s)"));
     }
 
     fn task_projection(id: Uuid, parent_task_id: Option<Uuid>) -> den_docket::DocketTaskProjection {

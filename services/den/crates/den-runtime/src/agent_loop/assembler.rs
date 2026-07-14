@@ -322,6 +322,10 @@ fn objective_orientation_input(
 }
 
 fn active_orientation_task_ref(plan: &TaskListProjection) -> Option<OrientationTaskRef> {
+    if plan.status == "planned" {
+        return None;
+    }
+
     let item = plan.current_item.as_ref().or_else(|| {
         plan.items.iter().find(|item| {
             matches!(
@@ -669,5 +673,47 @@ mod tests {
             lookup.source_conversation_id.as_deref(),
             Some("conversation-1")
         );
+    }
+
+    #[test]
+    fn planned_activity_plan_does_not_orient_to_task() {
+        let task_list_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let item = den_docket::TaskListItem {
+            id: task_id.to_string(),
+            title: "Plan-only task".to_string(),
+            summary: None,
+            status: den_docket::TaskListItemStatus::Pending,
+            blocked_reason: None,
+            source_ref: den_docket::TaskListSourceRef::docket_task(
+                None,
+                task_id.to_string(),
+                vec![format!("docket_task:{task_id}")],
+            ),
+            sync_state: den_docket::TaskListSyncState::Clean,
+        };
+        let plan = TaskListProjection {
+            id: task_list_id,
+            bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap(),
+            title: "Session tasks".to_string(),
+            summary: "Planned session tasks".to_string(),
+            owner_profile: "pair".to_string(),
+            visibility: "private_to_profile".to_string(),
+            status: "planned".to_string(),
+            version: 1,
+            source_ref: den_docket::TaskListSourceRef::local(vec![format!(
+                "session_anchor:{task_list_id}"
+            )]),
+            items: vec![item.clone()],
+            current_item: Some(item),
+            source_conversation_id: Some("conversation-1".to_string()),
+            source_client_session_id: Some(task_list_id.to_string()),
+            handoff_intent_path: None,
+            handoff_task_id: None,
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        };
+
+        assert!(active_orientation_task_ref(&plan).is_none());
     }
 }

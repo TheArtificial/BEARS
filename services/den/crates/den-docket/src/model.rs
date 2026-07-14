@@ -1374,6 +1374,14 @@ pub fn task_list_projection_from_session_tasks(
         })
         .collect::<Vec<_>>();
     let current_item = current_task_list_item(&items).cloned();
+    let status = if items
+        .iter()
+        .any(|item| item.status == TaskListItemStatus::InProgress)
+    {
+        "active"
+    } else {
+        "planned"
+    };
     Some(TaskListProjection {
         id: session_anchor_id,
         bear_id,
@@ -1381,7 +1389,7 @@ pub fn task_list_projection_from_session_tasks(
         summary: "Tasks anchored to the current client session".to_string(),
         owner_profile: owner_profile.as_str().to_string(),
         visibility: "private_to_profile".to_string(),
-        status: "active".to_string(),
+        status: status.to_string(),
         version: 1,
         source_ref: TaskListSourceRef::local(vec![format!("session_anchor:{session_anchor_id}")]),
         items,
@@ -1905,6 +1913,76 @@ mod tests {
         assert_eq!(item.source_ref.docket_job_id.as_deref(), Some("job-123"));
         assert_eq!(item.source_ref.docket_task_id.as_deref(), Some("task-456"));
         assert_eq!(item.sync_state, TaskListSyncState::CheckedOut);
+    }
+
+    #[test]
+    fn session_task_projection_is_planned_until_work_starts() {
+        let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let session_anchor_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let run_id = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+        let task = DocketTaskRow {
+            id: task_id,
+            bear_id,
+            job_id: None,
+            session_anchor_id: Some(session_anchor_id),
+            parent_task_id: None,
+            sibling_order: 0,
+            kind: "execution".to_string(),
+            scope: "run".to_string(),
+            title: "Check the plan".to_string(),
+            body: "Do not start yet.".to_string(),
+            completion_criteria: Json(vec!["Plan is visible".to_string()]),
+            difficulty: None,
+            effort_hint: None,
+            assigned_to_role: Some("pair".to_string()),
+            created_by_role: "pair".to_string(),
+            created_by_user_id: None,
+            created_by_agent_id: None,
+            created_in_run_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        let planned = task_list_projection_from_session_tasks(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[DocketTaskProjection {
+                task: task.clone(),
+                run_state: None,
+            }],
+        )
+        .expect("session projection");
+
+        assert_eq!(planned.status, "planned");
+        assert_eq!(
+            planned.current_item.as_ref().map(|item| item.id.as_str()),
+            Some(task_id.to_string().as_str())
+        );
+
+        let active = task_list_projection_from_session_tasks(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[DocketTaskProjection {
+                task,
+                run_state: Some(DocketTaskRunStateRow {
+                    run_id,
+                    task_id,
+                    status: "in_progress".to_string(),
+                    result_refs: None,
+                    result_summary: None,
+                    started_at: None,
+                    finished_at: None,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                }),
+            }],
+        )
+        .expect("active session projection");
+
+        assert_eq!(active.status, "active");
     }
 
     #[test]
