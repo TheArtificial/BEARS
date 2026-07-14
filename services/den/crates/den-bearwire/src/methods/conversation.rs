@@ -1,5 +1,7 @@
 use axum::http::HeaderMap;
 use serde_json::{json, Value};
+use sqlx::types::time::OffsetDateTime;
+use uuid::Uuid;
 
 use bearwire_protocol::{
     methods::ConversationHistoryRequest,
@@ -11,6 +13,97 @@ use den_service::{client_sessions, conversation::persistence, DenState};
 
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
+
+#[derive(Debug, sqlx::FromRow)]
+struct DocketDiagnosticEventRow {
+    id: Uuid,
+    created_at: OffsetDateTime,
+    event_type: String,
+    payload: Value,
+    job_id: Option<Uuid>,
+    task_id: Option<Uuid>,
+}
+
+async fn list_docket_diagnostic_events(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+    limit: i64,
+) -> Result<Vec<DocketDiagnosticEventRow>, den_core::DenError> {
+    sqlx::query_as::<_, DocketDiagnosticEventRow>(
+        r#"
+        WITH focused_jobs AS (
+            SELECT DISTINCT job_id
+            FROM docket_execution_sessions
+            WHERE bear_id = $1
+              AND source_conversation_id = $2
+        ), docket_events AS (
+            SELECT id, created_at, event_type, payload, job_id, NULL::uuid AS task_id
+            FROM bear_job_events
+            WHERE job_id IN (SELECT job_id FROM focused_jobs)
+              AND event_type = 'focus_selected'
+            UNION ALL
+            SELECT events.id, events.created_at, events.event_type, events.payload, tasks.job_id, events.task_id
+            FROM bear_task_events events
+            JOIN bear_tasks tasks ON tasks.id = events.task_id
+            WHERE tasks.job_id IN (SELECT job_id FROM focused_jobs)
+              AND events.event_type IN ('created', 'updated')
+              AND events.payload ? 'definition'
+        )
+        SELECT id, created_at, event_type, payload, job_id, task_id
+        FROM docket_events
+        ORDER BY created_at ASC
+        LIMIT $3
+        "#,
+    )
+    .bind(bear_id)
+    .bind(conversation_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| den_core::DenError::Database(format!("list docket diagnostic events: {err}")))
+}
+
+fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Value> {
+    match row.event_type.as_str() {
+        "focus_selected" => Some(json!(SurfaceHistoryEvent::Message {
+            id: Some(format!("docket:{}", row.id)),
+            role: "system".to_string(),
+            text: format!(
+                "Docket focus selected: job={} state={}",
+                row.job_id?,
+                row.payload
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("active")
+            ),
+            resources: Vec::<SurfaceResourceRef>::new(),
+            created_at: Some(row.created_at.to_string()),
+        })),
+        "created" | "updated" => {
+            let definition = row.payload.get("definition")?;
+            let title = definition
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("untitled task");
+            Some(json!(SurfaceHistoryEvent::Message {
+                id: Some(format!("docket:{}", row.id)),
+                role: "system".to_string(),
+                text: format!(
+                    "Docket task {}: {} ({})",
+                    row.event_type,
+                    title,
+                    row.task_id
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "unknown task".to_string())
+                ),
+                resources: Vec::<SurfaceResourceRef>::new(),
+                created_at: Some(row.created_at.to_string()),
+            }))
+        }
+        _ => None,
+    }
+}
 
 fn trimmed_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
@@ -243,6 +336,35 @@ async fn conversation_history_like_result(
                 }),
             );
 
+            // ponytail: orientation diagnostics are a current live-session snapshot, not a
+            // replayed history of every orientation transition. Promote orientation changes to
+            // persisted BearWire events if we need full transition history.
+            if let Some(runtime_state) =
+                den_runtime::native_runtime::native_client_session_runtime_state(
+                    &conversation_id,
+                    &session.client_session_id,
+                )
+            {
+                let orientation = runtime_state
+                    .pointer("/run/objective_orientation_kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let focused_job = runtime_state
+                    .pointer("/run/focused_job_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("none");
+                messages.push(json!(SurfaceHistoryEvent::Message {
+                    id: Some(format!("runtime-orientation:{}", session.client_session_id)),
+                    role: "system".to_string(),
+                    text: format!(
+                        "Runtime orientation snapshot: kind={} focused_job={}",
+                        orientation, focused_job
+                    ),
+                    resources: Vec::<SurfaceResourceRef>::new(),
+                    created_at: Some(session.updated_at.to_string()),
+                }));
+            }
+
             let surface_event_rows = bearwire_events::list_bearwire_events_after(
                 &state.sqlx_pool,
                 &session.client_session_id,
@@ -322,6 +444,19 @@ async fn conversation_history_like_result(
                     replay_policy: Some(replay_policy),
                     created_at: Some(row.created_at.to_string()),
                 }));
+            }
+        }
+
+        for row in list_docket_diagnostic_events(
+            &state.sqlx_pool,
+            bear.id,
+            &conversation_id,
+            i64::from(limit),
+        )
+        .await?
+        {
+            if let Some(event) = docket_diagnostic_surface_event(row) {
+                messages.push(event);
             }
         }
     }

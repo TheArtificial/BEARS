@@ -1838,6 +1838,101 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .await
     .expect("persist unsupported reasoning replay policy event");
 
+    let docket_job_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal, status)
+        VALUES ($1, $2, 'pair', 'Surface diagnostics job', 'running')
+        RETURNING id
+        "#,
+    )
+    .bind(bear_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("insert docket job");
+    let docket_run_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO bear_job_runs (job_id, state, started_at)
+        VALUES ($1, 'running', NOW())
+        RETURNING id
+        "#,
+    )
+    .bind(docket_job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("insert docket run");
+    sqlx::query("UPDATE bear_jobs SET current_run_id = $2 WHERE id = $1")
+        .bind(docket_job_id)
+        .bind(docket_run_id)
+        .execute(&pool)
+        .await
+        .expect("attach docket run");
+    let docket_task_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO bear_tasks (
+            bear_id, job_id, kind, scope, title, body, completion_criteria, created_by_role, created_by_user_id
+        )
+        VALUES ($1, $2, 'execution', 'template', 'Diagnostic task', 'Check projection', '["projection includes task"]'::jsonb, 'pair', $3)
+        RETURNING id
+        "#,
+    )
+    .bind(bear_id)
+    .bind(docket_job_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("insert docket task");
+    sqlx::query(
+        r#"
+        INSERT INTO docket_execution_sessions (
+            bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id, job_id, run_id, task_id
+        )
+        VALUES ($1, 'pair', $2, $3, $2, $4, $5, $6)
+        "#,
+    )
+    .bind(bear_id)
+    .bind(&session_id)
+    .bind(&conversation_id)
+    .bind(docket_job_id)
+    .bind(docket_run_id)
+    .bind(docket_task_id)
+    .execute(&pool)
+    .await
+    .expect("insert docket execution session");
+    sqlx::query(
+        r#"
+        INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_user_id, payload)
+        VALUES ($1, $2, 'focus_selected', 'pair', $3, '{"state":"active"}'::jsonb)
+        "#,
+    )
+    .bind(docket_job_id)
+    .bind(docket_run_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .expect("insert focus event");
+    sqlx::query(
+        r#"
+        INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_user_id, payload)
+        VALUES ($1, $2, 'created', 'pair', $3, $4::jsonb)
+        "#,
+    )
+    .bind(docket_task_id)
+    .bind(docket_run_id)
+    .bind(user_id)
+    .bind(json!({
+        "definition": {
+            "task_id": docket_task_id,
+            "job_id": docket_job_id,
+            "title": "Diagnostic task",
+            "body": "Check projection",
+            "completion_criteria": ["projection includes task"]
+        }
+    }))
+    .execute(&pool)
+    .await
+    .expect("insert task definition event");
+
     let surface_response = rpc_value(
         test_state(pool),
         &token,
@@ -1936,6 +2031,28 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                     && event.get("status").and_then(Value::as_str) == Some("ok")
             ),
         "surface history should expose structured ok tool result: {surface_response}"
+    );
+    assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("message")
+                && event.get("role").and_then(Value::as_str) == Some("system")
+                && event
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| text.contains("Docket focus selected"))
+        }),
+        "surface history should expose Docket focus diagnostics: {surface_response}"
+    );
+    assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("message")
+                && event.get("role").and_then(Value::as_str) == Some("system")
+                && event
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| text.contains("Docket task created: Diagnostic task"))
+        }),
+        "surface history should expose Docket task definition diagnostics: {surface_response}"
     );
 }
 
