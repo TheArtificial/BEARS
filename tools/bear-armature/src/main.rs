@@ -5080,6 +5080,8 @@ async fn handle_local_slash_prompt(
     send_user_message_chunk(session_id, &display_prompt).await?;
     let report = if command == LocalSlashCommand::Debug {
         debug_report(debug_argument_from_prompt(&prompt))
+    } else if command == LocalSlashCommand::Focus {
+        focus_report(shared_state, session_id, &prompt).await
     } else {
         handle_local_slash_command(
             http,
@@ -5311,6 +5313,7 @@ enum LocalSlashCommand {
     Capabilities,
     Runtime,
     Status,
+    Focus,
     Version,
     Debug,
 }
@@ -5366,6 +5369,13 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
         description: "Show concise BEARS status from adapter-local environment plus optional Den health.",
         command: LocalSlashCommand::Status,
         den_required: false,
+    },
+    LocalSlashCommandDescriptor {
+        name: "focus",
+        aliases: &[],
+        description: "Focus this pair session on a Docket job: /focus <job_id>.",
+        command: LocalSlashCommand::Focus,
+        den_required: true,
     },
     LocalSlashCommandDescriptor {
         name: "version",
@@ -5462,8 +5472,39 @@ async fn handle_local_slash_command(
         LocalSlashCommand::Status => {
             status_report(http, config, adapter_state, shared_state, session_id).await
         }
+        LocalSlashCommand::Focus => "BEARS ACP /focus needs a job id: /focus <job_id>".to_string(),
         LocalSlashCommand::Version => version_report(http, config).await,
         LocalSlashCommand::Debug => debug_report(None),
+    }
+}
+
+fn focus_job_id_from_prompt(prompt: &str) -> Option<String> {
+    let mut parts = prompt.split_whitespace();
+    let _command = parts.next()?;
+    let candidate = parts.next()?.trim();
+    if Uuid::parse_str(candidate).is_ok() && parts.next().is_none() {
+        Some(candidate.to_string())
+    } else {
+        None
+    }
+}
+
+async fn focus_report(shared_state: &AdapterSharedState, session_id: &str, prompt: &str) -> String {
+    let Some(job_id) = focus_job_id_from_prompt(prompt) else {
+        return "BEARS ACP /focus needs exactly one Docket job UUID: /focus <job_id>".to_string();
+    };
+    match shared_state
+        .mcp_registry
+        .call_tool(session_id, "execute_job", json!({ "job_id": job_id }))
+        .await
+    {
+        Ok(result) => format!(
+            "BEARS ACP focus set\n\n- Job: {job_id}\n- execute_job: {}",
+            compact_json_for_status(&result)
+        ),
+        Err(err) => format!(
+            "BEARS ACP /focus failed for job {job_id}: {err:#}\n\nMake sure this ACP session is connected to Den and the execute_job tool is available."
+        ),
     }
 }
 
@@ -11996,6 +12037,21 @@ mod tests {
         assert_eq!(
             parse_local_slash_command("/status"),
             Some(LocalSlashCommand::Status)
+        );
+    }
+
+    #[test]
+    fn parse_focus_job_id_from_prompt() {
+        let job_id = "11111111-1111-1111-1111-111111111111";
+        assert_eq!(
+            focus_job_id_from_prompt(&format!("/focus {job_id}")),
+            Some(job_id.to_string())
+        );
+        assert_eq!(focus_job_id_from_prompt("/focus"), None);
+        assert_eq!(focus_job_id_from_prompt("/focus nope"), None);
+        assert_eq!(
+            focus_job_id_from_prompt(&format!("/focus {job_id} extra")),
+            None
         );
     }
 
