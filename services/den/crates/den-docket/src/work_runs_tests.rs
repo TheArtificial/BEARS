@@ -117,6 +117,8 @@ async fn seed_work_job_with_policy(
             work_branch: None,
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::SameUser,
+            source_conversation_id: None,
+            objective_kind: None,
             criteria: vec![DocketJobCriterionInput {
                 kind: DocketCriterionKind::Narrative,
                 description: "Everything is done".to_string(),

@@ -529,7 +529,8 @@ pub async fn jobs_awaiting_completion(
 ) -> Result<Vec<crate::model::DocketJobRow>, DenError> {
     let rows = sqlx::query_as::<_, crate::model::DocketJobRow>(
         "SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-                work_surface_id, commit_policy, work_branch, status, visibility, current_run_id,
+                work_surface_id, commit_policy, work_branch, status, visibility,
+                source_conversation_id, objective_kind, current_run_id,
                 created_at, updated_at
          FROM bear_jobs j
          WHERE j.bear_id = $1
