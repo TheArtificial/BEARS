@@ -175,6 +175,18 @@ fn command_name_from_tool_event(data: &Value) -> Option<String> {
 }
 
 fn default_tool_status_summary_with_context(data: &Value, tool_name: &str, failed: bool) -> String {
+    if tool_name == "set_conversation_title" && !failed {
+        if let Some(title) = normalized_tool_arguments(data)
+            .as_ref()
+            .and_then(|args| args.get("title"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            return format!("Set conversation title to {title:?}.");
+        }
+    }
+
     let base = default_tool_status_summary(tool_name, failed);
     let Some(command) = command_name_from_tool_event(data) else {
         return base;
@@ -2420,7 +2432,7 @@ mod tests {
     }
 
     #[test]
-    fn set_conversation_title_finished_summary_is_specific_for_acp_tool_card() {
+    fn set_conversation_title_finished_summary_includes_requested_title_for_acp_tool_card() {
         let data = json!({
             "tool_call": {
                 "id": "call-title",
@@ -2432,7 +2444,24 @@ mod tests {
 
         assert_eq!(
             tool_call_finished_summary(&data, "set_conversation_title", false),
-            "Set conversation title."
+            "Set conversation title to \"Test Armature ACP conversation title tool\"."
+        );
+    }
+
+    #[test]
+    fn set_conversation_title_finished_summary_reads_stringified_normalized_arguments() {
+        let data = json!({
+            "tool_call": {
+                "id": "call-title",
+                "name": "set_conversation_title",
+                "arguments": r#"{"title":"Stringified ACP title"}"#
+            },
+            "summary": "Finished set_conversation_title"
+        });
+
+        assert_eq!(
+            tool_call_finished_summary(&data, "set_conversation_title", false),
+            "Set conversation title to \"Stringified ACP title\"."
         );
     }
 
