@@ -1,8 +1,13 @@
 use std::collections::HashSet;
 
-use den_core::DenError;
+use den_core::{config::Config, DenError};
+use den_memory::MemoryStoreManager;
+use den_service::{bears::BearProfile, memory_proposals::CreateMemoryProposal};
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use uuid::Uuid;
+
+use super::create_proposal;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryExtractionBundle {
@@ -98,6 +103,46 @@ pub fn run_memory_extraction(
     Ok(validate_extraction_result(bundle, raw))
 }
 
+pub async fn create_proposals_from_extraction(
+    pool: &PgPool,
+    config: &Config,
+    stores: &MemoryStoreManager,
+    source_profile: BearProfile,
+    source_agent_id: Option<String>,
+    bundle: &MemoryExtractionBundle,
+    output: &MemoryExtractionPipelineOutput,
+) -> Result<Vec<Uuid>, DenError> {
+    let mut proposal_ids = Vec::new();
+    for draft in &output.proposal_drafts {
+        let proposal = create_proposal(
+            pool,
+            config,
+            stores,
+            CreateMemoryProposal {
+                bear_id: bundle.bear_id,
+                source_profile,
+                source_agent_id: source_agent_id.clone(),
+                source_paths: Vec::new(),
+                source_refs: draft.source_refs.clone(),
+                suggested_action: &draft.suggested_action,
+                target_ref: None,
+                title: &draft.title,
+                summary: &draft.summary,
+                rationale: &draft.rationale,
+                proposed_content: Some(&draft.proposed_content),
+                proposed_patch: None,
+                refs: draft.refs.clone(),
+                sensitivity: &draft.sensitivity,
+                requires_human: draft.requires_human,
+                project_to_conversation: false,
+            },
+        )
+        .await?;
+        proposal_ids.push(proposal.id);
+    }
+    Ok(proposal_ids)
+}
+
 fn validate_bundle(bundle: &MemoryExtractionBundle) -> Result<(), DenError> {
     if bundle.source_kind.trim().is_empty() {
         return Err(DenError::ValidationError(
@@ -148,6 +193,10 @@ fn validate_extraction_result(
             continue;
         }
         proposal_drafts.push(proposal_draft_for_candidate(bundle, candidate));
+    }
+
+    for draft in &mut proposal_drafts {
+        draft.refs["discarded"] = serde_json::json!(discarded);
     }
 
     MemoryExtractionPipelineOutput {
@@ -237,6 +286,7 @@ fn proposal_draft_for_candidate(
     });
     let refs = serde_json::json!({
         "memory_extraction": true,
+        "discarded": [],
         "quality": {
             "confidence": candidate.confidence,
             "detector": "memory-extraction-contract-v0",
