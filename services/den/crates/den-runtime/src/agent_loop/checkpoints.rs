@@ -354,6 +354,25 @@ pub struct LoopControlReplayTurn {
     pub evidence_refs: Vec<LedgerEvidenceRef>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpectedLoopControlReplayTurn {
+    pub run_id: String,
+    pub turn_step_id: Option<Uuid>,
+    pub decision_count: usize,
+    pub decision_kinds: Vec<LoopControlDecisionKind>,
+    pub control_levels: Vec<String>,
+    pub orientation_kinds: Vec<String>,
+    pub checkpoint_ids: Vec<String>,
+    pub evidence_refs: Vec<LedgerEvidenceRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoopControlReplayTurnMismatch {
+    pub index: usize,
+    pub expected: Option<ExpectedLoopControlReplayTurn>,
+    pub observed: Option<LoopControlReplayTurn>,
+}
+
 pub fn replay_loop_control_observations(
     rows: &[LoopControlLedgerRow],
 ) -> Result<Vec<LoopControlReplayObservation>, DenError> {
@@ -436,6 +455,45 @@ pub fn aggregate_loop_control_replay_turns(
         }
     }
     Ok(turns)
+}
+
+pub fn compare_loop_control_replay_turns(
+    observed: &[LoopControlReplayTurn],
+    expected: &[ExpectedLoopControlReplayTurn],
+) -> Vec<LoopControlReplayTurnMismatch> {
+    let max_len = observed.len().max(expected.len());
+    (0..max_len)
+        .filter_map(|index| {
+            let observed = observed.get(index).cloned();
+            let expected = expected.get(index).cloned();
+            let matches = match (&observed, &expected) {
+                (Some(observed), Some(expected)) => {
+                    replay_turn_matches_expected(observed, expected)
+                }
+                (None, None) => true,
+                _ => false,
+            };
+            (!matches).then_some(LoopControlReplayTurnMismatch {
+                index,
+                expected,
+                observed,
+            })
+        })
+        .collect()
+}
+
+fn replay_turn_matches_expected(
+    observed: &LoopControlReplayTurn,
+    expected: &ExpectedLoopControlReplayTurn,
+) -> bool {
+    observed.run_id == expected.run_id
+        && observed.turn_step_id == expected.turn_step_id
+        && observed.decision_count == expected.decision_count
+        && observed.decision_kinds == expected.decision_kinds
+        && observed.control_levels == expected.control_levels
+        && observed.orientation_kinds == expected.orientation_kinds
+        && observed.checkpoint_ids == expected.checkpoint_ids
+        && observed.evidence_refs == expected.evidence_refs
 }
 
 fn push_optional_unique<T: PartialEq>(values: &mut Vec<T>, value: Option<T>) {
@@ -1186,6 +1244,26 @@ mod tests {
                 id: "call-1".to_string(),
             }]
         );
+
+        let expected_turns = vec![ExpectedLoopControlReplayTurn {
+            run_id: run_id.clone(),
+            turn_step_id: None,
+            decision_count: 1,
+            decision_kinds: vec![LoopControlDecisionKind::CheckpointRequested],
+            control_levels: vec!["careful".to_string()],
+            orientation_kinds: vec!["focused".to_string()],
+            checkpoint_ids: vec!["ckpt-1".to_string()],
+            evidence_refs: vec![LedgerEvidenceRef {
+                kind: "tool_result".to_string(),
+                id: "call-1".to_string(),
+            }],
+        }];
+        assert!(compare_loop_control_replay_turns(&turns, &expected_turns).is_empty());
+
+        let mismatches = compare_loop_control_replay_turns(&turns, &[]);
+        assert_eq!(mismatches.len(), 1);
+        assert_eq!(mismatches[0].observed.as_ref(), Some(&turns[0]));
+        assert_eq!(mismatches[0].expected, None);
 
         let by_session =
             list_checkpoints_for_session(&pool, bear_id, &format!("session-{run_id}"), 10)
