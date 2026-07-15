@@ -223,6 +223,10 @@ pub(crate) struct DocketTaskUpdateArguments {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct DocketCurrentTaskStatusArguments {
+    #[serde(default)]
+    pub(crate) job_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) run_id: Option<Uuid>,
     pub(crate) task_id: Uuid,
     pub(crate) status: DocketTaskStatus,
     #[serde(default)]
@@ -1389,6 +1393,7 @@ pub(crate) async fn update_task(
     let task = PgDocketService::from_pool(pool)
         .update_task(DocketTaskUpdate {
             bear_id: context.bear_id,
+            job_id: None,
             task_id: args.task_id,
             actor_role: role,
             actor_user_id: Some(context.user_id),
@@ -1429,30 +1434,54 @@ pub(crate) async fn update_current_task_status(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketCurrentTaskStatusArguments = serde_json::from_value(arguments)?;
-    let lookup = DocketExecutionLookup {
-        session_id: Some(context.session_id.clone()),
-        source_conversation_id: clean_optional(&context.conversation_id),
-        source_client_session_id: context.client_session_id.clone(),
-    };
-    let Some(execution) = PgDocketService::from_pool(pool)
-        .get_active_execution_session(context.bear_id, role, lookup)
-        .await?
-    else {
+    if args.job_id.is_some() != args.run_id.is_some() {
         return Err(DenError::ValidationError(
-            "update_current_task_status needs an active Docket run for this session; call execute_job or checkout_task_list for the job first".to_string(),
+            "update_current_task_status requires job_id and run_id together; pass both for explicit scope or neither to use the active Docket run"
+                .to_string(),
         )
         .into());
+    }
+    let execution = if args.job_id.is_some() {
+        None
+    } else {
+        let lookup = DocketExecutionLookup {
+            session_id: Some(context.session_id.clone()),
+            source_conversation_id: clean_optional(&context.conversation_id),
+            source_client_session_id: context.client_session_id.clone(),
+        };
+        PgDocketService::from_pool(pool)
+            .get_active_execution_session(context.bear_id, role, lookup)
+            .await?
     };
+    let job_id = args
+        .job_id
+        .or_else(|| execution.as_ref().map(|execution| execution.job_id))
+        .ok_or_else(|| {
+            DenError::ValidationError(
+                "update_current_task_status needs an active Docket run for this session; call execute_job or checkout_task_list for the job first"
+                    .to_string(),
+            )
+        })?;
+    let run_id = args
+        .run_id
+        .or_else(|| execution.as_ref().map(|execution| execution.run_id))
+        .ok_or_else(|| {
+            DenError::ValidationError(
+                "update_current_task_status needs an active Docket run for this session; call execute_job or checkout_task_list for the job first"
+                    .to_string(),
+            )
+        })?;
     let task = PgDocketService::from_pool(pool)
         .update_task(DocketTaskUpdate {
             bear_id: context.bear_id,
+            job_id: Some(job_id),
             task_id: args.task_id,
             actor_role: role,
             actor_user_id: Some(context.user_id),
             actor_agent_id: clean_optional(&context.binding_id),
             definition: DocketTaskDefinitionPatch::default(),
             run_state: Some(DocketTaskRunStateUpdate {
-                run_id: execution.run_id,
+                run_id,
                 status: args.status,
                 result_refs: args.result_refs,
                 result_summary: args.result_summary,
@@ -1460,7 +1489,7 @@ pub(crate) async fn update_current_task_status(
         })
         .await?;
     let job = PgDocketService::from_pool(pool)
-        .get_job(context.bear_id, execution.job_id)
+        .get_job(context.bear_id, job_id)
         .await?;
     let status_report = job.as_ref().map(docket_job_status_report);
     if let (Some(job), Some(status_report)) = (&job, &status_report) {
@@ -1487,10 +1516,10 @@ pub(crate) async fn update_current_task_status(
         "item_counts": task_list.as_ref().map(task_list_item_counts),
         "task": task,
         "docket": {
-            "active_job_id": execution.job_id,
-            "active_run_id": execution.run_id,
-            "active_task_id": execution.task_id,
-            "source": "docket_execution_session"
+            "active_job_id": job_id,
+            "active_run_id": run_id,
+            "active_task_id": execution.as_ref().and_then(|execution| execution.task_id).unwrap_or(args.task_id),
+            "source": if execution.is_some() { "docket_execution_session" } else { "explicit_task_status_scope" }
         },
         "task_list": task_list,
         "status_report": status_report,
