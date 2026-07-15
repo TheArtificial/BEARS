@@ -38,10 +38,10 @@ use crate::{
     agent_loop::{
         agent_loop_control_profile_fingerprint, agent_loop_session_key,
         assemble_native_turn_for_bear, classify_tool_budget_class, evaluate_checkpoint_trigger,
-        evaluate_turn_budget, latest_grounding_probe_signal_for_run,
-        latest_grounding_probe_signal_for_tool_call, objective_orientation_allowed_for_stance,
-        projected_memory_session_diagnostic, provider_tool_is_den_web_fetch,
-        recalled_memory_session_diagnostic, record_approval_decision, record_checkpoint_request,
+        evaluate_turn_budget, latest_grounding_probe_signal_for_tool_call,
+        objective_orientation_allowed_for_stance, projected_memory_session_diagnostic,
+        provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
+        record_approval_decision, record_checkpoint_request,
         record_grounding_probe_result_decision, resolve_agent_loop_control, run_agent_step_stream,
         tool_result_content_indicates_error, tool_signature_from_call,
         AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
@@ -1094,14 +1094,7 @@ async fn grounding_probe_signal_for_tool_observation(
     let Some(run_id) = run_id else {
         return Ok(None);
     };
-    if let Some(signal) =
-        latest_grounding_probe_signal_for_tool_call(pool, run_id, tool_call_id).await?
-    {
-        return Ok(Some(signal));
-    }
-    // ponytail: keep run-level fallback until probe producers pass tool_call_id;
-    // remove once grounding probe rows are consistently tied to tool-call refs.
-    latest_grounding_probe_signal_for_run(pool, run_id).await
+    latest_grounding_probe_signal_for_tool_call(pool, run_id, tool_call_id).await
 }
 
 fn tool_class_is_mutation(class: ToolBudgetClass) -> bool {
