@@ -37,7 +37,7 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 use crate::{
     agent_loop::{
         agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
-        evaluate_checkpoint_trigger, evaluate_turn_budget,
+        evaluate_checkpoint_trigger, evaluate_turn_budget, latest_grounding_probe_signal_for_run,
         objective_orientation_allowed_for_stance, projected_memory_session_diagnostic,
         provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
         record_approval_decision, record_checkpoint_request, resolve_agent_loop_control,
@@ -1072,13 +1072,14 @@ pub async fn continue_native_profile_turn_event_stream(
 fn tool_observation_from_call(
     call: &ChatToolCall,
     content: Option<&str>,
+    grounding_probe_signal: Option<crate::agent_loop::GroundingProbeSignalKind>,
 ) -> ToolContinuationObservation {
     ToolContinuationObservation {
         tool_name: call.function.name.clone(),
         signature: tool_signature_from_call(call),
         class: classify_tool_budget_class(&call.function.name),
         failed: tool_result_content_indicates_error(content),
-        grounding_probe_signal: None,
+        grounding_probe_signal,
     }
 }
 
@@ -1500,6 +1501,15 @@ pub async fn continue_native_client_turn_event_stream(
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
     let mut tool_messages = Vec::new();
     let mut observations = Vec::new();
+    let grounding_probe_signal = request
+        .run_id
+        .or(prior_session.run_id.as_deref())
+        .map(|run_id| latest_grounding_probe_signal_for_run(request.sqlx_pool, run_id));
+    let grounding_probe_signal = if let Some(signal) = grounding_probe_signal {
+        signal.await?
+    } else {
+        None
+    };
     match &request.continuation {
         RuntimeContinuation::ToolResult {
             tool_call_id,
@@ -1523,7 +1533,11 @@ pub async fn continue_native_client_turn_event_stream(
             }
             let pending_call = prior_session.find_pending_tool_call(tool_call_id);
             if let Some(call) = pending_call.as_ref() {
-                observations.push(tool_observation_from_call(call, Some(content)));
+                observations.push(tool_observation_from_call(
+                    call,
+                    Some(content),
+                    grounding_probe_signal,
+                ));
             }
             tool_messages.push(ChatMessage {
                 role: "tool".to_string(),
@@ -1562,6 +1576,7 @@ pub async fn continue_native_client_turn_event_stream(
                                 observations.push(tool_observation_from_call(
                                     &call,
                                     tool_message.content.as_deref(),
+                                    grounding_probe_signal,
                                 ));
                                 tool_messages.push(tool_message);
                             }
@@ -1574,7 +1589,11 @@ pub async fn continue_native_client_turn_event_stream(
                     .as_deref()
                     .and_then(|id| prior_session.find_pending_tool_call(id));
                 if let Some(call) = pending_call.as_ref() {
-                    observations.push(tool_observation_from_call(call, Some(&content)));
+                    observations.push(tool_observation_from_call(
+                        call,
+                        Some(&content),
+                        grounding_probe_signal,
+                    ));
                 }
                 tool_messages.push(ChatMessage {
                     role: "tool".to_string(),

@@ -206,6 +206,15 @@ impl GroundingProbeSignalKind {
             Self::NoSignal => "no_signal",
         }
     }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "pass" => Some(Self::Pass),
+            "fail" => Some(Self::Fail),
+            "no_signal" => Some(Self::NoSignal),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -857,6 +866,32 @@ pub async fn list_loop_control_decisions_for_run(
     Ok(rows.into_iter().map(row_to_ledger).collect())
 }
 
+pub async fn latest_grounding_probe_signal_for_run(
+    pool: &PgPool,
+    run_id: &str,
+) -> Result<Option<GroundingProbeSignalKind>, DenError> {
+    // ponytail: this is a run-level signal because current probe rows are not yet
+    // tied to individual tool-call ids; add a tool-call evidence ref if multiple
+    // mutation probes can overlap within one continuation.
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        r"
+        SELECT reason
+        FROM bear_loop_control_ledger
+        WHERE run_id = $1
+          AND decision_kind = 'grounding_probe_result'
+        ORDER BY created_at DESC, decision_id DESC
+        LIMIT 1
+        ",
+    )
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row
+        .and_then(|(reason,)| reason)
+        .and_then(|reason| GroundingProbeSignalKind::from_str(&reason)))
+}
+
 pub async fn summarize_loop_control_replay_profile_for_run(
     pool: &PgPool,
     run_id: &str,
@@ -1177,6 +1212,12 @@ mod tests {
         assert_eq!(recorded.decision["signal"], "pass");
         assert_eq!(recorded.decision["findings"][0]["code"], "diff_present");
         assert!(recorded.decision.get("diff").is_none());
+        assert_eq!(
+            latest_grounding_probe_signal_for_run(&pool, &run_id)
+                .await
+                .expect("latest grounding signal"),
+            Some(GroundingProbeSignalKind::Pass)
+        );
     }
 
     #[sqlx::test(migrations = "../../migrations")]
