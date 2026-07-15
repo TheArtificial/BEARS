@@ -1134,6 +1134,106 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../../migrations")]
+    async fn replay_turn_aggregate_handles_multi_decision_fixture(pool: PgPool) {
+        let run_id = format!("run-{}", Uuid::new_v4().simple());
+        seed_run(&pool, &run_id).await;
+        let (turn_step_id,): (Uuid,) = sqlx::query_as(
+            r"
+            INSERT INTO turn_steps (run_id, step_index, state)
+            VALUES ($1, 1, 'streaming_model')
+            RETURNING id
+            ",
+        )
+        .bind(&run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("create turn step");
+
+        record_loop_control_decision(
+            &pool,
+            LoopControlLedgerInput {
+                run_id: run_id.clone(),
+                turn_step_id: Some(turn_step_id),
+                decision_id: "multi:checkpoint".to_string(),
+                decision_kind: LoopControlDecisionKind::CheckpointRequested,
+                control_level: "careful".to_string(),
+                reason: Some("over_exploration".to_string()),
+                orientation_kind: Some("oriented".to_string()),
+                checkpoint_id: Some("ckpt-multi".to_string()),
+                related_task_list_id: Some("list-multi".to_string()),
+                related_task_item_id: Some("item-multi".to_string()),
+                related_docket_job_id: None,
+                related_docket_task_id: None,
+                evidence_refs: vec![LedgerEvidenceRef {
+                    kind: "tool_result".to_string(),
+                    id: "call-multi".to_string(),
+                }],
+                decision: serde_json::json!({ "active_objective_present": true }),
+            },
+        )
+        .await
+        .expect("record checkpoint decision");
+        record_loop_control_decision(
+            &pool,
+            LoopControlLedgerInput {
+                run_id: run_id.clone(),
+                turn_step_id: Some(turn_step_id),
+                decision_id: "multi:context_budget".to_string(),
+                decision_kind: LoopControlDecisionKind::ContextBudgetPressure,
+                control_level: "standard".to_string(),
+                reason: Some("near_budget".to_string()),
+                orientation_kind: Some("oriented".to_string()),
+                checkpoint_id: None,
+                related_task_list_id: Some("list-multi".to_string()),
+                related_task_item_id: Some("item-multi".to_string()),
+                related_docket_job_id: None,
+                related_docket_task_id: None,
+                evidence_refs: vec![LedgerEvidenceRef {
+                    kind: "context_budget_report".to_string(),
+                    id: "test/model:91:100".to_string(),
+                }],
+                decision: serde_json::json!({ "level": "near_budget" }),
+            },
+        )
+        .await
+        .expect("record context-budget decision");
+
+        let ledger = list_loop_control_decisions_for_run(&pool, &run_id)
+            .await
+            .expect("list ledger decisions");
+        let turns = aggregate_loop_control_replay_turns(&ledger).expect("aggregate replay turns");
+        let expected_turns = vec![ExpectedLoopControlReplayTurn {
+            run_id: run_id.clone(),
+            turn_step_id: Some(turn_step_id),
+            decision_count: 2,
+            decision_kinds: vec![
+                LoopControlDecisionKind::CheckpointRequested,
+                LoopControlDecisionKind::ContextBudgetPressure,
+            ],
+            control_levels: vec!["careful".to_string(), "standard".to_string()],
+            orientation_kinds: vec!["oriented".to_string()],
+            checkpoint_ids: vec!["ckpt-multi".to_string()],
+            evidence_refs: vec![
+                LedgerEvidenceRef {
+                    kind: "tool_result".to_string(),
+                    id: "call-multi".to_string(),
+                },
+                LedgerEvidenceRef {
+                    kind: "context_budget_report".to_string(),
+                    id: "test/model:91:100".to_string(),
+                },
+            ],
+        }];
+        assert!(compare_loop_control_replay_turns(&turns, &expected_turns).is_empty());
+
+        let mut wrong_turns = expected_turns;
+        wrong_turns[0].decision_count = 1;
+        let mismatches = compare_loop_control_replay_turns(&turns, &wrong_turns);
+        assert_eq!(mismatches.len(), 1);
+        assert_eq!(mismatches[0].observed.as_ref(), Some(&turns[0]));
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
     async fn records_checkpoint_request_and_response(pool: PgPool) {
         let run_id = format!("run-{}", Uuid::new_v4().simple());
         let (bear_id, _) = seed_run(&pool, &run_id).await;
