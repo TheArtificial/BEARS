@@ -1166,6 +1166,7 @@ pub struct DocketTaskDefinitionPatch {
 #[derive(Debug, Clone)]
 pub struct DocketTaskUpdate {
     pub bear_id: Uuid,
+    pub job_id: Option<Uuid>,
     pub task_id: Uuid,
     pub actor_role: BearProfile,
     pub actor_user_id: Option<i32>,

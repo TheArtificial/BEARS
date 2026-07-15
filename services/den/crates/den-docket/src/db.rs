@@ -1138,6 +1138,7 @@ pub(super) async fn execute_job(
             pool,
             DocketTaskUpdate {
                 bear_id: request.bear_id,
+                job_id: Some(request.job_id),
                 task_id: next.id,
                 actor_role: request.actor_role,
                 actor_user_id: request.actor_user_id,
@@ -1470,6 +1471,7 @@ pub(super) async fn update_task(
     validate_docket_task_run_state_update(update.run_state.as_ref())?;
     let mut tx = pool.begin().await?;
     let current = select_task(&mut tx, update.bear_id, update.task_id).await?;
+    validate_task_update_scope(&mut tx, &current, &update).await?;
     let patched = update_task_definition(&mut tx, &current, &update.definition).await?;
     append_task_updated_events(&mut tx, &patched, &update).await?;
     let run_state = if let Some(run_state) = update.run_state.as_ref() {
@@ -1550,7 +1552,51 @@ async fn select_task(
     .bind(task_id)
     .fetch_optional(&mut **tx)
     .await?
-    .ok_or_else(|| DenError::NotFound(format!("Docket task not found: {task_id}")))
+    .ok_or_else(|| {
+        DenError::NotFound(format!(
+            "Docket task definition not found in bear scope: task_id={task_id}, bear_id={bear_id}"
+        ))
+    })
+}
+
+async fn validate_task_update_scope(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    current: &DocketTaskRow,
+    update: &DocketTaskUpdate,
+) -> Result<(), DenError> {
+    if let Some(job_id) = update.job_id {
+        if current.job_id != Some(job_id) {
+            return Err(DenError::ValidationError(format!(
+                "Docket task belongs to a different job: task_id={}, expected_job_id={job_id}, actual_job_id={}",
+                update.task_id,
+                current
+                    .job_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "none".to_string())
+            )));
+        }
+        if let Some(run_state) = update.run_state.as_ref() {
+            let run = sqlx::query_as::<_, DocketJobRunRow>(
+                r"
+                SELECT id, job_id, trigger, schedule_ref, state, started_at, finished_at,
+                       outcome, created_at, updated_at
+                FROM bear_job_runs
+                WHERE job_id = $1 AND id = $2
+                ",
+            )
+            .bind(job_id)
+            .bind(run_state.run_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+            if run.is_none() {
+                return Err(DenError::NotFound(format!(
+                    "Docket task run state scope not found: task_id={}, job_id={job_id}, run_id={}",
+                    update.task_id, run_state.run_id
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn update_task_definition(
@@ -1844,6 +1890,7 @@ pub(super) async fn sync_task_list(
                 pool,
                 DocketTaskUpdate {
                     bear_id: request.task_list.bear_id,
+                    job_id: Some(job_id),
                     task_id,
                     actor_role: request
                         .task_list

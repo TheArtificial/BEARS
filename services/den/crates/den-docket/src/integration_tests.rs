@@ -216,6 +216,7 @@ async fn conversation_objective_checkout_projects_active_subtree_after_reconnect
     service
         .update_task(DocketTaskUpdate {
             bear_id,
+            job_id: None,
             task_id: child.id,
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
@@ -380,6 +381,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
     service
         .update_task(DocketTaskUpdate {
             bear_id,
+            job_id: None,
             task_id: task.id,
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
@@ -511,6 +513,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     let missing_summary = service
         .update_task(DocketTaskUpdate {
             bear_id,
+            job_id: None,
             task_id: first_task_id,
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
@@ -529,6 +532,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     service
         .update_task(DocketTaskUpdate {
             bear_id,
+            job_id: None,
             task_id: first_task_id,
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),
@@ -562,6 +566,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     service
         .update_task(DocketTaskUpdate {
             bear_id,
+            job_id: None,
             task_id: second_task_id,
             actor_role: BearProfile::Pair,
             actor_user_id: Some(user_id),

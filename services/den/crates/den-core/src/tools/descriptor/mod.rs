@@ -559,7 +559,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_UPDATE,
             "Update task list",
-            "Use durable Docket job/task tools for task and job state. For new task-oriented conversations, create or reuse a conversation-linked Docket objective/job; keep session_anchor_id only for compatibility with legacy session task projections. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status, which infers the active run. Do not call this tool to create visible progress UI.",
+            "Use durable Docket job/task tools for task and job state. For new task-oriented conversations, create or reuse a conversation-linked Docket objective/job; keep session_anchor_id only for compatibility with legacy session task projections. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status with job_id and run_id when known; otherwise it infers the active run. Do not call this tool to create visible progress UI.",
             "bear.activity",
             &["task_list.write"],
             TASK_LIST_UPDATE_PROFILES,
@@ -649,7 +649,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_UPDATE,
             "Update Docket task definition",
-            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort/assignment. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, in progress, done, blocked, or cancelled without passing a run_id.",
+            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort/assignment. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, in progress, done, blocked, or cancelled; pass job_id/run_id when known to avoid ambiguous active-run inference.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
@@ -658,11 +658,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_UPDATE_CURRENT_STATUS,
             "Update current task status",
-            "Update a Docket task's status/results in the current active Docket run for the focused job/conversation. The tool infers run_id from active job/run context; do not pass run_id. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not edit durable task definitions or execute task bodies.",
+            "Update a Docket task's status/results in a Docket run. Prefer passing job_id and run_id from get_job/execute_job for unambiguous updates; when omitted, the tool falls back to the focused active job/run context. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not edit durable task definitions or execute task bodies.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
-            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id","status"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id","status"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LIST_CHECKOUT,
