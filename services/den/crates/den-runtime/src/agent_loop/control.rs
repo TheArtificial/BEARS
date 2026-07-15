@@ -1,5 +1,6 @@
-use den_core::{AgentLoopControlLevel, BearStance, ThinkingEffort};
+use den_core::{AgentLoopControlLevel, BearStance, DenError, ThinkingEffort};
 use serde::{Deserialize, Deserializer, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{
     GroundingProbeSignalKind, PostMutationVerificationWindow, ToolBudgetClass,
@@ -71,6 +72,15 @@ pub struct AgentLoopControlProfile {
     pub thinking: CheckpointThinkingPolicy,
 }
 
+pub fn agent_loop_control_profile_fingerprint(
+    profile: &AgentLoopControlProfile,
+) -> Result<String, DenError> {
+    let bytes = serde_json::to_vec(profile)
+        .map_err(|err| DenError::System(format!("serialize agent-loop profile: {err}")))?;
+    let digest = Sha256::digest(bytes);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CheckpointState {
     pub read_search_since_mutation: u32,
@@ -129,6 +139,8 @@ pub struct RuntimeCheckpointRequest {
     pub run_id: String,
     pub reason: CheckpointReason,
     pub control_level: AgentLoopControlLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_fingerprint: Option<String>,
     pub active_objective: Option<String>,
     pub task_context: Option<CheckpointTaskContext>,
     pub evidence_refs: Vec<CheckpointEvidenceRef>,
@@ -1179,12 +1191,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn profile_fingerprint_is_deterministic_and_profile_sensitive() {
+        let standard = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Standard);
+        let standard_again = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Standard);
+        let careful = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
+
+        let standard_fingerprint = agent_loop_control_profile_fingerprint(&standard).unwrap();
+
+        assert_eq!(standard_fingerprint.len(), 64);
+        assert_eq!(
+            standard_fingerprint,
+            agent_loop_control_profile_fingerprint(&standard_again).unwrap()
+        );
+        assert_ne!(
+            standard_fingerprint,
+            agent_loop_control_profile_fingerprint(&careful).unwrap()
+        );
+    }
+
     fn checkpoint_request() -> RuntimeCheckpointRequest {
         RuntimeCheckpointRequest {
             checkpoint_id: "ckpt-1".to_string(),
             run_id: "run-1".to_string(),
             reason: CheckpointReason::OverExploration,
             control_level: AgentLoopControlLevel::Careful,
+            profile_fingerprint: Some("profile-test".to_string()),
             active_objective: Some("Patch the failing path".to_string()),
             task_context: Some(CheckpointTaskContext {
                 task_list_id: Some("list-1".to_string()),

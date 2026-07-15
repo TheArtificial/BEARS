@@ -36,8 +36,9 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     agent_loop::{
-        agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
-        evaluate_checkpoint_trigger, evaluate_turn_budget, latest_grounding_probe_signal_for_run,
+        agent_loop_control_profile_fingerprint, agent_loop_session_key,
+        assemble_native_turn_for_bear, classify_tool_budget_class, evaluate_checkpoint_trigger,
+        evaluate_turn_budget, latest_grounding_probe_signal_for_run,
         latest_grounding_probe_signal_for_tool_call, objective_orientation_allowed_for_stance,
         projected_memory_session_diagnostic, provider_tool_is_den_web_fetch,
         recalled_memory_session_diagnostic, record_approval_decision, record_checkpoint_request,
@@ -1227,6 +1228,10 @@ fn runtime_checkpoint_request_for_trigger(
         run_id,
         reason: trigger.reason,
         control_level: session.agent_loop_control.level,
+        profile_fingerprint: agent_loop_control_profile_fingerprint(
+            &session.agent_loop_control.profile,
+        )
+        .ok(),
         active_objective: active_checkpoint_objective(session),
         task_context: checkpoint_task_context(session),
         evidence_refs: Vec::new(),
@@ -2170,6 +2175,7 @@ mod tests {
             run_id: "run-1".to_string(),
             reason: crate::agent_loop::CheckpointReason::OverExploration,
             control_level: den_core::AgentLoopControlLevel::Careful,
+            profile_fingerprint: Some("profile-test".to_string()),
             active_objective: Some("Inspect routing".to_string()),
             task_context: None,
             evidence_refs: Vec::new(),

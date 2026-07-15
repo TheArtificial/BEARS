@@ -1747,6 +1747,7 @@ mod tests {
             run_id: "run-test".to_string(),
             reason: crate::agent_loop::CheckpointReason::OverExploration,
             control_level: den_core::AgentLoopControlLevel::Careful,
+            profile_fingerprint: None,
             active_objective: Some("Update task state".to_string()),
             task_context: None,
             evidence_refs: Vec::new(),

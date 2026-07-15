@@ -646,6 +646,7 @@ struct CheckpointLedgerDecision {
     checkpoint_id: String,
     reason: String,
     control_level: String,
+    profile_fingerprint: Option<String>,
     active_objective_present: bool,
     required_fields: Vec<String>,
     task_refs: CheckpointLedgerTaskRefs,
@@ -980,6 +981,7 @@ fn checkpoint_request_ledger_input(
         checkpoint_id: request.checkpoint_id.clone(),
         reason: request.reason.as_str().to_string(),
         control_level: request.control_level.as_str().to_string(),
+        profile_fingerprint: request.profile_fingerprint.clone(),
         active_objective_present: request.active_objective.is_some(),
         required_fields,
         task_refs: CheckpointLedgerTaskRefs {
@@ -1206,6 +1208,7 @@ mod tests {
             run_id: run_id.to_string(),
             reason: CheckpointReason::OverExploration,
             control_level: AgentLoopControlLevel::Careful,
+            profile_fingerprint: Some("profile-test".to_string()),
             active_objective: Some("Find the failing path".to_string()),
             task_context: Some(CheckpointTaskContext {
                 task_list_id: Some("list-1".to_string()),
@@ -1592,6 +1595,10 @@ mod tests {
         assert_eq!(
             ledger[0].decision["active_objective_present"],
             serde_json::json!(true)
+        );
+        assert_eq!(
+            ledger[0].decision["profile_fingerprint"],
+            serde_json::json!("profile-test")
         );
         assert!(ledger[0].decision.get("active_objective").is_none());
 
