@@ -9921,6 +9921,17 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
         // plain static label over pretending the requested title was `conversation`.
         return "Set conversation title".to_string();
     }
+    if matches!(tool_name, "create_job") {
+        if let Some(goal) = tool_args_from_event(event)
+            .and_then(|args| args.get("goal"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|goal| !goal.is_empty())
+        {
+            return format!("Create job: {}", truncate_title(goal));
+        }
+        return "Create job".to_string();
+    }
     if matches!(
         tool_name,
         "run_command" | "process_run" | "terminal_run_command"
@@ -12735,6 +12746,28 @@ mod tests {
                 .and_then(|args| args.get("title"))
                 .and_then(Value::as_str),
             Some("Actual ACP card title")
+        );
+        assert_eq!(
+            tool_call_title(
+                "create_job",
+                &json!({ "args": { "goal": "Ship ACP card title tests" } })
+            ),
+            "Create job: Ship ACP card title tests"
+        );
+        assert_eq!(
+            tool_call_title(
+                "create_job",
+                &json!({ "data": { "tool_call": { "arguments": { "goal": "Avoid prominent Docket branding" } } } })
+            ),
+            "Create job: Avoid prominent Docket branding"
+        );
+        assert_eq!(
+            tool_call_title("create_job", &json!({ "args": {} })),
+            "Create job"
+        );
+        assert!(
+            !tool_call_title("create_job", &json!({ "args": { "goal": "Plan release" } }))
+                .contains("Docket")
         );
         assert_eq!(
             tool_call_title(
