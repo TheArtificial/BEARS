@@ -1,12 +1,17 @@
 use den_core::{config::Config, DenError};
 use den_memory::MemoryStoreManager;
-use den_service::{bears::BearProfile, memory_proposals::CreateMemoryProposal};
+use den_service::bears::BearProfile;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    memory::create_proposal,
+    agent_loop::load_transcript_grouping_rows,
+    memory::extraction::{
+        create_proposals_from_extraction, run_memory_extraction, MemoryExtractionArtifact,
+        MemoryExtractionBundle, MemoryExtractionCandidate, MemoryExtractionCompactionContext,
+        MemoryExtractionDiscard, MemoryExtractionMessage, MemoryExtractionResult, MemoryExtractor,
+    },
     reflection::conductor::{enqueue_memory_curate_for_proposals, ProposalEnqueueParams},
     runtime::compaction::artifact_store::{
         load_latest_iterative_summary, CompactionArtifactRecord,
@@ -51,6 +56,36 @@ struct PairReflectionDiscard {
     text: String,
 }
 
+struct PairSummaryExtractor<'a> {
+    summary: &'a RuntimeIterativeSummary,
+}
+
+impl MemoryExtractor for PairSummaryExtractor<'_> {
+    fn extract(&self, bundle: &MemoryExtractionBundle) -> Result<MemoryExtractionResult, DenError> {
+        let source_message_ids = bundle
+            .messages
+            .iter()
+            .filter(|message| message.role == "user")
+            .map(|message| message.id.clone())
+            .collect::<Vec<_>>();
+        let extraction = extract_candidates_from_summary(self.summary);
+        Ok(MemoryExtractionResult {
+            candidates: extraction
+                .candidates
+                .into_iter()
+                .map(|candidate| {
+                    memory_candidate_from_pair_candidate(candidate, source_message_ids.clone())
+                })
+                .collect(),
+            discarded: extraction
+                .discarded
+                .into_iter()
+                .map(memory_discard_from_pair_discard)
+                .collect(),
+        })
+    }
+}
+
 pub async fn create_pair_reflection_proposals_from_latest_summary(
     pool: &PgPool,
     config: &Config,
@@ -87,78 +122,41 @@ async fn create_pair_reflection_proposals_for_artifact(
     session_id: &str,
     artifact: &CompactionArtifactRecord,
 ) -> Result<PairReflectionProposalOutput, DenError> {
-    let extraction = extract_candidates_from_summary(&artifact.summary);
-    let candidates = extraction.candidates;
-    let discarded = extraction.discarded;
-    let mut output = PairReflectionProposalOutput {
-        candidate_count: candidates.len(),
-        discarded_count: discarded.len(),
-        discarded_reasons: discarded
-            .iter()
-            .map(|discard| format!("{}:{}", discard.kind, discard.reason))
-            .collect(),
+    let rows = load_transcript_grouping_rows(pool, bear_id, conversation_id).await?;
+    let bundle = pair_reflection_bundle(bear_id, conversation_id, session_id, artifact, rows);
+    let extraction_output = run_memory_extraction(
+        &bundle,
+        &PairSummaryExtractor {
+            summary: &artifact.summary,
+        },
+    )?;
+    let discarded_reasons = extraction_output
+        .discarded
+        .iter()
+        .map(|discard| discard.reason.clone())
+        .collect::<Vec<_>>();
+    let candidate_count = extraction_output.proposal_drafts.len();
+    let discarded_count = extraction_output.discarded.len();
+    let created_proposal_ids = create_proposals_from_extraction(
+        pool,
+        config,
+        stores,
+        BearProfile::Pair,
+        Some("pair_reflection".to_string()),
+        &bundle,
+        &extraction_output,
+    )
+    .await?;
+    let output = PairReflectionProposalOutput {
+        created_proposal_ids,
+        candidate_count,
+        discarded_count,
+        discarded_reasons,
         dropped_followup_count: artifact.summary.unresolved_followups.len(),
         skipped_reason: None,
         source_message_start_seq: Some(artifact.source_message_start_seq),
         source_message_end_seq: Some(artifact.source_message_end_seq),
-        created_proposal_ids: Vec::new(),
     };
-
-    for candidate in candidates {
-        let source_refs = serde_json::json!({
-            "source": "pair_reflection",
-            "conversation_id": conversation_id,
-            "session_id": session_id,
-            "compaction_artifact_id": artifact.artifact_id,
-            "source_message_start_seq": artifact.source_message_start_seq,
-            "source_message_end_seq": artifact.source_message_end_seq,
-            "policy_version": artifact.policy_version,
-            "candidate_kind": candidate.kind,
-        });
-        let refs = serde_json::json!({
-            "pair_reflection": true,
-            "candidate_kind": candidate.kind,
-            "discarded_candidates": discarded.iter().map(|discard| serde_json::json!({
-                "kind": discard.kind,
-                "reason": discard.reason,
-                "text": discard.text,
-            })).collect::<Vec<_>>(),
-            "quality": {
-                "confidence": candidate.confidence,
-                "detector": "pair-reflection-extraction-v2",
-                "adr": "ADR-0041"
-            }
-        });
-        let rationale = format!(
-            "Extracted from pair reflection compaction artifact {} for conversation {}.",
-            artifact.artifact_id, conversation_id
-        );
-        let proposal = create_proposal(
-            pool,
-            config,
-            stores,
-            CreateMemoryProposal {
-                bear_id,
-                source_profile: BearProfile::Pair,
-                source_agent_id: Some("pair_reflection".to_string()),
-                source_paths: Vec::new(),
-                source_refs,
-                suggested_action: candidate.suggested_action,
-                target_ref: candidate.target_ref,
-                title: &candidate.title,
-                summary: "Review pair reflection candidate for durable memory.",
-                rationale: &rationale,
-                proposed_content: Some(&candidate.text),
-                proposed_patch: None,
-                refs,
-                sensitivity: candidate.sensitivity,
-                requires_human: candidate.requires_human,
-                project_to_conversation: false,
-            },
-        )
-        .await?;
-        output.created_proposal_ids.push(proposal.id);
-    }
 
     if !output.created_proposal_ids.is_empty() {
         let _ = enqueue_memory_curate_for_proposals(
@@ -177,6 +175,104 @@ async fn create_pair_reflection_proposals_for_artifact(
     }
 
     Ok(output)
+}
+
+fn pair_reflection_bundle(
+    bear_id: Uuid,
+    conversation_id: &str,
+    session_id: &str,
+    artifact: &CompactionArtifactRecord,
+    rows: Vec<crate::runtime::compaction::TranscriptGroupingRow>,
+) -> MemoryExtractionBundle {
+    let messages = rows
+        .into_iter()
+        .filter(|row| {
+            let seq = row.sequence_no.unwrap_or_default();
+            seq >= artifact.source_message_start_seq
+                && seq <= artifact.source_message_end_seq
+                && matches!(row.message_type.as_str(), "user" | "assistant")
+                && !row.content_text.trim().is_empty()
+        })
+        .map(|row| MemoryExtractionMessage {
+            id: row
+                .message_id
+                .unwrap_or_else(|| format!("seq-{}", row.sequence_no.unwrap_or_default())),
+            seq: row.sequence_no,
+            role: row.message_type,
+            content: row.content_text,
+            created_at: None,
+        })
+        .collect();
+
+    MemoryExtractionBundle {
+        source_kind: "pair_reflection".to_string(),
+        source_ref: artifact.artifact_id.to_string(),
+        bear_id,
+        conversation_id: Some(conversation_id.to_string()),
+        session_id: Some(session_id.to_string()),
+        compaction: Some(MemoryExtractionCompactionContext {
+            artifact_id: Some(artifact.artifact_id.to_string()),
+            policy_version: Some(artifact.policy_version.clone()),
+            source_message_start_seq: Some(artifact.source_message_start_seq),
+            source_message_end_seq: Some(artifact.source_message_end_seq),
+            hints: compaction_hints(&artifact.summary),
+        }),
+        messages,
+        artifacts: vec![MemoryExtractionArtifact {
+            id: artifact.artifact_id.to_string(),
+            kind: "iterative_summary".to_string(),
+            content: serde_json::to_string(&artifact.summary).unwrap_or_default(),
+        }],
+    }
+}
+
+fn compaction_hints(summary: &RuntimeIterativeSummary) -> Vec<String> {
+    let mut hints = Vec::new();
+    if !summary.decisions_made.is_empty() {
+        hints.push("possible_decision".to_string());
+    }
+    if !summary.important_constraints.is_empty() {
+        hints.push("possible_constraint".to_string());
+    }
+    if !summary.active_user_goals.is_empty() {
+        hints.push("possible_user_goal".to_string());
+    }
+    hints
+}
+
+fn memory_candidate_from_pair_candidate(
+    candidate: PairReflectionCandidate,
+    source_message_ids: Vec<String>,
+) -> MemoryExtractionCandidate {
+    MemoryExtractionCandidate {
+        kind: pair_candidate_kind(candidate.kind).to_string(),
+        content: candidate.text,
+        rationale: "Extracted from pair reflection over source transcript evidence.".to_string(),
+        source_message_ids,
+        source_artifact_ids: Vec::new(),
+        confidence: match candidate.confidence {
+            "high" => 0.85,
+            "medium" => 0.65,
+            _ => 0.5,
+        },
+        sensitivity: candidate.sensitivity.to_string(),
+        suggested_action: candidate.suggested_action.to_string(),
+    }
+}
+
+fn memory_discard_from_pair_discard(discard: PairReflectionDiscard) -> MemoryExtractionDiscard {
+    MemoryExtractionDiscard {
+        source_message_ids: Vec::new(),
+        source_artifact_ids: Vec::new(),
+        reason: format!("{}:{}", discard.kind, discard.reason),
+    }
+}
+
+fn pair_candidate_kind(kind: &str) -> &str {
+    match kind {
+        "goal" => "preference",
+        other => other,
+    }
 }
 
 fn extract_candidates_from_summary(summary: &RuntimeIterativeSummary) -> PairReflectionExtraction {
