@@ -337,6 +337,23 @@ pub struct LoopControlReplayMismatch {
     pub observed: Option<LoopControlReplayObservation>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoopControlReplayTurn {
+    pub run_id: String,
+    pub turn_step_id: Option<Uuid>,
+    pub decision_count: usize,
+    pub decision_ids: Vec<String>,
+    pub decision_kinds: Vec<LoopControlDecisionKind>,
+    pub control_levels: Vec<String>,
+    pub orientation_kinds: Vec<String>,
+    pub checkpoint_ids: Vec<String>,
+    pub related_task_list_ids: Vec<String>,
+    pub related_task_item_ids: Vec<String>,
+    pub related_docket_job_ids: Vec<Uuid>,
+    pub related_docket_task_ids: Vec<Uuid>,
+    pub evidence_refs: Vec<LedgerEvidenceRef>,
+}
+
 pub fn replay_loop_control_observations(
     rows: &[LoopControlLedgerRow],
 ) -> Result<Vec<LoopControlReplayObservation>, DenError> {
@@ -359,6 +376,78 @@ pub fn compare_loop_control_replay(
             })
         })
         .collect()
+}
+
+pub fn aggregate_loop_control_replay_turns(
+    rows: &[LoopControlLedgerRow],
+) -> Result<Vec<LoopControlReplayTurn>, DenError> {
+    let observations = replay_loop_control_observations(rows)?;
+    let mut turns: Vec<LoopControlReplayTurn> = Vec::new();
+    for observation in observations {
+        // ponytail: linear grouping is fine for per-run replay fixtures; upgrade to
+        // an index map if replaying large production windows in-process.
+        let turn = match turns.iter_mut().find(|turn| {
+            turn.run_id == observation.run_id && turn.turn_step_id == observation.turn_step_id
+        }) {
+            Some(turn) => turn,
+            None => {
+                turns.push(LoopControlReplayTurn {
+                    run_id: observation.run_id.clone(),
+                    turn_step_id: observation.turn_step_id,
+                    decision_count: 0,
+                    decision_ids: Vec::new(),
+                    decision_kinds: Vec::new(),
+                    control_levels: Vec::new(),
+                    orientation_kinds: Vec::new(),
+                    checkpoint_ids: Vec::new(),
+                    related_task_list_ids: Vec::new(),
+                    related_task_item_ids: Vec::new(),
+                    related_docket_job_ids: Vec::new(),
+                    related_docket_task_ids: Vec::new(),
+                    evidence_refs: Vec::new(),
+                });
+                turns.last_mut().expect("turn was just pushed")
+            }
+        };
+        turn.decision_count += 1;
+        push_unique(&mut turn.decision_ids, observation.decision_id);
+        push_unique(&mut turn.decision_kinds, observation.decision_kind);
+        push_unique(&mut turn.control_levels, observation.control_level);
+        push_optional_unique(&mut turn.orientation_kinds, observation.orientation_kind);
+        push_optional_unique(&mut turn.checkpoint_ids, observation.checkpoint_id);
+        push_optional_unique(
+            &mut turn.related_task_list_ids,
+            observation.related_task_list_id,
+        );
+        push_optional_unique(
+            &mut turn.related_task_item_ids,
+            observation.related_task_item_id,
+        );
+        push_optional_unique(
+            &mut turn.related_docket_job_ids,
+            observation.related_docket_job_id,
+        );
+        push_optional_unique(
+            &mut turn.related_docket_task_ids,
+            observation.related_docket_task_id,
+        );
+        for evidence_ref in observation.evidence_refs {
+            push_unique(&mut turn.evidence_refs, evidence_ref);
+        }
+    }
+    Ok(turns)
+}
+
+fn push_optional_unique<T: PartialEq>(values: &mut Vec<T>, value: Option<T>) {
+    if let Some(value) = value {
+        push_unique(values, value);
+    }
+}
+
+fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
 }
 
 fn replay_observation_from_row(
@@ -1074,6 +1163,29 @@ mod tests {
             }],
         }];
         assert!(compare_loop_control_replay(&observed, &expected).is_empty());
+
+        let turns = aggregate_loop_control_replay_turns(&ledger).expect("aggregate replay turns");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].run_id, run_id);
+        assert_eq!(turns[0].turn_step_id, None);
+        assert_eq!(turns[0].decision_count, 1);
+        assert_eq!(turns[0].decision_ids, vec!["checkpoint:ckpt-1"]);
+        assert_eq!(
+            turns[0].decision_kinds,
+            vec![LoopControlDecisionKind::CheckpointRequested]
+        );
+        assert_eq!(turns[0].control_levels, vec!["careful"]);
+        assert_eq!(turns[0].orientation_kinds, vec!["focused"]);
+        assert_eq!(turns[0].checkpoint_ids, vec!["ckpt-1"]);
+        assert_eq!(turns[0].related_task_list_ids, vec!["list-1"]);
+        assert_eq!(turns[0].related_task_item_ids, vec!["item-1"]);
+        assert_eq!(
+            turns[0].evidence_refs,
+            vec![LedgerEvidenceRef {
+                kind: "tool_result".to_string(),
+                id: "call-1".to_string(),
+            }]
+        );
 
         let by_session =
             list_checkpoints_for_session(&pool, bear_id, &format!("session-{run_id}"), 10)
