@@ -41,13 +41,15 @@ use crate::{
         latest_grounding_probe_signal_for_tool_call, objective_orientation_allowed_for_stance,
         projected_memory_session_diagnostic, provider_tool_is_den_web_fetch,
         recalled_memory_session_diagnostic, record_approval_decision, record_checkpoint_request,
-        resolve_agent_loop_control, run_agent_step_stream, tool_result_content_indicates_error,
-        tool_signature_from_call, AgentLoopControlResolutionInput, AgentLoopSession,
-        AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
-        CheckpointArtifactInput, CheckpointField, CheckpointReplayPolicy, CheckpointTaskContext,
-        CheckpointTrigger, CheckpointVisibility, NativeToolDispatchMode, ObjectiveOrientation,
-        RuntimeCheckpointRequest, SessionTrackingStream, ToolContinuationObservation,
-        TurnBudgetStopReason, TurnBudgetWarning,
+        record_grounding_probe_result_decision, resolve_agent_loop_control, run_agent_step_stream,
+        tool_result_content_indicates_error, tool_signature_from_call,
+        AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
+        AgentStepOverflowContext, AssembleTurnContext, CheckpointArtifactInput, CheckpointField,
+        CheckpointReplayPolicy, CheckpointTaskContext, CheckpointTrigger, CheckpointVisibility,
+        GroundingProbeFinding, GroundingProbeResultInput, GroundingProbeSignalKind,
+        NativeToolDispatchMode, ObjectiveOrientation, RuntimeCheckpointRequest,
+        SessionTrackingStream, ToolBudgetClass, ToolContinuationObservation, TurnBudgetStopReason,
+        TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{
@@ -1087,7 +1089,7 @@ async fn grounding_probe_signal_for_tool_observation(
     pool: &PgPool,
     run_id: Option<&str>,
     tool_call_id: &str,
-) -> Result<Option<crate::agent_loop::GroundingProbeSignalKind>, DenError> {
+) -> Result<Option<GroundingProbeSignalKind>, DenError> {
     let Some(run_id) = run_id else {
         return Ok(None);
     };
@@ -1099,6 +1101,73 @@ async fn grounding_probe_signal_for_tool_observation(
     // ponytail: keep run-level fallback until probe producers pass tool_call_id;
     // remove once grounding probe rows are consistently tied to tool-call refs.
     latest_grounding_probe_signal_for_run(pool, run_id).await
+}
+
+fn tool_class_is_mutation(class: ToolBudgetClass) -> bool {
+    matches!(class, ToolBudgetClass::Write | ToolBudgetClass::Destructive)
+}
+
+fn mvp_grounding_probe_signal_from_tool_result(
+    status: RuntimeToolResultStatus,
+    content: &str,
+) -> (GroundingProbeSignalKind, GroundingProbeFinding) {
+    // ponytail: MVP producer trusts tool status plus error-shaped content; upgrade to
+    // read-after-write/diff probes when a mutation surface needs stronger evidence.
+    if matches!(status, RuntimeToolResultStatus::Ok)
+        && !tool_result_content_indicates_error(Some(content))
+    {
+        (
+            GroundingProbeSignalKind::Pass,
+            GroundingProbeFinding {
+                code: "tool_result_ok".to_string(),
+                message: "Mutation-like tool returned an OK result without an error marker."
+                    .to_string(),
+            },
+        )
+    } else {
+        (
+            GroundingProbeSignalKind::Fail,
+            GroundingProbeFinding {
+                code: "tool_result_failed".to_string(),
+                message: "Mutation-like tool returned a failing or error-shaped result."
+                    .to_string(),
+            },
+        )
+    }
+}
+
+async fn produce_mvp_grounding_probe_signal_for_tool_result(
+    pool: &PgPool,
+    session: &AgentLoopSession,
+    run_id: Option<&str>,
+    call: &ChatToolCall,
+    status: RuntimeToolResultStatus,
+    content: &str,
+) -> Result<Option<GroundingProbeSignalKind>, DenError> {
+    let class = classify_tool_budget_class(&call.function.name);
+    if !tool_class_is_mutation(class) {
+        return Ok(None);
+    }
+    let (signal, finding) = mvp_grounding_probe_signal_from_tool_result(status, content);
+    let Some(run_id) = run_id else {
+        return Ok(Some(signal));
+    };
+    record_grounding_probe_result_decision(
+        pool,
+        GroundingProbeResultInput {
+            run_id: run_id.to_string(),
+            turn_step_id: None,
+            orientation_kind: Some(session.objective_orientation.kind().to_string()),
+            tool_call_id: Some(call.id.clone()),
+            probe_id: format!("mvp.tool_result.{}", call.id),
+            surface_kind: "tool_result".to_string(),
+            signal,
+            duration_ms: 0,
+            findings: vec![finding],
+        },
+    )
+    .await?;
+    Ok(Some(signal))
 }
 
 fn parse_args_or_empty_object(raw: &str) -> serde_json::Value {
@@ -1543,12 +1612,27 @@ pub async fn continue_native_client_turn_event_stream(
             }
             let pending_call = prior_session.find_pending_tool_call(tool_call_id);
             if let Some(call) = pending_call.as_ref() {
-                let grounding_probe_signal = grounding_probe_signal_for_tool_observation(
-                    request.sqlx_pool,
-                    observation_run_id,
-                    &call.id,
-                )
-                .await?;
+                let produced_grounding_probe_signal =
+                    produce_mvp_grounding_probe_signal_for_tool_result(
+                        request.sqlx_pool,
+                        &prior_session,
+                        observation_run_id,
+                        call,
+                        status.clone(),
+                        content,
+                    )
+                    .await?;
+                let grounding_probe_signal = match produced_grounding_probe_signal {
+                    Some(signal) => Some(signal),
+                    None => {
+                        grounding_probe_signal_for_tool_observation(
+                            request.sqlx_pool,
+                            observation_run_id,
+                            &call.id,
+                        )
+                        .await?
+                    }
+                };
                 observations.push(tool_observation_from_call(
                     call,
                     Some(content),
@@ -1793,6 +1877,42 @@ mod tests {
         crate::agent_loop::ObjectiveOrientation::Freeform {
             policy: FreeformPolicy::closed(),
         }
+    }
+
+    #[test]
+    fn mvp_grounding_probe_only_targets_mutation_classes() {
+        assert!(tool_class_is_mutation(classify_tool_budget_class(
+            "fs_edit_file"
+        )));
+        assert!(tool_class_is_mutation(classify_tool_budget_class(
+            "fs_delete_path"
+        )));
+        assert!(!tool_class_is_mutation(classify_tool_budget_class(
+            "fs_read_text_file"
+        )));
+    }
+
+    #[test]
+    fn mvp_grounding_probe_signal_follows_tool_result_status_and_content() {
+        let (ok_signal, ok_finding) = mvp_grounding_probe_signal_from_tool_result(
+            RuntimeToolResultStatus::Ok,
+            "{\"ok\":true}",
+        );
+        assert_eq!(ok_signal, GroundingProbeSignalKind::Pass);
+        assert_eq!(ok_finding.code, "tool_result_ok");
+
+        let (error_signal, error_finding) = mvp_grounding_probe_signal_from_tool_result(
+            RuntimeToolResultStatus::Ok,
+            "error: write failed",
+        );
+        assert_eq!(error_signal, GroundingProbeSignalKind::Fail);
+        assert_eq!(error_finding.code, "tool_result_failed");
+
+        let (status_signal, _) = mvp_grounding_probe_signal_from_tool_result(
+            RuntimeToolResultStatus::Error,
+            "{\"ok\":false}",
+        );
+        assert_eq!(status_signal, GroundingProbeSignalKind::Fail);
     }
 
     #[test]
