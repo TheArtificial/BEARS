@@ -277,7 +277,12 @@ fn docket_task_title(value: &serde_json::Value) -> Option<String> {
 fn task_list_tool_summary(tool_name: &str, content: Option<&str>) -> Option<String> {
     if !matches!(
         tool_name,
-        "list_task_lists" | "get_task_list_status" | "update_task_list"
+        "list_task_lists"
+            | "get_task_list_status"
+            | "update_task_list"
+            | "checkout_task_list"
+            | "sync_task_list"
+            | "request_task_list_handoff"
     ) {
         return None;
     }
@@ -292,6 +297,23 @@ fn task_list_tool_summary(tool_name: &str, content: Option<&str>) -> Option<Stri
             .get("task_list")
             .filter(|task_list| !task_list.is_null())
             .map(|task_list| format!("Updated task list: {}", task_list_summary(task_list))),
+        "checkout_task_list" => value
+            .get("task_list")
+            .filter(|task_list| !task_list.is_null())
+            .map(|task_list| format!("Checked out task list: {}", task_list_summary(task_list))),
+        "sync_task_list" => value
+            .get("task_list")
+            .filter(|task_list| !task_list.is_null())
+            .map(|task_list| format!("Synced task list: {}", task_list_summary(task_list))),
+        "request_task_list_handoff" => value
+            .get("task_list")
+            .filter(|task_list| !task_list.is_null())
+            .map(|task_list| {
+                format!(
+                    "Requested task-list handoff: {}",
+                    task_list_summary(task_list)
+                )
+            }),
         _ => None,
     }
 }
@@ -500,6 +522,49 @@ mod tests {
         assert!(summary.contains("1 pending"), "{summary}");
         assert!(summary.contains("1 completed"), "{summary}");
         assert!(summary.contains("current: `Patch code`"), "{summary}");
+    }
+
+    #[test]
+    fn task_list_checkout_summary_uses_counts_and_current_item() {
+        let content = serde_json::json!({
+            "task_list": {
+                "title": "Runtime fixes",
+                "items": [
+                    { "title": "Trace bug", "status": "completed" },
+                    { "title": "Patch code", "status": "in_progress" }
+                ],
+                "current_item": { "title": "Patch code", "status": "in_progress" }
+            }
+        })
+        .to_string();
+
+        assert_eq!(
+            user_visible_tool_summary("checkout_task_list", ToolCallFinishStatus::Ok, Some(&content)),
+            "Checked out task list: `Runtime fixes`, 2 items, 1 in progress, 1 completed, current: `Patch code`"
+        );
+    }
+
+    #[test]
+    fn task_list_handoff_summary_uses_counts() {
+        let content = serde_json::json!({
+            "task_list": {
+                "title": "Runtime fixes",
+                "items": [
+                    { "title": "Patch code", "status": "pending" },
+                    { "title": "Blocked issue", "status": "blocked" }
+                ]
+            }
+        })
+        .to_string();
+
+        assert_eq!(
+            user_visible_tool_summary(
+                "request_task_list_handoff",
+                ToolCallFinishStatus::Ok,
+                Some(&content)
+            ),
+            "Requested task-list handoff: `Runtime fixes`, 2 items, 1 pending, 1 blocked"
+        );
     }
 
     #[test]
