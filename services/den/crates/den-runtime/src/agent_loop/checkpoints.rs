@@ -356,6 +356,7 @@ pub struct LoopControlReplayTurn {
     pub decision_ids: Vec<String>,
     pub decision_kinds: Vec<LoopControlDecisionKind>,
     pub control_levels: Vec<String>,
+    pub reasons: Vec<String>,
     pub orientation_kinds: Vec<String>,
     pub checkpoint_ids: Vec<String>,
     pub related_task_list_ids: Vec<String>,
@@ -391,6 +392,7 @@ pub struct LoopControlReplayProfileSummary {
     pub decision_kind_counts: Vec<LoopControlReplayCount<LoopControlDecisionKind>>,
     pub control_level_counts: Vec<LoopControlReplayCount<String>>,
     pub orientation_kind_counts: Vec<LoopControlReplayCount<String>>,
+    pub reason_counts: Vec<LoopControlReplayCount<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -400,6 +402,7 @@ pub struct ExpectedLoopControlReplayProfileSummary {
     pub decision_kind_counts: Vec<LoopControlReplayCount<LoopControlDecisionKind>>,
     pub control_level_counts: Vec<LoopControlReplayCount<String>>,
     pub orientation_kind_counts: Vec<LoopControlReplayCount<String>>,
+    pub reason_counts: Vec<LoopControlReplayCount<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -458,6 +461,7 @@ pub fn aggregate_loop_control_replay_turns(
                     decision_ids: Vec::new(),
                     decision_kinds: Vec::new(),
                     control_levels: Vec::new(),
+                    reasons: Vec::new(),
                     orientation_kinds: Vec::new(),
                     checkpoint_ids: Vec::new(),
                     related_task_list_ids: Vec::new(),
@@ -473,6 +477,7 @@ pub fn aggregate_loop_control_replay_turns(
         push_unique(&mut turn.decision_ids, observation.decision_id);
         push_unique(&mut turn.decision_kinds, observation.decision_kind);
         push_unique(&mut turn.control_levels, observation.control_level);
+        push_optional_unique(&mut turn.reasons, observation.reason);
         push_optional_unique(&mut turn.orientation_kinds, observation.orientation_kind);
         push_optional_unique(&mut turn.checkpoint_ids, observation.checkpoint_id);
         push_optional_unique(
@@ -543,6 +548,7 @@ pub fn summarize_loop_control_replay_profile(
     let mut decision_kind_counts = Vec::new();
     let mut control_level_counts = Vec::new();
     let mut orientation_kind_counts = Vec::new();
+    let mut reason_counts = Vec::new();
     for turn in turns {
         for decision_kind in &turn.decision_kinds {
             increment_replay_count(&mut decision_kind_counts, *decision_kind);
@@ -553,6 +559,9 @@ pub fn summarize_loop_control_replay_profile(
         for orientation_kind in &turn.orientation_kinds {
             increment_replay_count(&mut orientation_kind_counts, orientation_kind.clone());
         }
+        for reason in &turn.reasons {
+            increment_replay_count(&mut reason_counts, reason.clone());
+        }
     }
     LoopControlReplayProfileSummary {
         turn_count: turns.len(),
@@ -560,6 +569,7 @@ pub fn summarize_loop_control_replay_profile(
         decision_kind_counts,
         control_level_counts,
         orientation_kind_counts,
+        reason_counts,
     }
 }
 
@@ -571,7 +581,8 @@ pub fn compare_loop_control_replay_profile(
         && observed.decision_count == expected.decision_count
         && observed.decision_kind_counts == expected.decision_kind_counts
         && observed.control_level_counts == expected.control_level_counts
-        && observed.orientation_kind_counts == expected.orientation_kind_counts;
+        && observed.orientation_kind_counts == expected.orientation_kind_counts
+        && observed.reason_counts == expected.reason_counts;
     (!matches).then_some(LoopControlReplayProfileMismatch {
         expected: expected.clone(),
         observed: observed.clone(),
@@ -1447,6 +1458,19 @@ mod tests {
                 count: 1,
             }]
         );
+        assert_eq!(
+            profile.reason_counts,
+            vec![
+                LoopControlReplayCount {
+                    value: "over_exploration".to_string(),
+                    count: 1,
+                },
+                LoopControlReplayCount {
+                    value: "near_budget".to_string(),
+                    count: 1,
+                },
+            ]
+        );
 
         let expected_profile = ExpectedLoopControlReplayProfileSummary {
             turn_count: 1,
@@ -1475,6 +1499,16 @@ mod tests {
                 value: "oriented".to_string(),
                 count: 1,
             }],
+            reason_counts: vec![
+                LoopControlReplayCount {
+                    value: "over_exploration".to_string(),
+                    count: 1,
+                },
+                LoopControlReplayCount {
+                    value: "near_budget".to_string(),
+                    count: 1,
+                },
+            ],
         };
         assert!(compare_loop_control_replay_profile(&profile, &expected_profile).is_none());
         let mut wrong_profile = expected_profile;
