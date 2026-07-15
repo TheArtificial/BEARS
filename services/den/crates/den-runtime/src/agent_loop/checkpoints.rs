@@ -373,6 +373,7 @@ pub struct ExpectedLoopControlReplayTurn {
     pub decision_count: usize,
     pub decision_kinds: Vec<LoopControlDecisionKind>,
     pub control_levels: Vec<String>,
+    pub reasons: Vec<String>,
     pub orientation_kinds: Vec<String>,
     pub checkpoint_ids: Vec<String>,
     pub evidence_refs: Vec<LedgerEvidenceRef>,
@@ -537,6 +538,7 @@ fn replay_turn_matches_expected(
         && observed.decision_count == expected.decision_count
         && observed.decision_kinds == expected.decision_kinds
         && observed.control_levels == expected.control_levels
+        && observed.reasons == expected.reasons
         && observed.orientation_kinds == expected.orientation_kinds
         && observed.checkpoint_ids == expected.checkpoint_ids
         && observed.evidence_refs == expected.evidence_refs
@@ -1403,6 +1405,7 @@ mod tests {
                 LoopControlDecisionKind::ContextBudgetPressure,
             ],
             control_levels: vec!["careful".to_string(), "standard".to_string()],
+            reasons: vec!["over_exploration".to_string(), "near_budget".to_string()],
             orientation_kinds: vec!["oriented".to_string()],
             checkpoint_ids: vec!["ckpt-multi".to_string()],
             evidence_refs: vec![
@@ -1519,7 +1522,7 @@ mod tests {
         assert_eq!(mismatch.expected.decision_count, 1);
 
         let mut wrong_turns = expected_turns;
-        wrong_turns[0].decision_count = 1;
+        wrong_turns[0].reasons = vec!["rule_of_ko".to_string()];
         let mismatches = compare_loop_control_replay_turns(&turns, &wrong_turns);
         assert_eq!(mismatches.len(), 1);
         assert_eq!(mismatches[0].observed.as_ref(), Some(&turns[0]));
@@ -1643,6 +1646,7 @@ mod tests {
             decision_count: 1,
             decision_kinds: vec![LoopControlDecisionKind::CheckpointRequested],
             control_levels: vec!["careful".to_string()],
+            reasons: vec!["over_exploration".to_string()],
             orientation_kinds: vec!["focused".to_string()],
             checkpoint_ids: vec!["ckpt-1".to_string()],
             evidence_refs: vec![LedgerEvidenceRef {
