@@ -118,6 +118,15 @@ impl LoopControlDecisionKind {
             Self::GroundingProbeResult => "grounding_probe_result",
         }
     }
+
+    pub fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "checkpoint_requested" => Some(Self::CheckpointRequested),
+            "context_budget_pressure" => Some(Self::ContextBudgetPressure),
+            "grounding_probe_result" => Some(Self::GroundingProbeResult),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,6 +311,83 @@ pub struct LoopControlLedgerRow {
     pub evidence_refs: Value,
     pub decision: Value,
     pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoopControlReplayObservation {
+    pub run_id: String,
+    pub turn_step_id: Option<Uuid>,
+    pub decision_id: String,
+    pub decision_kind: LoopControlDecisionKind,
+    pub control_level: String,
+    pub reason: Option<String>,
+    pub orientation_kind: Option<String>,
+    pub checkpoint_id: Option<String>,
+    pub related_task_list_id: Option<String>,
+    pub related_task_item_id: Option<String>,
+    pub related_docket_job_id: Option<Uuid>,
+    pub related_docket_task_id: Option<Uuid>,
+    pub evidence_refs: Vec<LedgerEvidenceRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoopControlReplayMismatch {
+    pub index: usize,
+    pub expected: Option<LoopControlReplayObservation>,
+    pub observed: Option<LoopControlReplayObservation>,
+}
+
+pub fn replay_loop_control_observations(
+    rows: &[LoopControlLedgerRow],
+) -> Result<Vec<LoopControlReplayObservation>, DenError> {
+    rows.iter().map(replay_observation_from_row).collect()
+}
+
+pub fn compare_loop_control_replay(
+    observed: &[LoopControlReplayObservation],
+    expected: &[LoopControlReplayObservation],
+) -> Vec<LoopControlReplayMismatch> {
+    let max_len = observed.len().max(expected.len());
+    (0..max_len)
+        .filter_map(|index| {
+            let observed = observed.get(index).cloned();
+            let expected = expected.get(index).cloned();
+            (observed != expected).then_some(LoopControlReplayMismatch {
+                index,
+                expected,
+                observed,
+            })
+        })
+        .collect()
+}
+
+fn replay_observation_from_row(
+    row: &LoopControlLedgerRow,
+) -> Result<LoopControlReplayObservation, DenError> {
+    let decision_kind = LoopControlDecisionKind::from_str(&row.decision_kind).ok_or_else(|| {
+        DenError::System(format!(
+            "unknown loop-control decision kind in replay ledger: {}",
+            row.decision_kind
+        ))
+    })?;
+    let evidence_refs: Vec<LedgerEvidenceRef> =
+        serde_json::from_value(row.evidence_refs.clone())
+            .map_err(|err| DenError::System(format!("deserialize replay evidence refs: {err}")))?;
+    Ok(LoopControlReplayObservation {
+        run_id: row.run_id.clone(),
+        turn_step_id: row.turn_step_id,
+        decision_id: row.decision_id.clone(),
+        decision_kind,
+        control_level: row.control_level.clone(),
+        reason: row.reason.clone(),
+        orientation_kind: row.orientation_kind.clone(),
+        checkpoint_id: row.checkpoint_id.clone(),
+        related_task_list_id: row.related_task_list_id.clone(),
+        related_task_item_id: row.related_task_item_id.clone(),
+        related_docket_job_id: row.related_docket_job_id,
+        related_docket_task_id: row.related_docket_task_id,
+        evidence_refs,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -966,6 +1052,28 @@ mod tests {
             serde_json::json!(true)
         );
         assert!(ledger[0].decision.get("active_objective").is_none());
+
+        let observed = replay_loop_control_observations(&ledger).expect("replay observations");
+        assert_eq!(observed.len(), 1);
+        let expected = vec![LoopControlReplayObservation {
+            run_id: run_id.clone(),
+            turn_step_id: None,
+            decision_id: "checkpoint:ckpt-1".to_string(),
+            decision_kind: LoopControlDecisionKind::CheckpointRequested,
+            control_level: "careful".to_string(),
+            reason: Some("over_exploration".to_string()),
+            orientation_kind: Some("focused".to_string()),
+            checkpoint_id: Some("ckpt-1".to_string()),
+            related_task_list_id: Some("list-1".to_string()),
+            related_task_item_id: Some("item-1".to_string()),
+            related_docket_job_id: None,
+            related_docket_task_id: None,
+            evidence_refs: vec![LedgerEvidenceRef {
+                kind: "tool_result".to_string(),
+                id: "call-1".to_string(),
+            }],
+        }];
+        assert!(compare_loop_control_replay(&observed, &expected).is_empty());
 
         let by_session =
             list_checkpoints_for_session(&pool, bear_id, &format!("session-{run_id}"), 10)

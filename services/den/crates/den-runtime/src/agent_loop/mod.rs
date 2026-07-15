@@ -47,14 +47,16 @@ pub use budget::{
     TurnBudgetStopReason, TurnBudgetWarning,
 };
 pub use checkpoints::{
-    context_budget_pressure_action, list_checkpoints_for_run, list_checkpoints_for_session,
-    list_loop_control_decisions_for_run, non_empty_diff_grounding_probe, record_checkpoint_request,
-    record_checkpoint_response, record_context_budget_pressure_decision,
-    record_grounding_probe_result_decision, CheckpointArtifactInput, CheckpointArtifactRow,
+    compare_loop_control_replay, context_budget_pressure_action, list_checkpoints_for_run,
+    list_checkpoints_for_session, list_loop_control_decisions_for_run,
+    non_empty_diff_grounding_probe, record_checkpoint_request, record_checkpoint_response,
+    record_context_budget_pressure_decision, record_grounding_probe_result_decision,
+    replay_loop_control_observations, CheckpointArtifactInput, CheckpointArtifactRow,
     CheckpointReplayPolicy, CheckpointResponseInput, CheckpointValidationStatus,
     CheckpointVisibility, ContextBudgetPressureLevel, GroundingProbeFinding,
     GroundingProbeResultInput, GroundingProbeSignalKind, LedgerEvidenceRef,
     LoopControlDecisionKind, LoopControlLedgerInput, LoopControlLedgerRow,
+    LoopControlReplayMismatch, LoopControlReplayObservation,
 };
 pub use context::{
     assemble_agent_messages, load_transcript_grouping_rows, load_transcript_messages,
