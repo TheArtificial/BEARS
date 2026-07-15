@@ -14,6 +14,7 @@ use crate::{
     agent_loop::{
         context::repair_tool_call_message_chain,
         overflow_retry::compact_session_messages_for_overflow,
+        record_context_budget_pressure_decision,
         session_store::{AgentLoopSession, AgentLoopSessionStore},
     },
     context_budget::estimate_context_budget,
@@ -638,6 +639,33 @@ pub async fn run_agent_step_stream(
         session.model_context_window,
         session.model_max_output_tokens,
     );
+    if let Some(overflow) = overflow.as_ref() {
+        overflow
+            .session_store
+            .update(&session.session_key, |stored| {
+                stored.latest_context_budget = Some(budget.clone());
+            });
+        let _ = den_service::conversation::persistence::update_latest_context_budget(
+            &overflow.pool,
+            session.bear_id,
+            &session.conversation_id,
+            Some(&session.client_session_id),
+            &budget,
+        )
+        .await;
+        if budget.near_budget || budget.over_budget {
+            if let Some(run_id) = session.run_id.as_deref() {
+                let _ = record_context_budget_pressure_decision(
+                    &overflow.pool,
+                    run_id,
+                    None,
+                    Some(session.objective_orientation.kind().to_string()),
+                    &budget,
+                )
+                .await;
+            }
+        }
+    }
     if budget.near_budget {
         tracing::warn!(
             session_key = %session.session_key,
@@ -659,6 +687,26 @@ pub async fn run_agent_step_stream(
             budget.context_window.unwrap_or_default(),
         )));
     }
+    let context_budget_pressure_event = budget.near_budget.then(|| {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+            kind: "context_budget_pressure".to_string(),
+            text: Some(
+                "Context budget is near the model limit; prefer checkpointing before more context growth."
+                    .to_string(),
+            ),
+            phase: Some("agent_loop_control".to_string()),
+            detail: Some(serde_json::json!({
+                "model": budget.model,
+                "context_window": budget.context_window,
+                "estimated_input_tokens": budget.estimated_input_tokens,
+                "reserved_output_tokens": budget.reserved_output_tokens,
+                "estimated_total_tokens": budget.estimated_total_tokens,
+                "near_budget": budget.near_budget,
+                "over_budget": budget.over_budget,
+                "action": "prefer_checkpoint_before_more_context_growth",
+            })),
+        })
+    });
     let checkpoint_thinking_event = request.thinking_effort.map(|effort| {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
             kind: "checkpoint_thinking_override_applied".to_string(),
@@ -675,21 +723,6 @@ pub async fn run_agent_step_stream(
             })),
         })
     });
-    if let Some(overflow) = overflow.as_ref() {
-        overflow
-            .session_store
-            .update(&session.session_key, |stored| {
-                stored.latest_context_budget = Some(budget.clone());
-            });
-        let _ = den_service::conversation::persistence::update_latest_context_budget(
-            &overflow.pool,
-            session.bear_id,
-            &session.conversation_id,
-            Some(&session.client_session_id),
-            &budget,
-        )
-        .await;
-    }
     let base_stream = Box::pin(LazyAgentStepStream::new(
         llm.clone(),
         request,
@@ -697,10 +730,15 @@ pub async fn run_agent_step_stream(
         session.api_style,
         overflow,
     )) as RuntimeEventStream;
-    if let Some(event) = checkpoint_thinking_event {
-        Ok(Box::pin(stream::iter(vec![Ok(event)]).chain(base_stream)) as RuntimeEventStream)
-    } else {
+    let prefix_events = [context_budget_pressure_event, checkpoint_thinking_event]
+        .into_iter()
+        .flatten()
+        .map(Ok)
+        .collect::<Vec<_>>();
+    if prefix_events.is_empty() {
         Ok(base_stream)
+    } else {
+        Ok(Box::pin(stream::iter(prefix_events).chain(base_stream)) as RuntimeEventStream)
     }
 }
 

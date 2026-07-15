@@ -1,4 +1,5 @@
 use den_core::DenError;
+use den_protocol::ContextBudgetReport;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
@@ -105,12 +106,75 @@ pub struct CheckpointArtifactRow {
 #[serde(rename_all = "snake_case")]
 pub enum LoopControlDecisionKind {
     CheckpointRequested,
+    ContextBudgetPressure,
 }
 
 impl LoopControlDecisionKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::CheckpointRequested => "checkpoint_requested",
+            Self::ContextBudgetPressure => "context_budget_pressure",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextBudgetPressureLevel {
+    NearBudget,
+    OverBudget,
+}
+
+impl ContextBudgetPressureLevel {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NearBudget => "near_budget",
+            Self::OverBudget => "over_budget",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ContextBudgetPressureDecision {
+    level: ContextBudgetPressureLevel,
+    model: String,
+    context_window: Option<u32>,
+    estimated_input_tokens: u32,
+    reserved_output_tokens: u32,
+    estimated_total_tokens: u32,
+    near_budget: bool,
+    over_budget: bool,
+    action: &'static str,
+}
+
+impl ContextBudgetPressureDecision {
+    fn from_report(report: &ContextBudgetReport) -> Option<Self> {
+        let level = if report.over_budget {
+            ContextBudgetPressureLevel::OverBudget
+        } else if report.near_budget {
+            ContextBudgetPressureLevel::NearBudget
+        } else {
+            return None;
+        };
+        Some(Self {
+            level,
+            model: report.model.clone(),
+            context_window: report.context_window,
+            estimated_input_tokens: report.estimated_input_tokens,
+            reserved_output_tokens: report.reserved_output_tokens,
+            estimated_total_tokens: report.estimated_total_tokens,
+            near_budget: report.near_budget,
+            over_budget: report.over_budget,
+            action: context_budget_pressure_action(level),
+        })
+    }
+}
+
+pub const fn context_budget_pressure_action(level: ContextBudgetPressureLevel) -> &'static str {
+    match level {
+        ContextBudgetPressureLevel::NearBudget => "prefer_checkpoint_before_more_context_growth",
+        ContextBudgetPressureLevel::OverBudget => {
+            "stop_before_model_call_and_request_compaction_or_smaller_context"
         }
     }
 }
@@ -240,6 +304,50 @@ pub async fn record_checkpoint_request(
     )
     .await?;
     Ok(checkpoint)
+}
+
+pub async fn record_context_budget_pressure_decision(
+    pool: &PgPool,
+    run_id: &str,
+    turn_step_id: Option<Uuid>,
+    orientation_kind: Option<String>,
+    report: &ContextBudgetReport,
+) -> Result<Option<LoopControlLedgerRow>, DenError> {
+    let Some(decision) = ContextBudgetPressureDecision::from_report(report) else {
+        return Ok(None);
+    };
+    let level = decision.level;
+    let decision_json = serde_json::to_value(&decision)
+        .map_err(|err| DenError::System(format!("serialize context budget decision: {err}")))?;
+    let row = record_loop_control_decision(
+        pool,
+        LoopControlLedgerInput {
+            run_id: run_id.to_string(),
+            turn_step_id,
+            decision_id: format!("context_budget:{}:{turn_step_id:?}", level.as_str()),
+            decision_kind: LoopControlDecisionKind::ContextBudgetPressure,
+            control_level: "standard".to_string(),
+            reason: Some(level.as_str().to_string()),
+            orientation_kind,
+            checkpoint_id: None,
+            related_task_list_id: None,
+            related_task_item_id: None,
+            related_docket_job_id: None,
+            related_docket_task_id: None,
+            evidence_refs: vec![LedgerEvidenceRef {
+                kind: "context_budget_report".to_string(),
+                id: format!(
+                    "{}:{}:{}",
+                    report.model,
+                    report.estimated_total_tokens,
+                    report.context_window.unwrap_or_default()
+                ),
+            }],
+            decision: decision_json,
+        },
+    )
+    .await?;
+    Ok(Some(row))
 }
 
 pub async fn record_loop_control_decision(
@@ -604,6 +712,49 @@ mod tests {
             evidence_refs: vec![],
             confidence: None,
         }
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn records_context_budget_pressure_decision(pool: PgPool) {
+        let run_id = format!("run-{}", Uuid::new_v4().simple());
+        seed_run(&pool, &run_id).await;
+        let report = ContextBudgetReport {
+            model: "test/model".to_string(),
+            context_window: Some(100),
+            max_output_tokens: Some(20),
+            reserved_output_tokens: 10,
+            estimated_input_tokens: 81,
+            estimated_total_tokens: 91,
+            estimate_precision: den_protocol::ContextBudgetEstimatePrecision::Approximate,
+            near_budget: true,
+            over_budget: false,
+            components: vec![],
+        };
+
+        let recorded = record_context_budget_pressure_decision(
+            &pool,
+            &run_id,
+            None,
+            Some("oriented".to_string()),
+            &report,
+        )
+        .await
+        .expect("record context budget pressure")
+        .expect("near budget writes ledger row");
+
+        assert_eq!(recorded.decision_kind, "context_budget_pressure");
+        assert_eq!(recorded.reason.as_deref(), Some("near_budget"));
+        assert_eq!(recorded.orientation_kind.as_deref(), Some("oriented"));
+        assert_eq!(recorded.evidence_refs[0]["kind"], "context_budget_report");
+        assert_eq!(
+            recorded.decision["estimated_total_tokens"],
+            serde_json::json!(91)
+        );
+        assert_eq!(
+            recorded.decision["action"],
+            context_budget_pressure_action(ContextBudgetPressureLevel::NearBudget)
+        );
+        assert!(recorded.decision.get("components").is_none());
     }
 
     #[sqlx::test(migrations = "../../migrations")]
