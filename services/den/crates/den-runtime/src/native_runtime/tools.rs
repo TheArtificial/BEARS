@@ -76,6 +76,22 @@ pub fn is_work_tool_provider_name(name: &str) -> bool {
     )
 }
 
+pub fn is_task_definition_or_delegation_tool_provider_name(name: &str) -> bool {
+    matches!(
+        name,
+        DEN_TASK_LISTS_UPDATE_PROVIDER
+            | DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER
+            | DEN_JOB_CREATE_PROVIDER
+            | DEN_JOB_UPDATE_PROVIDER
+            | DEN_JOB_EXECUTE_PROVIDER
+            | DEN_TASK_CREATE_PROVIDER
+            | DEN_TASK_UPDATE_PROVIDER
+            | DEN_TASK_LIST_SYNC_PROVIDER
+            | DEN_TASK_LIST_CHECKOUT_PROVIDER
+            | DEN_WORK_DISPATCH_PROVIDER
+    )
+}
+
 /// Collapse duplicate forwarded MCP tools that share the same action suffix, e.g.
 /// `mcp__chrome_devtools_mcp_zed__click` and `mcp__chrome_devtools_custom__click`.
 fn mcp_client_tool_dedup_key(name: &str) -> Option<&str> {
@@ -185,6 +201,7 @@ pub fn merge_den_and_client_tools(
     _config: &Config,
     role: BearProfile,
     work_enabled: bool,
+    may_define_task: bool,
     client_tools: Option<&Value>,
     pair_turn_prompt: Option<&str>,
 ) -> Result<Vec<LlmToolDefinition>, DenError> {
@@ -201,6 +218,9 @@ pub fn merge_den_and_client_tools(
     };
     if !work_enabled {
         merged.retain(|tool| !is_work_tool_provider_name(&tool.name));
+    }
+    if !may_define_task {
+        merged.retain(|tool| !is_task_definition_or_delegation_tool_provider_name(&tool.name));
     }
     if role == BearProfile::Chat {
         return Ok(merged);
@@ -297,6 +317,7 @@ mod tests {
             &config,
             BearProfile::Pair,
             true,
+            true,
             Some(&client_tools),
             Some("click the browser page button"),
         )
@@ -318,6 +339,7 @@ mod tests {
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Pair,
+            true,
             true,
             Some(&client_tools),
             Some("what do you know about me?"),
@@ -343,6 +365,7 @@ mod tests {
             &config,
             BearProfile::Pair,
             true,
+            true,
             Some(&client_tools),
             Some("please read README.md"),
         )
@@ -367,6 +390,7 @@ mod tests {
             &config,
             BearProfile::Pair,
             true,
+            true,
             Some(&client_tools),
             Some("please edit the file src/lib.rs"),
         )
@@ -390,6 +414,7 @@ mod tests {
             &config,
             BearProfile::Pair,
             true,
+            true,
             Some(&client_tools),
             Some("please build the project and inspect errors"),
         )
@@ -406,7 +431,8 @@ mod tests {
     fn curate_profile_includes_proposal_and_core_tools() {
         let config = native_test_config();
         let merged =
-            merge_den_and_client_tools(&config, BearProfile::Curate, true, None, None).unwrap();
+            merge_den_and_client_tools(&config, BearProfile::Curate, true, true, None, None)
+                .unwrap();
         let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"memory_list_proposals"));
         assert!(names.contains(&"memory_read_proposal"));
@@ -416,12 +442,34 @@ mod tests {
     }
 
     #[test]
+    fn closed_freeform_policy_omits_task_definition_and_delegation_tools() {
+        let config = native_test_config();
+        let merged = merge_den_and_client_tools(
+            &config,
+            BearProfile::Pair,
+            true,
+            false,
+            None,
+            Some("hello"),
+        )
+        .unwrap();
+        let names: Vec<_> = merged.iter().map(|t| t.name.as_str()).collect();
+
+        assert!(names.contains(&"list_jobs"));
+        assert!(names.contains(&"get_task_list_status"));
+        assert!(!names.contains(&"create_job"));
+        assert!(!names.contains(&"create_task"));
+        assert!(!names.contains(&"dispatch_work"));
+    }
+
+    #[test]
     fn disabled_work_bear_omits_task_job_and_work_tools() {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Pair,
             false,
+            true,
             None,
             Some("please create a job"),
         )
@@ -440,6 +488,7 @@ mod tests {
             &config,
             BearProfile::Chat,
             true,
+            true,
             None,
             Some("list your capabilities"),
         )
@@ -453,6 +502,7 @@ mod tests {
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Chat,
+            true,
             true,
             None,
             Some("search memory for deployment notes"),
@@ -482,6 +532,7 @@ mod tests {
         let merged = merge_den_and_client_tools(
             &config,
             BearProfile::Chat,
+            true,
             true,
             None,
             Some("search memory for deployment notes"),

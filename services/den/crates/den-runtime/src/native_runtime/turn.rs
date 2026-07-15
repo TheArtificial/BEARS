@@ -45,8 +45,9 @@ use crate::{
         AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
         AgentStepOverflowContext, AssembleTurnContext, CheckpointArtifactInput, CheckpointField,
         CheckpointReplayPolicy, CheckpointTaskContext, CheckpointTrigger, CheckpointVisibility,
-        NativeToolDispatchMode, RuntimeCheckpointRequest, SessionTrackingStream,
-        ToolContinuationObservation, TurnBudgetStopReason, TurnBudgetWarning,
+        NativeToolDispatchMode, ObjectiveOrientation, RuntimeCheckpointRequest,
+        SessionTrackingStream, ToolContinuationObservation, TurnBudgetStopReason,
+        TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{
@@ -681,10 +682,15 @@ async fn build_session(
             ));
         }
     }
+    let may_define_task = match &objective_orientation {
+        ObjectiveOrientation::Freeform { policy } => policy.may_define_task,
+        ObjectiveOrientation::Oriented { .. } | ObjectiveOrientation::Focused { .. } => true,
+    };
     let tools = merge_den_and_client_tools(
         deps.config,
         profile.profile,
         bear.work_enabled,
+        may_define_task,
         client_tools,
         human_message,
     )?;
