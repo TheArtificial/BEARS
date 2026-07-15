@@ -704,7 +704,7 @@ impl AgentLoopControlProfile {
                 ),
                 CheckpointPolicy {
                     enabled: true,
-                    exploration_without_mutation_threshold: Some(8),
+                    exploration_without_mutation_threshold: Some(12),
                     consecutive_failure_threshold: Some(2),
                     same_signature_warning_threshold: Some(2),
                     require_on_low_budget: true,
@@ -728,7 +728,7 @@ impl AgentLoopControlProfile {
                 ),
                 CheckpointPolicy {
                     enabled: true,
-                    exploration_without_mutation_threshold: Some(7),
+                    exploration_without_mutation_threshold: Some(10),
                     consecutive_failure_threshold: Some(2),
                     same_signature_warning_threshold: Some(2),
                     require_on_low_budget: true,
@@ -962,11 +962,11 @@ mod tests {
 
         assert_eq!(
             light.checkpoints.exploration_without_mutation_threshold,
-            Some(8)
+            Some(12)
         );
         assert_eq!(
             standard.checkpoints.exploration_without_mutation_threshold,
-            Some(7)
+            Some(10)
         );
         assert!(
             standard.checkpoints.exploration_without_mutation_threshold
