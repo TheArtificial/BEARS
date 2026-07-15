@@ -15,7 +15,10 @@ use den_protocol::{
     RuntimeToolResultStatus, StartTurnRequest,
 };
 use den_service::{
-    bears::BearProfile,
+    bears::{
+        prompt_fragments::{render_turn_fragment, repository_prompt_fragment_registry},
+        BearProfile,
+    },
     conversation::{
         events::{
             canonical_persistence_context, canonical_persistence_enabled_for_conversation,
@@ -51,7 +54,8 @@ use crate::{
         tools::{is_work_tool_provider_name, merge_den_and_client_tools},
     },
     turn_runner::{
-        materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest,
+        materialize_runtime_conversation_if_needed, RunRecoveryDisposition, TurnContinueRequest,
+        TurnStartRequest,
     },
 };
 use den_core::DenError;
@@ -1274,6 +1278,47 @@ async fn record_checkpoint_request_if_audited(
     }
 }
 
+fn render_run_recovery_context(
+    disposition: RunRecoveryDisposition,
+) -> Result<Option<String>, DenError> {
+    let RunRecoveryDisposition::ResumeEligible { attempts } = disposition else {
+        return Ok(None);
+    };
+    let fragments = repository_prompt_fragment_registry()?;
+    let fragment = fragments.require("runtime_run_recovery")?;
+    render_turn_fragment(
+        fragment,
+        &serde_json::json!({
+            "recovery": {
+                "attempts": attempts,
+            }
+        }),
+    )
+    .map(|text| Some(text.trim().to_string()))
+}
+
+fn apply_run_recovery_context(
+    session: &mut AgentLoopSession,
+    disposition: RunRecoveryDisposition,
+) -> Result<bool, DenError> {
+    let Some(message) = render_run_recovery_context(disposition)? else {
+        return Ok(false);
+    };
+    if session.messages.last().is_some_and(|existing| {
+        existing.role == "system" && existing.content.as_deref() == Some(message.as_str())
+    }) {
+        return Ok(false);
+    }
+    session.messages.push(ChatMessage {
+        role: "system".to_string(),
+        content: Some(message),
+        tool_call_id: None,
+        name: None,
+        tool_calls: None,
+    });
+    Ok(true)
+}
+
 fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarning) -> bool {
     if session.messages.last().is_some_and(|message| {
         message.role == "system" && message.content.as_deref() == Some(warning.model_message())
@@ -1551,6 +1596,7 @@ pub async fn continue_native_client_turn_event_stream(
         evaluation.warning.is_some(),
     );
     let mut warning_applied = false;
+    let mut recovery_context_result = Ok(false);
     SESSION_STORE.update(&session_key, |session| {
         session.request_id = Some(request.request_id.to_string());
         session.run_id = request
@@ -1558,12 +1604,15 @@ pub async fn continue_native_client_turn_event_stream(
             .map(str::to_string)
             .or_else(|| session.run_id.clone());
         session.messages.extend(tool_messages.clone());
+        recovery_context_result =
+            apply_run_recovery_context(session, request.stream_context.run_recovery);
         session.turn_budget_state = evaluation.next_state.clone();
         session.checkpoint_state = checkpoint_evaluation.next_state.clone();
         if let Some(warning) = evaluation.warning.as_ref() {
             warning_applied = apply_budget_warning(session, warning);
         }
     });
+    recovery_context_result?;
     let mut session = SESSION_STORE
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
@@ -1707,6 +1756,77 @@ mod tests {
             compatibility_backend: Some("runtime:legacy".to_string()),
         };
         assert_eq!(bear_id_from_native_binding(&binding), None);
+    }
+
+    #[test]
+    fn run_recovery_context_renders_neutral_fragment_once() {
+        let message =
+            render_run_recovery_context(RunRecoveryDisposition::ResumeEligible { attempts: 0 })
+                .expect("recovery fragment renders")
+                .expect("resume-eligible recovery emits context");
+
+        assert!(message.contains("ended before final delivery"));
+        assert!(!message.to_lowercase().contains("continue"));
+        assert!(!message.to_lowercase().contains("try again"));
+        assert!(
+            render_run_recovery_context(RunRecoveryDisposition::Exhausted { attempts: 1 })
+                .expect("exhausted recovery renders")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn apply_run_recovery_context_is_idempotent_for_same_session_tail() {
+        let mut session = AgentLoopSession {
+            session_key: "session".to_string(),
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(1),
+            conversation_id: "conv".to_string(),
+            client_session_id: "session".to_string(),
+            workspace_roots: vec![],
+            request_id: None,
+            run_id: None,
+            messages: vec![],
+            tools: vec![],
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 0,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
+            checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
+            pending_checkpoint_task_action: None,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
+            active_activity_plan: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        };
+        let disposition = RunRecoveryDisposition::ResumeEligible { attempts: 0 };
+
+        assert!(apply_run_recovery_context(&mut session, disposition).expect("first apply"));
+        assert!(!apply_run_recovery_context(&mut session, disposition).expect("second apply"));
+        assert_eq!(
+            session
+                .messages
+                .iter()
+                .filter(|message| message.role == "system")
+                .count(),
+            1
+        );
     }
 
     #[test]
