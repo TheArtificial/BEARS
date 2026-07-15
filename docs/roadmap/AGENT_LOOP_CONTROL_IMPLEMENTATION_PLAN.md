@@ -18,7 +18,7 @@ Recent slices have moved the plan through the governance/focus/orientation found
 - **Checkpoint protocol exists enough to exercise:** runtime can request structured `checkpoint` tool calls with typed next-action fields. Artifact retention, enforcement, and budget/ko integration are still future phases.
 - **Replay/measurement spine landed at the useful-minimum level:** the companion plan's transcript-free `bear_loop_control_ledger` exists and records checkpoint requests, context-budget pressure decisions, and grounding-probe results with typed metadata/evidence refs. Runtime now has pure replay helpers for typed decision observations, per-turn aggregates, expected-turn/profile comparisons, profile summaries, and a DB-backed `run_id -> profile summary` loader. No full policy simulator is planned unless real tuning needs outgrow these comparisons.
 - **Context budget is integrated as the first real loop budget dimension:** latest ADR-0047 context-budget reports are carried in `TurnBudgetState`, near/over-budget pressure can be written to the ledger, near-budget pressure emits a loop-control diagnostic, and active overflow recovery attempts emergency compaction before stopping an over-budget model call. Checkpoint-before-growth policy and replay-tuned thresholds remain future work.
-- **Grounding probes are partially integrated:** a minimal repository/diff grounding-probe helper can record non-empty-diff probe results through the ledger evidence path without storing raw diff contents. Surface-declared probe profiles, probe execution policy, and mutation-replenishment integration remain future work.
+- **Grounding probes are integrated at the generic MVP level:** mutation-like tool results now produce grounding-probe decisions tied to tool-call evidence refs, and failed probe signals prevent mutation replenishment/checkpoint reset. The MVP producer deliberately uses tool status/error-shaped content; stronger read-after-write or diff probes should be added only for surfaces where recorded runs show this is too weak.
 
 ### Implementation review and adjustments
 
@@ -31,10 +31,9 @@ Recent slices have moved the plan through the governance/focus/orientation found
 
 Recommended next slices:
 
-1. **Wire grounding probes into mutation verification.** Feed generic/repository probe pass/fail into meaningful-mutation replenishment and checkpoint evidence; defer surface-specific probes until a recorded run shows the generic path is insufficient.
-2. **Resume Phase 3/4 checkpoint and KO enforcement.** Tune checkpoint cadence, failure/KO thresholds, and task-gate behavior against recorded ledger decisions and profile summaries instead of hand-adjusting constants.
-3. **Refine context-budget policy with recorded evidence.** Add checkpoint-before-growth and threshold tuning only where ledger/replay summaries show the compact-first behavior is insufficient.
-4. **Only add more replay machinery when a concrete tuning question needs it.** The current no-simulator harness is enough for expected-observed drift checks; avoid a full policy simulator unless production traces prove summaries/comparators are too weak.
+1. **Tune checkpoint/KO enforcement with recorded evidence.** Checkpoint responses are now authoritative in enforce mode: a pending checkpoint must be answered through the checkpoint tool before another tool call or final answer. Next tune checkpoint cadence, failure/KO thresholds, and task-gate behavior against recorded ledger decisions and profile summaries instead of hand-adjusting constants.
+2. **Refine context-budget policy with recorded evidence.** Add checkpoint-before-growth and threshold tuning only where ledger/replay summaries show the compact-first behavior is insufficient.
+3. **Only add more replay machinery when a concrete tuning question needs it.** The current no-simulator harness is enough for expected-observed drift checks; avoid a full policy simulator unless production traces prove summaries/comparators are too weak.
 
 ## Goal
 

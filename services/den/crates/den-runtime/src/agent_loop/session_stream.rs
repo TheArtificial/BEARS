@@ -739,25 +739,6 @@ impl SessionTrackingStream {
             .is_some_and(|session| session.turn_budget_state.budget_finalization_grace_used)
     }
 
-    fn parse_checkpoint_response_text(text: &str) -> Result<RuntimeCheckpointResponse, DenError> {
-        let trimmed = text.trim();
-        let json_text = if let Some(rest) = trimmed.strip_prefix("```json") {
-            rest.trim()
-                .strip_suffix("```")
-                .map(str::trim)
-                .unwrap_or_else(|| rest.trim())
-        } else if let Some(rest) = trimmed.strip_prefix("```") {
-            rest.trim()
-                .strip_suffix("```")
-                .map(str::trim)
-                .unwrap_or_else(|| rest.trim())
-        } else {
-            trimmed
-        };
-        serde_json::from_str(json_text)
-            .map_err(|err| DenError::Parsing(format!("invalid checkpoint response JSON: {err}")))
-    }
-
     fn checkpoint_failure_event(message: String) -> RuntimeStreamEvent {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
             turn: None,
@@ -939,31 +920,17 @@ impl SessionTrackingStream {
     }
 
     #[allow(clippy::result_large_err)]
-    fn validate_pending_checkpoint_response(&mut self) -> Result<bool, RuntimeStreamEvent> {
+    fn fail_if_checkpoint_pending(&self, attempted_action: &str) -> Result<(), RuntimeStreamEvent> {
         if !self.enforce_checkpoint_responses() {
-            return Ok(false);
+            return Ok(());
         }
         let Some(request) = self.pending_checkpoint_request() else {
-            return Ok(false);
+            return Ok(());
         };
-        let response = match Self::parse_checkpoint_response_text(&self.assistant_text) {
-            Ok(response) => response,
-            Err(err) => {
-                self.degrade_invalid_checkpoint_response(format!(
-                    "assistant checkpoint text was not valid JSON: {err}"
-                ));
-                return Ok(false);
-            }
-        };
-        if let Err(err) = validate_checkpoint_response(&request, &response) {
-            self.degrade_invalid_checkpoint_response(format!(
-                "assistant checkpoint text failed validation: {err:?}"
-            ));
-            return Ok(false);
-        }
-        self.apply_valid_checkpoint_response(request, response);
-        self.assistant_text.clear();
-        Ok(true)
+        Err(Self::checkpoint_failure_event(format!(
+            "Runtime checkpoint `{}` is pending; the assistant attempted `{attempted_action}` before calling the `{}` tool.",
+            request.checkpoint_id, RUNTIME_CHECKPOINT_TOOL_NAME
+        )))
     }
 
     fn record_checkpoint_response_if_audited(
@@ -1229,7 +1196,9 @@ impl Stream for SessionTrackingStream {
                     }
                     return Poll::Ready(Some(Ok(started)));
                 }
-                if let Err(event) = self.validate_pending_checkpoint_response() {
+                if let Err(event) =
+                    self.fail_if_checkpoint_pending(&format!("tool_call:{tool_name}"))
+                {
                     self.finished = true;
                     return Poll::Ready(Some(Ok(event)));
                 }
@@ -1364,17 +1333,9 @@ impl Stream for SessionTrackingStream {
                     );
                     return Poll::Ready(None);
                 }
-                match self.validate_pending_checkpoint_response() {
-                    Ok(true) => {
-                        self.begin_checkpoint_continuation();
-                        cx.waker().wake_by_ref();
-                        return Poll::Pending;
-                    }
-                    Ok(false) => {}
-                    Err(event) => {
-                        self.finished = true;
-                        return Poll::Ready(Some(Ok(event)));
-                    }
+                if let Err(event) = self.fail_if_checkpoint_pending("final_answer") {
+                    self.finished = true;
+                    return Poll::Ready(Some(Ok(event)));
                 }
                 if let Err(event) = self.fail_if_checkpoint_task_action_pending() {
                     self.finished = true;
@@ -1755,32 +1716,29 @@ mod tests {
         assert!(error.contains("max_children is 6"));
     }
 
-    #[test]
-    fn parses_plain_and_fenced_checkpoint_response_json() {
-        let raw = serde_json::json!({
-            "checkpoint_id": "ckpt-1",
-            "active_objective": "Inspect routing",
-            "learned": ["The projector owns the mapping."],
-            "remaining_uncertainty": [],
-            "more_exploration_justified": false,
-            "next_action": "validate",
-            "task_state_change_needed": null,
-            "evidence_refs": [],
-            "confidence": "medium"
-        })
-        .to_string();
+    #[tokio::test]
+    async fn pending_checkpoint_blocks_non_checkpoint_actions_in_enforce_mode() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.pending_checkpoint_request = Some(checkpoint_request("ckpt-required"));
+        let stream = test_tracking_stream_with_session(&session);
 
-        let parsed = SessionTrackingStream::parse_checkpoint_response_text(&raw)
-            .expect("plain checkpoint response parses");
-        assert_eq!(parsed.checkpoint_id, "ckpt-1");
+        let tool_err = stream
+            .fail_if_checkpoint_pending("tool_call:memory_read")
+            .expect_err("non-checkpoint tool call is blocked");
+        assert!(matches!(
+            tool_err,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { ref message, .. })
+                if message.contains("ckpt-required") && message.contains("checkpoint")
+        ));
 
-        let fenced = format!("```json\n{raw}\n```");
-        let parsed = SessionTrackingStream::parse_checkpoint_response_text(&fenced)
-            .expect("fenced checkpoint response parses");
-        assert_eq!(
-            parsed.next_action,
-            crate::agent_loop::CheckpointNextAction::Validate
-        );
+        let final_err = stream
+            .fail_if_checkpoint_pending("final_answer")
+            .expect_err("final answer is blocked");
+        assert!(matches!(
+            final_err,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { ref message, .. })
+                if message.contains("final_answer")
+        ));
     }
 
     fn checkpoint_request(checkpoint_id: &str) -> RuntimeCheckpointRequest {
@@ -1923,7 +1881,7 @@ mod tests {
         session.checkpoint_state.same_signature_repeat_count = 2;
         session.checkpoint_state.last_signature = Some("memory_read:{path=a}".to_string());
         let mut stream = test_tracking_stream_with_session(&session);
-        stream.assistant_text = checkpoint_response_json(
+        let arguments: serde_json::Value = serde_json::from_str(&checkpoint_response_json(
             "ckpt-follow-through",
             serde_json::json!("update_task_list"),
             serde_json::json!({
@@ -1931,9 +1889,14 @@ mod tests {
                 "reason": "Missing deployment credential",
                 "evidence_refs": []
             }),
-        );
+        ))
+        .expect("checkpoint response json");
 
-        assert_eq!(stream.validate_pending_checkpoint_response(), Ok(true));
+        let event = stream.handle_checkpoint_tool_call("call-checkpoint".to_string(), arguments);
+        assert!(matches!(
+            event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished { .. })
+        ));
         assert!(matches!(
             stream.pending_checkpoint_task_action(),
             Some(crate::agent_loop::CheckpointNextAction::UpdateTaskList)
@@ -1960,7 +1923,7 @@ mod tests {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         session.pending_checkpoint_request = Some(checkpoint_request("ckpt-advisory-action"));
         let mut stream = test_tracking_stream_with_session(&session);
-        stream.assistant_text = checkpoint_response_json(
+        let arguments: serde_json::Value = serde_json::from_str(&checkpoint_response_json(
             "ckpt-advisory-action",
             serde_json::json!("validate"),
             serde_json::json!({
@@ -1968,9 +1931,10 @@ mod tests {
                 "reason": "Missing deployment credential",
                 "evidence_refs": []
             }),
-        );
+        ))
+        .expect("checkpoint response json");
 
-        assert_eq!(stream.validate_pending_checkpoint_response(), Ok(true));
+        let _ = stream.handle_checkpoint_tool_call("call-checkpoint".to_string(), arguments);
         assert!(stream.pending_checkpoint_request().is_none());
         assert!(stream.pending_checkpoint_task_action().is_none());
     }
@@ -1997,13 +1961,6 @@ mod tests {
             &crate::agent_loop::CheckpointNextAction::SyncTaskList,
             "memory_read",
         ));
-    }
-
-    #[test]
-    fn rejects_non_json_checkpoint_response() {
-        let err = SessionTrackingStream::parse_checkpoint_response_text("I will keep reading")
-            .expect_err("non-json checkpoint response should fail");
-        assert!(err.to_string().contains("invalid checkpoint response JSON"));
     }
 
     fn sample_tool_call(id: &str) -> ChatToolCall {
