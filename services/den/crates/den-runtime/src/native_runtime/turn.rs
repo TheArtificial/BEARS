@@ -1831,8 +1831,12 @@ mod tests {
     };
 
     fn sample_budget_warning(message: &str) -> TurnBudgetWarning {
+        sample_budget_warning_with_code("tool_class_budget_warning", message)
+    }
+
+    fn sample_budget_warning_with_code(code: &'static str, message: &str) -> TurnBudgetWarning {
         TurnBudgetWarning {
-            code: "tool_class_budget_warning",
+            code,
             message: message.to_string(),
         }
     }
@@ -2057,6 +2061,63 @@ mod tests {
             session.messages[0].content.as_deref(),
             Some(replacement.model_message())
         );
+    }
+
+    #[test]
+    fn apply_budget_warning_surfaces_rule_of_ko_warning_to_model_context() {
+        let mut session = AgentLoopSession {
+            session_key: "session".to_string(),
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(1),
+            conversation_id: "conv".to_string(),
+            client_session_id: "session".to_string(),
+            workspace_roots: vec![],
+            request_id: None,
+            run_id: None,
+            messages: vec![],
+            tools: vec![],
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 0,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
+            checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
+            pending_checkpoint_task_action: None,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
+            active_activity_plan: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        };
+        let warning = sample_budget_warning_with_code(
+            "rule_of_ko_warning",
+            "Budget advisory: this turn is close to its loop-ko limit (2/2 repeated tool batches). Do not repeat the same tool call pattern again; either answer now or choose a materially different next step.",
+        );
+
+        assert!(apply_budget_warning(&mut session, &warning));
+        assert_eq!(session.messages.len(), 1);
+        assert_eq!(session.messages[0].role, "system");
+        let message = session.messages[0]
+            .content
+            .as_deref()
+            .expect("budget warning message");
+        assert!(message.contains("loop-ko limit"));
+        assert!(message.contains("Do not repeat the same tool call pattern again"));
+        assert!(!apply_budget_warning(&mut session, &warning));
     }
 
     #[test]
