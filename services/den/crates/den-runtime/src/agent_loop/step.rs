@@ -13,6 +13,7 @@ use tokio::time::timeout;
 use crate::{
     agent_loop::{
         context::repair_tool_call_message_chain,
+        evaluate_turn_context_budget,
         overflow_retry::compact_session_messages_for_overflow,
         record_context_budget_pressure_decision,
         session_store::{AgentLoopSession, AgentLoopSessionStore},
@@ -639,11 +640,19 @@ pub async fn run_agent_step_stream(
         session.model_context_window,
         session.model_max_output_tokens,
     );
+    let context_budget_evaluation =
+        evaluate_turn_context_budget(&session.turn_budget_state, budget);
+    let budget = context_budget_evaluation
+        .next_state
+        .latest_context_budget
+        .clone()
+        .expect("context budget evaluation stores the latest report");
     if let Some(overflow) = overflow.as_ref() {
         overflow
             .session_store
             .update(&session.session_key, |stored| {
                 stored.latest_context_budget = Some(budget.clone());
+                stored.turn_budget_state = context_budget_evaluation.next_state.clone();
             });
         let _ = den_service::conversation::persistence::update_latest_context_budget(
             &overflow.pool,
@@ -666,7 +675,7 @@ pub async fn run_agent_step_stream(
             }
         }
     }
-    if budget.near_budget {
+    if let Some(warning) = context_budget_evaluation.warning.as_ref() {
         tracing::warn!(
             session_key = %session.session_key,
             model = %budget.model,
@@ -674,26 +683,17 @@ pub async fn run_agent_step_stream(
             estimated_input_tokens = budget.estimated_input_tokens,
             reserved_output_tokens = budget.reserved_output_tokens,
             estimated_total_tokens = budget.estimated_total_tokens,
+            warning_code = warning.code,
             "context budget is near model limit"
         );
     }
-    if budget.over_budget {
-        return Err(DenError::ValidationError(format!(
-            "Compiled request exceeds model context budget for {}: estimated_input_tokens={}, reserved_output_tokens={}, estimated_total_tokens={}, context_window={}. Reduce transcript/context, compact the conversation, or select a larger-context model.",
-            budget.model,
-            budget.estimated_input_tokens,
-            budget.reserved_output_tokens,
-            budget.estimated_total_tokens,
-            budget.context_window.unwrap_or_default(),
-        )));
+    if let Some(reason) = context_budget_evaluation.stop_reason.as_ref() {
+        return Err(DenError::ValidationError(reason.user_message()));
     }
-    let context_budget_pressure_event = budget.near_budget.then(|| {
+    let context_budget_pressure_event = context_budget_evaluation.warning.as_ref().map(|warning| {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
             kind: "context_budget_pressure".to_string(),
-            text: Some(
-                "Context budget is near the model limit; prefer checkpointing before more context growth."
-                    .to_string(),
-            ),
+            text: Some(warning.model_message().to_string()),
             phase: Some("agent_loop_control".to_string()),
             detail: Some(serde_json::json!({
                 "model": budget.model,

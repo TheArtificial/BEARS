@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use den_protocol::ContextBudgetReport;
 use den_service::bears::prompt_fragments::{
     render_turn_fragment, repository_prompt_fragment_registry,
 };
@@ -151,6 +152,7 @@ pub struct PostMutationVerificationWindow {
 pub struct TurnBudgetState {
     pub started_at: Instant,
     pub tool_usage: ToolCallBudgetUsage,
+    pub latest_context_budget: Option<ContextBudgetReport>,
     pub consecutive_tool_failures: u32,
     pub last_batch_signature: Option<String>,
     pub same_batch_signature_repeats: u32,
@@ -165,6 +167,7 @@ impl Default for TurnBudgetState {
         Self {
             started_at: Instant::now(),
             tool_usage: ToolCallBudgetUsage::default(),
+            latest_context_budget: None,
             consecutive_tool_failures: 0,
             last_batch_signature: None,
             same_batch_signature_repeats: 0,
@@ -223,6 +226,13 @@ pub enum TurnBudgetStopReason {
         step: u32,
         emergency_hard_steps: u32,
     },
+    ContextBudgetLimit {
+        model: String,
+        estimated_input_tokens: u32,
+        reserved_output_tokens: u32,
+        estimated_total_tokens: u32,
+        context_window: Option<u32>,
+    },
 }
 
 impl TurnBudgetWarning {
@@ -240,6 +250,7 @@ impl TurnBudgetStopReason {
             Self::ConsecutiveToolFailures { .. } => "consecutive_tool_failures",
             Self::RuleOfKo { .. } => "rule_of_ko",
             Self::EmergencyHardStepLimit { .. } => "emergency_hard_step_limit",
+            Self::ContextBudgetLimit { .. } => "context_budget_limit",
         }
     }
 
@@ -292,6 +303,16 @@ impl TurnBudgetStopReason {
                 emergency_hard_steps,
             } => format!(
                 "I stopped because this turn hit the emergency continuation fuse (step={step}/emergency_hard_steps={emergency_hard_steps}). The recent tool results were recorded, but this run needs a fresh turn to continue safely."
+            ),
+            Self::ContextBudgetLimit {
+                model,
+                estimated_input_tokens,
+                reserved_output_tokens,
+                estimated_total_tokens,
+                context_window,
+            } => format!(
+                "I stopped before the next model call because the compiled request exceeds the context budget for {model} (estimated_input_tokens={estimated_input_tokens}, reserved_output_tokens={reserved_output_tokens}, estimated_total_tokens={estimated_total_tokens}, context_window={}). Compact or reduce context before continuing.",
+                context_window.unwrap_or_default()
             ),
         }
     }
@@ -482,6 +503,47 @@ pub fn evaluate_turn_budget(
     } else {
         None
     };
+
+    TurnBudgetEvaluation {
+        next_state,
+        warning,
+        stop_reason,
+    }
+}
+
+pub fn evaluate_turn_context_budget(
+    prior_state: &TurnBudgetState,
+    report: ContextBudgetReport,
+) -> TurnBudgetEvaluation {
+    let mut next_state = prior_state.clone();
+    next_state.latest_context_budget = Some(report.clone());
+
+    let stop_reason = report
+        .over_budget
+        .then(|| TurnBudgetStopReason::ContextBudgetLimit {
+            model: report.model.clone(),
+            estimated_input_tokens: report.estimated_input_tokens,
+            reserved_output_tokens: report.reserved_output_tokens,
+            estimated_total_tokens: report.estimated_total_tokens,
+            context_window: report.context_window,
+        });
+    let warning = (stop_reason.is_none() && report.near_budget).then(|| {
+        let code = "context_budget_warning";
+        TurnBudgetWarning {
+            code,
+            message: render_budget_warning_message(
+                json!({
+                    "code": code,
+                    "model": report.model,
+                    "context_window": report.context_window,
+                    "estimated_input_tokens": report.estimated_input_tokens,
+                    "reserved_output_tokens": report.reserved_output_tokens,
+                    "estimated_total_tokens": report.estimated_total_tokens,
+                }),
+                "Budget advisory: the next model call is close to the context limit. Checkpoint or compact before adding more context.".to_string(),
+            ),
+        }
+    });
 
     TurnBudgetEvaluation {
         next_state,
@@ -833,6 +895,53 @@ mod tests {
             class: classify_tool_budget_class(tool_name),
             failed,
         }
+    }
+
+    fn context_budget_report(near_budget: bool, over_budget: bool) -> ContextBudgetReport {
+        ContextBudgetReport {
+            model: "test-model".to_string(),
+            context_window: Some(100),
+            max_output_tokens: Some(10),
+            reserved_output_tokens: 10,
+            estimated_input_tokens: if over_budget { 95 } else { 85 },
+            estimated_total_tokens: if over_budget { 105 } else { 95 },
+            estimate_precision: den_protocol::ContextBudgetEstimatePrecision::Approximate,
+            near_budget,
+            over_budget,
+            components: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn context_budget_report_updates_turn_budget_state() {
+        let evaluation =
+            evaluate_turn_context_budget(&state(), context_budget_report(false, false));
+
+        assert!(evaluation.stop_reason.is_none());
+        assert!(evaluation.warning.is_none());
+        assert!(evaluation.next_state.latest_context_budget.is_some());
+    }
+
+    #[test]
+    fn near_context_budget_warns_without_stopping() {
+        let evaluation = evaluate_turn_context_budget(&state(), context_budget_report(true, false));
+
+        assert!(evaluation.stop_reason.is_none());
+        assert_eq!(
+            evaluation.warning.as_ref().map(|warning| warning.code),
+            Some("context_budget_warning")
+        );
+    }
+
+    #[test]
+    fn over_context_budget_stops_before_model_call() {
+        let evaluation = evaluate_turn_context_budget(&state(), context_budget_report(true, true));
+
+        assert!(matches!(
+            evaluation.stop_reason,
+            Some(TurnBudgetStopReason::ContextBudgetLimit { .. })
+        ));
+        assert!(evaluation.warning.is_none());
     }
 
     #[test]

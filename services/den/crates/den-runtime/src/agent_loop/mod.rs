@@ -41,10 +41,10 @@ pub use assembler::{
     recalled_memory_session_diagnostic, AssembleTurnContext, AssembledNativeTurn,
 };
 pub use budget::{
-    classify_tool_budget_class, evaluate_turn_budget, tool_signature, tool_signature_from_call,
-    PostMutationVerificationWindow, ToolBudgetClass, ToolCallBudgetLimits, ToolCallBudgetUsage,
-    ToolContinuationObservation, TurnBudgetEvaluation, TurnBudgetPolicy, TurnBudgetState,
-    TurnBudgetStopReason, TurnBudgetWarning,
+    classify_tool_budget_class, evaluate_turn_budget, evaluate_turn_context_budget, tool_signature,
+    tool_signature_from_call, PostMutationVerificationWindow, ToolBudgetClass,
+    ToolCallBudgetLimits, ToolCallBudgetUsage, ToolContinuationObservation, TurnBudgetEvaluation,
+    TurnBudgetPolicy, TurnBudgetState, TurnBudgetStopReason, TurnBudgetWarning,
 };
 pub use checkpoints::{
     aggregate_loop_control_replay_turns, compare_loop_control_replay,
