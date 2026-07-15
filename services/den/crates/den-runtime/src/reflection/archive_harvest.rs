@@ -2,13 +2,21 @@ use den_core::{config::Config, DenError};
 use den_memory::{
     harvest_source_hash_marked, harvest_source_marked, record_harvest_mark, MemoryStoreManager,
 };
-use den_service::memory_proposals::CreateMemoryProposal;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{memory::create_proposal, runtime_conversations::RuntimeIterativeSummary};
 use den_service::bears::BearProfile;
+
+use crate::{
+    agent_loop::load_transcript_grouping_rows,
+    memory::extraction::{
+        create_proposals_from_extraction, run_memory_extraction, MemoryExtractionArtifact,
+        MemoryExtractionBundle, MemoryExtractionCandidate, MemoryExtractionCompactionContext,
+        MemoryExtractionDiscard, MemoryExtractionMessage, MemoryExtractionResult, MemoryExtractor,
+    },
+    runtime_conversations::RuntimeIterativeSummary,
+};
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct CompactionArtifactHarvestRow {
@@ -32,20 +40,73 @@ pub struct ArchiveHarvestOutput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HarvestAssessment {
-    durable_signal_count: usize,
-    confidence: &'static str,
-    sensitivity: &'static str,
-    risk_signals: Vec<&'static str>,
-    discarded_reasons: Vec<&'static str>,
+struct HarvestExtraction {
+    candidates: Vec<HarvestCandidate>,
+    discarded: Vec<HarvestDiscard>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct HarvestExtraction {
-    proposed_content: String,
-    durable_signal_count: usize,
-    confidence: &'static str,
-    discarded_reasons: Vec<&'static str>,
+struct HarvestCandidate {
+    kind: &'static str,
+    text: String,
+    confidence_basis: &'static str,
+    sensitivity: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HarvestDiscard {
+    kind: &'static str,
+    reason: &'static str,
+}
+
+struct ArchiveSummaryExtractor<'a> {
+    summary: &'a RuntimeIterativeSummary,
+}
+
+impl MemoryExtractor for ArchiveSummaryExtractor<'_> {
+    fn extract(&self, bundle: &MemoryExtractionBundle) -> Result<MemoryExtractionResult, DenError> {
+        let user_message_ids = bundle
+            .messages
+            .iter()
+            .filter(|message| message.role == "user")
+            .map(|message| message.id.clone())
+            .collect::<Vec<_>>();
+        let source_artifact_ids = bundle
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.id.clone())
+            .collect::<Vec<_>>();
+        let extraction = extract_harvest_candidate(self.summary);
+        Ok(MemoryExtractionResult {
+            candidates: extraction
+                .candidates
+                .into_iter()
+                .map(|candidate| MemoryExtractionCandidate {
+                    kind: candidate.kind.to_string(),
+                    content: candidate.text,
+                    rationale: "Extracted by archive harvest from source transcript evidence scoped by a compaction artifact.".to_string(),
+                    source_message_ids: user_message_ids.clone(),
+                    source_artifact_ids: source_artifact_ids.clone(),
+                    confidence: match candidate.confidence_basis {
+                        "high" => 0.85,
+                        "medium" => 0.65,
+                        _ => 0.5,
+                    },
+                    sensitivity: candidate.sensitivity.to_string(),
+                    suggested_action: "human_review".to_string(),
+                })
+                .collect(),
+            discarded: extraction
+                .discarded
+                .into_iter()
+                .map(|discard| MemoryExtractionDiscard {
+                    source_message_ids: Vec::new(),
+                    source_artifact_ids: source_artifact_ids.clone(),
+                    reason: format!("{}:{}", discard.kind, discard.reason),
+                })
+                .collect(),
+        })
+    }
 }
 
 fn db_err(context: &'static str) -> impl FnOnce(sqlx::Error) -> DenError {
@@ -101,8 +162,33 @@ pub async fn harvest_compaction_artifacts_once(
         {
             continue;
         }
-        let summary = decode_summary(artifact_json)?;
-        let Some(extraction) = extract_harvest_candidate(&summary) else {
+        let summary = decode_summary(artifact_json.clone())?;
+        let messages = if let Some(conversation_key) = &external_conversation_id {
+            load_transcript_grouping_rows(pool, bear_id, conversation_key).await?
+        } else {
+            Vec::new()
+        };
+        let bundle = archive_harvest_bundle(
+            bear_id,
+            &source_ref,
+            conversation_id,
+            external_conversation_id.as_deref(),
+            ArtifactScope {
+                artifact_kind,
+                policy_version,
+                trigger,
+                source_message_start_seq,
+                source_message_end_seq,
+                source_group_start,
+                source_group_end,
+            },
+            artifact_json,
+            messages,
+            &summary,
+        );
+        let extraction_output =
+            run_memory_extraction(&bundle, &ArchiveSummaryExtractor { summary: &summary })?;
+        if extraction_output.proposal_drafts.is_empty() {
             record_harvest_mark(
                 &store,
                 "compaction_artifact",
@@ -113,89 +199,25 @@ pub async fn harvest_compaction_artifacts_once(
             )
             .await?;
             continue;
-        };
-        let HarvestExtraction {
-            proposed_content,
-            durable_signal_count,
-            confidence,
-            discarded_reasons,
-        } = extraction;
-        let assessment = assess_harvest_candidate(
-            &proposed_content,
-            durable_signal_count,
-            confidence,
-            discarded_reasons,
-        );
-
-        let HarvestAssessment {
-            durable_signal_count,
-            confidence,
-            sensitivity,
-            risk_signals,
-            discarded_reasons,
-        } = assessment;
-        let title = proposal_title(&summary, id);
-        let rationale = format!(
-            "Mined from Den compaction artifact {id} produced by policy {policy_version} from source messages {source_message_start_seq}-{source_message_end_seq}."
-        );
-        let source_refs = serde_json::json!({
-            "source": "archive_harvest",
-            "artifact_id": id,
-            "artifact_kind": artifact_kind,
-            "conversation_uuid": conversation_id,
-            "conversation_id": &external_conversation_id,
-            "policy_version": policy_version,
-            "trigger": trigger,
-            "source_message_start_seq": source_message_start_seq,
-            "source_message_end_seq": source_message_end_seq,
-            "source_group_start": source_group_start,
-            "source_group_end": source_group_end,
-        });
-        let proposal = create_proposal(
+        }
+        let created_ids = create_proposals_from_extraction(
             pool,
             config,
             stores,
-            CreateMemoryProposal {
-                bear_id,
-                source_profile: BearProfile::Curate,
-                source_agent_id: Some("archive_harvest".to_string()),
-                source_paths: Vec::new(),
-                source_refs,
-                suggested_action: "human_review",
-                target_ref: None,
-                title: &title,
-                summary: "Review compaction-derived session knowledge for possible durable memory promotion.",
-                rationale: &rationale,
-                proposed_content: Some(&proposed_content),
-                proposed_patch: None,
-                refs: serde_json::json!({
-                    "conversation_id": &external_conversation_id,
-                    "artifact_id": id,
-                    "archive_harvest": true,
-                    "source_hash": source_hash,
-                    "quality": {
-                        "confidence": confidence,
-                        "durable_signal_count": durable_signal_count,
-                        "detector": "archive-harvest-extraction-v2",
-                        "adr": "ADR-0041",
-                    },
-                    "risk_signals": risk_signals,
-                    "discarded_reasons": discarded_reasons,
-                }),
-                sensitivity,
-                requires_human: true,
-                project_to_conversation: false,
-            },
+            BearProfile::Curate,
+            Some("archive_harvest".to_string()),
+            &bundle,
+            &extraction_output,
         )
         .await?;
-        output.created_proposal_ids.push(proposal.id);
+        output.created_proposal_ids.extend(created_ids.clone());
         record_harvest_mark(
             &store,
             "compaction_artifact",
             &source_ref,
             Some(&source_hash),
             run_id,
-            &[proposal.id.to_string()],
+            &created_ids.iter().map(Uuid::to_string).collect::<Vec<_>>(),
         )
         .await?;
     }
@@ -229,8 +251,14 @@ async fn list_unmined_compaction_artifacts(
               SELECT 1
               FROM bear_memory_proposals p
               WHERE p.bear_id = $1
-                AND p.source_refs->>'source' = 'archive_harvest'
-                AND p.source_refs->>'artifact_id' = a.id::text
+                AND (
+                    (p.source_refs->>'source' = 'archive_harvest'
+                     AND p.source_refs->>'artifact_id' = a.id::text)
+                    OR
+                    (p.source_refs->>'source' = 'memory_extraction'
+                     AND p.source_refs->>'source_kind' = 'archive_harvest'
+                     AND p.source_refs->>'source_ref' = a.id::text)
+                )
           )
         ORDER BY a.created_at ASC
         LIMIT $2
@@ -253,124 +281,174 @@ fn source_hash(value: &serde_json::Value) -> String {
     format!("sha256:{digest:x}")
 }
 
-fn proposal_title(summary: &RuntimeIterativeSummary, artifact_id: Uuid) -> String {
-    summary
-        .important_constraints
-        .iter()
-        .chain(summary.decisions_made.iter())
-        .chain(
-            summary
-                .active_user_goals
-                .iter()
-                .filter(|goal| looks_durable_goal(goal)),
-        )
-        .find_map(|value| {
-            let text = value.trim();
-            (!text.is_empty()).then(|| truncate_chars(text, 80))
-        })
-        .unwrap_or_else(|| format!("Review compaction artifact {artifact_id}"))
+#[derive(Debug, Clone)]
+struct ArtifactScope {
+    artifact_kind: String,
+    policy_version: String,
+    trigger: String,
+    source_message_start_seq: i64,
+    source_message_end_seq: i64,
+    source_group_start: Option<i32>,
+    source_group_end: Option<i32>,
 }
 
-fn extract_harvest_candidate(summary: &RuntimeIterativeSummary) -> Option<HarvestExtraction> {
-    let mut out = String::new();
-    let mut discarded_reasons = Vec::new();
-
-    let durable_goals = summary
-        .active_user_goals
-        .iter()
-        .filter_map(|value| {
-            let text = value.trim();
-            if text.is_empty() {
-                None
-            } else if looks_durable_goal(text) {
-                Some(text.to_string())
-            } else {
-                discarded_reasons.push("goal:transient_goal");
-                None
-            }
+fn archive_harvest_bundle(
+    bear_id: Uuid,
+    source_ref: &str,
+    conversation_uuid: Uuid,
+    conversation_id: Option<&str>,
+    scope: ArtifactScope,
+    artifact_json: serde_json::Value,
+    rows: Vec<crate::runtime::compaction::TranscriptGroupingRow>,
+    summary: &RuntimeIterativeSummary,
+) -> MemoryExtractionBundle {
+    let messages = rows
+        .into_iter()
+        .filter(|row| {
+            let seq = row.sequence_no.unwrap_or_default();
+            seq >= scope.source_message_start_seq
+                && seq <= scope.source_message_end_seq
+                && matches!(row.message_type.as_str(), "user" | "assistant")
+                && !row.content_text.trim().is_empty()
         })
-        .collect::<Vec<_>>();
+        .map(|row| MemoryExtractionMessage {
+            id: row
+                .message_id
+                .unwrap_or_else(|| format!("seq-{}", row.sequence_no.unwrap_or_default())),
+            seq: row.sequence_no,
+            role: row.message_type,
+            content: row.content_text,
+            created_at: None,
+        })
+        .collect();
 
-    append_section(&mut out, "Active user goals", &durable_goals);
-    append_section(
-        &mut out,
-        "Important constraints",
-        &summary.important_constraints,
-    );
-    append_section(&mut out, "Decisions made", &summary.decisions_made);
+    MemoryExtractionBundle {
+        source_kind: "archive_harvest".to_string(),
+        source_ref: source_ref.to_string(),
+        bear_id,
+        conversation_id: conversation_id.map(ToOwned::to_owned),
+        session_id: None,
+        compaction: Some(MemoryExtractionCompactionContext {
+            artifact_id: Some(source_ref.to_string()),
+            policy_version: Some(scope.policy_version.clone()),
+            source_message_start_seq: Some(scope.source_message_start_seq),
+            source_message_end_seq: Some(scope.source_message_end_seq),
+            hints: compaction_hints(summary),
+        }),
+        messages,
+        artifacts: vec![MemoryExtractionArtifact {
+            id: source_ref.to_string(),
+            kind: scope.artifact_kind,
+            content: serde_json::json!({
+                "conversation_uuid": conversation_uuid,
+                "trigger": scope.trigger,
+                "source_group_start": scope.source_group_start,
+                "source_group_end": scope.source_group_end,
+                "artifact": artifact_json,
+            })
+            .to_string(),
+        }],
+    }
+}
 
-    discarded_reasons.extend(
+fn compaction_hints(summary: &RuntimeIterativeSummary) -> Vec<String> {
+    let mut hints = Vec::new();
+    if !summary.decisions_made.is_empty() {
+        hints.push("possible_decision".to_string());
+    }
+    if !summary.important_constraints.is_empty() {
+        hints.push("possible_constraint".to_string());
+    }
+    if !summary.active_user_goals.is_empty() {
+        hints.push("possible_user_goal".to_string());
+    }
+    hints
+}
+
+fn extract_harvest_candidate(summary: &RuntimeIterativeSummary) -> HarvestExtraction {
+    let mut candidates = Vec::new();
+    let mut discarded = Vec::new();
+
+    for value in &summary.decisions_made {
+        push_candidate(&mut candidates, "decision", value, "high");
+    }
+    for value in &summary.important_constraints {
+        push_candidate(&mut candidates, "constraint", value, "high");
+    }
+    for value in &summary.active_user_goals {
+        let text = value.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if looks_durable_goal(text) {
+            push_candidate(&mut candidates, "preference", text, "medium");
+        } else {
+            discarded.push(HarvestDiscard {
+                kind: "goal",
+                reason: "transient_goal",
+            });
+        }
+    }
+    discarded.extend(
         summary
             .artifact_refs
             .iter()
             .filter(|value| !value.trim().is_empty())
-            .map(|_| "artifact:reference_without_semantic_claim"),
+            .map(|_| HarvestDiscard {
+                kind: "artifact",
+                reason: "reference_without_semantic_claim",
+            }),
     );
-    discarded_reasons.extend(
+    discarded.extend(
         summary
             .workflow_state_refs
             .iter()
             .filter(|value| !value.trim().is_empty())
-            .map(|_| "workflow_state:transient_workflow_state"),
+            .map(|_| HarvestDiscard {
+                kind: "workflow_state",
+                reason: "transient_workflow_state",
+            }),
     );
-    discarded_reasons.extend(
+    discarded.extend(
         summary
             .unresolved_followups
             .iter()
             .filter(|value| !value.trim().is_empty())
-            .map(|_| "followup:transient_followup"),
+            .map(|_| HarvestDiscard {
+                kind: "followup",
+                reason: "transient_followup",
+            }),
     );
-    discarded_reasons.sort_unstable();
-    discarded_reasons.dedup();
 
-    let durable_signal_count = durable_goals.len()
-        + summary
-            .important_constraints
-            .iter()
-            .filter(|value| !value.trim().is_empty())
-            .count()
-        + summary
-            .decisions_made
-            .iter()
-            .filter(|value| !value.trim().is_empty())
-            .count();
-    if durable_signal_count == 0 {
-        return None;
+    // ponytail: archive harvest still uses summary fields as extractor hints for this slice.
+    // Ceiling: claims may need source-turn-aware/model-assisted synthesis; upgrade path is a
+    // production extractor that reads bundle.messages instead of these compaction buckets.
+    HarvestExtraction {
+        candidates,
+        discarded,
     }
-
-    // ponytail: archive harvest trusts only compaction fields that already encode durable
-    // semantic claims. Ceiling: artifact refs can point at valuable durable context; upgrade
-    // path is source-turn-aware/model-assisted extraction instead of promoting references.
-    let confidence = if summary
-        .important_constraints
-        .iter()
-        .any(|value| !value.trim().is_empty())
-        || summary
-            .decisions_made
-            .iter()
-            .any(|value| !value.trim().is_empty())
-    {
-        "high"
-    } else {
-        "medium"
-    };
-
-    Some(HarvestExtraction {
-        proposed_content: out.trim().to_string(),
-        durable_signal_count,
-        confidence,
-        discarded_reasons,
-    })
 }
 
-fn assess_harvest_candidate(
-    proposed_content: &str,
-    durable_signal_count: usize,
-    confidence: &'static str,
-    discarded_reasons: Vec<&'static str>,
-) -> HarvestAssessment {
-    let haystack = proposed_content.to_ascii_lowercase();
-    let mut risk_signals = Vec::new();
+fn push_candidate(
+    candidates: &mut Vec<HarvestCandidate>,
+    kind: &'static str,
+    value: &str,
+    confidence_basis: &'static str,
+) {
+    let text = value.trim();
+    if text.is_empty() {
+        return;
+    }
+    candidates.push(HarvestCandidate {
+        kind,
+        text: text.to_string(),
+        confidence_basis,
+        sensitivity: sensitivity_for_text(text),
+    });
+}
+
+fn sensitivity_for_text(text: &str) -> &'static str {
+    let haystack = text.to_ascii_lowercase();
     if contains_any(
         &haystack,
         &[
@@ -383,40 +461,20 @@ fn assess_harvest_candidate(
             "access token",
         ],
     ) {
-        risk_signals.push("secret_risk");
-    }
-    if haystack.contains("http://")
+        "secret_risk"
+    } else if haystack.contains("http://")
         || haystack.contains("https://")
         || haystack.contains("external")
         || haystack.contains("untrusted")
     {
-        risk_signals.push("external_untrusted");
-    }
-    if contains_any(
+        "external_untrusted"
+    } else if contains_any(
         &haystack,
         &["prefers", "preference", "human ", "user ", "personally"],
     ) {
-        risk_signals.push("person");
-    }
-    risk_signals.sort_unstable();
-    risk_signals.dedup();
-
-    let sensitivity = if risk_signals.contains(&"secret_risk") {
-        "secret_risk"
-    } else if risk_signals.contains(&"external_untrusted") {
-        "external_untrusted"
-    } else if risk_signals.contains(&"person") {
         "person"
     } else {
         "normal"
-    };
-
-    HarvestAssessment {
-        durable_signal_count,
-        confidence,
-        sensitivity,
-        risk_signals,
-        discarded_reasons,
     }
 }
 
@@ -442,33 +500,10 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
-fn append_section(out: &mut String, title: &str, values: &[String]) {
-    if values.is_empty() {
-        return;
-    }
-    out.push_str("## ");
-    out.push_str(title);
-    out.push('\n');
-    for value in values {
-        out.push_str("- ");
-        out.push_str(value.trim());
-        out.push('\n');
-    }
-    out.push('\n');
-}
-
-fn truncate_chars(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_string();
-    }
-    let mut out = text.chars().take(max.saturating_sub(1)).collect::<String>();
-    out.push('…');
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::compaction::TranscriptGroupingRow;
 
     fn summary_with(
         constraints: &[&str],
@@ -490,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn extraction_renders_only_durable_summary_sections() {
+    fn extraction_maps_summary_hints_to_memory_contract() {
         let summary = RuntimeIterativeSummary {
             active_user_goals: vec![
                 "ship compaction".to_string(),
@@ -505,31 +540,37 @@ mod tests {
             unresolved_followups: vec!["wire archive harvest".to_string()],
         };
 
-        let extraction = extract_harvest_candidate(&summary).expect("extraction");
-        let rendered = extraction.proposed_content;
+        let extraction = extract_harvest_candidate(&summary);
 
-        assert!(rendered.contains("## Active user goals"));
-        assert!(rendered.contains("remember the long-term curation policy"));
-        assert!(rendered.contains("do not cross approval floors"));
-        assert!(!rendered.contains("ship compaction"));
-        assert!(!rendered.contains("wire archive harvest"));
-        assert!(!rendered.contains("DEN_CONTEXT_COMPACTION_IMPLEMENTATION_PLAN"));
+        assert_eq!(extraction.candidates.len(), 2);
+        assert!(extraction.candidates.iter().any(|candidate| {
+            candidate.kind == "preference"
+                && candidate.text == "remember the long-term curation policy"
+        }));
+        assert!(extraction.candidates.iter().any(|candidate| {
+            candidate.kind == "constraint" && candidate.text == "do not cross approval floors"
+        }));
+        assert!(extraction.discarded.iter().any(|discard| {
+            discard.kind == "artifact" && discard.reason == "reference_without_semantic_claim"
+        }));
         assert!(extraction
-            .discarded_reasons
-            .contains(&"artifact:reference_without_semantic_claim"));
+            .discarded
+            .iter()
+            .any(|discard| discard.kind == "followup" && discard.reason == "transient_followup"));
         assert!(extraction
-            .discarded_reasons
-            .contains(&"followup:transient_followup"));
-        assert!(extraction
-            .discarded_reasons
-            .contains(&"goal:transient_goal"));
+            .discarded
+            .iter()
+            .any(|discard| discard.kind == "goal" && discard.reason == "transient_goal"));
     }
 
     #[test]
     fn extraction_drops_transient_followups_only() {
         let summary = summary_with(&[], &[], &[], &["remember to rerun tests"]);
 
-        assert!(extract_harvest_candidate(&summary).is_none());
+        let extraction = extract_harvest_candidate(&summary);
+
+        assert!(extraction.candidates.is_empty());
+        assert_eq!(extraction.discarded.len(), 1);
     }
 
     #[test]
@@ -540,17 +581,17 @@ mod tests {
             &[],
             &[],
         );
-        let extraction = extract_harvest_candidate(&summary).expect("extraction");
-        let assessment = assess_harvest_candidate(
-            &extraction.proposed_content,
-            extraction.durable_signal_count,
-            extraction.confidence,
-            extraction.discarded_reasons,
-        );
+        let extraction = extract_harvest_candidate(&summary);
 
-        assert_eq!(assessment.confidence, "high");
-        assert_eq!(assessment.sensitivity, "normal");
-        assert_eq!(assessment.durable_signal_count, 2);
+        assert_eq!(extraction.candidates.len(), 2);
+        assert!(extraction
+            .candidates
+            .iter()
+            .all(|candidate| candidate.confidence_basis == "high"));
+        assert!(extraction
+            .candidates
+            .iter()
+            .all(|candidate| candidate.sensitivity == "normal"));
     }
 
     #[test]
@@ -562,7 +603,10 @@ mod tests {
             &[],
         );
 
-        assert!(extract_harvest_candidate(&summary).is_none());
+        let extraction = extract_harvest_candidate(&summary);
+
+        assert!(extraction.candidates.is_empty());
+        assert_eq!(extraction.discarded[0].kind, "artifact");
     }
 
     #[test]
@@ -571,28 +615,127 @@ mod tests {
         summary.active_user_goals = vec!["finish the current task".to_string()];
         summary.workflow_state_refs = vec!["job-123".to_string()];
 
-        assert!(extract_harvest_candidate(&summary).is_none());
+        let extraction = extract_harvest_candidate(&summary);
+
+        assert!(extraction.candidates.is_empty());
+        assert_eq!(extraction.discarded.len(), 3);
     }
 
     #[test]
-    fn assessment_flags_secret_external_and_person_risk() {
+    fn extraction_flags_secret_external_and_person_risk() {
         let summary = summary_with(
             &["Hans prefers not to share the API key from https://example.invalid."],
             &[],
             &[],
             &[],
         );
-        let extraction = extract_harvest_candidate(&summary).expect("extraction");
-        let assessment = assess_harvest_candidate(
-            &extraction.proposed_content,
-            extraction.durable_signal_count,
-            extraction.confidence,
-            extraction.discarded_reasons,
+        let extraction = extract_harvest_candidate(&summary);
+
+        let candidate = &extraction.candidates[0];
+        assert_eq!(candidate.sensitivity, "secret_risk");
+    }
+
+    #[test]
+    fn archive_bundle_filters_to_source_span_and_preserves_hints() {
+        let bear_id = Uuid::nil();
+        let artifact_id = Uuid::new_v4();
+        let conversation_uuid = Uuid::new_v4();
+        let summary = summary_with(
+            &["Prefer source-backed memory proposals."],
+            &["Use extraction contract for archive harvest."],
+            &[],
+            &[],
+        );
+        let rows = vec![
+            TranscriptGroupingRow::new("user", "outside", serde_json::Value::Null)
+                .with_message_id("m0")
+                .with_sequence_no(1),
+            TranscriptGroupingRow::new(
+                "user",
+                "For this project, prefer SQLite-first storage.",
+                serde_json::Value::Null,
+            )
+            .with_message_id("m1")
+            .with_sequence_no(2),
+            TranscriptGroupingRow::new("assistant", "Acknowledged.", serde_json::Value::Null)
+                .with_message_id("m2")
+                .with_sequence_no(3),
+        ];
+
+        let bundle = archive_harvest_bundle(
+            bear_id,
+            &artifact_id.to_string(),
+            conversation_uuid,
+            Some("conv-key"),
+            ArtifactScope {
+                artifact_kind: "iterative_summary".to_string(),
+                policy_version: "test-policy".to_string(),
+                trigger: "test".to_string(),
+                source_message_start_seq: 2,
+                source_message_end_seq: 3,
+                source_group_start: Some(1),
+                source_group_end: Some(2),
+            },
+            serde_json::json!({"summary": true}),
+            rows,
+            &summary,
         );
 
-        assert_eq!(assessment.sensitivity, "secret_risk");
-        assert!(assessment.risk_signals.contains(&"secret_risk"));
-        assert!(assessment.risk_signals.contains(&"external_untrusted"));
-        assert!(assessment.risk_signals.contains(&"person"));
+        assert_eq!(bundle.source_kind, "archive_harvest");
+        assert_eq!(bundle.messages.len(), 2);
+        assert_eq!(bundle.messages[0].id, "m1");
+        assert_eq!(bundle.messages[1].id, "m2");
+        assert_eq!(
+            bundle.compaction.as_ref().unwrap().hints,
+            vec![
+                "possible_decision".to_string(),
+                "possible_constraint".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn archive_extractor_uses_shared_memory_contract() {
+        let artifact_id = Uuid::new_v4().to_string();
+        let summary = summary_with(
+            &["Prefer source-backed memory proposals."],
+            &[],
+            &["docs/roadmap/MEMORY_AUTOMATION_ROADMAP.md"],
+            &[],
+        );
+        let bundle = MemoryExtractionBundle {
+            source_kind: "archive_harvest".to_string(),
+            source_ref: artifact_id.clone(),
+            bear_id: Uuid::nil(),
+            conversation_id: Some("conv-key".to_string()),
+            session_id: None,
+            compaction: None,
+            messages: vec![MemoryExtractionMessage {
+                id: "m1".to_string(),
+                seq: Some(1),
+                role: "user".to_string(),
+                content: "Prefer source-backed memory proposals.".to_string(),
+                created_at: None,
+            }],
+            artifacts: vec![MemoryExtractionArtifact {
+                id: artifact_id,
+                kind: "iterative_summary".to_string(),
+                content: "{}".to_string(),
+            }],
+        };
+
+        let output = run_memory_extraction(&bundle, &ArchiveSummaryExtractor { summary: &summary })
+            .expect("extraction output");
+
+        assert_eq!(output.proposal_drafts.len(), 1);
+        assert_eq!(
+            output.proposal_drafts[0].proposed_content,
+            "Prefer source-backed memory proposals."
+        );
+        assert_eq!(output.discarded.len(), 1);
+        assert_eq!(
+            output.discarded[0].reason,
+            "artifact:reference_without_semantic_claim"
+        );
     }
 }
