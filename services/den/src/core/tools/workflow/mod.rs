@@ -974,6 +974,8 @@ pub(crate) async fn create_job(
             work_branch: args.work_branch,
             status: args.status,
             visibility: args.visibility,
+            source_conversation_id: clean_optional(&context.conversation_id),
+            objective_kind: None,
             criteria: args.criteria,
             tasks: args.tasks,
         })
