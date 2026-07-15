@@ -30,6 +30,7 @@ use crate::{
         CheckpointValidationStatus, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
+    native_runtime::is_task_definition_or_delegation_tool_provider_name,
     runtime_compaction::enqueue_compaction_after_turn,
     tool_output_artifacts::{create_tool_output_artifact, ToolOutputArtifactInput},
 };
@@ -181,6 +182,7 @@ pub struct SessionTrackingStream {
     config: Arc<Config>,
     stores: MemoryStoreManager,
     profile: BearProfile,
+    may_define_task: bool,
 }
 
 impl SessionTrackingStream {
@@ -200,6 +202,11 @@ impl SessionTrackingStream {
         profile: BearProfile,
         dispatch_mode: NativeToolDispatchMode,
     ) -> Self {
+        let may_define_task = match &session.objective_orientation {
+            crate::agent_loop::ObjectiveOrientation::Freeform { policy } => policy.may_define_task,
+            crate::agent_loop::ObjectiveOrientation::Oriented { .. }
+            | crate::agent_loop::ObjectiveOrientation::Focused { .. } => true,
+        };
         Self {
             inner,
             session_key: session.session_key.clone(),
@@ -225,6 +232,7 @@ impl SessionTrackingStream {
             config,
             stores,
             profile,
+            may_define_task,
         }
     }
 
@@ -351,6 +359,8 @@ impl SessionTrackingStream {
             && builtin_den_tool_descriptor_for_provider_name(tool_name).is_some()
             && provider_tool_supports_unilateral_execution(tool_name)
             && !self.should_request_den_tool_permission(tool_name)
+            && (self.may_define_task
+                || !is_task_definition_or_delegation_tool_provider_name(tool_name))
     }
 
     fn started_tool_title(tool_name: &str) -> Option<String> {
@@ -2143,6 +2153,7 @@ mod tests {
         );
 
         assert!(stream.should_execute_den_tool_server_side("list_task_lists"));
+        assert!(!stream.should_execute_den_tool_server_side("create_job"));
         assert!(!stream.should_execute_den_tool_server_side("list_plans"));
         assert!(stream.should_execute_den_tool_server_side("session_info"));
         assert!(stream.should_request_den_tool_permission("web_fetch"));
