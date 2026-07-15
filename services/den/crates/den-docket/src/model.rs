@@ -1423,6 +1423,11 @@ pub fn task_list_projection_from_session_tasks(
     let current_item = current_task_list_item(&items).cloned();
     let status = if items
         .iter()
+        .all(|item| item.status == TaskListItemStatus::Completed)
+    {
+        "completed"
+    } else if items
+        .iter()
         .any(|item| item.status == TaskListItemStatus::InProgress)
     {
         "active"
@@ -2014,7 +2019,7 @@ mod tests {
             "conversation-1",
             session_anchor_id,
             &[DocketTaskProjection {
-                task,
+                task: task.clone(),
                 run_state: Some(DocketTaskRunStateRow {
                     run_id,
                     task_id,
@@ -2030,6 +2035,29 @@ mod tests {
         .expect("active session projection");
 
         assert_eq!(active.status, "active");
+
+        let completed = task_list_projection_from_session_tasks(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[DocketTaskProjection {
+                task,
+                run_state: Some(DocketTaskRunStateRow {
+                    run_id,
+                    task_id,
+                    status: "done".to_string(),
+                    result_refs: None,
+                    result_summary: None,
+                    started_at: None,
+                    finished_at: Some(OffsetDateTime::UNIX_EPOCH),
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                }),
+            }],
+        )
+        .expect("completed session projection");
+
+        assert_eq!(completed.status, "completed");
     }
 
     #[test]
