@@ -13,6 +13,10 @@
     <p><strong>{{ import_notice | e }}</strong></p>
     {% endif %} {% if import_error %}
     <p class="form-errors">{{ import_error | e }}</p>
+    {% endif %} {% if review_notice %}
+    <p><strong>{{ review_notice | e }}</strong></p>
+    {% endif %} {% if review_error %}
+    <p class="form-errors">{{ review_error | e }}</p>
     {% endif %} {% if stats %}
     <div
         style="
@@ -52,7 +56,7 @@
     <p class="form-hint">
         DB: <code>{{ stats.db_path | e }}</code>
         {% if stats.db_size_bytes %}({{ stats.db_size_bytes }} bytes){% endif %}
-        · pending proposals: {{ stats.pending_proposals }} · pending
+        · pending proposals: {{ pending_review_count }} · needs human review: {{ needs_human_review_count }} · pending
         observations: {{ stats.pending_observations }}
     </p>
     {% else %}
@@ -64,6 +68,20 @@
 
 <div class="box">
     <h3>Review queue</h3>
+    <p class="form-hint">
+        Showing the 10 most recent reviewable proposals out of {{ reviewable_proposal_count }} total
+        ({{ pending_review_count }} pending, {{ needs_human_review_count }} needs human review).
+    </p>
+    {% if can_manage_bear and reviewable_proposal_count > 0 %}
+    <form method="post" action="/bear/{{ bear.slug | e }}/memory/review-queue/clear" style="margin: 0 0 1rem 0; border: 1px solid currentColor; padding: 0.75rem;">
+        <p class="form-hint">
+            Clear rejects all currently reviewable proposals and marks identifiable source sessions for reflection retry.
+            Type <code>clear review queue</code> to confirm.
+        </p>
+        <input name="confirm" aria-label="Confirmation text" />
+        <button type="submit">Clear review queue and re-reflect sources</button>
+    </form>
+    {% endif %}
     {% if pending_proposals or (stats and stats.pending_observations > 0) %}
     {% if pending_proposals %}
     <table>

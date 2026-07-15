@@ -428,6 +428,60 @@ pub async fn list_memory_proposals(
         .collect())
 }
 
+pub async fn count_memory_proposals(
+    store: &BearMemoryStore,
+    status: Option<&str>,
+) -> Result<i64, DenError> {
+    let count = if let Some(status) = status {
+        sqlx::query_scalar::<_, i64>(
+            r"
+            SELECT COUNT(*)
+            FROM memory_proposals
+            WHERE bear_id = ? AND status = ?
+            ",
+        )
+        .bind(store.bear_id().to_string())
+        .bind(status)
+        .fetch_one(store.pool())
+        .await
+    } else {
+        sqlx::query_scalar::<_, i64>(
+            r"
+            SELECT COUNT(*)
+            FROM memory_proposals
+            WHERE bear_id = ?
+            ",
+        )
+        .bind(store.bear_id().to_string())
+        .fetch_one(store.pool())
+        .await
+    }
+    .map_err(|e| DenError::System(format!("sqlite count proposals failed: {e}")))?;
+    Ok(count)
+}
+
+pub async fn list_reviewable_memory_proposals(
+    store: &BearMemoryStore,
+) -> Result<Vec<SqliteMemoryProposal>, DenError> {
+    let rows = sqlx::query_as::<_, ProposalSqlRow>(
+        r"
+        SELECT proposal_id, sequence_no, status, payload_json, created_at
+        FROM memory_proposals
+        WHERE bear_id = ?
+          AND status IN ('pending', 'needs_human_review')
+        ORDER BY sequence_no DESC
+        ",
+    )
+    .bind(store.bear_id().to_string())
+    .fetch_all(store.pool())
+    .await
+    .map_err(|e| DenError::System(format!("sqlite list reviewable proposals failed: {e}")))?;
+    Ok(rows
+        .into_iter()
+        .map(ProposalSqlRow::into_proposal)
+        .collect())
+}
+
 pub async fn resolve_memory_proposal(
     store: &BearMemoryStore,
     proposal_id: &str,

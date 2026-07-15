@@ -387,6 +387,14 @@ pub async fn list_open_reflection_candidates(
                   AND e.user_id = s.user_id
             ) events ON TRUE
             LEFT JOIN LATERAL (
+                SELECT MAX(e.created_at) AS reflection_requeued_at
+                FROM bearwire_events e
+                WHERE e.session_id = s.client_session_id
+                  AND e.bear_id = s.bear_id
+                  AND e.user_id = s.user_id
+                  AND e.event_type = 'session.reflection_requeued'
+            ) requeued ON TRUE
+            LEFT JOIN LATERAL (
                 SELECT MAX(e.created_at) AS last_reflected_at,
                        MAX(
                            CASE
@@ -401,6 +409,7 @@ pub async fn list_open_reflection_candidates(
                   AND e.bear_id = s.bear_id
                   AND e.user_id = s.user_id
                   AND e.event_type = 'session.reflected'
+                  AND e.created_at > COALESCE(requeued.reflection_requeued_at, '-infinity'::timestamptz)
             ) reflected ON TRUE
             LEFT JOIN LATERAL (
                 SELECT a.source_message_end_seq

@@ -373,6 +373,21 @@ pub struct LoopControlReplayTurnMismatch {
     pub observed: Option<LoopControlReplayTurn>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoopControlReplayProfileSummary {
+    pub turn_count: usize,
+    pub decision_count: usize,
+    pub decision_kind_counts: Vec<LoopControlReplayCount<LoopControlDecisionKind>>,
+    pub control_level_counts: Vec<LoopControlReplayCount<String>>,
+    pub orientation_kind_counts: Vec<LoopControlReplayCount<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoopControlReplayCount<T> {
+    pub value: T,
+    pub count: usize,
+}
+
 pub fn replay_loop_control_observations(
     rows: &[LoopControlLedgerRow],
 ) -> Result<Vec<LoopControlReplayObservation>, DenError> {
@@ -494,6 +509,41 @@ fn replay_turn_matches_expected(
         && observed.orientation_kinds == expected.orientation_kinds
         && observed.checkpoint_ids == expected.checkpoint_ids
         && observed.evidence_refs == expected.evidence_refs
+}
+
+pub fn summarize_loop_control_replay_profile(
+    turns: &[LoopControlReplayTurn],
+) -> LoopControlReplayProfileSummary {
+    let mut decision_kind_counts = Vec::new();
+    let mut control_level_counts = Vec::new();
+    let mut orientation_kind_counts = Vec::new();
+    for turn in turns {
+        for decision_kind in &turn.decision_kinds {
+            increment_replay_count(&mut decision_kind_counts, *decision_kind);
+        }
+        for control_level in &turn.control_levels {
+            increment_replay_count(&mut control_level_counts, control_level.clone());
+        }
+        for orientation_kind in &turn.orientation_kinds {
+            increment_replay_count(&mut orientation_kind_counts, orientation_kind.clone());
+        }
+    }
+    LoopControlReplayProfileSummary {
+        turn_count: turns.len(),
+        decision_count: turns.iter().map(|turn| turn.decision_count).sum(),
+        decision_kind_counts,
+        control_level_counts,
+        orientation_kind_counts,
+    }
+}
+
+fn increment_replay_count<T: PartialEq>(counts: &mut Vec<LoopControlReplayCount<T>>, value: T) {
+    // ponytail: vector counters preserve first-seen order and are enough for small replay
+    // windows; use BTreeMap if offline replay starts scanning large production slices.
+    match counts.iter_mut().find(|count| count.value == value) {
+        Some(count) => count.count += 1,
+        None => counts.push(LoopControlReplayCount { value, count: 1 }),
+    }
 }
 
 fn push_optional_unique<T: PartialEq>(values: &mut Vec<T>, value: Option<T>) {
@@ -1225,6 +1275,43 @@ mod tests {
             ],
         }];
         assert!(compare_loop_control_replay_turns(&turns, &expected_turns).is_empty());
+
+        let profile = summarize_loop_control_replay_profile(&turns);
+        assert_eq!(profile.turn_count, 1);
+        assert_eq!(profile.decision_count, 2);
+        assert_eq!(
+            profile.decision_kind_counts,
+            vec![
+                LoopControlReplayCount {
+                    value: LoopControlDecisionKind::CheckpointRequested,
+                    count: 1,
+                },
+                LoopControlReplayCount {
+                    value: LoopControlDecisionKind::ContextBudgetPressure,
+                    count: 1,
+                },
+            ]
+        );
+        assert_eq!(
+            profile.control_level_counts,
+            vec![
+                LoopControlReplayCount {
+                    value: "careful".to_string(),
+                    count: 1,
+                },
+                LoopControlReplayCount {
+                    value: "standard".to_string(),
+                    count: 1,
+                },
+            ]
+        );
+        assert_eq!(
+            profile.orientation_kind_counts,
+            vec![LoopControlReplayCount {
+                value: "oriented".to_string(),
+                count: 1,
+            }]
+        );
 
         let mut wrong_turns = expected_turns;
         wrong_turns[0].decision_count = 1;

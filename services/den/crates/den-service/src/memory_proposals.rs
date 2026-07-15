@@ -187,6 +187,48 @@ pub async fn list_for_bear(
     Ok(rows.into_iter().map(row_from_sql).collect())
 }
 
+pub async fn count_for_bear_status(
+    pool: &PgPool,
+    bear_id: Uuid,
+    status: &str,
+) -> Result<i64, DenError> {
+    let count = sqlx::query_scalar::<_, i64>(
+        r"
+        SELECT COUNT(*)
+        FROM bear_memory_proposals
+        WHERE bear_id = $1 AND status = $2
+        ",
+    )
+    .bind(bear_id)
+    .bind(status)
+    .fetch_one(pool)
+    .await?;
+    Ok(count)
+}
+
+pub async fn list_reviewable_for_bear(
+    pool: &PgPool,
+    bear_id: Uuid,
+) -> Result<Vec<MemoryProposalRow>, DenError> {
+    let rows = sqlx::query(
+        r"
+        SELECT id, bear_id, source_profile, source_agent_id, source_paths, source_refs,
+               proposal_type, suggested_action, target_ref, title, summary, rationale,
+               proposed_content, proposed_patch, refs, sensitivity, requires_human, status,
+               reviewer_profile, reviewer_agent_id, review_notes, decision_summary,
+               result_path, result_commit, created_at, reviewed_at
+        FROM bear_memory_proposals
+        WHERE bear_id = $1
+          AND status IN ('pending', 'needs_human_review')
+        ORDER BY created_at DESC
+        ",
+    )
+    .bind(bear_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(row_from_sql).collect())
+}
+
 pub struct ProposalResolutionParams<'a> {
     pub bear_id: Uuid,
     pub proposal_id: Uuid,
