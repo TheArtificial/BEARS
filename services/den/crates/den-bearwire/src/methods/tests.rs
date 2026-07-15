@@ -2174,6 +2174,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                         text.contains("Docket focus selected")
                             && text.contains("goal=Surface diagnostics job")
                             && text.contains("status=running")
+                            && text.contains("task=Diagnostic task")
                     })
         }),
         "surface history should expose Docket focus diagnostics: {surface_response}"
