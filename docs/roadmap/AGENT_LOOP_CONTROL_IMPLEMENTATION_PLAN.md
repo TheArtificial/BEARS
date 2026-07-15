@@ -17,7 +17,7 @@ Recent slices have moved the plan through the governance/focus/orientation found
 - **Diagnostics/history improved:** armature `/status` shows runtime focus/orientation/governance, Docket task create/update events include task definitions, focus selection is logged as a lightweight Docket job event, BearWire conversation history surfaces focus/task-definition diagnostics including focused task titles, and persisted objective-orientation events are projected into conversation surface history.
 - **Checkpoint protocol exists enough to exercise:** runtime can request structured `checkpoint` tool calls with typed next-action fields. Artifact retention, enforcement, and budget/ko integration are still future phases.
 - **Replay/measurement spine landed at the useful-minimum level:** the companion plan's transcript-free `bear_loop_control_ledger` exists and records checkpoint requests, context-budget pressure decisions, and grounding-probe results with typed metadata/evidence refs. Runtime now has pure replay helpers for typed decision observations, per-turn aggregates, expected-turn/profile comparisons, profile summaries, and a DB-backed `run_id -> profile summary` loader. No full policy simulator is planned unless real tuning needs outgrow these comparisons.
-- **Context budget is partially integrated:** latest ADR-0047 context-budget reports are recorded before over-budget stop decisions, over/near-budget pressure can be written to the ledger, and near-budget pressure emits a loop-control diagnostic. Context budget is not yet a full `TurnBudgetState` dimension with compact/checkpoint sequencing.
+- **Context budget is integrated as the first real loop budget dimension:** latest ADR-0047 context-budget reports are carried in `TurnBudgetState`, near/over-budget pressure can be written to the ledger, near-budget pressure emits a loop-control diagnostic, and active overflow recovery attempts emergency compaction before stopping an over-budget model call. Checkpoint-before-growth policy and replay-tuned thresholds remain future work.
 - **Grounding probes are partially integrated:** a minimal repository/diff grounding-probe helper can record non-empty-diff probe results through the ledger evidence path without storing raw diff contents. Surface-declared probe profiles, probe execution policy, and mutation-replenishment integration remain future work.
 
 ### Implementation review and adjustments
@@ -31,9 +31,9 @@ Recent slices have moved the plan through the governance/focus/orientation found
 
 Recommended next slices:
 
-1. **Promote context budget to a real loop budget dimension.** Move beyond one-off pressure logging: make near/critical/over-budget thresholds part of `TurnBudgetState`/resolved control profiles, then wire checkpoint-before-growth and compact-first decisions through the ledger/replay summary path.
-2. **Wire grounding probes into mutation verification.** Feed generic/repository probe pass/fail into meaningful-mutation replenishment and checkpoint evidence; defer surface-specific probes until a recorded run shows the generic path is insufficient.
-3. **Resume Phase 3/4 checkpoint and KO enforcement.** Tune checkpoint cadence, failure/KO thresholds, and task-gate behavior against recorded ledger decisions and profile summaries instead of hand-adjusting constants.
+1. **Wire grounding probes into mutation verification.** Feed generic/repository probe pass/fail into meaningful-mutation replenishment and checkpoint evidence; defer surface-specific probes until a recorded run shows the generic path is insufficient.
+2. **Resume Phase 3/4 checkpoint and KO enforcement.** Tune checkpoint cadence, failure/KO thresholds, and task-gate behavior against recorded ledger decisions and profile summaries instead of hand-adjusting constants.
+3. **Refine context-budget policy with recorded evidence.** Add checkpoint-before-growth and threshold tuning only where ledger/replay summaries show the compact-first behavior is insufficient.
 4. **Only add more replay machinery when a concrete tuning question needs it.** The current no-simulator harness is enough for expected-observed drift checks; avoid a full policy simulator unless production traces prove summaries/comparators are too weak.
 
 ## Goal

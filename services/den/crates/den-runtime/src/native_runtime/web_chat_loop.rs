@@ -286,6 +286,7 @@ impl NativeWebChatLoopStream {
                 signature: tool_signature_from_call(call),
                 class: classify_tool_budget_class(&call.function.name),
                 failed: tool_result_content_indicates_error(message.content.as_deref()),
+                grounding_probe_signal: None,
             })
             .collect::<Vec<_>>();
         let evaluation = evaluate_turn_budget(

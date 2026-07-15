@@ -2,8 +2,8 @@ use den_core::{AgentLoopControlLevel, BearStance, ThinkingEffort};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{
-    PostMutationVerificationWindow, ToolBudgetClass, ToolCallBudgetLimits,
-    ToolContinuationObservation, TurnBudgetPolicy,
+    GroundingProbeSignalKind, PostMutationVerificationWindow, ToolBudgetClass,
+    ToolCallBudgetLimits, ToolContinuationObservation, TurnBudgetPolicy,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -671,6 +671,7 @@ fn observe_checkpoint_tool_result(
 
 fn observation_is_meaningful_mutation(observation: &ToolContinuationObservation) -> bool {
     !observation.failed
+        && observation.grounding_probe_signal != Some(GroundingProbeSignalKind::Fail)
         && matches!(
             observation.class,
             ToolBudgetClass::Write | ToolBudgetClass::Destructive
@@ -873,6 +874,7 @@ mod tests {
             signature: signature.to_string(),
             class,
             failed,
+            grounding_probe_signal: None,
         }
     }
 
@@ -1118,6 +1120,22 @@ mod tests {
 
         assert!(evaluation.trigger.is_none());
         assert_eq!(evaluation.next_state.read_search_since_mutation, 0);
+    }
+
+    #[test]
+    fn failed_grounding_probe_does_not_reset_exploration() {
+        let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
+        let state = CheckpointState {
+            read_search_since_mutation: 2,
+            ..CheckpointState::default()
+        };
+        let mut mutation = observation(ToolBudgetClass::Write, "write:a", false);
+        mutation.grounding_probe_signal = Some(GroundingProbeSignalKind::Fail);
+
+        let evaluation = evaluate_checkpoint_trigger(&profile, &state, &[mutation], false);
+
+        assert!(evaluation.trigger.is_none());
+        assert_eq!(evaluation.next_state.read_search_since_mutation, 2);
     }
 
     #[test]

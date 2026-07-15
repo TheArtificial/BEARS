@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 
 use crate::llm::ChatToolCall;
 
+use super::checkpoints::GroundingProbeSignalKind;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCallBudgetLimits {
     pub total: u32,
@@ -182,6 +184,7 @@ pub struct ToolContinuationObservation {
     pub signature: String,
     pub class: ToolBudgetClass,
     pub failed: bool,
+    pub grounding_probe_signal: Option<GroundingProbeSignalKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -320,6 +323,7 @@ impl TurnBudgetStopReason {
 
 fn observation_is_successful_mutation(observation: &ToolContinuationObservation) -> bool {
     !observation.failed
+        && observation.grounding_probe_signal != Some(GroundingProbeSignalKind::Fail)
         && matches!(
             observation.class,
             ToolBudgetClass::Write | ToolBudgetClass::Destructive
@@ -894,6 +898,7 @@ mod tests {
             signature: tool_signature(tool_name, arguments),
             class: classify_tool_budget_class(tool_name),
             failed,
+            grounding_probe_signal: None,
         }
     }
 
@@ -1183,6 +1188,23 @@ mod tests {
 
         assert_eq!(evaluation.next_state.tool_usage.read, 8);
         assert_eq!(evaluation.next_state.tool_usage.search, 5);
+        assert_eq!(evaluation.next_state.tool_usage.total, 20);
+        assert!(evaluation.stop_reason.is_none());
+    }
+
+    #[test]
+    fn failed_grounding_probe_blocks_mutation_replenishment() {
+        let mut prior = state();
+        prior.tool_usage.read = 12;
+        prior.tool_usage.search = 7;
+        prior.tool_usage.total = 19;
+        let mut mutation = observation("fs_edit_file", r#"{"path":"a"}"#, false);
+        mutation.grounding_probe_signal = Some(GroundingProbeSignalKind::Fail);
+
+        let evaluation = evaluate_turn_budget(policy(), 2, 1_000, &prior, &[mutation]);
+
+        assert_eq!(evaluation.next_state.tool_usage.read, 12);
+        assert_eq!(evaluation.next_state.tool_usage.search, 7);
         assert_eq!(evaluation.next_state.tool_usage.total, 20);
         assert!(evaluation.stop_reason.is_none());
     }

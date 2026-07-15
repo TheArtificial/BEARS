@@ -1078,6 +1078,7 @@ fn tool_observation_from_call(
         signature: tool_signature_from_call(call),
         class: classify_tool_budget_class(&call.function.name),
         failed: tool_result_content_indicates_error(content),
+        grounding_probe_signal: None,
     }
 }
 
