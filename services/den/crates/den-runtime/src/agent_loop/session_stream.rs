@@ -37,8 +37,9 @@ use crate::{
 use den_core::tools::{
     arguments::DenToolChannelContext,
     constants::{
-        DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
-        DEN_TASK_LIST_SYNC_PROVIDER, DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TOOL_OUTPUT_READ,
+        DEN_TASK_CREATE_PROVIDER, DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER,
+        DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_SYNC_PROVIDER,
+        DEN_TASK_UPDATE_CURRENT_STATUS_PROVIDER, DEN_TASK_UPDATE_PROVIDER, DEN_TOOL_OUTPUT_READ,
     },
     context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
@@ -46,10 +47,10 @@ use den_core::tools::{
 };
 use den_core::{config::Config, governance::Governance, profile::BearProfile, DenError};
 
-use super::session_store::AgentLoopSession;
 use super::transcript::{
     spawn_persist_incomplete_acp_tool_results, spawn_persist_native_agent_step,
 };
+use super::{session_store::AgentLoopSession, ObjectiveOrientation, OrientationTaskRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NativeToolDispatchMode {
@@ -111,6 +112,65 @@ fn recent_tool_exchange_start(messages: &[ChatMessage], tool_call_id: &str) -> O
             .as_ref()
             .is_some_and(|calls| calls.iter().any(|call| call.id == tool_call_id)))
     .then_some(assistant_index)
+}
+
+fn oriented_child_limit_error(max_children: u8, child_count: i64) -> Option<String> {
+    (child_count >= i64::from(max_children)).then(|| {
+        format!("oriented task decomposition child limit exceeded; max_children is {max_children}")
+    })
+}
+
+async fn oriented_child_count_policy_error(
+    pool: &sqlx::PgPool,
+    bear_id: uuid::Uuid,
+    canonical_tool_name: &str,
+    args: &serde_json::Value,
+    orientation: Option<&ObjectiveOrientation>,
+) -> Result<Option<String>, DenError> {
+    if !matches!(
+        canonical_tool_name,
+        DEN_TASK_CREATE_PROVIDER | DEN_TASK_UPDATE_PROVIDER
+    ) {
+        return Ok(None);
+    }
+    let Some(ObjectiveOrientation::Oriented { task }) = orientation else {
+        return Ok(None);
+    };
+    let Some(parent_task_id) = args
+        .get("parent_task_id")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(None);
+    };
+    let OrientationTaskRef::DocketTask {
+        task_id: oriented_task_id,
+        ..
+    } = &task.task_ref
+    else {
+        return Ok(None);
+    };
+    if parent_task_id != oriented_task_id || task.child_policy.max_children == 0 {
+        return Ok(None);
+    }
+    let parent_task_id = uuid::Uuid::parse_str(parent_task_id).map_err(|_| {
+        DenError::ValidationError("parent_task_id must be a valid UUID".to_string())
+    })?;
+    let child_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM bear_tasks
+        WHERE bear_id = $1
+          AND parent_task_id = $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(parent_task_id)
+    .fetch_one(pool)
+    .await?;
+    if let Some(error) = oriented_child_limit_error(task.child_policy.max_children, child_count) {
+        return Ok(Some(error));
+    }
+    Ok(None)
 }
 
 async fn tool_output_read_result(
@@ -363,6 +423,66 @@ impl SessionTrackingStream {
                 || !is_task_definition_or_delegation_tool_provider_name(tool_name))
     }
 
+    fn task_definition_policy_error(
+        &self,
+        canonical_tool_name: &str,
+        args: &serde_json::Value,
+    ) -> Option<String> {
+        if !matches!(
+            canonical_tool_name,
+            DEN_TASK_CREATE_PROVIDER | DEN_TASK_UPDATE_PROVIDER
+        ) {
+            return None;
+        }
+        let orientation = self
+            .store
+            .get(&self.session_key)
+            .map(|session| session.objective_orientation)?;
+        match orientation {
+            ObjectiveOrientation::Focused { job } if !job.mutable => Some(
+                "objective orientation is immutable focused; task decomposition is not allowed"
+                    .to_string(),
+            ),
+            ObjectiveOrientation::Oriented { task } => {
+                let parent_task_id = args
+                    .get("parent_task_id")
+                    .and_then(serde_json::Value::as_str);
+                let Some(parent_task_id) = parent_task_id else {
+                    return None;
+                };
+                let OrientationTaskRef::DocketTask {
+                    task_id: oriented_task_id,
+                    ..
+                } = task.task_ref
+                else {
+                    return Some(
+                        "oriented task decomposition requires a Docket task parent".to_string(),
+                    );
+                };
+                if parent_task_id != oriented_task_id {
+                    return Some(format!(
+                        "oriented task decomposition depth limit exceeded; parent_task_id must be the oriented task {}",
+                        oriented_task_id
+                    ));
+                }
+                if task.child_policy.max_children == 0 {
+                    return Some(
+                        "oriented task decomposition child limit exceeded; max_children is 0"
+                            .to_string(),
+                    );
+                }
+                if task.child_policy.max_depth_below_oriented_task == 0 {
+                    return Some(
+                        "oriented task decomposition depth limit exceeded; max depth is 0"
+                            .to_string(),
+                    );
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
     fn started_tool_title(tool_name: &str) -> Option<String> {
         builtin_den_tool_descriptor_for_provider_name(tool_name)
             .map(|descriptor| descriptor.label.to_string())
@@ -457,6 +577,17 @@ impl SessionTrackingStream {
             .unwrap_or_else(|| provider_name.clone());
         let args = serde_json::from_str(&call.function.arguments)
             .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+        if let Some(error) = self.task_definition_policy_error(&canonical, &args) {
+            self.pending_server_tool =
+                Some(Box::pin(
+                    async move { Err(DenError::ValidationError(error)) },
+                ));
+            return;
+        }
+        let objective_orientation = self
+            .store
+            .get(&self.session_key)
+            .map(|session| session.objective_orientation);
         let context = self.server_tool_context();
         let pool = self.pool.clone();
         let config = self.config.clone();
@@ -469,6 +600,17 @@ impl SessionTrackingStream {
         let conversation_id = self.conversation_id.clone();
         let client_session_id = self.client_session_id.clone();
         self.pending_server_tool = Some(Box::pin(async move {
+            if let Some(error) = oriented_child_count_policy_error(
+                &pool,
+                bear_id,
+                &canonical,
+                &args,
+                objective_orientation.as_ref(),
+            )
+            .await?
+            {
+                return Err(DenError::ValidationError(error));
+            }
             let result = if canonical == DEN_TOOL_OUTPUT_READ {
                 tool_output_read_result(&pool, bear_id, &client_session_id, args).await
             } else {
@@ -1518,6 +1660,99 @@ mod tests {
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
         }
+    }
+
+    #[tokio::test]
+    async fn immutable_focused_orientation_denies_task_decomposition() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.objective_orientation = crate::agent_loop::ObjectiveOrientation::Focused {
+            job: crate::agent_loop::JobOrientation {
+                job_id: uuid::Uuid::new_v4().to_string(),
+                active_task_ref: None,
+                mutable: false,
+            },
+        };
+        let stream = test_tracking_stream_with_session(&session);
+
+        let error = stream
+            .task_definition_policy_error(
+                "create_task",
+                &serde_json::json!({ "parent_task_id": uuid::Uuid::new_v4() }),
+            )
+            .expect("immutable focused task creation is rejected");
+
+        assert!(error.contains("immutable focused"));
+    }
+
+    #[tokio::test]
+    async fn oriented_orientation_rejects_deeper_child_parent() {
+        let oriented_task_id = uuid::Uuid::new_v4().to_string();
+        let nested_parent_id = uuid::Uuid::new_v4().to_string();
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.objective_orientation = crate::agent_loop::ObjectiveOrientation::Oriented {
+            task: crate::agent_loop::TaskOrientation {
+                task_ref: crate::agent_loop::OrientationTaskRef::DocketTask {
+                    job_id: Some(uuid::Uuid::new_v4().to_string()),
+                    task_id: oriented_task_id.clone(),
+                    title: Some("Oriented task".to_string()),
+                },
+                child_policy: crate::agent_loop::OrientedChildTaskPolicy {
+                    max_children: 6,
+                    max_depth_below_oriented_task: 1,
+                },
+            },
+        };
+        let stream = test_tracking_stream_with_session(&session);
+
+        let error = stream
+            .task_definition_policy_error(
+                "create_task",
+                &serde_json::json!({ "parent_task_id": nested_parent_id }),
+            )
+            .expect("nested decomposition is rejected");
+        assert!(error.contains("depth limit exceeded"));
+
+        assert!(stream
+            .task_definition_policy_error(
+                "create_task",
+                &serde_json::json!({ "parent_task_id": oriented_task_id }),
+            )
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn oriented_orientation_rejects_zero_child_cap() {
+        let oriented_task_id = uuid::Uuid::new_v4().to_string();
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.objective_orientation = crate::agent_loop::ObjectiveOrientation::Oriented {
+            task: crate::agent_loop::TaskOrientation {
+                task_ref: crate::agent_loop::OrientationTaskRef::DocketTask {
+                    job_id: Some(uuid::Uuid::new_v4().to_string()),
+                    task_id: oriented_task_id.clone(),
+                    title: None,
+                },
+                child_policy: crate::agent_loop::OrientedChildTaskPolicy {
+                    max_children: 0,
+                    max_depth_below_oriented_task: 1,
+                },
+            },
+        };
+        let stream = test_tracking_stream_with_session(&session);
+
+        let error = stream
+            .task_definition_policy_error(
+                "create_task",
+                &serde_json::json!({ "parent_task_id": oriented_task_id }),
+            )
+            .expect("zero child cap is rejected");
+        assert!(error.contains("child limit exceeded"));
+    }
+
+    #[test]
+    fn oriented_child_limit_rejects_at_cap() {
+        assert!(oriented_child_limit_error(6, 5).is_none());
+        let error = oriented_child_limit_error(6, 6).expect("cap is enforced");
+        assert!(error.contains("max_children is 6"));
     }
 
     #[test]
