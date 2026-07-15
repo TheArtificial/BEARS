@@ -728,7 +728,7 @@ impl AgentLoopControlProfile {
                 ),
                 CheckpointPolicy {
                     enabled: true,
-                    exploration_without_mutation_threshold: Some(5),
+                    exploration_without_mutation_threshold: Some(7),
                     consecutive_failure_threshold: Some(2),
                     same_signature_warning_threshold: Some(2),
                     require_on_low_budget: true,
@@ -960,9 +960,13 @@ mod tests {
         let careful = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
         let strict = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Strict);
 
-        assert!(
-            light.checkpoints.exploration_without_mutation_threshold
-                > standard.checkpoints.exploration_without_mutation_threshold
+        assert_eq!(
+            light.checkpoints.exploration_without_mutation_threshold,
+            Some(8)
+        );
+        assert_eq!(
+            standard.checkpoints.exploration_without_mutation_threshold,
+            Some(7)
         );
         assert!(
             standard.checkpoints.exploration_without_mutation_threshold
