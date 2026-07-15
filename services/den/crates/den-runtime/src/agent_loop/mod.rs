@@ -47,10 +47,11 @@ pub use budget::{
     TurnBudgetStopReason, TurnBudgetWarning,
 };
 pub use checkpoints::{
-    list_checkpoints_for_run, list_checkpoints_for_session, record_checkpoint_request,
-    record_checkpoint_response, CheckpointArtifactInput, CheckpointArtifactRow,
-    CheckpointReplayPolicy, CheckpointResponseInput, CheckpointValidationStatus,
-    CheckpointVisibility,
+    list_checkpoints_for_run, list_checkpoints_for_session, list_loop_control_decisions_for_run,
+    record_checkpoint_request, record_checkpoint_response, CheckpointArtifactInput,
+    CheckpointArtifactRow, CheckpointReplayPolicy, CheckpointResponseInput,
+    CheckpointValidationStatus, CheckpointVisibility, LedgerEvidenceRef, LoopControlDecisionKind,
+    LoopControlLedgerInput, LoopControlLedgerRow,
 };
 pub use context::{
     assemble_agent_messages, load_transcript_grouping_rows, load_transcript_messages,

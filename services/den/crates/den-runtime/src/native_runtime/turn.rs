@@ -1267,6 +1267,7 @@ async fn record_checkpoint_request_if_audited(
         CheckpointArtifactInput {
             run_id: request.run_id.clone(),
             turn_step_id: None,
+            orientation_kind: Some(session.objective_orientation.kind().to_string()),
             request,
             visibility: CheckpointVisibility::AuditOnly,
             replay_policy: CheckpointReplayPolicy::None,
