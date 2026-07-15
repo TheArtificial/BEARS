@@ -1351,10 +1351,17 @@ pub fn task_list_projection_from_docket_job(
         .iter()
         .map(|state| (state.task_id, state))
         .collect::<std::collections::HashMap<_, _>>();
-    let items = projection
+    let mut tasks = projection
         .tasks
         .iter()
         .filter(|task| task.parent_task_id == parent_task_id)
+        .collect::<Vec<_>>();
+    // Keep projection order deterministic at the task-list boundary. Upstream DB
+    // queries usually order by sibling_order, but ACP "agent plan" rendering
+    // should not depend on every caller preserving that order.
+    tasks.sort_by_key(|task| (task.sibling_order, task.created_at, task.id));
+    let items = tasks
+        .into_iter()
         .map(|task| task_list_item_from_docket_task(task, states_by_task_id.get(&task.id).copied()))
         .collect::<Vec<_>>();
     let current_item = current_task_list_item(&items).cloned();
@@ -1396,8 +1403,18 @@ pub fn task_list_projection_from_session_tasks(
     tasks: &[DocketTaskProjection],
 ) -> Option<TaskListProjection> {
     let first_task = tasks.first()?;
-    let items = tasks
-        .iter()
+    let mut sorted_tasks = tasks.iter().collect::<Vec<_>>();
+    // See task_list_projection_from_docket_job: ACP plan projection must be
+    // deterministic even if the caller hands us an unordered task slice.
+    sorted_tasks.sort_by_key(|projection| {
+        (
+            projection.task.sibling_order,
+            projection.task.created_at,
+            projection.task.id,
+        )
+    });
+    let items = sorted_tasks
+        .into_iter()
         .map(|projection| {
             task_list_item_from_docket_task(&projection.task, projection.run_state.as_ref())
         })
@@ -2238,6 +2255,7 @@ mod tests {
     fn task_list_projection_from_docket_job_projects_conversation_objective_level() {
         let job_id = Uuid::parse_str("00000000-0000-0000-0000-000000000777").unwrap();
         let root_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000888").unwrap();
+        let root_peer_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000889").unwrap();
         let child_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap();
         let run_id = Uuid::parse_str("00000000-0000-0000-0000-000000000abc").unwrap();
         let projection = DocketJobProjection {
@@ -2274,6 +2292,28 @@ mod tests {
                     title: "Root task".to_string(),
                     body: "Do root work.".to_string(),
                     completion_criteria: sqlx::types::Json(vec!["Root work done".to_string()]),
+                    difficulty: None,
+                    effort_hint: None,
+                    assigned_to_role: Some("work".to_string()),
+                    created_by_role: "pair".to_string(),
+                    created_by_user_id: Some(42),
+                    created_by_agent_id: None,
+                    created_in_run_id: None,
+                    created_at: OffsetDateTime::UNIX_EPOCH,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                },
+                DocketTaskRow {
+                    id: root_peer_task_id,
+                    bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+                    job_id: Some(job_id),
+                    session_anchor_id: None,
+                    parent_task_id: None,
+                    sibling_order: -1,
+                    kind: "execution".to_string(),
+                    scope: "template".to_string(),
+                    title: "Root peer task".to_string(),
+                    body: "Do peer work.".to_string(),
+                    completion_criteria: sqlx::types::Json(vec!["Peer work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
                     assigned_to_role: Some("work".to_string()),
@@ -2333,11 +2373,12 @@ mod tests {
                 .map(|item| item.id.as_str()),
             Some(root_task_id.to_string().as_str())
         );
-        assert_eq!(root_checkout.items.len(), 1);
-        assert_eq!(root_checkout.items[0].id, root_task_id.to_string());
-        assert_eq!(root_checkout.items[0].sync_state, TaskListSyncState::Clean);
+        assert_eq!(root_checkout.items.len(), 2);
+        assert_eq!(root_checkout.items[0].id, root_peer_task_id.to_string());
+        assert_eq!(root_checkout.items[1].id, root_task_id.to_string());
+        assert_eq!(root_checkout.items[1].sync_state, TaskListSyncState::Clean);
         assert_eq!(
-            root_checkout.items[0].status,
+            root_checkout.items[1].status,
             TaskListItemStatus::InProgress
         );
 
