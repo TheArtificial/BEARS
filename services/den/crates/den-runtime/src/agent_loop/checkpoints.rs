@@ -383,6 +383,21 @@ pub struct LoopControlReplayProfileSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpectedLoopControlReplayProfileSummary {
+    pub turn_count: usize,
+    pub decision_count: usize,
+    pub decision_kind_counts: Vec<LoopControlReplayCount<LoopControlDecisionKind>>,
+    pub control_level_counts: Vec<LoopControlReplayCount<String>>,
+    pub orientation_kind_counts: Vec<LoopControlReplayCount<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoopControlReplayProfileMismatch {
+    pub expected: ExpectedLoopControlReplayProfileSummary,
+    pub observed: LoopControlReplayProfileSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoopControlReplayCount<T> {
     pub value: T,
     pub count: usize,
@@ -535,6 +550,21 @@ pub fn summarize_loop_control_replay_profile(
         control_level_counts,
         orientation_kind_counts,
     }
+}
+
+pub fn compare_loop_control_replay_profile(
+    observed: &LoopControlReplayProfileSummary,
+    expected: &ExpectedLoopControlReplayProfileSummary,
+) -> Option<LoopControlReplayProfileMismatch> {
+    let matches = observed.turn_count == expected.turn_count
+        && observed.decision_count == expected.decision_count
+        && observed.decision_kind_counts == expected.decision_kind_counts
+        && observed.control_level_counts == expected.control_level_counts
+        && observed.orientation_kind_counts == expected.orientation_kind_counts;
+    (!matches).then_some(LoopControlReplayProfileMismatch {
+        expected: expected.clone(),
+        observed: observed.clone(),
+    })
 }
 
 fn increment_replay_count<T: PartialEq>(counts: &mut Vec<LoopControlReplayCount<T>>, value: T) {
@@ -1312,6 +1342,42 @@ mod tests {
                 count: 1,
             }]
         );
+
+        let expected_profile = ExpectedLoopControlReplayProfileSummary {
+            turn_count: 1,
+            decision_count: 2,
+            decision_kind_counts: vec![
+                LoopControlReplayCount {
+                    value: LoopControlDecisionKind::CheckpointRequested,
+                    count: 1,
+                },
+                LoopControlReplayCount {
+                    value: LoopControlDecisionKind::ContextBudgetPressure,
+                    count: 1,
+                },
+            ],
+            control_level_counts: vec![
+                LoopControlReplayCount {
+                    value: "careful".to_string(),
+                    count: 1,
+                },
+                LoopControlReplayCount {
+                    value: "standard".to_string(),
+                    count: 1,
+                },
+            ],
+            orientation_kind_counts: vec![LoopControlReplayCount {
+                value: "oriented".to_string(),
+                count: 1,
+            }],
+        };
+        assert!(compare_loop_control_replay_profile(&profile, &expected_profile).is_none());
+        let mut wrong_profile = expected_profile;
+        wrong_profile.decision_count = 1;
+        let mismatch = compare_loop_control_replay_profile(&profile, &wrong_profile)
+            .expect("profile mismatch");
+        assert_eq!(mismatch.observed, profile);
+        assert_eq!(mismatch.expected.decision_count, 1);
 
         let mut wrong_turns = expected_turns;
         wrong_turns[0].decision_count = 1;
