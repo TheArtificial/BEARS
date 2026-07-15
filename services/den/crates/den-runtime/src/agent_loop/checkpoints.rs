@@ -107,6 +107,7 @@ pub struct CheckpointArtifactRow {
 pub enum LoopControlDecisionKind {
     CheckpointRequested,
     ContextBudgetPressure,
+    GroundingProbeResult,
 }
 
 impl LoopControlDecisionKind {
@@ -114,6 +115,7 @@ impl LoopControlDecisionKind {
         match self {
             Self::CheckpointRequested => "checkpoint_requested",
             Self::ContextBudgetPressure => "context_budget_pressure",
+            Self::GroundingProbeResult => "grounding_probe_result",
         }
     }
 }
@@ -176,6 +178,85 @@ pub const fn context_budget_pressure_action(level: ContextBudgetPressureLevel) -
         ContextBudgetPressureLevel::OverBudget => {
             "stop_before_model_call_and_request_compaction_or_smaller_context"
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GroundingProbeSignalKind {
+    Pass,
+    Fail,
+    NoSignal,
+}
+
+impl GroundingProbeSignalKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::NoSignal => "no_signal",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroundingProbeFinding {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroundingProbeResultInput {
+    pub run_id: String,
+    pub turn_step_id: Option<Uuid>,
+    pub orientation_kind: Option<String>,
+    pub probe_id: String,
+    pub surface_kind: String,
+    pub signal: GroundingProbeSignalKind,
+    pub duration_ms: u64,
+    pub findings: Vec<GroundingProbeFinding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GroundingProbeDecision {
+    probe_id: String,
+    surface_kind: String,
+    signal: GroundingProbeSignalKind,
+    duration_ms: u64,
+    findings: Vec<GroundingProbeFinding>,
+}
+
+pub fn non_empty_diff_grounding_probe(
+    run_id: impl Into<String>,
+    diff: &str,
+) -> GroundingProbeResultInput {
+    let changed = !diff.trim().is_empty();
+    GroundingProbeResultInput {
+        run_id: run_id.into(),
+        turn_step_id: None,
+        orientation_kind: None,
+        probe_id: "generic.non_empty_diff".to_string(),
+        surface_kind: "repository".to_string(),
+        signal: if changed {
+            GroundingProbeSignalKind::Pass
+        } else {
+            GroundingProbeSignalKind::Fail
+        },
+        duration_ms: 0,
+        findings: vec![GroundingProbeFinding {
+            code: if changed {
+                "diff_present"
+            } else {
+                "empty_diff"
+            }
+            .to_string(),
+            message: if changed {
+                "Workspace diff is non-empty."
+            } else {
+                "Workspace diff is empty."
+            }
+            .to_string(),
+        }],
     }
 }
 
@@ -348,6 +429,44 @@ pub async fn record_context_budget_pressure_decision(
     )
     .await?;
     Ok(Some(row))
+}
+
+pub async fn record_grounding_probe_result_decision(
+    pool: &PgPool,
+    input: GroundingProbeResultInput,
+) -> Result<LoopControlLedgerRow, DenError> {
+    let decision = GroundingProbeDecision {
+        probe_id: input.probe_id.clone(),
+        surface_kind: input.surface_kind.clone(),
+        signal: input.signal,
+        duration_ms: input.duration_ms,
+        findings: input.findings,
+    };
+    let decision_json = serde_json::to_value(&decision)
+        .map_err(|err| DenError::System(format!("serialize grounding probe decision: {err}")))?;
+    record_loop_control_decision(
+        pool,
+        LoopControlLedgerInput {
+            run_id: input.run_id,
+            turn_step_id: input.turn_step_id,
+            decision_id: format!("grounding_probe:{}", input.probe_id),
+            decision_kind: LoopControlDecisionKind::GroundingProbeResult,
+            control_level: "standard".to_string(),
+            reason: Some(input.signal.as_str().to_string()),
+            orientation_kind: input.orientation_kind,
+            checkpoint_id: None,
+            related_task_list_id: None,
+            related_task_item_id: None,
+            related_docket_job_id: None,
+            related_docket_task_id: None,
+            evidence_refs: vec![LedgerEvidenceRef {
+                kind: "grounding_probe".to_string(),
+                id: input.probe_id,
+            }],
+            decision: decision_json,
+        },
+    )
+    .await
 }
 
 pub async fn record_loop_control_decision(
@@ -712,6 +831,30 @@ mod tests {
             evidence_refs: vec![],
             confidence: None,
         }
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn records_grounding_probe_result_decision(pool: PgPool) {
+        let run_id = format!("run-{}", Uuid::new_v4().simple());
+        seed_run(&pool, &run_id).await;
+        let input = non_empty_diff_grounding_probe(&run_id, "diff --git a/file b/file\n");
+
+        let recorded = record_grounding_probe_result_decision(&pool, input)
+            .await
+            .expect("record grounding probe result");
+
+        assert_eq!(recorded.decision_kind, "grounding_probe_result");
+        assert_eq!(
+            recorded.decision_id,
+            "grounding_probe:generic.non_empty_diff"
+        );
+        assert_eq!(recorded.reason.as_deref(), Some("pass"));
+        assert_eq!(recorded.evidence_refs[0]["kind"], "grounding_probe");
+        assert_eq!(recorded.evidence_refs[0]["id"], "generic.non_empty_diff");
+        assert_eq!(recorded.decision["surface_kind"], "repository");
+        assert_eq!(recorded.decision["signal"], "pass");
+        assert_eq!(recorded.decision["findings"][0]["code"], "diff_present");
+        assert!(recorded.decision.get("diff").is_none());
     }
 
     #[sqlx::test(migrations = "../../migrations")]
