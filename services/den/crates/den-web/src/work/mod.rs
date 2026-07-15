@@ -503,6 +503,8 @@ async fn create_job(
                 .filter(|branch| !branch.is_empty()),
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::SameUser,
+            source_conversation_id: None,
+            objective_kind: None,
             criteria: vec![DocketJobCriterionInput {
                 kind: den_docket::DocketCriterionKind::Narrative,
                 description: "All tasks completed to their criteria".to_string(),
