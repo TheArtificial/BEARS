@@ -245,6 +245,82 @@ Pair reflection should move from bucket promotion/filtering to the same extracti
 - Promotion from goals/workflow buckets when they encode durable preferences or conventions.
 - Semantic dedup/consolidation beyond exact-claim metadata.
 
+### Shared extraction contract v0
+
+The replacement path uses one backend-agnostic contract for pair reflection and archive harvest. Compaction may create the job and provide hints, but the extractor input must keep source evidence separate from those hints.
+
+Input bundle:
+
+```json
+{
+  "source_kind": "pair_session|compaction_span|conversation_archive",
+  "source_ref": "stable session/span/archive identifier",
+  "bear_id": "...",
+  "conversation_id": "...",
+  "session_id": "...",
+  "compaction": {
+    "artifact_id": "optional scheduler/provenance id",
+    "policy_version": "optional compaction policy",
+    "source_message_start_seq": 1,
+    "source_message_end_seq": 99,
+    "hints": ["possible_preference", "possible_decision"]
+  },
+  "messages": [
+    {
+      "id": "message id or seq",
+      "seq": 1,
+      "role": "user|assistant|tool|system",
+      "content": "bounded source text",
+      "created_at": "optional timestamp"
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "optional artifact id/path",
+      "kind": "tool_summary|memory_entry|file_ref|other",
+      "content": "bounded source text"
+    }
+  ]
+}
+```
+
+Output:
+
+```json
+{
+  "candidates": [
+    {
+      "kind": "preference|decision|fact|constraint|lesson",
+      "content": "durable semantic statement, not transcript prose",
+      "rationale": "why this helps future sessions",
+      "source_message_ids": ["..."],
+      "source_artifact_ids": ["..."],
+      "confidence": 0.0,
+      "sensitivity": "normal|person|secret_risk|external_untrusted",
+      "suggested_action": "retain_profile_local|human_review|discard"
+    }
+  ],
+  "discarded": [
+    {
+      "source_message_ids": ["..."],
+      "source_artifact_ids": ["..."],
+      "reason": "transient_followup|assistant_only|task_state|artifact_ref_without_semantic_claim|duplicate|not_durable|unsafe|invalid_candidate"
+    }
+  ]
+}
+```
+
+Validation before proposal creation:
+
+- `content` must be non-empty, future-useful, and distinct from raw transcript/bucket labels.
+- every candidate must have at least one source message or artifact ref;
+- user-authored preferences, decisions, and constraints must include user-message evidence, not only assistant summaries;
+- `kind`, `sensitivity`, and `suggested_action` are allowlisted;
+- invalid candidates become discarded entries with `invalid_candidate` rather than crashing or silently disappearing;
+- discard-only output is a valid harvest result.
+
+The deterministic test fixture uses the same contract with a fake extractor backend. Its source bundle contains one user preference, one assistant acknowledgement, and one transient reminder/task follow-up. The fake output contains one semantic candidate grounded in the user message plus discard reasons for assistant-only and transient material. This tests the pipeline contract without pretending to evaluate model quality.
+
 ### Positive smoke test
 
 Before more automation, add one runnable end-to-end memory smoke test:
