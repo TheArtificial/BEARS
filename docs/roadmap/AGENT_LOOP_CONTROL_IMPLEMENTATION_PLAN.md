@@ -6,16 +6,19 @@ In progress. Implements [ADR-0050 — Agent Loop Control, Adaptive Budgets, and 
 
 > **Companion plan (2026-07-06, revised 2026-07-13):** [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md) delivers the ADR-0050 amendment — surface-declared grounding probes (§7c), context/token budget as a loop dimension (§11), and a persisted replayable ledger/offline tuning harness. Because Den is still pre-release, development is staged but completed loop-control slices are active by default once tested; feature flags and long observation-only rollout periods are not the normal delivery mechanism. Land the companion plan's ledger foundation early; it is the measurement loop the rest of this plan is tuned against.
 
-### Current implementation status — 2026-07-14
+### Current implementation status — 2026-07-15
 
-Recent slices have moved the plan through the governance/focus/orientation foundation, but not yet into policy-driven budget enforcement:
+Recent slices have moved the plan through the governance/focus/orientation foundation and into the first replayable measurement spine, but not yet into broad policy-driven enforcement:
 
 - **Phase 2 / 2a partially complete:** runtime sessions carry governance, session info exposes governance/orientation/focus snapshots, final-gate continuations now mark governance as `autonomous_continuation`, and `work` stance is rejected before model invocation unless objective orientation is `focused`.
 - **Phase 2a focus persistence is intentionally minimal:** the current durable focus source is the conversation-linked Docket execution session (`docket_execution_sessions`) restored by live session id, ACP/client session id, then conversation id. Do not add a separate conversation-focus table unless we need history labels, explicit clear reasons, multi-job focus stacks, or richer title provenance.
 - **Phase 2b minimal UX is live:** armature has `/focus <job_id>` for exact UUID focus through the existing `execute_job` path, and runtime clears Docket focus on session mode changes. Search/matching and elicitation remain deferred UX work.
-- **Phase 2c partially complete:** runtime has objective-orientation-derived prompt/session diagnostics and derives task snapshots from orientation. Focused work takes precedence where wired, and closed freeform no longer exposes or server-executes task-definition/delegation tools when `may_define_task = false`. Oriented child caps, immutable-focused decomposition handling, and budget-profile differences are still incomplete.
-- **Diagnostics/history improved:** armature `/status` shows runtime focus/orientation/governance, Docket task create/update events include task definitions, focus selection is logged as a lightweight Docket job event, and BearWire conversation history surfaces focus/task-definition diagnostics including focused task titles. Orientation history is still snapshot-only; persist orientation transitions as logged events next if diagnostic replay needs more than live state.
+- **Phase 2c mostly complete for orientation/focus boundaries:** runtime has objective-orientation-derived prompt/session diagnostics and derives task snapshots from orientation. Focused work takes precedence where wired, closed freeform no longer exposes or server-executes task-definition/delegation tools when `may_define_task = false`, and server-side `create_task`/`update_task` enforce oriented child count/depth caps plus immutable-focused decomposition rejection. Budget-profile differences are still incomplete.
+- **Diagnostics/history improved:** armature `/status` shows runtime focus/orientation/governance, Docket task create/update events include task definitions, focus selection is logged as a lightweight Docket job event, BearWire conversation history surfaces focus/task-definition diagnostics including focused task titles, and persisted objective-orientation events are projected into conversation surface history.
 - **Checkpoint protocol exists enough to exercise:** runtime can request structured `checkpoint` tool calls with typed next-action fields. Artifact retention, enforcement, and budget/ko integration are still future phases.
+- **Replay/measurement spine started:** the companion plan's transcript-free `bear_loop_control_ledger` exists and records checkpoint requests, context-budget pressure decisions, and grounding-probe results with typed metadata/evidence refs.
+- **Context budget is partially integrated:** latest ADR-0047 context-budget reports are recorded before over-budget stop decisions, over/near-budget pressure can be written to the ledger, and near-budget pressure emits a loop-control diagnostic. Context budget is not yet a full `TurnBudgetState` dimension with compact/checkpoint sequencing.
+- **Grounding probes are partially integrated:** a minimal repository/diff grounding-probe helper can record non-empty-diff probe results through the ledger evidence path without storing raw diff contents. Surface-declared probe profiles, probe execution policy, and mutation-replenishment integration remain future work.
 
 ### Implementation review and adjustments
 
@@ -23,16 +26,16 @@ Recent slices have moved the plan through the governance/focus/orientation found
 - Keep **durable focus** and **diagnostic history** separate. The current Docket execution-session record can remain the focus source of truth; event logs explain how focus/orientation changed over time.
 - Treat `/focus` matching as a UX layer, not a runtime primitive. Exact-id focus is enough for now; fuzzy search and elicitation should be added only after the projection/clear/title semantics are stable.
 - Do not build a generic `FocusTarget`. The implementation experience still supports the existing constraint: durable focus is a Docket Job; task focus is derived and ephemeral.
-- Move orientation-transition logging ahead of broad budget work. It is the smallest next slice that closes the known diagnostics gap and will make later budget/checkpoint tuning auditable.
-- Reconcile this plan with the grounding/tuning companion before Phase 3/4 enforcement. Budget changes without the replayable ledger will be harder to tune and explain.
+- Keep broad budget enforcement behind the replay/tuning spine. The first ledger slices are in place; next budget/checkpoint changes should be replayable or at least recorded as typed loop-control decisions.
+- Reconcile this plan with the grounding/tuning companion before Phase 3/4 enforcement. Context-pressure and grounding signals now have ledger hooks, but the offline replay loop is still too thin to tune aggressive thresholds safely.
 
 Recommended next slices:
 
-1. **Persist orientation transitions as events.** Log objective-orientation changes/snapshots through the smallest existing event path, include conversation/session/run/job/task refs where available, and project those persisted events into `conversation.surface_history`.
-2. **Add oriented/focused decomposition limits.** Enforce oriented child count/depth caps and immutable-focused decomposition rejection before tuning budget leniency around those states.
-3. **Pause this base plan and land the companion replay/ledger foundation.** After the two slices above, switch to [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md), starting with the replayable ledger/offline tuning spine. Keep the ledger typed and transcript-free, and record enough orientation/focus/task refs to replay policy decisions.
-4. **Wire context budget into loop control through that ledger.** Consume the ADR-0047 budget report as a first-class trigger only after the ledger can explain/replay why context pressure changed a turn decision.
-5. **Then add grounding probes incrementally.** Start with the generic/repository floor and feed probe signals into the ledger/checkpoint evidence path; defer richer surface-specific probes until the measurement spine is useful.
+1. **Add the smallest offline replay harness.** Keep it model-call-free and transcript-free: read existing loop-control ledger rows, reconstruct typed decision records, and assert one tiny fixture/replay path can compare observed decisions against the current policy code.
+2. **Add a compact per-turn replay shape.** Either add a `bear_loop_ledger_turns` table or a narrow aggregate view/helper over existing decision rows. Record enough stable refs/profile metadata to replay a turn without raw conversation text.
+3. **Promote context budget to a real loop budget dimension.** Move beyond one-off pressure logging: make near/critical/over-budget thresholds part of `TurnBudgetState`/resolved control profiles, then wire checkpoint-before-growth and compact-first decisions through the ledger.
+4. **Wire grounding probes into mutation verification.** Feed generic/repository probe pass/fail into meaningful-mutation replenishment and checkpoint evidence; defer surface-specific probes until the replay harness can show threshold impact.
+5. **Resume Phase 3/4 checkpoint and KO enforcement.** Once replay can explain policy decisions, tune checkpoint cadence, failure/KO thresholds, and task-gate behavior against recorded decisions instead of hand-adjusting constants.
 
 ## Goal
 
