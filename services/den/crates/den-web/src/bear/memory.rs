@@ -150,6 +150,8 @@ struct MemoryProposalResolutionForm {
     review_notes: Option<String>,
     #[serde(default)]
     decision_summary: Option<String>,
+    #[serde(default)]
+    after_save: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2398,11 +2400,35 @@ async fn proposal_post(
         resolve_sqlite_memory_proposal(&store, &proposal_id.to_string(), status, &review_payload)
             .await?;
     }
-    Ok(Redirect::to(&format!(
-        "/bear/{}/memory/proposals/{proposal_id}",
-        bear.slug
-    ))
-    .into_response())
+    if form.after_save.as_deref() == Some("next") {
+        let manager = MemoryStoreManager::new(state.config.as_ref());
+        if let Some(next) = next_review_proposal(&state, &manager, bear.id, proposal_id).await {
+            return Ok(
+                Redirect::to(&format!("/bear/{}/memory/proposals/{}", bear.slug, next.id))
+                    .into_response(),
+            );
+        }
+    }
+    Ok(Redirect::to(&format!("/bear/{}/memory", bear.slug)).into_response())
+}
+
+async fn next_review_proposal(
+    state: &AppState,
+    manager: &MemoryStoreManager,
+    bear_id: Uuid,
+    current_id: Uuid,
+) -> Option<MemoryProposalView> {
+    let current_id = current_id.to_string();
+    // ponytail: scans the first 200 reviewable proposals; upgrade to a cursor query if queues grow.
+    let mut proposals =
+        list_dashboard_proposals(state, manager, bear_id, Some("pending"), 200).await;
+    proposals.extend(
+        list_dashboard_proposals(state, manager, bear_id, Some("needs_human_review"), 200).await,
+    );
+    proposals.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    proposals
+        .into_iter()
+        .find(|proposal| proposal.id != current_id)
 }
 
 #[cfg(test)]

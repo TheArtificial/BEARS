@@ -86,7 +86,10 @@
             <label for="review-notes">Review notes</label>
             <textarea id="review-notes" name="review_notes" rows="4"></textarea>
             <div></div>
-            <button type="submit">Resolve proposal</button>
+            <div>
+                <button type="submit" name="after_save" value="list">Save and return to list</button>
+                <button type="submit" name="after_save" value="next">Save and review next</button>
+            </div>
         </form>
     </section>
     {% endif %}
