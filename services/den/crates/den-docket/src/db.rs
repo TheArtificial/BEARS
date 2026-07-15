@@ -803,6 +803,45 @@ pub(super) async fn get_active_execution_session(
     Ok(row)
 }
 
+pub(super) async fn clear_active_execution_sessions(
+    pool: &PgPool,
+    bear_id: Uuid,
+    lookup: DocketExecutionLookup,
+) -> Result<u64, DenError> {
+    if lookup.source_conversation_id.is_none()
+        && lookup.session_id.is_none()
+        && lookup.source_client_session_id.is_none()
+    {
+        return Err(DenError::ValidationError(
+            "Docket execution clear requires a conversation, session, or client session id"
+                .to_string(),
+        ));
+    }
+
+    // ponytail: clear is lookup-based and marks matching active-like rows cancelled. The ceiling is
+    // richer clear reasons/history; add a Docket event if operator-facing audit needs it.
+    let result = sqlx::query(
+        r"
+        UPDATE docket_execution_sessions
+        SET state = 'cancelled', updated_at = NOW()
+        WHERE bear_id = $1
+          AND state IN ('active', 'blocked', 'completing', 'paused')
+          AND (
+            ($2::TEXT IS NOT NULL AND source_conversation_id = $2)
+            OR ($3::TEXT IS NOT NULL AND session_id = $3)
+            OR ($4::TEXT IS NOT NULL AND source_client_session_id = $4)
+          )
+        ",
+    )
+    .bind(bear_id)
+    .bind(lookup.source_conversation_id)
+    .bind(lookup.session_id)
+    .bind(lookup.source_client_session_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 const SELECT_EXECUTION_BY_ACP_SESSION: &str = r"
     SELECT id, bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id,
            job_id, run_id, task_id, state, created_at, updated_at

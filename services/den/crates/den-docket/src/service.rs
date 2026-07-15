@@ -67,6 +67,12 @@ pub trait DocketService: Send + Sync {
         lookup: DocketExecutionLookup,
     ) -> Result<Option<DocketExecutionSessionRow>, DenError>;
 
+    async fn clear_active_execution_sessions(
+        &self,
+        bear_id: Uuid,
+        lookup: DocketExecutionLookup,
+    ) -> Result<u64, DenError>;
+
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError>;
 
     async fn list_tasks(
@@ -168,6 +174,14 @@ impl DocketService for PgDocketService {
         lookup: DocketExecutionLookup,
     ) -> Result<Option<DocketExecutionSessionRow>, DenError> {
         db::get_active_execution_session(&self.pool, bear_id, owner_profile, lookup).await
+    }
+
+    async fn clear_active_execution_sessions(
+        &self,
+        bear_id: Uuid,
+        lookup: DocketExecutionLookup,
+    ) -> Result<u64, DenError> {
+        db::clear_active_execution_sessions(&self.pool, bear_id, lookup).await
     }
 
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError> {
