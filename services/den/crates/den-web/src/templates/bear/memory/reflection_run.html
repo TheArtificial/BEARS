@@ -84,6 +84,15 @@
         {% if detail.run.scanned_artifacts is not none %}
         · <strong>{{ detail.run.scanned_artifacts }}</strong> artifact{{ detail.run.scanned_artifacts == 1 and "" or "s" }} scanned
         {% endif %}
+        {% if detail.run.candidate_count is not none %}
+        · <strong>{{ detail.run.candidate_count }}</strong> candidate{{ detail.run.candidate_count == 1 and "" or "s" }}
+        {% endif %}
+        {% if detail.run.discarded_count is not none %}
+        · <strong>{{ detail.run.discarded_count }}</strong> discarded
+        {% endif %}
+        {% if detail.run.no_candidate_count is not none %}
+        · <strong>{{ detail.run.no_candidate_count }}</strong> no-candidate artifact{{ detail.run.no_candidate_count == 1 and "" or "s" }}
+        {% endif %}
     </p>
 
     {% if detail.linked_proposals %}

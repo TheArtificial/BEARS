@@ -36,6 +36,9 @@ struct CompactionArtifactHarvestRow {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ArchiveHarvestOutput {
     pub scanned_artifacts: usize,
+    pub candidate_count: usize,
+    pub discarded_count: usize,
+    pub no_candidate_count: usize,
     pub created_proposal_ids: Vec<Uuid>,
 }
 
@@ -135,6 +138,9 @@ pub async fn harvest_compaction_artifacts_once(
     let artifacts = list_unmined_compaction_artifacts(pool, bear_id, limit).await?;
     let mut output = ArchiveHarvestOutput {
         scanned_artifacts: artifacts.len(),
+        candidate_count: 0,
+        discarded_count: 0,
+        no_candidate_count: 0,
         created_proposal_ids: Vec::new(),
     };
 
@@ -188,7 +194,10 @@ pub async fn harvest_compaction_artifacts_once(
         );
         let extraction_output =
             run_memory_extraction(&bundle, &ArchiveSummaryExtractor { summary: &summary })?;
+        output.candidate_count += extraction_output.proposal_drafts.len();
+        output.discarded_count += extraction_output.discarded.len();
         if extraction_output.proposal_drafts.is_empty() {
+            output.no_candidate_count += 1;
             record_harvest_mark(
                 &store,
                 "compaction_artifact",

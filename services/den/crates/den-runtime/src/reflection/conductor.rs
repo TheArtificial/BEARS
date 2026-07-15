@@ -194,6 +194,9 @@ pub async fn run_next_archive_harvest_once(
                 run.id,
                 serde_json::json!({
                     "scanned_artifacts": output.scanned_artifacts,
+                    "candidate_count": output.candidate_count,
+                    "discarded_count": output.discarded_count,
+                    "no_candidate_count": output.no_candidate_count,
                     "created_proposal_ids": output.created_proposal_ids,
                 }),
             )

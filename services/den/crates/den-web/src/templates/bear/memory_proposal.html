@@ -46,6 +46,27 @@
         <h4>Proposed patch</h4>
         <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ proposal.proposed_patch | e }}</pre>
         {% endif %}
+
+        {% if proposal.extraction.is_memory_extraction %}
+        <h4>Extraction evidence</h4>
+        <dl class="fields-grid">
+            {% if proposal.extraction.source_kind %}<dt>Source kind</dt><dd><code>{{ proposal.extraction.source_kind | e }}</code></dd>{% endif %}
+            {% if proposal.extraction.source_ref %}<dt>Source ref</dt><dd><code>{{ proposal.extraction.source_ref | e }}</code></dd>{% endif %}
+            {% if proposal.extraction.candidate_kind %}<dt>Candidate kind</dt><dd><code>{{ proposal.extraction.candidate_kind | e }}</code></dd>{% endif %}
+            <dt>Evidence</dt><dd>{{ proposal.extraction.source_message_count }} message{{ proposal.extraction.source_message_count == 1 and "" or "s" }} · {{ proposal.extraction.source_artifact_count }} artifact{{ proposal.extraction.source_artifact_count == 1 and "" or "s" }}</dd>
+            {% if proposal.extraction.confidence_label %}<dt>Confidence</dt><dd>{{ proposal.extraction.confidence_label | e }}</dd>{% endif %}
+            {% if proposal.extraction.detector %}<dt>Detector</dt><dd><code>{{ proposal.extraction.detector | e }}</code></dd>{% endif %}
+            <dt>Discarded alongside</dt><dd>{{ proposal.extraction.discarded_count }}</dd>
+        </dl>
+        {% if proposal.extraction.discarded_preview %}
+        <p class="form-hint">Discard preview:</p>
+        <ul>
+            {% for reason in proposal.extraction.discarded_preview %}
+            <li><code>{{ reason | e }}</code></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
     </section>
 
     <section class="box full-width">

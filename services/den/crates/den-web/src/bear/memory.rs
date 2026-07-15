@@ -248,6 +248,9 @@ struct ReflectionRunView {
     queued_age_label: String,
     proposal_count: Option<usize>,
     scanned_artifacts: Option<i64>,
+    candidate_count: Option<i64>,
+    discarded_count: Option<i64>,
+    no_candidate_count: Option<i64>,
     output_summary: Value,
     error: Option<String>,
 }
@@ -362,6 +365,21 @@ struct MemoryProposalView {
     decision_summary: Option<String>,
     created_at: String,
     reviewed_at: Option<String>,
+    extraction: MemoryProposalExtractionView,
+}
+
+#[derive(Debug, Serialize, Clone, Default)]
+struct MemoryProposalExtractionView {
+    is_memory_extraction: bool,
+    source_kind: Option<String>,
+    source_ref: Option<String>,
+    candidate_kind: Option<String>,
+    source_message_count: usize,
+    source_artifact_count: usize,
+    confidence_label: Option<String>,
+    detector: Option<String>,
+    discarded_count: usize,
+    discarded_preview: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -575,6 +593,64 @@ fn scanned_artifacts_from_summary(output: &Value) -> Option<i64> {
     output.get("scanned_artifacts").and_then(Value::as_i64)
 }
 
+fn i64_field_from_summary(output: &Value, key: &str) -> Option<i64> {
+    output.get(key).and_then(Value::as_i64)
+}
+
+fn string_field(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn array_len_field(value: &Value, key: &str) -> usize {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+fn proposal_extraction_view(source_refs: &Value, refs: &Value) -> MemoryProposalExtractionView {
+    let quality = refs.get("quality").unwrap_or(&Value::Null);
+    let discarded = refs
+        .get("discarded")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let discarded_preview = discarded
+        .iter()
+        .filter_map(|value| string_field(value, "reason"))
+        .take(3)
+        .collect();
+    let confidence_label = quality
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .map(|value| format!("{value:.2}"));
+    let is_memory_extraction = source_refs.get("source").and_then(Value::as_str)
+        == Some("memory_extraction")
+        || refs
+            .get("memory_extraction")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+    MemoryProposalExtractionView {
+        is_memory_extraction,
+        source_kind: string_field(source_refs, "source_kind"),
+        source_ref: string_field(source_refs, "source_ref"),
+        candidate_kind: string_field(source_refs, "candidate_kind"),
+        source_message_count: array_len_field(source_refs, "source_message_ids"),
+        source_artifact_count: array_len_field(source_refs, "source_artifact_ids"),
+        confidence_label,
+        detector: string_field(quality, "detector"),
+        discarded_count: discarded.len(),
+        discarded_preview,
+    }
+}
+
 fn reflection_summary(runs: &[ReflectionRunView]) -> ReflectionRunSummary {
     let mut completed_durations = Vec::new();
     for run in runs {
@@ -719,6 +795,12 @@ async fn list_recent_reflection_runs(
                     queued_age_label: duration_label(queued_age_ms),
                     proposal_count: proposal_count_from_summary(&output_summary),
                     scanned_artifacts: scanned_artifacts_from_summary(&output_summary),
+                    candidate_count: i64_field_from_summary(&output_summary, "candidate_count"),
+                    discarded_count: i64_field_from_summary(&output_summary, "discarded_count"),
+                    no_candidate_count: i64_field_from_summary(
+                        &output_summary,
+                        "no_candidate_count",
+                    ),
                     output_summary,
                     error,
                 }
@@ -933,6 +1015,9 @@ async fn get_reflection_run_detail(
             queued_age_label: duration_label(queued_age_ms),
             proposal_count: proposal_count_from_summary(&output_summary),
             scanned_artifacts: scanned_artifacts_from_summary(&output_summary),
+            candidate_count: i64_field_from_summary(&output_summary, "candidate_count"),
+            discarded_count: i64_field_from_summary(&output_summary, "discarded_count"),
+            no_candidate_count: i64_field_from_summary(&output_summary, "no_candidate_count"),
             output_summary: output_summary.clone(),
             error,
         },
@@ -1215,6 +1300,7 @@ async fn get_reflection_evidence(
 }
 
 fn proposal_view_from_postgres(row: memory_proposals::MemoryProposalRow) -> MemoryProposalView {
+    let extraction = proposal_extraction_view(&row.source_refs, &row.refs);
     MemoryProposalView {
         id: row.id.to_string(),
         store: "postgres".to_string(),
@@ -1239,11 +1325,18 @@ fn proposal_view_from_postgres(row: memory_proposals::MemoryProposalRow) -> Memo
         decision_summary: row.decision_summary,
         created_at: row.created_at.to_string(),
         reviewed_at: row.reviewed_at.map(|value| value.to_string()),
+        extraction,
     }
 }
 
 fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
     let payload = row.payload_json;
+    let source_refs = payload
+        .get("source_refs")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let refs = payload.get("refs").cloned().unwrap_or_else(|| json!({}));
+    let extraction = proposal_extraction_view(&source_refs, &refs);
     let string_field = |key: &str, default: &str| {
         payload
             .get(key)
@@ -1270,10 +1363,7 @@ fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
             .and_then(Value::as_str)
             .map(str::to_string),
         source_paths,
-        source_refs: payload
-            .get("source_refs")
-            .cloned()
-            .unwrap_or_else(|| json!({})),
+        source_refs,
         suggested_action: string_field("suggested_action", "unspecified"),
         target_ref: payload
             .get("target_ref")
@@ -1290,7 +1380,7 @@ fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
             .get("proposed_patch")
             .and_then(Value::as_str)
             .map(str::to_string),
-        refs: payload.get("refs").cloned().unwrap_or_else(|| json!({})),
+        refs,
         sensitivity: string_field("sensitivity", "normal"),
         requires_human: payload
             .get("requires_human")
@@ -1315,6 +1405,7 @@ fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
             .map(str::to_string),
         created_at: row.created_at,
         reviewed_at: None,
+        extraction,
     }
 }
 

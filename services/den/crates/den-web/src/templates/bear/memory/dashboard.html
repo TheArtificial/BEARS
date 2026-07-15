@@ -248,8 +248,11 @@
                 <td>
                     {% if run.proposal_count is not none %}{{ run.proposal_count }} proposal{{ run.proposal_count == 1 and "" or "s" }}{% endif %}
                     {% if run.scanned_artifacts is not none %}{% if run.proposal_count is not none %} · {% endif %}{{ run.scanned_artifacts }} scanned{% endif %}
+                    {% if run.candidate_count is not none %} · {{ run.candidate_count }} candidate{{ run.candidate_count == 1 and "" or "s" }}{% endif %}
+                    {% if run.discarded_count is not none %} · {{ run.discarded_count }} discarded{% endif %}
+                    {% if run.no_candidate_count is not none %} · {{ run.no_candidate_count }} no-candidate{% endif %}
                     {% if run.error %}<span class="form-errors">{{ run.error | e }}</span>{% endif %}
-                    {% if run.proposal_count is none and run.scanned_artifacts is none and not run.error %}<span class="form-hint">—</span>{% endif %}
+                    {% if run.proposal_count is none and run.scanned_artifacts is none and run.candidate_count is none and run.discarded_count is none and run.no_candidate_count is none and not run.error %}<span class="form-hint">—</span>{% endif %}
                 </td>
                 <td class="form-hint">{{ run.created_at | e }}</td>
             </tr>
