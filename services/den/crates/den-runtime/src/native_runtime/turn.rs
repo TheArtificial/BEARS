@@ -1415,6 +1415,17 @@ fn apply_run_recovery_context(
     Ok(true)
 }
 
+fn budget_warning_requires_checkpoint(warning: &TurnBudgetWarning) -> bool {
+    matches!(
+        warning.code,
+        "context_budget_warning"
+            | "wall_clock_warning"
+            | "total_tool_budget_warning"
+            | "tool_class_budget_warning"
+            | "emergency_hard_step_warning"
+    )
+}
+
 fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarning) -> bool {
     if session.messages.last().is_some_and(|message| {
         message.role == "system" && message.content.as_deref() == Some(warning.model_message())
@@ -1733,7 +1744,10 @@ pub async fn continue_native_client_turn_event_stream(
         &prior_session.agent_loop_control.profile,
         &prior_session.checkpoint_state,
         &observations,
-        evaluation.warning.is_some(),
+        evaluation
+            .warning
+            .as_ref()
+            .is_some_and(budget_warning_requires_checkpoint),
     );
     let mut warning_applied = false;
     let mut recovery_context_result = Ok(false);
@@ -2007,6 +2021,35 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn budget_warning_checkpoint_gate_only_treats_budget_pressure_as_low_budget() {
+        for code in [
+            "context_budget_warning",
+            "wall_clock_warning",
+            "total_tool_budget_warning",
+            "tool_class_budget_warning",
+            "emergency_hard_step_warning",
+        ] {
+            assert!(
+                budget_warning_requires_checkpoint(&sample_budget_warning_with_code(
+                    code,
+                    "Budget advisory"
+                )),
+                "{code} should request a low-budget checkpoint"
+            );
+        }
+
+        for code in ["rule_of_ko_warning", "failure_budget_warning"] {
+            assert!(
+                !budget_warning_requires_checkpoint(&sample_budget_warning_with_code(
+                    code,
+                    "Budget advisory"
+                )),
+                "{code} has a dedicated checkpoint reason"
+            );
+        }
     }
 
     #[test]
