@@ -857,6 +857,15 @@ pub async fn list_loop_control_decisions_for_run(
     Ok(rows.into_iter().map(row_to_ledger).collect())
 }
 
+pub async fn summarize_loop_control_replay_profile_for_run(
+    pool: &PgPool,
+    run_id: &str,
+) -> Result<LoopControlReplayProfileSummary, DenError> {
+    let rows = list_loop_control_decisions_for_run(pool, run_id).await?;
+    let turns = aggregate_loop_control_replay_turns(&rows)?;
+    Ok(summarize_loop_control_replay_profile(&turns))
+}
+
 fn checkpoint_request_ledger_input(
     request: &RuntimeCheckpointRequest,
     turn_step_id: Option<Uuid>,
@@ -1307,6 +1316,10 @@ mod tests {
         assert!(compare_loop_control_replay_turns(&turns, &expected_turns).is_empty());
 
         let profile = summarize_loop_control_replay_profile(&turns);
+        let loaded_profile = summarize_loop_control_replay_profile_for_run(&pool, &run_id)
+            .await
+            .expect("summarize replay profile for run");
+        assert_eq!(loaded_profile, profile);
         assert_eq!(profile.turn_count, 1);
         assert_eq!(profile.decision_count, 2);
         assert_eq!(
