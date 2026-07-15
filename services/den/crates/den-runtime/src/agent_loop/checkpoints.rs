@@ -228,6 +228,7 @@ pub struct GroundingProbeResultInput {
     pub run_id: String,
     pub turn_step_id: Option<Uuid>,
     pub orientation_kind: Option<String>,
+    pub tool_call_id: Option<String>,
     pub probe_id: String,
     pub surface_kind: String,
     pub signal: GroundingProbeSignalKind,
@@ -253,6 +254,7 @@ pub fn non_empty_diff_grounding_probe(
         run_id: run_id.into(),
         turn_step_id: None,
         orientation_kind: None,
+        tool_call_id: None,
         probe_id: "generic.non_empty_diff".to_string(),
         surface_kind: "repository".to_string(),
         signal: if changed {
@@ -766,6 +768,16 @@ pub async fn record_grounding_probe_result_decision(
     };
     let decision_json = serde_json::to_value(&decision)
         .map_err(|err| DenError::System(format!("serialize grounding probe decision: {err}")))?;
+    let mut evidence_refs = vec![LedgerEvidenceRef {
+        kind: "grounding_probe".to_string(),
+        id: input.probe_id.clone(),
+    }];
+    if let Some(tool_call_id) = input.tool_call_id.as_ref() {
+        evidence_refs.push(LedgerEvidenceRef {
+            kind: "tool_call".to_string(),
+            id: tool_call_id.clone(),
+        });
+    }
     record_loop_control_decision(
         pool,
         LoopControlLedgerInput {
@@ -781,10 +793,7 @@ pub async fn record_grounding_probe_result_decision(
             related_task_item_id: None,
             related_docket_job_id: None,
             related_docket_task_id: None,
-            evidence_refs: vec![LedgerEvidenceRef {
-                kind: "grounding_probe".to_string(),
-                id: input.probe_id,
-            }],
+            evidence_refs,
             decision: decision_json,
         },
     )
@@ -864,6 +873,33 @@ pub async fn list_loop_control_decisions_for_run(
     .await?;
 
     Ok(rows.into_iter().map(row_to_ledger).collect())
+}
+
+pub async fn latest_grounding_probe_signal_for_tool_call(
+    pool: &PgPool,
+    run_id: &str,
+    tool_call_id: &str,
+) -> Result<Option<GroundingProbeSignalKind>, DenError> {
+    let evidence_ref = serde_json::json!([{ "kind": "tool_call", "id": tool_call_id }]);
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        r#"
+        SELECT reason
+        FROM bear_loop_control_ledger
+        WHERE run_id = $1
+          AND decision_kind = 'grounding_probe_result'
+          AND evidence_refs @> $2::jsonb
+        ORDER BY created_at DESC, decision_id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(run_id)
+    .bind(evidence_ref)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row
+        .and_then(|(reason,)| reason)
+        .and_then(|reason| GroundingProbeSignalKind::from_str(&reason)))
 }
 
 pub async fn latest_grounding_probe_signal_for_run(
@@ -1194,7 +1230,8 @@ mod tests {
     async fn records_grounding_probe_result_decision(pool: PgPool) {
         let run_id = format!("run-{}", Uuid::new_v4().simple());
         seed_run(&pool, &run_id).await;
-        let input = non_empty_diff_grounding_probe(&run_id, "diff --git a/file b/file\n");
+        let mut input = non_empty_diff_grounding_probe(&run_id, "diff --git a/file b/file\n");
+        input.tool_call_id = Some("call-grounded".to_string());
 
         let recorded = record_grounding_probe_result_decision(&pool, input)
             .await
@@ -1208,10 +1245,24 @@ mod tests {
         assert_eq!(recorded.reason.as_deref(), Some("pass"));
         assert_eq!(recorded.evidence_refs[0]["kind"], "grounding_probe");
         assert_eq!(recorded.evidence_refs[0]["id"], "generic.non_empty_diff");
+        assert_eq!(recorded.evidence_refs[1]["kind"], "tool_call");
+        assert_eq!(recorded.evidence_refs[1]["id"], "call-grounded");
         assert_eq!(recorded.decision["surface_kind"], "repository");
         assert_eq!(recorded.decision["signal"], "pass");
         assert_eq!(recorded.decision["findings"][0]["code"], "diff_present");
         assert!(recorded.decision.get("diff").is_none());
+        assert_eq!(
+            latest_grounding_probe_signal_for_tool_call(&pool, &run_id, "call-grounded")
+                .await
+                .expect("latest tool grounding signal"),
+            Some(GroundingProbeSignalKind::Pass)
+        );
+        assert_eq!(
+            latest_grounding_probe_signal_for_tool_call(&pool, &run_id, "other-call")
+                .await
+                .expect("missing tool grounding signal"),
+            None
+        );
         assert_eq!(
             latest_grounding_probe_signal_for_run(&pool, &run_id)
                 .await

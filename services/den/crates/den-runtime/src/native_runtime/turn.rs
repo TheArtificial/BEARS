@@ -38,16 +38,16 @@ use crate::{
     agent_loop::{
         agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
         evaluate_checkpoint_trigger, evaluate_turn_budget, latest_grounding_probe_signal_for_run,
-        objective_orientation_allowed_for_stance, projected_memory_session_diagnostic,
-        provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
-        record_approval_decision, record_checkpoint_request, resolve_agent_loop_control,
-        run_agent_step_stream, tool_result_content_indicates_error, tool_signature_from_call,
-        AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
-        AgentStepOverflowContext, AssembleTurnContext, CheckpointArtifactInput, CheckpointField,
-        CheckpointReplayPolicy, CheckpointTaskContext, CheckpointTrigger, CheckpointVisibility,
-        NativeToolDispatchMode, ObjectiveOrientation, RuntimeCheckpointRequest,
-        SessionTrackingStream, ToolContinuationObservation, TurnBudgetStopReason,
-        TurnBudgetWarning,
+        latest_grounding_probe_signal_for_tool_call, objective_orientation_allowed_for_stance,
+        projected_memory_session_diagnostic, provider_tool_is_den_web_fetch,
+        recalled_memory_session_diagnostic, record_approval_decision, record_checkpoint_request,
+        resolve_agent_loop_control, run_agent_step_stream, tool_result_content_indicates_error,
+        tool_signature_from_call, AgentLoopControlResolutionInput, AgentLoopSession,
+        AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
+        CheckpointArtifactInput, CheckpointField, CheckpointReplayPolicy, CheckpointTaskContext,
+        CheckpointTrigger, CheckpointVisibility, NativeToolDispatchMode, ObjectiveOrientation,
+        RuntimeCheckpointRequest, SessionTrackingStream, ToolContinuationObservation,
+        TurnBudgetStopReason, TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
     native_runtime::{
@@ -1083,6 +1083,24 @@ fn tool_observation_from_call(
     }
 }
 
+async fn grounding_probe_signal_for_tool_observation(
+    pool: &PgPool,
+    run_id: Option<&str>,
+    tool_call_id: &str,
+) -> Result<Option<crate::agent_loop::GroundingProbeSignalKind>, DenError> {
+    let Some(run_id) = run_id else {
+        return Ok(None);
+    };
+    if let Some(signal) =
+        latest_grounding_probe_signal_for_tool_call(pool, run_id, tool_call_id).await?
+    {
+        return Ok(Some(signal));
+    }
+    // ponytail: keep run-level fallback until probe producers pass tool_call_id;
+    // remove once grounding probe rows are consistently tied to tool-call refs.
+    latest_grounding_probe_signal_for_run(pool, run_id).await
+}
+
 fn parse_args_or_empty_object(raw: &str) -> serde_json::Value {
     serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::Object(Default::default()))
 }
@@ -1501,15 +1519,7 @@ pub async fn continue_native_client_turn_event_stream(
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
     let mut tool_messages = Vec::new();
     let mut observations = Vec::new();
-    let grounding_probe_signal = request
-        .run_id
-        .or(prior_session.run_id.as_deref())
-        .map(|run_id| latest_grounding_probe_signal_for_run(request.sqlx_pool, run_id));
-    let grounding_probe_signal = if let Some(signal) = grounding_probe_signal {
-        signal.await?
-    } else {
-        None
-    };
+    let observation_run_id = request.run_id.or(prior_session.run_id.as_deref());
     match &request.continuation {
         RuntimeContinuation::ToolResult {
             tool_call_id,
@@ -1533,6 +1543,12 @@ pub async fn continue_native_client_turn_event_stream(
             }
             let pending_call = prior_session.find_pending_tool_call(tool_call_id);
             if let Some(call) = pending_call.as_ref() {
+                let grounding_probe_signal = grounding_probe_signal_for_tool_observation(
+                    request.sqlx_pool,
+                    observation_run_id,
+                    &call.id,
+                )
+                .await?;
                 observations.push(tool_observation_from_call(
                     call,
                     Some(content),
@@ -1573,6 +1589,13 @@ pub async fn continue_native_client_turn_event_stream(
                                     &request, session, &call, profile,
                                 )
                                 .await?;
+                                let grounding_probe_signal =
+                                    grounding_probe_signal_for_tool_observation(
+                                        request.sqlx_pool,
+                                        observation_run_id,
+                                        &call.id,
+                                    )
+                                    .await?;
                                 observations.push(tool_observation_from_call(
                                     &call,
                                     tool_message.content.as_deref(),
@@ -1589,6 +1612,12 @@ pub async fn continue_native_client_turn_event_stream(
                     .as_deref()
                     .and_then(|id| prior_session.find_pending_tool_call(id));
                 if let Some(call) = pending_call.as_ref() {
+                    let grounding_probe_signal = grounding_probe_signal_for_tool_observation(
+                        request.sqlx_pool,
+                        observation_run_id,
+                        &call.id,
+                    )
+                    .await?;
                     observations.push(tool_observation_from_call(
                         call,
                         Some(&content),
