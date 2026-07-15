@@ -595,6 +595,18 @@ fn checkpoint_tool_definition() -> crate::llm::LlmToolDefinition {
     }
 }
 
+fn should_try_preflight_context_compaction(
+    stop_requested: bool,
+    recovered_this_step: bool,
+    retry_already_attempted: bool,
+    compaction_mode: &str,
+) -> bool {
+    stop_requested
+        && !recovered_this_step
+        && !retry_already_attempted
+        && CompactionMode::parse(compaction_mode) == CompactionMode::Active
+}
+
 fn tools_with_checkpoint_tool(session: &AgentLoopSession) -> Vec<crate::llm::LlmToolDefinition> {
     let mut tools = session.tools.clone();
     if session.pending_checkpoint_request.is_some()
@@ -612,7 +624,9 @@ pub async fn run_agent_step_stream(
     session: &AgentLoopSession,
     overflow: Option<AgentStepOverflowContext>,
 ) -> Result<RuntimeEventStream, DenError> {
-    let messages = repair_tool_call_message_chain(session.messages.clone());
+    let mut session = session.clone();
+    let mut recovered_from_preflight_context_budget = false;
+    let mut messages = repair_tool_call_message_chain(session.messages.clone());
     tracing::info!(
         session_key = %session.session_key,
         model = %session.model,
@@ -623,58 +637,102 @@ pub async fn run_agent_step_stream(
         overflow_recovery = overflow.is_some(),
         "native agent step starting LLM stream"
     );
-    let request = ChatCompletionRequest {
-        model: session.model.clone(),
-        messages,
-        tools: tools_with_checkpoint_tool(session),
-        stream: true,
-        tool_choice: None,
-        temperature: None,
-        max_tokens: None,
-        thinking_effort: checkpoint_thinking_effort_for_session(session),
-        telemetry: Some(session.llm_telemetry()),
-    };
-    let budget = estimate_context_budget(
-        &request,
-        &session.budget_components,
-        session.model_context_window,
-        session.model_max_output_tokens,
-    );
-    let context_budget_evaluation =
-        evaluate_turn_context_budget(&session.turn_budget_state, budget);
-    let budget = context_budget_evaluation
-        .next_state
-        .latest_context_budget
-        .clone()
-        .expect("context budget evaluation stores the latest report");
-    if let Some(overflow) = overflow.as_ref() {
+    let (request, budget, context_budget_evaluation) = loop {
+        let request = ChatCompletionRequest {
+            model: session.model.clone(),
+            messages,
+            tools: tools_with_checkpoint_tool(&session),
+            stream: true,
+            tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+            thinking_effort: checkpoint_thinking_effort_for_session(&session),
+            telemetry: Some(session.llm_telemetry()),
+        };
+        let budget = estimate_context_budget(
+            &request,
+            &session.budget_components,
+            session.model_context_window,
+            session.model_max_output_tokens,
+        );
+        let context_budget_evaluation =
+            evaluate_turn_context_budget(&session.turn_budget_state, budget);
+        let budget = context_budget_evaluation
+            .next_state
+            .latest_context_budget
+            .clone()
+            .expect("context budget evaluation stores the latest report");
+        if let Some(overflow) = overflow.as_ref() {
+            overflow
+                .session_store
+                .update(&session.session_key, |stored| {
+                    stored.latest_context_budget = Some(budget.clone());
+                    stored.turn_budget_state = context_budget_evaluation.next_state.clone();
+                });
+            let _ = den_service::conversation::persistence::update_latest_context_budget(
+                &overflow.pool,
+                session.bear_id,
+                &session.conversation_id,
+                Some(&session.client_session_id),
+                &budget,
+            )
+            .await;
+            if budget.near_budget || budget.over_budget {
+                if let Some(run_id) = session.run_id.as_deref() {
+                    let _ = record_context_budget_pressure_decision(
+                        &overflow.pool,
+                        run_id,
+                        None,
+                        Some(session.objective_orientation.kind().to_string()),
+                        &budget,
+                    )
+                    .await;
+                }
+            }
+        }
+        if overflow.as_ref().is_none_or(|overflow| {
+            !should_try_preflight_context_compaction(
+                context_budget_evaluation.stop_reason.is_some(),
+                recovered_from_preflight_context_budget,
+                session.overflow_retry_attempted,
+                &overflow.config.compaction_mode,
+            )
+        }) {
+            break (request, budget, context_budget_evaluation);
+        }
+        let Some(overflow) = overflow.as_ref() else {
+            break (request, budget, context_budget_evaluation);
+        };
+        tracing::info!(
+            session_key = %session.session_key,
+            conversation_id = %session.conversation_id,
+            profile = %overflow.profile.as_str(),
+            "context budget exceeded before LLM call; running emergency compaction"
+        );
+        let (new_messages, recovered) = compact_session_messages_for_overflow(
+            &overflow.pool,
+            &overflow.config,
+            &session,
+            overflow.profile,
+        )
+        .await?;
         overflow
             .session_store
             .update(&session.session_key, |stored| {
-                stored.latest_context_budget = Some(budget.clone());
-                stored.turn_budget_state = context_budget_evaluation.next_state.clone();
+                stored.messages.clone_from(&new_messages);
+                stored.overflow_retry_attempted = true;
+                stored.overflow_compaction_recovered = recovered;
             });
-        let _ = den_service::conversation::persistence::update_latest_context_budget(
-            &overflow.pool,
-            session.bear_id,
-            &session.conversation_id,
-            Some(&session.client_session_id),
-            &budget,
-        )
-        .await;
-        if budget.near_budget || budget.over_budget {
-            if let Some(run_id) = session.run_id.as_deref() {
-                let _ = record_context_budget_pressure_decision(
-                    &overflow.pool,
-                    run_id,
-                    None,
-                    Some(session.objective_orientation.kind().to_string()),
-                    &budget,
-                )
-                .await;
-            }
+        if !recovered {
+            break (request, budget, context_budget_evaluation);
         }
-    }
+        session.messages = new_messages;
+        session.overflow_retry_attempted = true;
+        session.overflow_compaction_recovered = true;
+        session.turn_budget_state = context_budget_evaluation.next_state.clone();
+        messages = repair_tool_call_message_chain(session.messages.clone());
+        recovered_from_preflight_context_budget = true;
+    };
     if let Some(warning) = context_budget_evaluation.warning.as_ref() {
         tracing::warn!(
             session_key = %session.session_key,
@@ -745,6 +803,25 @@ pub async fn run_agent_step_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preflight_context_compaction_only_runs_once_for_active_overflow_recovery() {
+        assert!(should_try_preflight_context_compaction(
+            true, false, false, "active"
+        ));
+        assert!(!should_try_preflight_context_compaction(
+            false, false, false, "active"
+        ));
+        assert!(!should_try_preflight_context_compaction(
+            true, true, false, "active"
+        ));
+        assert!(!should_try_preflight_context_compaction(
+            true, false, true, "active"
+        ));
+        assert!(!should_try_preflight_context_compaction(
+            true, false, false, "off"
+        ));
+    }
 
     #[test]
     fn native_llm_handshake_timeout_defaults_to_cold_start_tolerant_value() {
