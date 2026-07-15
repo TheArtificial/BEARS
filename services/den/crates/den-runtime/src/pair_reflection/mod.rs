@@ -540,4 +540,72 @@ mod tests {
         assert_eq!(candidates[0].sensitivity, "secret_risk");
         assert!(candidates[0].requires_human);
     }
+
+    #[test]
+    #[ignore = "manual smoke eval for the production pair-reflection extractor contract"]
+    fn production_pair_extractor_finds_obvious_durable_preference() {
+        let summary = RuntimeIterativeSummary {
+            active_user_goals: vec![
+                "Remember the user's preference for SQLite-first storage unless there is a specific exception."
+                    .to_string(),
+            ],
+            unresolved_followups: vec!["remind me tomorrow to check the auth logs".to_string()],
+            ..RuntimeIterativeSummary::default()
+        };
+        let bundle = MemoryExtractionBundle {
+            source_kind: "manual_smoke_eval".to_string(),
+            source_ref: "pair-reflection-golden".to_string(),
+            bear_id: Uuid::nil(),
+            conversation_id: Some("conv-golden".to_string()),
+            session_id: Some("session-golden".to_string()),
+            compaction: Some(MemoryExtractionCompactionContext {
+                artifact_id: Some("artifact-golden".to_string()),
+                policy_version: Some("manual-smoke".to_string()),
+                source_message_start_seq: Some(1),
+                source_message_end_seq: Some(3),
+                hints: vec!["possible_user_goal".to_string()],
+            }),
+            messages: vec![
+                MemoryExtractionMessage {
+                    id: "m1".to_string(),
+                    seq: Some(1),
+                    role: "user".to_string(),
+                    content: "For this project, prefer SQLite-first storage unless there is a specific reason not to."
+                        .to_string(),
+                    created_at: None,
+                },
+                MemoryExtractionMessage {
+                    id: "m2".to_string(),
+                    seq: Some(2),
+                    role: "assistant".to_string(),
+                    content: "Makes sense; I'll use SQLite-first.".to_string(),
+                    created_at: None,
+                },
+                MemoryExtractionMessage {
+                    id: "m3".to_string(),
+                    seq: Some(3),
+                    role: "user".to_string(),
+                    content: "Also remind me tomorrow to check the auth logs.".to_string(),
+                    created_at: None,
+                },
+            ],
+            artifacts: Vec::new(),
+        };
+
+        let output = run_memory_extraction(&bundle, &PairSummaryExtractor { summary: &summary })
+            .expect("production extractor smoke eval should run");
+
+        assert_eq!(output.proposal_drafts.len(), 1);
+        assert!(output.proposal_drafts[0]
+            .proposed_content
+            .contains("SQLite-first storage"));
+        assert_eq!(
+            output.proposal_drafts[0].source_refs["candidate_kind"],
+            "preference"
+        );
+        assert!(output
+            .discarded
+            .iter()
+            .any(|discard| discard.reason == "followup:transient_followup"));
+    }
 }
