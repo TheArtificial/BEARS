@@ -12,9 +12,9 @@ Recent slices have moved the plan through the governance/focus/orientation found
 
 - **Phase 2 / 2a partially complete:** runtime sessions carry governance, session info exposes governance/orientation/focus snapshots, final-gate continuations now mark governance as `autonomous_continuation`, and `work` stance is rejected before model invocation unless objective orientation is `focused`.
 - **Phase 2a focus persistence is intentionally minimal:** the current durable focus source is the conversation-linked Docket execution session (`docket_execution_sessions`) restored by live session id, ACP/client session id, then conversation id. Do not add a separate conversation-focus table unless we need history labels, explicit clear reasons, multi-job focus stacks, or richer title provenance.
-- **Phase 2b minimal UX is live:** armature has `/focus <job_id>` for exact UUID focus through the existing `execute_job` path. Search/matching, elicitation, title updates, and clear-on-mode-change remain undone.
-- **Phase 2c partially complete:** runtime has objective-orientation-derived prompt/session diagnostics and derives task snapshots from orientation. Focused work takes precedence where wired. Freeform task-definition policy, oriented child caps, immutable-focused decomposition handling, and budget-profile differences are still incomplete.
-- **Diagnostics/history improved:** armature `/status` shows runtime focus/orientation/governance, Docket task create/update events include task definitions, focus selection is logged as a lightweight Docket job event, and BearWire conversation history surfaces focus/task-definition diagnostics. Orientation history is still snapshot-only; persist orientation transitions as logged events next if diagnostic replay needs more than live state.
+- **Phase 2b minimal UX is live:** armature has `/focus <job_id>` for exact UUID focus through the existing `execute_job` path, and runtime clears Docket focus on session mode changes. Search/matching and elicitation remain deferred UX work.
+- **Phase 2c partially complete:** runtime has objective-orientation-derived prompt/session diagnostics and derives task snapshots from orientation. Focused work takes precedence where wired, and closed freeform no longer exposes or server-executes task-definition/delegation tools when `may_define_task = false`. Oriented child caps, immutable-focused decomposition handling, and budget-profile differences are still incomplete.
+- **Diagnostics/history improved:** armature `/status` shows runtime focus/orientation/governance, Docket task create/update events include task definitions, focus selection is logged as a lightweight Docket job event, and BearWire conversation history surfaces focus/task-definition diagnostics including focused task titles. Orientation history is still snapshot-only; persist orientation transitions as logged events next if diagnostic replay needs more than live state.
 - **Checkpoint protocol exists enough to exercise:** runtime can request structured `checkpoint` tool calls with typed next-action fields. Artifact retention, enforcement, and budget/ko integration are still future phases.
 
 ### Implementation review and adjustments
@@ -29,10 +29,10 @@ Recent slices have moved the plan through the governance/focus/orientation found
 Recommended next slices:
 
 1. **Persist orientation transitions as events.** Log objective-orientation changes/snapshots through the smallest existing event path, include conversation/session/run/job/task refs where available, and project those persisted events into `conversation.surface_history`.
-2. **Finish Focus projection semantics.** Add clear-on-mode-change, focused title updates, and Den-authoritative Focus projection before fuzzy `/focus` search. Exact-id focus already covers the simplest path.
-3. **Close freeform policy enforcement.** Ensure closed freeform prompt construction does not expose task-definition affordances and defensively rejects task-definition/delegation attempts when `may_define_task = false`.
-4. **Add oriented/focused decomposition limits.** Enforce oriented child count/depth caps and immutable-focused decomposition rejection before tuning budget leniency around those states.
-5. **Land replay/ledger support before broad budget changes.** Use the companion grounding/tuning ledger to make Phase 3/4 threshold changes measurable instead of anecdotal.
+2. **Add oriented/focused decomposition limits.** Enforce oriented child count/depth caps and immutable-focused decomposition rejection before tuning budget leniency around those states.
+3. **Pause this base plan and land the companion replay/ledger foundation.** After the two slices above, switch to [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md), starting with the replayable ledger/offline tuning spine. Keep the ledger typed and transcript-free, and record enough orientation/focus/task refs to replay policy decisions.
+4. **Wire context budget into loop control through that ledger.** Consume the ADR-0047 budget report as a first-class trigger only after the ledger can explain/replay why context pressure changed a turn decision.
+5. **Then add grounding probes incrementally.** Start with the generic/repository floor and feed probe signals into the ledger/checkpoint evidence path; defer richer surface-specific probes until the measurement spine is useful.
 
 ## Goal
 
