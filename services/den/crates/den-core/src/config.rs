@@ -21,6 +21,10 @@ pub const DEFAULT_LLM_API_URL: &str = "http://bears-bifrost:8080/v1";
 /// Sandbox provider host used by the default Docker Compose stack.
 const DEFAULT_SANDBOX_SERVER_HOST: &str = "bears-sandbox-provider";
 
+/// Qdrant host used by the default Docker Compose recall profile.
+const DEFAULT_QDRANT_HOST: &str = "bears-qdrant";
+const DEFAULT_QDRANT_PORT: u16 = 6333;
+
 pub fn session_cookie_secure_from_env(default: bool) -> bool {
     std::env::var("SESSION_COOKIE_SECURE")
         .map(|v| match v.trim().to_ascii_lowercase().as_str() {
@@ -553,10 +557,14 @@ impl Config {
             })
             .clamp(1, 10);
 
-        let qdrant_url = std::env::var("QDRANT_URL")
-            .ok()
-            .map(|s| s.trim().trim_end_matches('/').to_string())
-            .filter(|s| !s.is_empty());
+        let qdrant_port = std::env::var("QDRANT_PORT")
+            .unwrap_or_else(|_| DEFAULT_QDRANT_PORT.to_string())
+            .parse::<u16>()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid QDRANT_PORT environment variable. Defaulting to {DEFAULT_QDRANT_PORT}");
+                DEFAULT_QDRANT_PORT
+            });
+        let qdrant_url = qdrant_url_from_env(std::env::var("QDRANT_URL").ok(), qdrant_port);
         let embedding_standard = std::env::var("EMBEDDING_STANDARD")
             .ok()
             .map(|s| s.trim().to_string())
@@ -742,6 +750,20 @@ impl Config {
             checkpoint_audit_mode,
             ui_fixture_profile,
         }
+    }
+}
+
+fn qdrant_url_from_env(raw: Option<String>, qdrant_port: u16) -> Option<String> {
+    match raw {
+        Some(value) => {
+            let value = value.trim().trim_end_matches('/').to_string();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        None => Some(format!("http://{DEFAULT_QDRANT_HOST}:{qdrant_port}")),
     }
 }
 
@@ -945,6 +967,19 @@ pub fn requires_jwt_secret(config: &Config) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qdrant_url_defaults_to_compose_service_port() {
+        assert_eq!(
+            qdrant_url_from_env(None, 6334).as_deref(),
+            Some("http://bears-qdrant:6334")
+        );
+        assert_eq!(qdrant_url_from_env(Some(String::new()), 6333), None);
+        assert_eq!(
+            qdrant_url_from_env(Some(" http://qdrant:6333/ ".into()), 6333).as_deref(),
+            Some("http://qdrant:6333")
+        );
+    }
 
     #[test]
     fn sandbox_server_url_defaults_for_den_processes() {
