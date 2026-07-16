@@ -1424,7 +1424,14 @@ fn budget_warning_requires_checkpoint(warning: &TurnBudgetWarning) -> bool {
     )
 }
 
+fn budget_warning_is_model_visible(warning: &TurnBudgetWarning) -> bool {
+    !matches!(warning.code, "tool_class_budget_warning")
+}
+
 fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarning) -> bool {
+    if !budget_warning_is_model_visible(warning) {
+        return false;
+    }
     if session.messages.last().is_some_and(|message| {
         message.role == "system" && message.content.as_deref() == Some(warning.model_message())
     }) {
@@ -1747,7 +1754,7 @@ pub async fn continue_native_client_turn_event_stream(
             .as_ref()
             .is_some_and(budget_warning_requires_checkpoint),
     );
-    let mut warning_applied = false;
+    let mut warning_model_context_applied = false;
     let mut recovery_context_result = Ok(false);
     SESSION_STORE.update(&session_key, |session| {
         session.request_id = Some(request.request_id.to_string());
@@ -1761,7 +1768,7 @@ pub async fn continue_native_client_turn_event_stream(
         session.turn_budget_state = evaluation.next_state.clone();
         session.checkpoint_state = checkpoint_evaluation.next_state.clone();
         if let Some(warning) = evaluation.warning.as_ref() {
-            warning_applied = apply_budget_warning(session, warning);
+            warning_model_context_applied = apply_budget_warning(session, warning);
         }
     });
     recovery_context_result?;
@@ -1794,13 +1801,16 @@ pub async fn continue_native_client_turn_event_stream(
     let overflow = overflow_context(request.sqlx_pool.clone(), config.clone(), profile);
     let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let mut prefix_events = Vec::new();
-    if warning_applied {
-        let warning_event = evaluation
-            .warning
-            .as_ref()
-            .map(budget_warning_runtime_event)
-            .expect("warning_applied requires warning payload");
-        prefix_events.push(Ok(warning_event));
+    if let Some(warning) = evaluation.warning.as_ref() {
+        let model_context_already_has_warning = session.messages.last().is_some_and(|message| {
+            message.role == "system" && message.content.as_deref() == Some(warning.model_message())
+        });
+        if warning_model_context_applied
+            || model_context_already_has_warning
+            || !budget_warning_is_model_visible(warning)
+        {
+            prefix_events.push(Ok(budget_warning_runtime_event(warning)));
+        }
     }
     if agent_loop_control_observe_enabled(request.config) {
         if let Some(trigger) = checkpoint_evaluation.trigger.as_ref() {
@@ -1843,7 +1853,7 @@ mod tests {
     };
 
     fn sample_budget_warning(message: &str) -> TurnBudgetWarning {
-        sample_budget_warning_with_code("tool_class_budget_warning", message)
+        sample_budget_warning_with_code("total_tool_budget_warning", message)
     }
 
     fn sample_budget_warning_with_code(code: &'static str, message: &str) -> TurnBudgetWarning {
@@ -2105,7 +2115,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_budget_warning_surfaces_rule_of_ko_warning_to_model_context() {
+    fn apply_budget_warning_keeps_tool_class_warning_out_of_model_context() {
         let mut session = AgentLoopSession {
             session_key: "session".to_string(),
             bear_id: Uuid::new_v4(),
@@ -2145,20 +2155,12 @@ mod tests {
             overflow_compaction_recovered: false,
         };
         let warning = sample_budget_warning_with_code(
-            "rule_of_ko_warning",
-            "Budget advisory: this turn is close to its loop-ko limit (2/2 repeated tool batches). Do not repeat the same tool call pattern again; either answer now or choose a materially different next step.",
+            "tool_class_budget_warning",
+            "Budget advisory: this turn is close to its read tool budget (5/6 used). Prefer a final answer over more tool calls unless one more read call is strictly necessary.",
         );
 
-        assert!(apply_budget_warning(&mut session, &warning));
-        assert_eq!(session.messages.len(), 1);
-        assert_eq!(session.messages[0].role, "system");
-        let message = session.messages[0]
-            .content
-            .as_deref()
-            .expect("budget warning message");
-        assert!(message.contains("loop-ko limit"));
-        assert!(message.contains("Do not repeat the same tool call pattern again"));
         assert!(!apply_budget_warning(&mut session, &warning));
+        assert!(session.messages.is_empty());
     }
 
     #[test]
