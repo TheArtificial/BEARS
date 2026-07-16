@@ -5373,7 +5373,7 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
     LocalSlashCommandDescriptor {
         name: "focus",
         aliases: &[],
-        description: "Focus this pair session on a Docket job: /focus <job_id>.",
+        description: "Focus this pair session on a Docket job: /focus [job_id].",
         command: LocalSlashCommand::Focus,
         den_required: true,
     },
@@ -5472,39 +5472,125 @@ async fn handle_local_slash_command(
         LocalSlashCommand::Status => {
             status_report(http, config, adapter_state, shared_state, session_id).await
         }
-        LocalSlashCommand::Focus => "BEARS ACP /focus needs a job id: /focus <job_id>".to_string(),
+        LocalSlashCommand::Focus => "Den ACP /focus usage: /focus [job_id]".to_string(),
         LocalSlashCommand::Version => version_report(http, config).await,
         LocalSlashCommand::Debug => debug_report(None),
     }
 }
 
-fn focus_job_id_from_prompt(prompt: &str) -> Option<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FocusPromptTarget {
+    ConversationAssociated,
+    JobId(String),
+    Invalid,
+}
+
+fn focus_prompt_target(prompt: &str) -> FocusPromptTarget {
     let mut parts = prompt.split_whitespace();
-    let _command = parts.next()?;
-    let candidate = parts.next()?.trim();
+    let _command = parts.next();
+    let Some(candidate) = parts.next() else {
+        return FocusPromptTarget::ConversationAssociated;
+    };
     if Uuid::parse_str(candidate).is_ok() && parts.next().is_none() {
-        Some(candidate.to_string())
+        FocusPromptTarget::JobId(candidate.to_string())
     } else {
-        None
+        FocusPromptTarget::Invalid
     }
 }
 
-async fn focus_report(shared_state: &AdapterSharedState, session_id: &str, prompt: &str) -> String {
-    let Some(job_id) = focus_job_id_from_prompt(prompt) else {
-        return "BEARS ACP /focus needs exactly one Docket job UUID: /focus <job_id>".to_string();
-    };
+#[cfg(test)]
+fn focus_job_id_from_prompt(prompt: &str) -> Option<String> {
+    match focus_prompt_target(prompt) {
+        FocusPromptTarget::JobId(job_id) => Some(job_id),
+        FocusPromptTarget::ConversationAssociated | FocusPromptTarget::Invalid => None,
+    }
+}
+
+fn collect_docket_job_refs(value: &Value, jobs: &mut std::collections::BTreeSet<String>) {
+    match value {
+        Value::String(text) => {
+            if let Some(job_id) = text.strip_prefix("docket_job:") {
+                if job_id != "<none>" && Uuid::parse_str(job_id).is_ok() {
+                    jobs.insert(job_id.to_string());
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_docket_job_refs(value, jobs);
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values() {
+                collect_docket_job_refs(value, jobs);
+            }
+        }
+        Value::Bool(_) | Value::Number(_) | Value::Null => {}
+    }
+}
+
+fn docket_job_ids_from_task_list_status(value: &Value) -> Vec<String> {
+    let mut jobs = std::collections::BTreeSet::new();
+    collect_docket_job_refs(value, &mut jobs);
+    jobs.into_iter().collect()
+}
+
+async fn focus_job_report(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    job_id: String,
+) -> String {
     match shared_state
         .mcp_registry
         .call_tool(session_id, "execute_job", json!({ "job_id": job_id }))
         .await
     {
         Ok(result) => format!(
-            "BEARS ACP focus set\n\n- Job: {job_id}\n- execute_job: {}",
+            "Den ACP focus set\n\n- Job: {job_id}\n- execute_job: {}",
             compact_json_for_status(&result)
         ),
         Err(err) => format!(
-            "BEARS ACP /focus failed for job {job_id}: {err:#}\n\nMake sure this ACP session is connected to Den and the execute_job tool is available."
+            "Den ACP /focus failed for job {job_id}: {err:#}\n\nMake sure this ACP session is connected to Den and the execute_job tool is available."
         ),
+    }
+}
+
+async fn focus_report(shared_state: &AdapterSharedState, session_id: &str, prompt: &str) -> String {
+    match focus_prompt_target(prompt) {
+        FocusPromptTarget::JobId(job_id) => {
+            focus_job_report(shared_state, session_id, job_id).await
+        }
+        FocusPromptTarget::Invalid => {
+            "Den ACP /focus needs zero arguments or exactly one Docket job UUID: /focus [job_id]"
+                .to_string()
+        }
+        FocusPromptTarget::ConversationAssociated => {
+            let status = match shared_state
+                .mcp_registry
+                .call_tool(session_id, "get_task_list_status", json!({}))
+                .await
+            {
+                Ok(status) => status,
+                Err(err) => {
+                    return format!(
+                        "Den ACP /focus could not inspect conversation-associated tasks: {err:#}\n\nUse /focus <job_id> to focus an explicit Docket job."
+                    );
+                }
+            };
+            let job_ids = docket_job_ids_from_task_list_status(&status);
+            match job_ids.as_slice() {
+                [job_id] => focus_job_report(shared_state, session_id, job_id.clone()).await,
+                [] => "Den ACP /focus found no Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
+                    .to_string(),
+                many => format!(
+                    "Den ACP /focus found multiple Job-backed task lists associated with this conversation. Choose one explicitly:\n\n{}",
+                    many.iter()
+                        .map(|job_id| format!("- /focus {job_id}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+            }
+        }
     }
 }
 
@@ -12058,11 +12144,44 @@ mod tests {
             focus_job_id_from_prompt(&format!("/focus {job_id}")),
             Some(job_id.to_string())
         );
+        assert_eq!(
+            focus_prompt_target("/focus"),
+            FocusPromptTarget::ConversationAssociated
+        );
         assert_eq!(focus_job_id_from_prompt("/focus"), None);
+        assert_eq!(
+            focus_prompt_target("/focus nope"),
+            FocusPromptTarget::Invalid
+        );
         assert_eq!(focus_job_id_from_prompt("/focus nope"), None);
+        assert_eq!(
+            focus_prompt_target(&format!("/focus {job_id} extra")),
+            FocusPromptTarget::Invalid
+        );
         assert_eq!(
             focus_job_id_from_prompt(&format!("/focus {job_id} extra")),
             None
+        );
+    }
+
+    #[test]
+    fn task_list_status_docket_jobs_ignore_session_only_refs() {
+        let job_id = "11111111-1111-1111-1111-111111111111";
+        let other_job_id = "22222222-2222-2222-2222-222222222222";
+        let status = json!({
+            "task_list": {
+                "items": [
+                    {"source_ref": {"refs": ["docket_job:<none>", "docket_task:task-only"]}},
+                    {"source_ref": {"refs": [format!("docket_job:{job_id}")]}},
+                    {"source_ref": {"refs": [format!("docket_job:{job_id}")]}},
+                    {"source_ref": {"refs": [format!("docket_job:{other_job_id}")]}}
+                ]
+            }
+        });
+
+        assert_eq!(
+            docket_job_ids_from_task_list_status(&status),
+            vec![job_id.to_string(), other_job_id.to_string()]
         );
     }
 
