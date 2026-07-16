@@ -16,6 +16,10 @@ use den_core::{BearProfile, DenError};
 
 use crate::model::DocketExecutionSessionUpsert;
 
+/// Explicit root name for a provider-managed empty workspace. Absence is not
+/// scratch: callers must opt in so rootless dispatch stays invalid.
+pub const SCRATCH_ROOT_NAME: &str = "scratch";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkRunState {
     Queued,
@@ -188,6 +192,26 @@ pub async fn enqueue_work_run(
         )));
     }
 
+    let requested_root = enqueue
+        .root_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+    let job_work_surface_ref: Option<String> =
+        sqlx::query_scalar("SELECT work_surface_ref FROM bear_jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let has_job_root = job_work_surface_ref
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|name| !name.is_empty());
+    if requested_root.is_none() && !has_job_root {
+        return Err(DenError::ValidationError(
+            "no sandbox root configured: choose a root, set work_surface_ref on the job, or explicitly dispatch to scratch".into(),
+        ));
+    }
+
     // Managed-surface enforcement: a job bound to a work surface (and any
     // explicit root override naming one) requires the bear to be assigned to
     // that surface. Free-text roots matching no managed surface pass through;
@@ -204,12 +228,7 @@ pub async fn enqueue_work_run(
         ensure_bear_assigned_to_surface(&mut tx, enqueue.bear_id, *surface_id, surface_name)
             .await?;
     }
-    if let Some(root_name) = enqueue
-        .root_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-    {
+    if let Some(root_name) = requested_root {
         let named_surface: Option<(Uuid,)> =
             sqlx::query_as("SELECT id FROM work_surfaces WHERE name = $1")
                 .bind(root_name)

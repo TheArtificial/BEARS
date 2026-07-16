@@ -43,13 +43,23 @@
                 <td>
                     {% if task.is_work and task.status in ["pending", "blocked"] %}
                     <form method="post" action="/work/tasks/{{ task.id }}/dispatch">
+                        {% if work_surface_ref %}
+                        <p><small>Using job work surface <code>{{ work_surface_ref }}</code> unless a root is selected.</small></p>
+                        {% else %}
+                        <p><small>This job has no work surface. Choose an existing root, or explicitly use an empty scratch workspace. Scratch returns reports/artifacts only; it does not imply publishable repo changes.</small></p>
+                        {% endif %}
                         {% if catalog and catalog.roots %}
                         <select name="root" title="sandbox root">
-                            <option value="">root: job default</option>
+                            <option value="">{% if work_surface_ref %}root: job default{% else %}choose root…{% endif %}</option>
                             {% for root in catalog.roots %}
                             <option value="{{ root.name }}" {% if root.name == work_surface_ref %}selected{% endif %}>{{ root.name }}</option>
                             {% endfor %}
                         </select>
+                        {% elif not work_surface_ref %}
+                        <input name="root" placeholder="sandbox root name" />
+                        {% endif %}
+                        {% if not work_surface_ref %}
+                        <label><input type="checkbox" name="scratch" value="true" /> empty scratch workspace</label>
                         {% endif %}
                         {% if catalog and catalog.images %}
                         <select name="image" title="toolchain image">

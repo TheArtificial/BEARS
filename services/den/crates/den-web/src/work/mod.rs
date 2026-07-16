@@ -21,7 +21,7 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
-use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow};
+use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow, SCRATCH_ROOT_NAME};
 use den_docket::{
     DocketCommitPolicy, DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter,
     DocketJobStatus, DocketService, DocketTaskInput, DocketTaskKind, DocketTaskScope,
@@ -670,6 +670,8 @@ struct DispatchForm {
     #[serde(default)]
     root: String,
     #[serde(default)]
+    scratch: bool,
+    #[serde(default)]
     image: String,
     #[serde(default)]
     git_ref: String,
@@ -696,12 +698,17 @@ async fn dispatch_task(
     let Some((bear_id, job_id)) = row.filter(|(bear_id, _)| bears.contains_key(bear_id)) else {
         return Err(CustomError::NotFound("task not found".to_string()));
     };
+    let root_name = if form.scratch {
+        Some(SCRATCH_ROOT_NAME.to_string())
+    } else {
+        clean_form_field(&form.root)
+    };
     work_runs::enqueue_work_run(
         state.sqlx_pool(),
         work_runs::WorkRunEnqueue {
             bear_id,
             task_id,
-            root_name: clean_form_field(&form.root),
+            root_name,
             git_ref: clean_form_field(&form.git_ref),
             image_name: clean_form_field(&form.image),
             requested_by_user_id: Some(user_id),
