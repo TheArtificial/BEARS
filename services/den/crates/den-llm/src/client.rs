@@ -7,7 +7,7 @@ use std::{
 use futures::Stream;
 use reqwest::{
     header::{HeaderName, HeaderValue},
-    Response,
+    RequestBuilder, Response, StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -16,6 +16,12 @@ use den_core::{config::Config, DenError, ThinkingEffort};
 
 #[cfg(test)]
 use crate::model_registry;
+
+const LLM_PROVIDER_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(54),
+];
 
 /// Canonical Den model handle used in product/UI/DB/policy state, e.g. `openai/gpt-5.5`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -515,6 +521,105 @@ fn bifrost_virtual_key_not_found_error(text: &str) -> bool {
     text.contains("virtual_key_not_found") || text.contains("virtual key not found")
 }
 
+fn llm_provider_error_retryable_status(status: StatusCode) -> bool {
+    status == StatusCode::REQUEST_TIMEOUT
+        || status == StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+}
+
+fn llm_provider_retry_exhausted_error(
+    api_style: LlmApiStyle,
+    model: &str,
+    attempts: usize,
+    last_error: &str,
+) -> DenError {
+    DenError::System(format!(
+        "LLM provider hiccup persisted after {attempts} attempts for {} model {model}; retry pauses were 2s, 4s, and 54s; ending the turn after retry backoff. Last error: {last_error}",
+        api_style.as_str()
+    ))
+}
+
+async fn send_llm_provider_request_with_retries(
+    mut build_request: impl FnMut() -> RequestBuilder,
+    api_style: LlmApiStyle,
+    model: &str,
+    started: Instant,
+    telemetry: Option<&LlmRequestTelemetry>,
+) -> Result<Response, DenError> {
+    for attempt_index in 0..=LLM_PROVIDER_RETRY_DELAYS.len() {
+        let attempt_number = attempt_index + 1;
+        let resp = match build_request().send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                let last_error = e.to_string();
+                tracing::warn!(
+                    model,
+                    api_style = %api_style.as_str(),
+                    duration_ms = started.elapsed().as_millis(),
+                    attempt = attempt_number,
+                    max_attempts = LLM_PROVIDER_RETRY_DELAYS.len() + 1,
+                    error = %last_error,
+                    request_id = telemetry.and_then(|t| t.request_id.as_deref()),
+                    run_id = telemetry.and_then(|t| t.run_id.as_deref()),
+                    session_id = telemetry.and_then(|t| t.session_id.as_deref()),
+                    conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
+                    "LLM provider request failed"
+                );
+                let Some(delay) = LLM_PROVIDER_RETRY_DELAYS.get(attempt_index).copied() else {
+                    return Err(llm_provider_retry_exhausted_error(
+                        api_style,
+                        model,
+                        attempt_number,
+                        &last_error,
+                    ));
+                };
+                tracing::warn!(
+                    model,
+                    api_style = %api_style.as_str(),
+                    attempt = attempt_number,
+                    retry_delay_ms = delay.as_millis(),
+                    "retrying LLM provider request after transport error"
+                );
+                sleep_llm_provider_retry_delay(delay).await;
+                continue;
+            }
+        };
+        if resp.status().is_success() || !llm_provider_error_retryable_status(resp.status()) {
+            return Ok(resp);
+        }
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if attempt_index == LLM_PROVIDER_RETRY_DELAYS.len() {
+            return Err(llm_provider_retry_exhausted_error(
+                api_style,
+                model,
+                attempt_number,
+                &format!("HTTP {status}: {text}"),
+            ));
+        }
+        let delay = LLM_PROVIDER_RETRY_DELAYS[attempt_index];
+        tracing::warn!(
+            model,
+            api_style = %api_style.as_str(),
+            http_status = status.as_u16(),
+            attempt = attempt_number,
+            retry_delay_ms = delay.as_millis(),
+            response_body_sample = %log_sample(&text, 1000),
+            request_id = telemetry.and_then(|t| t.request_id.as_deref()),
+            run_id = telemetry.and_then(|t| t.run_id.as_deref()),
+            session_id = telemetry.and_then(|t| t.session_id.as_deref()),
+            conversation_id = telemetry.and_then(|t| t.conversation_id.as_deref()),
+            "retrying LLM provider request after retryable HTTP error"
+        );
+        sleep_llm_provider_retry_delay(delay).await;
+    }
+    unreachable!("bounded retry loop always returns")
+}
+
+async fn sleep_llm_provider_retry_delay(delay: Duration) {
+    tokio::time::sleep(delay).await;
+}
+
 fn bifrost_virtual_key_not_found_diagnostic(
     api_style: LlmApiStyle,
     model: &str,
@@ -758,23 +863,19 @@ impl LlmClient {
         );
         let started = Instant::now();
         let body = request.to_body();
-        let mut req = self.http.post(&url).json(&body);
-        req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
-        req = apply_bifrost_virtual_key_header(req, request.telemetry.as_ref());
-        req = apply_bifrost_session_cache_headers(req, request.telemetry.as_ref());
-        let resp = req.send().await.map_err(|e| {
-            tracing::warn!(
-                model = %request.model,
-                duration_ms = started.elapsed().as_millis(),
-                error = %e,
-                request_id = request.telemetry.as_ref().and_then(|t| t.request_id.as_deref()),
-                run_id = request.telemetry.as_ref().and_then(|t| t.run_id.as_deref()),
-                session_id = request.telemetry.as_ref().and_then(|t| t.session_id.as_deref()),
-                conversation_id = request.telemetry.as_ref().and_then(|t| t.conversation_id.as_deref()),
-                "LLM chat/completions request failed"
-            );
-            DenError::System(format!("LLM chat/completions request failed: {e}"))
-        })?;
+        let resp = send_llm_provider_request_with_retries(
+            || {
+                let mut req = self.http.post(&url).json(&body);
+                req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
+                req = apply_bifrost_virtual_key_header(req, request.telemetry.as_ref());
+                apply_bifrost_session_cache_headers(req, request.telemetry.as_ref())
+            },
+            LlmApiStyle::ChatCompletionsStream,
+            &request.model,
+            started,
+            request.telemetry.as_ref(),
+        )
+        .await?;
         let http_status = resp.status().as_u16();
         if !resp.status().is_success() {
             let status = resp.status();
@@ -899,20 +1000,19 @@ impl LlmClient {
         );
         let started = Instant::now();
         let body = request.to_responses_body();
-        let mut req = self.http.post(&url).json(&body);
-        req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
-        req = apply_bifrost_virtual_key_header(req, request.telemetry.as_ref());
-        req = apply_bifrost_session_cache_headers(req, request.telemetry.as_ref());
-        let resp = req.send().await.map_err(|e| {
-            tracing::warn!(
-                model_handle = %model_handle,
-                api_style = %LlmApiStyle::ResponsesStream.as_str(),
-                duration_ms = started.elapsed().as_millis(),
-                error = %e,
-                "LLM responses request failed"
-            );
-            DenError::System(format!("LLM responses request failed: {e}"))
-        })?;
+        let resp = send_llm_provider_request_with_retries(
+            || {
+                let mut req = self.http.post(&url).json(&body);
+                req = apply_bears_telemetry_headers(req, request.telemetry.as_ref());
+                req = apply_bifrost_virtual_key_header(req, request.telemetry.as_ref());
+                apply_bifrost_session_cache_headers(req, request.telemetry.as_ref())
+            },
+            LlmApiStyle::ResponsesStream,
+            model_handle.as_str(),
+            started,
+            request.telemetry.as_ref(),
+        )
+        .await?;
         let http_status = resp.status().as_u16();
         if !resp.status().is_success() {
             let status = resp.status();
@@ -1165,6 +1265,36 @@ mod tests {
 
         let responses_body = request.to_responses_body();
         assert_eq!(responses_body["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn retries_provider_hiccup_statuses() {
+        assert!(llm_provider_error_retryable_status(
+            StatusCode::REQUEST_TIMEOUT
+        ));
+        assert!(llm_provider_error_retryable_status(
+            StatusCode::TOO_MANY_REQUESTS
+        ));
+        assert!(llm_provider_error_retryable_status(StatusCode::BAD_GATEWAY));
+        assert!(!llm_provider_error_retryable_status(
+            StatusCode::BAD_REQUEST
+        ));
+    }
+
+    #[test]
+    fn retry_exhausted_error_reports_turn_ending_strategy() {
+        let error = llm_provider_retry_exhausted_error(
+            LlmApiStyle::ResponsesStream,
+            "openai/gpt-5.5",
+            4,
+            "HTTP 503 Service Unavailable: overloaded",
+        )
+        .to_string();
+
+        assert!(error.contains("persisted after 4 attempts"));
+        assert!(error.contains("retry pauses were 2s, 4s, and 54s"));
+        assert!(error.contains("ending the turn after retry backoff"));
+        assert!(error.contains("HTTP 503 Service Unavailable"));
     }
 
     #[test]

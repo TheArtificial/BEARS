@@ -119,7 +119,18 @@ pub fn run_failed_user_message(reason: &str, message: &str, bear_name: &str) -> 
             display_bear_name(bear_name)
         ));
     }
+    if is_llm_provider_retry_exhausted(message) {
+        return Some(format!(
+            "{} could not reach the LLM provider after retrying this turn. Den already waited 2 seconds, then 4 seconds, then 54 seconds before giving up. You can send another message to retry, or close this session if you do not want to wait for another timeout.",
+            display_bear_name(bear_name)
+        ));
+    }
     None
+}
+
+fn is_llm_provider_retry_exhausted(message: &str) -> bool {
+    message.contains("LLM provider hiccup persisted after")
+        && message.contains("ending the turn after retry backoff")
 }
 
 pub fn run_failed_history_marker(reason: &str, message: &str, bear_name: &str) -> Option<String> {
@@ -166,6 +177,10 @@ pub fn failure_context_with_diagnostics(
         if let Some(limit_ms) = numeric_message_field(message, "limit=") {
             diagnostic["limit_ms"] = json!(limit_ms);
         }
+    } else if is_llm_provider_retry_exhausted(message) {
+        diagnostic["class"] = json!("llm_provider_retry_exhausted");
+        diagnostic["model_action"] = json!("report_retry_pause_and_wait_for_user_retry");
+        diagnostic["retry_pauses_seconds"] = json!([2, 4, 54]);
     }
     object.insert("diagnostic".to_string(), diagnostic);
     Some(context)
@@ -334,6 +349,33 @@ mod tests {
             .contains("continue from the latest successful state"));
         assert_eq!(projection.content["kind"], "operational_failure");
         assert_eq!(projection.content["retryable"], false);
+    }
+
+    #[test]
+    fn llm_provider_retry_exhaustion_has_friendly_user_message_and_diagnostics() {
+        let message = "LLM provider hiccup persisted after 4 attempts for responses_stream model openai/gpt-5.5; retry pauses were 2s, 4s, and 54s; ending the turn after retry backoff. Last error: HTTP 503 Service Unavailable: overloaded";
+
+        let projection =
+            run_failure_projection("runtime_internal", message, "run-1", "Builder Bear", None);
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("waited 2 seconds, then 4 seconds, then 54 seconds"));
+        assert!(user_message.contains("send another message to retry"));
+        assert!(user_message.contains("close this session"));
+
+        let context = projection.diagnostic_context.expect("diagnostic context");
+        assert_eq!(
+            context["diagnostic"]["class"],
+            "llm_provider_retry_exhausted"
+        );
+        assert_eq!(
+            context["diagnostic"]["model_action"],
+            "report_retry_pause_and_wait_for_user_retry"
+        );
+        assert_eq!(
+            context["diagnostic"]["retry_pauses_seconds"],
+            json!([2, 4, 54])
+        );
     }
 
     #[test]
