@@ -5550,7 +5550,7 @@ async fn focus_job_report(
             compact_json_for_status(&result)
         ),
         Err(err) => format!(
-            "Den ACP /focus failed for job {job_id}: {err:#}\n\nMake sure this ACP session is connected to Den and the execute_job tool is available."
+            "Den ACP /focus could not start focus for job {job_id}: {err:#}\n\nThis usually means this ACP session did not register the Docket execute_job tool. Reconnect the session after deploying Den/armature, then retry /focus {job_id}."
         ),
     }
 }
