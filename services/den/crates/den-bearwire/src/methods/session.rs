@@ -18,6 +18,10 @@ use den_runtime::{
     },
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
     runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
+    runtime::focus_context::{
+        active_docket_execution_lookup_for_session, resolve_runtime_focus_context,
+        RuntimeFocusResolveRequest,
+    },
     turn_obligations,
 };
 use den_service::{
@@ -229,25 +233,42 @@ async fn session_state_payload(
         &conversation_runtime_id,
         &session.client_session_id,
     );
-    let active_activity_plan = if work_enabled {
-        den_runtime::native_runtime::native_client_session_active_activity_plan(
-            &conversation_runtime_id,
-            &session.client_session_id,
+    let runtime_focus_context = if work_enabled {
+        Some(
+            resolve_runtime_focus_context(
+                &state.sqlx_pool,
+                RuntimeFocusResolveRequest {
+                    bear_id: session.bear_id,
+                    profile: BearProfile::Pair,
+                    user_id: Some(session.user_id),
+                    conversation_id: conversation_runtime_id.clone(),
+                    client_session_id: session.client_session_id.clone(),
+                    cached_activity_plan_projection: den_runtime::native_runtime::native_client_session_cached_activity_plan_projection(
+                        &conversation_runtime_id,
+                        &session.client_session_id,
+                    ),
+                },
+            )
+            .await?,
         )
-        .map(active_activity_plan_projection)
     } else {
         None
     };
+    let active_activity_plan = runtime_focus_context.as_ref().and_then(|focus| {
+        focus
+            .active_activity_plan()
+            .cloned()
+            .map(|plan| active_activity_plan_projection(plan, focus.source.as_str()))
+    });
     let active_docket_execution = if work_enabled {
         PgDocketService::from_pool(&state.sqlx_pool)
             .get_active_execution_session(
                 session.bear_id,
                 BearProfile::Pair,
-                DocketExecutionLookup {
-                    session_id: Some(session.client_session_id.clone()),
-                    source_conversation_id: None,
-                    source_client_session_id: None,
-                },
+                active_docket_execution_lookup_for_session(
+                    &conversation_runtime_id,
+                    &session.client_session_id,
+                ),
             )
             .await?
             .map(active_docket_execution_projection)
@@ -332,11 +353,11 @@ fn active_docket_execution_projection(execution: den_docket::DocketExecutionSess
     })
 }
 
-fn active_activity_plan_projection(plan: den_docket::TaskListProjection) -> Value {
+fn active_activity_plan_projection(plan: den_docket::TaskListProjection, source: &str) -> Value {
     let current_item_id = plan.current_item.as_ref().map(|item| item.id.clone());
     json!({
         "schema": "den.acp_plan_projection.v1",
-        "source": "native_agent_loop_active_activity_plan",
+        "source": source,
         "projection": "flat_current_level",
         "id": plan.id,
         "title": plan.title,

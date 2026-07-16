@@ -304,11 +304,11 @@ fn looks_like_task_focus_continuation_nudge(text: &str) -> bool {
 
 pub fn should_allow_terminal_response(
     profile: BearProfile,
-    active_activity_plan: Option<&TaskListLocalProjection>,
+    cached_activity_plan_projection: Option<&TaskListLocalProjection>,
     assistant_text: &str,
 ) -> bool {
     let kind = classify_autonomous_final_response(assistant_text);
-    autonomous_execution_gate_for_plan(profile, active_activity_plan, kind).may_stop
+    autonomous_execution_gate_for_plan(profile, cached_activity_plan_projection, kind).may_stop
 }
 
 pub fn autonomous_execution_gate_for_task_list(

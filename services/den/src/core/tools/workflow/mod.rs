@@ -896,7 +896,7 @@ fn refresh_runtime_session_activity_plan(
     ) else {
         return;
     };
-    den_runtime::native_runtime::update_native_client_session_active_activity_plan(
+    den_runtime::native_runtime::update_native_client_session_cached_activity_plan_projection(
         &conversation_id,
         client_session_id,
         task_list,

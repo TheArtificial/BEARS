@@ -1,9 +1,8 @@
 use den_core::config::Config;
 use den_core::DenError;
 use den_docket::{
-    task_list_projection_from_session_tasks, DocketExecutionLookup, DocketService,
-    DocketTaskListFilter, PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource,
-    TaskListProjection,
+    task_list_projection_from_session_tasks, DocketService, DocketTaskListFilter, PgDocketService,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection,
 };
 use den_memory::MemoryStoreManager;
 use den_service::{
@@ -36,6 +35,7 @@ use crate::context_budget::AssembledTurnBudgetComponents;
 use crate::runtime::compaction::{
     on_turn_assemble_compaction, render_compaction_prompt_context, CompactionMode,
 };
+use crate::runtime::focus_context::active_docket_execution_lookup;
 
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
@@ -95,11 +95,11 @@ pub struct AssembledNativeTurn {
     /// disabled, skipped (e.g. empty query), or failed best-effort.
     pub recall_diagnostic: Option<Value>,
     pub budget_components: AssembledTurnBudgetComponents,
-    pub active_activity_plan: Option<TaskListProjection>,
+    pub cached_activity_plan_projection: Option<TaskListProjection>,
     pub objective_orientation: ObjectiveOrientation,
 }
 
-async fn load_active_activity_plan(
+async fn load_cached_activity_plan_projection(
     ctx: &AssembleTurnContext<'_>,
 ) -> Result<Option<TaskListProjection>, DenError> {
     let Some(user_id) = ctx.user_id else {
@@ -110,7 +110,7 @@ async fn load_active_activity_plan(
         .get_active_execution_session(
             ctx.bear_id,
             ctx.profile,
-            active_execution_lookup(ctx.session_id, ctx.conversation_id),
+            active_docket_execution_lookup(ctx.session_id, ctx.conversation_id),
         )
         .await?
     {
@@ -167,19 +167,6 @@ async fn load_session_anchored_activity_plan(
         session_anchor_id,
         &tasks,
     ))
-}
-
-fn active_execution_lookup(
-    session_id: Option<&str>,
-    conversation_id: &str,
-) -> DocketExecutionLookup {
-    DocketExecutionLookup {
-        session_id: session_id.map(str::to_string),
-        // ponytail: conversation-scoped focus is the durable restore path for now; upgrade to an
-        // explicit conversation focus record if focus needs history, labels, or multi-job stacks.
-        source_conversation_id: Some(conversation_id.to_string()),
-        source_client_session_id: session_id.map(str::to_string),
-    }
 }
 
 pub fn projected_memory_session_diagnostic(projection: &KeyMemoryProjectionResult) -> Value {
@@ -306,13 +293,14 @@ async fn record_objective_orientation_event(
 }
 
 fn objective_orientation_input(
-    active_activity_plan: Option<&TaskListProjection>,
+    cached_activity_plan_projection: Option<&TaskListProjection>,
     work_enabled: bool,
 ) -> ObjectiveOrientationResolutionInput {
     ObjectiveOrientationResolutionInput {
-        focused_job_id: active_activity_plan.and_then(|plan| plan.source_ref.docket_job_id.clone()),
+        focused_job_id: cached_activity_plan_projection
+            .and_then(|plan| plan.source_ref.docket_job_id.clone()),
         focused_job_mutable: true,
-        active_task_ref: active_activity_plan.and_then(active_orientation_task_ref),
+        active_task_ref: cached_activity_plan_projection.and_then(active_orientation_task_ref),
         freeform_policy: if work_enabled {
             FreeformPolicy::task_definition_permitted()
         } else {
@@ -494,9 +482,9 @@ pub async fn assemble_native_turn_for_bear(
         ctx.profile,
     )
     .await?;
-    let active_activity_plan = load_active_activity_plan(&ctx).await?;
+    let cached_activity_plan_projection = load_cached_activity_plan_projection(&ctx).await?;
     let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
-        active_activity_plan.as_ref(),
+        cached_activity_plan_projection.as_ref(),
         bear.work_enabled,
     ));
     record_objective_orientation_event(&ctx, &objective_orientation).await?;
@@ -639,7 +627,7 @@ pub async fn assemble_native_turn_for_bear(
         key_memory_projection: Some(projection),
         recall_diagnostic,
         budget_components,
-        active_activity_plan,
+        cached_activity_plan_projection,
         objective_orientation,
     })
 }

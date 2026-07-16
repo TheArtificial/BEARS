@@ -11,6 +11,7 @@ use den_service::bears::prompt_fragments::{
 };
 use futures::Stream;
 
+use crate::runtime::focus_context::{resolve_runtime_focus_context, RuntimeFocusResolveRequest};
 use crate::runtime::turn_state::{
     autonomous_execution_gate_for_task_list, classify_autonomous_final_response,
     detect_task_focus_loop, AutonomousExecutionGate,
@@ -46,6 +47,7 @@ use den_core::tools::{
     result_compaction::{compact_json_tool_result, compact_json_tool_result_with_artifact},
 };
 use den_core::{config::Config, governance::Governance, profile::BearProfile, DenError};
+use den_docket::TaskListProjection;
 
 use super::transcript::{
     spawn_persist_incomplete_acp_tool_results, spawn_persist_native_agent_step,
@@ -71,6 +73,12 @@ type ServerToolFuture = Pin<
 >;
 type FinalGateContinuationFuture =
     Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
+type RuntimeFocusFuture = Pin<
+    Box<
+        dyn Future<Output = Result<crate::runtime::focus_context::RuntimeFocusContext, DenError>>
+            + Send,
+    >,
+>;
 
 fn render_final_gate_continuation_guidance(next_task: &str) -> Result<String, DenError> {
     // Keep reusable final-gate steering in the fragment registry; this helper is
@@ -238,6 +246,7 @@ pub struct SessionTrackingStream {
     pending_server_tool: Option<ServerToolFuture>,
     pending_server_tool_continuation: Option<String>,
     pending_final_gate_continuation: Option<FinalGateContinuationFuture>,
+    pending_runtime_focus: Option<RuntimeFocusFuture>,
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
     stores: MemoryStoreManager,
@@ -288,6 +297,7 @@ impl SessionTrackingStream {
             pending_server_tool: None,
             pending_server_tool_continuation: None,
             pending_final_gate_continuation: None,
+            pending_runtime_focus: None,
             dispatch_mode,
             config,
             stores,
@@ -964,6 +974,114 @@ impl SessionTrackingStream {
         });
     }
 
+    fn evaluate_final_gate_or_complete(
+        &mut self,
+        cached_activity_plan_projection: Option<TaskListProjection>,
+    ) {
+        let autonomous_gate = autonomous_execution_gate_for_task_list(
+            self.profile,
+            cached_activity_plan_projection.as_ref(),
+            classify_autonomous_final_response(&self.assistant_text),
+        );
+        // ponytail: budget landing beats autonomous task-focus continuation; upgrade by
+        // tracking an explicit finalization-mode reason instead of this budget-state bit.
+        if should_force_final_gate_continuation(
+            self.budget_finalization_grace_used(),
+            &autonomous_gate,
+        ) {
+            let recent_texts = self
+                .store
+                .get(&self.session_key)
+                .map(|session| {
+                    session
+                        .messages
+                        .iter()
+                        .rev()
+                        .filter_map(|message| message.content.as_deref())
+                        .take(6)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let loop_detection = detect_task_focus_loop(&recent_texts);
+            if loop_detection.detected {
+                self.finished = true;
+                tracing::warn!(
+                    client_session_id = %self.client_session_id,
+                    profile = %self.profile.as_str(),
+                    terminal_objections = loop_detection.terminal_objections,
+                    continuation_nudges = loop_detection.continuation_nudges,
+                    repeated_objection_kind = ?loop_detection.repeated_objection_kind,
+                    "native runtime task-focus loop detected; accepting terminal objection instead of issuing another continuation nudge"
+                );
+                self.pending_pause_after_tool =
+                    Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
+                return;
+            }
+            let next_task = autonomous_gate
+                .next_incomplete_task_title
+                .unwrap_or_else(|| "the next incomplete task".to_string());
+            tracing::info!(
+                client_session_id = %self.client_session_id,
+                profile = %self.profile.as_str(),
+                next_task = %next_task,
+                "native runtime converted premature terminal response into continuation nudge"
+            );
+            self.begin_final_gate_continuation(&next_task);
+            self.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunProgress {
+                kind: "autonomous_continuation_gate".to_string(),
+                text: Some(format!(
+                    "Active task-list work remains; continuing with {next_task} instead of stopping on a progress-only summary."
+                )),
+                phase: Some("continuation".to_string()),
+                detail: Some(serde_json::json!({
+                    "next_task": next_task,
+                    "profile": self.profile.as_str(),
+                    "terminal_response_suppressed": true,
+                })),
+            });
+            return;
+        }
+
+        let pool = self.pool.clone();
+        let config = self.config.clone();
+        let bear_id = self.bear_id;
+        let conversation_id = self.conversation_id.clone();
+        let profile = self.profile;
+        tokio::spawn(async move {
+            enqueue_compaction_after_turn(&pool, &config, bear_id, &conversation_id, profile).await;
+        });
+        self.finished = true;
+        self.pending_pause_after_tool = Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
+    }
+
+    fn begin_runtime_focus_resolution(&mut self) {
+        let pool = self.pool.clone();
+        let bear_id = self.bear_id;
+        let profile = self.profile;
+        let user_id = self.user_id;
+        let conversation_id = self.conversation_id.clone();
+        let client_session_id = self.client_session_id.clone();
+        let cached_activity_plan_projection = self
+            .store
+            .get(&self.session_key)
+            .and_then(|session| session.cached_activity_plan_projection);
+        self.pending_runtime_focus = Some(Box::pin(async move {
+            resolve_runtime_focus_context(
+                &pool,
+                RuntimeFocusResolveRequest {
+                    bear_id,
+                    profile,
+                    user_id,
+                    conversation_id,
+                    client_session_id,
+                    cached_activity_plan_projection,
+                },
+            )
+            .await
+        }));
+    }
+
     fn begin_checkpoint_continuation(&mut self) {
         let store = self.store.clone();
         let session_key = self.session_key.clone();
@@ -1089,6 +1207,27 @@ impl Stream for SessionTrackingStream {
                 }
                 Poll::Ready(Err(error)) => {
                     self.pending_server_tool = None;
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
+        if let Some(fut) = self.pending_runtime_focus.as_mut() {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(focus)) => {
+                    self.pending_runtime_focus = None;
+                    let cached_activity_plan_projection = focus.cached_activity_plan_projection;
+                    self.store.update(&self.session_key, |session| {
+                        session.cached_activity_plan_projection =
+                            cached_activity_plan_projection.clone();
+                    });
+                    self.evaluate_final_gate_or_complete(cached_activity_plan_projection);
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => {
+                    self.pending_runtime_focus = None;
                     return Poll::Ready(Some(Err(error)));
                 }
                 Poll::Pending => return Poll::Pending,
@@ -1352,101 +1491,9 @@ impl Stream for SessionTrackingStream {
                     ))));
                 }
                 self.persist_assistant_tool_step();
-                let active_activity_plan = self
-                    .store
-                    .get(&self.session_key)
-                    .and_then(|session| session.active_activity_plan);
-                let autonomous_gate = autonomous_execution_gate_for_task_list(
-                    self.profile,
-                    active_activity_plan.as_ref(),
-                    classify_autonomous_final_response(&self.assistant_text),
-                );
-                // ponytail: budget landing beats autonomous task-focus continuation; upgrade by
-                // tracking an explicit finalization-mode reason instead of this budget-state bit.
-                // ponytail: only force continuation when there is a concrete next item;
-                // upgrade by refreshing active_activity_plan from Docket before gating.
-                if should_force_final_gate_continuation(
-                    self.budget_finalization_grace_used(),
-                    &autonomous_gate,
-                ) {
-                    let recent_texts = self
-                        .store
-                        .get(&self.session_key)
-                        .map(|session| {
-                            session
-                                .messages
-                                .iter()
-                                .rev()
-                                .filter_map(|message| message.content.as_deref())
-                                .take(6)
-                                .map(str::to_string)
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    let loop_detection = detect_task_focus_loop(&recent_texts);
-                    if loop_detection.detected {
-                        self.finished = true;
-                        tracing::warn!(
-                            client_session_id = %self.client_session_id,
-                            profile = %self.profile.as_str(),
-                            terminal_objections = loop_detection.terminal_objections,
-                            continuation_nudges = loop_detection.continuation_nudges,
-                            repeated_objection_kind = ?loop_detection.repeated_objection_kind,
-                            "native runtime task-focus loop detected; accepting terminal objection instead of issuing another continuation nudge"
-                        );
-                        return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
-                            RuntimeSemanticEvent::TurnCompleted { turn: None },
-                        ))));
-                    }
-                    let next_task = autonomous_gate
-                        .next_incomplete_task_title
-                        .unwrap_or_else(|| "the next incomplete task".to_string());
-                    tracing::info!(
-                        client_session_id = %self.client_session_id,
-                        profile = %self.profile.as_str(),
-                        next_task = %next_task,
-                        "native runtime converted premature terminal response into continuation nudge"
-                    );
-                    self.begin_final_gate_continuation(&next_task);
-                    self.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunProgress {
-                        kind: "autonomous_continuation_gate".to_string(),
-                        text: Some(format!(
-                            "Active task-list work remains; continuing with {next_task} instead of stopping on a progress-only summary."
-                        )),
-                        phase: Some("continuation".to_string()),
-                        detail: Some(serde_json::json!({
-                            "next_task": next_task,
-                            "profile": self.profile.as_str(),
-                            "terminal_response_suppressed": true,
-                        })),
-                    });
-                    return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
-                        RuntimeSemanticEvent::StatusText {
-                            text: format!(
-                                "Warned the bear that task focus is still active; continuing with {next_task}."
-                            ),
-                        },
-                    ))));
-                }
-                let pool = self.pool.clone();
-                let config = self.config.clone();
-                let bear_id = self.bear_id;
-                let conversation_id = self.conversation_id.clone();
-                let profile = self.profile;
-                tokio::spawn(async move {
-                    enqueue_compaction_after_turn(
-                        &pool,
-                        &config,
-                        bear_id,
-                        &conversation_id,
-                        profile,
-                    )
-                    .await;
-                });
-                self.finished = true;
-                Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(
-                    RuntimeSemanticEvent::TurnCompleted { turn: None },
-                ))))
+                self.begin_runtime_focus_resolution();
+                cx.waker().wake_by_ref();
+                Poll::Pending
             }
             Poll::Ready(Some(Err(error))) => {
                 if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
@@ -1616,7 +1663,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,

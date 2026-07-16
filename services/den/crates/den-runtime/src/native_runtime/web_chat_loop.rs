@@ -580,7 +580,7 @@ async fn execute_one_web_chat_den_tool(
             session_policy: None,
             activity: session_snapshot
                 .as_ref()
-                .and_then(|session| session.active_activity_plan.as_ref())
+                .and_then(|session| session.cached_activity_plan_projection.as_ref())
                 .and_then(|plan| serde_json::to_value(plan).ok()),
             runtime: session_snapshot
                 .as_ref()

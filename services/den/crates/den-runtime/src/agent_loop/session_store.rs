@@ -53,7 +53,7 @@ pub struct AgentLoopSession {
     pub latest_context_budget: Option<ContextBudgetReport>,
     pub latest_projected_memory: Option<Value>,
     pub latest_recalled_memory: Option<Value>,
-    pub active_activity_plan: Option<TaskListProjection>,
+    pub cached_activity_plan_projection: Option<TaskListProjection>,
     pub profile: BearProfile,
     pub overflow_retry_attempted: bool,
     pub overflow_compaction_recovered: bool,
@@ -89,7 +89,7 @@ impl AgentLoopSession {
             .max_wall_clock_ms
             .saturating_sub(elapsed_ms);
         let next_incomplete_task = self
-            .active_activity_plan
+            .cached_activity_plan_projection
             .as_ref()
             .and_then(|plan| {
                 plan.items.iter().find(|item| {
@@ -102,7 +102,7 @@ impl AgentLoopSession {
             })
             .map(|item| item.title.clone())
             .or_else(|| orientation_active_task_title(&self.objective_orientation));
-        let task_focus_active = self.active_activity_plan.is_some()
+        let task_focus_active = self.cached_activity_plan_projection.is_some()
             || !matches!(
                 self.objective_orientation,
                 ObjectiveOrientation::Freeform { .. }
@@ -168,9 +168,9 @@ impl AgentLoopSession {
             },
             "task_focus": {
                 "active": task_focus_active,
-                "plan_id": self.active_activity_plan.as_ref().map(|plan| plan.id.to_string()),
-                "plan_title": self.active_activity_plan.as_ref().map(|plan| plan.title.clone()),
-                "plan_status": self.active_activity_plan.as_ref().map(|plan| plan.status.clone()),
+                "plan_id": self.cached_activity_plan_projection.as_ref().map(|plan| plan.id.to_string()),
+                "plan_title": self.cached_activity_plan_projection.as_ref().map(|plan| plan.title.clone()),
+                "plan_status": self.cached_activity_plan_projection.as_ref().map(|plan| plan.status.clone()),
                 "next_incomplete_task_title": next_incomplete_task,
                 "continuation_policy": if task_focus_active {
                     "continue_until_complete_or_blocked"
@@ -178,7 +178,7 @@ impl AgentLoopSession {
                     "inactive"
                 },
             },
-            "docket": docket_context_json(self.active_activity_plan.as_ref(), &self.objective_orientation),
+            "docket": docket_context_json(self.cached_activity_plan_projection.as_ref(), &self.objective_orientation),
             "last_budget_advisory": last_system_advisory(&self.messages, "Budget advisory:"),
             "last_task_focus_advisory": last_system_advisory(&self.messages, "You are in autonomous implementation mode."),
         })
@@ -434,7 +434,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,

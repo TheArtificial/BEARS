@@ -7,6 +7,7 @@ pub mod compaction;
 pub mod compaction_observability;
 pub mod compaction_store;
 pub mod conversations;
+pub mod focus_context;
 pub mod pair_turn;
 pub mod provider;
 pub mod role;

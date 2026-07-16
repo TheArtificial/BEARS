@@ -187,24 +187,24 @@ pub fn native_client_session_exists(conversation_id: &str, client_session_id: &s
     SESSION_STORE.get(&key).is_some()
 }
 
-pub fn native_client_session_active_activity_plan(
+pub fn native_client_session_cached_activity_plan_projection(
     conversation_id: &str,
     client_session_id: &str,
 ) -> Option<TaskListProjection> {
     let key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE
         .get(&key)
-        .and_then(|session| session.active_activity_plan)
+        .and_then(|session| session.cached_activity_plan_projection)
 }
 
-pub fn update_native_client_session_active_activity_plan(
+pub fn update_native_client_session_cached_activity_plan_projection(
     conversation_id: &str,
     client_session_id: &str,
-    active_activity_plan: Option<TaskListProjection>,
+    cached_activity_plan_projection: Option<TaskListProjection>,
 ) {
     let key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE.update(&key, |session| {
-        session.active_activity_plan = active_activity_plan;
+        session.cached_activity_plan_projection = cached_activity_plan_projection;
     })
 }
 
@@ -221,7 +221,7 @@ fn active_docket_execution_lookup_for_session(
     }
 }
 
-async fn refresh_active_activity_plan_from_docket(
+async fn refresh_cached_activity_plan_projection_from_docket(
     pool: &PgPool,
     conversation_id: &str,
     client_session_id: &str,
@@ -724,7 +724,7 @@ async fn build_session(
     ));
     let messages = assembled.messages;
     let budget_components = assembled.budget_components;
-    let active_activity_plan = assembled.active_activity_plan;
+    let cached_activity_plan_projection = assembled.cached_activity_plan_projection;
     let objective_orientation = assembled.objective_orientation;
     if profile.profile == BearProfile::Work {
         if !bear.work_enabled {
@@ -863,7 +863,7 @@ async fn build_session(
         latest_context_budget: None,
         latest_projected_memory,
         latest_recalled_memory,
-        active_activity_plan,
+        cached_activity_plan_projection,
         profile: profile.profile,
         overflow_retry_attempted: false,
         overflow_compaction_recovered: false,
@@ -1292,7 +1292,7 @@ fn runtime_checkpoint_request_for_trigger(
 
 fn active_checkpoint_objective(session: &AgentLoopSession) -> Option<String> {
     session
-        .active_activity_plan
+        .cached_activity_plan_projection
         .as_ref()
         .and_then(|plan| {
             plan.current_item.as_ref().or_else(|| {
@@ -1309,7 +1309,7 @@ fn active_checkpoint_objective(session: &AgentLoopSession) -> Option<String> {
 }
 
 fn checkpoint_task_context(session: &AgentLoopSession) -> Option<CheckpointTaskContext> {
-    let plan = session.active_activity_plan.as_ref()?;
+    let plan = session.cached_activity_plan_projection.as_ref()?;
     let active_item = plan.current_item.as_ref().or_else(|| {
         plan.items.iter().find(|item| {
             matches!(
@@ -1605,7 +1605,7 @@ async fn execute_approved_den_tool_for_session(
         workspace_roots: session.workspace_roots.clone(),
         session_policy: None,
         activity: session
-            .active_activity_plan
+            .cached_activity_plan_projection
             .as_ref()
             .and_then(|plan| serde_json::to_value(plan).ok()),
         runtime: Some(session.session_info_runtime_snapshot()),
@@ -1847,7 +1847,7 @@ pub async fn continue_native_client_turn_event_stream(
             }
         }
     }
-    if let Some(refreshed_plan) = refresh_active_activity_plan_from_docket(
+    if let Some(refreshed_plan) = refresh_cached_activity_plan_projection_from_docket(
         request.sqlx_pool,
         &conversation_id,
         client_session_id,
@@ -1858,9 +1858,9 @@ pub async fn continue_native_client_turn_event_stream(
     .await?
     {
         SESSION_STORE.update(&session_key, |session| {
-            session.active_activity_plan = Some(refreshed_plan.clone());
+            session.cached_activity_plan_projection = Some(refreshed_plan.clone());
         });
-        session.active_activity_plan = Some(refreshed_plan);
+        session.cached_activity_plan_projection = Some(refreshed_plan);
     }
     if let Some(reason) = evaluation.stop_reason {
         return Ok(continuation_budget_stop(reason));
@@ -2092,7 +2092,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -2175,7 +2175,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -2229,7 +2229,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -2361,7 +2361,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -2475,7 +2475,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -2638,7 +2638,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -2793,7 +2793,7 @@ mod tests {
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
