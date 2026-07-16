@@ -1,3 +1,6 @@
+use den_service::bears::prompt_fragments::{
+    render_turn_fragment, repository_prompt_fragment_registry,
+};
 use serde_json::{json, Value};
 
 const LOG_SAMPLE_CHARS: usize = 2_000;
@@ -57,39 +60,17 @@ pub fn normalized_operational_outcome(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let (kind, retryable, subsystem, summary) = match reason {
-        "continuation_stream_error" => (
-            "provider_stream_error",
-            true,
-            "llm_stream_transport",
-            "Previous turn ended with a retryable provider stream transport error after continuation started. Recent tool results were preserved, but no final answer was delivered. Verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.",
-        ),
-        "continuation_watchdog_timeout" => (
-            "continuation_timeout",
-            true,
-            "continuation_runtime",
-            "Previous turn timed out after a client/local-tool result was received and continuation started, but the resumed runtime produced no event before the watchdog expired. Recent tool results were preserved, but no final answer was delivered. Verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.",
-        ),
-        "continuation_start_failed" => (
-            "continuation_start_failed",
-            true,
-            "continuation_runtime",
-            "Previous turn failed while starting continuation after client results were delivered. Recent tool results were preserved, but no final answer was delivered. Verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.",
-        ),
-        "runtime_internal" if is_budget_or_loop_failure(reason, message) => (
-            "turn_budget_exhausted",
-            false,
-            "turn_budget",
-            "Previous turn stopped for budget or loop-safety reasons before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; if the user asks to proceed, verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.",
-        ),
-        _ => (
-            "operational_failure",
-            false,
-            "runtime",
-            "Previous turn ended with an operational failure before final answer delivery. Do not assume the requested work completed or incomplete from prior assistant text alone. Verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.",
-        ),
+    let (kind, retryable, subsystem) = match reason {
+        "continuation_stream_error" => ("provider_stream_error", true, "llm_stream_transport"),
+        "continuation_watchdog_timeout" => ("continuation_timeout", true, "continuation_runtime"),
+        "continuation_start_failed" => ("continuation_start_failed", true, "continuation_runtime"),
+        "runtime_internal" if is_budget_or_loop_failure(reason, message) => {
+            ("turn_budget_exhausted", false, "turn_budget")
+        }
+        _ => ("operational_failure", false, "runtime"),
     };
-    let summary = autonomous_resume.unwrap_or(summary);
+    let rendered_summary = render_operational_outcome_summary(kind);
+    let summary = autonomous_resume.unwrap_or(&rendered_summary);
     let mut content = json!({
             "source": "den.runtime",
             "event": "operational_outcome",
@@ -107,6 +88,24 @@ pub fn normalized_operational_outcome(
         content["context"] = context.clone();
     }
     (summary.to_string(), content)
+}
+
+fn render_operational_outcome_summary(kind: &str) -> String {
+    render_operational_outcome_summary_from_fragments(kind).unwrap_or_else(|_| {
+        // ponytail: fallback avoids losing runtime error reporting if fragment loading fails;
+        // upgrade path is to plumb DenError through normalized_operational_outcome callers.
+        "Previous turn ended before final answer delivery. Verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do."
+            .to_string()
+    })
+}
+
+fn render_operational_outcome_summary_from_fragments(
+    kind: &str,
+) -> Result<String, den_core::DenError> {
+    let fragments = repository_prompt_fragment_registry()?;
+    let fragment = fragments.require("runtime_operational_outcome_summary")?;
+    render_turn_fragment(fragment, &json!({ "outcome": { "kind": kind } }))
+        .map(|text| text.trim().to_string())
 }
 
 pub fn is_budget_or_loop_failure(reason: &str, message: &str) -> bool {

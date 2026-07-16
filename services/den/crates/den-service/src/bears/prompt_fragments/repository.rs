@@ -41,6 +41,10 @@ const REPOSITORY_PROMPT_SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../prompts/fragments/runtime/run_recovery.md"),
     ),
     (
+        "fragments/runtime/operational_outcome_summary.md",
+        include_str!("../../../../../prompts/fragments/runtime/operational_outcome_summary.md"),
+    ),
+    (
         "fragments/runtime/task_list_final_gate_continuation.md",
         include_str!(
             "../../../../../prompts/fragments/runtime/task_list_final_gate_continuation.md"
