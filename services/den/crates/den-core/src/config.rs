@@ -619,6 +619,7 @@ impl Config {
 
         let sandbox_server_url = sandbox_server_url_from_env(
             std::env::var("SANDBOX_SERVER_URL").ok(),
+            run_web,
             run_workers,
             run_sandbox,
             sandbox_port,
@@ -746,6 +747,7 @@ impl Config {
 
 fn sandbox_server_url_from_env(
     raw: Option<String>,
+    run_web: bool,
     run_workers: bool,
     run_sandbox: bool,
     sandbox_port: u16,
@@ -759,7 +761,7 @@ fn sandbox_server_url_from_env(
                 Some(value)
             }
         }
-        None if run_workers && !run_sandbox => Some(format!(
+        None if (run_web || run_workers) && !run_sandbox => Some(format!(
             "http://{DEFAULT_SANDBOX_SERVER_HOST}:{sandbox_port}"
         )),
         None => None,
@@ -945,19 +947,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sandbox_server_url_defaults_for_worker_only_processes() {
+    fn sandbox_server_url_defaults_for_den_processes() {
         assert_eq!(
-            sandbox_server_url_from_env(None, true, false, 3137).as_deref(),
+            sandbox_server_url_from_env(None, false, true, false, 3137).as_deref(),
             Some("http://bears-sandbox-provider:3137")
         );
         assert_eq!(
-            sandbox_server_url_from_env(Some(String::new()), true, false, 3002),
+            sandbox_server_url_from_env(None, true, false, false, 3138).as_deref(),
+            Some("http://bears-sandbox-provider:3138")
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(Some(String::new()), true, true, false, 3002),
             None
         );
-        assert_eq!(sandbox_server_url_from_env(None, false, true, 3002), None);
         assert_eq!(
-            sandbox_server_url_from_env(Some(" http://sandbox:3002/ ".into()), true, false, 3002)
-                .as_deref(),
+            sandbox_server_url_from_env(None, false, false, true, 3002),
+            None
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(
+                Some(" http://sandbox:3002/ ".into()),
+                true,
+                true,
+                false,
+                3002
+            )
+            .as_deref(),
             Some("http://sandbox:3002")
         );
     }
