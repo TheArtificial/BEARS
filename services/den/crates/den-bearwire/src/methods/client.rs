@@ -168,7 +168,47 @@ fn continuation_retry_pauses() -> &'static [Duration] {
 }
 
 fn is_retryable_continuation_stream_error(message: &str) -> bool {
-    message.contains("LLM byte stream produced no data")
+    let message = message.to_ascii_lowercase();
+    [
+        "llm byte stream produced no data",
+        "connection reset",
+        "connection closed",
+        "connection aborted",
+        "broken pipe",
+        "unexpected eof",
+        "stream reset",
+        "http/2 stream",
+        "request timeout",
+        "request timed out",
+        "operation timed out",
+        "gateway timeout",
+        "upstream timeout",
+        "temporarily unavailable",
+        "too many requests",
+        "rate limit",
+        "rate_limit",
+        "overloaded",
+        "status 408",
+        "status: 408",
+        "http 408",
+        "status 429",
+        "status: 429",
+        "http 429",
+        "status 500",
+        "status: 500",
+        "http 500",
+        "status 502",
+        "status: 502",
+        "http 502",
+        "status 503",
+        "status: 503",
+        "http 503",
+        "status 504",
+        "status: 504",
+        "http 504",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
 }
 
 fn continuation_retry_pauses_seconds() -> Vec<u64> {
@@ -640,7 +680,7 @@ fn spawn_continuation_task(
                         run.user_id,
                         continuation_started_at,
                         "continuation_stream_retryable_error",
-                        "LLM continuation stream produced no data; will retry after backoff.",
+                        "LLM continuation stream hit a transient error; will retry after backoff.",
                         json!({
                             "request_id": request_id,
                             "attempt": attempt_number,
@@ -1228,12 +1268,35 @@ mod tests {
     #[test]
     fn continuation_retry_schedule_and_idle_error_classification() {
         assert_eq!(continuation_retry_pauses_seconds(), vec![2, 4, 54]);
-        assert!(is_retryable_continuation_stream_error(
-            "Server Error: LLM byte stream produced no data for 30s"
-        ));
-        assert!(!is_retryable_continuation_stream_error(
-            "Server Error: some other continuation failure"
-        ));
+        for message in [
+            "Server Error: LLM byte stream produced no data for 30s",
+            "Server Error: connection reset by peer",
+            "Server Error: HTTP/2 stream reset",
+            "Server Error: upstream timeout",
+            "Server Error: provider temporarily unavailable",
+            "Server Error: rate limit exceeded",
+            "Server Error: overloaded",
+            "Server Error: status 429 Too Many Requests",
+            "Server Error: HTTP 503 Service Unavailable",
+            "Server Error: gateway timeout",
+        ] {
+            assert!(
+                is_retryable_continuation_stream_error(message),
+                "expected retryable: {message}"
+            );
+        }
+        for message in [
+            "Server Error: some other continuation failure",
+            "Validation Error: invalid continuation payload",
+            "Authorization failed for continuation",
+            "model not found",
+            "permission denied",
+        ] {
+            assert!(
+                !is_retryable_continuation_stream_error(message),
+                "expected non-retryable: {message}"
+            );
+        }
     }
 
     #[test]
