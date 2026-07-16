@@ -544,7 +544,8 @@ pub fn evaluate_turn_context_budget(
                     "reserved_output_tokens": report.reserved_output_tokens,
                     "estimated_total_tokens": report.estimated_total_tokens,
                 }),
-                "Budget advisory: the next model call is close to the context limit. Checkpoint or compact before adding more context.".to_string(),
+                "Budget advisory: the next model call is close to the context limit. Checkpoint or compact before adding more context. If focused work remains, split the remaining work into smaller task slices rather than trying to fit the whole Job in this turn."
+                    .to_string(),
             ),
         }
     });
@@ -589,7 +590,7 @@ fn budget_warning(
                             "limit_ms": limit_ms,
                         }),
                         format!(
-                            "Budget advisory: this turn reached its wall-clock limit after recording the latest tool result (elapsed={elapsed_ms}ms/limit={limit_ms}ms). Do not call more tools in this turn; provide the best final answer now."
+                            "Budget advisory: this turn reached its wall-clock limit after recording the latest tool result (elapsed={elapsed_ms}ms/limit={limit_ms}ms). Do not call more tools in this turn. If focused work remains, summarize progress and prepare a smaller next task slice rather than claiming the Job is complete."
                         ),
                     ),
                 }
@@ -601,7 +602,7 @@ fn budget_warning(
                     code,
                     message: render_budget_warning_message(
                         json!({ "code": code }),
-                        "Budget advisory: this turn has exceeded a tool budget after recording the latest tool result. Do not call more tools in this turn; provide the best final answer now.".to_string(),
+                        "Budget advisory: this turn has exceeded a tool budget after recording the latest tool result. Do not call more tools in this turn. If focused work remains, summarize progress and prepare a smaller next task slice rather than claiming the Job is complete.".to_string(),
                     ),
                 }
             }
@@ -620,7 +621,7 @@ fn budget_warning(
                     "limit": policy.emergency_hard_steps,
                 }),
                 format!(
-                    "Budget advisory: this turn is at the end of its emergency continuation fuse (next step would reach {}/{}). If you already have enough information, stop calling tools and provide the best final answer now.",
+                    "Budget advisory: this turn is at the end of its emergency continuation fuse (next step would reach {}/{}). If you already have enough information for this slice, stop calling tools, record progress, and leave a smaller next slice if focused work remains.",
                     step + 1,
                     policy.emergency_hard_steps
                 ),
@@ -641,7 +642,7 @@ fn budget_warning(
                     "remaining_ms": remaining_wall_clock_ms,
                 }),
                 format!(
-                    "Budget advisory: this turn is close to its wall-clock limit (remaining={}ms). Prefer a final answer over more tool calls unless one more call is strictly necessary.",
+                    "Budget advisory: this turn is close to its wall-clock limit (remaining={}ms). Prefer finishing the current slice, checkpointing, or decomposing remaining focused work over starting another broad tool sequence. Use one more tool call only if it is strictly necessary to safely close this slice.",
                     remaining_wall_clock_ms
                 ),
             ),
@@ -660,7 +661,7 @@ fn budget_warning(
                     "limit": policy.tool_call_limits.total,
                 }),
                 format!(
-                    "Budget advisory: this turn has fully used its emergency total tool-call fuse ({}/{} tool calls used). Any further tool call will stop the turn. Provide the best final answer now unless you explicitly need a fresh turn.",
+                    "Budget advisory: this turn has fully used its emergency total tool-call fuse ({}/{} tool calls used). Any further tool call will stop the turn. Finish/checkpoint this slice; if focused work remains, prepare a smaller next task slice instead of treating the budget as Job completion.",
                     state.tool_usage.total,
                     policy.tool_call_limits.total
                 ),
@@ -679,7 +680,7 @@ fn budget_warning(
                     "limit": policy.tool_call_limits.total,
                 }),
                 format!(
-                    "Budget advisory: this turn is close to its emergency total tool-call fuse ({}/{} tool calls used). Prefer a final answer over more tool calls unless one more call is strictly necessary.",
+                    "Budget advisory: this turn is close to its emergency total tool-call fuse ({}/{} tool calls used). Prefer finishing/checkpointing this slice and decomposing remaining focused work over more tool calls unless one more call is strictly necessary.",
                     state.tool_usage.total,
                     policy.tool_call_limits.total
                 ),
@@ -706,7 +707,7 @@ fn budget_warning(
                         "limit": limit,
                     }),
                     format!(
-                        "Budget advisory: this turn has fully used its {} tool budget ({}/{} used). Any further {} call will stop the turn. Provide the best final answer now unless you explicitly need a fresh turn.",
+                        "Budget advisory: this turn has fully used its {} tool budget ({}/{} used). Any further {} call will stop the turn. Finish/checkpoint this slice; if focused work remains, prepare a smaller next task slice instead of treating the budget as Job completion.",
                         class.label(),
                         count,
                         limit,
@@ -727,7 +728,7 @@ fn budget_warning(
                         "limit": limit,
                     }),
                     format!(
-                        "Budget advisory: this turn is close to its {} tool budget ({}/{} used). Prefer a final answer over more tool calls unless one more {} call is strictly necessary.",
+                        "Budget advisory: this turn is close to its {} tool budget ({}/{} used). Prefer finishing/checkpointing this slice and decomposing remaining focused work over another {} call unless one more call is strictly necessary.",
                         class.label(),
                         count,
                         limit,
