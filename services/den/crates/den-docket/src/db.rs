@@ -379,11 +379,13 @@ pub(super) async fn list_jobs(
                commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1
+          AND ($2::text IS NULL OR source_conversation_id = $2)
         ORDER BY updated_at DESC
-        LIMIT $2
+        LIMIT $3
         ",
     )
     .bind(bear_id)
+    .bind(filter.source_conversation_id.as_deref())
     .bind(limit)
     .fetch_all(pool)
     .await?;

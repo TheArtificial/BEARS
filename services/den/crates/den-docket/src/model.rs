@@ -1021,6 +1021,7 @@ pub struct DocketConversationObjectiveRequest {
 pub struct DocketJobListFilter {
     pub statuses: Option<Vec<DocketJobStatus>>,
     pub include_cancelled: bool,
+    pub source_conversation_id: Option<String>,
     pub limit: i64,
 }
 

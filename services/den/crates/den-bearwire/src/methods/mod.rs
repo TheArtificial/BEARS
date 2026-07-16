@@ -10,6 +10,7 @@ use den_service::DenState;
 
 pub(crate) mod client;
 pub(crate) mod conversation;
+pub(crate) mod docket;
 pub(crate) mod resource;
 pub(crate) mod run;
 pub(crate) mod session;

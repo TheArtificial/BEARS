@@ -5551,6 +5551,81 @@ fn docket_job_ids_from_den_session_state(value: &Value) -> Vec<String> {
     jobs.into_iter().collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DocketJobListEntry {
+    id: String,
+    goal: String,
+    status: String,
+}
+
+async fn den_list_docket_jobs_for_session(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+) -> Result<Vec<DocketJobListEntry>> {
+    let value = bearwire::rpc_call(
+        http,
+        config,
+        "docket.jobs.list",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "limit": 50,
+        }),
+    )
+    .await
+    .with_context(|| format!("list BearWire Docket jobs for session {session_id}"))?;
+    let jobs = value
+        .get("jobs")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|job| {
+            Some(DocketJobListEntry {
+                id: job.get("id")?.as_str()?.to_string(),
+                goal: job
+                    .get("goal")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
+                status: job
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .trim()
+                    .to_string(),
+            })
+        })
+        .filter(|job| Uuid::parse_str(&job.id).is_ok())
+        .collect();
+    Ok(jobs)
+}
+
+fn truncate_for_focus_list(text: &str) -> String {
+    const LIMIT: usize = 120;
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= LIMIT {
+        return trimmed.to_string();
+    }
+    format!("{}...", trimmed.chars().take(LIMIT - 3).collect::<String>())
+}
+
+fn focus_job_choice_lines(jobs: &[DocketJobListEntry]) -> String {
+    jobs.iter()
+        .map(|job| {
+            let goal = truncate_for_focus_list(&job.goal);
+            if goal.is_empty() {
+                format!("- /focus {}\n  {}", job.id, job.status)
+            } else {
+                format!("- /focus {}\n  {} — {}", job.id, job.status, goal)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 async fn focus_job_report(
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -5591,31 +5666,45 @@ async fn focus_report(
             let (Some(http), Some(config)) = (http, config) else {
                 return den_required_slash_command_unavailable(LocalSlashCommand::Focus);
             };
-            let session_state = match den_get_acp_session(http, config, session_id).await {
-                Ok(session_state) => session_state,
+            match den_list_docket_jobs_for_session(http, config, session_id).await {
+                Ok(jobs) => match jobs.as_slice() {
+                    [job] => focus_job_report(shared_state, session_id, job.id.clone()).await,
+                    [] => "Den ACP /focus found no Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
+                        .to_string(),
+                    many => format!(
+                        "Den ACP /focus found multiple Jobs associated with this conversation. Choose one explicitly:\n\n{}",
+                        focus_job_choice_lines(many)
+                    ),
+                },
                 Err(err) => {
-                    return format!(
-                        "Den ACP /focus could not inspect this conversation's Den session state: {err:#}\n\nBare /focus uses Den's recorded session/task projection, not ACP MCP tool registration. Reconnect this ACP session after deploying Den/armature, then retry /focus."
-                    );
+                    let session_state = match den_get_acp_session(http, config, session_id).await {
+                        Ok(session_state) => session_state,
+                        Err(state_err) => {
+                            return format!(
+                                "Den ACP /focus could not list this conversation's Docket Jobs: {err:#}\n\nIt also could not inspect this conversation's Den session state: {state_err:#}\n\nBare /focus uses Den's recorded Docket/session projection, not ACP MCP tool registration. Reconnect this ACP session after deploying Den/armature, then retry /focus."
+                            );
+                        }
+                    };
+                    let mut job_ids = docket_job_ids_from_den_session_state(&session_state);
+                    if job_ids.is_empty() {
+                        if let Ok(context) = session_context(adapter_state, session_id) {
+                            job_ids = docket_job_ids_from_task_list_status(&context.raw);
+                        }
+                    }
+                    match job_ids.as_slice() {
+                        [job_id] => focus_job_report(shared_state, session_id, job_id.clone()).await,
+                        [] => format!(
+                            "Den ACP /focus could not list this conversation's Docket Jobs: {err:#}\n\nIt found no Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
+                        ),
+                        many => format!(
+                            "Den ACP /focus could not list Docket Job descriptions: {err:#}\n\nIt found multiple Job-backed task lists associated with this conversation. Choose one explicitly:\n\n{}",
+                            many.iter()
+                                .map(|job_id| format!("- /focus {job_id}"))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        ),
+                    }
                 }
-            };
-            let mut job_ids = docket_job_ids_from_den_session_state(&session_state);
-            if job_ids.is_empty() {
-                if let Ok(context) = session_context(adapter_state, session_id) {
-                    job_ids = docket_job_ids_from_task_list_status(&context.raw);
-                }
-            }
-            match job_ids.as_slice() {
-                [job_id] => focus_job_report(shared_state, session_id, job_id.clone()).await,
-                [] => "Den ACP /focus found no Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
-                    .to_string(),
-                many => format!(
-                    "Den ACP /focus found multiple Job-backed task lists associated with this conversation. Choose one explicitly:\n\n{}",
-                    many.iter()
-                        .map(|job_id| format!("- /focus {job_id}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ),
             }
         }
     }
@@ -12233,6 +12322,18 @@ mod tests {
             docket_job_ids_from_den_session_state(&session_state),
             vec![job_id.to_string()]
         );
+    }
+
+    #[test]
+    fn focus_job_choice_lines_include_status_and_goal() {
+        let lines = focus_job_choice_lines(&[DocketJobListEntry {
+            id: "11111111-1111-1111-1111-111111111111".to_string(),
+            status: "ready".to_string(),
+            goal: "Advance the roadmap with evidence-backed slices".to_string(),
+        }]);
+
+        assert!(lines.contains("/focus 11111111-1111-1111-1111-111111111111"));
+        assert!(lines.contains("ready — Advance the roadmap with evidence-backed slices"));
     }
 
     #[test]
