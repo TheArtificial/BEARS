@@ -174,6 +174,20 @@ pub struct DocketJobsListRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct DocketJobsExecuteRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub bear_slug: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    pub job_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub session_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub conversation_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub source_client_session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SessionModelSetRequest {
     #[serde(deserialize_with = "deserialize_required_string")]
     pub session_id: String,

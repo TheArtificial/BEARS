@@ -1,8 +1,10 @@
 use axum::http::HeaderMap;
-use den_docket::{DocketJobListFilter, DocketService, PgDocketService};
+use den_core::BearProfile;
+use den_docket::{DocketJobExecuteRequest, DocketJobListFilter, DocketService, PgDocketService};
 use serde_json::{json, Value};
+use uuid::Uuid;
 
-use bearwire_protocol::methods::DocketJobsListRequest;
+use bearwire_protocol::methods::{DocketJobsExecuteRequest, DocketJobsListRequest};
 use den_http::errors::CustomError;
 use den_service::{client_sessions, DenState};
 
@@ -33,6 +35,35 @@ pub async fn docket_jobs_list_result(
     Ok(json!({
         "jobs": jobs,
     }))
+}
+
+pub async fn docket_jobs_execute_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let request: DocketJobsExecuteRequest = parse_params(params)?;
+    let job_id = Uuid::parse_str(&request.job_id)
+        .map_err(|err| CustomError::ValidationError(format!("invalid job_id: {err}")))?;
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let service = PgDocketService::from_pool(&state.sqlx_pool);
+    let outcome = service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id: bear.id,
+            job_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: request.session_id.clone(),
+            source_conversation_id: request.conversation_id.clone(),
+            source_client_session_id: request
+                .source_client_session_id
+                .clone()
+                .or_else(|| request.session_id.clone()),
+        })
+        .await?;
+
+    Ok(json!(outcome))
 }
 
 async fn source_conversation_id(

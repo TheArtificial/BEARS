@@ -5661,21 +5661,29 @@ fn focus_choice_jobs(jobs: &[DocketJobListEntry]) -> Vec<DocketJobListEntry> {
 }
 
 async fn focus_job_report(
-    shared_state: &AdapterSharedState,
+    http: &reqwest::Client,
+    config: &Config,
     session_id: &str,
     job_id: String,
 ) -> String {
-    match shared_state
-        .mcp_registry
-        .call_tool(session_id, "execute_job", json!({ "job_id": job_id }))
-        .await
+    match bearwire::rpc_call(
+        http,
+        config,
+        "docket.jobs.execute",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "job_id": job_id,
+        }),
+    )
+    .await
     {
         Ok(result) => format!(
-            "Den ACP focus set\n\n- Job: {job_id}\n- execute_job: {}",
+            "Den ACP focus set\n\n- Job: {job_id}\n- Docket execution: {}",
             compact_json_for_status(&result)
         ),
         Err(err) => format!(
-            "Den ACP /focus could not start focus for job {job_id}: {err:#}\n\nThis usually means this ACP session did not register the Docket execute_job tool. Reconnect the session after deploying Den/armature, then retry /focus {job_id}."
+            "Den ACP /focus could not start focus for job {job_id}: {err:#}\n\nRetry after reconnecting if this session was opened before the latest Den/armature deploy."
         ),
     }
 }
@@ -5684,13 +5692,16 @@ async fn focus_report(
     http: Option<&reqwest::Client>,
     config: Option<&Config>,
     adapter_state: &AdapterState,
-    shared_state: &AdapterSharedState,
+    _shared_state: &AdapterSharedState,
     session_id: &str,
     prompt: &str,
 ) -> String {
     match focus_prompt_target(prompt) {
         FocusPromptTarget::JobId(job_id) => {
-            focus_job_report(shared_state, session_id, job_id).await
+            let (Some(http), Some(config)) = (http, config) else {
+                return den_required_slash_command_unavailable(LocalSlashCommand::Focus);
+            };
+            focus_job_report(http, config, session_id, job_id).await
         }
         FocusPromptTarget::Invalid => {
             "Den ACP /focus needs zero arguments or exactly one Docket job UUID: /focus [job_id]"
@@ -5702,7 +5713,7 @@ async fn focus_report(
             };
             match den_list_docket_jobs_for_session(http, config, session_id).await {
                 Ok(jobs) => match focus_noncompleted_jobs(&jobs).as_slice() {
-                    [job] => focus_job_report(shared_state, session_id, job.id.clone()).await,
+                    [job] => focus_job_report(http, config, session_id, job.id.clone()).await,
                     [] => "Den ACP /focus found no non-completed Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
                         .to_string(),
                     many => {
@@ -5729,7 +5740,7 @@ async fn focus_report(
                         }
                     }
                     match job_ids.as_slice() {
-                        [job_id] => focus_job_report(shared_state, session_id, job_id.clone()).await,
+                        [job_id] => focus_job_report(http, config, session_id, job_id.clone()).await,
                         [] => format!(
                             "Den ACP /focus could not list this conversation's Docket Jobs: {err:#}\n\nIt found no Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
                         ),
