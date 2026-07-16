@@ -1011,6 +1011,7 @@ pub(crate) async fn list_jobs(
                 statuses: args.statuses,
                 include_cancelled: args.include_cancelled,
                 limit: args.limit,
+                ..DocketJobListFilter::default()
             },
         )
         .await?;
