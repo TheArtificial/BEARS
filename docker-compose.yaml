@@ -94,7 +94,7 @@ services:
             start_period: 10s
 
     # Optional derived recall vector store (ADR-0038). Enable with `COMPOSE_PROFILES=recall`.
-    # Den defaults to `QDRANT_URL=http://bears-qdrant:${QDRANT_PORT:-6333}` and degrades to keyword
+    # Den defaults to `QDRANT_URL=http://bears-qdrant:<QDRANT_PORT>` and degrades to keyword
     # (`LIKE`) recall when Qdrant is absent or unreachable, so it stays optional and nothing
     # `depends_on` it. No healthcheck: the Qdrant image ships no shell HTTP client; operators
     # add external reachability monitors (see docs/guides/infrastructure-and-ops.md).
@@ -219,7 +219,8 @@ services:
             # defaults must match SANDBOX_SERVICE_TOKEN on the provider —
             # setting either env var updates both sides; override it in
             # production.
-            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-http://bears-sandbox-provider:${SANDBOX_PORT:-3002}}
+            SANDBOX_PORT: ${SANDBOX_PORT:-3002}
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL-auto}
             SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
             SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
@@ -248,7 +249,8 @@ services:
             # Derived recall index (ADR-0038). QDRANT_URL empty = recall disabled (LIKE fallback);
             # the default points at the bundled recall-profile service. Embedding
             # settings pin the active platform standard and route via Bifrost /v1/embeddings.
-            QDRANT_URL: ${QDRANT_URL:-http://bears-qdrant:${QDRANT_PORT:-6333}}
+            QDRANT_PORT: ${QDRANT_PORT:-6333}
+            QDRANT_URL: ${QDRANT_URL-auto}
             EMBEDDING_STANDARD: ${EMBEDDING_STANDARD:-bears-embed-v1}
             EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
             EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
@@ -317,7 +319,8 @@ services:
             # defaults must match SANDBOX_SERVICE_TOKEN on the provider —
             # setting either env var updates both sides; override it in
             # production.
-            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL:-http://bears-sandbox-provider:${SANDBOX_PORT:-3002}}
+            SANDBOX_PORT: ${SANDBOX_PORT:-3002}
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL-auto}
             SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
             SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
@@ -343,7 +346,8 @@ services:
             BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
             BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
-            QDRANT_URL: ${QDRANT_URL:-http://bears-qdrant:${QDRANT_PORT:-6333}}
+            QDRANT_PORT: ${QDRANT_PORT:-6333}
+            QDRANT_URL: ${QDRANT_URL-auto}
             EMBEDDING_STANDARD: ${EMBEDDING_STANDARD:-bears-embed-v1}
             EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
             EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}

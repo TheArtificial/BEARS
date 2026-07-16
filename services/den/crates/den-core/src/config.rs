@@ -754,7 +754,7 @@ impl Config {
 }
 
 fn qdrant_url_from_env(raw: Option<String>, qdrant_port: u16) -> Option<String> {
-    match raw {
+    match raw.and_then(normalize_auto_url_env) {
         Some(value) => {
             let value = value.trim().trim_end_matches('/').to_string();
             if value.is_empty() {
@@ -774,7 +774,7 @@ fn sandbox_server_url_from_env(
     run_sandbox: bool,
     sandbox_port: u16,
 ) -> Option<String> {
-    match raw {
+    match raw.and_then(normalize_auto_url_env) {
         Some(value) => {
             let value = value.trim().trim_end_matches('/').to_string();
             if value.is_empty() {
@@ -787,6 +787,16 @@ fn sandbox_server_url_from_env(
             "http://{DEFAULT_SANDBOX_SERVER_HOST}:{sandbox_port}"
         )),
         None => None,
+    }
+}
+
+fn normalize_auto_url_env(value: String) -> Option<String> {
+    if value.trim().eq_ignore_ascii_case("auto") {
+        // ponytail: Compose can warn on nested defaults inside URL defaults in some deployers.
+        // `auto` is a local sentinel that lets Rust use the parsed *_PORT fallback.
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -979,6 +989,10 @@ mod tests {
             qdrant_url_from_env(Some(" http://qdrant:6333/ ".into()), 6333).as_deref(),
             Some("http://qdrant:6333")
         );
+        assert_eq!(
+            qdrant_url_from_env(Some("auto".into()), 6334).as_deref(),
+            Some("http://bears-qdrant:6334")
+        );
     }
 
     #[test]
@@ -990,6 +1004,10 @@ mod tests {
         assert_eq!(
             sandbox_server_url_from_env(None, true, false, false, 3138).as_deref(),
             Some("http://bears-sandbox-provider:3138")
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(Some("auto".into()), true, false, false, 3139).as_deref(),
+            Some("http://bears-sandbox-provider:3139")
         );
         assert_eq!(
             sandbox_server_url_from_env(Some(String::new()), true, true, false, 3002),
