@@ -5081,7 +5081,15 @@ async fn handle_local_slash_prompt(
     let report = if command == LocalSlashCommand::Debug {
         debug_report(debug_argument_from_prompt(&prompt))
     } else if command == LocalSlashCommand::Focus {
-        focus_report(shared_state, session_id, &prompt).await
+        focus_report(
+            http,
+            config,
+            adapter_state,
+            shared_state,
+            session_id,
+            &prompt,
+        )
+        .await
     } else {
         handle_local_slash_command(
             http,
@@ -5535,6 +5543,14 @@ fn docket_job_ids_from_task_list_status(value: &Value) -> Vec<String> {
     jobs.into_iter().collect()
 }
 
+fn docket_job_ids_from_den_session_state(value: &Value) -> Vec<String> {
+    let mut jobs = std::collections::BTreeSet::new();
+    if let Some(plan) = value.pointer("/diagnostics/active_activity_plan") {
+        collect_docket_job_refs(plan, &mut jobs);
+    }
+    jobs.into_iter().collect()
+}
+
 async fn focus_job_report(
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -5555,7 +5571,14 @@ async fn focus_job_report(
     }
 }
 
-async fn focus_report(shared_state: &AdapterSharedState, session_id: &str, prompt: &str) -> String {
+async fn focus_report(
+    http: Option<&reqwest::Client>,
+    config: Option<&Config>,
+    adapter_state: &AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    prompt: &str,
+) -> String {
     match focus_prompt_target(prompt) {
         FocusPromptTarget::JobId(job_id) => {
             focus_job_report(shared_state, session_id, job_id).await
@@ -5565,19 +5588,23 @@ async fn focus_report(shared_state: &AdapterSharedState, session_id: &str, promp
                 .to_string()
         }
         FocusPromptTarget::ConversationAssociated => {
-            let status = match shared_state
-                .mcp_registry
-                .call_tool(session_id, "get_task_list_status", json!({}))
-                .await
-            {
-                Ok(status) => status,
+            let (Some(http), Some(config)) = (http, config) else {
+                return den_required_slash_command_unavailable(LocalSlashCommand::Focus);
+            };
+            let session_state = match den_get_acp_session(http, config, session_id).await {
+                Ok(session_state) => session_state,
                 Err(err) => {
                     return format!(
-                        "Den ACP /focus could not resolve a conversation-associated Job because this ACP session could not call get_task_list_status: {err:#}\n\nBare /focus needs that task-list status tool to inspect this conversation. If Den/armature was just deployed, reconnect this ACP session and retry /focus. If you already know the Job, /focus <job_id> can still work when execute_job is registered."
+                        "Den ACP /focus could not inspect this conversation's Den session state: {err:#}\n\nBare /focus uses Den's recorded session/task projection, not ACP MCP tool registration. Reconnect this ACP session after deploying Den/armature, then retry /focus."
                     );
                 }
             };
-            let job_ids = docket_job_ids_from_task_list_status(&status);
+            let mut job_ids = docket_job_ids_from_den_session_state(&session_state);
+            if job_ids.is_empty() {
+                if let Ok(context) = session_context(adapter_state, session_id) {
+                    job_ids = docket_job_ids_from_task_list_status(&context.raw);
+                }
+            }
             match job_ids.as_slice() {
                 [job_id] => focus_job_report(shared_state, session_id, job_id.clone()).await,
                 [] => "Den ACP /focus found no Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
@@ -12182,6 +12209,29 @@ mod tests {
         assert_eq!(
             docket_job_ids_from_task_list_status(&status),
             vec![job_id.to_string(), other_job_id.to_string()]
+        );
+    }
+
+    #[test]
+    fn den_session_state_docket_jobs_use_active_activity_plan() {
+        let job_id = "11111111-1111-1111-1111-111111111111";
+        let session_state = json!({
+            "diagnostics": {
+                "active_activity_plan": {
+                    "items": [
+                        {"source_ref": {"refs": ["docket_job:<none>"]}},
+                        {"source_ref": {"refs": [format!("docket_job:{job_id}")]}}
+                    ]
+                }
+            },
+            "adapter_environment": {
+                "stale": {"refs": ["docket_job:22222222-2222-2222-2222-222222222222"]}
+            }
+        });
+
+        assert_eq!(
+            docket_job_ids_from_den_session_state(&session_state),
+            vec![job_id.to_string()]
         );
     }
 
