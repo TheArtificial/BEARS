@@ -125,12 +125,23 @@ pub fn run_failed_user_message(reason: &str, message: &str, bear_name: &str) -> 
             display_bear_name(bear_name)
         ));
     }
+    if is_llm_stream_idle_timeout(reason, message) {
+        return Some(format!(
+            "{} lost the LLM provider stream after it produced no data for 30 seconds. Recent tool results were preserved, but no final answer was delivered. You can send another message to retry, or close this session if you do not want to wait for another timeout.",
+            display_bear_name(bear_name)
+        ));
+    }
     None
 }
 
 fn is_llm_provider_retry_exhausted(message: &str) -> bool {
     message.contains("LLM provider hiccup persisted after")
         && message.contains("ending the turn after retry backoff")
+}
+
+fn is_llm_stream_idle_timeout(reason: &str, message: &str) -> bool {
+    reason == "continuation_stream_error"
+        && message.contains("LLM byte stream produced no data for 30s")
 }
 
 pub fn run_failed_history_marker(reason: &str, message: &str, bear_name: &str) -> Option<String> {
@@ -181,6 +192,10 @@ pub fn failure_context_with_diagnostics(
         diagnostic["class"] = json!("llm_provider_retry_exhausted");
         diagnostic["model_action"] = json!("report_retry_pause_and_wait_for_user_retry");
         diagnostic["retry_pauses_seconds"] = json!([2, 4, 54]);
+    } else if is_llm_stream_idle_timeout(reason, message) {
+        diagnostic["class"] = json!("llm_stream_idle_timeout");
+        diagnostic["model_action"] = json!("wait_for_user_retry_after_reporting_stream_timeout");
+        diagnostic["idle_timeout_seconds"] = json!(30);
     }
     object.insert("diagnostic".to_string(), diagnostic);
     Some(context)
@@ -376,6 +391,32 @@ mod tests {
             context["diagnostic"]["retry_pauses_seconds"],
             json!([2, 4, 54])
         );
+    }
+
+    #[test]
+    fn llm_stream_idle_timeout_has_friendly_user_message_and_diagnostics() {
+        let message = "Server Error: LLM byte stream produced no data for 30s";
+
+        let projection = run_failure_projection(
+            "continuation_stream_error",
+            message,
+            "run-1",
+            "Builder Bear",
+            None,
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("produced no data for 30 seconds"));
+        assert!(user_message.contains("send another message to retry"));
+        assert!(user_message.contains("close this session"));
+
+        let context = projection.diagnostic_context.expect("diagnostic context");
+        assert_eq!(context["diagnostic"]["class"], "llm_stream_idle_timeout");
+        assert_eq!(
+            context["diagnostic"]["model_action"],
+            "wait_for_user_retry_after_reporting_stream_timeout"
+        );
+        assert_eq!(context["diagnostic"]["idle_timeout_seconds"], 30);
     }
 
     #[test]
