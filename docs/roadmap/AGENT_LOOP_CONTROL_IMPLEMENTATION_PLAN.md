@@ -12,7 +12,7 @@ Recent slices have moved the plan through the governance/focus/orientation found
 
 - **Phase 2 / 2a partially complete:** runtime sessions carry governance, session info exposes governance/orientation/focus snapshots, final-gate continuations now mark governance as `autonomous_continuation`, and `work` stance is rejected before model invocation unless objective orientation is `focused`.
 - **Phase 2a focus persistence is intentionally minimal:** the current durable focus source is the conversation-linked Docket execution session (`docket_execution_sessions`) restored by live session id, ACP/client session id, then conversation id. Do not add a separate conversation-focus table unless we need history labels, explicit clear reasons, multi-job focus stacks, or richer title provenance.
-- **Phase 2b minimal UX is live:** armature has `/focus <job_id>` for exact UUID focus through the existing `execute_job` path, and runtime clears Docket focus on session mode changes. Search/matching and elicitation remain deferred UX work.
+- **Phase 2b minimal UX is live:** armature has `/focus <job_id>` for exact UUID focus through the existing `execute_job` path, and runtime clears Docket focus on session mode changes. Search/matching and elicitation remain deferred UX work. Chat/runtime tool surfaces still need a first-class focus affordance if the assistant is expected to request focus for the current session without relying on an armature slash command.
 - **Phase 2c mostly complete for orientation/focus boundaries:** runtime has objective-orientation-derived prompt/session diagnostics and derives task snapshots from orientation. Focused work takes precedence where wired, closed freeform no longer exposes or server-executes task-definition/delegation tools when `may_define_task = false`, and server-side `create_task`/`update_task` enforce oriented child count/depth caps plus immutable-focused decomposition rejection. Budget-profile differences are still incomplete.
 - **Diagnostics/history improved:** armature `/status` shows runtime focus/orientation/governance, Docket task create/update events include task definitions, focus selection is logged as a lightweight Docket job event, BearWire conversation history surfaces focus/task-definition diagnostics including focused task titles, and persisted objective-orientation events are projected into conversation surface history.
 - **Checkpoint protocol is enforced enough for normal development:** runtime can request structured `checkpoint` tool calls with typed next-action fields, and enforce mode now requires a pending checkpoint to be answered through the checkpoint tool before another non-checkpoint tool call or final answer. The assistant-text/fenced-JSON fallback path has been removed. Artifact retention is still future work.
@@ -252,6 +252,19 @@ Command shape:
 /focus [job]
 ```
 
+Model/tool affordance:
+
+The slash command is the client UX. If a Bear in chat or pair is expected to request Focus without the user typing `/focus`, expose a small runtime affordance that designates or clears the focused Job for the current conversation/session. Keep it boring: accept an exact `job_id` and an explicit clear operation first; do not implement fuzzy matching in the model-facing tool. The runtime should still validate the Job, bind focus through the same Docket execution-session path as `/focus`, emit the same diagnostics/events, and project the same orientation snapshot on the next run.
+
+Do not make `execute_job` double as the whole focus API for every surface unless it also updates the current session's Focus projection. Starting or resuming Docket execution and making the current conversation **Focused** are related, but the user-visible invariant is session focus: subsequent turns should be steered toward that Job until it completes, blocks, is cancelled, focus is cleared, or loop control stops continuation.
+
+Minimal useful sequence:
+
+1. `/focus <uuid>` remains the exact-ID armature path and is the reference behavior.
+2. Add or expose a first-class current-session focus operation for assistant/client use, with exact `job_id` and clear only.
+3. Verify `session_info`, `/status`, objective orientation, title projection, and prompt diagnostics all reflect the same focused Job.
+4. Add search/matching/elicitation only after exact focus/clear semantics are stable across chat, pair, and armature surfaces.
+
 `[job]` resolution:
 
 - exact Job ID: focus that Job and begin execution immediately;
@@ -274,6 +287,7 @@ When focused:
 | Define Focus projection | BearWire/ACP can project **Focused** as a special non-selectable state tied to conversation `focused_job_id`. |
 | Keep Den authoritative | Clients display Focus and may provide commands to request it, but Den validates/designates/clears the focused Job. |
 | Add slash-command hook | ACP/client command plumbing can handle `/focus [job]` with exact-id, search, ambiguous-selection, empty-recent, and define-new paths. |
+| Add current-session focus affordance | Chat/pair runtimes can designate or clear the current conversation's focused Job by exact `job_id` without relying on a user-typed armature slash command; the affordance shares validation/projection with `/focus`. |
 | Add focus matching policy | Focus matching considers at most 5 recent Jobs by default, auto-matches only exact/explicit or single high-confidence candidates, requires elicitation on ambiguity, and asks before durable Job creation or Docket-affecting `pair` attachment. |
 | Add elicitation path | Job selection uses one model-visible elicitation tool; client adapters choose native UI or numbered text fallback without exposing that choice to the model. |
 | Clear on mode change | If a client changes mode away from **Focused**, Den clears the conversation focused Job. |
