@@ -637,8 +637,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn active_execution_lookup_keeps_conversation_restore_path() {
-        let lookup = active_execution_lookup(Some("session-1"), "conversation-1");
+    fn active_docket_execution_lookup_keeps_conversation_restore_path() {
+        let lookup = active_docket_execution_lookup(Some("session-1"), "conversation-1");
 
         assert_eq!(lookup.session_id.as_deref(), Some("session-1"));
         assert_eq!(
@@ -652,8 +652,8 @@ mod tests {
     }
 
     #[test]
-    fn active_execution_lookup_restores_without_live_session() {
-        let lookup = active_execution_lookup(None, "conversation-1");
+    fn active_docket_execution_lookup_restores_without_live_session() {
+        let lookup = active_docket_execution_lookup(None, "conversation-1");
 
         assert!(lookup.session_id.is_none());
         assert!(lookup.source_client_session_id.is_none());

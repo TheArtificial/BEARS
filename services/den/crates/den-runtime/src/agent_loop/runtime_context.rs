@@ -223,8 +223,15 @@ mod tests {
         )
         .unwrap();
         assert!(pair.contains("Pair task-orientation hint"));
-        assert!(pair.contains("capture it as a task list"));
-        assert!(pair.contains("Prefer task lists; create a Job only when durable job-level criteria, delegation, handoff, or commit/work-branch tracking are needed."));
+        assert!(pair.contains("Docket is the user-visible durable work surface"));
+        assert!(pair.contains("conversation's implied Docket objective"));
+        assert!(pair.contains("Create an explicit Job only for separable objectives"));
+        assert!(pair.contains(
+            "lifecycle, focus, delegation, work surface, commit policy, or execution tracking"
+        ));
+        assert!(pair.contains(
+            "Docket/task tools record durable work state; they do not authorize autonomous execution"
+        ));
 
         let chat = render_objective_orientation_context(
             "chat",
