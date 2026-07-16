@@ -63,7 +63,7 @@ The note should tell the future model:
 
 - the previous turn did not complete;
 - whether recent tool results were preserved;
-- whether it should continue from latest successful state;
+- that persisted state and task/worktree status should be verified before deciding whether work remains;
 - whether there is nothing for it to repair.
 
 For infrastructure-only events where no model action is required, say that explicitly.
@@ -71,13 +71,13 @@ For infrastructure-only events where no model action is required, say that expli
 Example for budget exhaustion:
 
 ```text
-Previous turn stopped after exhausting its wall-clock budget before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; continue from the latest successful state if the user asks to proceed.
+Previous turn stopped after exhausting its wall-clock budget before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.
 ```
 
 Example for Den restart / missing in-memory continuation:
 
 ```text
-Previous turn could not continue because in-memory runtime state was lost, likely due to a Den restart. Persisted conversation and tool results remain available, but no final answer was delivered. There is no repair action for the model; continue from persisted state in this fresh turn.
+Previous turn could not continue because in-memory runtime state was lost, likely due to a Den restart. Persisted conversation and tool results remain available, but no final answer was delivered. There is no repair action for the model; verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.
 ```
 
 ### Chat-Surface And History Marker
@@ -153,9 +153,9 @@ Diagnostic context must not include secrets, full file contents, full prompts, b
 
 | Class | User Copy | Model Continuity | Diagnostic Home |
 |---|---|---|---|
-| Turn budget exhausted | “stopped after it ran too long” | Continue only if user asks; latest tool results preserved | Den logs + hidden operational outcome |
-| Den restart / missing continuation state | “lost active runtime state, likely restart” | No repair action; continue from persisted state | Den logs + armature stderr |
-| Continuation watchdog timeout | “runtime did not resume after tool result” | Continue from latest successful state | Den logs + armature stderr context |
+| Turn budget exhausted | “stopped after it ran too long” | Verify persisted state if user asks; latest tool results preserved | Den logs + hidden operational outcome |
+| Den restart / missing continuation state | “lost active runtime state, likely restart” | No repair action; verify persisted state before deciding work remains | Den logs + armature stderr |
+| Continuation watchdog timeout | “runtime did not resume after tool result” | Verify persisted state before deciding work remains | Den logs + armature stderr context |
 | Provider stream transport error | “model stream was interrupted” | Retry/continue safely; do not assume completion | Bifrost/Den logs + armature stderr |
 | Tool execution failure | Tool-specific user message | Use tool result/error semantics | Tool result raw output + Den/armature logs |
 | User cancellation | “request was cancelled” | Do not continue unless user asks | Armature/Den logs |
@@ -168,7 +168,7 @@ Budget, checkpoint, and task-focus warnings are governed by [ADR-0050 (Agent Loo
 |---|---|---|---|
 | Near-budget warning | “close to this turn's budget” | Prefer concise wrap-up or ask for fresh turn | Den event/log context budget details |
 | Task-focus warning | “kept task focus active” | Continue next incomplete/unblocked item | Den task-focus state |
-| Recoverable continuation warning | “recovered from interrupted continuation” | Recent results preserved; continue from latest state | Den logs + armature stderr if adapter-observed |
+| Recoverable continuation warning | “recovered from interrupted continuation” | Recent results preserved; verify persisted state before deciding work remains | Den logs + armature stderr if adapter-observed |
 | Budget replenishment after mutation | “allowed a short verification pass” when user-relevant | Verification-oriented continuation only | Den budget state |
 
 ## Retryability Vocabulary

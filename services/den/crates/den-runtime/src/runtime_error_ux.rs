@@ -62,31 +62,31 @@ pub fn normalized_operational_outcome(
             "provider_stream_error",
             true,
             "llm_stream_transport",
-            "Previous turn ended with a retryable provider stream transport error after continuation started. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
+            "Previous turn ended with a retryable provider stream transport error after continuation started. Recent tool results were preserved, but no final answer was delivered. Verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.",
         ),
         "continuation_watchdog_timeout" => (
             "continuation_timeout",
             true,
             "continuation_runtime",
-            "Previous turn timed out after a client/local-tool result was received and continuation started, but the resumed runtime produced no event before the watchdog expired. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
+            "Previous turn timed out after a client/local-tool result was received and continuation started, but the resumed runtime produced no event before the watchdog expired. Recent tool results were preserved, but no final answer was delivered. Verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.",
         ),
         "continuation_start_failed" => (
             "continuation_start_failed",
             true,
             "continuation_runtime",
-            "Previous turn failed while starting continuation after client results were delivered. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
+            "Previous turn failed while starting continuation after client results were delivered. Recent tool results were preserved, but no final answer was delivered. Verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.",
         ),
         "runtime_internal" if is_budget_or_loop_failure(reason, message) => (
             "turn_budget_exhausted",
             false,
             "turn_budget",
-            "Previous turn stopped for budget or loop-safety reasons before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; continue from the latest successful state only if the user asks to proceed.",
+            "Previous turn stopped for budget or loop-safety reasons before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; if the user asks to proceed, verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.",
         ),
         _ => (
             "operational_failure",
             false,
             "runtime",
-            "Previous turn ended with an operational failure before final answer delivery. Do not assume the requested work completed; continue from the latest successful state.",
+            "Previous turn ended with an operational failure before final answer delivery. Do not assume the requested work completed or incomplete from prior assistant text alone. Verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do.",
         ),
     };
     let summary = autonomous_resume.unwrap_or(summary);
@@ -305,6 +305,35 @@ mod tests {
             .model_summary
             .contains("Operational note from Den"));
         assert_eq!(projection.content["kind"], "turn_budget_exhausted");
+        assert_eq!(projection.content["retryable"], false);
+    }
+
+    #[test]
+    fn generic_operational_outcome_tells_model_to_verify_persisted_state() {
+        let projection = run_failure_projection(
+            "runtime_internal_unknown",
+            "unexpected runtime failure",
+            "run-1",
+            "Builder Bear",
+            None,
+        );
+
+        assert!(
+            projection.model_summary.contains("Verify persisted state"),
+            "{}",
+            projection.model_summary
+        );
+        assert!(
+            projection
+                .model_summary
+                .contains("before deciding whether there is work left to do"),
+            "{}",
+            projection.model_summary
+        );
+        assert!(!projection
+            .model_summary
+            .contains("continue from the latest successful state"));
+        assert_eq!(projection.content["kind"], "operational_failure");
         assert_eq!(projection.content["retryable"], false);
     }
 
