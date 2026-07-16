@@ -5558,6 +5558,12 @@ struct DocketJobListEntry {
     status: String,
 }
 
+impl DocketJobListEntry {
+    fn is_completed(&self) -> bool {
+        self.status.eq_ignore_ascii_case("completed")
+    }
+}
+
 async fn den_list_docket_jobs_for_session(
     http: &reqwest::Client,
     config: &Config,
@@ -5626,6 +5632,34 @@ fn focus_job_choice_lines(jobs: &[DocketJobListEntry]) -> String {
         .join("\n")
 }
 
+fn focus_noncompleted_jobs(jobs: &[DocketJobListEntry]) -> Vec<DocketJobListEntry> {
+    jobs.iter()
+        .filter(|job| !job.is_completed())
+        .cloned()
+        .collect()
+}
+
+fn focus_choice_jobs(jobs: &[DocketJobListEntry]) -> Vec<DocketJobListEntry> {
+    const MAX_CHOICES: usize = 10;
+
+    let mut choices = jobs
+        .iter()
+        .filter(|job| !job.is_completed())
+        .take(MAX_CHOICES)
+        .cloned()
+        .collect::<Vec<_>>();
+    let remaining = MAX_CHOICES.saturating_sub(choices.len());
+    if remaining > 0 {
+        choices.extend(
+            jobs.iter()
+                .filter(|job| job.is_completed())
+                .take(remaining)
+                .cloned(),
+        );
+    }
+    choices
+}
+
 async fn focus_job_report(
     shared_state: &AdapterSharedState,
     session_id: &str,
@@ -5667,14 +5701,17 @@ async fn focus_report(
                 return den_required_slash_command_unavailable(LocalSlashCommand::Focus);
             };
             match den_list_docket_jobs_for_session(http, config, session_id).await {
-                Ok(jobs) => match jobs.as_slice() {
+                Ok(jobs) => match focus_noncompleted_jobs(&jobs).as_slice() {
                     [job] => focus_job_report(shared_state, session_id, job.id.clone()).await,
-                    [] => "Den ACP /focus found no Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
+                    [] => "Den ACP /focus found no non-completed Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
                         .to_string(),
-                    many => format!(
-                        "Den ACP /focus found multiple Jobs associated with this conversation. Choose one explicitly:\n\n{}",
-                        focus_job_choice_lines(many)
-                    ),
+                    many => {
+                        let choices = focus_choice_jobs(&jobs);
+                        format!(
+                            "Den ACP /focus found multiple non-completed Jobs associated with this conversation. Choose one explicitly:\n\n{}",
+                            focus_job_choice_lines(if choices.is_empty() { many } else { &choices })
+                        )
+                    }
                 },
                 Err(err) => {
                     let session_state = match den_get_acp_session(http, config, session_id).await {
@@ -12334,6 +12371,58 @@ mod tests {
 
         assert!(lines.contains("/focus 11111111-1111-1111-1111-111111111111"));
         assert!(lines.contains("ready — Advance the roadmap with evidence-backed slices"));
+    }
+
+    #[test]
+    fn focus_noncompleted_jobs_ignore_completed_candidates() {
+        let jobs = vec![
+            DocketJobListEntry {
+                id: "11111111-1111-1111-1111-111111111111".to_string(),
+                status: "completed".to_string(),
+                goal: "Done work".to_string(),
+            },
+            DocketJobListEntry {
+                id: "22222222-2222-2222-2222-222222222222".to_string(),
+                status: "ready".to_string(),
+                goal: "Current work".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            focus_noncompleted_jobs(&jobs),
+            vec![DocketJobListEntry {
+                id: "22222222-2222-2222-2222-222222222222".to_string(),
+                status: "ready".to_string(),
+                goal: "Current work".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn focus_choice_jobs_append_completed_only_when_under_cap() {
+        let mut jobs = (0..11)
+            .map(|index| DocketJobListEntry {
+                id: format!("00000000-0000-0000-0000-{index:012}"),
+                status: "ready".to_string(),
+                goal: format!("Ready job {index}"),
+            })
+            .collect::<Vec<_>>();
+        jobs.push(DocketJobListEntry {
+            id: "99999999-9999-9999-9999-999999999999".to_string(),
+            status: "completed".to_string(),
+            goal: "Completed overflow".to_string(),
+        });
+
+        let choices = focus_choice_jobs(&jobs);
+        assert_eq!(choices.len(), 10);
+        assert!(choices.iter().all(|job| !job.is_completed()));
+
+        let choices = focus_choice_jobs(&jobs[0..2]);
+        assert_eq!(choices.len(), 2);
+
+        let choices = focus_choice_jobs(&jobs[10..]);
+        assert_eq!(choices.len(), 2);
+        assert_eq!(choices[1].status, "completed");
     }
 
     #[test]
