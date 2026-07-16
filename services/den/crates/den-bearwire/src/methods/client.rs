@@ -211,6 +211,11 @@ fn is_retryable_continuation_stream_error(message: &str) -> bool {
     .any(|needle| message.contains(needle))
 }
 
+fn should_retry_continuation_error(message: &str, attempt_index: usize) -> bool {
+    is_retryable_continuation_stream_error(message)
+        && attempt_index < continuation_retry_pauses().len()
+}
+
 fn continuation_retry_pauses_seconds() -> Vec<u64> {
     continuation_retry_pauses()
         .iter()
@@ -437,242 +442,246 @@ fn spawn_continuation_task(
                     _ = tokio::time::sleep(pause) => {}
                 }
             }
-        let continuation_future = continue_native_client_turn_event_stream(
-            TurnContinueRequest {
-                sqlx_pool: &pool,
-                config: config.as_ref(),
-                memory_stores: &memory_stores,
-                request_id,
-                run_id: Some(&run.run_id),
-                client_session_id: &run.session_id,
-                conversation: RuntimeConversationRef {
-                    id: conversation_id.clone(),
+            let continuation_future = continue_native_client_turn_event_stream(
+                TurnContinueRequest {
+                    sqlx_pool: &pool,
+                    config: config.as_ref(),
+                    memory_stores: &memory_stores,
+                    request_id,
+                    run_id: Some(&run.run_id),
+                    client_session_id: &run.session_id,
+                    conversation: RuntimeConversationRef {
+                        id: conversation_id.clone(),
+                    },
+                    binding: &binding,
+                    continuation: continuation.clone(),
+                    stream_context: default_tool_continue_stream_context(),
                 },
-                binding: &binding,
-                continuation: continuation.clone(),
-                stream_context: default_tool_continue_stream_context(),
-            },
-            BearProfile::Pair,
-        );
-        tokio::pin!(continuation_future);
-        let result = tokio::select! {
-            changed = cancel_rx.changed() => {
-                if changed.is_ok() && *cancel_rx.borrow() {
-                    tracing::info!(
-                        session_id = %run.session_id,
-                        run_id = %run.run_id,
-                        request_id = %request_id,
-                        "BearWire continuation startup observed cancellation"
-                    );
-                    return;
+                BearProfile::Pair,
+            );
+            tokio::pin!(continuation_future);
+            let result = tokio::select! {
+                changed = cancel_rx.changed() => {
+                    if changed.is_ok() && *cancel_rx.borrow() {
+                        tracing::info!(
+                            session_id = %run.session_id,
+                            run_id = %run.run_id,
+                            request_id = %request_id,
+                            "BearWire continuation startup observed cancellation"
+                        );
+                        return;
+                    }
+                    continuation_future.await
                 }
-                continuation_future.await
-            }
-            result = &mut continuation_future => result,
-        };
-        match result {
-            Ok((_continuation, mut stream)) => {
-                persist_run_progress(
-                    &pool,
-                    &run.session_id,
-                    &run.run_id,
-                    run.bear_id,
-                    run.user_id,
-                    continuation_started_at,
-                    "continuation_model_stream_waiting",
-                    "Waiting for model output after local tool/permission result…",
-                    json!({
-                        "request_id": request_id,
-                    }),
-                )
-                .await;
-                let mut first_event_seen = false;
-                let mut runtime_event_count = 0usize;
-                let mut terminal_event_seen = false;
-                let mut wait_event_seen = false;
-                let mut cancellation_seen = false;
-                let mut last_event_kind: Option<&'static str> = None;
-                let mut last_runtime_event_at: Option<Instant> = None;
-                let mut last_event_sequence: Option<i64> = None;
-                let mut retryable_stream_error: Option<String> = None;
-                let idle_watchdog_timeout = continuation_watchdog_timeout();
-                let handshake_timeout = native_llm_handshake_timeout();
-                let first_event_watchdog_timeout = continuation_first_event_watchdog_timeout(
-                    handshake_timeout,
-                    idle_watchdog_timeout,
-                );
-                loop {
-                    let watchdog_phase = if first_event_seen {
-                        "between_runtime_events"
-                    } else {
-                        "first_runtime_event"
-                    };
-                    let watchdog_timeout = if first_event_seen {
-                        idle_watchdog_timeout
-                    } else {
-                        first_event_watchdog_timeout
-                    };
-                    let item = tokio::select! {
-                        changed = cancel_rx.changed() => {
-                            if changed.is_ok() && *cancel_rx.borrow() {
-                                cancellation_seen = true;
-                                tracing::info!(
-                                    session_id = %run.session_id,
-                                    run_id = %run.run_id,
-                                    request_id = %request_id,
-                                    "BearWire continuation stream observed cancellation"
-                                );
-                                break;
+                result = &mut continuation_future => result,
+            };
+            match result {
+                Ok((_continuation, mut stream)) => {
+                    persist_run_progress(
+                        &pool,
+                        &run.session_id,
+                        &run.run_id,
+                        run.bear_id,
+                        run.user_id,
+                        continuation_started_at,
+                        "continuation_model_stream_waiting",
+                        "Waiting for model output after local tool/permission result…",
+                        json!({
+                            "request_id": request_id,
+                        }),
+                    )
+                    .await;
+                    let mut first_event_seen = false;
+                    let mut runtime_event_count = 0usize;
+                    let mut terminal_event_seen = false;
+                    let mut wait_event_seen = false;
+                    let mut cancellation_seen = false;
+                    let mut last_event_kind: Option<&'static str> = None;
+                    let mut last_runtime_event_at: Option<Instant> = None;
+                    let mut last_event_sequence: Option<i64> = None;
+                    let mut retryable_stream_error: Option<String> = None;
+                    let idle_watchdog_timeout = continuation_watchdog_timeout();
+                    let handshake_timeout = native_llm_handshake_timeout();
+                    let first_event_watchdog_timeout = continuation_first_event_watchdog_timeout(
+                        handshake_timeout,
+                        idle_watchdog_timeout,
+                    );
+                    loop {
+                        let watchdog_phase = if first_event_seen {
+                            "between_runtime_events"
+                        } else {
+                            "first_runtime_event"
+                        };
+                        let watchdog_timeout = if first_event_seen {
+                            idle_watchdog_timeout
+                        } else {
+                            first_event_watchdog_timeout
+                        };
+                        let item = tokio::select! {
+                            changed = cancel_rx.changed() => {
+                                if changed.is_ok() && *cancel_rx.borrow() {
+                                    cancellation_seen = true;
+                                    tracing::info!(
+                                        session_id = %run.session_id,
+                                        run_id = %run.run_id,
+                                        request_id = %request_id,
+                                        "BearWire continuation stream observed cancellation"
+                                    );
+                                    break;
+                                }
+                                continue;
                             }
-                            continue;
-                        }
-                        timed = tokio::time::timeout(watchdog_timeout, stream.next()) => {
-                            match timed {
-                                Ok(item) => item,
-                                Err(_) => {
-                                    let last_event_age_ms = last_runtime_event_at
-                                        .map(|at| at.elapsed().as_millis());
-                                    let context = json!({
-                                        "continuation_request_id": request_id,
-                                        "watchdog_phase": watchdog_phase,
-                                        "watchdog_timeout_ms": watchdog_timeout.as_millis(),
-                                        "first_event_watchdog_timeout_ms": first_event_watchdog_timeout.as_millis(),
-                                        "handshake_timeout_ms": handshake_timeout.as_millis(),
-                                        "idle_watchdog_timeout_ms": idle_watchdog_timeout.as_millis(),
-                                        "continuation_elapsed_ms": continuation_started_at.elapsed().as_millis(),
-                                        "runtime_event_count": runtime_event_count,
-                                        "first_event_seen": first_event_seen,
-                                        "terminal_event_seen": terminal_event_seen,
-                                        "wait_event_seen": wait_event_seen,
-                                        "last_event_kind": last_event_kind,
-                                        "last_event_sequence": last_event_sequence,
-                                        "last_event_age_ms": last_event_age_ms,
-                                        "diagnostic_note": "The continuation watchdog observes Den runtime events, not raw provider chunks. Check den_llm stream timing logs for provider chunk/byte counts for this request_id.",
-                                    });
-                                    let message = if first_event_seen {
-                                        format!(
-                                            "Den received the client result and continuation request {request_id} emitted runtime events, but no further runtime event arrived within {}ms. This usually means the resumed model/runtime stream stalled after it started.",
-                                            watchdog_timeout.as_millis()
+                            timed = tokio::time::timeout(watchdog_timeout, stream.next()) => {
+                                match timed {
+                                    Ok(item) => item,
+                                    Err(_) => {
+                                        let last_event_age_ms = last_runtime_event_at
+                                            .map(|at| at.elapsed().as_millis());
+                                        let context = json!({
+                                            "continuation_request_id": request_id,
+                                            "watchdog_phase": watchdog_phase,
+                                            "watchdog_timeout_ms": watchdog_timeout.as_millis(),
+                                            "first_event_watchdog_timeout_ms": first_event_watchdog_timeout.as_millis(),
+                                            "handshake_timeout_ms": handshake_timeout.as_millis(),
+                                            "idle_watchdog_timeout_ms": idle_watchdog_timeout.as_millis(),
+                                            "continuation_elapsed_ms": continuation_started_at.elapsed().as_millis(),
+                                            "runtime_event_count": runtime_event_count,
+                                            "first_event_seen": first_event_seen,
+                                            "terminal_event_seen": terminal_event_seen,
+                                            "wait_event_seen": wait_event_seen,
+                                            "last_event_kind": last_event_kind,
+                                            "last_event_sequence": last_event_sequence,
+                                            "last_event_age_ms": last_event_age_ms,
+                                            "diagnostic_note": "The continuation watchdog observes Den runtime events, not raw provider chunks. Check den_llm stream timing logs for provider chunk/byte counts for this request_id.",
+                                        });
+                                        let message = if first_event_seen {
+                                            format!(
+                                                "Den received the client result and continuation request {request_id} emitted runtime events, but no further runtime event arrived within {}ms. This usually means the resumed model/runtime stream stalled after it started.",
+                                                watchdog_timeout.as_millis()
+                                            )
+                                        } else {
+                                            format!(
+                                                "Den received the client result and started continuation request {request_id}, but no runtime event arrived within {}ms. This includes the configured LLM handshake allowance ({}ms) plus the continuation idle watchdog ({}ms). This usually means the resumed model/runtime stream stalled before emitting its first event.",
+                                                watchdog_timeout.as_millis(),
+                                                handshake_timeout.as_millis(),
+                                                idle_watchdog_timeout.as_millis()
+                                            )
+                                        };
+                                        fail_run_lifecycle(
+                                            &pool,
+                                            &run.session_id,
+                                            &run.run_id,
+                                            run.bear_id,
+                                            run.user_id,
+                                            "continuation_watchdog_timeout",
+                                            message,
+                                            Some(context),
                                         )
-                                    } else {
-                                        format!(
-                                            "Den received the client result and started continuation request {request_id}, but no runtime event arrived within {}ms. This includes the configured LLM handshake allowance ({}ms) plus the continuation idle watchdog ({}ms). This usually means the resumed model/runtime stream stalled before emitting its first event.",
-                                            watchdog_timeout.as_millis(),
-                                            handshake_timeout.as_millis(),
-                                            idle_watchdog_timeout.as_millis()
-                                        )
-                                    };
-                                    fail_run_lifecycle(
+                                        .await;
+                                        break;
+                                    }
+                                }
+                            }
+                        };
+                        let Some(item) = item else {
+                            break;
+                        };
+                        match item {
+                            Ok(runtime_event) => {
+                                runtime_event_count += 1;
+                                last_runtime_event_at = Some(Instant::now());
+                                let event_kind =
+                                    crate::methods::run::runtime_event_kind(&runtime_event);
+                                last_event_kind = Some(event_kind);
+                                match &runtime_event {
+                                    den_protocol::RuntimeStreamEvent::Semantic(
+                                        den_protocol::RuntimeSemanticEvent::TurnCompleted {
+                                            ..
+                                        }
+                                        | den_protocol::RuntimeSemanticEvent::TurnFailed { .. }
+                                        | den_protocol::RuntimeSemanticEvent::TurnCancelled {
+                                            ..
+                                        }
+                                        | den_protocol::RuntimeSemanticEvent::Error { .. },
+                                    ) => {
+                                        terminal_event_seen = true;
+                                    }
+                                    den_protocol::RuntimeStreamEvent::Semantic(
+                                        den_protocol::RuntimeSemanticEvent::ToolCallRequested {
+                                            ..
+                                        }
+                                        | den_protocol::RuntimeSemanticEvent::RunPaused { .. },
+                                    ) => {
+                                        wait_event_seen = true;
+                                    }
+                                    _ => {}
+                                }
+                                if !first_event_seen {
+                                    first_event_seen = true;
+                                    persist_run_progress(
                                         &pool,
                                         &run.session_id,
                                         &run.run_id,
                                         run.bear_id,
                                         run.user_id,
-                                        "continuation_watchdog_timeout",
-                                        message,
-                                        Some(context),
+                                        continuation_started_at,
+                                        "continuation_first_runtime_event",
+                                        "Received first runtime event after continuation.",
+                                        json!({
+                                            "request_id": request_id,
+                                            "event_kind": event_kind,
+                                            "runtime_event_count": runtime_event_count,
+                                        }),
                                     )
                                     .await;
-                                    break;
                                 }
-                            }
-                        }
-                    };
-                    let Some(item) = item else {
-                        break;
-                    };
-                    match item {
-                        Ok(runtime_event) => {
-                            runtime_event_count += 1;
-                            last_runtime_event_at = Some(Instant::now());
-                            let event_kind =
-                                crate::methods::run::runtime_event_kind(&runtime_event);
-                            last_event_kind = Some(event_kind);
-                            match &runtime_event {
-                                den_protocol::RuntimeStreamEvent::Semantic(
-                                    den_protocol::RuntimeSemanticEvent::TurnCompleted { .. }
-                                    | den_protocol::RuntimeSemanticEvent::TurnFailed { .. }
-                                    | den_protocol::RuntimeSemanticEvent::TurnCancelled { .. }
-                                    | den_protocol::RuntimeSemanticEvent::Error { .. },
-                                ) => {
-                                    terminal_event_seen = true;
-                                }
-                                den_protocol::RuntimeStreamEvent::Semantic(
-                                    den_protocol::RuntimeSemanticEvent::ToolCallRequested {
-                                        ..
-                                    }
-                                    | den_protocol::RuntimeSemanticEvent::RunPaused { .. },
-                                ) => {
-                                    wait_event_seen = true;
-                                }
-                                _ => {}
-                            }
-                            if !first_event_seen {
-                                first_event_seen = true;
-                                persist_run_progress(
+                                persist_runtime_event_as_bearwire(
                                     &pool,
                                     &run.session_id,
                                     &run.run_id,
                                     run.bear_id,
                                     run.user_id,
-                                    continuation_started_at,
-                                    "continuation_first_runtime_event",
-                                    "Received first runtime event after continuation.",
-                                    json!({
-                                        "request_id": request_id,
-                                        "event_kind": event_kind,
-                                        "runtime_event_count": runtime_event_count,
-                                    }),
+                                    runtime_event,
+                                    request_id,
+                                    Some(continuation_started_at),
                                 )
                                 .await;
+                                last_event_sequence =
+                                    bearwire_events::latest_event_sequence(&pool, &run.session_id)
+                                        .await
+                                        .ok()
+                                        .flatten();
                             }
-                            persist_runtime_event_as_bearwire(
-                                &pool,
-                                &run.session_id,
-                                &run.run_id,
-                                run.bear_id,
-                                run.user_id,
-                                runtime_event,
-                                request_id,
-                                Some(continuation_started_at),
-                            )
-                            .await;
-                            last_event_sequence =
-                                bearwire_events::latest_event_sequence(&pool, &run.session_id)
-                                    .await
-                                    .ok()
-                                    .flatten();
-                        }
-                        Err(err) => {
-                            let err_message = err.to_string();
-                            let is_retryable = is_retryable_continuation_stream_error(&err_message);
-                            if is_retryable && attempt_index < retry_pauses.len()
-                            {
-                                retryable_stream_error = Some(err_message);
-                                break;
+                            Err(err) => {
+                                let err_message = err.to_string();
+                                let is_retryable =
+                                    is_retryable_continuation_stream_error(&err_message);
+                                if should_retry_continuation_error(&err_message, attempt_index) {
+                                    retryable_stream_error = Some(err_message);
+                                    break;
+                                }
+                                fail_run_lifecycle(
+                                    &pool,
+                                    &run.session_id,
+                                    &run.run_id,
+                                    run.bear_id,
+                                    run.user_id,
+                                    "continuation_stream_error",
+                                    err_message,
+                                    Some(json!({
+                                        "attempt": attempt_number,
+                                        "retryable": is_retryable,
+                                        "retry_exhausted": is_retryable,
+                                        "retry_pauses_seconds": continuation_retry_pauses_seconds(),
+                                    })),
+                                )
+                                .await;
+                                break 'continuation_attempts;
                             }
-                            fail_run_lifecycle(
-                                &pool,
-                                &run.session_id,
-                                &run.run_id,
-                                run.bear_id,
-                                run.user_id,
-                                "continuation_stream_error",
-                                err_message,
-                                Some(json!({
-                                    "attempt": attempt_number,
-                                    "retryable": is_retryable,
-                                    "retry_exhausted": is_retryable,
-                                    "retry_pauses_seconds": continuation_retry_pauses_seconds(),
-                                })),
-                            )
-                            .await;
-                            break 'continuation_attempts;
                         }
                     }
-                }
-                if let Some(err_message) = retryable_stream_error {
-                    persist_run_progress(
+                    if let Some(err_message) = retryable_stream_error {
+                        persist_run_progress(
                         &pool,
                         &run.session_id,
                         &run.run_id,
@@ -689,11 +698,11 @@ fn spawn_continuation_task(
                         }),
                     )
                     .await;
-                    continue 'continuation_attempts;
-                }
-                let terminal_or_wait_seen = terminal_event_seen || wait_event_seen;
-                if !terminal_or_wait_seen && !cancellation_seen {
-                    fail_run_lifecycle(
+                        continue 'continuation_attempts;
+                    }
+                    let terminal_or_wait_seen = terminal_event_seen || wait_event_seen;
+                    if !terminal_or_wait_seen && !cancellation_seen {
+                        fail_run_lifecycle(
                         &pool,
                         &run.session_id,
                         &run.run_id,
@@ -716,52 +725,79 @@ fn spawn_continuation_task(
                         })),
                     )
                     .await;
-                } else {
-                    persist_run_progress(
+                    } else {
+                        persist_run_progress(
+                            &pool,
+                            &run.session_id,
+                            &run.run_id,
+                            run.bear_id,
+                            run.user_id,
+                            continuation_started_at,
+                            if terminal_event_seen {
+                                "continuation_stream_ended_after_terminal"
+                            } else {
+                                "continuation_stream_ended_after_wait"
+                            },
+                            if terminal_event_seen {
+                                "Continuation stream ended after a terminal runtime event."
+                            } else {
+                                "Continuation stream ended after emitting another client wait."
+                            },
+                            json!({
+                                "request_id": request_id,
+                                "runtime_event_count": runtime_event_count,
+                                "first_event_seen": first_event_seen,
+                                "terminal_event_seen": terminal_event_seen,
+                                "wait_event_seen": wait_event_seen,
+                                "last_event_kind": last_event_kind,
+                            }),
+                        )
+                        .await;
+                    }
+                    break 'continuation_attempts;
+                }
+                Err(err) => {
+                    let err_message = err.to_string();
+                    let is_retryable = is_retryable_continuation_stream_error(&err_message);
+                    if should_retry_continuation_error(&err_message, attempt_index) {
+                        persist_run_progress(
                         &pool,
                         &run.session_id,
                         &run.run_id,
                         run.bear_id,
                         run.user_id,
                         continuation_started_at,
-                        if terminal_event_seen {
-                            "continuation_stream_ended_after_terminal"
-                        } else {
-                            "continuation_stream_ended_after_wait"
-                        },
-                        if terminal_event_seen {
-                            "Continuation stream ended after a terminal runtime event."
-                        } else {
-                            "Continuation stream ended after emitting another client wait."
-                        },
+                        "continuation_start_retryable_error",
+                        "LLM continuation startup hit a transient error; will retry after backoff.",
                         json!({
                             "request_id": request_id,
-                            "runtime_event_count": runtime_event_count,
-                            "first_event_seen": first_event_seen,
-                            "terminal_event_seen": terminal_event_seen,
-                            "wait_event_seen": wait_event_seen,
-                            "last_event_kind": last_event_kind,
+                            "attempt": attempt_number,
+                            "error": err_message,
+                            "retry_pauses_seconds": continuation_retry_pauses_seconds(),
                         }),
                     )
                     .await;
+                        continue 'continuation_attempts;
+                    }
+                    fail_run_lifecycle(
+                        &pool,
+                        &run.session_id,
+                        &run.run_id,
+                        run.bear_id,
+                        run.user_id,
+                        "continuation_start_failed",
+                        err_message,
+                        Some(json!({
+                            "attempt": attempt_number,
+                            "retryable": is_retryable,
+                            "retry_exhausted": is_retryable,
+                            "retry_pauses_seconds": continuation_retry_pauses_seconds(),
+                        })),
+                    )
+                    .await;
+                    break 'continuation_attempts;
                 }
-                break 'continuation_attempts;
             }
-            Err(err) => {
-                fail_run_lifecycle(
-                    &pool,
-                    &run.session_id,
-                    &run.run_id,
-                    run.bear_id,
-                    run.user_id,
-                    "continuation_start_failed",
-                    err.to_string(),
-                    None,
-                )
-                .await;
-                break 'continuation_attempts;
-            }
-        }
         }
     });
 }
@@ -1296,7 +1332,19 @@ mod tests {
                 !is_retryable_continuation_stream_error(message),
                 "expected non-retryable: {message}"
             );
+            assert!(
+                !should_retry_continuation_error(message, 0),
+                "expected no retry: {message}"
+            );
         }
+        assert!(should_retry_continuation_error(
+            "Server Error: LLM byte stream produced no data for 30s",
+            0
+        ));
+        assert!(!should_retry_continuation_error(
+            "Server Error: LLM byte stream produced no data for 30s",
+            continuation_retry_pauses().len()
+        ));
     }
 
     #[test]
