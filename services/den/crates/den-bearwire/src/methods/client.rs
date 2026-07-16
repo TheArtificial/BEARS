@@ -158,6 +158,26 @@ fn continuation_first_event_watchdog_timeout(
         .unwrap_or(Duration::from_millis(u64::MAX))
 }
 
+fn continuation_retry_pauses() -> &'static [Duration] {
+    static PAUSES: [Duration; 3] = [
+        Duration::from_secs(2),
+        Duration::from_secs(4),
+        Duration::from_secs(54),
+    ];
+    &PAUSES
+}
+
+fn is_retryable_continuation_stream_error(message: &str) -> bool {
+    message.contains("LLM byte stream produced no data")
+}
+
+fn continuation_retry_pauses_seconds() -> Vec<u64> {
+    continuation_retry_pauses()
+        .iter()
+        .map(Duration::as_secs)
+        .collect()
+}
+
 fn continuation_conversation_id(session: &client_sessions::ClientSessionRow) -> String {
     session
         .resolved_conversation_id
@@ -336,6 +356,47 @@ fn spawn_continuation_task(
             binding_id,
             compatibility_backend: Some("native".to_string()),
         };
+        let retry_pauses = continuation_retry_pauses();
+        'continuation_attempts: for attempt_index in 0..=retry_pauses.len() {
+            let attempt_number = attempt_index + 1;
+            if attempt_index > 0 {
+                let pause = retry_pauses[attempt_index - 1];
+                persist_run_progress(
+                    &pool,
+                    &run.session_id,
+                    &run.run_id,
+                    run.bear_id,
+                    run.user_id,
+                    continuation_started_at,
+                    "continuation_retry_waiting",
+                    &format!(
+                        "LLM continuation stream stalled; retrying after {} seconds…",
+                        pause.as_secs()
+                    ),
+                    json!({
+                        "request_id": request_id,
+                        "attempt": attempt_number,
+                        "pause_seconds": pause.as_secs(),
+                        "retry_pauses_seconds": continuation_retry_pauses_seconds(),
+                    }),
+                )
+                .await;
+                tokio::select! {
+                    changed = cancel_rx.changed() => {
+                        if changed.is_ok() && *cancel_rx.borrow() {
+                            tracing::info!(
+                                session_id = %run.session_id,
+                                run_id = %run.run_id,
+                                request_id = %request_id,
+                                attempt = attempt_number,
+                                "BearWire continuation retry wait observed cancellation"
+                            );
+                            return;
+                        }
+                    }
+                    _ = tokio::time::sleep(pause) => {}
+                }
+            }
         let continuation_future = continue_native_client_turn_event_stream(
             TurnContinueRequest {
                 sqlx_pool: &pool,
@@ -345,10 +406,10 @@ fn spawn_continuation_task(
                 run_id: Some(&run.run_id),
                 client_session_id: &run.session_id,
                 conversation: RuntimeConversationRef {
-                    id: conversation_id,
+                    id: conversation_id.clone(),
                 },
                 binding: &binding,
-                continuation,
+                continuation: continuation.clone(),
                 stream_context: default_tool_continue_stream_context(),
             },
             BearProfile::Pair,
@@ -393,6 +454,7 @@ fn spawn_continuation_task(
                 let mut last_event_kind: Option<&'static str> = None;
                 let mut last_runtime_event_at: Option<Instant> = None;
                 let mut last_event_sequence: Option<i64> = None;
+                let mut retryable_stream_error: Option<String> = None;
                 let idle_watchdog_timeout = continuation_watchdog_timeout();
                 let handshake_timeout = native_llm_handshake_timeout();
                 let first_event_watchdog_timeout = continuation_first_event_watchdog_timeout(
@@ -542,6 +604,13 @@ fn spawn_continuation_task(
                                     .flatten();
                         }
                         Err(err) => {
+                            let err_message = err.to_string();
+                            let is_retryable = is_retryable_continuation_stream_error(&err_message);
+                            if is_retryable && attempt_index < retry_pauses.len()
+                            {
+                                retryable_stream_error = Some(err_message);
+                                break;
+                            }
                             fail_run_lifecycle(
                                 &pool,
                                 &run.session_id,
@@ -549,13 +618,38 @@ fn spawn_continuation_task(
                                 run.bear_id,
                                 run.user_id,
                                 "continuation_stream_error",
-                                err.to_string(),
-                                None,
+                                err_message,
+                                Some(json!({
+                                    "attempt": attempt_number,
+                                    "retryable": is_retryable,
+                                    "retry_exhausted": is_retryable,
+                                    "retry_pauses_seconds": continuation_retry_pauses_seconds(),
+                                })),
                             )
                             .await;
-                            break;
+                            break 'continuation_attempts;
                         }
                     }
+                }
+                if let Some(err_message) = retryable_stream_error {
+                    persist_run_progress(
+                        &pool,
+                        &run.session_id,
+                        &run.run_id,
+                        run.bear_id,
+                        run.user_id,
+                        continuation_started_at,
+                        "continuation_stream_retryable_error",
+                        "LLM continuation stream produced no data; will retry after backoff.",
+                        json!({
+                            "request_id": request_id,
+                            "attempt": attempt_number,
+                            "error": err_message,
+                            "retry_pauses_seconds": continuation_retry_pauses_seconds(),
+                        }),
+                    )
+                    .await;
+                    continue 'continuation_attempts;
                 }
                 let terminal_or_wait_seen = terminal_event_seen || wait_event_seen;
                 if !terminal_or_wait_seen && !cancellation_seen {
@@ -611,6 +705,7 @@ fn spawn_continuation_task(
                     )
                     .await;
                 }
+                break 'continuation_attempts;
             }
             Err(err) => {
                 fail_run_lifecycle(
@@ -624,7 +719,9 @@ fn spawn_continuation_task(
                     None,
                 )
                 .await;
+                break 'continuation_attempts;
             }
+        }
         }
     });
 }
@@ -1127,6 +1224,17 @@ pub(crate) async fn client_permission_result_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn continuation_retry_schedule_and_idle_error_classification() {
+        assert_eq!(continuation_retry_pauses_seconds(), vec![2, 4, 54]);
+        assert!(is_retryable_continuation_stream_error(
+            "Server Error: LLM byte stream produced no data for 30s"
+        ));
+        assert!(!is_retryable_continuation_stream_error(
+            "Server Error: some other continuation failure"
+        ));
+    }
 
     #[test]
     fn continuation_watchdog_timeout_defaults_and_clamps() {
