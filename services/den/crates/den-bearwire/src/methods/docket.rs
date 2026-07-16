@@ -4,11 +4,16 @@ use den_docket::{DocketJobExecuteRequest, DocketJobListFilter, DocketService, Pg
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use bearwire_protocol::methods::{DocketJobsExecuteRequest, DocketJobsListRequest};
+use bearwire_protocol::{
+    methods::{DocketJobsExecuteRequest, DocketJobsListRequest},
+    wire::BearWireEvent,
+};
 use den_http::errors::CustomError;
+use den_runtime::bearwire_events;
 use den_service::{client_sessions, DenState};
 
 use crate::auth::authenticated_bear;
+use crate::methods::conversation::project_focus_title;
 use crate::methods::parse_params;
 
 pub async fn docket_jobs_list_result(
@@ -62,6 +67,46 @@ pub async fn docket_jobs_execute_result(
                 .or_else(|| request.session_id.clone()),
         })
         .await?;
+
+    if let Some(session_id) = request
+        .source_client_session_id
+        .as_deref()
+        .or(request.session_id.as_deref())
+    {
+        if let Some(session) = client_sessions::find_for_user_bear_session_id(
+            &state.sqlx_pool,
+            user_id,
+            bear.id,
+            session_id,
+        )
+        .await?
+        {
+            let title = project_focus_title(session.conversation_title.clone(), true);
+            if title.is_some() || session.conversation_title_updated_at.is_some() {
+                let mut event = BearWireEvent::ephemeral(
+                    "session_info_update",
+                    json!({
+                        "title": title,
+                        "updated_at": session
+                            .conversation_title_updated_at
+                            .unwrap_or(session.updated_at)
+                            .to_string(),
+                    }),
+                );
+                event.bear_id = Some(bear.id.to_string());
+                event.human_id = Some(user_id.to_string());
+                event.session_id = Some(session.client_session_id.clone());
+                let _ = bearwire_events::append_bearwire_event(
+                    &state.sqlx_pool,
+                    &session.client_session_id,
+                    Some(bear.id),
+                    Some(user_id),
+                    event,
+                )
+                .await;
+            }
+        }
+    }
 
     Ok(json!(outcome))
 }

@@ -43,10 +43,26 @@ use den_service::{
 
 use crate::{
     events::{events_page, EventPageQuery},
-    methods::run::persist_run_failed,
+    methods::{conversation::project_focus_title, run::persist_run_failed},
     rpc::rpc,
 };
 use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
+
+#[test]
+fn project_focus_title_prefix_is_projection_only_and_idempotent() {
+    assert_eq!(
+        project_focus_title(Some("Title".to_string()), true).as_deref(),
+        Some("⌖ Title")
+    );
+    assert_eq!(
+        project_focus_title(Some("⌖ Title".to_string()), true).as_deref(),
+        Some("⌖ Title")
+    );
+    assert_eq!(
+        project_focus_title(Some("⌖ Title".to_string()), false).as_deref(),
+        Some("Title")
+    );
+}
 
 fn test_state(pool: sqlx::PgPool) -> DenState {
     test_state_with_config(pool, den_core::config::Config::test_stub())
@@ -2107,7 +2123,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     assert!(
         surface_events.iter().any(|event| {
             event.get("kind").and_then(Value::as_str) == Some("session_info_update")
-                && event.get("title").and_then(Value::as_str) == Some("History replay title")
+                && event.get("title").and_then(Value::as_str) == Some("⌖ History replay title")
                 && event.get("current_mode").and_then(Value::as_str) == Some("write")
         }),
         "surface history should expose typed session metadata update from latest session state: {surface_response}"

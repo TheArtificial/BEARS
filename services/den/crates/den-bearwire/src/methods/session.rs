@@ -26,6 +26,7 @@ use den_service::{
 };
 
 use crate::auth::{authenticate_for_bear_slug, authenticated_bear};
+use crate::methods::conversation::project_focus_title;
 use crate::methods::{parse_params, DEFAULT_CLIENT};
 
 pub async fn reflect_open_sessions_once(state: &DenState) -> Result<usize, CustomError> {
@@ -457,6 +458,34 @@ pub(crate) async fn session_open_result(
         &session_id,
     )
     .await?;
+    if cleared_focus_count > 0 {
+        if let Some(session) = session.as_ref() {
+            let title = project_focus_title(session.conversation_title.clone(), false);
+            if title.is_some() || session.conversation_title_updated_at.is_some() {
+                let mut update = BearWireEvent::ephemeral(
+                    "session_info_update",
+                    json!({
+                        "title": title,
+                        "updated_at": session
+                            .conversation_title_updated_at
+                            .unwrap_or(session.updated_at)
+                            .to_string(),
+                    }),
+                );
+                update.bear_id = Some(bear.id.to_string());
+                update.human_id = Some(user_id.to_string());
+                update.session_id = Some(session_id.clone());
+                let _ = bearwire_events::append_bearwire_event(
+                    &state.sqlx_pool,
+                    &session_id,
+                    Some(bear.id),
+                    Some(user_id),
+                    update,
+                )
+                .await;
+            }
+        }
+    }
     let mut event = BearWireEvent::ephemeral(
         "session.opened",
         json!({
