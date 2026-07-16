@@ -571,15 +571,31 @@ impl McpRegistry {
         provider_name: &str,
         args: Value,
     ) -> Result<Value> {
-        let route = self
-            .sessions
-            .lock()
-            .await
-            .get(session_id)
-            .and_then(|session| session.tools.get(provider_name).cloned())
-            .ok_or_else(|| {
+        let route = {
+            let sessions = self.sessions.lock().await;
+            let session = sessions.get(session_id).ok_or_else(|| {
                 anyhow!("MCP tool {provider_name:?} is not registered for ACP session {session_id}")
             })?;
+            if let Some(route) = session.tools.get(provider_name).cloned() {
+                route
+            } else {
+                let mut matches = session
+                    .tools
+                    .values()
+                    .filter(|route| route.original_tool_name == provider_name);
+                let Some(route) = matches.next().cloned() else {
+                    return Err(anyhow!(
+                        "MCP tool {provider_name:?} is not registered for ACP session {session_id}"
+                    ));
+                };
+                if matches.next().is_some() {
+                    return Err(anyhow!(
+                        "MCP tool {provider_name:?} is ambiguous for ACP session {session_id}; use the server-qualified provider name"
+                    ));
+                }
+                route
+            }
+        };
         call_server_tool(&route.source, &route.original_tool_name, args).await
     }
 }
@@ -993,6 +1009,13 @@ mod tests {
                 "mcp__host_browser__browser_snapshot",
                 Value::Null,
             )
+            .await
+            .unwrap();
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["content"], "snapshot ok");
+
+        let result = registry
+            .call_tool("session-1", "browser_snapshot", Value::Null)
             .await
             .unwrap();
         assert_eq!(result["ok"], true);
