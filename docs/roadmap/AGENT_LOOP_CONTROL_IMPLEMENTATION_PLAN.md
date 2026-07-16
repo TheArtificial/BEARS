@@ -25,7 +25,7 @@ Recent slices have moved the plan through the governance/focus/orientation found
 
 - Prefer **events over new state tables** for diagnostics. Focus and task-definition history fit well as existing Docket events; orientation transitions should use an existing conversation/BearWire event stream or similarly lightweight log rather than a new heavy table.
 - Keep **durable focus** and **diagnostic history** separate. The current Docket execution-session record can remain the focus source of truth; event logs explain how focus/orientation changed over time.
-- Treat `/focus` matching as a UX layer, not a runtime primitive. Exact-id focus is enough for now; fuzzy search and elicitation should be added only after the projection/clear/title semantics are stable.
+- Treat `/focus` matching as a UX layer, not a runtime primitive. Exact-id focus is enough for now; empty `/focus` may use current-conversation Job association before falling back to recent Jobs. Broader fuzzy search and elicitation should be added only after the projection/clear/title semantics are stable.
 - Do not build a generic `FocusTarget`. The implementation experience still supports the existing constraint: durable focus is a Docket Job; task focus is derived and ephemeral.
 - Keep broad budget enforcement behind the replay/tuning spine. The ledger/replay slices are now in place; next budget/checkpoint changes should either be replayable through the existing summary/comparison helpers or recorded as typed loop-control decisions.
 - Reconcile this plan with the grounding/tuning companion before Phase 3/4 enforcement. Context-pressure and grounding signals now have ledger hooks and enough replay support to compare observed behavior against expected decision/profile shapes. Prefer those small comparisons over building a speculative policy simulator.
@@ -269,7 +269,7 @@ Minimal useful sequence:
 
 - exact Job ID: focus that Job and begin execution immediately;
 - other text: search existing Jobs; if exactly one high-confidence match exists, focus it and begin execution immediately; otherwise show possible matches and ask the user to select one or begin defining a new Job;
-- empty: show the 5 most recent Jobs and ask the user to select one or begin defining a new Job.
+- empty: resolve from the current conversation first. If the conversation has exactly one active associated focused Job or Job-backed task list, focus that Job immediately. If it has multiple plausible associated Jobs, ask the user to choose. If it has only session-local tasks with no backing Job, do not silently convert them into Focus; offer to keep working in oriented/session-task mode or create/focus a durable Job. If there is no conversation-associated candidate, show the 5 most recent Jobs and ask the user to select one or begin defining a new Job.
 
 High-confidence focus matching is intentionally narrow. Exact Job IDs and explicit continuation references to the current focused Job qualify. Otherwise, a match needs strong lexical/semantic overlap plus recency, with no competing plausible Job. Ambiguous matches must elicit a choice. `work` requires an explicit focused Job and must not fuzzy-attach to a Job before model-driven continuation. `pair` may use conversational focus to suggest a Job, but must ask before making Docket-affecting focus/task updates. If no high-confidence match exists and the request is task-like, stay freeform or session-local and ask before creating a durable Job.
 
@@ -286,7 +286,7 @@ When focused:
 | --- | --- |
 | Define Focus projection | BearWire/ACP can project **Focused** as a special non-selectable state tied to conversation `focused_job_id`. |
 | Keep Den authoritative | Clients display Focus and may provide commands to request it, but Den validates/designates/clears the focused Job. |
-| Add slash-command hook | ACP/client command plumbing can handle `/focus [job]` with exact-id, search, ambiguous-selection, empty-recent, and define-new paths. |
+| Add slash-command hook | ACP/client command plumbing can handle `/focus [job]` with exact-id, conversation-associated empty invocation, search, ambiguous-selection, empty-recent, and define-new paths. |
 | Add current-session focus affordance | Chat/pair runtimes can designate or clear the current conversation's focused Job by exact `job_id` without relying on a user-typed armature slash command; the affordance shares validation/projection with `/focus`. |
 | Add focus matching policy | Focus matching considers at most 5 recent Jobs by default, auto-matches only exact/explicit or single high-confidence candidates, requires elicitation on ambiguity, and asks before durable Job creation or Docket-affecting `pair` attachment. |
 | Add elicitation path | Job selection uses one model-visible elicitation tool; client adapters choose native UI or numbered text fallback without exposing that choice to the model. |
