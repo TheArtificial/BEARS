@@ -14,6 +14,7 @@ fn test_bear(profile: Option<BearContextProfile>) -> Bear {
         default_model: Some("openai/gpt-4o".to_string()),
         default_tool_budget_multiplier: None,
         tools_enabled: None,
+        work_enabled: false,
         runtime_plan: None,
         context_profile: profile
             .as_ref()
