@@ -5573,7 +5573,7 @@ async fn focus_report(shared_state: &AdapterSharedState, session_id: &str, promp
                 Ok(status) => status,
                 Err(err) => {
                     return format!(
-                        "Den ACP /focus could not inspect conversation-associated tasks: {err:#}\n\nUse /focus <job_id> to focus an explicit Docket job."
+                        "Den ACP /focus could not resolve a conversation-associated Job because this ACP session could not call get_task_list_status: {err:#}\n\nBare /focus needs that task-list status tool to inspect this conversation. If Den/armature was just deployed, reconnect this ACP session and retry /focus. If you already know the Job, /focus <job_id> can still work when execute_job is registered."
                     );
                 }
             };
