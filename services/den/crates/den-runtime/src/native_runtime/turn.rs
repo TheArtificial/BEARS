@@ -63,6 +63,10 @@ use crate::{
     },
 };
 use den_core::DenError;
+use den_docket::{
+    DocketExecutionLookup, DocketService, PgDocketService, TaskListCheckoutRequest,
+    TaskListCheckoutSource, TaskListProjection,
+};
 use den_service::conversation::persistence::PersistedTranscriptRecord;
 
 static SESSION_STORE: LazyLock<AgentLoopSessionStore> =
@@ -186,7 +190,7 @@ pub fn native_client_session_exists(conversation_id: &str, client_session_id: &s
 pub fn native_client_session_active_activity_plan(
     conversation_id: &str,
     client_session_id: &str,
-) -> Option<den_docket::TaskListProjection> {
+) -> Option<TaskListProjection> {
     let key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE
         .get(&key)
@@ -196,12 +200,62 @@ pub fn native_client_session_active_activity_plan(
 pub fn update_native_client_session_active_activity_plan(
     conversation_id: &str,
     client_session_id: &str,
-    active_activity_plan: Option<den_docket::TaskListProjection>,
+    active_activity_plan: Option<TaskListProjection>,
 ) {
     let key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE.update(&key, |session| {
         session.active_activity_plan = active_activity_plan;
     })
+}
+
+fn active_docket_execution_lookup_for_session(
+    conversation_id: &str,
+    client_session_id: &str,
+) -> DocketExecutionLookup {
+    DocketExecutionLookup {
+        session_id: Some(client_session_id.to_string()),
+        // ponytail: conversation-scoped focus is the durable restore path for now; upgrade to an
+        // explicit conversation focus record if focus needs history, labels, or multi-job stacks.
+        source_conversation_id: Some(conversation_id.to_string()),
+        source_client_session_id: Some(client_session_id.to_string()),
+    }
+}
+
+async fn refresh_active_activity_plan_from_docket(
+    pool: &PgPool,
+    conversation_id: &str,
+    client_session_id: &str,
+    bear_id: Uuid,
+    user_id: Option<i32>,
+    profile: BearProfile,
+) -> Result<Option<TaskListProjection>, DenError> {
+    let Some(user_id) = user_id else {
+        return Ok(None);
+    };
+    let service = PgDocketService::from_pool(pool);
+    let Some(execution) = service
+        .get_active_execution_session(
+            bear_id,
+            profile,
+            active_docket_execution_lookup_for_session(conversation_id, client_session_id),
+        )
+        .await?
+    else {
+        return Ok(None);
+    };
+    service
+        .checkout_task_list(
+            bear_id,
+            profile,
+            user_id,
+            TaskListCheckoutRequest {
+                source: TaskListCheckoutSource::DocketJob {
+                    job_id: execution.job_id,
+                    parent_task_id: None,
+                },
+            },
+        )
+        .await
 }
 
 pub fn native_client_session_runtime_state(
@@ -1793,6 +1847,21 @@ pub async fn continue_native_client_turn_event_stream(
             }
         }
     }
+    if let Some(refreshed_plan) = refresh_active_activity_plan_from_docket(
+        request.sqlx_pool,
+        &conversation_id,
+        client_session_id,
+        session.bear_id,
+        session.user_id,
+        profile,
+    )
+    .await?
+    {
+        SESSION_STORE.update(&session_key, |session| {
+            session.active_activity_plan = Some(refreshed_plan.clone());
+        });
+        session.active_activity_plan = Some(refreshed_plan);
+    }
     if let Some(reason) = evaluation.stop_reason {
         return Ok(continuation_budget_stop(reason));
     }
@@ -1903,6 +1972,17 @@ mod tests {
         crate::agent_loop::ObjectiveOrientation::Freeform {
             policy: FreeformPolicy::closed(),
         }
+    }
+
+    #[test]
+    fn active_docket_execution_lookup_uses_conversation_focus_restore_path() {
+        let lookup = active_docket_execution_lookup_for_session("conv-1", "session-1");
+        assert_eq!(lookup.session_id.as_deref(), Some("session-1"));
+        assert_eq!(lookup.source_conversation_id.as_deref(), Some("conv-1"));
+        assert_eq!(
+            lookup.source_client_session_id.as_deref(),
+            Some("session-1")
+        );
     }
 
     #[test]
