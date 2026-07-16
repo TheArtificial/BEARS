@@ -12,8 +12,12 @@ use bearwire_protocol::{
 use den_http::errors::CustomError;
 use den_runtime::{
     bearwire_events,
+    conversation_review::{
+        ConversationReview, ConversationReviewFinding, ConversationReviewFindingDetail,
+        ConversationReviewTrigger, FindingSource,
+    },
     pair_reflection::create_pair_reflection_proposals_from_latest_summary,
-    runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
+    runtime::compaction::{prepare_turn_compaction, TurnCompactionState, TurnCompactionTrigger},
     turn_obligations,
 };
 use den_service::{
@@ -93,7 +97,7 @@ async fn reflect_pair_session(
         .as_deref()
         .unwrap_or(&session.conversation_id)
         .to_string();
-    prepare_turn_compaction(
+    let compaction_state = prepare_turn_compaction(
         pool,
         &state.config,
         session.bear_id,
@@ -112,9 +116,19 @@ async fn reflect_pair_session(
     )
     .await
     .map_err(CustomError::from)?;
+    let review = build_pair_conversation_review(
+        conversation_id.clone(),
+        session.client_session_id.clone(),
+        trigger,
+        compaction_state.as_ref(),
+        output.candidate_count,
+        output.source_message_start_seq,
+        output.source_message_end_seq,
+    );
     Ok(json!({
         "status": if output.skipped_reason.is_some() { "skipped" } else { "processed" },
         "trigger": trigger,
+        "conversation_review": review,
         "skipped_reason": output.skipped_reason,
         "candidate_count": output.candidate_count,
         "discarded_count": output.discarded_count,
@@ -124,6 +138,66 @@ async fn reflect_pair_session(
         "source_message_start_seq": output.source_message_start_seq,
         "source_message_end_seq": output.source_message_end_seq,
     }))
+}
+
+fn build_pair_conversation_review(
+    conversation_id: String,
+    client_session_id: String,
+    trigger: &str,
+    compaction_state: Option<&TurnCompactionState>,
+    memory_candidate_count: usize,
+    source_message_start_seq: Option<i64>,
+    source_message_end_seq: Option<i64>,
+) -> ConversationReview {
+    let refs = source_seq_refs(source_message_start_seq, source_message_end_seq);
+    let mut findings = Vec::new();
+
+    if let Some(state) = compaction_state {
+        if state.decision.is_some() {
+            findings.push(ConversationReviewFinding {
+                source: FindingSource::runtime(refs.clone()),
+                detail: ConversationReviewFindingDetail::CompactionNeeded {
+                    reason: "Conversation review produced a compaction artifact.".to_string(),
+                },
+            });
+        }
+    }
+
+    if memory_candidate_count > 0 {
+        findings.push(ConversationReviewFinding {
+            source: FindingSource::runtime(refs),
+            detail: ConversationReviewFindingDetail::MemoryReflectionCandidate {
+                reason: format!(
+                    "Pair reflection found {memory_candidate_count} memory candidate(s)."
+                ),
+            },
+        });
+    }
+
+    ConversationReview::new(
+        conversation_id,
+        Some(client_session_id),
+        None,
+        conversation_review_trigger_from_reflection_trigger(trigger),
+        findings,
+    )
+}
+
+fn conversation_review_trigger_from_reflection_trigger(trigger: &str) -> ConversationReviewTrigger {
+    match trigger {
+        "session_close" => ConversationReviewTrigger::SessionClose,
+        "manual" => ConversationReviewTrigger::Manual,
+        _ => ConversationReviewTrigger::OpenSessionSweep,
+    }
+}
+
+fn source_seq_refs(start_seq: Option<i64>, end_seq: Option<i64>) -> Vec<String> {
+    match (start_seq, end_seq) {
+        (Some(start), Some(end)) => vec![format!("conversation_seq:{start}-{end}")],
+        (Some(start), None) => vec![format!("conversation_seq:{start}-")],
+        (None, Some(end)) => vec![format!("conversation_seq:-{end}")],
+        (None, None) => Vec::new(),
+    }
 }
 
 fn resolved_or_stored_conversation_id(session: &client_sessions::ClientSessionRow) -> &str {
