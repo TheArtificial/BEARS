@@ -6064,16 +6064,29 @@ fn render_den_runtime_status(runtime_state_response: &Value) -> Vec<String> {
         status_scalar(runtime, "/run/focused_job_id").unwrap_or_else(|| "<none>".to_string());
     let loop_level = status_scalar(runtime, "/agent_loop_control/level")
         .unwrap_or_else(|| "unknown".to_string());
-    let task_active =
-        status_scalar(runtime, "/task_focus/active").unwrap_or_else(|| "unknown".to_string());
+    let active_execution = session.pointer("/diagnostics/active_docket_execution");
+    let execution_job = active_execution.and_then(|execution| status_scalar(execution, "/job_id"));
+    let execution_task =
+        active_execution.and_then(|execution| status_scalar(execution, "/task_id"));
+    let task_active = status_scalar(runtime, "/task_focus/active")
+        .or_else(|| execution_job.as_ref().map(|_| "true".to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
     let next_task = status_scalar(runtime, "/task_focus/next_incomplete_task_title")
+        .or_else(|| {
+            execution_task
+                .as_ref()
+                .map(|task_id| format!("task {task_id}"))
+        })
         .unwrap_or_else(|| "<none>".to_string());
-    let docket_job =
-        status_scalar(runtime, "/docket/active_job_id").unwrap_or_else(|| "<none>".to_string());
-    let docket_task =
-        status_scalar(runtime, "/docket/active_task_id").unwrap_or_else(|| "<none>".to_string());
-    let docket_source =
-        status_scalar(runtime, "/docket/source").unwrap_or_else(|| "unknown".to_string());
+    let docket_job = status_scalar(runtime, "/docket/active_job_id")
+        .or(execution_job)
+        .unwrap_or_else(|| "<none>".to_string());
+    let docket_task = status_scalar(runtime, "/docket/active_task_id")
+        .or(execution_task)
+        .unwrap_or_else(|| "<none>".to_string());
+    let docket_source = status_scalar(runtime, "/docket/source")
+        .or_else(|| active_execution.map(|_| "docket_execution_session".to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
     vec![
         format!(
             "- Run: live={live} id={run_id} stance={stance} governance={governance} orientation={orientation} focused_job={focused_job} loop={loop_level}"

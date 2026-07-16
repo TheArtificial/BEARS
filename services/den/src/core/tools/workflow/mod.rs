@@ -11,10 +11,11 @@ use den_core::tools::constants::{
     DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
 };
 use den_docket::{
-    self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
-    DocketCriterionStatus, DocketEffortHint, DocketExecutionLookup, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection,
-    DocketJobStatus, DocketJobStatusReport, DocketJobUpdate, DocketService, DocketTaskCreate,
+    self as docket, docket_job_status_report, DocketCommitPolicy,
+    DocketConversationObjectiveRequest, DocketCriterionStateUpdate, DocketCriterionStatus,
+    DocketEffortHint, DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobStatus,
+    DocketJobStatusReport, DocketJobUpdate, DocketService, DocketTaskCreate,
     DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
     DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
     DocketTaskUpdate, DocketValidationError, PgDocketService, TaskListCheckoutRequest,
@@ -1233,6 +1234,44 @@ pub(crate) async fn evaluate_criterion(
     }))
 }
 
+fn should_default_pair_conversation_objective(role: BearProfile, job_id: Option<Uuid>) -> bool {
+    role == BearProfile::Pair && job_id.is_none()
+}
+
+fn should_default_pair_task_list_filter(
+    role: BearProfile,
+    job_id: Option<Uuid>,
+    session_anchor_id: Option<Uuid>,
+) -> bool {
+    should_default_pair_conversation_objective(role, job_id) && session_anchor_id.is_none()
+}
+
+async fn pair_conversation_objective_job_id(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+) -> Result<Option<Uuid>, CustomError> {
+    if role != BearProfile::Pair {
+        return Ok(None);
+    }
+    let Some(conversation_id) = clean_optional(&context.conversation_id) else {
+        return Err(DenError::ValidationError(
+            "pair task tools without job_id need the current conversation, but no conversation id is available in this tool context"
+                .to_string(),
+        )
+        .into());
+    };
+    let objective = PgDocketService::from_pool(pool)
+        .get_or_create_conversation_objective(DocketConversationObjectiveRequest {
+            bear_id: context.bear_id,
+            created_by_user_id: context.user_id,
+            created_by_role: role.as_str().to_string(),
+            source_conversation_id: conversation_id,
+        })
+        .await?;
+    Ok(Some(objective.job.id))
+}
+
 async fn default_task_session_anchor_id(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -1274,12 +1313,21 @@ pub(crate) async fn create_task(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskCreateArguments = serde_json::from_value(arguments)?;
-    let session_anchor_id = default_task_session_anchor_id(pool, context, &args).await?;
+    let job_id = if should_default_pair_conversation_objective(role, args.job_id) {
+        pair_conversation_objective_job_id(pool, context, role).await?
+    } else {
+        args.job_id
+    };
+    let session_anchor_id = if job_id.is_some() {
+        args.session_anchor_id
+    } else {
+        default_task_session_anchor_id(pool, context, &args).await?
+    };
     enforce_oriented_task_create_policy(pool, context, &args).await?;
     let task = PgDocketService::from_pool(pool)
         .create_task(DocketTaskCreate {
             bear_id: context.bear_id,
-            job_id: args.job_id,
+            job_id,
             session_anchor_id,
             parent_task_id: args.parent_task_id,
             sibling_order: args.sibling_order,
@@ -1297,7 +1345,7 @@ pub(crate) async fn create_task(
             created_in_run_id: args.created_in_run_id,
         })
         .await?;
-    let task_list = if args.job_id.is_none() {
+    let task_list = if job_id.is_none() {
         if let Some(session_anchor_id) = session_anchor_id {
             session_anchored_task_list_projection(pool, context, role, session_anchor_id).await?
         } else {
@@ -1306,14 +1354,14 @@ pub(crate) async fn create_task(
     } else {
         None
     };
-    if args.job_id.is_none() {
+    if job_id.is_none() {
         refresh_runtime_session_activity_plan(context, task_list.clone());
     }
     let task_list_phase = task_list
         .as_ref()
         .map(|task_list| task_list.status.as_str());
     let execution_allowed = task_list_phase.is_some_and(|phase| phase != "planned");
-    let summary = if args.job_id.is_none() && matches!(task_list_phase, Some("planned")) {
+    let summary = if job_id.is_none() && matches!(task_list_phase, Some("planned")) {
         format!(
             "Planned Docket task '{}'. Execution has not started.",
             task.title
@@ -1331,7 +1379,7 @@ pub(crate) async fn create_task(
         "task_list_phase": task_list_phase,
         "execution_allowed": execution_allowed,
         "item_counts": task_list.as_ref().map(task_list_item_counts),
-        "notes": if args.job_id.is_none() && matches!(task_list_phase, Some("planned")) {
+        "notes": if job_id.is_none() && matches!(task_list_phase, Some("planned")) {
             vec![
                 "Created a durable session-anchored Docket task definition.",
                 "The session task list is planned; wait for an explicit start/activation request before executing pending tasks."
@@ -1347,14 +1395,21 @@ pub(crate) async fn create_task(
 pub(crate) async fn list_tasks(
     pool: &PgPool,
     context: &DenToolInvocationContext,
+    role: BearProfile,
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskListArguments = serde_json::from_value(arguments)?;
+    let job_id = if should_default_pair_task_list_filter(role, args.job_id, args.session_anchor_id)
+    {
+        pair_conversation_objective_job_id(pool, context, role).await?
+    } else {
+        args.job_id
+    };
     let tasks = PgDocketService::from_pool(pool)
         .list_tasks(
             context.bear_id,
             DocketTaskListFilter {
-                job_id: args.job_id,
+                job_id,
                 session_anchor_id: args.session_anchor_id,
                 parent_task_id: args.parent_task_id,
                 include_descendants: args.include_descendants,
@@ -1565,16 +1620,28 @@ pub(crate) async fn checkout_task_list(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: TaskListCheckoutArguments = serde_json::from_value(arguments)?;
-    let Some(job_id) = args.job_id else {
+    let (source, checkout_job_id) = if let Some(job_id) = args.job_id {
+        (
+            TaskListCheckoutSource::DocketJob {
+                job_id,
+                parent_task_id: args.parent_task_id,
+            },
+            Some(job_id),
+        )
+    } else if let Some(job_id) = pair_conversation_objective_job_id(pool, context, role).await? {
+        (
+            TaskListCheckoutSource::DocketJob {
+                job_id,
+                parent_task_id: args.parent_task_id,
+            },
+            Some(job_id),
+        )
+    } else {
         return Err(DenError::ValidationError(
-            "checkout_task_list requires job_id; provide a Docket job id to project as a task list"
+            "checkout_task_list requires job_id outside pair stance; provide a Docket job id to project as a task list"
                 .to_string(),
         )
         .into());
-    };
-    let source = TaskListCheckoutSource::DocketJob {
-        job_id,
-        parent_task_id: args.parent_task_id,
     };
     let task_list = PgDocketService::from_pool(pool)
         .checkout_task_list(
@@ -1584,10 +1651,14 @@ pub(crate) async fn checkout_task_list(
             TaskListCheckoutRequest { source },
         )
         .await?;
-    let summary = task_list
-        .as_ref()
-        .map(task_list_summary)
-        .unwrap_or_else(|| format!("No Docket job found for {job_id}."));
+    let summary =
+        task_list
+            .as_ref()
+            .map(task_list_summary)
+            .unwrap_or_else(|| match checkout_job_id {
+                Some(job_id) => format!("No Docket job found for {job_id}."),
+                None => "No Docket task list found.".to_string(),
+            });
     let item_counts = task_list.as_ref().map(task_list_item_counts);
     Ok(json!({
         "domain": "docket",
@@ -1745,6 +1816,46 @@ mod test {
             },
             run_state: None,
         }
+    }
+
+    #[test]
+    fn pair_defaults_only_when_task_tool_scope_is_implicit() {
+        let explicit_job_id = Uuid::new_v4();
+        let session_anchor_id = Uuid::new_v4();
+
+        assert!(should_default_pair_conversation_objective(
+            BearProfile::Pair,
+            None
+        ));
+        assert!(!should_default_pair_conversation_objective(
+            BearProfile::Pair,
+            Some(explicit_job_id)
+        ));
+        assert!(!should_default_pair_conversation_objective(
+            BearProfile::Chat,
+            None
+        ));
+
+        assert!(should_default_pair_task_list_filter(
+            BearProfile::Pair,
+            None,
+            None
+        ));
+        assert!(!should_default_pair_task_list_filter(
+            BearProfile::Pair,
+            Some(explicit_job_id),
+            None
+        ));
+        assert!(!should_default_pair_task_list_filter(
+            BearProfile::Pair,
+            None,
+            Some(session_anchor_id)
+        ));
+        assert!(!should_default_pair_task_list_filter(
+            BearProfile::Chat,
+            None,
+            None
+        ));
     }
 
     #[test]

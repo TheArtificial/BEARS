@@ -96,7 +96,7 @@ async fn invoke_workflow_tool(
             workflow::evaluate_criterion(pool, context, role, arguments).await?
         }
         DEN_TASK_CREATE => workflow::create_task(pool, context, role, arguments).await?,
-        DEN_TASK_LIST => workflow::list_tasks(pool, context, arguments).await?,
+        DEN_TASK_LIST => workflow::list_tasks(pool, context, role, arguments).await?,
         DEN_TASK_UPDATE => workflow::update_task(pool, context, role, arguments).await?,
         DEN_TASK_UPDATE_CURRENT_STATUS => {
             workflow::update_current_task_status(pool, context, role, arguments).await?

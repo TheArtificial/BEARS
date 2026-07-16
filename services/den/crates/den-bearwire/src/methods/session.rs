@@ -238,6 +238,22 @@ async fn session_state_payload(
     } else {
         None
     };
+    let active_docket_execution = if work_enabled {
+        PgDocketService::from_pool(&state.sqlx_pool)
+            .get_active_execution_session(
+                session.bear_id,
+                BearProfile::Pair,
+                DocketExecutionLookup {
+                    session_id: Some(session.client_session_id.clone()),
+                    source_conversation_id: None,
+                    source_client_session_id: None,
+                },
+            )
+            .await?
+            .map(active_docket_execution_projection)
+    } else {
+        None
+    };
     let runtime_state = den_runtime::native_runtime::native_client_session_runtime_state(
         &conversation_runtime_id,
         &session.client_session_id,
@@ -293,9 +309,27 @@ async fn session_state_payload(
             "runtime_session_live": runtime_session_live,
             "runtime_state": runtime_state,
             "active_activity_plan": active_activity_plan,
+            "active_docket_execution": active_docket_execution,
             "open_obligations": open_obligations,
         }
     }))
+}
+
+fn active_docket_execution_projection(execution: den_docket::DocketExecutionSessionRow) -> Value {
+    json!({
+        "schema": "den.docket.active_execution.v1",
+        "source": "docket_execution_session",
+        "id": execution.id,
+        "owner_profile": execution.owner_profile,
+        "session_id": execution.session_id,
+        "source_conversation_id": execution.source_conversation_id,
+        "source_client_session_id": execution.source_client_session_id,
+        "job_id": execution.job_id,
+        "run_id": execution.run_id,
+        "task_id": execution.task_id,
+        "state": execution.state,
+        "updated_at": execution.updated_at,
+    })
 }
 
 fn active_activity_plan_projection(plan: den_docket::TaskListProjection) -> Value {

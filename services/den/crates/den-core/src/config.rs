@@ -561,7 +561,9 @@ impl Config {
             .unwrap_or_else(|_| DEFAULT_QDRANT_PORT.to_string())
             .parse::<u16>()
             .unwrap_or_else(|_| {
-                tracing::warn!("Invalid QDRANT_PORT environment variable. Defaulting to {DEFAULT_QDRANT_PORT}");
+                tracing::warn!(
+                    "Invalid QDRANT_PORT environment variable. Defaulting to {DEFAULT_QDRANT_PORT}"
+                );
                 DEFAULT_QDRANT_PORT
             });
         let qdrant_url = qdrant_url_from_env(std::env::var("QDRANT_URL").ok(), qdrant_port);
