@@ -53,6 +53,9 @@ pub struct AgentLoopSession {
     pub latest_context_budget: Option<ContextBudgetReport>,
     pub latest_projected_memory: Option<Value>,
     pub latest_recalled_memory: Option<Value>,
+    /// Volatile task-list projection cache. Durable Docket execution is the
+    /// source of truth for focused work; behavior decisions should resolve
+    /// `RuntimeFocusContext` instead of treating this cache as authoritative.
     pub cached_activity_plan_projection: Option<TaskListProjection>,
     pub profile: BearProfile,
     pub overflow_retry_attempted: bool,

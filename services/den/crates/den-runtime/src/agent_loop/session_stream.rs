@@ -11,7 +11,9 @@ use den_service::bears::prompt_fragments::{
 };
 use futures::Stream;
 
-use crate::runtime::focus_context::{resolve_runtime_focus_context, RuntimeFocusResolveRequest};
+use crate::runtime::focus_context::{
+    resolve_runtime_focus_context, RuntimeFocusContext, RuntimeFocusResolveRequest,
+};
 use crate::runtime::turn_state::{
     autonomous_execution_gate_for_task_list, classify_autonomous_final_response,
     detect_task_focus_loop, AutonomousExecutionGate,
@@ -73,7 +75,7 @@ type ServerToolFuture = Pin<
 >;
 type FinalGateContinuationFuture =
     Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
-type RuntimeFocusFuture = Pin<
+type FinalGateFocusFuture = Pin<
     Box<
         dyn Future<Output = Result<crate::runtime::focus_context::RuntimeFocusContext, DenError>>
             + Send,
@@ -246,7 +248,7 @@ pub struct SessionTrackingStream {
     pending_server_tool: Option<ServerToolFuture>,
     pending_server_tool_continuation: Option<String>,
     pending_final_gate_continuation: Option<FinalGateContinuationFuture>,
-    pending_runtime_focus: Option<RuntimeFocusFuture>,
+    pending_final_gate_focus: Option<FinalGateFocusFuture>,
     dispatch_mode: NativeToolDispatchMode,
     config: Arc<Config>,
     stores: MemoryStoreManager,
@@ -297,7 +299,7 @@ impl SessionTrackingStream {
             pending_server_tool: None,
             pending_server_tool_continuation: None,
             pending_final_gate_continuation: None,
-            pending_runtime_focus: None,
+            pending_final_gate_focus: None,
             dispatch_mode,
             config,
             stores,
@@ -974,6 +976,14 @@ impl SessionTrackingStream {
         });
     }
 
+    fn prepare_autonomous_final_gate(&mut self, focus: RuntimeFocusContext) {
+        let cached_activity_plan_projection = focus.cached_activity_plan_projection;
+        self.store.update(&self.session_key, |session| {
+            session.cached_activity_plan_projection = cached_activity_plan_projection.clone();
+        });
+        self.evaluate_final_gate_or_complete(cached_activity_plan_projection);
+    }
+
     fn evaluate_final_gate_or_complete(
         &mut self,
         cached_activity_plan_projection: Option<TaskListProjection>,
@@ -1055,7 +1065,9 @@ impl SessionTrackingStream {
         self.pending_pause_after_tool = Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
     }
 
-    fn begin_runtime_focus_resolution(&mut self) {
+    fn begin_final_gate_focus_resolution(&mut self) {
+        // Final-answer gating is a behavior boundary: resolve durable focus here
+        // instead of trusting the session projection cache.
         let pool = self.pool.clone();
         let bear_id = self.bear_id;
         let profile = self.profile;
@@ -1066,7 +1078,7 @@ impl SessionTrackingStream {
             .store
             .get(&self.session_key)
             .and_then(|session| session.cached_activity_plan_projection);
-        self.pending_runtime_focus = Some(Box::pin(async move {
+        self.pending_final_gate_focus = Some(Box::pin(async move {
             resolve_runtime_focus_context(
                 &pool,
                 RuntimeFocusResolveRequest {
@@ -1213,21 +1225,16 @@ impl Stream for SessionTrackingStream {
             }
         }
 
-        if let Some(fut) = self.pending_runtime_focus.as_mut() {
+        if let Some(fut) = self.pending_final_gate_focus.as_mut() {
             match fut.as_mut().poll(cx) {
                 Poll::Ready(Ok(focus)) => {
-                    self.pending_runtime_focus = None;
-                    let cached_activity_plan_projection = focus.cached_activity_plan_projection;
-                    self.store.update(&self.session_key, |session| {
-                        session.cached_activity_plan_projection =
-                            cached_activity_plan_projection.clone();
-                    });
-                    self.evaluate_final_gate_or_complete(cached_activity_plan_projection);
+                    self.pending_final_gate_focus = None;
+                    self.prepare_autonomous_final_gate(focus);
                     cx.waker().wake_by_ref();
                     return Poll::Pending;
                 }
                 Poll::Ready(Err(error)) => {
-                    self.pending_runtime_focus = None;
+                    self.pending_final_gate_focus = None;
                     return Poll::Ready(Some(Err(error)));
                 }
                 Poll::Pending => return Poll::Pending,
@@ -1491,7 +1498,7 @@ impl Stream for SessionTrackingStream {
                     ))));
                 }
                 self.persist_assistant_tool_step();
-                self.begin_runtime_focus_resolution();
+                self.begin_final_gate_focus_resolution();
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }

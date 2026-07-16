@@ -1,3 +1,14 @@
+//! Runtime focus resolution.
+//!
+//! Durable Docket execution is the source of truth for focused work. The
+//! `AgentLoopSession.cached_activity_plan_projection` field is only a volatile
+//! projection cache used to seed prompts/tools and avoid rehydrating Docket on
+//! every stream event.
+//!
+//! Runtime behavior decisions, diagnostics, and user-facing status projections
+//! should resolve a `RuntimeFocusContext` instead of reading the session cache as
+//! authoritative.
+
 use den_core::DenError;
 use den_docket::{
     DocketExecutionLookup, DocketService, PgDocketService, TaskListCheckoutRequest,
