@@ -13,8 +13,8 @@ use crate::{
     is_den_server_tool_request, plan_entries_from_plan_update_event,
     project_den_owned_tool_request, send_agent_message_chunk_for_turn,
     send_agent_thought_chunk_for_turn, send_tool_call_update_for_turn, spawn_tool_request_task,
-    stream_has_successful_terminal_condition, truncate_for_log, AdapterSharedState, AdapterState,
-    Config, SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
+    stream_allows_prompt_end_response, truncate_for_log, AdapterSharedState, AdapterState, Config,
+    SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
 };
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -712,7 +712,7 @@ pub(crate) async fn handle_prompt(
         sleep(BEARWIRE_POLL_INTERVAL).await;
     }
 
-    if !stream_has_successful_terminal_condition(
+    if !stream_allows_prompt_end_response(
         saw_visible_output,
         saw_error,
         saw_done,

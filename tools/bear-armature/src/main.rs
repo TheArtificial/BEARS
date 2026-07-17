@@ -1256,13 +1256,13 @@ impl SseStreamDiagnostics {
     }
 }
 
-fn stream_has_successful_terminal_condition(
-    saw_visible_output: bool,
+fn stream_allows_prompt_end_response(
+    _saw_visible_output: bool,
     saw_error: bool,
     saw_done: bool,
-    saw_tool_activity: bool,
+    _saw_tool_activity: bool,
 ) -> bool {
-    saw_visible_output || saw_error || (saw_done && saw_tool_activity)
+    saw_done || saw_error
 }
 
 #[derive(Clone, Default)]
@@ -13007,27 +13007,25 @@ mod tests {
     }
 
     #[test]
-    fn permission_request_activity_is_successful_without_stream_terminal() {
-        assert!(stream_has_successful_terminal_condition(
-            true, false, false, true
+    fn error_allows_prompt_end_response_without_stream_terminal() {
+        assert!(stream_allows_prompt_end_response(false, true, false, false));
+    }
+
+    #[test]
+    fn visible_output_without_terminal_does_not_allow_prompt_end_response() {
+        assert!(!stream_allows_prompt_end_response(
+            true, false, false, false
         ));
     }
 
     #[test]
-    fn stream_terminal_condition_allows_visible_output_error_or_tool_completion() {
-        assert!(stream_has_successful_terminal_condition(
-            true, false, false, false
-        ));
-        assert!(stream_has_successful_terminal_condition(
-            false, true, false, false
-        ));
-        assert!(stream_has_successful_terminal_condition(
-            false, false, true, true
-        ));
-        assert!(!stream_has_successful_terminal_condition(
-            false, false, true, false
-        ));
-        assert!(!stream_has_successful_terminal_condition(
+    fn run_done_allows_prompt_end_response_without_output_or_tool_activity() {
+        assert!(stream_allows_prompt_end_response(false, false, true, false));
+    }
+
+    #[test]
+    fn tool_activity_alone_does_not_allow_prompt_end_response() {
+        assert!(!stream_allows_prompt_end_response(
             false, false, false, true
         ));
     }
