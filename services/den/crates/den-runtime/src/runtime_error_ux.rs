@@ -21,6 +21,87 @@ pub struct RuntimeHistoryMarkerProjection {
     pub metadata: Value,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeIssueSeverity {
+    Info,
+    Warning,
+    Recoverable,
+    UserActionRequired,
+    Fatal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeIssueDisposition {
+    LogOnly,
+    SurfaceDiagnostic,
+    SteerModelAndContinue,
+    AskUserAndPause,
+    AbortRun,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeIssuePolicy {
+    pub severity: RuntimeIssueSeverity,
+    pub disposition: RuntimeIssueDisposition,
+    pub code: &'static str,
+    pub side_effects_blocked: bool,
+    pub required_next_tool: Option<&'static str>,
+}
+
+impl RuntimeIssuePolicy {
+    pub const fn soft_warning(code: &'static str) -> Self {
+        Self {
+            severity: RuntimeIssueSeverity::Warning,
+            disposition: RuntimeIssueDisposition::SurfaceDiagnostic,
+            code,
+            side_effects_blocked: true,
+            required_next_tool: None,
+        }
+    }
+
+    pub const fn user_action_required(code: &'static str) -> Self {
+        Self {
+            severity: RuntimeIssueSeverity::UserActionRequired,
+            disposition: RuntimeIssueDisposition::AskUserAndPause,
+            code,
+            side_effects_blocked: true,
+            required_next_tool: None,
+        }
+    }
+
+    pub const fn fatal(code: &'static str) -> Self {
+        Self {
+            severity: RuntimeIssueSeverity::Fatal,
+            disposition: RuntimeIssueDisposition::AbortRun,
+            code,
+            side_effects_blocked: false,
+            required_next_tool: None,
+        }
+    }
+
+    pub const fn recoverable_required_next_tool(
+        code: &'static str,
+        required_next_tool: &'static str,
+    ) -> Self {
+        Self {
+            severity: RuntimeIssueSeverity::Recoverable,
+            disposition: RuntimeIssueDisposition::SteerModelAndContinue,
+            code,
+            side_effects_blocked: true,
+            required_next_tool: Some(required_next_tool),
+        }
+    }
+}
+
+pub const fn checkpoint_follow_through_required_policy(
+    required_next_tool: &'static str,
+) -> RuntimeIssuePolicy {
+    RuntimeIssuePolicy::recoverable_required_next_tool(
+        "checkpoint_follow_through_required",
+        required_next_tool,
+    )
+}
+
 pub fn log_sample(value: impl AsRef<str>) -> String {
     let value = value.as_ref();
     let mut out = value.chars().take(LOG_SAMPLE_CHARS).collect::<String>();
@@ -291,6 +372,33 @@ fn display_bear_name(bear_name: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_issue_policy_classifies_checkpoint_follow_through_as_recoverable() {
+        let policy = checkpoint_follow_through_required_policy("checkpoint");
+
+        assert_eq!(policy.severity, RuntimeIssueSeverity::Recoverable);
+        assert_eq!(
+            policy.disposition,
+            RuntimeIssueDisposition::SteerModelAndContinue
+        );
+        assert_eq!(policy.code, "checkpoint_follow_through_required");
+        assert!(policy.side_effects_blocked);
+        assert_eq!(policy.required_next_tool, Some("checkpoint"));
+    }
+
+    #[test]
+    fn runtime_issue_policy_keeps_user_pauses_and_fatals_distinct() {
+        let pause = RuntimeIssuePolicy::user_action_required("confirmation_required");
+        assert_eq!(pause.severity, RuntimeIssueSeverity::UserActionRequired);
+        assert_eq!(pause.disposition, RuntimeIssueDisposition::AskUserAndPause);
+        assert!(pause.side_effects_blocked);
+
+        let fatal = RuntimeIssuePolicy::fatal("database_invariant_failed");
+        assert_eq!(fatal.severity, RuntimeIssueSeverity::Fatal);
+        assert_eq!(fatal.disposition, RuntimeIssueDisposition::AbortRun);
+        assert!(!fatal.side_effects_blocked);
+    }
 
     #[test]
     fn budget_failure_has_friendly_user_message_and_diagnostics() {
