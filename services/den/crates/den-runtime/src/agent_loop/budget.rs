@@ -418,7 +418,7 @@ pub fn evaluate_turn_budget(
         }
     }
 
-    let batch_signature = batch_signature(observations);
+    let batch_signature = rule_of_ko_batch_signature(observations);
     let primary_tool_name = observations
         .first()
         .map(|observation| observation.tool_name.clone());
@@ -431,6 +431,9 @@ pub fn evaluate_turn_budget(
                 1
             };
         next_state.last_batch_signature = Some(signature);
+    } else if !observations.is_empty() {
+        next_state.last_batch_signature = None;
+        next_state.same_batch_signature_repeats = 0;
     }
 
     let batch_failed =
@@ -794,8 +797,8 @@ fn first_exhausted_class(
     None
 }
 
-fn batch_signature(observations: &[ToolContinuationObservation]) -> Option<String> {
-    if observations.is_empty() {
+fn rule_of_ko_batch_signature(observations: &[ToolContinuationObservation]) -> Option<String> {
+    if observations.is_empty() || observations.iter().all(observation_is_stateless_read_probe) {
         return None;
     }
     Some(
@@ -805,6 +808,12 @@ fn batch_signature(observations: &[ToolContinuationObservation]) -> Option<Strin
             .collect::<Vec<_>>()
             .join(" || "),
     )
+}
+
+fn observation_is_stateless_read_probe(observation: &ToolContinuationObservation) -> bool {
+    !observation.failed
+        && observation.class == ToolBudgetClass::Read
+        && matches!(observation.tool_name.as_str(), "git_status")
 }
 
 fn canonicalize_jsonish(raw: &str) -> String {
@@ -976,6 +985,25 @@ mod tests {
             evaluation.stop_reason,
             Some(TurnBudgetStopReason::RuleOfKo { repeats: 3, .. })
         ));
+    }
+
+    #[test]
+    fn repeated_git_status_does_not_trigger_rule_of_ko() {
+        let mut prior = state();
+        prior.last_batch_signature = Some(tool_signature("memory_read", r#"{"path":"a"}"#));
+        prior.same_batch_signature_repeats = 2;
+
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            3,
+            1_000,
+            &prior,
+            &[observation("git_status", r#"{}"#, false)],
+        );
+
+        assert!(evaluation.stop_reason.is_none());
+        assert_eq!(evaluation.next_state.last_batch_signature, None);
+        assert_eq!(evaluation.next_state.same_batch_signature_repeats, 0);
     }
 
     #[test]

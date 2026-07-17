@@ -1236,6 +1236,10 @@ fn continuation_budget_stop(
     (RuntimeStreamContinuation::Deferred, stream)
 }
 
+fn reset_turn_budget_state_after_forced_stop(session: &mut AgentLoopSession) {
+    session.turn_budget_state = Default::default();
+}
+
 const BUDGET_WARNING_PREFIX: &str = "Budget advisory:";
 const CHECKPOINT_NUDGE_PREFIX: &str = "Runtime checkpoint required:";
 
@@ -1864,6 +1868,7 @@ pub async fn continue_native_client_turn_event_stream(
         session.cached_activity_plan_projection = Some(refreshed_plan);
     }
     if let Some(reason) = evaluation.stop_reason {
+        SESSION_STORE.update(&session_key, reset_turn_budget_state_after_forced_stop);
         return Ok(continuation_budget_stop(reason));
     }
     let llm = LlmClient::new(request.config);
@@ -2111,6 +2116,61 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn forced_budget_stop_resets_reusable_turn_budget_state() {
+        let mut session = AgentLoopSession {
+            session_key: "session".to_string(),
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(1),
+            conversation_id: "conv".to_string(),
+            client_session_id: "session".to_string(),
+            workspace_roots: vec![],
+            request_id: None,
+            run_id: None,
+            messages: vec![],
+            tools: vec![],
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 0,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
+            checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
+            pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
+            cached_activity_plan_projection: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        };
+        session.turn_budget_state.same_batch_signature_repeats = 3;
+        session.turn_budget_state.last_batch_signature = Some("git_status:{}".to_string());
+        session.turn_budget_state.consecutive_tool_failures = 2;
+        session.turn_budget_state.budget_finalization_grace_used = true;
+
+        reset_turn_budget_state_after_forced_stop(&mut session);
+
+        assert_eq!(session.turn_budget_state.same_batch_signature_repeats, 0);
+        assert_eq!(session.turn_budget_state.last_batch_signature, None);
+        assert_eq!(session.turn_budget_state.consecutive_tool_failures, 0);
+        assert!(!session.turn_budget_state.budget_finalization_grace_used);
+        assert_eq!(session.turn_budget_state.tool_usage.total, 0);
     }
 
     #[test]
