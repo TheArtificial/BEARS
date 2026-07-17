@@ -19,6 +19,7 @@ use crate::web::{self, AppState};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/models", get(index).post(create_model))
+        .route("/models/add-from-catalog", post(add_from_catalog))
         .route("/models/update", post(update_model))
         .route("/models/delete", post(delete_model))
 }
@@ -36,7 +37,16 @@ struct ModelForm {
     recommended: Option<String>,
     sort_order: Option<i32>,
     notes: Option<String>,
-    metadata_json: String,
+    metadata_json: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CatalogModelForm {
+    handle: String,
+    selectable: Option<String>,
+    recommended: Option<String>,
+    sort_order: Option<i32>,
+    notes: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,7 +109,7 @@ async fn create_model(
     Form(form): Form<ModelForm>,
 ) -> Result<impl IntoResponse, CustomError> {
     let form = normalize_form(form)?;
-    let metadata_json = parse_metadata_json(&form.metadata_json)?;
+    let metadata_json = parse_metadata_json(form.metadata_json.as_deref().unwrap_or("{}"))?;
     sqlx::query(
         r"
         INSERT INTO model_selection_options (
@@ -129,12 +139,67 @@ async fn create_model(
     Ok(Redirect::to("/admin/models?message=Saved"))
 }
 
+async fn add_from_catalog(
+    State(state): State<AppState>,
+    Form(form): Form<CatalogModelForm>,
+) -> Result<impl IntoResponse, CustomError> {
+    let form = normalize_catalog_form(form)?;
+    let (display_name, metadata_json) = {
+        let catalog = state
+            .bifrost_catalog
+            .read()
+            .map_err(|_| CustomError::System("Bifrost catalog lock poisoned".to_string()))?;
+        let entry = catalog.resolve(&form.handle).ok_or_else(|| {
+            CustomError::ValidationError(format!(
+                "{} is not present in the Bifrost catalog; use Add custom model instead",
+                form.handle
+            ))
+        })?;
+        (
+            entry
+                .display_name
+                .clone()
+                .unwrap_or_else(|| form.handle.clone()),
+            catalog_metadata_json(entry),
+        )
+    };
+
+    sqlx::query(
+        r"
+        INSERT INTO model_selection_options (
+            handle, display_name, selectable, recommended, sort_order, notes, metadata_json
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (handle) DO UPDATE SET
+            display_name = EXCLUDED.display_name,
+            selectable = EXCLUDED.selectable,
+            recommended = EXCLUDED.recommended,
+            sort_order = EXCLUDED.sort_order,
+            notes = EXCLUDED.notes,
+            metadata_json = EXCLUDED.metadata_json,
+            updated_at = NOW()
+        ",
+    )
+    .bind(&form.handle)
+    .bind(&display_name)
+    .bind(form.selectable.is_some())
+    .bind(form.recommended.is_some())
+    .bind(form.sort_order)
+    .bind(form.notes.as_deref())
+    .bind(Json(metadata_json))
+    .execute(state.sqlx_pool())
+    .await?;
+
+    Ok(Redirect::to(
+        "/admin/models?message=Enabled%20from%20Bifrost%20catalog",
+    ))
+}
+
 async fn update_model(
     State(state): State<AppState>,
     Form(form): Form<ModelForm>,
 ) -> Result<impl IntoResponse, CustomError> {
     let form = normalize_form(form)?;
-    let metadata_json = parse_metadata_json(&form.metadata_json)?;
     let result = sqlx::query(
         r"
         UPDATE model_selection_options
@@ -143,7 +208,6 @@ async fn update_model(
             recommended = $4,
             sort_order = $5,
             notes = $6,
-            metadata_json = $7,
             updated_at = NOW()
         WHERE handle = $1
         ",
@@ -154,7 +218,6 @@ async fn update_model(
     .bind(form.recommended.is_some())
     .bind(form.sort_order)
     .bind(form.notes.as_deref())
-    .bind(Json(metadata_json))
     .execute(state.sqlx_pool())
     .await?;
 
@@ -280,14 +343,7 @@ async fn render_index(
                 entry.supports_responses_api,
                 entry.supports_vision,
             ),
-            metadata_json: json!({
-                "context_window": entry.context_window,
-                "max_output_tokens": entry.max_output_tokens,
-                "supports_tools": entry.supports_tools,
-                "supports_responses_api": entry.supports_responses_api,
-                "supports_vision": entry.supports_vision,
-            })
-            .to_string(),
+            metadata_json: catalog_metadata_json(entry).to_string(),
         })
         .collect::<Vec<_>>();
     catalog_rows.sort_by(|a, b| a.display_name.cmp(&b.display_name));
@@ -362,8 +418,34 @@ fn normalize_form(mut form: ModelForm) -> Result<ModelForm, CustomError> {
             "display name is required".to_string(),
         ));
     }
-    parse_metadata_json(&form.metadata_json)?;
+    if let Some(raw) = &form.metadata_json {
+        parse_metadata_json(raw)?;
+    }
     Ok(form)
+}
+
+fn normalize_catalog_form(mut form: CatalogModelForm) -> Result<CatalogModelForm, CustomError> {
+    form.handle = form.handle.trim().to_string();
+    form.notes = form
+        .notes
+        .map(|notes| notes.trim().to_string())
+        .filter(|notes| !notes.is_empty());
+    if form.handle.is_empty() {
+        return Err(CustomError::ValidationError(
+            "model handle is required".to_string(),
+        ));
+    }
+    Ok(form)
+}
+
+fn catalog_metadata_json(entry: &den_service::bifrost::BifrostCatalogEntry) -> serde_json::Value {
+    json!({
+        "context_window": entry.context_window,
+        "max_output_tokens": entry.max_output_tokens,
+        "supports_tools": entry.supports_tools,
+        "supports_responses_api": entry.supports_responses_api,
+        "supports_vision": entry.supports_vision,
+    })
 }
 
 fn parse_metadata_json(raw: &str) -> Result<serde_json::Value, CustomError> {
@@ -450,7 +532,7 @@ mod tests {
             recommended: None,
             sort_order: None,
             notes: None,
-            metadata_json: "{".to_string(),
+            metadata_json: Some("{".to_string()),
         })
         .unwrap_err();
         assert!(err.to_string().contains("metadata JSON is invalid"));

@@ -9,6 +9,12 @@
 <p><strong>{{ message }}</strong></p>
 {% endif %}
 
+<p>
+    Bifrost owns model identity and capability metadata. Den stores the local
+    overlay: whether the model is selectable, recommendation status, ordering,
+    and notes.
+</p>
+
 <h4>Usage and cost</h4>
 {% if usage.status == "ok" and usage.has_rows %}
 <table>
@@ -39,27 +45,74 @@
 <p>Usage unavailable.</p>
 {% endif %}
 
-<h4>Add model</h4>
-<form method="post" action="/admin/models">
+<h4>Add from Bifrost catalog</h4>
+<p>Source: {{ catalog_source }}; fetched: {{ catalog_fetched_at }}{% if catalog_stale %}; stale{% endif %}</p>
+{% if catalog_rows %}
+<table>
+    <thead>
+        <tr>
+            <th>Handle</th>
+            <th>Display name</th>
+            <th>Context</th>
+            <th>Output</th>
+            <th>Capabilities</th>
+            <th>Den settings</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in catalog_rows %}
+        <tr>
+            <td><code>{{ row.handle }}</code></td>
+            <td>{{ row.display_name }}</td>
+            <td>{{ row.context_window }}</td>
+            <td>{{ row.max_output_tokens }}</td>
+            <td>{{ row.capabilities }}</td>
+            <td>
+                <form method="post" action="/admin/models/add-from-catalog">
+                    <input type="hidden" name="handle" value="{{ row.handle }}">
+                    <input type="number" name="sort_order" placeholder="sort" style="width: 6em">
+                    <label><input type="checkbox" name="selectable" checked> selectable</label>
+                    <label><input type="checkbox" name="recommended"> recommended</label>
+                    <br>
+                    <input type="text" name="notes" placeholder="notes" size="40">
+                    <button type="submit">Enable</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No unconfigured catalog models.</p>
+{% endif %}
+
+<details>
+    <summary>Add custom model not known to Bifrost</summary>
     <p>
-        <input type="text" name="handle" placeholder="provider/model" size="28" required>
-        <input type="text" name="display_name" placeholder="Display name" size="28" required>
-        <input type="number" name="sort_order" placeholder="sort" style="width: 6em">
-        <label><input type="checkbox" name="selectable" checked> selectable</label>
-        <label><input type="checkbox" name="recommended"> recommended</label>
+        Use this only for a model missing from the Bifrost catalog. Custom models
+        must provide their own metadata because Bifrost cannot fill it in.
     </p>
-    <p><input type="text" name="notes" placeholder="notes" size="80"></p>
-    <p><textarea name="metadata_json" rows="4" cols="96">{{ default_metadata }}</textarea></p>
-    <p><button type="submit">Add model</button></p>
-</form>
+    <form method="post" action="/admin/models">
+        <p>
+            <input type="text" name="handle" placeholder="provider/model" size="28" required>
+            <input type="text" name="display_name" placeholder="Display name" size="28" required>
+            <input type="number" name="sort_order" placeholder="sort" style="width: 6em">
+            <label><input type="checkbox" name="selectable" checked> selectable</label>
+            <label><input type="checkbox" name="recommended"> recommended</label>
+        </p>
+        <p><input type="text" name="notes" placeholder="notes" size="80"></p>
+        <p><textarea name="metadata_json" rows="4" cols="96" required>{{ default_metadata }}</textarea></p>
+        <p><button type="submit">Add custom model</button></p>
+    </form>
+</details>
 
 <h4>Configured models</h4>
 <table>
     <thead>
         <tr>
             <th>Handle</th>
-            <th>Model</th>
-            <th>Bifrost</th>
+            <th>Den settings</th>
+            <th>Bifrost metadata</th>
             <th></th>
         </tr>
     </thead>
@@ -77,15 +130,20 @@
                         <label><input type="checkbox" name="recommended" {% if model.recommended %}checked{% endif %}> recommended</label>
                     </p>
                     <p><input type="text" name="notes" value="{{ model.notes }}" size="80" placeholder="notes"></p>
-                    <p><textarea name="metadata_json" rows="5" cols="96">{{ model.metadata_json }}</textarea></p>
-                    <button type="submit">Save</button>
+                    <button type="submit">Save Den settings</button>
                 </form>
             </td>
             <td>
-                <p>{{ model.bifrost_status }}</p>
+                <p>Status: {{ model.bifrost_status }}</p>
                 <p>Context: {{ model.bifrost_context_window }}</p>
                 <p>Output: {{ model.bifrost_max_output_tokens }}</p>
                 <p>{{ model.bifrost_capabilities }}</p>
+                {% if model.bifrost_status == "missing" %}
+                <details>
+                    <summary>Custom/local metadata</summary>
+                    <pre>{{ model.metadata_json }}</pre>
+                </details>
+                {% endif %}
             </td>
             <td>
                 <form method="post" action="/admin/models/delete"
@@ -100,43 +158,4 @@
         {% endfor %}
     </tbody>
 </table>
-
-<h4>Bifrost catalog</h4>
-<p>Source: {{ catalog_source }}; fetched: {{ catalog_fetched_at }}{% if catalog_stale %}; stale{% endif %}</p>
-{% if catalog_rows %}
-<table>
-    <thead>
-        <tr>
-            <th>Handle</th>
-            <th>Display name</th>
-            <th>Context</th>
-            <th>Output</th>
-            <th>Capabilities</th>
-            <th></th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for row in catalog_rows %}
-        <tr>
-            <td><code>{{ row.handle }}</code></td>
-            <td>{{ row.display_name }}</td>
-            <td>{{ row.context_window }}</td>
-            <td>{{ row.max_output_tokens }}</td>
-            <td>{{ row.capabilities }}</td>
-            <td>
-                <form method="post" action="/admin/models">
-                    <input type="hidden" name="handle" value="{{ row.handle }}">
-                    <input type="hidden" name="display_name" value="{{ row.display_name }}">
-                    <input type="hidden" name="metadata_json" value="{{ row.metadata_json }}">
-                    <input type="hidden" name="selectable" value="on">
-                    <button type="submit">Add</button>
-                </form>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<p>No unconfigured catalog models.</p>
-{% endif %}
 {% endblock %}
