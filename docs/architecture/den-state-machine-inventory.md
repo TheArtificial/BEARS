@@ -39,15 +39,39 @@ EffectiveTurnState =
 × RecoveryState
 ```
 
-The two most important derived views are:
+The three authority owners that must stay singular are:
 
 ```text
-EffectivePolicy = TrustProfile × Governance × Armature × RunAuthContext × PermissionMode
+MutationAuthority = TurnAuthority
+FocusDrivenContinuation = ResolvedFocus × DocketTaskState
+ActiveObligations = TurnRunState × ObligationSet
+```
 
-CompletionAuthority = FocusState × DocketTaskState × Governance × BudgetState × ObligationSet
+`TurnAuthority` is the compiled permission surface for the turn: tool routing,
+prompt authority blocks, and client permission projection consume it, but prompt
+or client labels cannot feed authority back into it. `ResolvedFocus` is the only
+input that may let completion policy force continuation for unfinished focused
+work. `TurnRunState` owns lifecycle, active wait reason, and terminal obligation
+closure.
+
+Useful projections remain derived views only:
+
+```text
+EffectivePolicyProjection = TrustProfile × Governance × Armature × RunAuthContext × PermissionMode
+
+CompletionProjection = FocusState × DocketTaskState × Governance × BudgetState × ObligationSet
 ```
 
 Do not let a derived view become a peer source of truth. If two axes disagree, resolve the conflict into canonical state before prompt rendering or client projection.
+
+Exit gate for the reduced authority model:
+
+- mutation authority has one owner: `TurnAuthority`;
+- focus-driven continuation has one owner: active `ResolvedFocus` plus current
+  Docket task state;
+- active waits have one owner: `TurnRunState` plus `ObligationSet`;
+- projections, caches, labels, model choice, prompt text, and compaction state
+  cannot expand authority or manufacture focus/work.
 
 ## Ownership summary
 
@@ -551,7 +575,18 @@ Invalid or suspicious combinations should be rejected before prompt assembly or 
 
 ## Test obligations
 
-Add or update tests whenever behavior crosses axes. The first tests to keep permanently are:
+Add or update tests whenever behavior crosses axes. Keep these seam checks permanently mapped to the reduced authority model:
+
+| Seam | Current executable check |
+| --- | --- |
+| submitted/drafting plan cannot unlock mutation | `den-core` `submitted_plan_keeps_write_tools_locked`; `turn_authority_is_single_derived_permission_surface` |
+| prompt/client projection labels cannot expand authority | `den-core` `turn_authority_ignores_client_policy_projection_labels`; `turn_authority_has_no_prompt_or_compaction_authority_input` |
+| model choice is not an authority source | `den-core` `turn_authority_has_no_model_choice_authority_input`; loop-control tests may still cover model-default budget/checkpoint behavior |
+| stale cached task list cannot manufacture focus/continuation | `den-runtime` `no_focus_allows_final_even_with_cached_task_list`; `final_gate_ignores_and_clears_cache_without_durable_focus` |
+| terminal transitions own obligation closure and late results | `den-runtime` `turn_runs::tests`; `client_obligation_coordinator_contract` late-result contract when DB-backed tests are available |
+| WorkRun owns sandbox root materialization | `den-docket` `effective_work_run_root_prefers_trimmed_request_then_job_default` plus provisioning's `WorkRunRow.root_name` check |
+
+Baseline scenarios to preserve:
 
 1. no focus allows final answers, even with a stale cached task list;
 2. changing mode away from Focused clears focus before completion policy runs;
