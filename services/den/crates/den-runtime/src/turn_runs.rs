@@ -52,6 +52,14 @@ impl TurnRunState {
             ))),
         }
     }
+
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
+
+    pub fn allows_open_obligation(self) -> bool {
+        !self.is_terminal()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -353,10 +361,7 @@ pub async fn transition_run(
     state: TurnRunState,
     terminal_reason: Option<&str>,
 ) -> Result<Option<TurnRunRow>, DenError> {
-    let terminal = matches!(
-        state,
-        TurnRunState::Completed | TurnRunState::Failed | TurnRunState::Cancelled
-    );
+    let terminal = state.is_terminal();
     let row = sqlx::query(&format!(
         r"
         UPDATE turn_runs
@@ -376,4 +381,24 @@ pub async fn transition_run(
     .fetch_optional(pool)
     .await?;
     Ok(row.map(row_to_run))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TurnRunState;
+
+    #[test]
+    fn terminal_run_with_open_obligation_is_invalid() {
+        for terminal in [
+            TurnRunState::Completed,
+            TurnRunState::Failed,
+            TurnRunState::Cancelled,
+        ] {
+            assert!(terminal.is_terminal());
+            assert!(!terminal.allows_open_obligation());
+        }
+
+        assert!(TurnRunState::WaitingForToolResult.allows_open_obligation());
+        assert!(TurnRunState::WaitingForPermission.allows_open_obligation());
+    }
 }

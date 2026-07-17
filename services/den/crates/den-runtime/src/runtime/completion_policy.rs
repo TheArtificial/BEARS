@@ -173,6 +173,120 @@ mod tests {
     }
 
     #[test]
+    fn no_focus_allows_final_even_with_cached_task_list() {
+        let cached_task_list = task_list(
+            "active",
+            vec![task_list_item(
+                "Stale cached task",
+                TaskListItemStatus::Pending,
+            )],
+        );
+
+        // ponytail: this models the final gate after focus resolution; the cached
+        // task list is intentionally not passed because cache-only focus has no
+        // completion authority. Upgrade path is an integration replay at the
+        // focus resolver boundary.
+        let decision = decide_turn_completion(TurnCompletionPolicyInput {
+            profile: BearProfile::Pair,
+            focused_task_list: None,
+            assistant_text: "Done.",
+            recent_texts: &[],
+        });
+
+        assert_eq!(cached_task_list.items.len(), 1);
+        assert!(matches!(
+            decision,
+            TurnCompletionDecision::Complete {
+                reason: TurnCompletionCompleteReason::NoActiveFocusedTask,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn durable_focus_with_incomplete_task_forces_continuation() {
+        let focused = task_list(
+            "active",
+            vec![task_list_item(
+                "Implement next slice",
+                TaskListItemStatus::Pending,
+            )],
+        );
+
+        let decision = decide_turn_completion(TurnCompletionPolicyInput {
+            profile: BearProfile::Pair,
+            focused_task_list: Some(&focused),
+            assistant_text: "Progress made; stopping here.",
+            recent_texts: &[],
+        });
+
+        assert!(matches!(
+            decision,
+            TurnCompletionDecision::Continue {
+                reason: TurnCompletionContinueReason::FocusedWorkRemains,
+                ref next_task,
+                ..
+            } if next_task == "Implement next slice"
+        ));
+    }
+
+    #[test]
+    fn completed_focused_job_allows_finalization() {
+        let focused = task_list(
+            "completed",
+            vec![task_list_item(
+                "Verify completion",
+                TaskListItemStatus::Completed,
+            )],
+        );
+
+        let decision = decide_turn_completion(TurnCompletionPolicyInput {
+            profile: BearProfile::Pair,
+            focused_task_list: Some(&focused),
+            assistant_text: "Job completed. Final answer follows.",
+            recent_texts: &[],
+        });
+
+        assert!(matches!(
+            decision,
+            TurnCompletionDecision::Complete {
+                reason: TurnCompletionCompleteReason::FocusedWorkCompleteFinalizationDrain,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn mode_change_away_from_focused_clears_focus_before_completion_policy() {
+        let previously_focused = task_list(
+            "active",
+            vec![task_list_item(
+                "Do not continue stale focus",
+                TaskListItemStatus::Pending,
+            )],
+        );
+
+        // ponytail: mode resolution owns clearing stale focus; this is the
+        // completion-policy boundary check. Upgrade path is a mode-transition
+        // replay test if focus resolution grows persistence side effects.
+        let decision = decide_turn_completion(TurnCompletionPolicyInput {
+            profile: BearProfile::Pair,
+            focused_task_list: None,
+            assistant_text: "Mode changed back to ordinary chat.",
+            recent_texts: &[],
+        });
+
+        assert_eq!(previously_focused.items.len(), 1);
+        assert!(matches!(
+            decision,
+            TurnCompletionDecision::Complete {
+                reason: TurnCompletionCompleteReason::NoActiveFocusedTask,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn runtime_limit_final_does_not_complete_incomplete_focused_work() {
         let focused = task_list(
             "active",

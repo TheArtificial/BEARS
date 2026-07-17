@@ -69,6 +69,20 @@ fn read_only_fs_tool_policies_do_not_require_permission() {
 }
 
 #[test]
+fn submitted_plan_keeps_write_tools_locked() {
+    let policy = resolve_session_policy_for_mode("write", Some("submitted"));
+
+    assert_eq!(policy.mode_label, "Plan");
+    assert_eq!(policy.tool_enablement, ToolEnablementState::ReadOnly);
+    assert!(!policy.allows_tool(ClientToolName::EditFile));
+    assert!(policy.allows_tool(ClientToolName::ReadTextFile));
+    assert_eq!(
+        policy.denied_tool_classes(),
+        vec!["workspace_mutation", "execution", "browser"]
+    );
+}
+
+#[test]
 fn find_paths_policy_is_descriptor_owned() {
     let policy = client_tool_policy(ClientToolName::FindPaths);
     assert_eq!(

@@ -258,6 +258,66 @@ async fn late_result_after_terminal_run_is_ignored_by_coordinator(pool: sqlx::Pg
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn late_tool_result_after_terminal_is_ignored(pool: sqlx::PgPool) {
+    let (run, step, session_id) = create_run_with_step(&pool).await;
+    let obligation = turn_obligations::upsert_tool_result_obligation_for_step(
+        &pool,
+        &run.run_id,
+        &session_id,
+        Some(step.id),
+        "call-late-exact-name",
+        None,
+        json!({ "tool_name": "fs_read_text_file" }),
+    )
+    .await
+    .expect("create tool obligation");
+    turn_runs::transition_run(
+        &pool,
+        &run.run_id,
+        turn_runs::TurnRunState::Completed,
+        Some("test terminal"),
+    )
+    .await
+    .expect("mark run completed");
+    turn_obligations::settle_outstanding_for_run(
+        &pool,
+        &run.run_id,
+        turn_obligations::TurnObligationState::Continued,
+    )
+    .await
+    .expect("settle outstanding obligations");
+    let completed_run = turn_runs::get_run(&pool, &run.run_id)
+        .await
+        .expect("load completed run")
+        .expect("run exists");
+    let completed_obligation =
+        turn_obligations::get_tool_call_obligation(&pool, &run.run_id, "call-late-exact-name")
+            .await
+            .expect("load completed obligation")
+            .expect("obligation exists");
+    assert_eq!(completed_obligation.id, obligation.id);
+
+    let outcome = client_obligation_coordinator::record_and_settle_tool_result(
+        &pool,
+        &completed_run,
+        &completed_obligation,
+        "tool",
+        "call-late-exact-name",
+        json!({ "status": "ok", "content": "too late" }),
+    )
+    .await
+    .expect("settle late tool result");
+
+    assert!(matches!(
+        outcome,
+        ToolResultCoordinatorOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state
+        } if run_state == "completed" && obligation_state == "continued"
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn duplicate_conflicting_tool_result_is_owned_by_coordinator(pool: sqlx::PgPool) {
     let (run, step, session_id) = create_run_with_step(&pool).await;
     let obligation = turn_obligations::upsert_tool_result_obligation_for_step(

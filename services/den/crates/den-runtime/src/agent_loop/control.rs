@@ -1369,6 +1369,36 @@ mod tests {
     }
 
     #[test]
+    fn work_autonomous_without_focused_job_is_invalid() {
+        let freeform = ObjectiveOrientation::Freeform {
+            policy: FreeformPolicy::task_definition_permitted(),
+        };
+        let oriented = ObjectiveOrientation::Oriented {
+            task: TaskOrientation {
+                task_ref: OrientationTaskRef::DocketTask {
+                    job_id: Some("job-1".to_string()),
+                    task_id: "task-1".to_string(),
+                    title: Some("Task without focused job".to_string()),
+                },
+                child_policy: OrientedChildTaskPolicy::default(),
+            },
+        };
+
+        assert!(!objective_orientation_allowed_for_stance(
+            BearStance::Work,
+            &freeform
+        ));
+        assert!(!objective_orientation_allowed_for_stance(
+            BearStance::Work,
+            &oriented
+        ));
+        assert!(objective_orientation_allowed_for_stance(
+            BearStance::Work,
+            &focused_orientation()
+        ));
+    }
+
+    #[test]
     fn context_defaults_are_aggressive_for_pre_release() {
         let pair_freeform = resolve_agent_loop_control(AgentLoopControlResolutionInput {
             model_handle: Some("openai/gpt-5.5"),
