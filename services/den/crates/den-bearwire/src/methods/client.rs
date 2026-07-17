@@ -230,6 +230,31 @@ fn should_retry_non_terminal_continuation_eof(
         && attempt_index < continuation_retry_pauses().len()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContinuationStreamBoundary {
+    Continue,
+    ClientWait,
+    Terminal,
+}
+
+fn continuation_stream_boundary(
+    event: &den_protocol::RuntimeStreamEvent,
+) -> ContinuationStreamBoundary {
+    match event {
+        den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::TurnCompleted { .. }
+            | den_protocol::RuntimeSemanticEvent::TurnFailed { .. }
+            | den_protocol::RuntimeSemanticEvent::TurnCancelled { .. }
+            | den_protocol::RuntimeSemanticEvent::Error { .. },
+        ) => ContinuationStreamBoundary::Terminal,
+        den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::ToolCallRequested { .. }
+            | den_protocol::RuntimeSemanticEvent::RunPaused { .. },
+        ) => ContinuationStreamBoundary::ClientWait,
+        _ => ContinuationStreamBoundary::Continue,
+    }
+}
+
 fn continuation_retry_pauses_seconds() -> Vec<u64> {
     continuation_retry_pauses()
         .iter()
@@ -609,28 +634,15 @@ fn spawn_continuation_task(
                                 let event_kind =
                                     crate::methods::run::runtime_event_kind(&runtime_event);
                                 last_event_kind = Some(event_kind);
-                                match &runtime_event {
-                                    den_protocol::RuntimeStreamEvent::Semantic(
-                                        den_protocol::RuntimeSemanticEvent::TurnCompleted {
-                                            ..
-                                        }
-                                        | den_protocol::RuntimeSemanticEvent::TurnFailed { .. }
-                                        | den_protocol::RuntimeSemanticEvent::TurnCancelled {
-                                            ..
-                                        }
-                                        | den_protocol::RuntimeSemanticEvent::Error { .. },
-                                    ) => {
+                                let stream_boundary = continuation_stream_boundary(&runtime_event);
+                                match stream_boundary {
+                                    ContinuationStreamBoundary::Terminal => {
                                         terminal_event_seen = true;
                                     }
-                                    den_protocol::RuntimeStreamEvent::Semantic(
-                                        den_protocol::RuntimeSemanticEvent::ToolCallRequested {
-                                            ..
-                                        }
-                                        | den_protocol::RuntimeSemanticEvent::RunPaused { .. },
-                                    ) => {
+                                    ContinuationStreamBoundary::ClientWait => {
                                         wait_event_seen = true;
                                     }
-                                    _ => {}
+                                    ContinuationStreamBoundary::Continue => {}
                                 }
                                 if !first_event_seen {
                                     first_event_seen = true;
@@ -667,6 +679,9 @@ fn spawn_continuation_task(
                                         .await
                                         .ok()
                                         .flatten();
+                                if stream_boundary != ContinuationStreamBoundary::Continue {
+                                    break;
+                                }
                             }
                             Err(err) => {
                                 let err_message = err.to_string();
@@ -1422,6 +1437,56 @@ mod tests {
             false,
             continuation_retry_pauses().len()
         ));
+    }
+
+    #[test]
+    fn continuation_stream_boundary_stops_on_terminal_or_client_wait() {
+        let completed = den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::TurnCompleted { turn: None },
+        );
+        let failed =
+            den_protocol::RuntimeStreamEvent::Semantic(den_protocol::RuntimeSemanticEvent::Error {
+                message: "boom".to_string(),
+                detail: None,
+                error_type: None,
+                request_id: None,
+                context: None,
+            });
+        let wait = den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "tool-1".to_string(),
+                tool_name: "read_text_file".to_string(),
+                title: None,
+                kind: None,
+                arguments: json!({}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            },
+        );
+        let delta = den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::AssistantTextDelta {
+                text: "still streaming".to_string(),
+            },
+        );
+
+        assert_eq!(
+            continuation_stream_boundary(&completed),
+            ContinuationStreamBoundary::Terminal
+        );
+        assert_eq!(
+            continuation_stream_boundary(&failed),
+            ContinuationStreamBoundary::Terminal
+        );
+        assert_eq!(
+            continuation_stream_boundary(&wait),
+            ContinuationStreamBoundary::ClientWait
+        );
+        assert_eq!(
+            continuation_stream_boundary(&delta),
+            ContinuationStreamBoundary::Continue
+        );
     }
 
     #[test]
