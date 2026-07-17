@@ -729,6 +729,49 @@ fn docket_task_row_summary(task: &docket::DocketTaskRow) -> String {
     format!("Task '{}' was created.", task.title)
 }
 
+fn docket_task_create_summary(
+    task: &docket::DocketTaskRow,
+    job_id: Option<Uuid>,
+    defaulted_to_conversation_objective: bool,
+    planned_session_task: bool,
+) -> String {
+    if let Some(job_id) = job_id {
+        if defaulted_to_conversation_objective {
+            return format!(
+                "Task '{}' was created in the current conversation's Docket objective ({job_id}).",
+                task.title
+            );
+        }
+        return format!("Task '{}' was created in Docket Job {job_id}.", task.title);
+    }
+
+    if planned_session_task {
+        return format!(
+            "Planned Docket task '{}' in the current session task list. Execution has not started.",
+            task.title
+        );
+    }
+
+    docket_task_row_summary(task)
+}
+
+fn docket_tasks_summary_for_scope(
+    tasks: &[docket::DocketTaskProjection],
+    job_id: Option<Uuid>,
+    defaulted_to_conversation_objective: bool,
+) -> String {
+    let count = count_label(tasks.len(), "Docket task", "Docket tasks");
+    if let Some(job_id) = job_id {
+        if defaulted_to_conversation_objective {
+            return format!(
+                "Found {count} in the current conversation's Docket objective ({job_id})."
+            );
+        }
+        return format!("Found {count} in Docket Job {job_id}.");
+    }
+    docket_tasks_summary(tasks)
+}
+
 fn docket_task_summary(task: &docket::DocketTaskProjection) -> String {
     format!(
         "Task '{}' is {}.",
@@ -1313,7 +1356,9 @@ pub(crate) async fn create_task(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskCreateArguments = serde_json::from_value(arguments)?;
-    let job_id = if should_default_pair_conversation_objective(role, args.job_id) {
+    let defaulted_to_conversation_objective =
+        should_default_pair_conversation_objective(role, args.job_id);
+    let job_id = if defaulted_to_conversation_objective {
         pair_conversation_objective_job_id(pool, context, role).await?
     } else {
         args.job_id
@@ -1361,14 +1406,13 @@ pub(crate) async fn create_task(
         .as_ref()
         .map(|task_list| task_list.status.as_str());
     let execution_allowed = task_list_phase.is_some_and(|phase| phase != "planned");
-    let summary = if job_id.is_none() && matches!(task_list_phase, Some("planned")) {
-        format!(
-            "Planned Docket task '{}'. Execution has not started.",
-            task.title
-        )
-    } else {
-        docket_task_row_summary(&task)
-    };
+    let planned_session_task = job_id.is_none() && matches!(task_list_phase, Some("planned"));
+    let summary = docket_task_create_summary(
+        &task,
+        job_id,
+        defaulted_to_conversation_objective,
+        planned_session_task,
+    );
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
@@ -1379,6 +1423,11 @@ pub(crate) async fn create_task(
         "task_list_phase": task_list_phase,
         "execution_allowed": execution_allowed,
         "item_counts": task_list.as_ref().map(task_list_item_counts),
+        "docket_scope": {
+            "kind": if defaulted_to_conversation_objective { "conversation_objective" } else if job_id.is_some() { "explicit_job" } else { "session_task_list" },
+            "job_id": job_id,
+            "session_anchor_id": session_anchor_id,
+        },
         "notes": if job_id.is_none() && matches!(task_list_phase, Some("planned")) {
             vec![
                 "Created a durable session-anchored Docket task definition.",
@@ -1399,8 +1448,9 @@ pub(crate) async fn list_tasks(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketTaskListArguments = serde_json::from_value(arguments)?;
-    let job_id = if should_default_pair_task_list_filter(role, args.job_id, args.session_anchor_id)
-    {
+    let defaulted_to_conversation_objective =
+        should_default_pair_task_list_filter(role, args.job_id, args.session_anchor_id);
+    let job_id = if defaulted_to_conversation_objective {
         pair_conversation_objective_job_id(pool, context, role).await?
     } else {
         args.job_id
@@ -1418,13 +1468,19 @@ pub(crate) async fn list_tasks(
         )
         .await?;
     let content = docket_tasks_card_content(&tasks);
+    let summary =
+        docket_tasks_summary_for_scope(&tasks, job_id, defaulted_to_conversation_objective);
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "content": content,
-        "summary": docket_tasks_summary(&tasks),
+        "summary": summary,
         "count": tasks.len(),
         "counts": docket_task_counts(&tasks),
+        "docket_scope": {
+            "kind": if defaulted_to_conversation_objective { "conversation_objective" } else if job_id.is_some() { "explicit_job" } else { "session_task_list" },
+            "job_id": job_id,
+        },
         "tasks": tasks,
     }))
 }
@@ -1856,6 +1912,32 @@ mod test {
             None,
             None
         ));
+    }
+
+    #[test]
+    fn task_create_summary_names_conversation_objective_scope() {
+        let mut task = task_projection(Uuid::new_v4(), None).task;
+        task.title = "Capture next step".to_string();
+        let job_id = Uuid::new_v4();
+
+        let summary = docket_task_create_summary(&task, Some(job_id), true, false);
+
+        assert!(summary.contains("current conversation's Docket objective"));
+        assert!(summary.contains(&job_id.to_string()));
+        assert!(!summary.contains("Docket Job"));
+    }
+
+    #[test]
+    fn task_list_summary_names_explicit_job_scope() {
+        let task = task_projection(Uuid::new_v4(), None);
+        let job_id = Uuid::new_v4();
+
+        let summary = docket_tasks_summary_for_scope(&[task], Some(job_id), false);
+
+        assert_eq!(
+            summary,
+            format!("Found 1 Docket task in Docket Job {job_id}.")
+        );
     }
 
     #[test]
