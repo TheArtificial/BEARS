@@ -321,9 +321,17 @@ struct ToolPolicy {
 const MODE_ASK: &str = "ask";
 const MODE_PLAN: &str = "plan";
 const MODE_WRITE: &str = "write";
+const FOCUS_TITLE_PREFIX: &str = "⌖ ";
 const DEN_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
 const DEN_ACP_ADAPTER_CONTRACT_VERSION: u32 = 1;
 const LOCAL_DEN_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn project_focused_acp_title(title: Option<String>) -> Option<String> {
+    title.map(|title| {
+        let bare = title.strip_prefix(FOCUS_TITLE_PREFIX).unwrap_or(&title);
+        format!("{FOCUS_TITLE_PREFIX}{bare}")
+    })
+}
 
 pub(crate) fn adapter_version() -> &'static str {
     env!("DEN_ACP_ADAPTER_VERSION")
@@ -5662,9 +5670,76 @@ fn focus_choice_jobs(jobs: &[DocketJobListEntry]) -> Vec<DocketJobListEntry> {
     choices
 }
 
+fn session_title_from_adapter_state(
+    adapter_state: &AdapterState,
+    session_id: &str,
+) -> Option<String> {
+    adapter_state
+        .session_contexts
+        .get(session_id)
+        .and_then(|context| context.thread_title.as_deref())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+}
+
+async fn session_title_from_shared_state(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> Option<String> {
+    shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get(session_id)
+        .and_then(|context| context.thread_title.as_deref())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+}
+
+async fn publish_focus_title_update(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> Result<()> {
+    let den_session = den_get_acp_session(http, config, session_id).await.ok();
+    let mut title = den_session
+        .as_ref()
+        .and_then(den_session_display_title)
+        .or_else(|| session_title_from_adapter_state(adapter_state, session_id));
+    if title.is_none() {
+        title = session_title_from_shared_state(shared_state, session_id).await;
+    }
+    let Some(title) = project_focused_acp_title(title) else {
+        return Ok(());
+    };
+    let updated_at = den_session.as_ref().and_then(|session| {
+        session
+            .get("conversation_title_updated_at")
+            .or_else(|| session.get("title_updated_at"))
+            .or_else(|| session.get("updated_at"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    if let Some(context) = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get_mut(session_id)
+    {
+        context.thread_title = Some(title.clone());
+    }
+    send_session_info_update(session_id, Some(title), updated_at).await
+}
+
 async fn focus_job_report(
     http: &reqwest::Client,
     config: &Config,
+    adapter_state: &AdapterState,
+    shared_state: &AdapterSharedState,
     session_id: &str,
     job_id: String,
 ) -> String {
@@ -5675,15 +5750,33 @@ async fn focus_job_report(
         json!({
             "bear_slug": config.bear,
             "session_id": session_id,
-            "job_id": job_id,
+            "job_id": job_id.clone(),
         }),
     )
     .await
     {
-        Ok(result) => format!(
-            "Den ACP focus set\n\n- Job: {job_id}\n- Docket execution: {}",
-            compact_json_for_status(&result)
-        ),
+        Ok(result) => {
+            if let Err(err) = publish_focus_title_update(
+                http,
+                config,
+                adapter_state,
+                shared_state,
+                session_id,
+            )
+            .await
+            {
+                if bear_debug_verbose() {
+                    eprintln!(
+                        "bear-armature: failed to publish /focus title update session_id={} error={err:#}",
+                        session_id
+                    );
+                }
+            }
+            format!(
+                "Den ACP focus set\n\n- Job: {job_id}\n- Docket execution: {}",
+                compact_json_for_status(&result)
+            )
+        },
         Err(err) => format!(
             "Den ACP /focus could not start focus for job {job_id}: {err:#}\n\nRetry after reconnecting if this session was opened before the latest Den/armature deploy."
         ),
@@ -5694,7 +5787,7 @@ async fn focus_report(
     http: Option<&reqwest::Client>,
     config: Option<&Config>,
     adapter_state: &AdapterState,
-    _shared_state: &AdapterSharedState,
+    shared_state: &AdapterSharedState,
     session_id: &str,
     prompt: &str,
 ) -> String {
@@ -5703,7 +5796,15 @@ async fn focus_report(
             let (Some(http), Some(config)) = (http, config) else {
                 return den_required_slash_command_unavailable(LocalSlashCommand::Focus);
             };
-            focus_job_report(http, config, session_id, job_id).await
+            focus_job_report(
+                http,
+                config,
+                adapter_state,
+                shared_state,
+                session_id,
+                job_id,
+            )
+            .await
         }
         FocusPromptTarget::Invalid => {
             "Den ACP /focus needs zero arguments or exactly one Docket job UUID: /focus [job_id]"
@@ -5715,7 +5816,15 @@ async fn focus_report(
             };
             match den_list_docket_jobs_for_session(http, config, session_id).await {
                 Ok(jobs) => match focus_noncompleted_jobs(&jobs).as_slice() {
-                    [job] => focus_job_report(http, config, session_id, job.id.clone()).await,
+                    [job] => focus_job_report(
+                        http,
+                        config,
+                        adapter_state,
+                        shared_state,
+                        session_id,
+                        job.id.clone(),
+                    )
+                    .await,
                     [] => "Den ACP /focus found no non-completed Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
                         .to_string(),
                     many => {
@@ -5742,7 +5851,15 @@ async fn focus_report(
                         }
                     }
                     match job_ids.as_slice() {
-                        [job_id] => focus_job_report(http, config, session_id, job_id.clone()).await,
+                        [job_id] => focus_job_report(
+                            http,
+                            config,
+                            adapter_state,
+                            shared_state,
+                            session_id,
+                            job_id.clone(),
+                        )
+                        .await,
                         [] => format!(
                             "Den ACP /focus could not list this conversation's Docket Jobs: {err:#}\n\nIt found no Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
                         ),
@@ -12340,6 +12457,18 @@ mod tests {
         assert_eq!(
             focus_job_id_from_prompt(&format!("/focus {job_id} extra")),
             None
+        );
+    }
+
+    #[test]
+    fn project_focused_acp_title_is_idempotent() {
+        assert_eq!(
+            project_focused_acp_title(Some("Roadmap".to_string())).as_deref(),
+            Some("⌖ Roadmap")
+        );
+        assert_eq!(
+            project_focused_acp_title(Some("⌖ Roadmap".to_string())).as_deref(),
+            Some("⌖ Roadmap")
         );
     }
 

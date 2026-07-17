@@ -812,7 +812,7 @@ impl SessionTrackingStream {
         attempted_action: &str,
     ) -> String {
         format!(
-            "Your attempted action `{attempted_action}` was blocked before execution because runtime checkpoint `{}` is pending. Call the `{}` tool before any other tool.",
+            "Your attempted action `{attempted_action}` was blocked before execution because Den checkpoint `{}` is pending. Call the `{}` tool before any other tool.",
             request.checkpoint_id, RUNTIME_CHECKPOINT_TOOL_NAME
         )
     }
@@ -892,7 +892,7 @@ impl SessionTrackingStream {
             return Ok(());
         }
         Err(Self::checkpoint_failure_event(format!(
-            "Runtime checkpoint required task-state follow-through with `{action:?}`, but the assistant next called `{tool_name}`. Use the task-management tool indicated by the checkpoint response before other actions."
+            "Den needs task-state follow-through with `{action:?}` before continuing, but the assistant next called `{tool_name}`. Use the task-management tool indicated by the checkpoint response before other actions. No blocked tool was executed."
         )))
     }
 
@@ -900,7 +900,7 @@ impl SessionTrackingStream {
     fn fail_if_checkpoint_task_action_pending(&self) -> Result<(), RuntimeStreamEvent> {
         if let Some(action) = self.pending_checkpoint_task_action() {
             return Err(Self::checkpoint_failure_event(format!(
-                "Runtime checkpoint required task-state follow-through with `{action:?}`, but the assistant attempted to stop before using the required task-management tool."
+                "Den needs task-state follow-through with `{action:?}` before stopping, but the assistant attempted to stop before using the required task-management tool. No blocked tool was executed."
             )));
         }
         Ok(())
@@ -1035,7 +1035,7 @@ impl SessionTrackingStream {
 
         if attempts > MAX_CHECKPOINT_RECOVERY_ATTEMPTS {
             return Err(Self::checkpoint_failure_event(format!(
-                "Runtime checkpoint `{}` is still pending after {MAX_CHECKPOINT_RECOVERY_ATTEMPTS} recoverable correction attempts; the assistant attempted `{attempted_action}` before calling the `{}` tool. No blocked tool was executed.",
+                "Den got stuck satisfying checkpoint `{}` after {MAX_CHECKPOINT_RECOVERY_ATTEMPTS} recoverable correction attempts; the assistant attempted `{attempted_action}` before calling the `{}` tool. No blocked tool was executed.",
                 request.checkpoint_id, RUNTIME_CHECKPOINT_TOOL_NAME
             )));
         }
