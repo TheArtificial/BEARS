@@ -551,7 +551,7 @@ pub(crate) async fn handle_prompt(
                                 &state,
                                 turn_token,
                             )
-                            .await;
+                            .await?;
                         }
                         Err(state_err) => {
                             tracing::debug!(
@@ -696,7 +696,7 @@ pub(crate) async fn handle_prompt(
                         &state,
                         turn_token,
                     )
-                    .await;
+                    .await?;
                 }
                 Err(err) => {
                     tracing::debug!(
@@ -1076,6 +1076,42 @@ fn actionable_tool_request_event_from_obligation(
     }))
 }
 
+fn unsupported_required_client_obligation_error(obligation: &Value) -> Option<anyhow::Error> {
+    if !obligation_open_for_client(obligation) {
+        return None;
+    }
+    let request = obligation_request_payload(obligation);
+    if obligation_execution_target_is_den(request, obligation) {
+        return None;
+    }
+
+    let id = obligation_id(obligation).unwrap_or("<unknown>");
+    let kind = obligation
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    let expected = obligation
+        .get("expected_responder_action")
+        .or_else(|| obligation.get("expected_client_method"))
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    let tool_call_id = request
+        .get("tool_call_id")
+        .or_else(|| obligation.get("tool_call_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("<none>");
+    let permission_id = request
+        .get("approval_request_id")
+        .or_else(|| obligation.get("permission_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("<none>");
+    let sample = truncate_for_log(&obligation.to_string(), 1000);
+
+    Some(anyhow!(
+        "unsupported required BearWire client obligation: id={id} kind={kind} expected={expected} tool_call={tool_call_id} permission={permission_id} sample={sample}"
+    ))
+}
+
 async fn service_run_state_tool_obligations(
     config: &Config,
     shared_state: &AdapterSharedState,
@@ -1083,12 +1119,15 @@ async fn service_run_state_tool_obligations(
     run_id: &str,
     state: &Value,
     turn_token: Uuid,
-) {
+) -> Result<()> {
     let Some(open) = state.get("open_obligations").and_then(Value::as_array) else {
-        return;
+        return Ok(());
     };
     for obligation in open {
         let Some(event) = actionable_tool_request_event_from_obligation(run_id, obligation) else {
+            if let Some(err) = unsupported_required_client_obligation_error(obligation) {
+                return Err(err);
+            }
             continue;
         };
         let tool_call_id = event
@@ -1152,6 +1191,7 @@ async fn service_run_state_tool_obligations(
             );
         }
     }
+    Ok(())
 }
 
 pub(crate) async fn post_permission_result(
@@ -2287,6 +2327,52 @@ mod tests {
             }
         });
         assert!(actionable_tool_request_event_from_obligation("run-1", &obligation).is_none());
+    }
+
+    #[test]
+    fn unsupported_open_client_obligation_becomes_prompt_error() {
+        let obligation = json!({
+            "id": "obl-context",
+            "kind": "added_context",
+            "expected_responder_action": "context_result",
+            "state": "waiting_for_client",
+            "request_payload": {
+                "resource_id": "ctx-1",
+                "execution_target": "armature_local"
+            }
+        });
+
+        let err = unsupported_required_client_obligation_error(&obligation)
+            .expect("unsupported open client obligation should fail the prompt");
+        let message = err.to_string();
+
+        assert!(message.contains("unsupported required BearWire client obligation"));
+        assert!(message.contains("obl-context"));
+        assert!(message.contains("added_context"));
+        assert!(message.contains("context_result"));
+    }
+
+    #[test]
+    fn unsupported_obligation_error_ignores_closed_and_den_obligations() {
+        let closed = json!({
+            "id": "obl-closed",
+            "kind": "added_context",
+            "expected_responder_action": "context_result",
+            "state": "completed"
+        });
+        assert!(unsupported_required_client_obligation_error(&closed).is_none());
+
+        let den_owned = json!({
+            "id": "obl-den",
+            "kind": "tool_result",
+            "expected_responder_action": "tool_result",
+            "state": "waiting_for_client",
+            "request_payload": {
+                "tool_call_id": "call-title",
+                "execution_target": "den"
+            }
+        });
+        assert!(unsupported_required_client_obligation_error(&den_owned).is_none());
     }
 
     #[test]
