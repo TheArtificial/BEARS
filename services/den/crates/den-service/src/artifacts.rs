@@ -163,6 +163,33 @@ pub struct FinalizeArtifactInput {
 }
 
 #[derive(Debug, Clone)]
+pub struct FinalizeGarageArtifactInput {
+    pub artifact_ref: String,
+    pub bear_id: Uuid,
+    pub content_type: String,
+    pub content_bytes: i64,
+    pub content_sha256: String,
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GarageArtifactUploadPath {
+    pub storage_key: String,
+    pub bucket: String,
+    pub object_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtifactContentLocation {
+    pub artifact_ref: String,
+    pub storage_kind: ArtifactStorageKind,
+    pub storage_key: String,
+    pub content_type: Option<String>,
+    pub content_bytes: i64,
+    pub content_sha256: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ArtifactAccessContext {
     pub bear_id: Uuid,
     pub user_id: Option<i32>,
@@ -266,6 +293,9 @@ pub async fn finalize_metadata_only_artifact(
     input: FinalizeArtifactInput,
 ) -> Result<ArtifactMetadata, DenError> {
     validate_json_object("metadata", &input.metadata)?;
+    if let Some(storage_key) = &input.storage_key {
+        validate_non_empty("storage key", storage_key)?;
+    }
     if let Some(bytes) = input.content_bytes {
         if bytes < 0 {
             return Err(DenError::ValidationError(
@@ -300,6 +330,102 @@ pub async fn finalize_metadata_only_artifact(
             input.artifact_ref
         ))),
     }
+}
+
+pub async fn get_garage_artifact_upload_path(
+    pool: &PgPool,
+    bear_id: Uuid,
+    artifact_ref: &str,
+    bucket: &str,
+) -> Result<GarageArtifactUploadPath, DenError> {
+    validate_non_empty("bucket", bucket)?;
+    let artifact = get_artifact_metadata(pool, bear_id, artifact_ref).await?;
+    if artifact.storage_kind != ArtifactStorageKind::GarageArtifacts {
+        return Err(DenError::ValidationError(format!(
+            "artifact {artifact_ref} is not garage-backed"
+        )));
+    }
+    if artifact.lifecycle != ArtifactLifecycle::Pending {
+        return Err(DenError::ValidationError(format!(
+            "artifact {artifact_ref} is not pending"
+        )));
+    }
+
+    let storage_key = garage_artifact_storage_key(artifact_ref)?;
+    Ok(GarageArtifactUploadPath {
+        object_path: format!("/{bucket}/{storage_key}"),
+        bucket: bucket.to_string(),
+        storage_key,
+    })
+}
+
+pub async fn finalize_garage_artifact(
+    pool: &PgPool,
+    input: FinalizeGarageArtifactInput,
+) -> Result<ArtifactMetadata, DenError> {
+    validate_non_empty("content type", &input.content_type)?;
+    validate_json_object("metadata", &input.metadata)?;
+    if input.content_bytes < 0 {
+        return Err(DenError::ValidationError(
+            "content_bytes must be non-negative".to_string(),
+        ));
+    }
+    validate_sha256(&input.content_sha256)?;
+
+    let storage_key = garage_artifact_storage_key(&input.artifact_ref)?;
+    let row = sqlx::query(
+        "UPDATE artifacts
+         SET lifecycle = 'finalized', storage_key = $3, content_type = $4,
+             content_bytes = $5, content_sha256 = $6, metadata = $7,
+             finalized_at = NOW(), updated_at = NOW()
+         WHERE artifact_ref = $1
+            AND bear_id = $2
+            AND lifecycle = 'pending'
+            AND storage_kind = 'garage_artifacts'
+         RETURNING *",
+    )
+    .bind(&input.artifact_ref)
+    .bind(input.bear_id)
+    .bind(storage_key)
+    .bind(input.content_type)
+    .bind(input.content_bytes)
+    .bind(input.content_sha256)
+    .bind(input.metadata)
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        Some(row) => artifact_from_row(&row),
+        None => Err(DenError::ValidationError(format!(
+            "artifact {} is not pending garage-backed content or does not exist",
+            input.artifact_ref
+        ))),
+    }
+}
+
+pub async fn get_artifact_content_location(
+    pool: &PgPool,
+    artifact_ref: &str,
+    context: ArtifactAccessContext,
+) -> Result<ArtifactContentLocation, DenError> {
+    let artifact =
+        authorize_artifact_access(pool, artifact_ref, context, ArtifactAccessLevel::Content)
+            .await?;
+
+    Ok(ArtifactContentLocation {
+        artifact_ref: artifact.artifact_ref,
+        storage_kind: artifact.storage_kind,
+        storage_key: artifact.storage_key.ok_or_else(|| {
+            DenError::ValidationError(format!("artifact {artifact_ref} has no storage key"))
+        })?,
+        content_type: artifact.content_type,
+        content_bytes: artifact.content_bytes.ok_or_else(|| {
+            DenError::ValidationError(format!("artifact {artifact_ref} has no content size"))
+        })?,
+        content_sha256: artifact.content_sha256.ok_or_else(|| {
+            DenError::ValidationError(format!("artifact {artifact_ref} has no content sha256"))
+        })?,
+    })
 }
 
 pub async fn get_artifact_metadata(
@@ -452,8 +578,56 @@ pub async fn list_artifact_links(
     rows.iter().map(link_from_row).collect()
 }
 
+pub async fn list_expired_artifact_gc_candidates(
+    pool: &PgPool,
+    bear_id: Uuid,
+    now: OffsetDateTime,
+    limit: i64,
+) -> Result<Vec<ArtifactMetadata>, DenError> {
+    if limit <= 0 {
+        return Err(DenError::ValidationError(
+            "limit must be positive".to_string(),
+        ));
+    }
+
+    let rows = sqlx::query(
+        "SELECT * FROM artifacts
+         WHERE bear_id = $1
+            AND expires_at IS NOT NULL
+            AND expires_at <= $2
+            AND lifecycle IN ('finalized', 'expired')
+         ORDER BY expires_at ASC, created_at ASC
+         LIMIT $3",
+    )
+    .bind(bear_id)
+    .bind(now)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    rows.iter().map(artifact_from_row).collect()
+}
+
 fn new_artifact_ref() -> String {
     format!("{ARTIFACT_REF_PREFIX}{}", Uuid::new_v4().simple())
+}
+
+pub fn garage_artifact_storage_key(artifact_ref: &str) -> Result<String, DenError> {
+    let suffix = artifact_ref
+        .strip_prefix(ARTIFACT_REF_PREFIX)
+        .filter(|suffix| {
+            suffix.len() == 32
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+        .ok_or_else(|| {
+            DenError::ValidationError(format!("invalid artifact ref: {artifact_ref}"))
+        })?;
+
+    // ponytail: one-level sharding by ref prefix is enough for the initial bucket layout;
+    // upgrade to time/bear partitioning if object listings become hot.
+    Ok(format!("artifacts/{}/{artifact_ref}", &suffix[..2]))
 }
 
 fn role_can_read_artifact(artifact: &ArtifactMetadata, context: &ArtifactAccessContext) -> bool {
@@ -613,6 +787,27 @@ mod tests {
         }
     }
 
+    fn garage_reserve_input(
+        bear_id: Uuid,
+        user_id: i32,
+        expires_at: Option<OffsetDateTime>,
+    ) -> ReserveArtifactInput {
+        ReserveArtifactInput {
+            bear_id,
+            created_by_user_id: Some(user_id),
+            owner_profile: BearProfile::Pair,
+            kind: "report".to_string(),
+            title: Some("garage sample".to_string()),
+            summary: None,
+            content_type: None,
+            storage_kind: ArtifactStorageKind::GarageArtifacts,
+            visibility: ArtifactVisibility::SameUser,
+            provenance: json!({"test": true}),
+            metadata: json!({"phase": 2}),
+            expires_at,
+        }
+    }
+
     #[tokio::test]
     async fn artifact_registry_lifecycle_and_links() {
         let _guard = DB_LOCK.lock().await;
@@ -733,5 +928,97 @@ mod tests {
         .await
         .unwrap_err();
         assert!(deleted_content.to_string().contains("not readable"));
+    }
+
+    #[tokio::test]
+    async fn garage_artifact_finalize_content_location_and_gc() {
+        let _guard = DB_LOCK.lock().await;
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let user_id = create_user(&pool).await;
+        let bear_id = create_bear(&pool).await;
+        let now = OffsetDateTime::now_utc();
+
+        let reserved = reserve_artifact(
+            &pool,
+            garage_reserve_input(bear_id, user_id, Some(now - time::Duration::minutes(5))),
+        )
+        .await
+        .expect("reserve garage artifact");
+
+        let upload = get_garage_artifact_upload_path(
+            &pool,
+            bear_id,
+            &reserved.artifact_ref,
+            "den-artifacts",
+        )
+        .await
+        .expect("garage upload path");
+        assert_eq!(upload.bucket, "den-artifacts");
+        assert!(upload.storage_key.ends_with(&reserved.artifact_ref));
+        assert_eq!(
+            upload.object_path,
+            format!("/den-artifacts/{}", upload.storage_key)
+        );
+
+        let finalized = finalize_garage_artifact(
+            &pool,
+            FinalizeGarageArtifactInput {
+                artifact_ref: reserved.artifact_ref.clone(),
+                bear_id,
+                content_type: "application/json".to_string(),
+                content_bytes: 42,
+                content_sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+                metadata: json!({"phase": 2, "final": true}),
+            },
+        )
+        .await
+        .expect("finalize garage artifact");
+        assert_eq!(finalized.lifecycle, ArtifactLifecycle::Finalized);
+        assert_eq!(finalized.storage_kind, ArtifactStorageKind::GarageArtifacts);
+        assert_eq!(
+            finalized.storage_key.as_deref(),
+            Some(upload.storage_key.as_str())
+        );
+
+        let double_finalize = finalize_garage_artifact(
+            &pool,
+            FinalizeGarageArtifactInput {
+                artifact_ref: reserved.artifact_ref.clone(),
+                bear_id,
+                content_type: "application/json".to_string(),
+                content_bytes: 42,
+                content_sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+                metadata: json!({}),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(double_finalize.to_string().contains("not pending"));
+
+        let location = get_artifact_content_location(
+            &pool,
+            &reserved.artifact_ref,
+            ArtifactAccessContext {
+                bear_id,
+                user_id: Some(user_id),
+                profile: BearProfile::Pair,
+            },
+        )
+        .await
+        .expect("content location");
+        assert_eq!(location.storage_kind, ArtifactStorageKind::GarageArtifacts);
+        assert_eq!(location.storage_key, upload.storage_key);
+        assert_eq!(location.content_bytes, 42);
+
+        let candidates = list_expired_artifact_gc_candidates(&pool, bear_id, now, 10)
+            .await
+            .expect("gc candidates");
+        assert!(candidates
+            .iter()
+            .any(|artifact| artifact.artifact_ref == reserved.artifact_ref));
     }
 }
