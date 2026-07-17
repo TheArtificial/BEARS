@@ -43,12 +43,46 @@ The current [Den state machine inventory](../architecture/den-state-machine-inve
 
 Target canonical runtime objects:
 
-1. **`ActorContext`** owns Bear identity, user membership/access, and trust profile.
-2. **`ConversationSnapshot`** owns durable conversation inputs, including model-selection snapshot and the durable focus pointer.
-3. **`TurnAuthority`** is the only owner of mutation authority: governance, workplan/approval gate, permission policy, allowed tool classes, and approval requirements compile into one object before tool routing or prompt assembly.
-4. **`ResolvedFocus`** is the only focus input to completion policy. Cached task lists, prompt diagnostics, and session-local task projections may inform display/model context, but cannot force continuation unless they resolve through current durable focus.
-5. **`RunState`** owns lifecycle plus active wait reason. Waiting states should structurally carry their obligation handles; terminal transitions should close/cancel open obligations transactionally so late results are ignored by construction.
-6. **`RunControl`** owns budgets, checkpoint state, failure/KO counters, retry policy, and recovery disposition.
+1. **`ActorContext`** is the resolved actor/access input for the run: Bear identity, user membership/access, and trust profile. It is not a derivation engine: membership may constrain authority, but must not silently change trust profile, and trust profile must not imply user access.
+2. **`ConversationSnapshot`** owns durable conversation inputs captured for the turn/run, including model-selection snapshot and the durable focus pointer. Ordinary policy decisions use the snapshot; mid-run changes enter through typed transitions rather than ad hoc row reads.
+3. **`TurnAuthority`** is the compiled authority view for a turn. It consumes trust/profile defaults, governance, session permission mode, workplan/approval state, armature capabilities, and tool descriptors, then produces mutation/execution gates, allowed tool classes, and approval requirements. Governance remains a run-supervision input; `TurnAuthority` owns only the derived permission surface.
+4. **`ResolvedFocus`** is the only focus input to completion policy. It may include Docket task state only after resolving the current durable focus pointer. Cached task lists, prompt diagnostics, and session-local task projections may inform display/model context, but cannot become focus or force continuation.
+5. **`TurnRunState`** owns lifecycle plus active wait reason. Waiting states should structurally carry their obligation handles. Terminal transitions should close/cancel open obligations transactionally and idempotently so late results are ignored by construction; retrying terminalization must not reopen obligations, schedule another continuation, or change a previously settled terminal outcome except through an explicit recovery transition.
+6. **`RunControl`** owns budgets, checkpoint state, failure/KO counters, retry policy, and recovery disposition. It may decide or record recovery, but lifecycle changes still occur through `TurnRunState`, and recovery must not mutate focus or authority except via explicit typed transitions.
+
+Derivation direction is one-way:
+
+```text
+ActorContext
+ConversationSnapshot
+Session/client capability snapshot
+Docket/workplan state
+Tool descriptors
+Governance
+        │
+        ▼
+TurnAuthority ───────► tool routing / prompt authority block / client projection
+
+ConversationSnapshot.durable_focus_pointer
+        │
+        ▼
+Docket focused execution lookup
+        │
+        ▼
+ResolvedFocus ───────► completion policy / task-orientation prompt projection
+
+TurnRunState + obligations
+        │
+        ▼
+continuation / wait / terminal behavior
+
+RunControl
+        │
+        ▼
+budget / checkpoint / retry decisions
+```
+
+Projections do not feed back into authority. A cached task-list projection cannot itself be a focus source; at most it can be reused as a display/cache optimization after identity/version checks against the durable focus.
 
 Demote these from state authorities to projections/caches or owned subrecords:
 
@@ -66,13 +100,21 @@ Do not collapse these boundaries:
 - authority vs prompt/client labels;
 - user membership/access vs trust profile.
 
+Anti-goals:
+
+- do not introduce a monolithic `EffectiveTurnState` object that every subsystem mutates;
+- do not make prompt/client labels canonical state;
+- do not let cached projections participate in completion or permission decisions;
+- do not make model selection, compaction, title updates, or focus display updates authority sources;
+- do not collapse trust profile into governance or governance into permission mode.
+
 Implementation slices:
 
 | Slice | Done when |
 | --- | --- |
-| Introduce authority compiler seam | Tool routing, prompt assembly, and client projection all consume the same `TurnAuthority` result for write/mutation decisions. |
-| Make focus completion input explicit | Completion policy accepts `ResolvedFocus`/focused Docket state only; stale task-list caches cannot force continuation. |
-| Reify wait reasons in run state | Waiting run states carry obligation ids, and terminal transitions reject or close open obligations transactionally. |
+| Introduce authority compiler seam | Tool routing, prompt assembly, and client projection all consume the same `TurnAuthority` result for write/mutation decisions, and no separate prompt/client/session-mode path can independently expand allowed tool classes. |
+| Make focus completion input explicit | Completion policy accepts `ResolvedFocus` and Docket-focused task state only. Session cached task lists are not accepted by the completion API and cannot be adapted into focus without resolving the durable focus pointer. |
+| Reify wait reasons in turn-run state | Waiting `TurnRunState` variants carry obligation ids, and terminal transitions reject or close open obligations transactionally and idempotently. |
 | Move work-surface ownership to WorkRun | Sandbox/workspace/branch state is resolved through Docket work execution records, not conversation focus. |
 | Demote projection-only axes | Prompt, compaction, client labels, and cached task lists cannot create focus, permissions, obligations, or governance. |
 | Update inventory/tests | The state-machine inventory documents the reduced authority model and keeps seam tests for stale focus, submitted plans, terminal obligations, late results, and projection-only state. |
