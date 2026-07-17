@@ -16,6 +16,9 @@
 - [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md)
 - [ADR-0037: Work sandbox, egress gateway, and upstream auth](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)
 - [ADR-0051: Reflection performance assessments](adr-0051-reflection-performance-assessments.md)
+- [Den state machine inventory](../architecture/den-state-machine-inventory.md)
+
+> **State-inventory maintenance.** This ADR defines several runtime state axes: governance, focused Job, task focus, budgets, checkpoints, task gates, and completion/continuation reasons. Any implementation change that alters those axes or their transitions must update the Den state machine inventory and add or adjust executable invariants/replay assertions for the affected behavior.
 
 > **2026-07-06 amendment.** Four changes were added after comparative review against OpenCode, Cursor, Letta Code, and Claude Code loop control:
 > 1. **§7c** introduces surface-declared **grounding probes** so post-mutation feedback is grounded in the work surface's own validators rather than only in model self-report, without assuming every surface is a code repository.

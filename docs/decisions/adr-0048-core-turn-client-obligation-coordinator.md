@@ -11,6 +11,9 @@
 - [ADR-0044: Runtime stream state machines must make progress explicit](adr-0044-runtime-stream-wake-invariant.md)
 - [BearWire JSON specification](../architecture/bearwire-json-spec.md)
 - [BearWire turn coordinator refactor plan](../roadmap/BEARWIRE_TURN_COORDINATOR_REFACTOR_PLAN.md)
+- [Den state machine inventory](../architecture/den-state-machine-inventory.md)
+
+> **State-inventory maintenance.** This ADR owns turn phases, run lifecycle waits, obligation kinds/states, and late-result handling in the Den state machine inventory. Changes to any wait/settlement/continuation transition must update that inventory and add/update coordinator tests for legal and illegal transitions.
 
 ## Context
 

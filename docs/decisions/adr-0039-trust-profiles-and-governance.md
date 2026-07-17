@@ -12,6 +12,9 @@
 - [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
 - [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 - [`work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md)
+- [`den-state-machine-inventory.md`](../architecture/den-state-machine-inventory.md)
+
+> **State-inventory maintenance.** This ADR owns the trust-profile and governance axes in the Den state machine inventory. Changes to trust profiles, governance values, governance transitions, or effective-policy derivation must update that inventory and include behavior-level tests or replay assertions for affected transitions.
 
 ## Context
 

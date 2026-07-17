@@ -2,7 +2,10 @@
 
 **Status:** Proposed  
 **Date:** 2026-06-20  
-**Amends:** [ADR-0034: Jobs and Tasks Work-Management Model](adr-0034-jobs-and-tasks-work-management.md), [ADR-0027: Workflow-state ontology](adr-0027-workflow-state-ontology.md)
+**Amends:** [ADR-0034: Jobs and Tasks Work-Management Model](adr-0034-jobs-and-tasks-work-management.md), [ADR-0027: Workflow-state ontology](adr-0027-workflow-state-ontology.md)  
+**State inventory:** [Den state machine inventory](../architecture/den-state-machine-inventory.md)
+
+> **State-inventory maintenance.** This ADR owns session task-list projections, Docket checkout/sync boundaries, and the task-list continuation gate. Changes to task-list source-of-truth rules, focus authority, or stop/continue behavior must update the state inventory and include tests that stale projections cannot force continuation.
 
 ## Context
 

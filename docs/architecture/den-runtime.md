@@ -34,6 +34,7 @@ The target removes that split entirely. There is **no Letta server, no Letta Cod
 - **Bear memory and cognition is canonical in per-Bear SQLite** (ADR-0031). The git MemFS sidecar is removed; git is retained only for human-authored artifacts.
 - **Tasks/jobs are not Bear memory.** They are Docket-canonical in Den Postgres (ADR-0034). The bear/Den boundary is drawn at memory, not tasks.
 - **Loop control separates supervision from objective.** A run's **governance** determines continuation pressure (`interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`). A run's **focused Job**, when present, is the Docket Job kept centered for next-task selection. `work` normally requires a focused Job; `pair` only designates one explicitly through Bear conversation or client command. See [ADR-0050](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md).
+- **Runtime state axes are documented and tested.** Conversation/session/turn/run state is inventoried in [Den state machine inventory](den-state-machine-inventory.md). Runtime changes that add or change state semantics must update that inventory and leave a small executable invariant, table-driven test, replay assertion, or projection test for behavior-affecting changes.
 
 ## Runtime architecture
 
