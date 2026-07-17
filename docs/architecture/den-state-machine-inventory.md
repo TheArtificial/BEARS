@@ -19,10 +19,10 @@ Prompt text and UI labels are never authority by themselves. Canonical state mus
 
 ## State-machine shape
 
-Den should be reasoned about as a product of mostly orthogonal axes:
+Den should keep a broad inventory of mostly orthogonal product axes:
 
 ```text
-EffectiveTurnState =
+TurnStateInventory =
   BearIdentity
 × UserMembership
 × ConversationState
@@ -39,6 +39,19 @@ EffectiveTurnState =
 × RecoveryState
 ```
 
+That inventory is not the runtime authority surface. The implemented authority
+surface is intentionally smaller:
+
+```text
+RuntimeAuthorityState =
+  TurnAuthority
+× ResolvedFocus
+× DocketTaskState
+× TurnRunState
+× ObligationSet
+× LoopControlState
+```
+
 The three authority owners that must stay singular are:
 
 ```text
@@ -50,19 +63,23 @@ ActiveObligations = TurnRunState × ObligationSet
 `TurnAuthority` is the compiled permission surface for the turn: tool routing,
 prompt authority blocks, and client permission projection consume it, but prompt
 or client labels cannot feed authority back into it. `ResolvedFocus` is the only
-input that may let completion policy force continuation for unfinished focused
-work. `TurnRunState` owns lifecycle, active wait reason, and terminal obligation
-closure.
+focus input that may let completion policy force continuation for unfinished
+focused work. `TurnRunState` owns lifecycle, active wait reason, and terminal
+obligation closure.
 
-Useful projections remain derived views only:
+The remaining axes feed compilation, execution, or projection. They are not peer
+authority owners unless a typed implementation seam consumes them into one of
+the authority owners above:
 
 ```text
 EffectivePolicyProjection = TrustProfile × Governance × Armature × RunAuthContext × PermissionMode
 
-CompletionProjection = FocusState × DocketTaskState × Governance × BudgetState × ObligationSet
+CompletionProjection = ResolvedFocus × DocketTaskState × Governance × BudgetState × ObligationSet
 ```
 
-Do not let a derived view become a peer source of truth. If two axes disagree, resolve the conflict into canonical state before prompt rendering or client projection.
+Do not let a derived view become a peer source of truth. If two axes disagree,
+resolve the conflict into canonical state before prompt rendering or client
+projection.
 
 Exit gate for the reduced authority model:
 
@@ -85,8 +102,8 @@ Exit gate for the reduced authority model:
 | Governance | runtime/workspace session | run-scoped mutable timeline | `interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`. |
 | Focused Job | Docket + conversation focus resolver | conversation-scoped durable objective | Only active focus may drive focused completion behavior. |
 | Task focus | runtime derivation | ephemeral per run/turn | Next actionable Docket/task-list item derived from active focus and task state. |
-| Workflow state | current-turn state compiler | current turn | Authoritative workplan/activity/memory/execution state. |
-| Permission policy | Den policy resolver + descriptors | current turn/tool call | Resolves Ask/Plan/Write, tool classes, approvals, and armature routes. |
+| Workflow state | current-turn state compiler | current turn | Inputs compiled into `TurnAuthority`; derived operational focus is advisory. |
+| Permission policy | Den policy resolver + descriptors | current turn/tool call | Resolves Ask/Plan/Write, tool classes, approvals, and armature routes before `TurnAuthority`/routing consume them. |
 | Turn/run lifecycle | runtime turn controller | run/turn | Accepted/running/waiting/terminal states and active-run selection. |
 | Obligations | obligation coordinator | per tool/permission/human wait | Client/tool/approval waits; blocks only while open. |
 | Loop control/budgets | agent loop controller | run/turn | Budgets, checkpoints, KO/failure signals, context pressure. |
@@ -285,7 +302,9 @@ Derived `operational_focus` values may include:
 
 Invariants:
 
-- Current-turn workflow state is authority; `operational_focus` is advisory.
+- Current-turn workflow state contributes typed inputs to `TurnAuthority`; it is
+  not a separate mutation authority after compilation.
+- `operational_focus` is advisory.
 - If execution is locked, no derived focus may imply mutation is allowed.
 - Prior-turn state and prompt reminders must not override current-turn authority.
 
