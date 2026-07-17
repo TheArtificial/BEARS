@@ -521,7 +521,22 @@ impl SessionTrackingStream {
     fn plan_update_event_from_tool_message(message: &ChatMessage) -> Option<RuntimeSemanticEvent> {
         let content = message.content.as_deref()?;
         let value: serde_json::Value = serde_json::from_str(content).ok()?;
-        let entries = value
+        let entries = Self::plan_update_entries_from_tool_result(&value)?;
+        if entries.is_empty() {
+            return None;
+        }
+        Some(RuntimeSemanticEvent::RunProgress {
+            kind: "plan_update".to_string(),
+            text: None,
+            phase: Some("tool_result".to_string()),
+            detail: Some(serde_json::json!({ "entries": entries })),
+        })
+    }
+
+    fn plan_update_entries_from_tool_result(
+        value: &serde_json::Value,
+    ) -> Option<Vec<serde_json::Value>> {
+        value
             .get("plan")
             .and_then(|plan| plan.get("items"))
             .or_else(|| value.get("task_list").and_then(|plan| plan.get("items")))
@@ -531,16 +546,42 @@ impl SessionTrackingStream {
                     .and_then(|sync| sync.get("task_list"))
                     .and_then(|plan| plan.get("items"))
             })
-            .and_then(|items| items.as_array())?
-            .clone();
-        if entries.is_empty() {
+            .and_then(|items| items.as_array())
+            .cloned()
+            .or_else(|| Self::docket_tool_plan_entries(value))
+    }
+
+    fn docket_tool_plan_entries(value: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+        let domain = value.get("domain").and_then(serde_json::Value::as_str);
+        if domain != Some("docket") {
             return None;
         }
-        Some(RuntimeSemanticEvent::RunProgress {
-            kind: "plan_update".to_string(),
-            text: None,
-            phase: Some("tool_result".to_string()),
-            detail: Some(serde_json::json!({ "entries": entries })),
+        if let Some(tasks) = value
+            .get("job")
+            .and_then(|job| job.get("tasks"))
+            .and_then(serde_json::Value::as_array)
+        {
+            return Some(tasks.iter().map(Self::docket_task_plan_entry).collect());
+        }
+        if let Some(tasks) = value.get("tasks").and_then(serde_json::Value::as_array) {
+            return Some(tasks.iter().map(Self::docket_task_plan_entry).collect());
+        }
+        value
+            .get("task")
+            .map(|task| vec![Self::docket_task_plan_entry(task)])
+    }
+
+    fn docket_task_plan_entry(task: &serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "id": task.get("id"),
+            "title": task.get("title"),
+            "summary": task.get("body").or_else(|| task.get("summary")),
+            "status": task.get("status"),
+            "source_ref": {
+                "kind": "docket_task",
+                "docket_job_id": task.get("job_id"),
+                "docket_task_id": task.get("id"),
+            },
         })
     }
 
@@ -2144,6 +2185,71 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content.as_deref(), Some("checking"));
         assert_eq!(messages[0].tool_calls.as_ref().map(|c| c.len()), Some(2));
+    }
+
+    #[test]
+    fn plan_update_event_is_derived_from_task_list_tool_result() {
+        let message = ChatMessage {
+            role: "tool".to_string(),
+            content: Some(
+                serde_json::json!({
+                    "task_list": {
+                        "items": [
+                            {"id": "task-1", "title": "First", "status": "pending"}
+                        ]
+                    }
+                })
+                .to_string(),
+            ),
+            tool_call_id: Some("call-1".to_string()),
+            name: Some("update_task_list".to_string()),
+            tool_calls: None,
+        };
+
+        let event = SessionTrackingStream::plan_update_event_from_tool_message(&message)
+            .expect("plan update event");
+
+        assert!(matches!(
+            event,
+            RuntimeSemanticEvent::RunProgress { kind, detail: Some(detail), .. }
+                if kind == "plan_update"
+                    && detail["entries"][0]["id"].as_str() == Some("task-1")
+        ));
+    }
+
+    #[test]
+    fn plan_update_event_is_derived_from_docket_task_tool_result() {
+        let message = ChatMessage {
+            role: "tool".to_string(),
+            content: Some(
+                serde_json::json!({
+                    "domain": "docket",
+                    "task": {
+                        "id": "docket-task-1",
+                        "job_id": "job-1",
+                        "title": "Add task",
+                        "body": "Make the ACP plan visible.",
+                        "status": "pending"
+                    }
+                })
+                .to_string(),
+            ),
+            tool_call_id: Some("call-1".to_string()),
+            name: Some("create_task".to_string()),
+            tool_calls: None,
+        };
+
+        let event = SessionTrackingStream::plan_update_event_from_tool_message(&message)
+            .expect("plan update event");
+
+        assert!(matches!(
+            event,
+            RuntimeSemanticEvent::RunProgress { kind, detail: Some(detail), .. }
+                if kind == "plan_update"
+                    && detail["entries"][0]["id"].as_str() == Some("docket-task-1")
+                    && detail["entries"][0]["title"].as_str() == Some("Add task")
+                    && detail["entries"][0]["source_ref"]["kind"].as_str() == Some("docket_task")
+        ));
     }
 
     #[test]
