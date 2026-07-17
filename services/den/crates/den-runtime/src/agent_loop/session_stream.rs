@@ -11,12 +11,12 @@ use den_service::bears::prompt_fragments::{
 };
 use futures::Stream;
 
+use crate::runtime::completion_policy::{
+    decide_turn_completion, TurnCompletionCompleteReason, TurnCompletionDecision,
+    TurnCompletionPolicyInput,
+};
 use crate::runtime::focus_context::{
     resolve_runtime_focus_context, RuntimeFocusContext, RuntimeFocusResolveRequest,
-};
-use crate::runtime::turn_state::{
-    autonomous_execution_gate_for_task_list, classify_autonomous_final_response,
-    detect_task_focus_loop, AutonomousExecutionGate,
 };
 use crate::{
     agent_loop::{
@@ -95,13 +95,6 @@ fn render_final_gate_continuation_guidance(next_task: &str) -> Result<String, De
             }
         }),
     )
-}
-
-fn should_force_final_gate_continuation(
-    budget_finalization_grace_used: bool,
-    gate: &AutonomousExecutionGate,
-) -> bool {
-    !budget_finalization_grace_used && gate.has_incomplete_unblocked_items && !gate.may_stop
 }
 
 fn recent_tool_result_matches(messages: &[ChatMessage], tool_call_id: &str) -> bool {
@@ -745,12 +738,6 @@ impl SessionTrackingStream {
         }
     }
 
-    fn budget_finalization_grace_used(&self) -> bool {
-        self.store
-            .get(&self.session_key)
-            .is_some_and(|session| session.turn_budget_state.budget_finalization_grace_used)
-    }
-
     fn checkpoint_failure_event(message: String) -> RuntimeStreamEvent {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
             turn: None,
@@ -988,33 +975,64 @@ impl SessionTrackingStream {
         &mut self,
         cached_activity_plan_projection: Option<TaskListProjection>,
     ) {
-        let autonomous_gate = autonomous_execution_gate_for_task_list(
-            self.profile,
-            cached_activity_plan_projection.as_ref(),
-            classify_autonomous_final_response(&self.assistant_text),
-        );
-        // ponytail: budget landing beats autonomous task-focus continuation; upgrade by
-        // tracking an explicit finalization-mode reason instead of this budget-state bit.
-        if should_force_final_gate_continuation(
-            self.budget_finalization_grace_used(),
-            &autonomous_gate,
-        ) {
-            let recent_texts = self
-                .store
-                .get(&self.session_key)
-                .map(|session| {
-                    session
-                        .messages
-                        .iter()
-                        .rev()
-                        .filter_map(|message| message.content.as_deref())
-                        .take(6)
-                        .map(str::to_string)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let loop_detection = detect_task_focus_loop(&recent_texts);
-            if loop_detection.detected {
+        let recent_texts = self
+            .store
+            .get(&self.session_key)
+            .map(|session| {
+                session
+                    .messages
+                    .iter()
+                    .rev()
+                    .filter_map(|message| message.content.as_deref())
+                    .take(6)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let decision = decide_turn_completion(TurnCompletionPolicyInput {
+            profile: self.profile,
+            focused_task_list: cached_activity_plan_projection.as_ref(),
+            assistant_text: &self.assistant_text,
+            recent_texts: &recent_texts,
+        });
+
+        match decision {
+            TurnCompletionDecision::Continue {
+                reason,
+                next_task,
+                final_response_kind,
+                ..
+            } => {
+                tracing::info!(
+                    client_session_id = %self.client_session_id,
+                    profile = %self.profile.as_str(),
+                    next_task = %next_task,
+                    reason = ?reason,
+                    final_response_kind = ?final_response_kind,
+                    "native runtime converted premature terminal response into continuation nudge"
+                );
+                self.begin_final_gate_continuation(&next_task);
+                self.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunProgress {
+                    kind: "autonomous_continuation_gate".to_string(),
+                    text: Some(format!(
+                        "Active task-list work remains; continuing with {next_task} instead of stopping on a progress-only summary."
+                    )),
+                    phase: Some("continuation".to_string()),
+                    detail: Some(serde_json::json!({
+                        "next_task": next_task,
+                        "profile": self.profile.as_str(),
+                        "terminal_response_suppressed": true,
+                        "reason": format!("{reason:?}"),
+                        "final_response_kind": format!("{final_response_kind:?}"),
+                    })),
+                });
+                return;
+            }
+            TurnCompletionDecision::Complete {
+                reason: TurnCompletionCompleteReason::RepeatedTerminalObjection,
+                loop_detection: Some(loop_detection),
+                ..
+            } => {
                 self.finished = true;
                 tracing::warn!(
                     client_session_id = %self.client_session_id,
@@ -1028,29 +1046,7 @@ impl SessionTrackingStream {
                     Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
                 return;
             }
-            let next_task = autonomous_gate
-                .next_incomplete_task_title
-                .unwrap_or_else(|| "the next incomplete task".to_string());
-            tracing::info!(
-                client_session_id = %self.client_session_id,
-                profile = %self.profile.as_str(),
-                next_task = %next_task,
-                "native runtime converted premature terminal response into continuation nudge"
-            );
-            self.begin_final_gate_continuation(&next_task);
-            self.pending_pause_after_tool = Some(RuntimeSemanticEvent::RunProgress {
-                kind: "autonomous_continuation_gate".to_string(),
-                text: Some(format!(
-                    "Active task-list work remains; continuing with {next_task} instead of stopping on a progress-only summary."
-                )),
-                phase: Some("continuation".to_string()),
-                detail: Some(serde_json::json!({
-                    "next_task": next_task,
-                    "profile": self.profile.as_str(),
-                    "terminal_response_suppressed": true,
-                })),
-            });
-            return;
+            TurnCompletionDecision::Complete { .. } => {}
         }
 
         let pool = self.pool.clone();
@@ -1852,35 +1848,6 @@ mod tests {
             session.profile,
             NativeToolDispatchMode::DeferToClient,
         )
-    }
-
-    #[test]
-    fn final_gate_does_not_force_continuation_without_incomplete_work() {
-        let gate = AutonomousExecutionGate {
-            is_active_autonomous_task: true,
-            has_incomplete_unblocked_items: false,
-            acceptance_criteria_met: false,
-            has_hard_blocker: false,
-            may_stop: false,
-            next_incomplete_task_title: None,
-        };
-
-        assert!(!should_force_final_gate_continuation(false, &gate));
-    }
-
-    #[test]
-    fn final_gate_forces_continuation_only_for_actionable_incomplete_work() {
-        let gate = AutonomousExecutionGate {
-            is_active_autonomous_task: true,
-            has_incomplete_unblocked_items: true,
-            acceptance_criteria_met: false,
-            has_hard_blocker: false,
-            may_stop: false,
-            next_incomplete_task_title: Some("finish the task".to_string()),
-        };
-
-        assert!(should_force_final_gate_continuation(false, &gate));
-        assert!(!should_force_final_gate_continuation(true, &gate));
     }
 
     #[tokio::test]

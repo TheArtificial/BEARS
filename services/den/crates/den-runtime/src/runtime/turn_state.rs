@@ -173,6 +173,8 @@ pub fn classify_autonomous_final_response(text: &str) -> AutonomousFinalResponse
         || lower.contains("runtime limits")
         || lower.contains("tool budget")
         || lower.contains("write budget")
+        || lower.contains("wall-clock")
+        || lower.contains("wall clock")
         || lower.contains("loop-ko")
         || lower.contains("further write")
         || lower.contains("fresh turn")
@@ -352,7 +354,6 @@ pub fn autonomous_execution_gate_for_task_list(
         matches!(
             final_response_kind,
             AutonomousFinalResponseKind::ScopeEscalationFinal
-                | AutonomousFinalResponseKind::RuntimeLimitBlockedFinal
         )
     } else {
         matches!(
@@ -937,7 +938,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_limit_blocked_final_allows_terminal_response_with_remaining_work() {
+    fn runtime_limit_blocked_final_forces_continuation_with_remaining_work() {
         let task_list = task_list(
             "active",
             vec![
@@ -958,7 +959,7 @@ mod tests {
         );
 
         assert!(gate.has_incomplete_unblocked_items);
-        assert!(gate.may_stop);
+        assert!(!gate.may_stop);
     }
 
     #[test]
