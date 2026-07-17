@@ -213,6 +213,75 @@ pub struct AttachArtifactInput {
     pub created_by_user_id: Option<i32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocketArtifactTargetKind {
+    Job,
+    Task,
+    Run,
+    Criterion,
+}
+
+impl DocketArtifactTargetKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Job => "docket_job",
+            Self::Task => "docket_task",
+            Self::Run => "docket_run",
+            Self::Criterion => "docket_criterion",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocketArtifactRole {
+    Input,
+    Source,
+    Output,
+    Evidence,
+    TestReport,
+    Diff,
+    RuntimeCheckpoint,
+    CompletionReceipt,
+}
+
+impl DocketArtifactRole {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Source => "source",
+            Self::Output => "output",
+            Self::Evidence => "evidence",
+            Self::TestReport => "test_report",
+            Self::Diff => "diff",
+            Self::RuntimeCheckpoint => "runtime_checkpoint",
+            Self::CompletionReceipt => "completion_receipt",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AttachDocketArtifactInput {
+    pub artifact_ref: String,
+    pub bear_id: Uuid,
+    pub target_kind: DocketArtifactTargetKind,
+    pub target_id: Uuid,
+    pub role: DocketArtifactRole,
+    pub metadata: Value,
+    pub created_by_user_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ArtifactCitation {
+    pub artifact_ref: String,
+    pub kind: String,
+    pub title: Option<String>,
+    pub summary: Option<String>,
+    pub content_type: Option<String>,
+    pub content_bytes: Option<i64>,
+    pub lifecycle: ArtifactLifecycle,
+    pub readable: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArtifactMetadata {
     pub id: Uuid,
@@ -578,6 +647,80 @@ pub async fn list_artifact_links(
     rows.iter().map(link_from_row).collect()
 }
 
+pub async fn attach_docket_artifact(
+    pool: &PgPool,
+    input: AttachDocketArtifactInput,
+) -> Result<ArtifactLink, DenError> {
+    attach_artifact(
+        pool,
+        AttachArtifactInput {
+            artifact_ref: input.artifact_ref,
+            bear_id: input.bear_id,
+            target_kind: input.target_kind.as_str().to_string(),
+            target_id: input.target_id.to_string(),
+            role: input.role.as_str().to_string(),
+            metadata: input.metadata,
+            created_by_user_id: input.created_by_user_id,
+        },
+    )
+    .await
+}
+
+pub async fn list_artifact_citations(
+    pool: &PgPool,
+    bear_id: Uuid,
+    target_kind: &str,
+    target_id: &str,
+    context: ArtifactAccessContext,
+) -> Result<Vec<ArtifactCitation>, DenError> {
+    validate_non_empty("target kind", target_kind)?;
+    validate_non_empty("target id", target_id)?;
+    if context.bear_id != bear_id {
+        return Err(DenError::Authorization(
+            "artifact citation context bear does not match target bear".to_string(),
+        ));
+    }
+
+    let rows = sqlx::query(
+        "SELECT artifacts.*
+         FROM artifact_links
+         JOIN artifacts ON artifacts.id = artifact_links.artifact_id
+         WHERE artifacts.bear_id = $1
+            AND artifact_links.target_kind = $2
+            AND artifact_links.target_id = $3
+            AND artifacts.lifecycle <> 'deleted'
+         ORDER BY artifact_links.created_at DESC",
+    )
+    .bind(bear_id)
+    .bind(target_kind)
+    .bind(target_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.iter()
+        .map(|row| {
+            artifact_from_row(row).map(|artifact| citation_from_artifact(&artifact, &context))
+        })
+        .collect()
+}
+
+pub async fn list_docket_artifact_citations(
+    pool: &PgPool,
+    bear_id: Uuid,
+    target_kind: DocketArtifactTargetKind,
+    target_id: Uuid,
+    context: ArtifactAccessContext,
+) -> Result<Vec<ArtifactCitation>, DenError> {
+    list_artifact_citations(
+        pool,
+        bear_id,
+        target_kind.as_str(),
+        &target_id.to_string(),
+        context,
+    )
+    .await
+}
+
 pub async fn list_expired_artifact_gc_candidates(
     pool: &PgPool,
     bear_id: Uuid,
@@ -642,6 +785,33 @@ fn role_can_read_artifact(artifact: &ArtifactMetadata, context: &ArtifactAccessC
             matches!(context.profile, BearProfile::Curate)
                 || context.profile == artifact.owner_profile
         }
+    }
+}
+
+fn citation_from_artifact(
+    artifact: &ArtifactMetadata,
+    context: &ArtifactAccessContext,
+) -> ArtifactCitation {
+    let metadata_readable = role_can_read_artifact(artifact, context);
+    ArtifactCitation {
+        artifact_ref: artifact.artifact_ref.clone(),
+        kind: if metadata_readable {
+            artifact.kind.clone()
+        } else {
+            "unavailable".to_string()
+        },
+        title: metadata_readable.then(|| artifact.title.clone()).flatten(),
+        summary: metadata_readable
+            .then(|| artifact.summary.clone())
+            .flatten(),
+        content_type: metadata_readable
+            .then(|| artifact.content_type.clone())
+            .flatten(),
+        content_bytes: metadata_readable
+            .then_some(artifact.content_bytes)
+            .flatten(),
+        lifecycle: artifact.lifecycle,
+        readable: metadata_readable && artifact.lifecycle == ArtifactLifecycle::Finalized,
     }
 }
 
@@ -928,6 +1098,72 @@ mod tests {
         .await
         .unwrap_err();
         assert!(deleted_content.to_string().contains("not readable"));
+    }
+
+    #[tokio::test]
+    async fn docket_artifact_attach_and_citations_are_model_safe() {
+        let _guard = DB_LOCK.lock().await;
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let user_id = create_user(&pool).await;
+        let bear_id = create_bear(&pool).await;
+        let task_id = Uuid::new_v4();
+
+        let reserved = reserve_artifact(&pool, reserve_input(bear_id, user_id))
+            .await
+            .expect("reserve artifact");
+        finalize_metadata_only_artifact(
+            &pool,
+            FinalizeArtifactInput {
+                artifact_ref: reserved.artifact_ref.clone(),
+                bear_id,
+                storage_key: Some("db-text-placeholder".to_string()),
+                content_bytes: Some(12),
+                content_sha256: Some(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+                ),
+                metadata: json!({"phase": 3}),
+            },
+        )
+        .await
+        .expect("finalize artifact");
+
+        let link = attach_docket_artifact(
+            &pool,
+            AttachDocketArtifactInput {
+                artifact_ref: reserved.artifact_ref.clone(),
+                bear_id,
+                target_kind: DocketArtifactTargetKind::Task,
+                target_id: task_id,
+                role: DocketArtifactRole::Evidence,
+                metadata: json!({"note": "does not update task state"}),
+                created_by_user_id: Some(user_id),
+            },
+        )
+        .await
+        .expect("attach docket artifact");
+        assert_eq!(link.target_kind, "docket_task");
+        assert_eq!(link.target_id, task_id.to_string());
+        assert_eq!(link.role, "evidence");
+
+        let citations = list_docket_artifact_citations(
+            &pool,
+            bear_id,
+            DocketArtifactTargetKind::Task,
+            task_id,
+            ArtifactAccessContext {
+                bear_id,
+                user_id: Some(user_id),
+                profile: BearProfile::Pair,
+            },
+        )
+        .await
+        .expect("list citations");
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].artifact_ref, reserved.artifact_ref);
+        assert_eq!(citations[0].readable, true);
+        assert_eq!(citations[0].content_bytes, Some(12));
     }
 
     #[tokio::test]
