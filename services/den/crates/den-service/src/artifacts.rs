@@ -1,0 +1,737 @@
+//! Artifact registry service.
+//!
+//! This module owns the small relational registry for durable artifact refs. It
+//! does not store blob bytes yet; Phase 1 only reserves refs, finalizes
+//! metadata/storage pointers, authorizes reads, and links artifacts to Den
+//! objects.
+
+use std::{fmt, str::FromStr};
+
+use den_core::{BearProfile, DenError};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sqlx::{PgPool, Row};
+use time::OffsetDateTime;
+use uuid::Uuid;
+
+const ARTIFACT_REF_PREFIX: &str = "artifact_";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactStorageKind {
+    DbText,
+    GarageArtifacts,
+}
+
+impl ArtifactStorageKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::DbText => "db_text",
+            Self::GarageArtifacts => "garage_artifacts",
+        }
+    }
+}
+
+impl fmt::Display for ArtifactStorageKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ArtifactStorageKind {
+    type Err = DenError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "db_text" => Ok(Self::DbText),
+            "garage_artifacts" => Ok(Self::GarageArtifacts),
+            other => Err(DenError::ValidationError(format!(
+                "unknown artifact storage kind: {other}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactLifecycle {
+    Pending,
+    Finalized,
+    Deleted,
+    Expired,
+}
+
+impl ArtifactLifecycle {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Finalized => "finalized",
+            Self::Deleted => "deleted",
+            Self::Expired => "expired",
+        }
+    }
+}
+
+impl fmt::Display for ArtifactLifecycle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ArtifactLifecycle {
+    type Err = DenError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "finalized" => Ok(Self::Finalized),
+            "deleted" => Ok(Self::Deleted),
+            "expired" => Ok(Self::Expired),
+            other => Err(DenError::ValidationError(format!(
+                "unknown artifact lifecycle: {other}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactVisibility {
+    PrivateToProfile,
+    SameUser,
+    BearVisible,
+    HandoffRequested,
+}
+
+impl ArtifactVisibility {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::PrivateToProfile => "private_to_profile",
+            Self::SameUser => "same_user",
+            Self::BearVisible => "bear_visible",
+            Self::HandoffRequested => "handoff_requested",
+        }
+    }
+}
+
+impl fmt::Display for ArtifactVisibility {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ArtifactVisibility {
+    type Err = DenError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "private_to_profile" => Ok(Self::PrivateToProfile),
+            "same_user" => Ok(Self::SameUser),
+            "bear_visible" => Ok(Self::BearVisible),
+            "handoff_requested" => Ok(Self::HandoffRequested),
+            other => Err(DenError::ValidationError(format!(
+                "unknown artifact visibility: {other}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ReserveArtifactInput {
+    pub bear_id: Uuid,
+    pub created_by_user_id: Option<i32>,
+    pub owner_profile: BearProfile,
+    pub kind: String,
+    pub title: Option<String>,
+    pub summary: Option<String>,
+    pub content_type: Option<String>,
+    pub storage_kind: ArtifactStorageKind,
+    pub visibility: ArtifactVisibility,
+    pub provenance: Value,
+    pub metadata: Value,
+    pub expires_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FinalizeArtifactInput {
+    pub artifact_ref: String,
+    pub bear_id: Uuid,
+    pub storage_key: Option<String>,
+    pub content_bytes: Option<i64>,
+    pub content_sha256: Option<String>,
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArtifactAccessContext {
+    pub bear_id: Uuid,
+    pub user_id: Option<i32>,
+    pub profile: BearProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArtifactAccessLevel {
+    Metadata,
+    Content,
+}
+
+#[derive(Debug, Clone)]
+pub struct AttachArtifactInput {
+    pub artifact_ref: String,
+    pub bear_id: Uuid,
+    pub target_kind: String,
+    pub target_id: String,
+    pub role: String,
+    pub metadata: Value,
+    pub created_by_user_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtifactMetadata {
+    pub id: Uuid,
+    pub artifact_ref: String,
+    pub bear_id: Uuid,
+    pub created_by_user_id: Option<i32>,
+    pub owner_profile: BearProfile,
+    pub kind: String,
+    pub title: Option<String>,
+    pub summary: Option<String>,
+    pub content_type: Option<String>,
+    pub storage_kind: ArtifactStorageKind,
+    pub storage_key: Option<String>,
+    pub content_bytes: Option<i64>,
+    pub content_sha256: Option<String>,
+    pub lifecycle: ArtifactLifecycle,
+    pub visibility: ArtifactVisibility,
+    pub provenance: Value,
+    pub metadata: Value,
+    pub expires_at: Option<OffsetDateTime>,
+    pub finalized_at: Option<OffsetDateTime>,
+    pub deleted_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtifactLink {
+    pub id: Uuid,
+    pub artifact_ref: String,
+    pub target_kind: String,
+    pub target_id: String,
+    pub role: String,
+    pub metadata: Value,
+    pub created_by_user_id: Option<i32>,
+    pub created_at: OffsetDateTime,
+}
+
+pub async fn reserve_artifact(
+    pool: &PgPool,
+    input: ReserveArtifactInput,
+) -> Result<ArtifactMetadata, DenError> {
+    validate_non_empty("artifact kind", &input.kind)?;
+    validate_json_object("provenance", &input.provenance)?;
+    validate_json_object("metadata", &input.metadata)?;
+
+    let artifact_ref = new_artifact_ref();
+    let row = sqlx::query(
+        "INSERT INTO artifacts (
+            artifact_ref, bear_id, created_by_user_id, owner_profile, kind,
+            title, summary, content_type, storage_kind, visibility, provenance,
+            metadata, expires_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         RETURNING *",
+    )
+    .bind(&artifact_ref)
+    .bind(input.bear_id)
+    .bind(input.created_by_user_id)
+    .bind(input.owner_profile.as_str())
+    .bind(input.kind)
+    .bind(input.title)
+    .bind(input.summary)
+    .bind(input.content_type)
+    .bind(input.storage_kind.as_str())
+    .bind(input.visibility.as_str())
+    .bind(input.provenance)
+    .bind(input.metadata)
+    .bind(input.expires_at)
+    .fetch_one(pool)
+    .await?;
+
+    artifact_from_row(&row)
+}
+
+pub async fn finalize_metadata_only_artifact(
+    pool: &PgPool,
+    input: FinalizeArtifactInput,
+) -> Result<ArtifactMetadata, DenError> {
+    validate_json_object("metadata", &input.metadata)?;
+    if let Some(bytes) = input.content_bytes {
+        if bytes < 0 {
+            return Err(DenError::ValidationError(
+                "content_bytes must be non-negative".to_string(),
+            ));
+        }
+    }
+    if let Some(hash) = &input.content_sha256 {
+        validate_sha256(hash)?;
+    }
+
+    let row = sqlx::query(
+        "UPDATE artifacts
+         SET lifecycle = 'finalized', storage_key = $3, content_bytes = $4,
+             content_sha256 = $5, metadata = $6, finalized_at = NOW(), updated_at = NOW()
+         WHERE artifact_ref = $1 AND bear_id = $2 AND lifecycle = 'pending'
+         RETURNING *",
+    )
+    .bind(&input.artifact_ref)
+    .bind(input.bear_id)
+    .bind(input.storage_key)
+    .bind(input.content_bytes)
+    .bind(input.content_sha256)
+    .bind(input.metadata)
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        Some(row) => artifact_from_row(&row),
+        None => Err(DenError::ValidationError(format!(
+            "artifact {} is not pending or does not exist",
+            input.artifact_ref
+        ))),
+    }
+}
+
+pub async fn get_artifact_metadata(
+    pool: &PgPool,
+    bear_id: Uuid,
+    artifact_ref: &str,
+) -> Result<ArtifactMetadata, DenError> {
+    let row = sqlx::query("SELECT * FROM artifacts WHERE bear_id = $1 AND artifact_ref = $2")
+        .bind(bear_id)
+        .bind(artifact_ref)
+        .fetch_optional(pool)
+        .await?;
+
+    match row {
+        Some(row) => artifact_from_row(&row),
+        None => Err(DenError::NotFound(format!(
+            "artifact not found: {artifact_ref}"
+        ))),
+    }
+}
+
+pub async fn authorize_artifact_access(
+    pool: &PgPool,
+    artifact_ref: &str,
+    context: ArtifactAccessContext,
+    access_level: ArtifactAccessLevel,
+) -> Result<ArtifactMetadata, DenError> {
+    let artifact = get_artifact_metadata(pool, context.bear_id, artifact_ref).await?;
+
+    if access_level == ArtifactAccessLevel::Content {
+        match artifact.lifecycle {
+            ArtifactLifecycle::Finalized => {}
+            ArtifactLifecycle::Pending => {
+                return Err(DenError::Authorization(format!(
+                    "artifact {artifact_ref} is pending"
+                )))
+            }
+            ArtifactLifecycle::Deleted | ArtifactLifecycle::Expired => {
+                return Err(DenError::Authorization(format!(
+                    "artifact {artifact_ref} is not readable"
+                )))
+            }
+        }
+    } else if matches!(artifact.lifecycle, ArtifactLifecycle::Deleted) {
+        return Err(DenError::Authorization(format!(
+            "artifact {artifact_ref} is deleted"
+        )));
+    }
+
+    if role_can_read_artifact(&artifact, &context) {
+        Ok(artifact)
+    } else {
+        Err(DenError::Authorization(format!(
+            "artifact {artifact_ref} is not visible to this context"
+        )))
+    }
+}
+
+pub async fn mark_artifact_deleted(
+    pool: &PgPool,
+    bear_id: Uuid,
+    artifact_ref: &str,
+) -> Result<ArtifactMetadata, DenError> {
+    let row = sqlx::query(
+        "UPDATE artifacts
+         SET lifecycle = 'deleted', deleted_at = NOW(), updated_at = NOW()
+         WHERE bear_id = $1 AND artifact_ref = $2 AND lifecycle <> 'deleted'
+         RETURNING *",
+    )
+    .bind(bear_id)
+    .bind(artifact_ref)
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        Some(row) => artifact_from_row(&row),
+        None => Err(DenError::NotFound(format!(
+            "artifact not found or already deleted: {artifact_ref}"
+        ))),
+    }
+}
+
+pub async fn attach_artifact(
+    pool: &PgPool,
+    input: AttachArtifactInput,
+) -> Result<ArtifactLink, DenError> {
+    validate_non_empty("target kind", &input.target_kind)?;
+    validate_non_empty("target id", &input.target_id)?;
+    validate_non_empty("artifact link role", &input.role)?;
+    validate_json_object("metadata", &input.metadata)?;
+
+    let row = sqlx::query(
+        "WITH artifact AS (
+            SELECT id, artifact_ref FROM artifacts
+            WHERE bear_id = $1 AND artifact_ref = $2 AND lifecycle <> 'deleted'
+         )
+         INSERT INTO artifact_links (
+            artifact_id, target_kind, target_id, role, metadata, created_by_user_id
+         )
+         SELECT id, $3, $4, $5, $6, $7 FROM artifact
+         ON CONFLICT (artifact_id, target_kind, target_id, role)
+         DO UPDATE SET metadata = EXCLUDED.metadata
+         RETURNING id,
+            (SELECT artifact_ref FROM artifact) AS artifact_ref,
+            target_kind, target_id, role, metadata, created_by_user_id, created_at",
+    )
+    .bind(input.bear_id)
+    .bind(&input.artifact_ref)
+    .bind(input.target_kind)
+    .bind(input.target_id)
+    .bind(input.role)
+    .bind(input.metadata)
+    .bind(input.created_by_user_id)
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        Some(row) => link_from_row(&row),
+        None => Err(DenError::NotFound(format!(
+            "artifact not found or deleted: {}",
+            input.artifact_ref
+        ))),
+    }
+}
+
+pub async fn list_artifact_links(
+    pool: &PgPool,
+    bear_id: Uuid,
+    target_kind: &str,
+    target_id: &str,
+) -> Result<Vec<ArtifactLink>, DenError> {
+    let rows = sqlx::query(
+        "SELECT artifact_links.id, artifacts.artifact_ref, artifact_links.target_kind,
+            artifact_links.target_id, artifact_links.role, artifact_links.metadata,
+            artifact_links.created_by_user_id, artifact_links.created_at
+         FROM artifact_links
+         JOIN artifacts ON artifacts.id = artifact_links.artifact_id
+         WHERE artifacts.bear_id = $1
+            AND artifact_links.target_kind = $2
+            AND artifact_links.target_id = $3
+            AND artifacts.lifecycle <> 'deleted'
+         ORDER BY artifact_links.created_at DESC",
+    )
+    .bind(bear_id)
+    .bind(target_kind)
+    .bind(target_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.iter().map(link_from_row).collect()
+}
+
+fn new_artifact_ref() -> String {
+    format!("{ARTIFACT_REF_PREFIX}{}", Uuid::new_v4().simple())
+}
+
+fn role_can_read_artifact(artifact: &ArtifactMetadata, context: &ArtifactAccessContext) -> bool {
+    match artifact.visibility {
+        ArtifactVisibility::PrivateToProfile => context.profile == artifact.owner_profile,
+        ArtifactVisibility::SameUser => {
+            artifact.created_by_user_id == context.user_id
+                || context.profile == artifact.owner_profile
+        }
+        ArtifactVisibility::BearVisible => true,
+        ArtifactVisibility::HandoffRequested => {
+            matches!(context.profile, BearProfile::Curate)
+                || context.profile == artifact.owner_profile
+        }
+    }
+}
+
+fn artifact_from_row(row: &sqlx::postgres::PgRow) -> Result<ArtifactMetadata, DenError> {
+    let owner_profile: String = row.try_get("owner_profile")?;
+    let storage_kind: String = row.try_get("storage_kind")?;
+    let lifecycle: String = row.try_get("lifecycle")?;
+    let visibility: String = row.try_get("visibility")?;
+    Ok(ArtifactMetadata {
+        id: row.try_get("id")?,
+        artifact_ref: row.try_get("artifact_ref")?,
+        bear_id: row.try_get("bear_id")?,
+        created_by_user_id: row.try_get("created_by_user_id")?,
+        owner_profile: owner_profile
+            .parse()
+            .map_err(|err: String| DenError::ValidationError(err))?,
+        kind: row.try_get("kind")?,
+        title: row.try_get("title")?,
+        summary: row.try_get("summary")?,
+        content_type: row.try_get("content_type")?,
+        storage_kind: storage_kind.parse()?,
+        storage_key: row.try_get("storage_key")?,
+        content_bytes: row.try_get("content_bytes")?,
+        content_sha256: row.try_get("content_sha256")?,
+        lifecycle: lifecycle.parse()?,
+        visibility: visibility.parse()?,
+        provenance: row.try_get("provenance")?,
+        metadata: row.try_get("metadata")?,
+        expires_at: row.try_get("expires_at")?,
+        finalized_at: row.try_get("finalized_at")?,
+        deleted_at: row.try_get("deleted_at")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
+}
+
+fn link_from_row(row: &sqlx::postgres::PgRow) -> Result<ArtifactLink, DenError> {
+    Ok(ArtifactLink {
+        id: row.try_get("id")?,
+        artifact_ref: row.try_get("artifact_ref")?,
+        target_kind: row.try_get("target_kind")?,
+        target_id: row.try_get("target_id")?,
+        role: row.try_get("role")?,
+        metadata: row.try_get("metadata")?,
+        created_by_user_id: row.try_get("created_by_user_id")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+fn validate_non_empty(name: &str, value: &str) -> Result<(), DenError> {
+    if value.trim().is_empty() {
+        Err(DenError::ValidationError(format!(
+            "{name} must not be empty"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_json_object(name: &str, value: &Value) -> Result<(), DenError> {
+    if value.is_object() {
+        Ok(())
+    } else {
+        Err(DenError::ValidationError(format!(
+            "{name} must be a JSON object"
+        )))
+    }
+}
+
+fn validate_sha256(hash: &str) -> Result<(), DenError> {
+    if hash.len() == 64
+        && hash
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        Ok(())
+    } else {
+        Err(DenError::ValidationError(
+            "content_sha256 must be 64 hex characters".to_string(),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    static DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    async fn test_pool() -> Option<PgPool> {
+        let database_url = std::env::var("TEST_DATABASE_URL")
+            .or_else(|_| std::env::var("DATABASE_URL"))
+            .ok()?;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&database_url)
+            .await
+            .ok()?;
+        sqlx::migrate!("../../migrations").run(&pool).await.ok()?;
+        Some(pool)
+    }
+
+    async fn create_user(pool: &PgPool) -> i32 {
+        let suffix = Uuid::new_v4().simple().to_string();
+        let username = format!("artifactuser{}", &suffix[..12]);
+        sqlx::query_scalar(
+            "INSERT INTO users (email, username, display_name, passhash)
+             VALUES ($1, $2, $3, 'x') RETURNING id",
+        )
+        .bind(format!("{username}@example.invalid"))
+        .bind(&username)
+        .bind(&username)
+        .fetch_one(pool)
+        .await
+        .expect("create user")
+    }
+
+    async fn create_bear(pool: &PgPool) -> Uuid {
+        let suffix = Uuid::new_v4().simple().to_string();
+        sqlx::query_scalar("INSERT INTO bears (slug, name) VALUES ($1, $2) RETURNING id")
+            .bind(format!("artifact-bear-{}", &suffix[..12]))
+            .bind("Artifact Test Bear")
+            .fetch_one(pool)
+            .await
+            .expect("create bear")
+    }
+
+    fn reserve_input(bear_id: Uuid, user_id: i32) -> ReserveArtifactInput {
+        ReserveArtifactInput {
+            bear_id,
+            created_by_user_id: Some(user_id),
+            owner_profile: BearProfile::Pair,
+            kind: "tool_output".to_string(),
+            title: Some("sample".to_string()),
+            summary: None,
+            content_type: Some("text/plain".to_string()),
+            storage_kind: ArtifactStorageKind::DbText,
+            visibility: ArtifactVisibility::SameUser,
+            provenance: json!({"test": true}),
+            metadata: json!({"phase": 1}),
+            expires_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn artifact_registry_lifecycle_and_links() {
+        let _guard = DB_LOCK.lock().await;
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let user_id = create_user(&pool).await;
+        let other_user_id = create_user(&pool).await;
+        let bear_id = create_bear(&pool).await;
+
+        let reserved = reserve_artifact(&pool, reserve_input(bear_id, user_id))
+            .await
+            .expect("reserve artifact");
+        assert!(reserved.artifact_ref.starts_with(ARTIFACT_REF_PREFIX));
+        assert_eq!(reserved.lifecycle, ArtifactLifecycle::Pending);
+
+        let pending_content = authorize_artifact_access(
+            &pool,
+            &reserved.artifact_ref,
+            ArtifactAccessContext {
+                bear_id,
+                user_id: Some(user_id),
+                profile: BearProfile::Pair,
+            },
+            ArtifactAccessLevel::Content,
+        )
+        .await
+        .unwrap_err();
+        assert!(pending_content.to_string().contains("pending"));
+
+        let finalized = finalize_metadata_only_artifact(
+            &pool,
+            FinalizeArtifactInput {
+                artifact_ref: reserved.artifact_ref.clone(),
+                bear_id,
+                storage_key: Some("db-text-placeholder".to_string()),
+                content_bytes: Some(12),
+                content_sha256: Some(
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+                ),
+                metadata: json!({"phase": 1, "final": true}),
+            },
+        )
+        .await
+        .expect("finalize artifact");
+        assert_eq!(finalized.lifecycle, ArtifactLifecycle::Finalized);
+
+        let double_finalize = finalize_metadata_only_artifact(
+            &pool,
+            FinalizeArtifactInput {
+                artifact_ref: reserved.artifact_ref.clone(),
+                bear_id,
+                storage_key: None,
+                content_bytes: None,
+                content_sha256: None,
+                metadata: json!({}),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(double_finalize.to_string().contains("not pending"));
+
+        let fetched = get_artifact_metadata(&pool, bear_id, &reserved.artifact_ref)
+            .await
+            .expect("fetch metadata");
+        assert_eq!(fetched.artifact_ref, reserved.artifact_ref);
+        assert_eq!(fetched.metadata["final"], true);
+
+        let other_user_access = authorize_artifact_access(
+            &pool,
+            &reserved.artifact_ref,
+            ArtifactAccessContext {
+                bear_id,
+                user_id: Some(other_user_id),
+                profile: BearProfile::Chat,
+            },
+            ArtifactAccessLevel::Metadata,
+        )
+        .await
+        .unwrap_err();
+        assert!(other_user_access.to_string().contains("not visible"));
+
+        let link = attach_artifact(
+            &pool,
+            AttachArtifactInput {
+                artifact_ref: reserved.artifact_ref.clone(),
+                bear_id,
+                target_kind: "bear_task".to_string(),
+                target_id: "task-1".to_string(),
+                role: "result".to_string(),
+                metadata: json!({"slot": "primary"}),
+                created_by_user_id: Some(user_id),
+            },
+        )
+        .await
+        .expect("attach artifact");
+        assert_eq!(link.artifact_ref, reserved.artifact_ref);
+
+        let links = list_artifact_links(&pool, bear_id, "bear_task", "task-1")
+            .await
+            .expect("list links");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].role, "result");
+
+        mark_artifact_deleted(&pool, bear_id, &reserved.artifact_ref)
+            .await
+            .expect("delete artifact");
+        let deleted_content = authorize_artifact_access(
+            &pool,
+            &reserved.artifact_ref,
+            ArtifactAccessContext {
+                bear_id,
+                user_id: Some(user_id),
+                profile: BearProfile::Pair,
+            },
+            ArtifactAccessLevel::Content,
+        )
+        .await
+        .unwrap_err();
+        assert!(deleted_content.to_string().contains("not readable"));
+    }
+}

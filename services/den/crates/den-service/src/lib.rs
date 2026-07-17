@@ -4,6 +4,7 @@
 //! handles needed by HTTP edges, but not runtime execution or model turns.
 
 pub mod archived_conversations;
+pub mod artifacts;
 pub mod bears;
 pub mod bifrost;
 pub mod bifrost_governance;
