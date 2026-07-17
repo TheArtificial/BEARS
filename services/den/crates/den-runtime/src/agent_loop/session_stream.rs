@@ -1525,15 +1525,45 @@ impl Stream for SessionTrackingStream {
                     );
                     return Poll::Ready(None);
                 }
-                let failed_or_empty_continuation = matches!(
+                if other.is_none() {
+                    if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
+                        tracing::warn!(
+                            client_session_id = %self.client_session_id,
+                            tool_call_id = %tool_call_id,
+                            "native runtime server-tool continuation ended without a terminal event; removing recent tool chain from in-memory session"
+                        );
+                        self.remove_recent_server_tool_chain_from_session(&tool_call_id);
+                        self.finished = true;
+                        return Poll::Ready(Some(Ok(Self::checkpoint_failure_event(
+                            "Server-tool continuation stream ended without a terminal runtime event."
+                                .to_string(),
+                        ))));
+                    }
+                    if self.assistant_text.trim().is_empty() {
+                        self.finished = true;
+                        return Poll::Ready(Some(Ok(Self::checkpoint_failure_event(
+                            "Model stream ended without assistant output or a terminal runtime event."
+                                .to_string(),
+                        ))));
+                    }
+                    // ponytail: some provider/client streams can EOF after assistant text without
+                    // emitting an explicit TurnCompleted. Treat that as a terminal answer candidate
+                    // and send it through the same focused-work gate; upgrade path is making every
+                    // provider adapter emit an explicit terminal event before EOF.
+                    self.persist_assistant_tool_step();
+                    self.begin_final_gate_focus_resolution();
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                let failed_continuation = matches!(
                     &other,
                     Some(Ok(RuntimeStreamEvent::Semantic(
                         RuntimeSemanticEvent::TurnFailed { .. }
                             | RuntimeSemanticEvent::TurnCancelled { .. }
                             | RuntimeSemanticEvent::Error { .. }
-                    ))) | None
+                    )))
                 );
-                if failed_or_empty_continuation {
+                if failed_continuation {
                     if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
                         tracing::warn!(
                             client_session_id = %self.client_session_id,
