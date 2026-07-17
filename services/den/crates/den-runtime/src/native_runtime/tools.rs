@@ -81,13 +81,6 @@ pub fn is_task_definition_or_delegation_tool_provider_name(name: &str) -> bool {
         name,
         DEN_TASK_LISTS_UPDATE_PROVIDER
             | DEN_TASK_LISTS_REQUEST_HANDOFF_PROVIDER
-            | DEN_JOB_CREATE_PROVIDER
-            | DEN_JOB_UPDATE_PROVIDER
-            | DEN_JOB_EXECUTE_PROVIDER
-            | DEN_TASK_CREATE_PROVIDER
-            | DEN_TASK_UPDATE_PROVIDER
-            | DEN_TASK_LIST_SYNC_PROVIDER
-            | DEN_TASK_LIST_CHECKOUT_PROVIDER
             | DEN_WORK_DISPATCH_PROVIDER
     )
 }
@@ -442,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn closed_freeform_policy_omits_task_definition_and_delegation_tools() {
+    fn closed_freeform_policy_keeps_docket_planning_but_omits_work_delegation_tools() {
         let config = native_test_config();
         let merged = merge_den_and_client_tools(
             &config,
@@ -457,9 +450,16 @@ mod tests {
 
         assert!(names.contains(&"list_jobs"));
         assert!(names.contains(&"get_task_list_status"));
-        assert!(!names.contains(&"create_job"));
-        assert!(!names.contains(&"create_task"));
+        assert!(names.contains(&"create_job"));
+        assert!(names.contains(&"update_job"));
+        assert!(names.contains(&"execute_job"));
+        assert!(names.contains(&"create_task"));
+        assert!(names.contains(&"update_task"));
+        assert!(names.contains(&"sync_task_list"));
+        assert!(names.contains(&"checkout_task_list"));
         assert!(!names.contains(&"dispatch_work"));
+        assert!(!names.contains(&"update_task_list"));
+        assert!(!names.contains(&"request_task_list_handoff"));
     }
 
     #[test]
