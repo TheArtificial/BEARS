@@ -2584,6 +2584,7 @@ async fn handle_request(
                     }
                 }
                 notify_mode_state(session_id, mode).await?;
+                send_available_commands_update(session_id).await?;
                 write_response(
                     id,
                     Ok(json!({
@@ -2685,6 +2686,7 @@ async fn handle_request(
                     }
                 }
                 notify_mode_state(session_id, mode).await?;
+                send_available_commands_update(session_id).await?;
                 write_response(
                     id,
                     Ok(json!({
