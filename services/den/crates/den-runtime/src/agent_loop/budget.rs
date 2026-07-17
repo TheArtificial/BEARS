@@ -1041,6 +1041,26 @@ mod tests {
     }
 
     #[test]
+    fn budget_warning_mentions_docket_for_durable_work_tracking() {
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            60_000,
+            &state(),
+            &[observation("memory_read", r#"{"path":"a"}"#, false)],
+        );
+        let warning = evaluation.warning.expect("budget warning");
+
+        assert!(warning
+            .message
+            .contains("Docket tasks support much higher durable work-tracking limits"));
+        assert!(warning
+            .message
+            .contains("without implying autonomous execution"));
+        assert!(warning.message.contains("requiring an explicit Job"));
+    }
+
+    #[test]
     fn wall_clock_budget_stops_after_finalization_grace_is_used() {
         let mut prior = state();
         prior.budget_finalization_grace_used = true;
