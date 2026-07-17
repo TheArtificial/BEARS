@@ -37,6 +37,48 @@ Recommended next slices:
 3. **Strengthen grounding probes only where attribution-backed runs show the MVP is too weak.** Tool-observation lookup now requires tool-call attribution, so the next probe slice should be surface-specific rather than another generic fallback.
 4. **Only add more replay machinery when a concrete tuning question needs it.** The current no-simulator harness has profile reason counts, turn-level reason comparison, and profile fingerprints. Avoid a full policy simulator unless production traces prove summaries/comparators are too weak.
 
+### Roadmap item — collapse state authority dimensions
+
+The current [Den state machine inventory](../architecture/den-state-machine-inventory.md) is deliberately explicit, but several axes should be simplified before loop-control enforcement grows more complicated. The goal is not one giant enum; it is fewer canonical owners and more derived projections.
+
+Target canonical runtime objects:
+
+1. **`ActorContext`** owns Bear identity, user membership/access, and trust profile.
+2. **`ConversationSnapshot`** owns durable conversation inputs, including model-selection snapshot and the durable focus pointer.
+3. **`TurnAuthority`** is the only owner of mutation authority: governance, workplan/approval gate, permission policy, allowed tool classes, and approval requirements compile into one object before tool routing or prompt assembly.
+4. **`ResolvedFocus`** is the only focus input to completion policy. Cached task lists, prompt diagnostics, and session-local task projections may inform display/model context, but cannot force continuation unless they resolve through current durable focus.
+5. **`RunState`** owns lifecycle plus active wait reason. Waiting states should structurally carry their obligation handles; terminal transitions should close/cancel open obligations transactionally so late results are ignored by construction.
+6. **`RunControl`** owns budgets, checkpoint state, failure/KO counters, retry policy, and recovery disposition.
+
+Demote these from state authorities to projections/caches or owned subrecords:
+
+- task focus and active-task display, derived from `ResolvedFocus` + Docket state;
+- cached task lists and operational-focus labels;
+- prompt/context/compaction state, as prompt projection over canonical runtime objects;
+- model choice as an input/capability snapshot, not an authority source;
+- work surface/sandbox state, owned by Docket `WorkRun` rather than conversation focus;
+- standalone recovery state, folded into `RunControl`.
+
+Do not collapse these boundaries:
+
+- trust profile vs governance;
+- focus vs work surface;
+- authority vs prompt/client labels;
+- user membership/access vs trust profile.
+
+Implementation slices:
+
+| Slice | Done when |
+| --- | --- |
+| Introduce authority compiler seam | Tool routing, prompt assembly, and client projection all consume the same `TurnAuthority` result for write/mutation decisions. |
+| Make focus completion input explicit | Completion policy accepts `ResolvedFocus`/focused Docket state only; stale task-list caches cannot force continuation. |
+| Reify wait reasons in run state | Waiting run states carry obligation ids, and terminal transitions reject or close open obligations transactionally. |
+| Move work-surface ownership to WorkRun | Sandbox/workspace/branch state is resolved through Docket work execution records, not conversation focus. |
+| Demote projection-only axes | Prompt, compaction, client labels, and cached task lists cannot create focus, permissions, obligations, or governance. |
+| Update inventory/tests | The state-machine inventory documents the reduced authority model and keeps seam tests for stale focus, submitted plans, terminal obligations, late results, and projection-only state. |
+
+Exit gate: a turn's mutation authority, focus-driven continuation, and active obligations each have exactly one canonical owner, with projections unable to expand authority or manufacture work.
+
 ## Goal
 
 Give Den a typed **agent loop control** layer that governs tool-using turns across model calls and tool results: when to continue, checkpoint, retry, warn, stop, escalate thinking effort, or require task-state reconciliation.
