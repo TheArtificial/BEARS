@@ -514,6 +514,7 @@ fn spawn_continuation_task(
                     let mut last_runtime_event_at: Option<Instant> = None;
                     let mut last_event_sequence: Option<i64> = None;
                     let mut retryable_stream_error: Option<String> = None;
+                    let mut fatal_stream_failure_seen = false;
                     let idle_watchdog_timeout = continuation_watchdog_timeout();
                     let handshake_timeout = native_llm_handshake_timeout();
                     let first_event_watchdog_timeout = continuation_first_event_watchdog_timeout(
@@ -592,6 +593,7 @@ fn spawn_continuation_task(
                                             Some(context),
                                         )
                                         .await;
+                                        fatal_stream_failure_seen = true;
                                         break;
                                     }
                                 }
@@ -693,6 +695,9 @@ fn spawn_continuation_task(
                                 break 'continuation_attempts;
                             }
                         }
+                    }
+                    if fatal_stream_failure_seen {
+                        break 'continuation_attempts;
                     }
                     if let Some(err_message) = retryable_stream_error {
                         persist_run_progress(
