@@ -1078,11 +1078,11 @@ impl SessionTrackingStream {
     }
 
     fn prepare_autonomous_final_gate(&mut self, focus: RuntimeFocusContext) {
-        let cached_activity_plan_projection = focus.cached_activity_plan_projection;
+        let focused_task_list = focus.active_activity_plan().cloned();
         self.store.update(&self.session_key, |session| {
-            session.cached_activity_plan_projection = cached_activity_plan_projection.clone();
+            session.cached_activity_plan_projection = focused_task_list.clone();
         });
-        self.evaluate_final_gate_or_complete(cached_activity_plan_projection);
+        self.evaluate_final_gate_or_complete(focused_task_list);
     }
 
     fn evaluate_final_gate_or_complete(
@@ -1161,7 +1161,9 @@ impl SessionTrackingStream {
                 return;
             }
             TurnCompletionDecision::Complete {
-                reason: TurnCompletionCompleteReason::FocusedWorkCompleteFinalizationDrain,
+                reason:
+                    TurnCompletionCompleteReason::NoActiveFocusedTask
+                    | TurnCompletionCompleteReason::FocusedWorkCompleteFinalizationDrain,
                 ..
             } => {
                 self.store.update(&self.session_key, |session| {
@@ -2134,6 +2136,28 @@ mod tests {
         assert!(stored.cached_activity_plan_projection.is_none());
     }
 
+    #[tokio::test]
+    async fn final_gate_ignores_and_clears_cache_without_durable_focus() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.governance = Governance::AutonomousContinuation;
+        session.cached_activity_plan_projection = Some(completed_task_list_projection());
+        let mut stream = test_tracking_stream_with_session(&session);
+
+        stream.prepare_autonomous_final_gate(RuntimeFocusContext {
+            source: crate::runtime::focus_context::RuntimeFocusSource::None,
+            cached_activity_plan_projection: Some(completed_task_list_projection()),
+        });
+
+        let stored = stream
+            .store
+            .get(&stream.session_key)
+            .expect("stored session after cache-only final gate");
+        assert!(stream.finished);
+        assert_eq!(stored.governance, Governance::Interactive);
+        assert!(stored.cached_activity_plan_projection.is_none());
+        assert!(stream.pending_final_gate_continuation.is_none());
+    }
+
     #[test]
     fn checkpoint_task_state_change_requires_task_management_next_action() {
         assert!(
@@ -2696,7 +2720,7 @@ mod tests {
         );
 
         assert!(stream.should_execute_den_tool_server_side("list_task_lists"));
-        assert!(!stream.should_execute_den_tool_server_side("create_job"));
+        assert!(stream.should_execute_den_tool_server_side("create_job"));
         assert!(!stream.should_execute_den_tool_server_side("list_plans"));
         assert!(stream.should_execute_den_tool_server_side("session_info"));
         assert!(stream.should_request_den_tool_permission("web_fetch"));

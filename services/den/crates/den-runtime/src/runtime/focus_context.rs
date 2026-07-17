@@ -21,7 +21,6 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeFocusSource {
     DurableDocketExecution,
-    RuntimeCachedActivityPlan,
     None,
 }
 
@@ -29,7 +28,6 @@ impl RuntimeFocusSource {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::DurableDocketExecution => "durable_docket_execution",
-            Self::RuntimeCachedActivityPlan => "runtime_cached_activity_plan",
             Self::None => "none",
         }
     }
@@ -43,7 +41,12 @@ pub struct RuntimeFocusContext {
 
 impl RuntimeFocusContext {
     pub fn active_activity_plan(&self) -> Option<&TaskListProjection> {
-        self.cached_activity_plan_projection.as_ref()
+        match self.source {
+            RuntimeFocusSource::DurableDocketExecution => {
+                self.cached_activity_plan_projection.as_ref()
+            }
+            RuntimeFocusSource::None => None,
+        }
     }
 }
 
@@ -87,7 +90,7 @@ pub async fn resolve_runtime_focus_context(
         user_id,
         conversation_id,
         client_session_id,
-        cached_activity_plan_projection,
+        cached_activity_plan_projection: _,
     } = request;
 
     if let Some(user_id) = user_id {
@@ -118,13 +121,6 @@ pub async fn resolve_runtime_focus_context(
                 cached_activity_plan_projection: plan,
             });
         }
-    }
-
-    if cached_activity_plan_projection.is_some() {
-        return Ok(RuntimeFocusContext {
-            source: RuntimeFocusSource::RuntimeCachedActivityPlan,
-            cached_activity_plan_projection,
-        });
     }
 
     Ok(RuntimeFocusContext {

@@ -203,17 +203,12 @@ async fn provision_run(
         }
     };
 
-    let Some(root) = run
-        .root_name
-        .clone()
-        .or_else(|| context.work_surface_ref.clone())
-        .filter(|root| !root.trim().is_empty())
-    else {
+    let Some(root) = run.root_name.clone().filter(|root| !root.trim().is_empty()) else {
         fail_run(
             pool,
             run,
             "no_root",
-            "no sandbox root configured: set `root` on dispatch or work_surface_ref on the job",
+            "no sandbox root configured on work run: dispatch must freeze root_name before provisioning",
             None,
         )
         .await;

@@ -219,13 +219,6 @@ async fn late_result_after_terminal_run_is_ignored_by_coordinator(pool: sqlx::Pg
     )
     .await
     .expect("mark run failed");
-    turn_obligations::settle_outstanding_for_run(
-        &pool,
-        &run.run_id,
-        turn_obligations::TurnObligationState::Failed,
-    )
-    .await
-    .expect("settle outstanding obligations");
     let failed_run = turn_runs::get_run(&pool, &run.run_id)
         .await
         .expect("load failed run")
@@ -279,13 +272,6 @@ async fn late_tool_result_after_terminal_is_ignored(pool: sqlx::PgPool) {
     )
     .await
     .expect("mark run completed");
-    turn_obligations::settle_outstanding_for_run(
-        &pool,
-        &run.run_id,
-        turn_obligations::TurnObligationState::Continued,
-    )
-    .await
-    .expect("settle outstanding obligations");
     let completed_run = turn_runs::get_run(&pool, &run.run_id)
         .await
         .expect("load completed run")

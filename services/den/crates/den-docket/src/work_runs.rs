@@ -118,6 +118,21 @@ impl WorkRunRow {
     }
 }
 
+pub fn effective_work_run_root(
+    requested_root: Option<&str>,
+    job_work_surface_ref: Option<&str>,
+) -> Option<String> {
+    requested_root
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            job_work_surface_ref
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+        })
+        .map(ToOwned::to_owned)
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkRunEnqueue {
     pub bear_id: Uuid,
@@ -192,21 +207,16 @@ pub async fn enqueue_work_run(
         )));
     }
 
-    let requested_root = enqueue
-        .root_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty());
     let job_work_surface_ref: Option<String> =
         sqlx::query_scalar("SELECT work_surface_ref FROM bear_jobs WHERE id = $1")
             .bind(job_id)
             .fetch_one(&mut *tx)
             .await?;
-    let has_job_root = job_work_surface_ref
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|name| !name.is_empty());
-    if requested_root.is_none() && !has_job_root {
+    let root_name = effective_work_run_root(
+        enqueue.root_name.as_deref(),
+        job_work_surface_ref.as_deref(),
+    );
+    if root_name.is_none() {
         return Err(DenError::ValidationError(
             "no sandbox root configured: choose a root, set work_surface_ref on the job, or explicitly dispatch to scratch".into(),
         ));
@@ -228,7 +238,7 @@ pub async fn enqueue_work_run(
         ensure_bear_assigned_to_surface(&mut tx, enqueue.bear_id, *surface_id, surface_name)
             .await?;
     }
-    if let Some(root_name) = requested_root {
+    if let Some(root_name) = root_name.as_deref() {
         let named_surface: Option<(Uuid,)> =
             sqlx::query_as("SELECT id FROM work_surfaces WHERE name = $1")
                 .bind(root_name)
@@ -293,7 +303,7 @@ pub async fn enqueue_work_run(
     .bind(enqueue.task_id)
     .bind(job_run_id)
     .bind(attempt)
-    .bind(enqueue.root_name.as_deref())
+    .bind(root_name.as_deref())
     .bind(enqueue.git_ref.as_deref())
     .bind(enqueue.image_name.as_deref())
     .fetch_one(&mut *tx)
@@ -1128,4 +1138,22 @@ async fn append_task_event(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_work_run_root;
+
+    #[test]
+    fn effective_work_run_root_prefers_trimmed_request_then_job_default() {
+        assert_eq!(
+            effective_work_run_root(Some(" requested "), Some("job-default")),
+            Some("requested".to_string())
+        );
+        assert_eq!(
+            effective_work_run_root(Some("   "), Some(" job-default ")),
+            Some("job-default".to_string())
+        );
+        assert_eq!(effective_work_run_root(None, Some("   ")), None);
+    }
 }

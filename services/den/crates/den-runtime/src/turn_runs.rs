@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
+use crate::turn_obligations::TurnObligationState;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnRunState {
@@ -59,6 +61,15 @@ impl TurnRunState {
 
     pub fn allows_open_obligation(self) -> bool {
         !self.is_terminal()
+    }
+
+    fn terminal_obligation_state(self) -> Option<TurnObligationState> {
+        match self {
+            Self::Completed => Some(TurnObligationState::Continued),
+            Self::Failed => Some(TurnObligationState::Failed),
+            Self::Cancelled => Some(TurnObligationState::Cancelled),
+            _ => None,
+        }
     }
 }
 
@@ -362,6 +373,8 @@ pub async fn transition_run(
     terminal_reason: Option<&str>,
 ) -> Result<Option<TurnRunRow>, DenError> {
     let terminal = state.is_terminal();
+    let terminal_obligation_state = state.terminal_obligation_state();
+    let mut tx = pool.begin().await?;
     let row = sqlx::query(&format!(
         r"
         UPDATE turn_runs
@@ -378,8 +391,29 @@ pub async fn transition_run(
     .bind(state.as_str())
     .bind(terminal_reason)
     .bind(terminal)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
+
+    if row.is_some() {
+        if let Some(obligation_state) = terminal_obligation_state {
+            sqlx::query(
+                r"
+                UPDATE turn_obligations
+                SET state = $2,
+                    completed_at = COALESCE(completed_at, NOW()),
+                    updated_at = NOW()
+                WHERE run_id = $1
+                  AND state IN ('requested','waiting_for_client','result_received')
+                ",
+            )
+            .bind(run_id)
+            .bind(obligation_state.as_str())
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    tx.commit().await?;
     Ok(row.map(row_to_run))
 }
 
@@ -394,7 +428,10 @@ mod tests {
             TurnRunState::Failed,
             TurnRunState::Cancelled,
         ] {
-            assert!(terminal.is_terminal());
+            assert_eq!(
+                terminal.terminal_obligation_state().is_some(),
+                terminal.is_terminal()
+            );
             assert!(!terminal.allows_open_obligation());
         }
 
