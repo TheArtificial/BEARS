@@ -83,6 +83,30 @@ fn submitted_plan_keeps_write_tools_locked() {
 }
 
 #[test]
+fn turn_authority_is_single_derived_permission_surface() {
+    let authority = TurnAuthority::for_session_mode(
+        BearStance::Pair,
+        Governance::Interactive,
+        "write",
+        Some("submitted"),
+    );
+
+    assert_eq!(authority.mode_label(), "Plan");
+    assert_eq!(authority.tool_enablement(), ToolEnablementState::ReadOnly);
+    assert!(authority.allows_tool(ClientToolName::ReadTextFile));
+    assert!(!authority.allows_tool(ClientToolName::EditFile));
+    assert_eq!(authority.allowed_tool_classes(), vec!["read_only"]);
+    assert_eq!(
+        authority.denied_tool_classes(),
+        vec!["workspace_mutation", "execution", "browser"]
+    );
+    assert!(authority
+        .read_only_runtime_context()
+        .expect("read-only context")
+        .contains("permission_mode=`Plan`; tool_enablement=`read_only`"));
+}
+
+#[test]
 fn find_paths_policy_is_descriptor_owned() {
     let policy = client_tool_policy(ClientToolName::FindPaths);
     assert_eq!(

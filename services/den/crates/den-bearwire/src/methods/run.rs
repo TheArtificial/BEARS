@@ -116,15 +116,24 @@ fn client_tool_descriptors_from_context(
     client_context: Option<&Value>,
     requested_mode: Option<&str>,
 ) -> Value {
-    let context = client_context.unwrap_or(&Value::Null);
-    let policy = den_core::client_tools::resolve_session_policy_for_mode(
+    let authority = den_core::client_tools::TurnAuthority::for_session_mode(
+        den_core::BearStance::Pair,
+        den_core::Governance::Interactive,
         requested_mode.unwrap_or("ask"),
         None,
     );
+    client_tool_descriptors_from_context_with_authority(client_context, &authority)
+}
+
+fn client_tool_descriptors_from_context_with_authority(
+    client_context: Option<&Value>,
+    authority: &den_core::client_tools::TurnAuthority,
+) -> Value {
+    let context = client_context.unwrap_or(&Value::Null);
     let mut descriptors = Vec::new();
     for tool in den_core::client_tools::ClientToolName::all() {
         if *tool == den_core::client_tools::ClientToolName::McpCallTool
-            || !policy.allows_tool(*tool)
+            || !authority.allows_tool(*tool)
         {
             continue;
         }
@@ -146,23 +155,6 @@ fn client_tool_descriptors_from_context(
         ));
     }
     json!(descriptors)
-}
-
-fn read_only_task_orientation_runtime_context(requested_mode: Option<&str>) -> Option<String> {
-    let policy = den_core::client_tools::resolve_session_policy_for_mode(
-        requested_mode.unwrap_or("ask"),
-        None,
-    );
-    if policy.tool_enablement.enables_non_read_tools() {
-        return None;
-    }
-
-    Some(format!(
-        "AUTHORITATIVE RUNTIME PERMISSION ENVELOPE for this turn: permission_mode=`{}`; tool_enablement=`read_only`; allowed_tool_classes={:?}; denied_tool_classes={:?}; state_authority=current turn capabilities override prior task orientation.\n\nYou are in a read-only/non-mutative run. Do not attempt workspace edits, file creation/deletion, commits, shell/process execution, browser actions with side effects, or other externally visible actions. If the user or focused task asks for execution that requires mutation, deliver analysis, diagnosis, a plan, a proposed patch, or an explicit permission-blocked status with evidence instead of repeatedly trying denied tools.",
-        policy.mode_label,
-        policy.allowed_tool_classes(),
-        policy.denied_tool_classes()
-    ))
 }
 
 fn workspace_roots_from_client_context(client_context: Option<&Value>) -> Vec<String> {
@@ -1572,10 +1564,21 @@ pub(crate) async fn run_start_result(
     let client_context = request.client_context;
     let workspace_roots = workspace_roots_from_client_context(client_context.as_ref());
     let requested_mode = request.requested_mode;
-    let client_tools =
-        client_tool_descriptors_from_context(client_context.as_ref(), requested_mode.as_deref());
-    let read_only_runtime_context =
-        read_only_task_orientation_runtime_context(requested_mode.as_deref());
+    // `TurnAuthority` is the single local authority seam for BearWire's tool
+    // surface and prompt permission envelope. The concrete stance is resolved
+    // below for runtime binding; BearWire sessions use Pair-equivalent tool
+    // authority unless a later typed work-run authority input says otherwise.
+    let turn_authority = den_core::client_tools::TurnAuthority::for_session_mode(
+        den_core::BearStance::Pair,
+        den_core::Governance::Interactive,
+        requested_mode.as_deref().unwrap_or("ask"),
+        None,
+    );
+    let client_tools = client_tool_descriptors_from_context_with_authority(
+        client_context.as_ref(),
+        &turn_authority,
+    );
+    let read_only_runtime_context = turn_authority.read_only_runtime_context();
     // Stance signal: a session bound to a live work run via `work.checkout`
     // runs in the Work stance; every other BearWire session stays Pair.
     let stance =
