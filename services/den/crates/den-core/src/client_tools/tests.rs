@@ -107,6 +107,45 @@ fn turn_authority_is_single_derived_permission_surface() {
 }
 
 #[test]
+fn turn_authority_ignores_client_policy_projection_labels() {
+    let authority =
+        TurnAuthority::for_session_mode(BearStance::Pair, Governance::Interactive, "ask", None);
+    let mut projection = authority.session_policy.to_json();
+    projection["mode_label"] = json!("Write");
+    projection["tool_enablement"]["state"] = json!("all_tools");
+    projection["tool_enablement"]["enables_non_read_tools"] = json!(true);
+
+    assert_eq!(authority.mode_label(), "Ask");
+    assert_eq!(authority.tool_enablement(), ToolEnablementState::ReadOnly);
+    assert!(!authority.allows_tool(ClientToolName::EditFile));
+}
+
+#[test]
+fn turn_authority_has_no_model_choice_authority_input() {
+    let first =
+        TurnAuthority::for_session_mode(BearStance::Pair, Governance::Interactive, "ask", None);
+    let second =
+        TurnAuthority::for_session_mode(BearStance::Pair, Governance::Interactive, "ask", None);
+
+    assert_eq!(first.tool_enablement(), second.tool_enablement());
+    assert_eq!(first.allowed_tool_classes(), second.allowed_tool_classes());
+    assert!(!first.allows_tool(ClientToolName::RunCommand));
+}
+
+#[test]
+fn turn_authority_has_no_prompt_or_compaction_authority_input() {
+    let authority =
+        TurnAuthority::for_session_mode(BearStance::Pair, Governance::Interactive, "ask", None);
+
+    // ponytail: this is a compile-time seam check; if prompt/context/compaction
+    // state ever becomes authority input, replace it with an explicit denied-
+    // to-allowed regression using that typed input.
+    assert_eq!(authority.governance, Governance::Interactive);
+    assert_eq!(authority.tool_enablement(), ToolEnablementState::ReadOnly);
+    assert!(!authority.allows_tool(ClientToolName::RunCommand));
+}
+
+#[test]
 fn find_paths_policy_is_descriptor_owned() {
     let policy = client_tool_policy(ClientToolName::FindPaths);
     assert_eq!(
