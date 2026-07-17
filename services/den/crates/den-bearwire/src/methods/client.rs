@@ -216,6 +216,20 @@ fn should_retry_continuation_error(message: &str, attempt_index: usize) -> bool 
         && attempt_index < continuation_retry_pauses().len()
 }
 
+fn should_retry_non_terminal_continuation_eof(
+    terminal_event_seen: bool,
+    wait_event_seen: bool,
+    cancellation_seen: bool,
+    attempt_index: usize,
+) -> bool {
+    // ponytail: provider/client disconnects sometimes surface as clean EOF instead of
+    // an error; retry this only while the existing continuation retry budget remains.
+    !terminal_event_seen
+        && !wait_event_seen
+        && !cancellation_seen
+        && attempt_index < continuation_retry_pauses().len()
+}
+
 fn continuation_retry_pauses_seconds() -> Vec<u64> {
     continuation_retry_pauses()
         .iter()
@@ -701,6 +715,39 @@ fn spawn_continuation_task(
                         continue 'continuation_attempts;
                     }
                     let terminal_or_wait_seen = terminal_event_seen || wait_event_seen;
+                    if should_retry_non_terminal_continuation_eof(
+                        terminal_event_seen,
+                        wait_event_seen,
+                        cancellation_seen,
+                        attempt_index,
+                    ) {
+                        let pause = retry_pauses[attempt_index];
+                        persist_run_progress(
+                        &pool,
+                        &run.session_id,
+                        &run.run_id,
+                        run.bear_id,
+                        run.user_id,
+                        continuation_started_at,
+                        "continuation_stream_non_terminal_eof_retrying",
+                        "LLM continuation stream ended before a terminal runtime event; will retry after backoff.",
+                        json!({
+                            "request_id": request_id,
+                            "attempt": attempt_number,
+                            "pause_seconds": pause.as_secs(),
+                            "runtime_event_count": runtime_event_count,
+                            "first_event_seen": first_event_seen,
+                            "terminal_event_seen": terminal_event_seen,
+                            "wait_event_seen": wait_event_seen,
+                            "cancellation_seen": cancellation_seen,
+                            "last_event_kind": last_event_kind,
+                            "last_event_sequence": last_event_sequence,
+                            "retry_pauses_seconds": continuation_retry_pauses_seconds(),
+                        }),
+                    )
+                    .await;
+                        continue 'continuation_attempts;
+                    }
                     if !terminal_or_wait_seen && !cancellation_seen {
                         fail_run_lifecycle(
                         &pool,
@@ -722,6 +769,9 @@ fn spawn_continuation_task(
                             "wait_event_seen": wait_event_seen,
                             "cancellation_seen": cancellation_seen,
                             "last_event_kind": last_event_kind,
+                            "attempt": attempt_number,
+                            "retry_exhausted": true,
+                            "retry_pauses_seconds": continuation_retry_pauses_seconds(),
                         })),
                     )
                     .await;
@@ -1343,6 +1393,28 @@ mod tests {
         ));
         assert!(!should_retry_continuation_error(
             "Server Error: LLM byte stream produced no data for 30s",
+            continuation_retry_pauses().len()
+        ));
+    }
+
+    #[test]
+    fn non_terminal_continuation_eof_uses_existing_retry_budget() {
+        assert!(should_retry_non_terminal_continuation_eof(
+            false, false, false, 0
+        ));
+        assert!(!should_retry_non_terminal_continuation_eof(
+            true, false, false, 0
+        ));
+        assert!(!should_retry_non_terminal_continuation_eof(
+            false, true, false, 0
+        ));
+        assert!(!should_retry_non_terminal_continuation_eof(
+            false, false, true, 0
+        ));
+        assert!(!should_retry_non_terminal_continuation_eof(
+            false,
+            false,
+            false,
             continuation_retry_pauses().len()
         ));
     }
