@@ -1046,6 +1046,15 @@ impl SessionTrackingStream {
                     Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
                 return;
             }
+            TurnCompletionDecision::Complete {
+                reason: TurnCompletionCompleteReason::FocusedWorkCompleteFinalizationDrain,
+                ..
+            } => {
+                self.store.update(&self.session_key, |session| {
+                    session.governance = Governance::Interactive;
+                    session.cached_activity_plan_projection = None;
+                });
+            }
             TurnCompletionDecision::Complete { .. } => {}
         }
 
@@ -1898,6 +1907,54 @@ mod tests {
             .last()
             .and_then(|message| message.content.as_deref())
             .is_some_and(|content| content.contains("autonomous implementation mode")));
+    }
+
+    fn completed_task_list_projection() -> den_docket::TaskListProjection {
+        den_docket::TaskListProjection {
+            id: uuid::Uuid::nil(),
+            bear_id: uuid::Uuid::nil(),
+            title: "Focused work".to_string(),
+            summary: "Acceptance criteria".to_string(),
+            owner_profile: "pair".to_string(),
+            visibility: "bear_visible".to_string(),
+            status: "completed".to_string(),
+            version: 1,
+            source_ref: den_docket::TaskListSourceRef::local(Vec::new()),
+            current_item: None,
+            items: vec![den_docket::TaskListItem {
+                id: "done".to_string(),
+                title: "Done task".to_string(),
+                summary: None,
+                status: den_docket::TaskListItemStatus::Completed,
+                blocked_reason: None,
+                source_ref: den_docket::TaskListSourceRef::local(Vec::new()),
+                sync_state: den_docket::TaskListSyncState::Clean,
+            }],
+            source_conversation_id: None,
+            source_client_session_id: None,
+            handoff_intent_path: None,
+            handoff_task_id: None,
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[tokio::test]
+    async fn final_gate_completion_drains_completed_focus_state() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.governance = Governance::AutonomousContinuation;
+        session.cached_activity_plan_projection = Some(completed_task_list_projection());
+        let mut stream = test_tracking_stream_with_session(&session);
+
+        stream.evaluate_final_gate_or_complete(Some(completed_task_list_projection()));
+
+        let stored = stream
+            .store
+            .get(&stream.session_key)
+            .expect("stored session after final gate");
+        assert!(stream.finished);
+        assert_eq!(stored.governance, Governance::Interactive);
+        assert!(stored.cached_activity_plan_projection.is_none());
     }
 
     #[test]

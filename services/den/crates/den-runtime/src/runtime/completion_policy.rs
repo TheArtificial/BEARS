@@ -39,6 +39,7 @@ pub enum TurnCompletionDecision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnCompletionCompleteReason {
     NoActiveFocusedTask,
+    FocusedWorkCompleteFinalizationDrain,
     FocusedWorkCompleteOrTerminallyBlocked,
     RepeatedTerminalObjection,
 }
@@ -68,6 +69,15 @@ pub fn decide_turn_completion(input: TurnCompletionPolicyInput<'_>) -> TurnCompl
     if !gate.is_active_autonomous_task {
         return TurnCompletionDecision::Complete {
             reason: TurnCompletionCompleteReason::NoActiveFocusedTask,
+            gate,
+            final_response_kind,
+            loop_detection: None,
+        };
+    }
+
+    if !gate.has_incomplete_unblocked_items && !gate.has_hard_blocker {
+        return TurnCompletionDecision::Complete {
+            reason: TurnCompletionCompleteReason::FocusedWorkCompleteFinalizationDrain,
             gate,
             final_response_kind,
             loop_detection: None,
@@ -203,6 +213,31 @@ mod tests {
             }
             other => panic!("expected continuation, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn completed_focused_work_enters_finalization_drain() {
+        let focused = task_list(
+            "completed",
+            vec![task_list_item(
+                "Recheck Docket",
+                TaskListItemStatus::Completed,
+            )],
+        );
+        let decision = decide_turn_completion(TurnCompletionPolicyInput {
+            profile: BearProfile::Pair,
+            focused_task_list: Some(&focused),
+            assistant_text: "Job completed. Working tree clean.",
+            recent_texts: &[],
+        });
+
+        assert!(matches!(
+            decision,
+            TurnCompletionDecision::Complete {
+                reason: TurnCompletionCompleteReason::FocusedWorkCompleteFinalizationDrain,
+                ..
+            }
+        ));
     }
 
     #[test]
