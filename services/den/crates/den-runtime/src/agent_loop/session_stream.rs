@@ -18,6 +18,9 @@ use crate::runtime::completion_policy::{
 use crate::runtime::focus_context::{
     resolve_runtime_focus_context, RuntimeFocusContext, RuntimeFocusResolveRequest,
 };
+use crate::runtime_error_ux::{
+    checkpoint_follow_through_required_policy, RuntimeIssueDisposition, RuntimeIssueSeverity,
+};
 use crate::{
     agent_loop::{
         approvals::create_native_approval,
@@ -55,6 +58,8 @@ use super::transcript::{
     spawn_persist_incomplete_acp_tool_results, spawn_persist_native_agent_step,
 };
 use super::{session_store::AgentLoopSession, ObjectiveOrientation, OrientationTaskRef};
+
+const MAX_CHECKPOINT_RECOVERY_ATTEMPTS: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NativeToolDispatchMode {
@@ -787,6 +792,54 @@ impl SessionTrackingStream {
         })
     }
 
+    fn checkpoint_recovery_event(message: String) -> RuntimeStreamEvent {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+            kind: "recoverable_tool_rejection".to_string(),
+            text: Some(message),
+            phase: Some("runtime_checkpoint".to_string()),
+            detail: Some(serde_json::json!({
+                "code": "checkpoint_follow_through_required",
+                "severity": "recoverable",
+                "disposition": "steer_model_and_continue",
+                "side_effects": "blocked_before_execution",
+                "required_next_tool": RUNTIME_CHECKPOINT_TOOL_NAME,
+            })),
+        })
+    }
+
+    fn checkpoint_recovery_message(
+        request: &RuntimeCheckpointRequest,
+        attempted_action: &str,
+    ) -> String {
+        format!(
+            "Your attempted action `{attempted_action}` was blocked before execution because runtime checkpoint `{}` is pending. Call the `{}` tool before any other tool.",
+            request.checkpoint_id, RUNTIME_CHECKPOINT_TOOL_NAME
+        )
+    }
+
+    fn push_checkpoint_recovery_guidance(
+        &self,
+        request: &RuntimeCheckpointRequest,
+        attempted_action: &str,
+    ) {
+        let policy = checkpoint_follow_through_required_policy(RUNTIME_CHECKPOINT_TOOL_NAME);
+        debug_assert_eq!(policy.severity, RuntimeIssueSeverity::Recoverable);
+        debug_assert_eq!(
+            policy.disposition,
+            RuntimeIssueDisposition::SteerModelAndContinue
+        );
+        let message = Self::checkpoint_recovery_message(request, attempted_action);
+        self.store.update(&self.session_key, |session| {
+            session.messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: Some(message),
+                tool_call_id: None,
+                name: None,
+                tool_calls: None,
+            });
+        });
+    }
+
     fn required_task_action_satisfied(
         action: &crate::agent_loop::CheckpointNextAction,
         tool_name: &str,
@@ -834,6 +887,7 @@ impl SessionTrackingStream {
         if Self::required_task_action_satisfied(&action, tool_name) {
             self.store.update(&self.session_key, |session| {
                 session.pending_checkpoint_task_action = None;
+                session.pending_checkpoint_recovery_attempts = 0;
             });
             return Ok(());
         }
@@ -863,6 +917,7 @@ impl SessionTrackingStream {
         });
         self.store.update(&self.session_key, |session| {
             session.pending_checkpoint_request = None;
+            session.pending_checkpoint_recovery_attempts = 0;
             session
                 .pending_checkpoint_task_action
                 .clone_from(&required_task_action);
@@ -879,6 +934,7 @@ impl SessionTrackingStream {
         );
         self.store.update(&self.session_key, |session| {
             session.pending_checkpoint_request = None;
+            session.pending_checkpoint_recovery_attempts = 0;
             session.checkpoint_state.reset_after_checkpoint_report();
         });
     }
@@ -959,18 +1015,35 @@ impl SessionTrackingStream {
         RuntimeStreamEvent::Semantic(tool_call_finished_event_for_content(&call, Some(&content)))
     }
 
-    #[allow(clippy::result_large_err)]
-    fn fail_if_checkpoint_pending(&self, attempted_action: &str) -> Result<(), RuntimeStreamEvent> {
+    fn block_or_recover_if_checkpoint_pending(
+        &mut self,
+        attempted_action: &str,
+    ) -> Result<(), RuntimeStreamEvent> {
         if !self.enforce_checkpoint_responses() {
             return Ok(());
         }
         let Some(request) = self.pending_checkpoint_request() else {
             return Ok(());
         };
-        Err(Self::checkpoint_failure_event(format!(
-            "Runtime checkpoint `{}` is pending; the assistant attempted `{attempted_action}` before calling the `{}` tool.",
-            request.checkpoint_id, RUNTIME_CHECKPOINT_TOOL_NAME
-        )))
+        let mut attempts = MAX_CHECKPOINT_RECOVERY_ATTEMPTS.saturating_add(1);
+        self.store.update(&self.session_key, |session| {
+            session.pending_checkpoint_recovery_attempts = session
+                .pending_checkpoint_recovery_attempts
+                .saturating_add(1);
+            attempts = session.pending_checkpoint_recovery_attempts;
+        });
+
+        if attempts > MAX_CHECKPOINT_RECOVERY_ATTEMPTS {
+            return Err(Self::checkpoint_failure_event(format!(
+                "Runtime checkpoint `{}` is still pending after {MAX_CHECKPOINT_RECOVERY_ATTEMPTS} recoverable correction attempts; the assistant attempted `{attempted_action}` before calling the `{}` tool. No blocked tool was executed.",
+                request.checkpoint_id, RUNTIME_CHECKPOINT_TOOL_NAME
+            )));
+        }
+
+        let message = Self::checkpoint_recovery_message(&request, attempted_action);
+        self.push_checkpoint_recovery_guidance(&request, attempted_action);
+        self.begin_checkpoint_continuation();
+        Err(Self::checkpoint_recovery_event(message))
     }
 
     fn record_checkpoint_response_if_audited(
@@ -1389,9 +1462,14 @@ impl Stream for SessionTrackingStream {
                     return Poll::Ready(Some(Ok(started)));
                 }
                 if let Err(event) =
-                    self.fail_if_checkpoint_pending(&format!("tool_call:{tool_name}"))
+                    self.block_or_recover_if_checkpoint_pending(&format!("tool_call:{tool_name}"))
                 {
-                    self.finished = true;
+                    if matches!(
+                        event,
+                        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. })
+                    ) {
+                        self.finished = true;
+                    }
                     return Poll::Ready(Some(Ok(event)));
                 }
                 if let Err(event) = self.enforce_required_checkpoint_task_action(&tool_name) {
@@ -1525,8 +1603,13 @@ impl Stream for SessionTrackingStream {
                     );
                     return Poll::Ready(None);
                 }
-                if let Err(event) = self.fail_if_checkpoint_pending("final_answer") {
-                    self.finished = true;
+                if let Err(event) = self.block_or_recover_if_checkpoint_pending("final_answer") {
+                    if matches!(
+                        event,
+                        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { .. })
+                    ) {
+                        self.finished = true;
+                    }
                     return Poll::Ready(Some(Ok(event)));
                 }
                 if let Err(event) = self.fail_if_checkpoint_task_action_pending() {
@@ -1740,6 +1823,7 @@ mod tests {
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: true,
             key_memory_projection_cache_key: None,
@@ -1850,24 +1934,76 @@ mod tests {
     async fn pending_checkpoint_blocks_non_checkpoint_actions_in_enforce_mode() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
         session.pending_checkpoint_request = Some(checkpoint_request("ckpt-required"));
-        let stream = test_tracking_stream_with_session(&session);
+        let mut stream = test_tracking_stream_with_session(&session);
 
         let tool_err = stream
-            .fail_if_checkpoint_pending("tool_call:memory_read")
-            .expect_err("non-checkpoint tool call is blocked");
+            .block_or_recover_if_checkpoint_pending("tool_call:memory_read")
+            .expect_err("non-checkpoint tool call is blocked and steered");
         assert!(matches!(
             tool_err,
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { ref message, .. })
-                if message.contains("ckpt-required") && message.contains("checkpoint")
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { ref kind, ref text, .. })
+                if kind == "recoverable_tool_rejection"
+                    && text.as_deref().is_some_and(|text| text.contains("ckpt-required"))
         ));
 
         let final_err = stream
-            .fail_if_checkpoint_pending("final_answer")
-            .expect_err("final answer is blocked");
+            .block_or_recover_if_checkpoint_pending("final_answer")
+            .expect_err("final answer is blocked and steered while retry budget remains");
         assert!(matches!(
             final_err,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { ref kind, ref text, .. })
+                if kind == "recoverable_tool_rejection"
+                    && text.as_deref().is_some_and(|text| text.contains("final_answer"))
+        ));
+    }
+
+    #[tokio::test]
+    async fn pending_checkpoint_rejects_wrong_next_tool_recoverably_before_escalation() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.pending_checkpoint_request = Some(checkpoint_request("ckpt-recoverable"));
+        let mut stream = test_tracking_stream_with_session(&session);
+
+        let event = stream
+            .block_or_recover_if_checkpoint_pending("tool_call:run_command")
+            .expect_err("wrong next tool is blocked and steered");
+        assert!(matches!(
+            event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+                ref kind,
+                ref text,
+                ..
+            }) if kind == "recoverable_tool_rejection"
+                && text.as_deref().is_some_and(|text| text.contains("blocked before execution"))
+        ));
+        let stored = stream
+            .store
+            .get(&stream.session_key)
+            .expect("stored session");
+        assert_eq!(stored.pending_checkpoint_recovery_attempts, 1);
+        assert!(stored.messages.last().is_some_and(|message| {
+            message.role == "system"
+                && message
+                    .content
+                    .as_deref()
+                    .is_some_and(|content| content.contains("Call the `checkpoint` tool"))
+        }));
+        assert!(stream.pending_final_gate_continuation.is_some());
+    }
+
+    #[tokio::test]
+    async fn pending_checkpoint_repeated_wrong_next_tool_escalates() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.pending_checkpoint_request = Some(checkpoint_request("ckpt-escalate"));
+        session.pending_checkpoint_recovery_attempts = MAX_CHECKPOINT_RECOVERY_ATTEMPTS;
+        let mut stream = test_tracking_stream_with_session(&session);
+
+        let event = stream
+            .block_or_recover_if_checkpoint_pending("tool_call:run_command")
+            .expect_err("retry budget escalates to terminal failure");
+        assert!(matches!(
+            event,
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed { ref message, .. })
-                if message.contains("final_answer")
+                if message.contains("ckpt-escalate") && message.contains("No blocked tool was executed")
         ));
     }
 
