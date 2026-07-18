@@ -1035,9 +1035,9 @@ pub(crate) async fn fail_run_lifecycle(
     .await
     .unwrap_or_else(|err| {
         tracing::error!(session_id, run_id, reason, error = %err, "failed to atomically persist BearWire run failure");
-        false
+        None
     });
-    if !finished {
+    if finished.is_none() {
         return;
     }
     record_work_run_outcome_if_bound(
@@ -1143,28 +1143,46 @@ async fn settle_active_run_for_session(
     let stream_cancel = state.turn_cancellations.cancel_session(session_id);
     let active_turn = state.tool_turns.cancel_active_turn(session_id);
     let active_run = turn_runs::active_run_for_session(&state.sqlx_pool, session_id).await?;
+    let stream_run_ids = stream_cancel
+        .as_ref()
+        .map(|turn| turn.run_ids.clone())
+        .unwrap_or_default();
+    let cancelled_stream = stream_cancel.is_some();
+    let cancelled_tool_turn = active_turn.is_some();
     let mut settled_obligations = 0;
+    let mut event_sequence = None;
     if let Some(run) = &active_run {
-        let transitioned = turn_runs::transition_run(
+        let mut event = BearWireEvent::ephemeral(
+            "run.cancelled",
+            json!({
+                "session_id": session_id,
+                "cancelled": true,
+                "run_ids": stream_run_ids.clone(),
+                "run_id": run.run_id,
+                "reason": reason,
+                "superseded_by_run_id": superseded_by_run_id,
+                "cancelled_stream": cancelled_stream,
+                "cancelled_tool_turn": cancelled_tool_turn,
+            }),
+        );
+        event.bear_id = Some(bear_id.to_string());
+        event.human_id = Some(user_id.to_string());
+        event.session_id = Some(session_id.to_string());
+        event.run_id = Some(run.run_id.clone());
+        if let Some(finished) = turn_runs::finish_run_with_bearwire_event(
             &state.sqlx_pool,
+            session_id,
             &run.run_id,
+            bear_id,
+            user_id,
             turn_runs::TurnRunState::Cancelled,
             Some(reason),
+            event,
         )
-        .await?;
-        if transitioned.is_some() {
-            settled_obligations = turn_obligations::settle_outstanding_for_run(
-                &state.sqlx_pool,
-                &run.run_id,
-                turn_obligations::TurnObligationState::Cancelled,
-            )
-            .await?;
-            let _ = turn_steps::transition_active_steps_for_run(
-                &state.sqlx_pool,
-                &run.run_id,
-                turn_steps::TurnStepState::Cancelled,
-            )
-            .await;
+        .await?
+        {
+            settled_obligations = finished.settled_obligations;
+            event_sequence = Some(finished.event_sequence);
             record_work_run_outcome_if_bound(
                 &state.sqlx_pool,
                 session_id,
@@ -1174,26 +1192,15 @@ async fn settle_active_run_for_session(
             )
             .await;
         }
-    }
-    let stream_run_ids = stream_cancel
-        .as_ref()
-        .map(|turn| turn.run_ids.clone())
-        .unwrap_or_default();
-    let cancelled_stream = stream_cancel.is_some();
-    let cancelled_tool_turn = active_turn.is_some();
-    let should_emit = active_run.is_some() || cancelled_stream || cancelled_tool_turn;
-    let event_sequence = if should_emit {
-        let run_id = active_run.as_ref().map(|run| run.run_id.clone());
+    } else if cancelled_stream || cancelled_tool_turn {
         let mut event = BearWireEvent::ephemeral(
             "run.cancelled",
             json!({
                 "session_id": session_id,
                 "cancelled": true,
                 "run_ids": stream_run_ids.clone(),
-                "run_id": run_id.clone(),
                 "reason": reason,
                 "superseded_by_run_id": superseded_by_run_id,
-                "settled_obligations": settled_obligations,
                 "cancelled_stream": cancelled_stream,
                 "cancelled_tool_turn": cancelled_tool_turn,
             }),
@@ -1201,8 +1208,7 @@ async fn settle_active_run_for_session(
         event.bear_id = Some(bear_id.to_string());
         event.human_id = Some(user_id.to_string());
         event.session_id = Some(session_id.to_string());
-        event.run_id = active_run.as_ref().map(|run| run.run_id.clone());
-        Some(
+        event_sequence = Some(
             bearwire_events::append_bearwire_event(
                 &state.sqlx_pool,
                 session_id,
@@ -1212,10 +1218,8 @@ async fn settle_active_run_for_session(
             )
             .await?
             .sequence_no,
-        )
-    } else {
-        None
-    };
+        );
+    }
     Ok(SettledRunLifecycle {
         run: active_run,
         stream_run_ids,
@@ -1352,10 +1356,10 @@ async fn finish_runtime_terminal_event(
     )
     .await
     {
-        Ok(true) => {
+        Ok(Some(_)) => {
             record_work_run_outcome_if_bound(pool, session_id, run_id, outcome, detail).await;
         }
-        Ok(false) => {}
+        Ok(None) => {}
         Err(err) => {
             tracing::error!(session_id, run_id, error = %err, "failed to atomically persist terminal runtime event");
         }

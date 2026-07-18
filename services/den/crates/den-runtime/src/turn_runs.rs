@@ -366,6 +366,13 @@ pub async fn client_result_count_for_run_kind(
     Ok(count)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FinishRunResult {
+    pub settled_obligations: u64,
+    pub settled_steps: u64,
+    pub event_sequence: i64,
+}
+
 pub async fn finish_run_with_bearwire_event(
     pool: &PgPool,
     session_id: &str,
@@ -374,8 +381,8 @@ pub async fn finish_run_with_bearwire_event(
     user_id: i32,
     state: TurnRunState,
     terminal_reason: Option<&str>,
-    event: bearwire_protocol::wire::BearWireEvent,
-) -> Result<bool, DenError> {
+    mut event: bearwire_protocol::wire::BearWireEvent,
+) -> Result<Option<FinishRunResult>, DenError> {
     if !state.is_terminal() {
         return Err(DenError::ValidationError(format!(
             "finish_run_with_bearwire_event requires terminal state, got {}",
@@ -409,9 +416,9 @@ pub async fn finish_run_with_bearwire_event(
         == 1;
     if !claimed {
         tx.rollback().await?;
-        return Ok(false);
+        return Ok(None);
     }
-    sqlx::query(
+    let settled_obligations = sqlx::query(
         r"
         UPDATE turn_obligations
         SET state = $2,
@@ -424,8 +431,9 @@ pub async fn finish_run_with_bearwire_event(
     .bind(run_id)
     .bind(settlement_state)
     .execute(&mut *tx)
-    .await?;
-    sqlx::query(
+    .await?
+    .rows_affected();
+    let settled_steps = sqlx::query(
         r"
         UPDATE turn_steps
         SET state = $2,
@@ -437,8 +445,11 @@ pub async fn finish_run_with_bearwire_event(
     .bind(run_id)
     .bind(settlement_state)
     .execute(&mut *tx)
-    .await?;
-    crate::bearwire_events::append_bearwire_event_on(
+    .await?
+    .rows_affected();
+    event.data["settled_obligations"] = serde_json::json!(settled_obligations);
+    event.data["settled_steps"] = serde_json::json!(settled_steps);
+    let terminal_event = crate::bearwire_events::append_bearwire_event_on(
         &mut tx,
         session_id,
         Some(bear_id),
@@ -447,7 +458,11 @@ pub async fn finish_run_with_bearwire_event(
     )
     .await?;
     tx.commit().await?;
-    Ok(true)
+    Ok(Some(FinishRunResult {
+        settled_obligations,
+        settled_steps,
+        event_sequence: terminal_event.sequence_no,
+    }))
 }
 
 pub async fn transition_run(

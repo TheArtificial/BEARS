@@ -668,29 +668,6 @@ async fn expire_open_client_obligations_from_rows(
     Ok(expired)
 }
 
-pub async fn settle_outstanding_for_run(
-    pool: &PgPool,
-    run_id: &str,
-    state: TurnObligationState,
-) -> Result<u64, DenError> {
-    let state = state.as_str();
-    let result = sqlx::query(
-        r"
-        UPDATE turn_obligations
-        SET state = $2,
-            completed_at = COALESCE(completed_at, NOW()),
-            updated_at = NOW()
-        WHERE run_id = $1
-          AND state IN ('requested','waiting_for_client','result_received')
-        ",
-    )
-    .bind(run_id)
-    .bind(state)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
-}
-
 pub fn obligation_accepts_responder_action(
     obligation: &TurnObligationRow,
     action: ExpectedResponderAction,

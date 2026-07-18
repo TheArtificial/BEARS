@@ -139,26 +139,3 @@ pub async fn transition_step(
     .await?;
     Ok(row.map(row_to_step))
 }
-
-pub async fn transition_active_steps_for_run(
-    pool: &PgPool,
-    run_id: &str,
-    state: TurnStepState,
-) -> Result<u64, DenError> {
-    let terminal = state.is_terminal();
-    let result = sqlx::query(&format!(
-        r"
-        UPDATE turn_steps
-        SET state = $2,
-            closed_at = CASE WHEN $3 THEN COALESCE(closed_at, NOW()) ELSE closed_at END
-        WHERE run_id = $1
-          AND state IN ({ACTIVE_STEP_STATES_SQL})
-        "
-    ))
-    .bind(run_id)
-    .bind(state.as_str())
-    .bind(terminal)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
-}
