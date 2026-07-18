@@ -9,9 +9,7 @@ use den_core::{
     client_tools::{
         client_tool_display_for_provider, client_tool_policy_json_for_provider, ClientToolName,
     },
-    tools::descriptor::{
-        builtin_den_tool_descriptor_for_provider_name, den_tool_display_json_for_provider,
-    },
+    tools::descriptor::den_tool_display_json_for_provider,
 };
 use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
@@ -37,13 +35,11 @@ pub fn tool_call_wire(
 }
 
 fn tool_call_execution_target(tool_name: &str) -> ExecutionTargetWire {
-    let den_owned = tool_name == crate::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME
-        || builtin_den_tool_descriptor_for_provider_name(tool_name)
-            .is_some_and(|descriptor| descriptor.execution_target == "den");
-    if den_owned {
-        ExecutionTargetWire::Den
-    } else {
-        ExecutionTargetWire::ArmatureLocal
+    match crate::turn_waits::resolve_tool_execution_owner(tool_name) {
+        Ok(crate::turn_waits::ToolExecutionOwner::Den) => ExecutionTargetWire::Den,
+        Ok(crate::turn_waits::ToolExecutionOwner::Armature) | Err(_) => {
+            ExecutionTargetWire::ArmatureLocal
+        }
     }
 }
 

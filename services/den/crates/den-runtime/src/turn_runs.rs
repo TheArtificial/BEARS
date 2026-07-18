@@ -366,6 +366,90 @@ pub async fn client_result_count_for_run_kind(
     Ok(count)
 }
 
+pub async fn finish_run_with_bearwire_event(
+    pool: &PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: Uuid,
+    user_id: i32,
+    state: TurnRunState,
+    terminal_reason: Option<&str>,
+    event: bearwire_protocol::wire::BearWireEvent,
+) -> Result<bool, DenError> {
+    if !state.is_terminal() {
+        return Err(DenError::ValidationError(format!(
+            "finish_run_with_bearwire_event requires terminal state, got {}",
+            state.as_str()
+        )));
+    }
+    let obligation_state = state
+        .terminal_obligation_state()
+        .expect("terminal state has obligation settlement");
+    let settlement_state = obligation_state.as_str();
+    let mut tx = pool.begin().await?;
+    let claimed = sqlx::query(
+        r"
+        UPDATE turn_runs
+        SET state = $2,
+            terminal_reason = $3,
+            updated_at = NOW(),
+            completed_at = COALESCE(completed_at, NOW())
+        WHERE run_id = $1
+          AND session_id = $4
+          AND state NOT IN ('completed','failed','cancelled')
+        ",
+    )
+    .bind(run_id)
+    .bind(state.as_str())
+    .bind(terminal_reason)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    if !claimed {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    sqlx::query(
+        r"
+        UPDATE turn_obligations
+        SET state = $2,
+            completed_at = COALESCE(completed_at, NOW()),
+            updated_at = NOW()
+        WHERE run_id = $1
+          AND state IN ('requested','waiting_for_client','result_received')
+        ",
+    )
+    .bind(run_id)
+    .bind(settlement_state)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r"
+        UPDATE turn_steps
+        SET state = $2,
+            closed_at = COALESCE(closed_at, NOW())
+        WHERE run_id = $1
+          AND state IN ('streaming_model','waiting_for_client','ready_to_continue')
+        ",
+    )
+    .bind(run_id)
+    .bind(settlement_state)
+    .execute(&mut *tx)
+    .await?;
+    crate::bearwire_events::append_bearwire_event_on(
+        &mut tx,
+        session_id,
+        Some(bear_id),
+        Some(user_id),
+        event,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
 pub async fn transition_run(
     pool: &PgPool,
     run_id: &str,

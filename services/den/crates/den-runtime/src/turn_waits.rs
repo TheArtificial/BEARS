@@ -17,7 +17,7 @@ use crate::runtime::bearwire_projection::wire::tool_call_wire;
 use crate::{bearwire_events, turn_obligations, turn_runs};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ToolExecutionOwner {
+pub enum ToolExecutionOwner {
     Den,
     Armature,
 }
@@ -39,7 +39,7 @@ pub fn descriptor_resolution_failed(error: &DenError) -> bool {
     )
 }
 
-fn resolve_tool_execution_owner(tool_name: &str) -> Result<ToolExecutionOwner, DenError> {
+pub fn resolve_tool_execution_owner(tool_name: &str) -> Result<ToolExecutionOwner, DenError> {
     if tool_name == RUNTIME_CHECKPOINT_TOOL_NAME {
         return Ok(ToolExecutionOwner::Den);
     }

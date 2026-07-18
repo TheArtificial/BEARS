@@ -53,8 +53,10 @@ struct RunStateRequest {
 }
 
 fn den_owned_tool_call(tool_name: &str) -> bool {
-    den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
-        .is_some_and(|descriptor| descriptor.execution_target == "den")
+    matches!(
+        den_runtime::turn_waits::resolve_tool_execution_owner(tool_name),
+        Ok(den_runtime::turn_waits::ToolExecutionOwner::Den)
+    )
 }
 
 // Runtime status/error UX policy is surface-agnostic. Keep product copy,
@@ -551,11 +553,7 @@ pub(crate) fn runtime_stream_boundary(
                 && approval_request_id
                     .as_deref()
                     .is_some_and(|id| !id.trim().is_empty());
-            let den_owned = tool_name == den_runtime::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME
-                || den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(
-                    tool_name,
-                )
-                .is_some_and(|descriptor| descriptor.execution_target == "den");
+            let den_owned = den_owned_tool_call(tool_name);
             if approval_wait || !den_owned {
                 RuntimeStreamBoundary::ClientWait
             } else {
@@ -1006,34 +1004,6 @@ pub(crate) async fn fail_run_lifecycle(
         error_message = %log_sample(&message),
         "BearWire run failed"
     );
-    let transitioned =
-        turn_runs::transition_run(pool, run_id, turn_runs::TurnRunState::Failed, Some(reason))
-            .await
-            .ok()
-            .flatten();
-    if transitioned.is_none() {
-        tracing::debug!(
-            session_id,
-            run_id,
-            reason,
-            "skipping BearWire run.failed persistence for already-terminal run"
-        );
-        return;
-    }
-    record_work_run_outcome_if_bound(
-        pool,
-        session_id,
-        run_id,
-        "failed",
-        Some(json!({ "category": reason, "message": message.clone() })),
-    )
-    .await;
-    let _ = turn_obligations::settle_outstanding_for_run(
-        pool,
-        run_id,
-        turn_obligations::TurnObligationState::Failed,
-    )
-    .await;
     let mut event = BearWireEvent::ephemeral(
         "run.failed",
         json!({
@@ -1048,12 +1018,30 @@ pub(crate) async fn fail_run_lifecycle(
     event.human_id = Some(user_id.to_string());
     event.session_id = Some(session_id.to_string());
     event.run_id = Some(run_id.to_string());
-    let _ = bearwire_events::append_bearwire_event(
+    let finished = turn_runs::finish_run_with_bearwire_event(
         pool,
         session_id,
-        Some(bear_id),
-        Some(user_id),
+        run_id,
+        bear_id,
+        user_id,
+        turn_runs::TurnRunState::Failed,
+        Some(reason),
         event,
+    )
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(session_id, run_id, reason, error = %err, "failed to atomically persist BearWire run failure");
+        false
+    });
+    if !finished {
+        return;
+    }
+    record_work_run_outcome_if_bound(
+        pool,
+        session_id,
+        run_id,
+        "failed",
+        Some(json!({ "category": reason, "message": message.clone() })),
     )
     .await;
     if let Ok(Some(session)) =
