@@ -112,7 +112,7 @@ Acceptance checks:
 
 ### Milestone 3 — Den-owned typed liveness
 
-Status: **in progress**
+Status: **completed**
 
 Goal: distinguish handshake, provider activity, semantic activity, and legitimate client waits.
 
@@ -131,7 +131,7 @@ Progress:
 - completed: web-chat keepalive and absolute turn timeout now own polled Tokio sleep deadlines, so permanently pending model/tool futures still wake for liveness and timeout handling;
 - completed: raw OpenAI/Responses provider bytes emit process-local typed `ProviderActivity`; continuation watchdogs distinguish handshake silence, provider inactivity before first semantic output, and later semantic/provider inactivity;
 - completed: provider activity is explicitly ignored by BearWire/SSE/transcript projection and does not count as a semantic runtime event;
-- remaining: apply the same provider-aware watchdog policy to initial runs and remove the initial/continuation watchdog asymmetry.
+- completed: initial runs and continuations share the same configured handshake and provider-inactivity deadlines; both consume typed provider activity and only Den decides terminal timeout failure.
 
 Acceptance checks:
 
@@ -228,4 +228,5 @@ The roadmap is complete when:
 | 1 — durable local-tool cancellation | `1a169ccc` | armature compile; pre-wait cancellation race; matching/unrelated cancellation; session cancel/close; registry eviction/non-resurrection |
 | 2 — execution-owner consolidation | `49e60dd4` | resolver usage audit; continuation ownership matrix; Den-owned run-state recovery test; BearWire projection tests |
 | 3a — timer-backed web-chat liveness | `f5eafb02` | offline runtime compile; 43/44 native-runtime tests (one unrelated SQLx pool exhaustion) |
-| 3b — typed provider activity | this sub-item commit | raw-byte activity ordering; projection omission; OpenAI stream detach/tool tests; continuation watchdog tests |
+| 3b — typed provider activity | `183b111f` | raw-byte activity ordering; projection omission; OpenAI stream detach/tool tests; continuation watchdog tests |
+| 3c — initial/continuation liveness parity | this sub-item commit | initial run completion; shared watchdog configuration tests; OpenAI activity/stream tests; offline BearWire compile |

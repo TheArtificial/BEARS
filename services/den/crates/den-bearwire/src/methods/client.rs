@@ -133,7 +133,7 @@ fn bearwire_finish_payload(input: &ClientToolResultInput, compacted: Value) -> T
     )
 }
 
-fn continuation_watchdog_timeout() -> Duration {
+pub(crate) fn continuation_watchdog_timeout() -> Duration {
     continuation_watchdog_timeout_from_raw(
         std::env::var("BEARS_BEARWIRE_CONTINUATION_WATCHDOG_MS")
             .ok()
@@ -149,7 +149,7 @@ fn continuation_watchdog_timeout_from_raw(raw: Option<&str>) -> Duration {
     Duration::from_millis(millis)
 }
 
-fn continuation_first_event_watchdog_timeout(
+pub(crate) fn continuation_first_event_watchdog_timeout(
     handshake_timeout: Duration,
     idle_timeout: Duration,
 ) -> Duration {

@@ -1811,9 +1811,22 @@ pub(crate) async fn run_start_result(
                 )
                 .await;
                 let mut first_event_seen = false;
+                let mut provider_activity_seen = false;
                 let mut terminal_or_wait_seen = false;
                 let mut cancellation_seen = false;
+                let idle_watchdog_timeout = crate::methods::client::continuation_watchdog_timeout();
+                let handshake_timeout = den_runtime::agent_loop::native_llm_handshake_timeout();
+                let first_event_watchdog_timeout =
+                    crate::methods::client::continuation_first_event_watchdog_timeout(
+                        handshake_timeout,
+                        idle_watchdog_timeout,
+                    );
                 loop {
+                    let watchdog_timeout = if first_event_seen || provider_activity_seen {
+                        idle_watchdog_timeout
+                    } else {
+                        first_event_watchdog_timeout
+                    };
                     tokio::select! {
                         changed = cancel_rx.changed() => {
                             if changed.is_ok() && *cancel_rx.borrow() {
@@ -1830,11 +1843,44 @@ pub(crate) async fn run_start_result(
                                 break;
                             }
                         }
-                        item = stream.next() => {
+                        timed = tokio::time::timeout(watchdog_timeout, stream.next()) => {
+                            let item = match timed {
+                                Ok(item) => item,
+                                Err(_) => {
+                                    if let Some(tx) = eager_prefix_tx.take() {
+                                        let _ = tx.send(());
+                                    }
+                                    persist_run_failed(
+                                        &pool,
+                                        &session_for_task,
+                                        &run_id_for_task,
+                                        bear_id,
+                                        user_id,
+                                        "initial_stream_watchdog_timeout",
+                                        if provider_activity_seen {
+                                            format!("Provider activity stopped for {}ms before the run reached a terminal or client-wait event.", watchdog_timeout.as_millis())
+                                        } else {
+                                            format!("The provider did not begin streaming within the {}ms initial handshake window.", watchdog_timeout.as_millis())
+                                        },
+                                        Some(json!({
+                                            "request_id": request_id,
+                                            "provider_activity_seen": provider_activity_seen,
+                                            "first_event_seen": first_event_seen,
+                                            "watchdog_timeout_ms": watchdog_timeout.as_millis(),
+                                        })),
+                                    )
+                                    .await;
+                                    break;
+                                }
+                            };
                             let Some(item) = item else {
                                 break;
                             };
                             match item {
+                                Ok(den_protocol::RuntimeStreamEvent::ProviderActivity) => {
+                                    provider_activity_seen = true;
+                                    continue;
+                                }
                                 Ok(runtime_event) => {
                                     if runtime_event_is_terminal_or_wait(&runtime_event) {
                                         terminal_or_wait_seen = true;
