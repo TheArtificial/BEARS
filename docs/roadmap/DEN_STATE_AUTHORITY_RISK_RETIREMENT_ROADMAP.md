@@ -92,9 +92,16 @@ Acceptance checks:
 
 ### Milestone 2 — complete execution-owner consolidation
 
-Status: **not started**
+Status: **completed**
 
 Goal: every live, continuation, persistence, recovery, and armature route consumes one typed execution owner.
+
+Audit result:
+
+- Den routing, wait persistence, initial/continuation boundaries, and BearWire projection consume `resolve_tool_execution_owner`;
+- checkpoint-name checks remaining in the agent loop implement checkpoint semantics rather than routing ownership;
+- armature live and `run.state` recovery paths consume canonical BearWire `execution_target` and project Den-owned calls display-only;
+- unknown Den-side ownership fails descriptor resolution before an ambiguous client obligation is created.
 
 Acceptance checks:
 
@@ -211,4 +218,5 @@ The roadmap is complete when:
 | Milestone | Commit | Validation |
 | --- | --- | --- |
 | Foundation — atomic terminal authority | existing commits through `3bd566be` plus current follow-up commit | bundled-Postgres completion/cancel/expiry/late-result tests; offline checks |
-| 1 — durable local-tool cancellation | this milestone commit | armature compile; pre-wait cancellation race; matching/unrelated cancellation; session cancel/close; registry eviction/non-resurrection |
+| 1 — durable local-tool cancellation | `1a169ccc` | armature compile; pre-wait cancellation race; matching/unrelated cancellation; session cancel/close; registry eviction/non-resurrection |
+| 2 — execution-owner consolidation | this milestone audit commit | resolver usage audit; continuation ownership matrix; Den-owned run-state recovery test; BearWire projection tests |
