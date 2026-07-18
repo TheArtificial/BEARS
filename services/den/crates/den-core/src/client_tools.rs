@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::{BearStance, Governance};
+use crate::BearStance;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolClass {
@@ -49,27 +49,24 @@ pub struct ResolvedSessionPolicy {
 
 /// Compiled authority view for one turn.
 ///
-/// `TurnAuthority` is the seam between raw inputs (stance, governance, session mode,
-/// workplan state) and authority consumers such as tool advertisement, tool routing,
-/// prompt assembly, and client projection. Governance remains an input, not owned
-/// by this object; this type owns only the derived permission surface.
+/// `TurnAuthority` is the seam between mutation-authority inputs (stance, session mode,
+/// workplan state) and consumers such as tool advertisement, tool routing, prompt assembly,
+/// and client projection. Run supervision/governance is intentionally not an input to this
+/// permission surface.
 #[derive(Debug, Clone)]
 pub struct TurnAuthority {
     pub stance: BearStance,
-    pub governance: Governance,
     pub session_policy: ResolvedSessionPolicy,
 }
 
 impl TurnAuthority {
     pub fn for_session_mode(
         stance: BearStance,
-        governance: Governance,
         current_mode: &str,
         plan_mode_state: Option<&str>,
     ) -> Self {
         Self {
             stance,
-            governance,
             session_policy: resolve_session_policy_for_mode(current_mode, plan_mode_state),
         }
     }

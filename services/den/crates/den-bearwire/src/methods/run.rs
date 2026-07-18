@@ -1552,7 +1552,6 @@ pub(crate) async fn run_start_result(
     // authority unless a later typed work-run authority input says otherwise.
     let turn_authority = den_core::client_tools::TurnAuthority::for_session_mode(
         den_core::BearStance::Pair,
-        den_core::Governance::Interactive,
         requested_mode.as_deref().unwrap_or("ask"),
         None,
     );
@@ -2346,7 +2345,6 @@ mod tests {
         });
         let authority = den_core::client_tools::TurnAuthority::for_session_mode(
             den_core::BearStance::Pair,
-            den_core::Governance::Interactive,
             "write",
             None,
         );
@@ -2384,7 +2382,6 @@ mod tests {
         });
         let authority = den_core::client_tools::TurnAuthority::for_session_mode(
             den_core::BearStance::Pair,
-            den_core::Governance::Interactive,
             "ask",
             None,
         );

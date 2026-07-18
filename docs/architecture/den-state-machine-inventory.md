@@ -61,9 +61,11 @@ ActiveObligations = TurnRunState × ObligationSet
 TerminalOutcome = TurnRunState × ObligationSet × TurnStepState × BearWireTerminalEvent
 ```
 
-`TurnAuthority` is the compiled permission surface for the turn: tool routing,
-prompt authority blocks, and client permission projection consume it, but prompt
-or client labels cannot feed authority back into it. `ResolvedFocus` is the only
+`TurnAuthority` is the compiled permission surface for the turn: stance plus
+mode/plan policy determine tool routing, prompt authority blocks, and client
+permission projection. Governance is a separate run-supervision context and is
+not a mutation-permission input; prompt or client labels cannot feed authority
+back into either seam. `ResolvedFocus` is the only
 focus input that may let completion policy force continuation for unfinished
 focused work. `TurnRunState` owns lifecycle and active wait reason. Terminal
 closure is committed through one atomic finish operation that transitions the
@@ -75,7 +77,9 @@ authority owners unless a typed implementation seam consumes them into one of
 the authority owners above:
 
 ```text
-EffectivePolicyProjection = TrustProfile × Governance × Armature × RunAuthContext × PermissionMode
+EffectivePolicyProjection = TurnAuthority × Armature × RunAuthContext
+
+RunSupervisionProjection = Governance × HumanPresence
 
 CompletionProjection = ResolvedFocus × DocketTaskState × Governance × BudgetState × ObligationSet
 ```

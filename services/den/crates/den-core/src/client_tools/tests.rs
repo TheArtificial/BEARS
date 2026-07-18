@@ -84,12 +84,7 @@ fn submitted_plan_keeps_write_tools_locked() {
 
 #[test]
 fn turn_authority_is_single_derived_permission_surface() {
-    let authority = TurnAuthority::for_session_mode(
-        BearStance::Pair,
-        Governance::Interactive,
-        "write",
-        Some("submitted"),
-    );
+    let authority = TurnAuthority::for_session_mode(BearStance::Pair, "write", Some("submitted"));
 
     assert_eq!(authority.mode_label(), "Plan");
     assert_eq!(authority.tool_enablement(), ToolEnablementState::ReadOnly);
@@ -108,8 +103,7 @@ fn turn_authority_is_single_derived_permission_surface() {
 
 #[test]
 fn turn_authority_ignores_client_policy_projection_labels() {
-    let authority =
-        TurnAuthority::for_session_mode(BearStance::Pair, Governance::Interactive, "ask", None);
+    let authority = TurnAuthority::for_session_mode(BearStance::Pair, "ask", None);
     let mut projection = authority.session_policy.to_json();
     projection["mode_label"] = json!("Write");
     projection["tool_enablement"]["state"] = json!("all_tools");
@@ -122,10 +116,8 @@ fn turn_authority_ignores_client_policy_projection_labels() {
 
 #[test]
 fn turn_authority_has_no_model_choice_authority_input() {
-    let first =
-        TurnAuthority::for_session_mode(BearStance::Pair, Governance::Interactive, "ask", None);
-    let second =
-        TurnAuthority::for_session_mode(BearStance::Pair, Governance::Interactive, "ask", None);
+    let first = TurnAuthority::for_session_mode(BearStance::Pair, "ask", None);
+    let second = TurnAuthority::for_session_mode(BearStance::Pair, "ask", None);
 
     assert_eq!(first.tool_enablement(), second.tool_enablement());
     assert_eq!(first.allowed_tool_classes(), second.allowed_tool_classes());
@@ -134,13 +126,11 @@ fn turn_authority_has_no_model_choice_authority_input() {
 
 #[test]
 fn turn_authority_has_no_prompt_or_compaction_authority_input() {
-    let authority =
-        TurnAuthority::for_session_mode(BearStance::Pair, Governance::Interactive, "ask", None);
+    let authority = TurnAuthority::for_session_mode(BearStance::Pair, "ask", None);
 
     // ponytail: this is a compile-time seam check; if prompt/context/compaction
     // state ever becomes authority input, replace it with an explicit denied-
     // to-allowed regression using that typed input.
-    assert_eq!(authority.governance, Governance::Interactive);
     assert_eq!(authority.tool_enablement(), ToolEnablementState::ReadOnly);
     assert!(!authority.allows_tool(ClientToolName::RunCommand));
 }

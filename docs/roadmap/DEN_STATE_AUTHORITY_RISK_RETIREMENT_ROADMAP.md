@@ -210,13 +210,22 @@ Audit result:
 - removed the dead BearWire convenience wrapper that recomputed authority and made tests construct `TurnAuthority` explicitly;
 - existing `den-core` tests preserve submitted/drafting plan lock behavior and prove projection labels cannot expand authority.
 
-### Milestones 8–10 — governance and projection simplification
+### Milestone 8 — governance/permission decoupling
+
+Status: **completed**
+
+Audit result and change:
+
+- governance remains a run-supervision context used by autonomous continuation and runtime projection;
+- governance was not used to derive tool permissions, but was stored in `TurnAuthority` as a misleading authority input;
+- removed governance from `TurnAuthority` and its constructor, so mutation authority now compiles only stance plus mode/plan policy;
+- no new governance axes were added because active runtime behavior does not require them.
+
+### Milestones 9–10 — projection and completion simplification
 
 Status: **not started**
 
-Execute after the higher-risk authority retirements above:
-
-- split governance into orthogonal typed inputs if branches require it;
+Remaining:
 - group model/prompt/context/cache/UI state under derived views;
 - keep completion as a pure decision whose only durable result is atomic run finish.
 
@@ -245,4 +254,5 @@ The roadmap is complete when:
 | 5 — observational cache retirement | `8db7cac1` | session-scoped cache cleanup/reuse; terminal-card monotonicity; cancel/close cleanup; armature compile |
 | 6a — obligation-derived blocking behavior | `6c734959` | blocking derivation unit test; tool/permission wait persistence; coordinator contracts; `run.state` blocking reason; offline compile |
 | 6b — retire specialized waiting states | `e5d9090b` | migration/schema/type tests; 14 obligation regressions; 10 coordinator contracts; run-state projection; offline compile |
-| 7 — workflow/plan authority compilation | this milestone commit | direct-consumer audit; tool surface tests; `TurnAuthority` plan lock/projection tests; warning-free BearWire compile |
+| 7 — workflow/plan authority compilation | `9af60b1a` | direct-consumer audit; tool surface tests; `TurnAuthority` plan lock/projection tests; warning-free BearWire compile |
+| 8 — governance/permission decoupling | this milestone commit | governance usage audit; 14 client-tool authority tests; BearWire tool surface tests; offline compile |
