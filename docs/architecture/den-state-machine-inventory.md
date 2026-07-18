@@ -82,7 +82,13 @@ EffectivePolicyProjection = TurnAuthority × Armature × RunAuthContext
 RunSupervisionProjection = Governance × HumanPresence
 
 CompletionProjection = ResolvedFocus × DocketTaskState × Governance × BudgetState × ObligationSet
+
+DerivedViews = ModelRequest × PromptContext × MemoryProjection × CompactionProjection × SurfaceProjection
 ```
+
+`DerivedViews` are explicitly non-authoritative. They may cache or render canonical
+state, but cannot expand mutation permission, manufacture focus/obligations, choose
+a terminal outcome, or override current-turn ordering.
 
 Do not let a derived view become a peer source of truth. If two axes disagree,
 resolve the conflict into canonical state before prompt rendering or client
@@ -115,8 +121,7 @@ Exit gate for the reduced authority model:
 | Obligations | obligation coordinator | per tool/permission/human wait | Client/tool/approval waits; blocks only while open. |
 | Loop control/budgets | agent loop controller | run/turn | Budgets, checkpoints, KO/failure signals, context pressure. |
 | Recovery/error | runtime recovery logic | run/turn/session | Retry, resume, terminal outcome, late-result handling. |
-| Model selection | conversation model-selection service | conversation, snapshotted per turn | Affects provider/model request, not permissions/focus/governance. |
-| Prompt/context/compaction | context assembler | turn + compaction lifecycle | Projection only; cannot create authority absent from canonical state. |
+| Derived views: model request, prompt/context, memory, compaction, UI/surface caches | projection/assembler owners | request/turn/session bounded | Non-authoritative views only; cannot create permissions, focus, obligations, lifecycle, or completion. |
 | Work surface/sandbox | Docket/work execution | job/run/workspace | Execution materialization; not conversation focus by itself. |
 
 ## Axis inventory

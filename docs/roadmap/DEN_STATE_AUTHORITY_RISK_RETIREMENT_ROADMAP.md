@@ -221,13 +221,25 @@ Audit result and change:
 - removed governance from `TurnAuthority` and its constructor, so mutation authority now compiles only stance plus mode/plan policy;
 - no new governance axes were added because active runtime behavior does not require them.
 
-### Milestones 9–10 — projection and completion simplification
+### Milestone 9 — projection-only axes
+
+Status: **completed**
+
+Audit result and change:
+
+- model request, prompt/context, memory, compaction, and UI/surface cache state are grouped under one explicitly non-authoritative `DerivedViews` boundary;
+- `TurnAuthority` contains only stance and resolved session policy; projection state is not an authority input;
+- derived views have no input into terminal lifecycle or focus resolution and cannot manufacture permissions, obligations, focus, or completion;
+- the existing compile-time seam regression protects prompt/context/compaction state from becoming a `TurnAuthority` input.
+
+### Milestone 10 — completion as a pure decision
 
 Status: **not started**
 
 Remaining:
-- group model/prompt/context/cache/UI state under derived views;
-- keep completion as a pure decision whose only durable result is atomic run finish.
+
+- confirm completion remains an ephemeral decision;
+- document atomic run finish as its only durable result.
 
 ## Exit criteria
 
@@ -255,4 +267,5 @@ The roadmap is complete when:
 | 6a — obligation-derived blocking behavior | `6c734959` | blocking derivation unit test; tool/permission wait persistence; coordinator contracts; `run.state` blocking reason; offline compile |
 | 6b — retire specialized waiting states | `e5d9090b` | migration/schema/type tests; 14 obligation regressions; 10 coordinator contracts; run-state projection; offline compile |
 | 7 — workflow/plan authority compilation | `9af60b1a` | direct-consumer audit; tool surface tests; `TurnAuthority` plan lock/projection tests; warning-free BearWire compile |
-| 8 — governance/permission decoupling | this milestone commit | governance usage audit; 14 client-tool authority tests; BearWire tool surface tests; offline compile |
+| 8 — governance/permission decoupling | `da04bb98` | governance usage audit; 14 client-tool authority tests; BearWire tool surface tests; offline compile |
+| 9 — projection-only axes | this milestone commit | derived-view authority audit; `den-core` client-tool authority tests; formatting and diff checks |
