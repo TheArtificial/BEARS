@@ -281,7 +281,12 @@ pub enum RuntimeSemanticEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeStreamEvent {
     Semantic(RuntimeSemanticEvent),
-    UntranslatedProviderEvent { value: serde_json::Value },
+    /// Process-local liveness observation emitted when the provider stream yields bytes.
+    /// Projection layers must not persist or expose this as transcript/BearWire content.
+    ProviderActivity,
+    UntranslatedProviderEvent {
+        value: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

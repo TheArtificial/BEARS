@@ -11,6 +11,24 @@ use crate::native_runtime::openai_byte_stream_to_event_stream;
 use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
 #[tokio::test]
+async fn provider_bytes_emit_process_local_activity_before_semantic_events() {
+    let source = futures::stream::iter(vec![Ok::<Bytes, DenError>(Bytes::from_static(
+        b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n",
+    ))]);
+    let mut stream = openai_byte_stream_to_event_stream(source);
+
+    assert!(matches!(
+        stream.next().await.expect("activity event").expect("ok"),
+        RuntimeStreamEvent::ProviderActivity
+    ));
+    assert!(matches!(
+        stream.next().await.expect("semantic event").expect("ok"),
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { ref text })
+            if text == "hi"
+    ));
+}
+
+#[tokio::test]
 async fn tool_call_finish_does_not_synthesize_turn_completed() {
     let frames = concat!(
         "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"memory_read\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",

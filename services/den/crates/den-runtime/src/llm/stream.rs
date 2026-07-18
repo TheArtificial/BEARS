@@ -243,6 +243,7 @@ fn runtime_event_kind(event: &RuntimeStreamEvent) -> &'static str {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => {
             "turn_cancelled"
         }
+        RuntimeStreamEvent::ProviderActivity => "provider_activity",
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => "untranslated_provider_event",
     }
 }

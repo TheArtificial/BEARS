@@ -514,12 +514,14 @@ fn spawn_continuation_task(
                     )
                     .await;
                     let mut first_event_seen = false;
+                    let mut provider_activity_seen = false;
                     let mut runtime_event_count = 0usize;
                     let mut terminal_event_seen = false;
                     let mut wait_event_seen = false;
                     let mut cancellation_seen = false;
                     let mut last_event_kind: Option<&'static str> = None;
                     let mut last_runtime_event_at: Option<Instant> = None;
+                    let mut last_provider_activity_at: Option<Instant> = None;
                     let mut last_event_sequence: Option<i64> = None;
                     let mut retryable_stream_error: Option<String> = None;
                     let mut fatal_stream_failure_seen = false;
@@ -532,10 +534,12 @@ fn spawn_continuation_task(
                     loop {
                         let watchdog_phase = if first_event_seen {
                             "between_runtime_events"
+                        } else if provider_activity_seen {
+                            "provider_inactive_before_first_semantic_event"
                         } else {
-                            "first_runtime_event"
+                            "provider_handshake"
                         };
-                        let watchdog_timeout = if first_event_seen {
+                        let watchdog_timeout = if first_event_seen || provider_activity_seen {
                             idle_watchdog_timeout
                         } else {
                             first_event_watchdog_timeout
@@ -560,6 +564,8 @@ fn spawn_continuation_task(
                                     Err(_) => {
                                         let last_event_age_ms = last_runtime_event_at
                                             .map(|at| at.elapsed().as_millis());
+                                        let last_provider_activity_age_ms = last_provider_activity_at
+                                            .map(|at| at.elapsed().as_millis());
                                         let context = json!({
                                             "continuation_request_id": request_id,
                                             "watchdog_phase": watchdog_phase,
@@ -570,16 +576,23 @@ fn spawn_continuation_task(
                                             "continuation_elapsed_ms": continuation_started_at.elapsed().as_millis(),
                                             "runtime_event_count": runtime_event_count,
                                             "first_event_seen": first_event_seen,
+                                            "provider_activity_seen": provider_activity_seen,
+                                            "last_provider_activity_age_ms": last_provider_activity_age_ms,
                                             "terminal_event_seen": terminal_event_seen,
                                             "wait_event_seen": wait_event_seen,
                                             "last_event_kind": last_event_kind,
                                             "last_event_sequence": last_event_sequence,
                                             "last_event_age_ms": last_event_age_ms,
-                                            "diagnostic_note": "The continuation watchdog observes Den runtime events, not raw provider chunks. Check den_llm stream timing logs for provider chunk/byte counts for this request_id.",
+                                            "diagnostic_note": "The continuation watchdog observes typed provider activity and semantic runtime events. Provider activity is process-local and is not persisted to BearWire or transcript history.",
                                         });
                                         let message = if first_event_seen {
                                             format!(
-                                                "Den received the client result and continuation request {request_id} emitted runtime events, but no further runtime event arrived within {}ms. This usually means the resumed model/runtime stream stalled after it started.",
+                                                "Den received the client result and continuation request {request_id} emitted runtime events, but no further provider or semantic activity arrived within {}ms.",
+                                                watchdog_timeout.as_millis()
+                                            )
+                                        } else if provider_activity_seen {
+                                            format!(
+                                                "Den received provider bytes for continuation request {request_id}, but provider activity stopped before the first semantic event for {}ms.",
                                                 watchdog_timeout.as_millis()
                                             )
                                         } else {
@@ -611,6 +624,11 @@ fn spawn_continuation_task(
                             break;
                         };
                         match item {
+                            Ok(den_protocol::RuntimeStreamEvent::ProviderActivity) => {
+                                provider_activity_seen = true;
+                                last_provider_activity_at = Some(Instant::now());
+                                continue;
+                            }
                             Ok(runtime_event) => {
                                 runtime_event_count += 1;
                                 last_runtime_event_at = Some(Instant::now());

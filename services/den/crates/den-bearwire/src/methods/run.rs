@@ -597,6 +597,7 @@ pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'
             "turn_cancelled"
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error { .. }) => "error",
+        RuntimeStreamEvent::ProviderActivity => "provider_activity",
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => "untranslated_provider_event",
     }
 }

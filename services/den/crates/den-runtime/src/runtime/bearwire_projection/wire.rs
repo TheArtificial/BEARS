@@ -87,7 +87,8 @@ pub fn tool_call_finish_wire(
 pub fn runtime_stream_event_to_bearwire_events(event: RuntimeStreamEvent) -> Vec<BearWireEvent> {
     match event {
         RuntimeStreamEvent::Semantic(event) => runtime_semantic_event_to_bearwire_events(event),
-        RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
+        RuntimeStreamEvent::ProviderActivity
+        | RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
     }
 }
 

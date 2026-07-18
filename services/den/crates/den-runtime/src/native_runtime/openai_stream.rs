@@ -56,6 +56,7 @@ pub fn responses_byte_stream_to_event_stream_with_telemetry(
         }
         match Pin::new(&mut pinned).poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
+                queued_events.push_back(Ok(RuntimeStreamEvent::ProviderActivity));
                 buffer.extend_from_slice(&bytes);
                 while let Some(end) = find_sse_frame_end(&buffer) {
                     let raw: Vec<u8> = buffer.drain(..end).collect();
@@ -129,6 +130,7 @@ pub fn openai_byte_stream_to_event_stream_with_telemetry(
             }
             match Pin::new(&mut pinned).poll_next(cx) {
                 Poll::Ready(Some(Ok(bytes))) => {
+                    queued_events.push_back(Ok(RuntimeStreamEvent::ProviderActivity));
                     buffer.extend_from_slice(&bytes);
                     while let Some(end) = find_sse_frame_end(&buffer) {
                         let raw: Vec<u8> = buffer.drain(..end).collect();

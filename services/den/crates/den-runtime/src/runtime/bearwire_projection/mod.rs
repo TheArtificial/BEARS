@@ -33,6 +33,9 @@ pub fn project_runtime_event_lossy(event: RuntimeStreamEvent) -> RuntimeEventPro
         RuntimeStreamEvent::Semantic(event) => RuntimeEventProjectionOutcome::Events(
             runtime_semantic_event_to_bearwire_gateway_events(event),
         ),
+        RuntimeStreamEvent::ProviderActivity => RuntimeEventProjectionOutcome::Ignored {
+            reason: "provider_activity",
+        },
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => {
             RuntimeEventProjectionOutcome::Ignored {
                 reason: "untranslated_provider_event",
@@ -191,7 +194,8 @@ pub fn runtime_stream_event_to_bearwire_sse(event: RuntimeStreamEvent) -> Vec<By
                 .map(gateway_event_to_adapter_sse)
                 .collect()
         }
-        RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
+        RuntimeStreamEvent::ProviderActivity
+        | RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
     }
 }
 
