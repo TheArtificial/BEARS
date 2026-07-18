@@ -1,16 +1,29 @@
 # Rust Clarity & Idiomatic-ness Audit
 
-Status: COMPLETE — see "Audit complete" near the bottom.
+Status: OPEN — audit coverage is complete, but remediation is still active under Docket job `3c7562af-20f4-4950-a9c7-c0748df816e6`.
 Scope: `services/den/crates/*`, `services/den/src`, `tools/bear-armature`.
 
 Legend: [ ] not fixed, [x] fixed, (file:line) pointer.
 
 ---
 
-## Remediation progress (in-flight)
+## Docket reconciliation note
 
-Working through fixes in batches, running `cargo check`/`clippy` and committing at
-intervals. This section is the recoverable log of what has been changed.
+This file is now an advisory weakness map, not an authoritative line-number checklist.
+Old file/line pointers may be stale; before changing code, verify the current code path
+and treat each bullet as evidence of a broader pattern: production panics, stringly
+runtime contracts, raw IDs at trust boundaries, Debug-derived stable strings, oversized
+functions/files, duplicate logic, inconsistent error modeling, or unnecessary hand-rolled
+mechanisms.
+
+The checked bullets below mean "audited or triaged", not necessarily "all underlying
+weaknesses eliminated". Items marked **DEFERRED** remain open design or subsystem-cleanup
+signals unless a Docket task explicitly scopes them out.
+
+## Remediation progress
+
+Fixes have been applied in batches, with `cargo check`/`clippy` verification recorded
+where available. This section is the recoverable log of what has been changed.
 
 ### Batch 1 — panic-safety + clippy-gate green (upstream crates) — DONE
 Key discovery: the repo clippy gate (`cargo clippy --workspace --all-targets -- -D
@@ -61,9 +74,9 @@ Idiomatic/clippy fixes:
   pre-existing compile break in a den-web test helper (missing `content_json`
   field on `PersistedConversationMessage`).
 
-### Batch 5 — root `den` package (bin + integration tests) — IN PROGRESS
-Root package production code (lib + bins) is clippy-green. The remaining gate
-failures are **pre-existing broken test targets** from recent refactors:
+### Batch 5 — root `den` package (bin + integration tests) — DONE
+Root package production code (lib + bins) and integration-test targets are clippy-green.
+Earlier failures were pre-existing broken test targets from recent refactors:
 - commit "Remove re-exports" dropped `den_runtime`'s public re-exports, so tests
   importing `den_runtime::{bears,tool_turns,turn_controller,prompt_memory_block_store,
   prompt_memory_blocks,conversation_persistence,runtime_contracts,…}` no longer resolve.
@@ -703,13 +716,15 @@ Largest files: `bear/settings.rs` (2450), `bear/management.rs` (1491, largely de
 - `src/recall/qdrant.rs`, `src/archived_conversations.rs`, `tools/bear-armature/build.rs` — all clean/idiomatic, no significant findings.
 - Overall: solid error handling with `DenError` throughout and good doc comments in most files; main issues are structural (tuple-based row type, manual row mapping) rather than error-handling misuse.
 
-## Remaining coverage gaps (not yet audited)
-- `den-runtime` — 62 of its ~100 files reviewed (crate is 33.7k lines, the largest in the workspace). Everything over ~50 lines has now been read. Genuinely unreviewed: `llm/mod.rs` (21 lines, trivial re-exports), a handful of tiny mod.rs re-export shims, and `*_tests.rs` files (out of scope for production-code review).
-- `tools/bear-armature` — only `src/main.rs` lines 2165-6000 remain unread in depth (the already-flagged `handle_request` dispatch match itself — its god-function nature is already documented, re-reading it line-by-line would add volume, not new signal).
+## Coverage notes
+- `den-runtime` — production-code audit coverage is complete for meaningful files: everything over ~50 lines was reviewed. Remaining unreviewed files are trivial re-export shims or test-only files outside this production clarity pass.
+- `tools/bear-armature` — reviewed broadly, with the only intentional gap being the already-flagged `handle_request` dispatch match. Re-reading the full dispatch table would add volume, not new signal; the general weakness is the oversized dispatch/god-function shape.
 - `den-web`, `den-service` — no known gaps remain; all files identified in the initial survey have been reviewed.
 
-## Audit complete
-This audit has now covered essentially the entire workspace: every file over ~50 lines across `den-protocol`, `den-api`, `den-http`, `den-llm`, `den-docket`, `den-oauth`, `den-bearwire`, `den-memory`, `den-core`, `den-service`, `den-web`, `services/den/src`, `den-runtime`, and `tools/bear-armature`. The only intentionally-unread code is `bear-armature`'s `handle_request` dispatch match (already flagged as a god-function, so reading it fully would only add more instances of the same finding) and trivial test/re-export files. Further passes would mostly re-confirm the eight cross-cutting themes below rather than surface new categories of issue — this is a good stopping point for coverage; the remaining work is fixing, not finding.
+## Audit coverage complete; remediation open
+This audit has now covered essentially the entire workspace: every file over ~50 lines across `den-protocol`, `den-api`, `den-http`, `den-llm`, `den-docket`, `den-oauth`, `den-bearwire`, `den-memory`, `den-core`, `den-service`, `den-web`, `services/den/src`, `den-runtime`, and `tools/bear-armature`. The only intentionally-unread code is `bear-armature`'s `handle_request` dispatch match (already flagged as a god-function, so reading it fully would only add more instances of the same finding) and trivial test/re-export files. Further audit passes would mostly re-confirm the cross-cutting themes below rather than surface new categories of issue.
+
+Remediation is **not complete**. Treat the checked findings above as audited or triaged, then use the theme-level Docket tasks below to decide what still needs current-code verification and cleanup.
 
 ## Cross-cutting themes observed across the whole workspace
 1. **God-files/god-functions are the single most common issue** — nearly every crate has at least one 200+ line function or 1000+ line file mixing unrelated concerns (`den-docket::model.rs`/`db.rs`, `den-runtime::assembler.rs`/`key_memory_projection.rs`, `den-oauth::endpoints.rs::token_post`, `den-bearwire::run.rs`/`client.rs`, `den-web::bear/settings.rs`, `den-core::descriptor/mod.rs`/`client_tools.rs`, `bear-armature::main.rs`/`fs.rs`).
@@ -721,4 +736,4 @@ This audit has now covered essentially the entire workspace: every file over ~50
 7. **`format!("{:?}", ...)` (Debug) used to build persisted/wire strings** — seen 4+ times across `den-runtime`'s compaction subsystem alone (`mod.rs`, `artifact_store.rs`, `compaction_store.rs`) — fragile since Debug output isn't a stable contract; should be explicit `Display`/`as_str()`.
 8. **Typed newtypes introduced but not adopted** — `den-runtime::turn_ids.rs` defines 5 ID newtypes via macro, but most of the crate still passes raw `String`/`&str` for the same concepts, suggesting an incomplete migration rather than a design gap.
 
-Status: audit is thorough but not exhaustive — roughly two-thirds of the workspace by line count has been read in depth (all of den-protocol/api/http/llm/docket/oauth/core/memory/bearwire, most of den-web/den-service, ~1/3 of den-runtime, spot-checks of bear-armature). The findings above are actionable as-is; resuming coverage of den-runtime and bear-armature would be the highest-value next step given their size and the god-file density already observed there.
+Status: audit coverage is complete, but remediation remains open under Docket job `3c7562af-20f4-4950-a9c7-c0748df816e6`. The findings above are advisory weakness indicators, not authoritative current file/line instructions; verify current code before changing it.
