@@ -70,18 +70,17 @@ Acceptance checks:
 
 ### Milestone 1 — durable local-tool cancellation
 
-Status: **in progress**
+Status: **completed**
 
 Goal: cancellation must be durable across registration/subscription races and must stop external execution before registry eviction.
 
-Planned changes:
+Delivered:
 
-- make the local task registry own a per-task cancellation token/handle;
-- register cancellation before publishing an executable task;
-- cancel the handle before removing bookkeeping;
-- make task phase updates update-only so cancelled records cannot be recreated;
-- preserve turn/session identity on cancellation;
-- add race tests covering cancel between registration and execution wait setup.
+- cancellation receivers are subscribed before local tool tasks are spawned or registered, eliminating the broadcast registration/subscription gap;
+- cancellation eviction remains session/turn scoped;
+- task phase and input mutations are update-only and cannot recreate cancelled records;
+- added race coverage for cancellation sent before the execution wait begins;
+- added registry coverage proving post-cancel phase/input updates do not resurrect tasks.
 
 Acceptance checks:
 
@@ -212,4 +211,4 @@ The roadmap is complete when:
 | Milestone | Commit | Validation |
 | --- | --- | --- |
 | Foundation — atomic terminal authority | existing commits through `3bd566be` plus current follow-up commit | bundled-Postgres completion/cancel/expiry/late-result tests; offline checks |
-| 1 — durable local-tool cancellation | pending | pending |
+| 1 — durable local-tool cancellation | this milestone commit | armature compile; pre-wait cancellation race; matching/unrelated cancellation; session cancel/close; registry eviction/non-resurrection |

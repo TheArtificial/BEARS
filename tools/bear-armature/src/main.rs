@@ -7304,7 +7304,7 @@ enum ToolTaskWaitOutcome<T> {
 }
 
 async fn wait_for_tool_future_or_matching_cancellation<F>(
-    shared_state: &AdapterSharedState,
+    mut cancellation_rx: broadcast::Receiver<CancellationNotice>,
     session_id: &str,
     turn_token: Uuid,
     conversation_id: Option<&str>,
@@ -7313,7 +7313,6 @@ async fn wait_for_tool_future_or_matching_cancellation<F>(
 where
     F: std::future::Future,
 {
-    let mut cancellation_rx = shared_state.cancellation_tx.subscribe();
     let mut cancellation_closed = false;
     tokio::pin!(tool_future);
     loop {
@@ -7357,6 +7356,9 @@ pub(crate) fn spawn_tool_request_task(
     event: Value,
     turn_token: Uuid,
 ) {
+    // Subscribe before spawning or registering the task so cancellation cannot be lost
+    // between task publication and the first poll of its execution future.
+    let cancellation_rx = shared_state.cancellation_tx.subscribe();
     tokio::spawn(async move {
         let canonical = match BearWireToolCallRequestData::parse(&event) {
             Ok(canonical) => canonical,
@@ -7460,7 +7462,7 @@ pub(crate) fn spawn_tool_request_task(
             turn_token,
         );
         let result = match wait_for_tool_future_or_matching_cancellation(
-            &shared_state,
+            cancellation_rx,
             &session_id,
             turn_token,
             None,
@@ -12364,6 +12366,7 @@ mod tests {
     async fn adapter_tool_wait_ignores_unrelated_cancellation_notice() {
         let shared = test_shared_state();
         let turn_token = Uuid::new_v4();
+        let cancellation_rx = shared.cancellation_tx.subscribe();
         let sender = shared.cancellation_tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -12375,7 +12378,7 @@ mod tests {
         });
 
         let outcome = wait_for_tool_future_or_matching_cancellation(
-            &shared,
+            cancellation_rx,
             "acp-session",
             turn_token,
             None,
@@ -12395,9 +12398,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn adapter_tool_wait_observes_cancellation_sent_before_wait_begins() {
+        let shared = test_shared_state();
+        let turn_token = Uuid::new_v4();
+        let cancellation_rx = shared.cancellation_tx.subscribe();
+        let side_effect_reached = Arc::new(TokioMutex::new(false));
+        let side_effect_for_future = side_effect_reached.clone();
+        shared
+            .cancellation_tx
+            .send(CancellationNotice {
+                session_id: "acp-session".to_string(),
+                turn_token: Some(turn_token),
+                conversation_id: None,
+            })
+            .expect("send cancellation before wait");
+
+        let outcome = wait_for_tool_future_or_matching_cancellation(
+            cancellation_rx,
+            "acp-session",
+            turn_token,
+            None,
+            async move {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                *side_effect_for_future.lock().await = true;
+            },
+        )
+        .await;
+
+        assert!(matches!(outcome, ToolTaskWaitOutcome::Cancelled(_)));
+        assert!(!*side_effect_reached.lock().await);
+    }
+
+    #[tokio::test]
     async fn adapter_tool_wait_stops_on_matching_cancellation_notice() {
         let shared = test_shared_state();
         let turn_token = Uuid::new_v4();
+        let cancellation_rx = shared.cancellation_tx.subscribe();
         let sender = shared.cancellation_tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -12409,7 +12445,7 @@ mod tests {
         });
 
         let outcome = wait_for_tool_future_or_matching_cancellation(
-            &shared,
+            cancellation_rx,
             "acp-session",
             turn_token,
             None,
