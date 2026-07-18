@@ -86,6 +86,10 @@ When Den needs an armature action, it emits a structured client obligation such 
 - local tool execution request
 - local tool result wait
 
+### Completion
+
+Den may make an ephemeral policy decision to continue focused work or accept a final response. That decision is not ACP-visible lifecycle state. A persisted turn ends only when Den atomically transitions the run, settles obligations and active steps, and appends the matching `run.completed`, `run.failed`, or `run.cancelled` event. Assistant output and internal turn-completed semantic events are not substitutes for that durable terminal event.
+
 ### Cancellation
 
 ACP can request cancellation of the current active turn or operation through Den-owned cancellation semantics. For a persisted run, cancellation becomes visible only when Den atomically transitions the run, settles its obligations and active steps, and appends `run.cancelled`. Local tool-card cancellation is not a substitute for the run terminal event.

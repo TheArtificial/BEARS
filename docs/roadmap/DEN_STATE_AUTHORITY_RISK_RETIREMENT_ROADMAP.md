@@ -2,7 +2,7 @@
 
 ## Status
 
-Active implementation plan. Last updated: 2026-07-18.
+Completed implementation plan. Last updated: 2026-07-18.
 
 This roadmap converts the state-machine inventory into a risk-first sequence of authority retirements. It prioritizes disagreements that can cause unauthorized side effects, stuck runs, lost terminal outcomes, or cross-turn corruption before conceptual cleanup.
 
@@ -234,12 +234,14 @@ Audit result and change:
 
 ### Milestone 10 — completion as a pure decision
 
-Status: **not started**
+Status: **completed**
 
-Remaining:
+Audit result and change:
 
-- confirm completion remains an ephemeral decision;
-- document atomic run finish as its only durable result.
+- `TurnCompletionDecision` is returned only by the pure `decide_turn_completion` policy and consumed immediately by `SessionTrackingStream::evaluate_final_gate_or_complete`;
+- no completion decision or policy reason is persisted as peer lifecycle state;
+- an accepted completion emits an internal semantic event, while persisted lifecycle completion remains exclusively owned by `finish_run_with_bearwire_event` and its matching durable BearWire terminal event;
+- the inventory and ACP contract now distinguish ephemeral completion policy from durable run completion.
 
 ## Exit criteria
 
@@ -268,4 +270,5 @@ The roadmap is complete when:
 | 6b — retire specialized waiting states | `e5d9090b` | migration/schema/type tests; 14 obligation regressions; 10 coordinator contracts; run-state projection; offline compile |
 | 7 — workflow/plan authority compilation | `9af60b1a` | direct-consumer audit; tool surface tests; `TurnAuthority` plan lock/projection tests; warning-free BearWire compile |
 | 8 — governance/permission decoupling | `da04bb98` | governance usage audit; 14 client-tool authority tests; BearWire tool surface tests; offline compile |
-| 9 — projection-only axes | this milestone commit | derived-view authority audit; `den-core` client-tool authority tests; formatting and diff checks |
+| 9 — projection-only axes | `6c2c6944` | derived-view authority audit; `den-core` client-tool authority tests; formatting and diff checks |
+| 10 — completion as a pure decision | this milestone commit | completion-policy tests; BearWire completed/cancelled terminal tests; formatting and diff checks |

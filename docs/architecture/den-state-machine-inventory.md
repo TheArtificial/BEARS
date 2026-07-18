@@ -441,7 +441,9 @@ Invariants:
 
 ### Completion and continuation
 
-Completion decisions:
+`TurnCompletionDecision` is an ephemeral, pure policy result consumed within the
+runtime stream. It is not persisted as run state, a completion reason, or a peer
+lifecycle authority. Its variants are:
 
 - complete;
 - continue.
@@ -462,6 +464,7 @@ Invariants:
 
 - No active focus means normal final answers may complete the turn when no obligations block.
 - Focused incomplete actionable work may force continuation only while focus is active.
+- `TurnCompletionDecision` may select continuation or emit an internal turn-completed semantic event, but the only durable outcome is the atomic `finish_run_with_bearwire_event` transition and matching BearWire terminal event.
 - Runtime limits, budget pressure, progress reports, tool failure, assistant text, and stream EOF are not run completion.
 - ACP ends a turn only after a durable run terminal event; tool-level terminal updates are not run terminal events.
 - Den-owned tool requests continue draining the runtime stream; armature-owned requests and typed approval waits form client-wait boundaries.
