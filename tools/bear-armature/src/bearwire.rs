@@ -1181,6 +1181,8 @@ async fn service_run_state_tool_obligations(
                     "failed to service permission obligation from BearWire run.state"
                 );
             }
+        } else if is_den_server_tool_request(&event) {
+            project_den_owned_tool_request(shared_state, session_id, &event, turn_token).await?;
         } else {
             spawn_tool_request_task(
                 config.clone(),

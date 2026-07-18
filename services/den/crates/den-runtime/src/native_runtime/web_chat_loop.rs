@@ -363,10 +363,10 @@ impl NativeWebChatLoopStream {
             {
                 self.phase = LoopPhase::Finished;
                 self.pending_out.push_back(stop_event);
-                return Poll::Pending;
+                return Poll::Ready(self.pending_out.pop_front().map(Ok));
             }
             self.begin_next_step();
-            return Poll::Pending;
+            return Poll::Ready(self.pending_out.pop_front().map(Ok));
         }
 
         if active.is_none() {
@@ -447,9 +447,10 @@ impl Stream for NativeWebChatLoopStream {
                 self.emit_incomplete_tool_outcomes(&pending, "turn_timeout");
             }
             self.persist_interrupted_turn("turn_timeout");
+            self.pending_out.push_back(turn_timeout_event());
             self.phase = LoopPhase::Finished;
             self.touch_outbound();
-            return Poll::Ready(Some(Ok(turn_timeout_event())));
+            return Poll::Ready(self.pending_out.pop_front().map(Ok));
         }
 
         loop {

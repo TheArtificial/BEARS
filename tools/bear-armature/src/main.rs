@@ -1258,11 +1258,11 @@ impl SseStreamDiagnostics {
 
 fn stream_allows_prompt_end_response(
     _saw_visible_output: bool,
-    saw_error: bool,
+    _saw_error: bool,
     saw_done: bool,
     _saw_tool_activity: bool,
 ) -> bool {
-    saw_done || saw_error
+    saw_done
 }
 
 #[derive(Clone, Default)]
@@ -12077,9 +12077,11 @@ mod tests {
             .await
             .get("acp-session")
             .is_none());
-        let tasks = shared.tool_tasks.list_for_session("acp-session").await;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
+        assert!(shared
+            .tool_tasks
+            .list_for_session("acp-session")
+            .await
+            .is_empty());
         let notice = cancel_rx.recv().await.expect("cancellation notice");
         assert_eq!(notice.session_id, "acp-session");
         assert_eq!(notice.turn_token, None);
@@ -12185,9 +12187,11 @@ mod tests {
             .await
             .get("acp-session")
             .is_none());
-        let tasks = shared.tool_tasks.list_for_session("acp-session").await;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
+        assert!(shared
+            .tool_tasks
+            .list_for_session("acp-session")
+            .await
+            .is_empty());
         let notice = cancel_rx.recv().await.expect("close cancellation notice");
         assert_eq!(notice.session_id, "acp-session");
         assert_eq!(notice.turn_token, None);
@@ -12280,9 +12284,11 @@ mod tests {
             .await
             .get("acp-session")
             .is_none());
-        let tasks = shared.tool_tasks.list_for_session("acp-session").await;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
+        assert!(shared
+            .tool_tasks
+            .list_for_session("acp-session")
+            .await
+            .is_empty());
         let notice = cancel_rx.recv().await.expect("cancellation notice");
         assert_eq!(notice.session_id, "acp-session");
         assert_eq!(notice.turn_token, None);
@@ -13007,8 +13013,10 @@ mod tests {
     }
 
     #[test]
-    fn error_allows_prompt_end_response_without_stream_terminal() {
-        assert!(stream_allows_prompt_end_response(false, true, false, false));
+    fn error_without_run_terminal_does_not_allow_prompt_end_response() {
+        assert!(!stream_allows_prompt_end_response(
+            false, true, false, false
+        ));
     }
 
     #[test]

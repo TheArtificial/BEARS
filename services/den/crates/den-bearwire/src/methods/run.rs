@@ -520,19 +520,54 @@ fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent
     )
 }
 
-fn runtime_event_is_terminal_or_wait(event: &den_protocol::RuntimeStreamEvent) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeStreamBoundary {
+    Continue,
+    ClientWait,
+    Terminal,
+}
+
+pub(crate) fn runtime_stream_boundary(
+    event: &den_protocol::RuntimeStreamEvent,
+) -> RuntimeStreamBoundary {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
-    matches!(
-        event,
+    match event {
         RuntimeStreamEvent::Semantic(
-            RuntimeSemanticEvent::ToolCallRequested { .. }
-                | RuntimeSemanticEvent::RunPaused { .. }
-                | RuntimeSemanticEvent::TurnCompleted { .. }
-                | RuntimeSemanticEvent::TurnFailed { .. }
-                | RuntimeSemanticEvent::TurnCancelled { .. }
-                | RuntimeSemanticEvent::Error { .. }
-        )
-    )
+            RuntimeSemanticEvent::TurnCompleted { .. }
+            | RuntimeSemanticEvent::TurnFailed { .. }
+            | RuntimeSemanticEvent::TurnCancelled { .. }
+            | RuntimeSemanticEvent::Error { .. },
+        ) => RuntimeStreamBoundary::Terminal,
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { .. }) => {
+            RuntimeStreamBoundary::ClientWait
+        }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+            tool_name,
+            approval_required,
+            approval_request_id,
+            ..
+        }) => {
+            let approval_wait = *approval_required
+                && approval_request_id
+                    .as_deref()
+                    .is_some_and(|id| !id.trim().is_empty());
+            let den_owned = tool_name == den_runtime::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME
+                || den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(
+                    tool_name,
+                )
+                .is_some_and(|descriptor| descriptor.execution_target == "den");
+            if approval_wait || !den_owned {
+                RuntimeStreamBoundary::ClientWait
+            } else {
+                RuntimeStreamBoundary::Continue
+            }
+        }
+        _ => RuntimeStreamBoundary::Continue,
+    }
+}
+
+fn runtime_event_is_terminal_or_wait(event: &den_protocol::RuntimeStreamEvent) -> bool {
+    runtime_stream_boundary(event) != RuntimeStreamBoundary::Continue
 }
 
 pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'static str {

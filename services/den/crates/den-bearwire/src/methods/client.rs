@@ -230,39 +230,12 @@ fn should_retry_non_terminal_continuation_eof(
         && attempt_index < continuation_retry_pauses().len()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ContinuationStreamBoundary {
-    Continue,
-    ClientWait,
-    Terminal,
-}
+type ContinuationStreamBoundary = crate::methods::run::RuntimeStreamBoundary;
 
 fn continuation_stream_boundary(
     event: &den_protocol::RuntimeStreamEvent,
 ) -> ContinuationStreamBoundary {
-    match event {
-        den_protocol::RuntimeStreamEvent::Semantic(
-            den_protocol::RuntimeSemanticEvent::TurnCompleted { .. }
-            | den_protocol::RuntimeSemanticEvent::TurnFailed { .. }
-            | den_protocol::RuntimeSemanticEvent::TurnCancelled { .. }
-            | den_protocol::RuntimeSemanticEvent::Error { .. },
-        ) => ContinuationStreamBoundary::Terminal,
-        den_protocol::RuntimeStreamEvent::Semantic(
-            den_protocol::RuntimeSemanticEvent::ToolCallRequested { tool_name, .. },
-        ) if tool_name == den_runtime::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME
-            || den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(
-                tool_name,
-            )
-            .is_some_and(|descriptor| descriptor.execution_target == "den") =>
-        {
-            ContinuationStreamBoundary::Continue
-        }
-        den_protocol::RuntimeStreamEvent::Semantic(
-            den_protocol::RuntimeSemanticEvent::ToolCallRequested { .. }
-            | den_protocol::RuntimeSemanticEvent::RunPaused { .. },
-        ) => ContinuationStreamBoundary::ClientWait,
-        _ => ContinuationStreamBoundary::Continue,
-    }
+    crate::methods::run::runtime_stream_boundary(event)
 }
 
 fn continuation_retry_pauses_seconds() -> Vec<u64> {
@@ -1501,6 +1474,19 @@ mod tests {
                 run_id: None,
             },
         );
+        let den_approval_wait = den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "den-approval-1".to_string(),
+                tool_name: "web_fetch".to_string(),
+                title: None,
+                kind: None,
+                arguments: json!({"url":"https://example.com"}),
+                approval_request_id: Some("approval-1".to_string()),
+                approval_required: true,
+                approval_reason: Some("network access".to_string()),
+                run_id: None,
+            },
+        );
         let delta = den_protocol::RuntimeStreamEvent::Semantic(
             den_protocol::RuntimeSemanticEvent::AssistantTextDelta {
                 text: "still streaming".to_string(),
@@ -1526,6 +1512,10 @@ mod tests {
         assert_eq!(
             continuation_stream_boundary(&den_tool),
             ContinuationStreamBoundary::Continue
+        );
+        assert_eq!(
+            continuation_stream_boundary(&den_approval_wait),
+            ContinuationStreamBoundary::ClientWait
         );
         assert_eq!(
             continuation_stream_boundary(&delta),
