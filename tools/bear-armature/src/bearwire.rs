@@ -1761,6 +1761,7 @@ async fn handle_bearwire_event(
                 adapter_state,
                 shared_state,
                 session_id,
+                turn_token,
                 title,
                 updated_at,
                 context_budget,
@@ -1779,6 +1780,7 @@ async fn handle_bearwire_event(
                     adapter_state,
                     shared_state,
                     session_id,
+                    turn_token,
                     conversation_id,
                 )
                 .await?;

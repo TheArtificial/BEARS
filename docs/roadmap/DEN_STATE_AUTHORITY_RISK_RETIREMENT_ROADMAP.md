@@ -143,17 +143,16 @@ Acceptance checks:
 
 ### Milestone 4 — stale-turn mutation gating
 
-Status: **not started**
+Status: **completed**
 
 Goal: old runs cannot mutate current session/conversation projection state.
 
-Targets:
+Delivered:
 
-- session metadata/title updates;
-- conversation binding;
-- usage/context updates;
-- plan updates;
-- environment publication.
+- session metadata/title, runtime, and context-budget projections require the current prompt turn token;
+- conversation binding and environment publication require the current prompt turn token;
+- existing status, message, reasoning, plan, and tool projections retain current-turn gating;
+- added a regression proving stale session metadata and conversation binding cannot overwrite current turn state.
 
 Acceptance checks:
 
@@ -229,4 +228,5 @@ The roadmap is complete when:
 | 2 — execution-owner consolidation | `49e60dd4` | resolver usage audit; continuation ownership matrix; Den-owned run-state recovery test; BearWire projection tests |
 | 3a — timer-backed web-chat liveness | `f5eafb02` | offline runtime compile; 43/44 native-runtime tests (one unrelated SQLx pool exhaustion) |
 | 3b — typed provider activity | `183b111f` | raw-byte activity ordering; projection omission; OpenAI stream detach/tool tests; continuation watchdog tests |
-| 3c — initial/continuation liveness parity | this sub-item commit | initial run completion; shared watchdog configuration tests; OpenAI activity/stream tests; offline BearWire compile |
+| 3c — initial/continuation liveness parity | `5fba42b3` | initial run completion; shared watchdog configuration tests; OpenAI activity/stream tests; offline BearWire compile |
+| 4 — stale-turn mutation gating | this milestone commit | stale session-info/binding regression; Den-owned tool turn gate; title roundtrip; armature compile |

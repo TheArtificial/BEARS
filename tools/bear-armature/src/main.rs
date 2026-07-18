@@ -9087,11 +9087,22 @@ pub(crate) async fn handle_session_info_projection(
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
+    turn_token: Uuid,
     title: Option<String>,
     updated_at: Option<String>,
     context_budget: Option<Value>,
     runtime: Option<Value>,
 ) -> Result<()> {
+    if !is_current_prompt_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        "session_info_projection",
+    )
+    .await
+    {
+        return Ok(());
+    }
     apply_session_title_projection_state(adapter_state, shared_state, session_id, title.clone())
         .await;
     send_session_info_update(session_id, title, updated_at).await?;
@@ -9161,8 +9172,19 @@ pub(crate) async fn handle_conversation_resolved_projection(
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
+    turn_token: Uuid,
     conversation_id: &str,
 ) -> Result<()> {
+    if !is_current_prompt_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        "conversation_resolved_projection",
+    )
+    .await
+    {
+        return Ok(());
+    }
     let conversation_id = conversation_id.trim();
     if !conversation_id.starts_with("conv-") {
         return Ok(());
@@ -16967,6 +16989,65 @@ mod tests {
         assert!(
             tool_frames[0].to_string().contains("completed"),
             "expected only terminal card: {output:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_session_info_projection_cannot_mutate_session_state() {
+        let shared = test_shared_state();
+        let session_id = format!("session-{}", Uuid::new_v4());
+        let current_turn = Uuid::new_v4();
+        shared.active_prompts.lock().await.insert(
+            session_id.clone(),
+            ActivePromptTurn {
+                token: current_turn,
+                conversation_id: Some("conv-current".to_string()),
+            },
+        );
+        let mut adapter_state = AdapterState {
+            client_capabilities: Value::Null,
+            session_contexts: HashMap::new(),
+            transport: shared.transport.clone(),
+        };
+
+        handle_session_info_projection(
+            &mut adapter_state,
+            &shared,
+            &session_id,
+            Uuid::new_v4(),
+            Some("stale title".to_string()),
+            None,
+            Some(json!({"remaining": 1})),
+            Some(json!({"state":"stale"})),
+        )
+        .await
+        .expect("stale projection is ignored");
+
+        handle_conversation_resolved_projection(
+            &test_config("http://127.0.0.1:1".to_string()),
+            &mut adapter_state,
+            &shared,
+            &session_id,
+            Uuid::new_v4(),
+            "conv-stale",
+        )
+        .await
+        .expect("stale binding projection is ignored");
+
+        assert!(!adapter_state.session_contexts.contains_key(&session_id));
+        assert!(!shared
+            .session_contexts
+            .lock()
+            .await
+            .contains_key(&session_id));
+        assert_eq!(
+            shared
+                .active_prompts
+                .lock()
+                .await
+                .get(&session_id)
+                .and_then(|turn| turn.conversation_id.as_deref()),
+            Some("conv-current")
         );
     }
 
