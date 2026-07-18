@@ -248,6 +248,16 @@ fn continuation_stream_boundary(
             | den_protocol::RuntimeSemanticEvent::Error { .. },
         ) => ContinuationStreamBoundary::Terminal,
         den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::ToolCallRequested { tool_name, .. },
+        ) if tool_name == den_runtime::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME
+            || den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(
+                tool_name,
+            )
+            .is_some_and(|descriptor| descriptor.execution_target == "den") =>
+        {
+            ContinuationStreamBoundary::Continue
+        }
+        den_protocol::RuntimeStreamEvent::Semantic(
             den_protocol::RuntimeSemanticEvent::ToolCallRequested { .. }
             | den_protocol::RuntimeSemanticEvent::RunPaused { .. },
         ) => ContinuationStreamBoundary::ClientWait,
@@ -1465,6 +1475,32 @@ mod tests {
                 run_id: None,
             },
         );
+        let checkpoint = den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "checkpoint-1".to_string(),
+                tool_name: den_runtime::agent_loop::RUNTIME_CHECKPOINT_TOOL_NAME.to_string(),
+                title: None,
+                kind: None,
+                arguments: json!({}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            },
+        );
+        let den_tool = den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::ToolCallRequested {
+                tool_call_id: "den-tool-1".to_string(),
+                tool_name: "list_jobs".to_string(),
+                title: None,
+                kind: None,
+                arguments: json!({}),
+                approval_request_id: None,
+                approval_required: false,
+                approval_reason: None,
+                run_id: None,
+            },
+        );
         let delta = den_protocol::RuntimeStreamEvent::Semantic(
             den_protocol::RuntimeSemanticEvent::AssistantTextDelta {
                 text: "still streaming".to_string(),
@@ -1482,6 +1518,14 @@ mod tests {
         assert_eq!(
             continuation_stream_boundary(&wait),
             ContinuationStreamBoundary::ClientWait
+        );
+        assert_eq!(
+            continuation_stream_boundary(&checkpoint),
+            ContinuationStreamBoundary::Continue
+        );
+        assert_eq!(
+            continuation_stream_boundary(&den_tool),
+            ContinuationStreamBoundary::Continue
         );
         assert_eq!(
             continuation_stream_boundary(&delta),
