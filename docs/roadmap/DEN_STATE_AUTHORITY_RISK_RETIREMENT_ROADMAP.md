@@ -162,15 +162,17 @@ Acceptance checks:
 
 ### Milestone 5 — observational cache retirement
 
-Status: **not started**
+Status: **completed**
 
 Goal: observational caches cannot become durable state or grow without bound.
 
-Targets:
+Delivered:
 
-- surface tool status registry;
-- per-session dedupe state;
-- stale task/status records.
+- removed the process-global surface tool status registry;
+- scoped live BearWire tool-card monotonic dedupe to one adapter instance and current prompt turns;
+- session cancel/close clears the session's surface status observations;
+- direct local/replay rendering is stateless and does not depend on the live dedupe cache;
+- added coverage for session isolation, cleanup, and reused tool-call IDs.
 
 Acceptance checks:
 
@@ -229,4 +231,5 @@ The roadmap is complete when:
 | 3a — timer-backed web-chat liveness | `f5eafb02` | offline runtime compile; 43/44 native-runtime tests (one unrelated SQLx pool exhaustion) |
 | 3b — typed provider activity | `183b111f` | raw-byte activity ordering; projection omission; OpenAI stream detach/tool tests; continuation watchdog tests |
 | 3c — initial/continuation liveness parity | `5fba42b3` | initial run completion; shared watchdog configuration tests; OpenAI activity/stream tests; offline BearWire compile |
-| 4 — stale-turn mutation gating | this milestone commit | stale session-info/binding regression; Den-owned tool turn gate; title roundtrip; armature compile |
+| 4 — stale-turn mutation gating | `9bcc701d` | stale session-info/binding regression; Den-owned tool turn gate; title roundtrip; armature compile |
+| 5 — observational cache retirement | this milestone commit | session-scoped cache cleanup/reuse; terminal-card monotonicity; cancel/close cleanup; armature compile |

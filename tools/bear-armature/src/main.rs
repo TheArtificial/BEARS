@@ -150,6 +150,7 @@ struct AdapterSharedState {
     client_capabilities: Arc<TokioMutex<Value>>,
     session_contexts: Arc<TokioMutex<HashMap<String, SessionContext>>>,
     last_plan_update_hashes: Arc<TokioMutex<HashMap<String, u64>>>,
+    surface_tool_statuses: Arc<TokioMutex<HashMap<String, SurfaceToolStatus>>>,
     tool_tasks: ToolTaskRegistry,
     mcp_registry: McpRegistry,
     approval_cache: ApprovalCache,
@@ -1625,6 +1626,7 @@ async fn run() -> Result<()> {
         client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
         last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
+        surface_tool_statuses: Arc::new(TokioMutex::new(HashMap::new())),
         tool_tasks: ToolTaskRegistry::default(),
         mcp_registry: McpRegistry::default(),
         approval_cache,
@@ -4935,6 +4937,7 @@ async fn handle_session_close(
         .await
         .remove(session_id);
     shared_state.active_prompts.lock().await.remove(session_id);
+    clear_surface_tool_statuses_for_session(shared_state, session_id).await;
     shared_state.tool_tasks.cancel_session(session_id).await;
     let _ = shared_state.cancellation_tx.send(CancellationNotice {
         session_id: session_id.to_string(),
@@ -4961,6 +4964,7 @@ async fn handle_session_cancel(
         .await
         .remove(session_id);
     shared_state.active_prompts.lock().await.remove(session_id);
+    clear_surface_tool_statuses_for_session(shared_state, session_id).await;
     shared_state.tool_tasks.cancel_session(session_id).await;
     let _ = shared_state.cancellation_tx.send(CancellationNotice {
         session_id: session_id.to_string(),
@@ -7588,7 +7592,7 @@ pub(crate) async fn project_den_owned_tool_request(
     let canonical = BearWireToolCallRequestData::parse(event)?;
     let tool_call_id = canonical.tool_call.id.as_str();
     let tool_name = canonical.tool_call.name.as_str();
-    if current_surface_tool_status(session_id, tool_call_id)
+    if current_surface_tool_status(shared_state, session_id, tool_call_id)
         .await
         .is_some_and(SurfaceToolStatus::is_terminal)
     {
@@ -10683,32 +10687,40 @@ fn should_emit_surface_tool_status(
     next.rank() >= previous.rank()
 }
 
-static SURFACE_TOOL_STATUSES: OnceLock<TokioMutex<HashMap<String, SurfaceToolStatus>>> =
-    OnceLock::new();
-
 async fn current_surface_tool_status(
+    shared_state: &AdapterSharedState,
     session_id: &str,
     tool_call_id: &str,
 ) -> Option<SurfaceToolStatus> {
     let key = format!("{session_id}\n{tool_call_id}");
-    SURFACE_TOOL_STATUSES
-        .get_or_init(|| TokioMutex::new(HashMap::new()))
+    shared_state
+        .surface_tool_statuses
         .lock()
         .await
         .get(&key)
         .copied()
 }
 
+async fn clear_surface_tool_statuses_for_session(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) {
+    let prefix = format!("{session_id}\n");
+    shared_state
+        .surface_tool_statuses
+        .lock()
+        .await
+        .retain(|key, _| !key.starts_with(&prefix));
+}
+
 async fn record_surface_tool_status(
+    shared_state: &AdapterSharedState,
     session_id: &str,
     tool_call_id: &str,
     next: SurfaceToolStatus,
 ) -> bool {
     let key = format!("{session_id}\n{tool_call_id}");
-    let mut statuses = SURFACE_TOOL_STATUSES
-        .get_or_init(|| TokioMutex::new(HashMap::new()))
-        .lock()
-        .await;
+    let mut statuses = shared_state.surface_tool_statuses.lock().await;
     let previous = statuses.get(&key).copied();
     if !should_emit_surface_tool_status(previous, next) {
         if bear_debug_verbose()
@@ -10793,6 +10805,11 @@ pub(crate) async fn send_tool_call_update_for_turn(
     payload: ToolCallUpdatePayload<'_>,
 ) -> Result<()> {
     if is_current_prompt_turn(shared_state, session_id, turn_token, "tool_call_update").await {
+        let surface_status = SurfaceToolStatus::from_str(payload.status);
+        if !record_surface_tool_status(shared_state, session_id, tool_call_id, surface_status).await
+        {
+            return Ok(());
+        }
         send_tool_call_update(session_id, tool_call_id, tool_name, payload).await
     } else {
         Ok(())
@@ -10812,10 +10829,6 @@ async fn send_tool_call_update(
         raw_output,
         extra_content,
     } = payload;
-    let surface_status = SurfaceToolStatus::from_str(status);
-    if !record_surface_tool_status(session_id, tool_call_id, surface_status).await {
-        return Ok(());
-    }
     let display = event
         .map(|event| ToolDisplay::from_event(tool_name, event))
         .unwrap_or_else(|| tool_display(tool_name));
@@ -11468,6 +11481,7 @@ mod tests {
             client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
             session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
             last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
+            surface_tool_statuses: Arc::new(TokioMutex::new(HashMap::new())),
             tool_tasks: ToolTaskRegistry::default(),
             mcp_registry: McpRegistry::default(),
             approval_cache: ApprovalCache::default(),
@@ -16878,6 +16892,49 @@ mod tests {
         assert!(late.needs_attention());
     }
 
+    #[tokio::test]
+    async fn surface_tool_status_cache_is_session_scoped_and_clearable() {
+        let shared = test_shared_state();
+        assert!(
+            record_surface_tool_status(
+                &shared,
+                "session-a",
+                "call-reused",
+                SurfaceToolStatus::Completed,
+            )
+            .await
+        );
+        assert!(
+            record_surface_tool_status(
+                &shared,
+                "session-b",
+                "call-reused",
+                SurfaceToolStatus::InProgress,
+            )
+            .await
+        );
+
+        clear_surface_tool_statuses_for_session(&shared, "session-a").await;
+
+        assert_eq!(
+            current_surface_tool_status(&shared, "session-a", "call-reused").await,
+            None
+        );
+        assert_eq!(
+            current_surface_tool_status(&shared, "session-b", "call-reused").await,
+            Some(SurfaceToolStatus::InProgress)
+        );
+        assert!(
+            record_surface_tool_status(
+                &shared,
+                "session-a",
+                "call-reused",
+                SurfaceToolStatus::Pending,
+            )
+            .await
+        );
+    }
+
     #[test]
     fn surface_tool_status_updates_are_monotonic_and_idempotent() {
         assert!(should_emit_surface_tool_status(
@@ -16949,8 +17006,10 @@ mod tests {
         });
 
         let (result, output) = capture_json_output_for_test(|| async {
-            send_tool_call_update(
+            send_tool_call_update_for_turn(
+                &shared,
                 &session_id,
+                turn_token,
                 requested_event
                     .pointer("/data/tool_call/id")
                     .and_then(Value::as_str)

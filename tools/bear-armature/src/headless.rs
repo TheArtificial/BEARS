@@ -169,6 +169,7 @@ fn headless_adapter_state() -> (AdapterState, AdapterSharedState) {
         client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
         last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
+        surface_tool_statuses: Arc::new(TokioMutex::new(HashMap::new())),
         tool_tasks: crate::tool_tasks::ToolTaskRegistry::default(),
         mcp_registry: crate::tools::mcp::McpRegistry::default(),
         approval_cache: crate::approvals::ApprovalCache::default(),
