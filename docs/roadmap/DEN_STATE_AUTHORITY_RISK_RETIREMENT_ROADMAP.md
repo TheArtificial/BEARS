@@ -271,4 +271,4 @@ The roadmap is complete when:
 | 7 — workflow/plan authority compilation | `9af60b1a` | direct-consumer audit; tool surface tests; `TurnAuthority` plan lock/projection tests; warning-free BearWire compile |
 | 8 — governance/permission decoupling | `da04bb98` | governance usage audit; 14 client-tool authority tests; BearWire tool surface tests; offline compile |
 | 9 — projection-only axes | `6c2c6944` | derived-view authority audit; `den-core` client-tool authority tests; formatting and diff checks |
-| 10 — completion as a pure decision | this milestone commit | completion-policy tests; BearWire completed/cancelled terminal tests; formatting and diff checks |
+| 10 — completion as a pure decision | `97e03036` | completion-policy tests; BearWire completed/cancelled terminal tests; formatting and diff checks |
