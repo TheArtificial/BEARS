@@ -457,7 +457,6 @@ pub async fn transition_run(
     terminal_reason: Option<&str>,
 ) -> Result<Option<TurnRunRow>, DenError> {
     let terminal = state.is_terminal();
-    let terminal_obligation_state = state.terminal_obligation_state();
     let mut tx = pool.begin().await?;
     let row = sqlx::query(&format!(
         r"
@@ -477,25 +476,6 @@ pub async fn transition_run(
     .bind(terminal)
     .fetch_optional(&mut *tx)
     .await?;
-
-    if row.is_some() {
-        if let Some(obligation_state) = terminal_obligation_state {
-            sqlx::query(
-                r"
-                UPDATE turn_obligations
-                SET state = $2,
-                    completed_at = COALESCE(completed_at, NOW()),
-                    updated_at = NOW()
-                WHERE run_id = $1
-                  AND state IN ('requested','waiting_for_client','result_received')
-                ",
-            )
-            .bind(run_id)
-            .bind(obligation_state.as_str())
-            .execute(&mut *tx)
-            .await?;
-        }
-    }
 
     tx.commit().await?;
     Ok(row.map(row_to_run))

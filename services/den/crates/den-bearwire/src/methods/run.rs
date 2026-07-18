@@ -903,6 +903,7 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
         }
     }
 
+    let terminal_event = runtime_event_is_terminal(&runtime_event);
     let active_obligation = update_run_state_for_runtime_event(
         pool,
         session_id,
@@ -926,6 +927,9 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
             marker.metadata,
         )
         .await;
+    }
+    if terminal_event {
+        return;
     }
     for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
         if event.event_type == "client.waiting" {
@@ -1259,6 +1263,105 @@ async fn record_work_run_outcome_if_bound(
     }
 }
 
+fn runtime_event_is_terminal(event: &den_protocol::RuntimeStreamEvent) -> bool {
+    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    matches!(
+        event,
+        RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::TurnCompleted { .. }
+                | RuntimeSemanticEvent::TurnFailed { .. }
+                | RuntimeSemanticEvent::TurnCancelled { .. }
+                | RuntimeSemanticEvent::Error { .. }
+        )
+    )
+}
+
+async fn finish_runtime_terminal_event(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    event: &den_protocol::RuntimeStreamEvent,
+) {
+    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    let (state, reason, outcome, detail) = match event {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => (
+            turn_runs::TurnRunState::Completed,
+            "completed".to_string(),
+            "completed",
+            None,
+        ),
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
+            category,
+            message,
+            ..
+        }) => (
+            turn_runs::TurnRunState::Failed,
+            format!("{category:?}"),
+            "failed",
+            Some(json!({ "category": format!("{category:?}"), "message": message })),
+        ),
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => (
+            turn_runs::TurnRunState::Cancelled,
+            "cancelled".to_string(),
+            "cancelled",
+            None,
+        ),
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
+            message,
+            error_type,
+            ..
+        }) => (
+            turn_runs::TurnRunState::Failed,
+            error_type.clone().unwrap_or_else(|| "error".to_string()),
+            "failed",
+            Some(json!({ "category": error_type, "message": message })),
+        ),
+        _ => return,
+    };
+    let Some(mut terminal_event) = runtime_stream_event_to_bearwire_events(event.clone())
+        .into_iter()
+        .find(|event| {
+            matches!(
+                event.event_type.as_str(),
+                "run.completed" | "run.failed" | "run.cancelled"
+            )
+        })
+    else {
+        tracing::error!(
+            session_id,
+            run_id,
+            "terminal runtime event had no BearWire terminal projection"
+        );
+        return;
+    };
+    terminal_event.bear_id = Some(bear_id.to_string());
+    terminal_event.human_id = Some(user_id.to_string());
+    terminal_event.session_id = Some(session_id.to_string());
+    terminal_event.run_id = Some(run_id.to_string());
+    match turn_runs::finish_run_with_bearwire_event(
+        pool,
+        session_id,
+        run_id,
+        bear_id,
+        user_id,
+        state,
+        Some(&reason),
+        terminal_event,
+    )
+    .await
+    {
+        Ok(true) => {
+            record_work_run_outcome_if_bound(pool, session_id, run_id, outcome, detail).await;
+        }
+        Ok(false) => {}
+        Err(err) => {
+            tracing::error!(session_id, run_id, error = %err, "failed to atomically persist terminal runtime event");
+        }
+    }
+}
+
 async fn update_run_state_for_runtime_event(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -1270,6 +1373,10 @@ async fn update_run_state_for_runtime_event(
     started_at: Option<Instant>,
 ) -> Option<turn_obligations::TurnObligationRow> {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    if runtime_event_is_terminal(event) {
+        finish_runtime_terminal_event(pool, session_id, run_id, bear_id, user_id, event).await;
+        return None;
+    }
     match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
@@ -1406,148 +1513,7 @@ async fn update_run_state_for_runtime_event(
             }
             obligation
         }
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => {
-            let _ = turn_runs::transition_run(
-                pool,
-                run_id,
-                turn_runs::TurnRunState::Completed,
-                Some("completed"),
-            )
-            .await;
-            record_work_run_outcome_if_bound(pool, session_id, run_id, "completed", None).await;
-            let _ = turn_obligations::settle_outstanding_for_run(
-                pool,
-                run_id,
-                turn_obligations::TurnObligationState::Continued,
-            )
-            .await;
-            let _ = turn_steps::transition_active_steps_for_run(
-                pool,
-                run_id,
-                turn_steps::TurnStepState::Continued,
-            )
-            .await;
-            None
-        }
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
-            category,
-            message,
-            ..
-        }) => {
-            let reason = format!("{:?}", category);
-            tracing::warn!(
-                session_id,
-                run_id,
-                bear_id = %bear_id,
-                user_id,
-                %request_id,
-                elapsed_ms = started_at.map(|started| started.elapsed().as_millis()),
-                reason = %reason,
-                error_message = %log_sample(message),
-                "BearWire runtime turn failed"
-            );
-            let _ = turn_runs::transition_run(
-                pool,
-                run_id,
-                turn_runs::TurnRunState::Failed,
-                Some(&reason),
-            )
-            .await;
-            record_work_run_outcome_if_bound(
-                pool,
-                session_id,
-                run_id,
-                "failed",
-                Some(json!({ "category": reason, "message": message })),
-            )
-            .await;
-            let _ = turn_obligations::settle_outstanding_for_run(
-                pool,
-                run_id,
-                turn_obligations::TurnObligationState::Failed,
-            )
-            .await;
-            let _ = turn_steps::transition_active_steps_for_run(
-                pool,
-                run_id,
-                turn_steps::TurnStepState::Failed,
-            )
-            .await;
-            None
-        }
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => {
-            let _ = turn_runs::transition_run(
-                pool,
-                run_id,
-                turn_runs::TurnRunState::Cancelled,
-                Some("cancelled"),
-            )
-            .await;
-            record_work_run_outcome_if_bound(pool, session_id, run_id, "cancelled", None).await;
-            let _ = turn_obligations::settle_outstanding_for_run(
-                pool,
-                run_id,
-                turn_obligations::TurnObligationState::Cancelled,
-            )
-            .await;
-            let _ = turn_steps::transition_active_steps_for_run(
-                pool,
-                run_id,
-                turn_steps::TurnStepState::Cancelled,
-            )
-            .await;
-            None
-        }
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
-            message,
-            detail,
-            error_type,
-            request_id: event_request_id,
-            context,
-        }) => {
-            tracing::warn!(
-                session_id,
-                run_id,
-                bear_id = %bear_id,
-                user_id,
-                %request_id,
-                event_request_id = event_request_id.as_deref(),
-                elapsed_ms = started_at.map(|started| started.elapsed().as_millis()),
-                error_type = error_type.as_deref(),
-                error_message = %log_sample(message),
-                detail = detail.as_deref().map(log_sample),
-                context = context.as_ref().map(|value| log_sample(value.to_string())),
-                "BearWire runtime emitted error event"
-            );
-            let _ = turn_runs::transition_run(
-                pool,
-                run_id,
-                turn_runs::TurnRunState::Failed,
-                error_type.as_deref().or(Some("error")),
-            )
-            .await;
-            record_work_run_outcome_if_bound(
-                pool,
-                session_id,
-                run_id,
-                "error",
-                Some(json!({ "error_type": error_type, "message": message })),
-            )
-            .await;
-            let _ = turn_obligations::settle_outstanding_for_run(
-                pool,
-                run_id,
-                turn_obligations::TurnObligationState::Failed,
-            )
-            .await;
-            let _ = turn_steps::transition_active_steps_for_run(
-                pool,
-                run_id,
-                turn_steps::TurnStepState::Failed,
-            )
-            .await;
-            None
-        }
+
         _ => None,
     }
 }
