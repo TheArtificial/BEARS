@@ -199,13 +199,23 @@ Acceptance checks:
 - no open obligation means no client-wait boundary;
 - run-state projection and obligation projection cannot disagree.
 
-### Milestones 7–10 — policy and projection simplification
+### Milestone 7 — workflow/plan authority compilation
+
+Status: **completed**
+
+Audit result:
+
+- production BearWire tool advertisement and read-only prompt envelope consume one `TurnAuthority` compiled from mode/plan inputs;
+- no production consumer calls `resolve_session_policy_for_mode` directly;
+- removed the dead BearWire convenience wrapper that recomputed authority and made tests construct `TurnAuthority` explicitly;
+- existing `den-core` tests preserve submitted/drafting plan lock behavior and prove projection labels cannot expand authority.
+
+### Milestones 8–10 — governance and projection simplification
 
 Status: **not started**
 
-Execute only after the external-side-effect and liveness risks above are retired:
+Execute after the higher-risk authority retirements above:
 
-- compile workflow/plan state once into `TurnAuthority`;
 - split governance into orthogonal typed inputs if branches require it;
 - group model/prompt/context/cache/UI state under derived views;
 - keep completion as a pure decision whose only durable result is atomic run finish.
@@ -234,4 +244,5 @@ The roadmap is complete when:
 | 4 — stale-turn mutation gating | `9bcc701d` | stale session-info/binding regression; Den-owned tool turn gate; title roundtrip; armature compile |
 | 5 — observational cache retirement | `8db7cac1` | session-scoped cache cleanup/reuse; terminal-card monotonicity; cancel/close cleanup; armature compile |
 | 6a — obligation-derived blocking behavior | `6c734959` | blocking derivation unit test; tool/permission wait persistence; coordinator contracts; `run.state` blocking reason; offline compile |
-| 6b — retire specialized waiting states | this sub-item commit | migration/schema/type tests; 14 obligation regressions; 10 coordinator contracts; run-state projection; offline compile |
+| 6b — retire specialized waiting states | `e5d9090b` | migration/schema/type tests; 14 obligation regressions; 10 coordinator contracts; run-state projection; offline compile |
+| 7 — workflow/plan authority compilation | this milestone commit | direct-consumer audit; tool surface tests; `TurnAuthority` plan lock/projection tests; warning-free BearWire compile |

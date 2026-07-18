@@ -114,19 +114,6 @@ async fn persist_visible_runtime_marker(
     .await;
 }
 
-fn client_tool_descriptors_from_context(
-    client_context: Option<&Value>,
-    requested_mode: Option<&str>,
-) -> Value {
-    let authority = den_core::client_tools::TurnAuthority::for_session_mode(
-        den_core::BearStance::Pair,
-        den_core::Governance::Interactive,
-        requested_mode.unwrap_or("ask"),
-        None,
-    );
-    client_tool_descriptors_from_context_with_authority(client_context, &authority)
-}
-
 fn client_tool_descriptors_from_context_with_authority(
     client_context: Option<&Value>,
     authority: &den_core::client_tools::TurnAuthority,
@@ -2357,7 +2344,14 @@ mod tests {
                 }]
             }
         });
-        let descriptors = client_tool_descriptors_from_context(Some(&context), Some("write"));
+        let authority = den_core::client_tools::TurnAuthority::for_session_mode(
+            den_core::BearStance::Pair,
+            den_core::Governance::Interactive,
+            "write",
+            None,
+        );
+        let descriptors =
+            client_tool_descriptors_from_context_with_authority(Some(&context), &authority);
         let names = descriptor_names(&descriptors);
         assert!(names.contains(&"fs_read_text_file"));
         assert!(names.contains(&"fs_find_paths"));
@@ -2388,7 +2382,14 @@ mod tests {
                 }]
             }
         });
-        let descriptors = client_tool_descriptors_from_context(Some(&context), Some("ask"));
+        let authority = den_core::client_tools::TurnAuthority::for_session_mode(
+            den_core::BearStance::Pair,
+            den_core::Governance::Interactive,
+            "ask",
+            None,
+        );
+        let descriptors =
+            client_tool_descriptors_from_context_with_authority(Some(&context), &authority);
         let names = descriptor_names(&descriptors);
         assert!(names.contains(&"mcp__chrome_devtools_custom__click"));
     }
