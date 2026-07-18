@@ -1306,10 +1306,8 @@ impl Stream for SessionTrackingStream {
     type Item = Result<RuntimeStreamEvent, DenError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.finished {
-            return Poll::Ready(None);
-        }
-
+        // Terminal events are queued before some paths mark the stream finished. Drain the
+        // queued event first so BearWire observes the authoritative turn outcome before EOF.
         if let Some(pause) = self.pending_pause_after_tool.take() {
             if matches!(
                 pause,
@@ -1321,6 +1319,10 @@ impl Stream for SessionTrackingStream {
                 self.finished = true;
             }
             return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(pause))));
+        }
+
+        if self.finished {
+            return Poll::Ready(None);
         }
 
         if let Some(fut) = self.pending_server_tool.as_mut() {
@@ -2522,6 +2524,44 @@ mod tests {
         let repaired = store.get(&session.session_key).expect("session");
         assert_eq!(repaired.messages.len(), 1);
         assert_eq!(repaired.messages[0].role, "user");
+    }
+
+    #[tokio::test]
+    async fn queued_terminal_event_is_delivered_before_finished_stream_eof() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::default();
+        store.insert(session.clone());
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+        stream.finished = true;
+        stream.pending_pause_after_tool = Some(RuntimeSemanticEvent::TurnCompleted { turn: None });
+
+        let terminal = stream
+            .next()
+            .await
+            .expect("queued terminal event")
+            .expect("ok");
+        assert!(matches!(
+            terminal,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
+        ));
+        assert!(stream.next().await.is_none(), "EOF follows terminal event");
     }
 
     #[tokio::test]
