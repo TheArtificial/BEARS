@@ -436,6 +436,7 @@ pub struct ResponsesStreamAccumulator {
     tool_call_ids: HashMap<String, String>,
     tool_args: HashMap<String, String>,
     emitted_tool_call_keys: HashSet<String>,
+    reasoning_output_item_keys: HashSet<String>,
     completed: bool,
     saw_tool_call: bool,
 }
@@ -689,7 +690,28 @@ impl ResponsesStreamAccumulator {
         }
         let event_type = json.get("type").and_then(Value::as_str).unwrap_or_default();
         match event_type {
-            "response.output_text.delta" | "response.refusal.delta" => {
+            "response.output_text.delta" => {
+                if let Some(delta) = json
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    let event = if self
+                        .reasoning_output_item_keys
+                        .contains(&response_item_key(json))
+                    {
+                        RuntimeSemanticEvent::ReasoningTextDelta {
+                            text: delta.to_string(),
+                        }
+                    } else {
+                        RuntimeSemanticEvent::AssistantTextDelta {
+                            text: delta.to_string(),
+                        }
+                    };
+                    out.events.push(RuntimeStreamEvent::Semantic(event));
+                }
+            }
+            "response.refusal.delta" => {
                 if let Some(delta) = json
                     .get("delta")
                     .and_then(Value::as_str)
@@ -732,6 +754,12 @@ impl ResponsesStreamAccumulator {
             }
             "response.output_item.added" | "response.output_item.done" => {
                 if let Some(item) = json.get("item") {
+                    if response_item_is_reasoning_output(item) {
+                        self.reasoning_output_item_keys
+                            .insert(response_item_key_from_item(json, item));
+                        self.reasoning_output_item_keys
+                            .insert(response_item_key(json));
+                    }
                     if item.get("type").and_then(Value::as_str) == Some("function_call") {
                         self.saw_tool_call = true;
                         let key = response_item_key_from_item(json, item);
@@ -869,6 +897,19 @@ impl ResponsesStreamAccumulator {
             )]
         }
     }
+}
+
+fn response_item_is_reasoning_output(item: &Value) -> bool {
+    [item.get("phase"), item.get("channel")]
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "commentary" | "analysis" | "reasoning"
+            )
+        })
 }
 
 fn response_item_key(json: &Value) -> String {
@@ -1070,6 +1111,65 @@ mod tests {
 
         assert!(parsed.events.is_empty());
         assert!(!accumulator.should_detach_upstream());
+    }
+
+    #[test]
+    fn responses_stream_maps_commentary_output_text_to_reasoning() {
+        let mut accumulator = ResponsesStreamAccumulator::default();
+        let added = accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "id": "msg_commentary",
+                "type": "message",
+                "role": "assistant",
+                "phase": "commentary",
+                "content": []
+            }
+        }));
+        assert!(added.events.is_empty());
+
+        let delta = accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.output_text.delta",
+            "output_index": 0,
+            "item_id": "msg_commentary",
+            "content_index": 0,
+            "delta": "I should inspect the stream format."
+        }));
+        assert!(matches!(
+            delta.events.as_slice(),
+            [RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ReasoningTextDelta { text })]
+                if text == "I should inspect the stream format."
+        ));
+    }
+
+    #[test]
+    fn responses_stream_keeps_final_answer_output_text_as_assistant_text() {
+        let mut accumulator = ResponsesStreamAccumulator::default();
+        accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.output_item.added",
+            "output_index": 1,
+            "item": {
+                "id": "msg_final",
+                "type": "message",
+                "role": "assistant",
+                "phase": "final_answer",
+                "content": []
+            }
+        }));
+
+        let delta = accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.output_text.delta",
+            "output_index": 1,
+            "item_id": "msg_final",
+            "content_index": 0,
+            "delta": "Here is the result."
+        }));
+        assert!(matches!(
+            delta.events.as_slice(),
+            [RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text })]
+                if text == "Here is the result."
+        ));
     }
 
     #[test]
