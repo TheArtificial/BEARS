@@ -484,6 +484,10 @@ Recommended pause reasons include:
 }
 ```
 
+#### Terminal run event invariant
+
+For a persisted run, `run.completed`, `run.failed`, and `run.cancelled` are the durable completion contract. Den commits the terminal run state, obligation settlement, active-step settlement, and exactly one matching terminal event in one transaction. Clients must not infer run completion from assistant output, tool completion/failure, progress events, or stream EOF.
+
 #### `run.completed`
 
 ```json
@@ -1028,7 +1032,7 @@ run.state
 run.timeline
 ```
 
-`run.state` returns Den's current run row plus obligations, results, and recent BearWire events. It is the recovery/diagnostic source of truth when an armature suspects an event stream missed a terminal event or local-client obligation.
+`run.state` returns Den's current run row plus obligations, results, and recent BearWire events. It is the recovery/diagnostic source of truth when an armature suspects an event stream missed a terminal event or local-client obligation. Tool execution ownership in recovered obligations remains descriptor-owned: Den-owned requests are display-only to armatures, while armature-local requests may be serviced as client obligations.
 
 If compatibility requires an operation-oriented transport family, implementations may retain transitional method names, but the BearWire semantic model remains run-oriented.
 

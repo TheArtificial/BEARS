@@ -471,7 +471,12 @@ pub async fn transition_run(
     state: TurnRunState,
     terminal_reason: Option<&str>,
 ) -> Result<Option<TurnRunRow>, DenError> {
-    let terminal = state.is_terminal();
+    if state.is_terminal() {
+        return Err(DenError::ValidationError(format!(
+            "terminal run state {} must use finish_run_with_bearwire_event",
+            state.as_str()
+        )));
+    }
     let mut tx = pool.begin().await?;
     let row = sqlx::query(&format!(
         r"
@@ -479,7 +484,7 @@ pub async fn transition_run(
         SET state = $2,
             terminal_reason = $3,
             updated_at = NOW(),
-            completed_at = CASE WHEN $4 THEN COALESCE(completed_at, NOW()) ELSE completed_at END
+            completed_at = completed_at
         WHERE run_id = $1
           AND state NOT IN ('completed','failed','cancelled')
         RETURNING {RUN_RETURNING}
@@ -488,7 +493,6 @@ pub async fn transition_run(
     .bind(run_id)
     .bind(state.as_str())
     .bind(terminal_reason)
-    .bind(terminal)
     .fetch_optional(&mut *tx)
     .await?;
 

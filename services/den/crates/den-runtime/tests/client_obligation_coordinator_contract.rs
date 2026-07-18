@@ -1,3 +1,4 @@
+use bearwire_protocol::wire::BearWireEvent;
 use den_runtime::{
     client_obligation_coordinator::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
@@ -6,6 +7,32 @@ use den_runtime::{
 };
 use serde_json::json;
 use uuid::Uuid;
+
+async fn finish_test_run(
+    pool: &sqlx::PgPool,
+    run: &turn_runs::TurnRunRow,
+    state: turn_runs::TurnRunState,
+) {
+    let event_type = match state {
+        turn_runs::TurnRunState::Completed => "run.completed",
+        turn_runs::TurnRunState::Failed => "run.failed",
+        turn_runs::TurnRunState::Cancelled => "run.cancelled",
+        _ => panic!("test terminal helper requires terminal state"),
+    };
+    turn_runs::finish_run_with_bearwire_event(
+        pool,
+        &run.session_id,
+        &run.run_id,
+        run.bear_id,
+        run.user_id,
+        state,
+        Some("test terminal"),
+        BearWireEvent::ephemeral(event_type, json!({"run_id": run.run_id})),
+    )
+    .await
+    .expect("finish test run")
+    .expect("test run was active");
+}
 
 async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
     let suffix = Uuid::new_v4().simple().to_string();
@@ -211,14 +238,7 @@ async fn late_result_after_terminal_run_is_ignored_by_coordinator(pool: sqlx::Pg
     )
     .await
     .expect("create tool obligation");
-    turn_runs::transition_run(
-        &pool,
-        &run.run_id,
-        turn_runs::TurnRunState::Failed,
-        Some("test terminal"),
-    )
-    .await
-    .expect("mark run failed");
+    finish_test_run(&pool, &run, turn_runs::TurnRunState::Failed).await;
     let failed_run = turn_runs::get_run(&pool, &run.run_id)
         .await
         .expect("load failed run")
@@ -264,14 +284,7 @@ async fn late_tool_result_after_terminal_is_ignored(pool: sqlx::PgPool) {
     )
     .await
     .expect("create tool obligation");
-    turn_runs::transition_run(
-        &pool,
-        &run.run_id,
-        turn_runs::TurnRunState::Completed,
-        Some("test terminal"),
-    )
-    .await
-    .expect("mark run completed");
+    finish_test_run(&pool, &run, turn_runs::TurnRunState::Completed).await;
     let completed_run = turn_runs::get_run(&pool, &run.run_id)
         .await
         .expect("load completed run")

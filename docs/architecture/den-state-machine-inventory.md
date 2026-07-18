@@ -58,14 +58,17 @@ The three authority owners that must stay singular are:
 MutationAuthority = TurnAuthority
 FocusDrivenContinuation = ResolvedFocus × DocketTaskState
 ActiveObligations = TurnRunState × ObligationSet
+TerminalOutcome = TurnRunState × ObligationSet × TurnStepState × BearWireTerminalEvent
 ```
 
 `TurnAuthority` is the compiled permission surface for the turn: tool routing,
 prompt authority blocks, and client permission projection consume it, but prompt
 or client labels cannot feed authority back into it. `ResolvedFocus` is the only
 focus input that may let completion policy force continuation for unfinished
-focused work. `TurnRunState` owns lifecycle, active wait reason, and terminal
-obligation closure.
+focused work. `TurnRunState` owns lifecycle and active wait reason. Terminal
+closure is committed through one atomic finish operation that transitions the
+run, settles obligations and active steps, and appends exactly one run terminal
+BearWire event before exposing the terminal state.
 
 The remaining axes feed compilation, execution, or projection. They are not peer
 authority owners unless a typed implementation seam consumes them into one of
@@ -104,7 +107,7 @@ Exit gate for the reduced authority model:
 | Task focus | runtime derivation | ephemeral per run/turn | Next actionable Docket/task-list item derived from active focus and task state. |
 | Workflow state | current-turn state compiler | current turn | Inputs compiled into `TurnAuthority`; derived operational focus is advisory. |
 | Permission policy | Den policy resolver + descriptors | current turn/tool call | Resolves Ask/Plan/Write, tool classes, approvals, and armature routes before `TurnAuthority`/routing consume them. |
-| Turn/run lifecycle | runtime turn controller | run/turn | Accepted/running/waiting/terminal states and active-run selection. |
+| Turn/run lifecycle | runtime turn controller + atomic run finisher | run/turn | Accepted/running/waiting states use ordinary transitions. Completed/failed/cancelled state, obligation/step settlement, and the terminal BearWire event are one atomic finish operation. |
 | Obligations | obligation coordinator | per tool/permission/human wait | Client/tool/approval waits; blocks only while open. |
 | Loop control/budgets | agent loop controller | run/turn | Budgets, checkpoints, KO/failure signals, context pressure. |
 | Recovery/error | runtime recovery logic | run/turn/session | Retry, resume, terminal outcome, late-result handling. |
@@ -357,8 +360,9 @@ Tool classes:
 Invariants:
 
 - Tool availability comes from resolved policy and descriptors, not prompt labels.
+- Execution ownership is resolved once by the descriptor-owned `ToolExecutionOwner` resolver; projection, initial streams, continuations, recovery, and armatures consume that result rather than matching tool names independently.
 - Adapter-local tools that require a client response must create obligations.
-- Den-server tools must not wait for client tool results.
+- Den-server tools must not wait for client tool results; Den-owned approval requests may wait only on a typed permission obligation.
 - Unsupported tools fail or stop explicitly; they do not wait forever.
 
 ### Tool calls and obligations
@@ -422,7 +426,9 @@ Terminal outcomes/reasons include:
 Invariants:
 
 - At most one active turn per runtime ownership key.
-- Terminal run states must not have open obligations.
+- Terminal run states must not have open obligations or active turn steps.
+- A terminal run state must have a matching durable `run.completed`, `run.failed`, or `run.cancelled` event committed in the same transaction.
+- Ordinary `transition_run` calls are nonterminal-only; terminal fixtures and production outcomes use the atomic finisher.
 - `WaitingForPermission` requires an open permission obligation.
 - `WaitingForToolResult` requires an open tool-result obligation.
 
@@ -449,7 +455,9 @@ Invariants:
 
 - No active focus means normal final answers may complete the turn when no obligations block.
 - Focused incomplete actionable work may force continuation only while focus is active.
-- Runtime limits, budget pressure, and progress reports are not task completion.
+- Runtime limits, budget pressure, progress reports, tool failure, assistant text, and stream EOF are not run completion.
+- ACP ends a turn only after a durable run terminal event; tool-level terminal updates are not run terminal events.
+- Den-owned tool requests continue draining the runtime stream; armature-owned requests and typed approval waits form client-wait boundaries.
 - Repeated task-gate rejection should stop with a human-review blocker instead of infinite continuation.
 
 ### Loop control, budgets, and checkpoints
@@ -590,7 +598,7 @@ Invalid or suspicious combinations should be rejected before prompt assembly or 
 | WaitingForClient | at least one open client obligation |
 | WaitingForToolResult | open tool-result obligation |
 | WaitingForPermission | open permission-decision obligation |
-| Completed/Failed/Cancelled | no open obligations; late results ignored/cancelled/failed |
+| Completed/Failed/Cancelled | no open obligations or active steps; exactly one matching terminal BearWire event committed atomically; late results ignored |
 
 ## Test obligations
 
@@ -602,7 +610,7 @@ Add or update tests whenever behavior crosses axes. Keep these seam checks perma
 | prompt/client projection labels cannot expand authority | `den-core` `turn_authority_ignores_client_policy_projection_labels`; `turn_authority_has_no_prompt_or_compaction_authority_input` |
 | model choice is not an authority source | `den-core` `turn_authority_has_no_model_choice_authority_input`; loop-control tests may still cover model-default budget/checkpoint behavior |
 | stale cached task list cannot manufacture focus/continuation | `den-runtime` `no_focus_allows_final_even_with_cached_task_list`; `final_gate_ignores_and_clears_cache_without_durable_focus` |
-| terminal transitions own obligation closure and late results | `den-runtime` `turn_runs::tests`; `client_obligation_coordinator_contract` late-result contract when DB-backed tests are available |
+| terminal transitions atomically own run state, obligation/step closure, and terminal event | `den-bearwire` completion/cancellation/expiry/failure persistence tests; `den-runtime` `terminal_turn_run_cannot_be_reopened_or_overwritten`; `client_obligation_coordinator_contract` late-result tests |
 | WorkRun owns sandbox root materialization | `den-docket` `effective_work_run_root_prefers_trimmed_request_then_job_default` plus provisioning's `WorkRunRow.root_name` check |
 
 Baseline scenarios to preserve:
@@ -616,7 +624,9 @@ Baseline scenarios to preserve:
 7. terminal run with open obligation is invalid;
 8. late tool/permission result after terminal run is ignored;
 9. model selection changes do not mutate focus/governance/permissions;
-10. prompt/compaction projection cannot create focus or obligations.
+10. prompt/compaction projection cannot create focus or obligations;
+11. Den-owned tool requests do not stop initial or continuation stream consumption unless a typed approval obligation waits on the client;
+12. terminal run state, settled obligations/steps, and one terminal BearWire event commit or roll back together.
 
 Prefer pure derivation/validation tests first, then narrow persistence/replay tests at state seams.
 

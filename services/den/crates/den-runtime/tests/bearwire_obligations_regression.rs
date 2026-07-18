@@ -511,11 +511,20 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
     turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
-    let cancelled = turn_runs::transition_run(
+    let mut event = BearWireEvent::ephemeral(
+        "run.cancelled",
+        serde_json::json!({"run_id": run_id, "reason": "superseded_by_new_run"}),
+    );
+    event.run_id = Some(run_id.clone());
+    let cancelled = turn_runs::finish_run_with_bearwire_event(
         &pool,
+        &session_id,
         &run_id,
+        bear_id,
+        user_id,
         turn_runs::TurnRunState::Cancelled,
         Some("superseded_by_new_run"),
+        event,
     )
     .await
     .expect("cancel run");
@@ -526,11 +535,15 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
             .await
             .expect("attempt reopen terminal run");
     assert!(reopened.is_none());
-    let completed = turn_runs::transition_run(
+    let completed = turn_runs::finish_run_with_bearwire_event(
         &pool,
+        &session_id,
         &run_id,
+        bear_id,
+        user_id,
         turn_runs::TurnRunState::Completed,
         Some("stale_completed"),
+        BearWireEvent::ephemeral("run.completed", serde_json::json!({"run_id": run_id})),
     )
     .await
     .expect("attempt overwrite terminal run");
