@@ -274,7 +274,7 @@ async fn armature_owned_tool_call_creates_client_obligation(pool: sqlx::PgPool) 
         .await
         .expect("load run")
         .expect("run exists");
-    assert_eq!(run.state, "waiting_for_tool_result");
+    assert_eq!(run.state, "waiting_for_client");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -410,7 +410,7 @@ async fn den_owned_approval_required_tool_creates_permission_obligation(pool: sq
         .await
         .expect("load run")
         .expect("run exists");
-    assert_eq!(run.state, "waiting_for_permission");
+    assert_eq!(run.state, "waiting_for_client");
 
     let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
         .await
@@ -780,7 +780,7 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
         .await
         .expect("load run")
         .expect("run exists");
-    assert_eq!(run.state, "waiting_for_permission");
+    assert_eq!(run.state, "waiting_for_client");
 
     let step_state: String = sqlx::query(
         r"

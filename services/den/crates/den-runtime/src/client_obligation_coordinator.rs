@@ -448,7 +448,7 @@ pub async fn settle_tool_result(
         let transitioned = turn_runs::transition_run(
             pool,
             &run.run_id,
-            turn_runs::TurnRunState::WaitingForToolResult,
+            turn_runs::TurnRunState::WaitingForClient,
             None,
         )
         .await?;
@@ -529,7 +529,7 @@ async fn dispatch_local_tool_after_grant(
     let transitioned = turn_runs::transition_run(
         pool,
         &run.run_id,
-        turn_runs::TurnRunState::WaitingForToolResult,
+        turn_runs::TurnRunState::WaitingForClient,
         None,
     )
     .await?;

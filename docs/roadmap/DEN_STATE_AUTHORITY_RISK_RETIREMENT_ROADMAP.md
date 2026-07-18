@@ -182,16 +182,16 @@ Acceptance checks:
 
 ### Milestone 6 — obligation-derived blocking reason
 
-Status: **not started**
+Status: **in progress**
 
 Goal: obligations become the sole authority for why a run is blocked.
 
-Migration order:
+Progress:
 
-1. add typed derived `BlockingReason`;
-2. switch runtime decisions and API projection to it;
-3. stop branching on specialized persisted waiting labels;
-4. remove redundant waiting states only after consumers migrate.
+1. completed: added typed `BlockingReason` derived from open obligation responder actions;
+2. completed: `run.state` exposes the derived blocking reason;
+3. completed: new permission/tool waits and coordinator re-waits persist only generic `waiting_for_client`;
+4. remaining: migrate legacy storage/parser fixtures and remove `waiting_for_tool_result` / `waiting_for_permission` from `TurnRunState`, active-state SQL, and database checks.
 
 Acceptance checks:
 
@@ -232,4 +232,5 @@ The roadmap is complete when:
 | 3b — typed provider activity | `183b111f` | raw-byte activity ordering; projection omission; OpenAI stream detach/tool tests; continuation watchdog tests |
 | 3c — initial/continuation liveness parity | `5fba42b3` | initial run completion; shared watchdog configuration tests; OpenAI activity/stream tests; offline BearWire compile |
 | 4 — stale-turn mutation gating | `9bcc701d` | stale session-info/binding regression; Den-owned tool turn gate; title roundtrip; armature compile |
-| 5 — observational cache retirement | this milestone commit | session-scoped cache cleanup/reuse; terminal-card monotonicity; cancel/close cleanup; armature compile |
+| 5 — observational cache retirement | `8db7cac1` | session-scoped cache cleanup/reuse; terminal-card monotonicity; cancel/close cleanup; armature compile |
+| 6a — obligation-derived blocking behavior | this sub-item commit | blocking derivation unit test; tool/permission wait persistence; coordinator contracts; `run.state` blocking reason; offline compile |

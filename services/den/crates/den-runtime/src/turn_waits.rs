@@ -257,11 +257,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     let effective_approval_required = input.approval_required && has_permission_id;
     let execution_owner = resolve_tool_execution_owner(input.tool_name)?;
     let den_owned = execution_owner == ToolExecutionOwner::Den;
-    let run_state = if effective_approval_required {
-        turn_runs::TurnRunState::WaitingForPermission
-    } else {
-        turn_runs::TurnRunState::WaitingForToolResult
-    };
+    let run_state = turn_runs::TurnRunState::WaitingForClient;
     let execution_target = match execution_owner {
         ToolExecutionOwner::Den => "den",
         ToolExecutionOwner::Armature => "armature_local",

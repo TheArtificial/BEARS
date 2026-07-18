@@ -53,6 +53,58 @@ pub enum ExpectedResponderAction {
     HandoffDecision,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockingReason {
+    ToolResult,
+    PermissionDecision,
+    HumanInput,
+    ResourceBinding,
+    HandoffDecision,
+    Multiple,
+}
+
+impl BlockingReason {
+    pub fn from_open_obligations(obligations: &[TurnObligationRow]) -> Option<Self> {
+        Self::from_expected_actions(
+            obligations
+                .iter()
+                .filter_map(|obligation| obligation.expected_action().ok()),
+        )
+    }
+
+    pub fn from_expected_actions(
+        actions: impl IntoIterator<Item = ExpectedResponderAction>,
+    ) -> Option<Self> {
+        let mut reason = None;
+        for action in actions {
+            let next = match action {
+                ExpectedResponderAction::ToolResult => Self::ToolResult,
+                ExpectedResponderAction::PermissionDecision => Self::PermissionDecision,
+                ExpectedResponderAction::HumanInput => Self::HumanInput,
+                ExpectedResponderAction::ResourceBinding => Self::ResourceBinding,
+                ExpectedResponderAction::HandoffDecision => Self::HandoffDecision,
+            };
+            if reason.is_some_and(|current| current != next) {
+                return Some(Self::Multiple);
+            }
+            reason = Some(next);
+        }
+        reason
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ToolResult => "tool_result",
+            Self::PermissionDecision => "permission_decision",
+            Self::HumanInput => "human_input",
+            Self::ResourceBinding => "resource_binding",
+            Self::HandoffDecision => "handoff_decision",
+            Self::Multiple => "multiple",
+        }
+    }
+}
+
 impl ExpectedResponderAction {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -666,6 +718,30 @@ async fn expire_open_client_obligations_from_rows(
         }
     }
     Ok(expired)
+}
+
+#[cfg(test)]
+mod blocking_reason_tests {
+    use super::{BlockingReason, ExpectedResponderAction};
+
+    #[test]
+    fn blocking_reason_is_derived_from_expected_actions() {
+        assert_eq!(
+            BlockingReason::from_expected_actions([ExpectedResponderAction::ToolResult]),
+            Some(BlockingReason::ToolResult)
+        );
+        assert_eq!(
+            BlockingReason::from_expected_actions([
+                ExpectedResponderAction::ToolResult,
+                ExpectedResponderAction::PermissionDecision,
+            ]),
+            Some(BlockingReason::Multiple)
+        );
+        assert_eq!(
+            BlockingReason::from_expected_actions(std::iter::empty()),
+            None
+        );
+    }
 }
 
 pub fn obligation_accepts_responder_action(

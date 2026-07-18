@@ -1638,6 +1638,7 @@ async fn run_state_reports_run_obligations_results_and_events(pool: sqlx::PgPool
     let result = &response["result"];
     assert_eq!(result["kind"], "run_state", "{response}");
     assert_eq!(result["run"]["run_id"], run_id);
+    assert_eq!(result["blocking_reason"], "tool_result");
     assert_eq!(result["obligations"][0]["id"], obligation.id.to_string());
     assert_eq!(result["results"][0]["obligation_id"], "call-state");
     assert_eq!(

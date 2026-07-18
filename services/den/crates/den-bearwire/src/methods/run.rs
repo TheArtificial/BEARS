@@ -1408,12 +1408,13 @@ async fn update_run_state_for_runtime_event(
             if den_owned_tool_call(tool_name) {
                 return None;
             }
-            let state = if effective_approval_required {
-                turn_runs::TurnRunState::WaitingForPermission
-            } else {
-                turn_runs::TurnRunState::WaitingForToolResult
-            };
-            let _ = turn_runs::transition_run(pool, run_id, state, None).await;
+            let _ = turn_runs::transition_run(
+                pool,
+                run_id,
+                turn_runs::TurnRunState::WaitingForClient,
+                None,
+            )
+            .await;
             let turn_step_id = match turn_steps::ensure_active_step(pool, run_id).await {
                 Ok(step) => Some(step.id),
                 Err(err) => {
@@ -2157,6 +2158,17 @@ pub(crate) async fn run_state_result(
         })
         .cloned()
         .collect::<Vec<_>>();
+    let blocking_reason = turn_obligations::BlockingReason::from_expected_actions(
+        open_obligations.iter().filter_map(|obligation| {
+            obligation
+                .get("expected_responder_action")
+                .and_then(Value::as_str)
+                .and_then(|action| {
+                    turn_obligations::ExpectedResponderAction::try_from_storage(action).ok()
+                })
+        }),
+    )
+    .map(turn_obligations::BlockingReason::as_str);
     let results = run_results_payload(&state.sqlx_pool, &run.run_id).await?;
     let events = run_recent_events_payload(
         &state.sqlx_pool,
@@ -2168,6 +2180,7 @@ pub(crate) async fn run_state_result(
     Ok(json!({
         "kind": "run_state",
         "run": run,
+        "blocking_reason": blocking_reason,
         "open_obligations": open_obligations,
         "obligations": obligations,
         "results": results,
