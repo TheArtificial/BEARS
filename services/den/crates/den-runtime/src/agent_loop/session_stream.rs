@@ -72,10 +72,16 @@ pub enum NativeToolDispatchMode {
 
 type ApprovalPauseFuture =
     Pin<Box<dyn Future<Output = Result<Option<RuntimeSemanticEvent>, DenError>> + Send>>;
+type ServerToolContinuationFuture =
+    Pin<Box<dyn Future<Output = Result<RuntimeEventStream, DenError>> + Send>>;
 type ServerToolFuture = Pin<
     Box<
-        dyn Future<Output = Result<(ChatToolCall, ChatMessage, RuntimeEventStream), DenError>>
-            + Send,
+        dyn Future<
+                Output = Result<
+                    (ChatToolCall, ChatMessage, ServerToolContinuationFuture),
+                    DenError,
+                >,
+            > + Send,
     >,
 >;
 type FinalGateContinuationFuture =
@@ -244,6 +250,7 @@ pub struct SessionTrackingStream {
     pending_tool_event: Option<RuntimeStreamEvent>,
     pending_pause_after_tool: Option<RuntimeSemanticEvent>,
     pending_server_tool: Option<ServerToolFuture>,
+    pending_server_tool_stream: Option<ServerToolContinuationFuture>,
     pending_server_tool_continuation: Option<String>,
     pending_final_gate_continuation: Option<FinalGateContinuationFuture>,
     pending_final_gate_focus: Option<FinalGateFocusFuture>,
@@ -295,6 +302,7 @@ impl SessionTrackingStream {
             pending_tool_event: None,
             pending_pause_after_tool: None,
             pending_server_tool: None,
+            pending_server_tool_stream: None,
             pending_server_tool_continuation: None,
             pending_final_gate_continuation: None,
             pending_final_gate_focus: None,
@@ -716,18 +724,20 @@ impl SessionTrackingStream {
             store.update(&session_key, |session| {
                 session.messages.push(message.clone());
             });
-            let session = store.get(&session_key).ok_or_else(|| {
-                DenError::System("native agent loop session not found".to_string())
-            })?;
-            let llm = LlmClient::new(config.as_ref());
-            let overflow = AgentStepOverflowContext {
-                pool: pool.clone(),
-                config: config.clone(),
-                profile,
-                session_store: store.clone(),
-            };
-            let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
-            Ok((call, message, stream))
+            let continuation = Box::pin(async move {
+                let session = store.get(&session_key).ok_or_else(|| {
+                    DenError::System("native agent loop session not found".to_string())
+                })?;
+                let llm = LlmClient::new(config.as_ref());
+                let overflow = AgentStepOverflowContext {
+                    pool,
+                    config,
+                    profile,
+                    session_store: store,
+                };
+                run_agent_step_stream(&llm, &session, Some(overflow)).await
+            });
+            Ok((call, message, continuation as ServerToolContinuationFuture))
         }));
     }
 
@@ -1327,10 +1337,10 @@ impl Stream for SessionTrackingStream {
 
         if let Some(fut) = self.pending_server_tool.as_mut() {
             match fut.as_mut().poll(cx) {
-                Poll::Ready(Ok((call, message, stream))) => {
+                Poll::Ready(Ok((call, message, continuation))) => {
                     self.pending_server_tool = None;
                     self.tool_calls.remove(&call.id);
-                    self.inner = stream;
+                    self.pending_server_tool_stream = Some(continuation);
                     self.pending_pause_after_tool =
                         Self::plan_update_event_from_tool_message(&message).or_else(|| {
                             Self::session_info_update_event_from_tool_message(&message)
@@ -1342,6 +1352,25 @@ impl Stream for SessionTrackingStream {
                 }
                 Poll::Ready(Err(error)) => {
                     self.pending_server_tool = None;
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
+        if let Some(fut) = self.pending_server_tool_stream.as_mut() {
+            match fut.as_mut().poll(cx) {
+                Poll::Ready(Ok(stream)) => {
+                    self.pending_server_tool_stream = None;
+                    self.inner = stream;
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(error)) => {
+                    self.pending_server_tool_stream = None;
+                    if let Some(tool_call_id) = self.pending_server_tool_continuation.take() {
+                        self.remove_recent_server_tool_chain_from_session(&tool_call_id);
+                    }
                     return Poll::Ready(Some(Err(error)));
                 }
                 Poll::Pending => return Poll::Pending,
@@ -2562,6 +2591,64 @@ mod tests {
             RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. })
         ));
         assert!(stream.next().await.is_none(), "EOF follows terminal event");
+    }
+
+    #[tokio::test]
+    async fn server_tool_completion_is_not_blocked_by_stalled_model_continuation() {
+        let bear_id = uuid::Uuid::new_v4();
+        let session = test_session("den-conv-test:client-test", bear_id);
+        let store = AgentLoopSessionStore::default();
+        store.insert(session.clone());
+        let mut stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/noop")
+                .expect("lazy test pool"),
+            bear_id,
+            "test-bear".to_string(),
+            Some(7),
+            "den-conv-test".to_string(),
+            "client-test".to_string(),
+            Some("request-test".to_string()),
+            Arc::new(den_core::config::Config::test_stub()),
+            MemoryStoreManager::new(&den_core::config::Config::test_stub()),
+            BearProfile::Pair,
+            NativeToolDispatchMode::DeferToClient,
+        );
+        let call = ChatToolCall {
+            id: "call-list-jobs".to_string(),
+            call_type: "function".to_string(),
+            function: crate::llm::ChatToolCallFunction {
+                name: "list_jobs".to_string(),
+                arguments: "{}".to_string(),
+            },
+        };
+        let message = ChatMessage {
+            role: "tool".to_string(),
+            content: Some("{\"jobs\":[]}".to_string()),
+            tool_call_id: Some(call.id.clone()),
+            name: Some(call.function.name.clone()),
+            tool_calls: None,
+        };
+        let stalled: ServerToolContinuationFuture = Box::pin(futures::future::pending());
+        stream.pending_server_tool = Some(Box::pin(async move { Ok((call, message, stalled)) }));
+
+        let completed = stream.next().await.expect("tool completion").expect("ok");
+        assert!(matches!(
+            completed,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished {
+                ref tool_call_id,
+                ref tool_name,
+                ..
+            }) if tool_call_id == "call-list-jobs" && tool_name == "list_jobs"
+        ));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), stream.next())
+                .await
+                .is_err(),
+            "the synthetic continuation should remain stalled after completion is delivered"
+        );
     }
 
     #[tokio::test]
