@@ -2,6 +2,14 @@ use super::super::chat_proxy_stream::EPHEMERAL_PROGRESS_STATUSES;
 use super::*;
 
 #[test]
+fn provider_activity_is_not_projected_to_web_chat() {
+    assert!(
+        runtime_stream_event_to_bear_channel_bytes(RuntimeStreamEvent::ProviderActivity, None,)
+            .is_empty()
+    );
+}
+
+#[test]
 fn maps_assistant_text_to_assistant_delta() {
     let events = runtime_semantic_to_bear_channel_events(
         RuntimeSemanticEvent::AssistantTextDelta {

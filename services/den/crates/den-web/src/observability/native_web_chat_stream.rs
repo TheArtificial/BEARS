@@ -151,7 +151,8 @@ fn runtime_stream_event_to_bear_channel_bytes(
                 .map(|value| bear_channel_sse_bytes(&value))
                 .collect()
         }
-        RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
+        RuntimeStreamEvent::ProviderActivity
+        | RuntimeStreamEvent::UntranslatedProviderEvent { .. } => Vec::new(),
     }
 }
 
