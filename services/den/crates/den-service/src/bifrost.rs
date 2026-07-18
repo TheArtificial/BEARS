@@ -168,22 +168,24 @@ pub fn spawn_catalog_refresh_with_virtual_key(
 }
 
 pub fn spawn_managed_catalog_refresh(
-    client: Arc<BifrostClient>,
+    _client: Arc<BifrostClient>,
     store: BifrostCatalogStore,
     refresh_secs: u64,
     config: Arc<Config>,
 ) {
     tokio::spawn(async move {
         loop {
-            match crate::bifrost_governance::BifrostGovernanceClient::new(&config)
-                .ensure_catalog_virtual_key()
-                .await
-            {
-                Ok(virtual_key) => {
-                    refresh_catalog_with_virtual_key(&client, &store, &virtual_key.value).await;
+            let governance = crate::bifrost_governance::BifrostGovernanceClient::new(&config);
+            match governance.list_model_catalog().await {
+                Ok(models) => {
+                    let mut snapshot = BifrostCatalogSnapshot::from_available_models(models);
+                    snapshot.source = "api_models_details".to_string();
+                    if let Ok(mut guard) = store.write() {
+                        *guard = snapshot;
+                    }
                 }
                 Err(err) => {
-                    tracing::warn!(error = %err, "Bifrost catalog virtual key ensure failed");
+                    tracing::warn!(error = %err, "Bifrost management model catalog refresh failed");
                     mark_catalog_stale(&store);
                 }
             }

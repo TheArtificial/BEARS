@@ -46,11 +46,32 @@
 {% endif %}
 
 <h4>Add from Bifrost catalog</h4>
-<p>Source: {{ catalog_source }}; fetched: {{ catalog_fetched_at }}{% if catalog_stale %}; stale{% endif %}</p>
+<p>
+    Source: {{ catalog_source }}; fetched: {{ catalog_fetched_at }};
+    {{ catalog_row_count }} unconfigured models{% if catalog_stale %}; <strong>stale</strong>{% endif %}
+</p>
 {% if catalog_rows %}
-<table>
+<p>
+    <label>
+        Search
+        <input id="catalog-search" type="search" placeholder="Model name or handle" size="32">
+    </label>
+    <label>
+        Provider
+        <select id="catalog-provider">
+            <option value="">All providers</option>
+            {% for provider in catalog_providers %}
+            <option value="{{ provider }}">{{ provider }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <button id="catalog-show-all" type="button">Show all</button>
+    <span id="catalog-result-count"></span>
+</p>
+<table id="catalog-table">
     <thead>
         <tr>
+            <th>Provider</th>
             <th>Handle</th>
             <th>Display name</th>
             <th>Context</th>
@@ -61,7 +82,8 @@
     </thead>
     <tbody>
         {% for row in catalog_rows %}
-        <tr>
+        <tr class="catalog-row" data-provider="{{ row.provider }}" data-search="{{ row.display_name }} {{ row.handle }}">
+            <td>{{ row.provider }}</td>
             <td><code>{{ row.handle }}</code></td>
             <td>{{ row.display_name }}</td>
             <td>{{ row.context_window }}</td>
@@ -82,8 +104,39 @@
         {% endfor %}
     </tbody>
 </table>
+<script>
+(() => {
+    const rows = Array.from(document.querySelectorAll(".catalog-row"));
+    const search = document.getElementById("catalog-search");
+    const provider = document.getElementById("catalog-provider");
+    const showAllButton = document.getElementById("catalog-show-all");
+    const resultCount = document.getElementById("catalog-result-count");
+    const initialLimit = 50;
+    let showAll = false;
+
+    const update = () => {
+        const query = search.value.trim().toLowerCase();
+        const selectedProvider = provider.value;
+        const matches = rows.filter((row) => {
+            const matchesProvider = !selectedProvider || row.dataset.provider === selectedProvider;
+            const matchesQuery = !query || row.dataset.search.toLowerCase().includes(query);
+            return matchesProvider && matchesQuery;
+        });
+        const visible = showAll || query || selectedProvider ? matches : matches.slice(0, initialLimit);
+        const visibleRows = new Set(visible);
+        rows.forEach((row) => { row.hidden = !visibleRows.has(row); });
+        resultCount.textContent = `Showing ${visible.length} of ${matches.length} matching models`;
+        showAllButton.hidden = showAll || matches.length <= initialLimit || query || selectedProvider;
+    };
+
+    search.addEventListener("input", update);
+    provider.addEventListener("change", update);
+    showAllButton.addEventListener("click", () => { showAll = true; update(); });
+    update();
+})();
+</script>
 {% else %}
-<p>No unconfigured catalog models.</p>
+<p>No unconfigured catalog models. If the source is uninitialized or stale, check Bifrost management authentication.</p>
 {% endif %}
 
 <details>

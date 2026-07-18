@@ -72,6 +72,7 @@ struct ModelRow {
 #[derive(Debug, Serialize)]
 struct CatalogRow {
     handle: String,
+    provider: String,
     display_name: String,
     context_window: u32,
     max_output_tokens: String,
@@ -332,6 +333,7 @@ async fn render_index(
         .filter(|(handle, _)| !configured_handles.contains(*handle))
         .map(|(handle, entry)| CatalogRow {
             handle: handle.clone(),
+            provider: entry.provider.clone(),
             display_name: entry.display_name.clone().unwrap_or_else(|| handle.clone()),
             context_window: entry.context_window,
             max_output_tokens: entry
@@ -346,7 +348,18 @@ async fn render_index(
             metadata_json: catalog_metadata_json(entry).to_string(),
         })
         .collect::<Vec<_>>();
-    catalog_rows.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    catalog_rows.sort_by(|a, b| {
+        a.provider
+            .cmp(&b.provider)
+            .then_with(|| a.display_name.cmp(&b.display_name))
+    });
+    let catalog_row_count = catalog_rows.len();
+    let mut catalog_providers = catalog_rows
+        .iter()
+        .map(|row| row.provider.clone())
+        .collect::<Vec<_>>();
+    catalog_providers.sort();
+    catalog_providers.dedup();
 
     let usage = bifrost_usage_summary(&state).await;
 
@@ -358,6 +371,8 @@ async fn render_index(
             message => message.unwrap_or_default(),
             models,
             catalog_rows,
+            catalog_row_count,
+            catalog_providers,
             catalog_source => catalog.source,
             catalog_stale => catalog.stale,
             catalog_fetched_at => catalog.fetched_at.map(format_time).unwrap_or_else(|| "—".to_string()),
