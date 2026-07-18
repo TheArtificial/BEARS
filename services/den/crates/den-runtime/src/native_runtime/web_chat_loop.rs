@@ -83,7 +83,8 @@ pub struct NativeWebChatLoopStream {
     pending_out: VecDeque<RuntimeStreamEvent>,
     saw_turn_completed: bool,
     last_outbound: Instant,
-    started_at: Instant,
+    keepalive_sleep: Pin<Box<tokio::time::Sleep>>,
+    turn_timeout_sleep: Pin<Box<tokio::time::Sleep>>,
     turn_start_message_len: usize,
     transcript_persisted: bool,
 }
@@ -116,13 +117,19 @@ impl NativeWebChatLoopStream {
         initial: RuntimeEventStream,
         turn_start_message_len: usize,
     ) -> Self {
+        let wall_clock_limit = runtime
+            .session_store
+            .get(&runtime.session_key)
+            .map(|session| Duration::from_millis(session.turn_budget.max_wall_clock_ms))
+            .unwrap_or(WEB_CHAT_TURN_BUDGET);
         Self {
             runtime,
             phase: LoopPhase::Streaming(initial),
             pending_out: VecDeque::from([status_event("Thinking…")]),
             saw_turn_completed: false,
             last_outbound: Instant::now(),
-            started_at: Instant::now(),
+            keepalive_sleep: Box::pin(tokio::time::sleep(WEB_CHAT_KEEPALIVE_INTERVAL)),
+            turn_timeout_sleep: Box::pin(tokio::time::sleep(wall_clock_limit)),
             turn_start_message_len,
             transcript_persisted: false,
         }
@@ -197,6 +204,9 @@ impl NativeWebChatLoopStream {
 
     fn touch_outbound(&mut self) {
         self.last_outbound = Instant::now();
+        self.keepalive_sleep
+            .as_mut()
+            .reset(tokio::time::Instant::now() + WEB_CHAT_KEEPALIVE_INTERVAL);
     }
 
     fn maybe_keepalive(&mut self) -> Option<RuntimeStreamEvent> {
@@ -428,16 +438,14 @@ impl Stream for NativeWebChatLoopStream {
             self.touch_outbound();
             return Poll::Ready(Some(Ok(event)));
         }
-        if let Some(event) = self.maybe_keepalive() {
-            return Poll::Ready(Some(Ok(event)));
+        let turn_timed_out = self.turn_timeout_sleep.as_mut().poll(cx).is_ready();
+        if !turn_timed_out {
+            let _ = self.keepalive_sleep.as_mut().poll(cx);
+            if let Some(event) = self.maybe_keepalive() {
+                return Poll::Ready(Some(Ok(event)));
+            }
         }
-        let wall_clock_limit = self
-            .runtime
-            .session_store
-            .get(&self.runtime.session_key)
-            .map(|session| Duration::from_millis(session.turn_budget.max_wall_clock_ms))
-            .unwrap_or(WEB_CHAT_TURN_BUDGET);
-        if self.started_at.elapsed() >= wall_clock_limit {
+        if turn_timed_out {
             if let LoopPhase::ExecutingTools { calls, index, .. } = &self.phase {
                 let pending = calls[*index..].to_vec();
                 self.emit_incomplete_tool_outcomes(&pending, "turn_timeout");

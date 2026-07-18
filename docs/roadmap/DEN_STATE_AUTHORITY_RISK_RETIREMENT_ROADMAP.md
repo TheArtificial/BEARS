@@ -112,7 +112,7 @@ Acceptance checks:
 
 ### Milestone 3 — Den-owned typed liveness
 
-Status: **not started**
+Status: **in progress**
 
 Goal: distinguish handshake, provider activity, semantic activity, and legitimate client waits.
 
@@ -125,6 +125,11 @@ RunLiveness =
   + last_semantic_event_at
   + current_wait_kind
 ```
+
+Progress:
+
+- completed: web-chat keepalive and absolute turn timeout now own polled Tokio sleep deadlines, so permanently pending model/tool futures still wake for liveness and timeout handling;
+- remaining: expose provider-level activity and unify initial/continuation watchdog decisions around typed liveness.
 
 Acceptance checks:
 
@@ -219,4 +224,5 @@ The roadmap is complete when:
 | --- | --- | --- |
 | Foundation — atomic terminal authority | existing commits through `3bd566be` plus current follow-up commit | bundled-Postgres completion/cancel/expiry/late-result tests; offline checks |
 | 1 — durable local-tool cancellation | `1a169ccc` | armature compile; pre-wait cancellation race; matching/unrelated cancellation; session cancel/close; registry eviction/non-resurrection |
-| 2 — execution-owner consolidation | this milestone audit commit | resolver usage audit; continuation ownership matrix; Den-owned run-state recovery test; BearWire projection tests |
+| 2 — execution-owner consolidation | `49e60dd4` | resolver usage audit; continuation ownership matrix; Den-owned run-state recovery test; BearWire projection tests |
+| 3a — timer-backed web-chat liveness | this sub-item commit | offline runtime compile; 43/44 native-runtime tests (one unrelated SQLx pool exhaustion) |
