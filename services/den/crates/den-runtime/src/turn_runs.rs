@@ -15,8 +15,6 @@ pub enum TurnRunState {
     Accepted,
     Running,
     WaitingForClient,
-    WaitingForToolResult,
-    WaitingForPermission,
     Continuing,
     Completed,
     Failed,
@@ -29,8 +27,6 @@ impl TurnRunState {
             Self::Accepted => "accepted",
             Self::Running => "running",
             Self::WaitingForClient => "waiting_for_client",
-            Self::WaitingForToolResult => "waiting_for_tool_result",
-            Self::WaitingForPermission => "waiting_for_permission",
             Self::Continuing => "continuing",
             Self::Completed => "completed",
             Self::Failed => "failed",
@@ -43,8 +39,6 @@ impl TurnRunState {
             "accepted" => Ok(Self::Accepted),
             "running" => Ok(Self::Running),
             "waiting_for_client" => Ok(Self::WaitingForClient),
-            "waiting_for_tool_result" => Ok(Self::WaitingForToolResult),
-            "waiting_for_permission" => Ok(Self::WaitingForPermission),
             "continuing" => Ok(Self::Continuing),
             "completed" => Ok(Self::Completed),
             "failed" => Ok(Self::Failed),
@@ -112,7 +106,7 @@ const RUN_RETURNING: &str = r"
     id, run_id, session_id, bear_id, user_id, state,
     terminal_reason, created_at, updated_at, completed_at
 ";
-const ACTIVE_RUN_STATES_SQL: &str = "'accepted','running','waiting_for_client','waiting_for_tool_result','waiting_for_permission','continuing'";
+const ACTIVE_RUN_STATES_SQL: &str = "'accepted','running','waiting_for_client','continuing'";
 
 pub async fn create_run(
     pool: &PgPool,
@@ -518,7 +512,6 @@ mod tests {
             assert!(!terminal.allows_open_obligation());
         }
 
-        assert!(TurnRunState::WaitingForToolResult.allows_open_obligation());
-        assert!(TurnRunState::WaitingForPermission.allows_open_obligation());
+        assert!(TurnRunState::WaitingForClient.allows_open_obligation());
     }
 }

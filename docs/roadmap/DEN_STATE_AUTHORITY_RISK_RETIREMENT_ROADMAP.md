@@ -182,7 +182,7 @@ Acceptance checks:
 
 ### Milestone 6 — obligation-derived blocking reason
 
-Status: **in progress**
+Status: **completed**
 
 Goal: obligations become the sole authority for why a run is blocked.
 
@@ -191,7 +191,7 @@ Progress:
 1. completed: added typed `BlockingReason` derived from open obligation responder actions;
 2. completed: `run.state` exposes the derived blocking reason;
 3. completed: new permission/tool waits and coordinator re-waits persist only generic `waiting_for_client`;
-4. remaining: migrate legacy storage/parser fixtures and remove `waiting_for_tool_result` / `waiting_for_permission` from `TurnRunState`, active-state SQL, and database checks.
+4. completed: migration rewrites legacy specialized waits to `waiting_for_client`; removed specialized variants from `TurnRunState`, parser, active-state SQL, and database constraints/indexes.
 
 Acceptance checks:
 
@@ -233,4 +233,5 @@ The roadmap is complete when:
 | 3c — initial/continuation liveness parity | `5fba42b3` | initial run completion; shared watchdog configuration tests; OpenAI activity/stream tests; offline BearWire compile |
 | 4 — stale-turn mutation gating | `9bcc701d` | stale session-info/binding regression; Den-owned tool turn gate; title roundtrip; armature compile |
 | 5 — observational cache retirement | `8db7cac1` | session-scoped cache cleanup/reuse; terminal-card monotonicity; cancel/close cleanup; armature compile |
-| 6a — obligation-derived blocking behavior | this sub-item commit | blocking derivation unit test; tool/permission wait persistence; coordinator contracts; `run.state` blocking reason; offline compile |
+| 6a — obligation-derived blocking behavior | `6c734959` | blocking derivation unit test; tool/permission wait persistence; coordinator contracts; `run.state` blocking reason; offline compile |
+| 6b — retire specialized waiting states | this sub-item commit | migration/schema/type tests; 14 obligation regressions; 10 coordinator contracts; run-state projection; offline compile |

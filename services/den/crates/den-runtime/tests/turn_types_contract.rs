@@ -37,10 +37,8 @@ fn turn_state_parsers_accept_known_values_and_reject_unknown_values() {
         TurnRunState::try_from_storage("waiting_for_client").unwrap(),
         TurnRunState::WaitingForClient
     );
-    assert_eq!(
-        TurnRunState::try_from_storage("waiting_for_tool_result").unwrap(),
-        TurnRunState::WaitingForToolResult
-    );
+    assert!(TurnRunState::try_from_storage("waiting_for_tool_result").is_err());
+    assert!(TurnRunState::try_from_storage("waiting_for_permission").is_err());
     assert!(TurnRunState::try_from_storage("bearwire_waiting").is_err());
 
     assert_eq!(

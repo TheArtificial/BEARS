@@ -407,8 +407,6 @@ Representative states:
 - `Accepted`;
 - `Running`;
 - `WaitingForClient`;
-- `WaitingForToolResult`;
-- `WaitingForPermission`;
 - `Continuing`;
 - `Completed`;
 - `Failed`;
@@ -429,8 +427,8 @@ Invariants:
 - Terminal run states must not have open obligations or active turn steps.
 - A terminal run state must have a matching durable `run.completed`, `run.failed`, or `run.cancelled` event committed in the same transaction.
 - Ordinary `transition_run` calls are nonterminal-only; terminal fixtures and production outcomes use the atomic finisher.
-- `WaitingForPermission` requires an open permission obligation.
-- `WaitingForToolResult` requires an open tool-result obligation.
+- `WaitingForClient` requires at least one open client obligation.
+- The specific blocking reason (`tool_result`, `permission_decision`, human/resource/handoff, or `multiple`) is derived from open obligations and is not duplicated in run state.
 
 ### Completion and continuation
 
@@ -595,9 +593,7 @@ Invalid or suspicious combinations should be rejected before prompt assembly or 
 | Run state | Required obligation condition |
 | --- | --- |
 | Running | no blocking awaited obligation |
-| WaitingForClient | at least one open client obligation |
-| WaitingForToolResult | open tool-result obligation |
-| WaitingForPermission | open permission-decision obligation |
+| WaitingForClient | at least one open client obligation; blocking reason derived from obligation responder actions |
 | Completed/Failed/Cancelled | no open obligations or active steps; exactly one matching terminal BearWire event committed atomically; late results ignored |
 
 ## Test obligations
