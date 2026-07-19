@@ -194,7 +194,7 @@ async fn upsert_test_session(
             resolved_conversation_id: None,
             client: "bearwire-test".to_string(),
             cwd: Some("/workspace".to_string()),
-            current_mode: Some("write".to_string()),
+            current_mode: Some(client_sessions::ClientSessionMode::Write),
         },
     )
     .await
@@ -1098,7 +1098,7 @@ async fn run_start_uses_resolved_conversation_history_for_existing_session(pool:
             resolved_conversation_id: Some(resolved_conversation_id.clone()),
             client: "zed".to_string(),
             cwd: Some("/workspace".to_string()),
-            current_mode: Some("write".to_string()),
+            current_mode: Some(client_sessions::ClientSessionMode::Write),
         },
     )
     .await
@@ -1343,7 +1343,7 @@ async fn session_state_includes_latest_context_budget_for_resolved_conversation(
             resolved_conversation_id: Some(resolved_conversation_id.clone()),
             client: "zed".to_string(),
             cwd: Some("/workspace".to_string()),
-            current_mode: Some("write".to_string()),
+            current_mode: Some(client_sessions::ClientSessionMode::Write),
         },
     )
     .await

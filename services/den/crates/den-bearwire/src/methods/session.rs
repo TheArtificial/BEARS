@@ -475,10 +475,18 @@ pub(crate) async fn session_open_result(
         })
         .unwrap_or_else(|| format!("bearwire:{}:{}", bear.id, session_id));
     let cwd = request.cwd;
-    let current_mode = request.mode;
-    let cleared_focus_count =
-        clear_focus_for_mode_change(state, bear.id, existing.as_ref(), current_mode.as_deref())
-            .await?;
+    let current_mode = request
+        .mode
+        .as_deref()
+        .map(client_sessions::ClientSessionMode::try_from_storage)
+        .transpose()?;
+    let cleared_focus_count = clear_focus_for_mode_change(
+        state,
+        bear.id,
+        existing.as_ref(),
+        current_mode.as_ref().map(|mode| mode.as_str()),
+    )
+    .await?;
     let client_context = request.client_context;
     client_sessions::upsert_session(
         &state.sqlx_pool,

@@ -71,6 +71,13 @@ where available. This section is the recoverable log of what has been changed.
   strings through `as_str()`. Verified with `cargo test -p den-sandbox
   sandbox_error_kind_preserves_wire_strings` and `cargo clippy -p den-sandbox
   --all-targets -- -D warnings`.
+- [x] `den-service/src/client_sessions.rs`, `den-bearwire/src/methods/session.rs`,
+  and `den/src/core/tools/plan_mode.rs` — persisted `client_sessions.current_mode`
+  now flows through a finite `ClientSessionMode` enum (`ask`, `plan`, `write`) at
+  session open/upsert and plan-mode mutation boundaries instead of arbitrary strings;
+  unknown inbound mode values are rejected before persistence. Verified with `cargo
+  test -p den-service client_session_mode_preserves_storage_strings_and_rejects_unknown_values`
+  and `cargo check -p den-service -p den -p den-bearwire`.
 - [x] `den/src/startup.rs` — startup configuration failures now use distinct
   `StartupError` variants (`MissingDatabaseUrl`, `MissingJwtSecret`, `MissingLlmApiUrl`)
   instead of the former catch-all message variant, preserving the existing operator-facing

@@ -5,6 +5,35 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientSessionMode {
+    Ask,
+    Plan,
+    Write,
+}
+
+impl ClientSessionMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Plan => "plan",
+            Self::Write => "write",
+        }
+    }
+
+    pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
+        match value {
+            "ask" => Ok(Self::Ask),
+            "plan" => Ok(Self::Plan),
+            "write" => Ok(Self::Write),
+            other => Err(DenError::ValidationError(format!(
+                "unsupported client session mode: {other}"
+            ))),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpsertClientSession {
     pub user_id: i32,
@@ -17,7 +46,7 @@ pub struct UpsertClientSession {
     pub client: String,
     pub cwd: Option<String>,
     #[serde(default)]
-    pub current_mode: Option<String>,
+    pub current_mode: Option<ClientSessionMode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -135,7 +164,7 @@ pub async fn upsert_session(pool: &PgPool, session: UpsertClientSession) -> Resu
         .bind(session.resolved_conversation_id)
         .bind(session.client)
         .bind(session.cwd)
-        .bind(session.current_mode)
+        .bind(session.current_mode.map(ClientSessionMode::as_str))
         .execute(pool)
         .await?;
     Ok(())
@@ -146,13 +175,8 @@ pub async fn set_current_mode(
     user_id: i32,
     bear_id: Uuid,
     client_session_id: &str,
-    mode: &str,
+    mode: ClientSessionMode,
 ) -> Result<(), DenError> {
-    if !matches!(mode, "ask" | "plan" | "write") {
-        return Err(DenError::ValidationError(
-            "client session mode must be one of ask, plan, write".to_string(),
-        ));
-    }
     sqlx::query(
         r"
         UPDATE client_sessions
@@ -163,7 +187,7 @@ pub async fn set_current_mode(
     .bind(user_id)
     .bind(bear_id)
     .bind(client_session_id)
-    .bind(mode)
+    .bind(mode.as_str())
     .execute(pool)
     .await?;
     Ok(())
@@ -715,7 +739,7 @@ mod reflection_candidate_tests {
                 resolved_conversation_id: None,
                 client: "test".to_string(),
                 cwd: None,
-                current_mode: Some("ask".to_string()),
+                current_mode: Some(super::ClientSessionMode::Ask),
             },
         )
         .await
