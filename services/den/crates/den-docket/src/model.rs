@@ -1460,6 +1460,7 @@ pub fn task_list_projection_from_session_tasks(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DocketSourceRef {
     Job(Uuid),
     ParentTask(Uuid),
@@ -1467,13 +1468,37 @@ enum DocketSourceRef {
     MissingJob,
 }
 
+impl DocketSourceRef {
+    const JOB_PREFIX: &'static str = "docket_job:";
+    const PARENT_TASK_PREFIX: &'static str = "docket_parent_task:";
+    const TASK_PREFIX: &'static str = "docket_task:";
+    const MISSING_JOB_REF: &'static str = "docket_job:<none>";
+
+    fn parse(raw: &str) -> Option<Self> {
+        let raw = raw.trim();
+        if raw == Self::MISSING_JOB_REF {
+            return Some(Self::MissingJob);
+        }
+        if let Some(id) = raw.strip_prefix(Self::JOB_PREFIX) {
+            return Uuid::parse_str(id.trim()).ok().map(Self::Job);
+        }
+        if let Some(id) = raw.strip_prefix(Self::PARENT_TASK_PREFIX) {
+            return Uuid::parse_str(id.trim()).ok().map(Self::ParentTask);
+        }
+        if let Some(id) = raw.strip_prefix(Self::TASK_PREFIX) {
+            return Uuid::parse_str(id.trim()).ok().map(Self::Task);
+        }
+        None
+    }
+}
+
 impl fmt::Display for DocketSourceRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Job(id) => write!(f, "docket_job:{id}"),
-            Self::ParentTask(id) => write!(f, "docket_parent_task:{id}"),
-            Self::Task(id) => write!(f, "docket_task:{id}"),
-            Self::MissingJob => f.write_str("docket_job:<none>"),
+            Self::Job(id) => write!(f, "{}{id}", Self::JOB_PREFIX),
+            Self::ParentTask(id) => write!(f, "{}{id}", Self::PARENT_TASK_PREFIX),
+            Self::Task(id) => write!(f, "{}{id}", Self::TASK_PREFIX),
+            Self::MissingJob => f.write_str(Self::MISSING_JOB_REF),
         }
     }
 }
@@ -1487,11 +1512,13 @@ fn docket_checkout_refs(job_id: Uuid, parent_task_id: Option<Uuid>) -> Vec<Strin
 }
 
 pub fn docket_parent_task_ref(source_ref: &TaskListSourceRef) -> Option<Uuid> {
-    source_ref
-        .refs
-        .iter()
-        .find_map(|raw| raw.trim().strip_prefix("docket_parent_task:"))
-        .and_then(|raw| Uuid::parse_str(raw.trim()).ok())
+    source_ref.refs.iter().find_map(|raw| {
+        if let Some(DocketSourceRef::ParentTask(id)) = DocketSourceRef::parse(raw) {
+            Some(id)
+        } else {
+            None
+        }
+    })
 }
 
 pub fn task_list_item_status_from_docket_task_status(status: &str) -> TaskListItemStatus {
@@ -1792,6 +1819,25 @@ mod tests {
             item("three", TaskListItemStatus::Pending),
         ];
         assert!(validate_task_list_items(&items).is_ok());
+    }
+
+    #[test]
+    fn docket_parent_task_ref_uses_typed_source_ref_parser() {
+        let parent_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let source_ref = TaskListSourceRef::docket_job(
+            task_id.to_string(),
+            vec![
+                DocketSourceRef::Task(task_id).to_string(),
+                format!("  {}  ", DocketSourceRef::ParentTask(parent_id)),
+            ],
+        );
+
+        assert_eq!(docket_parent_task_ref(&source_ref), Some(parent_id));
+        assert_eq!(
+            DocketSourceRef::parse(&DocketSourceRef::ParentTask(parent_id).to_string()),
+            Some(DocketSourceRef::ParentTask(parent_id))
+        );
     }
 
     #[test]

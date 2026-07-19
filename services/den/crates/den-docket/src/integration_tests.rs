@@ -154,14 +154,14 @@ async fn conversation_objective_checkout_projects_active_subtree_after_reconnect
     );
 
     let (count,): (i64,) = sqlx::query_as(
-        r#"
+        r"
         SELECT COUNT(*)
         FROM bear_jobs
         WHERE bear_id = $1
           AND source_conversation_id = 'conversation-1'
           AND objective_kind = 'conversation_task_list'
           AND status NOT IN ('completed', 'cancelled')
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_one(&pool)
@@ -273,13 +273,13 @@ async fn creates_session_anchored_task_without_job() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "session-task").await;
     let service = PgDocketService::from_pool(&pool);
     let (session_anchor_id,): (Uuid,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO client_sessions (
             user_id, bear_id, bear_slug, client_session_id, runtime_session_id, conversation_id, client
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id
-        "#,
+        ",
     )
     .bind(user_id)
     .bind(bear_id)
@@ -330,13 +330,13 @@ async fn lists_session_anchored_task_with_latest_run_state() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "session-task-state").await;
     let service = PgDocketService::from_pool(&pool);
     let (session_anchor_id,): (Uuid,) = sqlx::query_as(
-        r#"
+        r"
         INSERT INTO client_sessions (
             user_id, bear_id, bear_slug, client_session_id, runtime_session_id, conversation_id, client
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id
-        "#,
+        ",
     )
     .bind(user_id)
     .bind(bear_id)
@@ -471,7 +471,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     assert_eq!(active_execution.state, "active");
 
     let (focus_event_count,): (i64,) = sqlx::query_as(
-        r#"
+        r"
         SELECT count(*)
         FROM bear_job_events
         WHERE job_id = $1
@@ -481,7 +481,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
           AND payload->>'session_id' = 'pair-integration-session'
           AND payload->>'source_client_session_id' = 'pair-integration-session'
           AND payload->>'state' = 'active'
-        "#,
+        ",
     )
     .bind(created.job.id)
     .bind(run_id)
@@ -492,7 +492,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
     assert_eq!(focus_event_count, 1);
 
     let (task_definition_count,): (i64,) = sqlx::query_as(
-        r#"
+        r"
         SELECT count(*)
         FROM bear_task_events
         WHERE task_id = $1
@@ -501,7 +501,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
           AND payload->'definition'->>'title' = 'First task'
           AND payload->'definition'->>'body' = 'Do first task'
           AND payload->'definition'->'completion_criteria'->>0 = 'First task is actually done'
-        "#,
+        ",
     )
     .bind(first_task_id)
     .bind(run_id)
@@ -711,14 +711,14 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
         .expect("execute after reconnect");
 
     let (active_rows,): (i64,) = sqlx::query_as(
-        r#"
+        r"
         SELECT count(*)
         FROM docket_execution_sessions
         WHERE bear_id = $1
           AND owner_profile = 'pair'
           AND source_conversation_id = 'conversation-1'
           AND state IN ('active', 'blocked', 'completing', 'paused')
-        "#,
+        ",
     )
     .bind(bear_id)
     .fetch_one(&pool)
