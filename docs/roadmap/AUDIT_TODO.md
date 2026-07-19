@@ -26,6 +26,7 @@ Fixes have been applied in batches, with `cargo check`/`clippy` verification rec
 where available. This section is the recoverable log of what has been changed.
 
 ### Active Docket typing batch — in progress
+- [x] `den-runtime/src/bearwire_events.rs` — BearWire persisted event ids now use a tiny `BearWireEventId` display type instead of inline `format!("evt_{id}")` prefix construction, preserving the stable wire string while centralizing the ID convention. Verified with `cargo test -p den-runtime bearwire_event_id_preserves_wire_string`.
 - [x] JSON Value/config-shape inventory for Docket child task `8ceae5b3-2826-4b15-af47-1aa5b65cf078` — current Den Rust JSON usage was reviewed by pattern rather than stale line number. Classification:
   - Intentionally open/provider/protocol payloads: BearWire JSON-RPC request/response parameters, protocol passthrough metadata, LLM/provider event bodies, tool descriptors/schemas, tool argument/result summaries, persisted diagnostic payloads, UI projection JSON, and memory/entity record payloads where arbitrary external or model-authored JSON is the contract.
   - Closed Den-owned config candidates: sandbox managed config and catalog shape (`den-sandbox` protocol/server), runtime/bear runtime-plan JSON merge (`den-service/src/bears/runtime_plan.rs`), adapter runtime/session environment workspace shape (`den-core/src/tools/environment/payloads.rs`), ACP/MCP server config parsing still noted outside Den service scope, and recurring BearWire diagnostic/event shapes consumed with raw `.get()` chains.

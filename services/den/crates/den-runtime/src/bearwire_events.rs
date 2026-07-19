@@ -1,3 +1,5 @@
+use std::fmt;
+
 use sqlx::{PgConnection, PgPool, Row};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
@@ -5,6 +7,21 @@ use uuid::Uuid;
 use den_core::DenError;
 
 use bearwire_protocol::wire::BearWireEvent;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BearWireEventId(Uuid);
+
+impl BearWireEventId {
+    fn new(id: Uuid) -> Self {
+        Self(id)
+    }
+}
+
+impl fmt::Display for BearWireEventId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "evt_{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BearWireEventRow {
@@ -48,7 +65,7 @@ pub async fn append_bearwire_event_on(
     let id: Uuid = row.get("id");
     let sequence_no: i64 = row.get("sequence_no");
     let created_at: OffsetDateTime = row.get("created_at");
-    event.event_id = Some(format!("evt_{id}"));
+    event.event_id = Some(BearWireEventId::new(id).to_string());
     event.sequence = Some(sequence_no as u64);
     event.time =
         Some(created_at.format(&Rfc3339).map_err(|err| {
@@ -180,4 +197,19 @@ pub async fn list_bearwire_events_after(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bearwire_event_id_preserves_wire_string() {
+        let id = Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").unwrap();
+
+        assert_eq!(
+            BearWireEventId::new(id).to_string(),
+            "evt_67e55044-10b1-426f-9247-bb680e5fe0c8"
+        );
+    }
 }
