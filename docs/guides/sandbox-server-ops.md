@@ -83,6 +83,10 @@ images can run. There is no config file on the provider
   upstream shows up as a sync *error*, never a local overwrite — resolve by
   deleting the pristine clone and letting it re-clone.
 
+## Multiple instances on one Docker host
+
+Production leaves `BEARS_INSTANCE_SUFFIX` empty and retains `bears-sandbox-provider` / `bears-sandbox-engine`. A secondary Compose deployment on the same host and shared predefined network sets a DNS-safe suffix such as `BEARS_INSTANCE_SUFFIX=-test`; Compose then uses `bears-sandbox-provider-test` / `bears-sandbox-engine-test`, an isolated `bears-stack-test` project, and separate sandbox engine, certificate, and workspace volumes. The suffix is also included in the Docker-in-Docker server certificate SAN and every generated client endpoint.
+
 ## Bring-up checklist
 
 1. **Run the provider** (compose does all of this for you):

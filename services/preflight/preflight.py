@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -153,6 +154,16 @@ def validate_http_url(name: str, value: str) -> None:
         fail(f"{name} must be an http(s) URL (got scheme {u.scheme!r})")
     if not u.netloc:
         fail(f"{name} must include a host (netloc)")
+
+
+def validate_instance_suffix() -> None:
+    suffix = os.environ.get("BEARS_INSTANCE_SUFFIX", "").strip()
+    if suffix and not re.fullmatch(r"-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", suffix):
+        fail(
+            "BEARS_INSTANCE_SUFFIX must be empty for production or a lowercase DNS suffix "
+            + "starting with '-', for example '-test'"
+        )
+    info(f"BEARS_INSTANCE_SUFFIX OK ({suffix or '<production>'})")
 
 
 def validate_bifrost_model_metadata_config() -> None:
@@ -317,6 +328,8 @@ def validate_database_url(reachable: bool = True) -> None:
 
 def validate_config_shape() -> None:
     info("checking required secrets and URI-shaped environment variables")
+
+    validate_instance_suffix()
 
     require_non_empty("JWT_SECRET")
     info("JWT_SECRET is set")

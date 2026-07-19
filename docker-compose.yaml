@@ -21,7 +21,10 @@
 # (`depends_on` + `service_completed_successfully`). Requires Docker Compose **v2.20+**.
 # Run manually: `docker compose run --rm bears-preflight-config`.
 
-name: bears-stack
+# Production keeps the historic `bears-*` identities. Shared-network secondary
+# deployments set BEARS_INSTANCE_SUFFIX (for example `-test`) so DNS names,
+# project resources, and volumes cannot collide with production.
+name: bears-stack${BEARS_INSTANCE_SUFFIX:-}
 
 x-preflight-build: &preflight-build
     context: .
@@ -29,12 +32,13 @@ x-preflight-build: &preflight-build
 
 x-preflight-environment: &preflight-environment
     BIFROST_CONFIG_PATH: /app/bifrost/config.json
+    BEARS_INSTANCE_SUFFIX: ${BEARS_INSTANCE_SUFFIX:-}
     JWT_SECRET: ${JWT_SECRET:-SETME}
     DEN_SECRET_ENCRYPTION_KEY: ${DEN_SECRET_ENCRYPTION_KEY:-SETME}
     BIFROST_ENCRYPTION_KEY: ${BIFROST_ENCRYPTION_KEY:-SETME}
     BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
     BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
-    BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
+    BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost${BEARS_INSTANCE_SUFFIX:-}:${BIFROST_APP_PORT:-8080}}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
     DATABASE_URL: ${DATABASE_URL:-SETME}
     WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_DEN:-SETME}}
@@ -94,11 +98,16 @@ services:
             start_period: 10s
 
     # Optional derived recall vector store (ADR-0038). Enable with `COMPOSE_PROFILES=recall`.
-    # Den defaults to `QDRANT_URL=http://bears-qdrant:<QDRANT_PORT>` and degrades to keyword
+    # Den defaults to `QDRANT_URL=http://bears-qdrant<suffix>:<QDRANT_PORT>` and degrades to keyword
     # (`LIKE`) recall when Qdrant is absent or unreachable, so it stays optional and nothing
     # `depends_on` it. No healthcheck: the Qdrant image ships no shell HTTP client; operators
     # add external reachability monitors (see docs/guides/infrastructure-and-ops.md).
     bears-qdrant:
+        hostname: bears-qdrant${BEARS_INSTANCE_SUFFIX:-}
+        networks:
+            default:
+                aliases:
+                    - bears-qdrant${BEARS_INSTANCE_SUFFIX:-}
         profiles:
             - recall
         image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.12.4}
@@ -127,6 +136,11 @@ services:
             start_period: 10s
 
     bears-bifrost:
+        hostname: bears-bifrost${BEARS_INSTANCE_SUFFIX:-}
+        networks:
+            default:
+                aliases:
+                    - bears-bifrost${BEARS_INSTANCE_SUFFIX:-}
         depends_on:
             <<: *preflight-depends
             bears-bifrost-valkey:
@@ -179,6 +193,11 @@ services:
             - bears-den-sqlite-data:/backup:ro
 
     bears-den:
+        hostname: bears-den${BEARS_INSTANCE_SUFFIX:-}
+        networks:
+            default:
+                aliases:
+                    - bears-den${BEARS_INSTANCE_SUFFIX:-}
         # No `pull_policy: build`. Coolify deploys in two phases — `docker compose
         # build` then `docker compose up -d` — from two different directories.
         # `pull_policy: build` forces `up` to recompile the image a second time
@@ -220,9 +239,9 @@ services:
             # setting either env var updates both sides; override it in
             # production.
             SANDBOX_PORT: ${SANDBOX_PORT:-3002}
-            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL-auto}
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL-http://bears-sandbox-provider${BEARS_INSTANCE_SUFFIX:-}:${SANDBOX_PORT:-3002}}
             SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
-            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
+            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den${BEARS_INSTANCE_SUFFIX:-}:${DEN_API_PORT:-3001}}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
             WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
             WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
@@ -242,7 +261,7 @@ services:
             MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
             MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
             TEMPLATES_DIR: ${TEMPLATES_DIR:-crates/den-web/src/templates}
-            BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
+            BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost${BEARS_INSTANCE_SUFFIX:-}:${BIFROST_APP_PORT:-8080}}
             BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
             BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
@@ -250,7 +269,7 @@ services:
             # the default points at the bundled recall-profile service. Embedding
             # settings pin the active platform standard and route via Bifrost /v1/embeddings.
             QDRANT_PORT: ${QDRANT_PORT:-6333}
-            QDRANT_URL: ${QDRANT_URL-auto}
+            QDRANT_URL: ${QDRANT_URL-http://bears-qdrant${BEARS_INSTANCE_SUFFIX:-}:${QDRANT_PORT:-6333}}
             EMBEDDING_STANDARD: ${EMBEDDING_STANDARD:-bears-embed-v1}
             EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
             EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
@@ -320,9 +339,9 @@ services:
             # setting either env var updates both sides; override it in
             # production.
             SANDBOX_PORT: ${SANDBOX_PORT:-3002}
-            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL-auto}
+            SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL-http://bears-sandbox-provider${BEARS_INSTANCE_SUFFIX:-}:${SANDBOX_PORT:-3002}}
             SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
-            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den:3001}
+            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den${BEARS_INSTANCE_SUFFIX:-}:${DEN_API_PORT:-3001}}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
             WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
             WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
@@ -342,12 +361,12 @@ services:
             MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
             MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
             TEMPLATES_DIR: ${TEMPLATES_DIR:-crates/den-web/src/templates}
-            BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost:${BIFROST_APP_PORT:-8080}}
+            BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost${BEARS_INSTANCE_SUFFIX:-}:${BIFROST_APP_PORT:-8080}}
             BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
             BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
             OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
             QDRANT_PORT: ${QDRANT_PORT:-6333}
-            QDRANT_URL: ${QDRANT_URL-auto}
+            QDRANT_URL: ${QDRANT_URL-http://bears-qdrant${BEARS_INSTANCE_SUFFIX:-}:${QDRANT_PORT:-6333}}
             EMBEDDING_STANDARD: ${EMBEDDING_STANDARD:-bears-embed-v1}
             EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
             EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1536}
@@ -370,8 +389,8 @@ services:
     # daemon; everything sandbox-shaped (containers, relays, internal
     # networks, images, disk) lives inside bears-sandbox-engine and is
     # removed with the project. The Den workers reach the provider via
-    # SANDBOX_SERVER_URL (default http://bears-sandbox-provider:3002) with
-    # SANDBOX_CALLBACK_API_URL=http://bears-den:3001 (http: required by the
+    # SANDBOX_SERVER_URL (default http://bears-sandbox-provider<suffix>:3002) with
+    # SANDBOX_CALLBACK_API_URL=http://bears-den<suffix>:3001 (http: required by the
     # default restricted network mode).
     #
     # Sandbox images must exist inside the ENGINE's store: reference
@@ -384,11 +403,17 @@ services:
     # host filesystem stay out of reach (this replaces the previous
     # host-root-equivalent docker.sock mount).
     bears-sandbox-engine:
+        hostname: bears-sandbox-engine${BEARS_INSTANCE_SUFFIX:-}
+        networks:
+            default:
+                aliases:
+                    - bears-sandbox-engine${BEARS_INSTANCE_SUFFIX:-}
         image: ${SANDBOX_ENGINE_IMAGE:-docker:27-dind}
         restart: unless-stopped
         privileged: true
         environment:
             DOCKER_TLS_CERTDIR: /certs
+            DOCKER_TLS_SAN: DNS:bears-sandbox-engine${BEARS_INSTANCE_SUFFIX:-}
         volumes:
             - bears-sandbox-engine-data:/var/lib/docker
             - bears-sandbox-certs:/certs
@@ -408,6 +433,11 @@ services:
     # Sandbox provider (RUN_SANDBOX only, no database): the Den binary plus a
     # docker CLI, talking to the engine over TLS TCP.
     bears-sandbox-provider:
+        hostname: bears-sandbox-provider${BEARS_INSTANCE_SUFFIX:-}
+        networks:
+            default:
+                aliases:
+                    - bears-sandbox-provider${BEARS_INSTANCE_SUFFIX:-}
         build:
             context: ./services/den
             dockerfile: Dockerfile
@@ -429,7 +459,7 @@ services:
             RUN_WORKERS: "false"
             RUN_SANDBOX: "true"
             RUST_LOG: ${RUST_LOG:-info}
-            DOCKER_HOST: tcp://bears-sandbox-engine:2376
+            DOCKER_HOST: tcp://bears-sandbox-engine${BEARS_INSTANCE_SUFFIX:-}:2376
             DOCKER_TLS_VERIFY: "1"
             DOCKER_CERT_PATH: /certs/client
             SANDBOX_PORT: ${SANDBOX_PORT:-3002}
@@ -481,7 +511,7 @@ services:
             bears-sandbox-engine:
                 condition: service_healthy
         environment:
-            DOCKER_HOST: tcp://bears-sandbox-engine:2376
+            DOCKER_HOST: tcp://bears-sandbox-engine${BEARS_INSTANCE_SUFFIX:-}:2376
             DOCKER_TLS_VERIFY: "1"
             DOCKER_CERT_PATH: /certs/client
         working_dir: /src
