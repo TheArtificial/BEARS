@@ -836,6 +836,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reasoning_effort_is_omitted_for_chat_completions_with_function_tools() {
+        let effort = Some(ThinkingEffort::Medium);
+
+        assert_eq!(
+            api_compatible_thinking_effort(Some(LlmApiStyle::ChatCompletionsStream), true, effort),
+            None
+        );
+        assert_eq!(
+            api_compatible_thinking_effort(Some(LlmApiStyle::ChatCompletionsStream), false, effort),
+            effort
+        );
+        assert_eq!(
+            api_compatible_thinking_effort(Some(LlmApiStyle::ResponsesStream), true, effort),
+            effort
+        );
+        assert_eq!(api_compatible_thinking_effort(None, true, effort), effort);
+    }
+
+    #[test]
     fn preflight_context_compaction_only_runs_once_for_active_overflow_recovery() {
         assert!(should_try_preflight_context_compaction(
             true, false, false, "active"

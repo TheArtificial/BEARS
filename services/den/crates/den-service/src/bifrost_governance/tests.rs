@@ -42,8 +42,8 @@ fn model_details_entry_maps_enriched_catalog_metadata() {
 #[test]
 fn model_details_entry_parses_json_encoded_capability_lists() {
     let entry: ModelDetailsEntry = serde_json::from_value(serde_json::json!({
-        "name": "gpt-5.6-terra",
-        "provider": "openai",
+        "name": "model-encoded-capabilities",
+        "provider": "provider-a",
         "additional_attributes": {
             "supported_parameters": "[\"tools\",\"temperature\"]",
             "supported_methods": "[\"chat_completion\",\"responses\"]"
@@ -63,8 +63,8 @@ fn model_details_entry_parses_json_encoded_capability_lists() {
 #[test]
 fn model_details_entry_rejects_malformed_capability_lists() {
     let entry: ModelDetailsEntry = serde_json::from_value(serde_json::json!({
-        "name": "gpt-5.6-terra",
-        "provider": "openai",
+        "name": "model-malformed-capabilities",
+        "provider": "provider-a",
         "additional_attributes": {
             "supported_parameters": "tools,temperature"
         }
@@ -76,7 +76,7 @@ fn model_details_entry_rejects_malformed_capability_lists() {
         .expect_err("malformed capability metadata must fail");
     let message = err.to_string();
     assert!(message.contains("supported_parameters"));
-    assert!(message.contains("openai/gpt-5.6-terra"));
+    assert!(message.contains("provider-a/model-malformed-capabilities"));
 }
 
 #[derive(Debug, Clone)]

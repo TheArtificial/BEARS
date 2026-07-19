@@ -2370,9 +2370,9 @@ mod tests {
     fn pair_model_capabilities_allow_unknown_tool_support() {
         let entry = BifrostCatalogEntry {
             available: true,
-            provider: "openai".to_string(),
-            provider_model_id: "gpt-5.6-terra".to_string(),
-            gateway_handle: "openai/gpt-5.6-terra".to_string(),
+            provider: "provider-a".to_string(),
+            provider_model_id: "model-unknown-tools".to_string(),
+            gateway_handle: "provider-a/model-unknown-tools".to_string(),
             display_name: None,
             context_window: 128_000,
             max_output_tokens: Some(4096),
@@ -2389,9 +2389,9 @@ mod tests {
     fn pair_model_capabilities_reject_explicit_tool_denial() {
         let mut entry = BifrostCatalogEntry {
             available: true,
-            provider: "openai".to_string(),
-            provider_model_id: "gpt-no-tools".to_string(),
-            gateway_handle: "openai/gpt-no-tools".to_string(),
+            provider: "provider-a".to_string(),
+            provider_model_id: "model-no-tools".to_string(),
+            gateway_handle: "provider-a/model-no-tools".to_string(),
             display_name: None,
             context_window: 128_000,
             max_output_tokens: Some(4096),
@@ -2412,9 +2412,9 @@ mod tests {
     fn unknown_capability_metadata_lists_unknown_fields() {
         let entry = BifrostCatalogEntry {
             available: true,
-            provider: "openai".to_string(),
-            provider_model_id: "gpt-5.6-terra".to_string(),
-            gateway_handle: "openai/gpt-5.6-terra".to_string(),
+            provider: "provider-a".to_string(),
+            provider_model_id: "model-partial-metadata".to_string(),
+            gateway_handle: "provider-a/model-partial-metadata".to_string(),
             display_name: None,
             context_window: 128_000,
             max_output_tokens: Some(4096),
