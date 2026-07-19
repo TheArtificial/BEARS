@@ -249,6 +249,7 @@ pub struct SessionTrackingStream {
     pending_approval: Option<ApprovalPauseFuture>,
     pending_tool_event: Option<RuntimeStreamEvent>,
     pending_pause_after_tool: Option<RuntimeSemanticEvent>,
+    pending_checkpoint_thinking: Option<RuntimeSemanticEvent>,
     pending_server_tool: Option<ServerToolFuture>,
     pending_server_tool_stream: Option<ServerToolContinuationFuture>,
     pending_server_tool_continuation: Option<String>,
@@ -301,6 +302,7 @@ impl SessionTrackingStream {
             pending_approval: None,
             pending_tool_event: None,
             pending_pause_after_tool: None,
+            pending_checkpoint_thinking: None,
             pending_server_tool: None,
             pending_server_tool_stream: None,
             pending_server_tool_continuation: None,
@@ -813,6 +815,11 @@ impl SessionTrackingStream {
                 "disposition": "steer_model_and_continue",
                 "side_effects": "blocked_before_execution",
                 "required_next_tool": RUNTIME_CHECKPOINT_TOOL_NAME,
+                "ui": {
+                    "presentation": "tool_card",
+                    "title": "Checkpoint needed",
+                    "intent": "warning"
+                },
             })),
         })
     }
@@ -930,6 +937,12 @@ impl SessionTrackingStream {
         request: RuntimeCheckpointRequest,
         response: RuntimeCheckpointResponse,
     ) {
+        let checkpoint_summary = response
+            .summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|summary| !summary.is_empty())
+            .map(str::to_string);
         let required_task_action = Self::checkpoint_has_task_followthrough_context(&request)
             .then(|| {
                 response.task_state_change_needed.as_ref().and_then(|_| {
@@ -948,6 +961,10 @@ impl SessionTrackingStream {
                 .clone_from(&required_task_action);
             session.checkpoint_state.reset_after_checkpoint_report();
         });
+        self.pending_checkpoint_thinking =
+            checkpoint_summary.map(|text| RuntimeSemanticEvent::ReasoningTextDelta {
+                text: format!("{text}\n"),
+            });
         self.record_checkpoint_response_if_audited(request, response);
     }
 
@@ -1344,6 +1361,10 @@ impl Stream for SessionTrackingStream {
                 self.finished = true;
             }
             return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(pause))));
+        }
+
+        if let Some(event) = self.pending_checkpoint_thinking.take() {
+            return Poll::Ready(Some(Ok(RuntimeStreamEvent::Semantic(event))));
         }
 
         if self.finished {
@@ -1989,9 +2010,14 @@ mod tests {
             .expect_err("non-checkpoint tool call is blocked and steered");
         assert!(matches!(
             tool_err,
-            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { ref kind, ref text, .. })
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress { ref kind, ref text, ref detail, .. })
                 if kind == "recoverable_tool_rejection"
                     && text.as_deref().is_some_and(|text| text.contains("ckpt-required"))
+                    && detail
+                        .as_ref()
+                        .and_then(|detail| detail.pointer("/ui/presentation"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("tool_card")
         ));
 
         let final_err = stream
@@ -2095,6 +2121,7 @@ mod tests {
         serde_json::json!({
             "checkpoint_id": checkpoint_id,
             "active_objective": "Update task state",
+            "summary": "Checkpoint says the run should reconcile task state before continuing.",
             "learned": ["The remaining item needs explicit state reconciliation."],
             "remaining_uncertainty": [],
             "more_exploration_justified": false,
@@ -2270,6 +2297,12 @@ mod tests {
         assert!(matches!(
             stream.pending_checkpoint_task_action(),
             Some(crate::agent_loop::CheckpointNextAction::UpdateTaskList)
+        ));
+        assert!(stream.pending_checkpoint_thinking.is_some());
+        assert!(matches!(
+            stream.pending_checkpoint_thinking,
+            Some(RuntimeSemanticEvent::ReasoningTextDelta { ref text })
+                if text.contains("Checkpoint says the run should reconcile task state")
         ));
         assert!(stream
             .enforce_required_checkpoint_task_action("memory_read")
