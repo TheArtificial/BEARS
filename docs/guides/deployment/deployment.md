@@ -118,7 +118,7 @@ You usually do not need to set internal service URLs. The compose file already d
 | `BIFROST_MANAGEMENT_URL` | `${BIFROST_ORIGIN}/api` |
 | `BEAR_SQLITE_DATA_DIR` | `/var/lib/den/bear-sqlite` |
 | `SANDBOX_SERVER_URL` | `http://bears-sandbox-provider${BEARS_INSTANCE_SUFFIX}:${SANDBOX_PORT}` |
-| `SANDBOX_CALLBACK_API_URL` | `http://bears-den${BEARS_INSTANCE_SUFFIX}:${DEN_API_PORT}` |
+| `SANDBOX_CALLBACK_API_URL` | `auto`, resolved by Den to `http://bears-den${BEARS_INSTANCE_SUFFIX}:${DEN_API_PORT}` |
 | `DOCKER_HOST` (provider/builder) | `tcp://bears-sandbox-engine${BEARS_INSTANCE_SUFFIX}:2376` |
 
 ## 6. Deploy

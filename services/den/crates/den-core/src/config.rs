@@ -635,11 +635,12 @@ impl Config {
             sandbox_port,
         );
         let sandbox_server_token = std::env::var("SANDBOX_SERVER_TOKEN").unwrap_or_default();
-        let sandbox_callback_api_url = std::env::var("SANDBOX_CALLBACK_API_URL")
-            .ok()
-            .map(|s| s.trim().trim_end_matches('/').to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| api_server_url.clone());
+        let sandbox_callback_api_url = sandbox_callback_api_url_from_env(
+            std::env::var("SANDBOX_CALLBACK_API_URL").ok(),
+            &api_server_url,
+            api_port,
+            &std::env::var("BEARS_INSTANCE_SUFFIX").unwrap_or_default(),
+        );
         let work_dispatch_auto = parse_bool_env("WORK_DISPATCH_AUTO", false);
         let work_sandbox_network = std::env::var("WORK_SANDBOX_NETWORK")
             .map(|value| value.trim().to_lowercase())
@@ -789,6 +790,21 @@ fn sandbox_server_url_from_env(
             "http://{DEFAULT_SANDBOX_SERVER_HOST}:{sandbox_port}"
         )),
         None => None,
+    }
+}
+
+fn sandbox_callback_api_url_from_env(
+    raw: Option<String>,
+    api_server_url: &str,
+    api_port: u16,
+    instance_suffix: &str,
+) -> String {
+    match raw.map(|value| value.trim().trim_end_matches('/').to_string()) {
+        Some(value) if value.eq_ignore_ascii_case("auto") => {
+            format!("http://bears-den{}:{api_port}", instance_suffix.trim())
+        }
+        Some(value) if !value.is_empty() => value,
+        _ => api_server_url.to_string(),
     }
 }
 
@@ -994,6 +1010,23 @@ mod tests {
         assert_eq!(
             qdrant_url_from_env(Some("auto".into()), 6334).as_deref(),
             Some("http://bears-qdrant:6334")
+        );
+    }
+
+    #[test]
+    fn sandbox_callback_auto_uses_instance_dns_name() {
+        assert_eq!(
+            sandbox_callback_api_url_from_env(
+                Some("auto".into()),
+                "https://api.example.com",
+                3036,
+                "-test",
+            ),
+            "http://bears-den-test:3036"
+        );
+        assert_eq!(
+            sandbox_callback_api_url_from_env(None, "https://api.example.com", 3001, ""),
+            "https://api.example.com"
         );
     }
 

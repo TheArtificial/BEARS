@@ -364,6 +364,20 @@ def validate_config_shape() -> None:
     validate_http_url("WEB_SERVER_URL", web)
     info(f"WEB_SERVER_URL OK ({web})")
 
+    callback = require_non_empty("SANDBOX_CALLBACK_API_URL")
+    if callback.lower() == "auto":
+        suffix = os.environ.get("BEARS_INSTANCE_SUFFIX", "").strip()
+        api_port = os.environ.get("DEN_API_PORT", "3001").strip()
+        callback = f"http://bears-den{suffix}:{api_port}"
+    validate_http_url("SANDBOX_CALLBACK_API_URL", callback)
+    callback_url = urlparse(callback)
+    network_mode = os.environ.get("WORK_SANDBOX_NETWORK", "restricted").strip().lower()
+    if network_mode == "restricted" and callback_url.scheme != "http":
+        fail(
+            "SANDBOX_CALLBACK_API_URL must use http when WORK_SANDBOX_NETWORK=restricted"
+        )
+    info(f"SANDBOX_CALLBACK_API_URL OK ({callback})")
+
     require_non_empty("OPENAI_API_KEY")
     info("OPENAI_API_KEY is set")
 

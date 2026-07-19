@@ -27,8 +27,12 @@ pub enum StartupError {
         "JWT_SECRET must be set to a non-empty value when the binary is built with `--features production`, or when RUN_API=true (OAuth access tokens use HS256)."
     )]
     MissingJwtSecret,
-    #[error("LLM_API_URL (or BIFROST_BASE_URL) must be set when RUN_API=true (Den-native agent loop).")]
+    #[error(
+        "LLM_API_URL (or BIFROST_BASE_URL) must be set when RUN_API=true (Den-native agent loop)."
+    )]
     MissingLlmApiUrl,
+    #[error("SANDBOX_CALLBACK_API_URL is invalid: {0}")]
+    InvalidSandboxCallbackUrl(String),
     #[error("sandbox provider startup: {0}")]
     SandboxProvider(String),
     /// Database connection failed with operator-actionable context.
@@ -123,6 +127,30 @@ pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
     }
     if edge_gateway_requires_runtime(config) && config.llm_api_url.trim().is_empty() {
         return Err(StartupError::MissingLlmApiUrl);
+    }
+    if config.sandbox_server_url.is_some() {
+        let callback = url::Url::parse(config.sandbox_callback_api_url.trim()).map_err(|err| {
+            StartupError::InvalidSandboxCallbackUrl(format!(
+                "expected an absolute http(s) URL, got {:?}: {err}",
+                config.sandbox_callback_api_url
+            ))
+        })?;
+        if callback.host_str().is_none() {
+            return Err(StartupError::InvalidSandboxCallbackUrl(
+                "URL must include a host".to_string(),
+            ));
+        }
+        if !matches!(callback.scheme(), "http" | "https") {
+            return Err(StartupError::InvalidSandboxCallbackUrl(format!(
+                "expected http or https, got {}",
+                callback.scheme()
+            )));
+        }
+        if config.work_sandbox_network == "restricted" && callback.scheme() != "http" {
+            return Err(StartupError::InvalidSandboxCallbackUrl(
+                "restricted sandbox networking requires an http callback; use WORK_SANDBOX_NETWORK=open for https callbacks".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -248,6 +276,27 @@ mod tests {
         let mut web_on = Config::test_stub();
         web_on.run_web = true;
         validate_runtime_config(&web_on).expect("RUN_WEB has no legacy runtime requirement");
+    }
+
+    #[test]
+    fn validate_sandbox_callback_url_rules() {
+        let mut config = Config::test_stub();
+        config.sandbox_server_url = Some("http://sandbox:3002".into());
+        config.sandbox_callback_api_url = "auto".into();
+        assert!(matches!(
+            validate_runtime_config(&config),
+            Err(StartupError::InvalidSandboxCallbackUrl(_))
+        ));
+
+        config.sandbox_callback_api_url = "https://api.example.com".into();
+        config.work_sandbox_network = "restricted".into();
+        assert!(matches!(
+            validate_runtime_config(&config),
+            Err(StartupError::InvalidSandboxCallbackUrl(_))
+        ));
+
+        config.sandbox_callback_api_url = "http://bears-den-test:3036".into();
+        validate_runtime_config(&config).expect("absolute HTTP callback should be valid");
     }
 
     #[test]

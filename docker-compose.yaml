@@ -39,6 +39,9 @@ x-preflight-environment: &preflight-environment
     BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-admin}
     BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-SETME}
     BIFROST_ORIGIN: ${BIFROST_ORIGIN:-http://bears-bifrost${BEARS_INSTANCE_SUFFIX:-}:${BIFROST_APP_PORT:-8080}}
+    SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-auto}
+    DEN_API_PORT: ${DEN_API_PORT:-3001}
+    WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-SETME}
     DATABASE_URL: ${DATABASE_URL:-SETME}
     WEB_SERVER_URL: ${WEB_SERVER_URL:-${SERVICE_URL_DEN:-SETME}}
@@ -220,6 +223,7 @@ services:
                 condition: service_healthy
         command: ["serve"]
         environment:
+            BEARS_INSTANCE_SUFFIX: ${BEARS_INSTANCE_SUFFIX:-}
             BEAR_SQLITE_DATA_DIR: ${BEAR_SQLITE_DATA_DIR:-/var/lib/den/bear-sqlite}
             DATABASE_URL: ${DATABASE_URL:-SETME}
             DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}
@@ -241,7 +245,7 @@ services:
             SANDBOX_PORT: ${SANDBOX_PORT:-3002}
             SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL-http://bears-sandbox-provider${BEARS_INSTANCE_SUFFIX:-}:${SANDBOX_PORT:-3002}}
             SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
-            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den${BEARS_INSTANCE_SUFFIX:-}:${DEN_API_PORT:-3001}}
+            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-auto}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
             WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
             WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
@@ -320,6 +324,7 @@ services:
                 condition: service_healthy
         command: ["migrate"]
         environment:
+            BEARS_INSTANCE_SUFFIX: ${BEARS_INSTANCE_SUFFIX:-}
             BEAR_SQLITE_DATA_DIR: ${BEAR_SQLITE_DATA_DIR:-/var/lib/den/bear-sqlite}
             DATABASE_URL: ${DATABASE_URL:-SETME}
             DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-5}
@@ -341,7 +346,7 @@ services:
             SANDBOX_PORT: ${SANDBOX_PORT:-3002}
             SANDBOX_SERVER_URL: ${SANDBOX_SERVER_URL-http://bears-sandbox-provider${BEARS_INSTANCE_SUFFIX:-}:${SANDBOX_PORT:-3002}}
             SANDBOX_SERVER_TOKEN: ${SANDBOX_SERVER_TOKEN:-${SANDBOX_SERVICE_TOKEN:-den-sandbox-default-token}}
-            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-http://bears-den${BEARS_INSTANCE_SUFFIX:-}:${DEN_API_PORT:-3001}}
+            SANDBOX_CALLBACK_API_URL: ${SANDBOX_CALLBACK_API_URL:-auto}
             WORK_DISPATCH_AUTO: ${WORK_DISPATCH_AUTO:-false}
             WORK_MAX_ATTEMPTS: ${WORK_MAX_ATTEMPTS:-2}
             WORK_SANDBOX_NETWORK: ${WORK_SANDBOX_NETWORK:-restricted}
