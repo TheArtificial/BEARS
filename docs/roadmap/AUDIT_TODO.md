@@ -26,6 +26,16 @@ Fixes have been applied in batches, with `cargo check`/`clippy` verification rec
 where available. This section is the recoverable log of what has been changed.
 
 ### Active Docket typing batch — in progress
+- [x] `den-bearwire/src/methods/run.rs` and `den-runtime/src/agent_loop/step.rs` —
+  Pair run preflight now derives API style from catalog support through a narrow typed
+  helper instead of model-name heuristics, and checkpoint reasoning effort is omitted
+  for the typed incompatible combination of Chat Completions + function tools. Verified
+  with `cargo test -p den-bearwire
+  pair_api_style_prefers_responses_unless_catalog_explicitly_denies_support`, `cargo
+  test -p den-runtime chat_completions_with_tools_omits_incompatible_thinking_effort`,
+  and `cargo check -p den-bearwire -p den-runtime`. `cargo clippy -p den-runtime
+  --all-targets -- -D warnings` remains blocked by unrelated pre-existing clippy
+  findings in `den-llm/src/client.rs`.
 - [x] `den-bearwire/src/methods/conversation.rs` — Docket diagnostic surface-event ids now
   use a tiny `DocketSurfaceEventId` display type instead of repeating raw
   `format!("docket:{}", row.id)` prefix construction. Verified with `cargo test -p

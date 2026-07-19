@@ -518,13 +518,42 @@ impl Stream for LazyAgentStepStream {
 /// that wait on `POST /prompt` with no timeout.
 pub const RUNTIME_CHECKPOINT_TOOL_NAME: &str = "checkpoint";
 
-fn checkpoint_thinking_effort_for_session(session: &AgentLoopSession) -> Option<ThinkingEffort> {
+fn api_compatible_thinking_effort(
+    api_style: Option<LlmApiStyle>,
+    has_function_tools: bool,
+    thinking_effort: Option<ThinkingEffort>,
+) -> Option<ThinkingEffort> {
+    if api_style == Some(LlmApiStyle::ChatCompletionsStream) && has_function_tools {
+        None
+    } else {
+        thinking_effort
+    }
+}
+
+fn checkpoint_thinking_effort_for_session(
+    session: &AgentLoopSession,
+    has_function_tools: bool,
+) -> Option<ThinkingEffort> {
     session.checkpoint_state.last_checkpoint_reason?;
     let policy = session.agent_loop_control.profile.thinking;
-    policy
+    let configured_effort = policy
         .enabled
         .then_some(policy.checkpoint_turn_effort)
-        .flatten()
+        .flatten();
+    let compatible_effort = api_compatible_thinking_effort(
+        session.api_style,
+        has_function_tools,
+        configured_effort,
+    );
+    if configured_effort.is_some() && compatible_effort.is_none() {
+        tracing::warn!(
+            session_key = %session.session_key,
+            model = %session.model,
+            api_style = LlmApiStyle::ChatCompletionsStream.as_str(),
+            "omitting checkpoint reasoning effort because Chat Completions with function tools is incompatible"
+        );
+    }
+    compatible_effort
 }
 
 fn checkpoint_tool_definition() -> crate::llm::LlmToolDefinition {
@@ -638,15 +667,17 @@ pub async fn run_agent_step_stream(
         "native agent step starting LLM stream"
     );
     let (request, budget, context_budget_evaluation) = loop {
+        let tools = tools_with_checkpoint_tool(&session);
+        let thinking_effort = checkpoint_thinking_effort_for_session(&session, !tools.is_empty());
         let request = ChatCompletionRequest {
             model: session.model.clone(),
             messages,
-            tools: tools_with_checkpoint_tool(&session),
+            tools,
             stream: true,
             tool_choice: None,
             temperature: None,
             max_tokens: None,
-            thinking_effort: checkpoint_thinking_effort_for_session(&session),
+            thinking_effort,
             telemetry: Some(session.llm_telemetry()),
         };
         let budget = estimate_context_budget(
@@ -828,6 +859,34 @@ mod tests {
         assert_eq!(
             native_llm_handshake_timeout_from_raw(None),
             DEFAULT_NATIVE_LLM_HANDSHAKE_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn chat_completions_with_tools_omits_incompatible_thinking_effort() {
+        assert_eq!(
+            api_compatible_thinking_effort(
+                Some(LlmApiStyle::ChatCompletionsStream),
+                true,
+                Some(ThinkingEffort::Low),
+            ),
+            None
+        );
+        assert_eq!(
+            api_compatible_thinking_effort(
+                Some(LlmApiStyle::ChatCompletionsStream),
+                false,
+                Some(ThinkingEffort::Low),
+            ),
+            Some(ThinkingEffort::Low)
+        );
+        assert_eq!(
+            api_compatible_thinking_effort(
+                Some(LlmApiStyle::ResponsesStream),
+                true,
+                Some(ThinkingEffort::Low),
+            ),
+            Some(ThinkingEffort::Low)
         );
     }
 

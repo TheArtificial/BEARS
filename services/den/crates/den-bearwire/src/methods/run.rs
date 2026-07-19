@@ -244,6 +244,15 @@ fn available_model_sample(models: &[den_service::bifrost::BifrostModelMetadata])
     handles.join(", ")
 }
 
+fn pair_api_style_for_catalog_support(
+    supports_responses_api: Option<bool>,
+) -> den_llm::LlmApiStyle {
+    match supports_responses_api {
+        Some(false) => den_llm::LlmApiStyle::ChatCompletionsStream,
+        Some(true) | None => den_llm::LlmApiStyle::ResponsesStream,
+    }
+}
+
 fn ensure_pair_model_capabilities(
     entry: &BifrostCatalogEntry,
     model_handle: &str,
@@ -412,10 +421,7 @@ async fn preflight_pair_run_model(
         );
     }
     let resolved = ResolvedRunModel {
-        api_style: den_llm::preferred_api_style_for_model_with_catalog_support(
-            &resolved.handle,
-            catalog_entry.supports_responses_api,
-        ),
+        api_style: pair_api_style_for_catalog_support(catalog_entry.supports_responses_api),
         ..resolved
     };
     if available
@@ -2339,6 +2345,22 @@ mod tests {
             &available_model("openai/gpt-5.1", "gpt-5.1"),
             &resolved
         ));
+    }
+
+    #[test]
+    fn pair_api_style_prefers_responses_unless_catalog_explicitly_denies_support() {
+        assert_eq!(
+            pair_api_style_for_catalog_support(None),
+            den_llm::LlmApiStyle::ResponsesStream
+        );
+        assert_eq!(
+            pair_api_style_for_catalog_support(Some(true)),
+            den_llm::LlmApiStyle::ResponsesStream
+        );
+        assert_eq!(
+            pair_api_style_for_catalog_support(Some(false)),
+            den_llm::LlmApiStyle::ChatCompletionsStream
+        );
     }
 
     #[test]
