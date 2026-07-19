@@ -50,7 +50,7 @@ pub use logical_path::{entity_anchor_path, LogicalMemoryPath, MemoryScopeType};
 pub use manager::MemoryStoreManager;
 pub use observations::{
     create_memory_observation, get_memory_observation, mark_observation_review_queued,
-    SqliteMemoryObservation,
+    MemoryObservationStatus, SqliteMemoryObservation,
 };
 pub use promotions::{
     append_memory_promotion, promote_to_shared_core, promote_to_shared_core_at_path,
