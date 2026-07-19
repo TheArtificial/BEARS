@@ -28,7 +28,7 @@ use den_runtime::{
 };
 use den_service::{
     bears::{db as bears_db, BearProfile},
-    bifrost::BifrostCatalogSnapshot,
+    bifrost::BifrostCatalogEntry,
     client_sessions,
     conversation::events::{
         canonical_persistence_context, persist_canonical_conversation_record,
@@ -244,6 +244,20 @@ fn available_model_sample(models: &[den_service::bifrost::BifrostModelMetadata])
     handles.join(", ")
 }
 
+fn missing_capability_metadata(entry: &BifrostCatalogEntry) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if entry.supports_tools.is_none() {
+        missing.push("supports_tools");
+    }
+    if entry.supports_responses_api.is_none() {
+        missing.push("supports_responses_api");
+    }
+    if entry.supports_vision.is_none() {
+        missing.push("supports_vision");
+    }
+    missing
+}
+
 async fn resolve_pair_run_model(
     state: &DenState,
     bear: &den_service::bears::Bear,
@@ -354,20 +368,36 @@ async fn preflight_pair_run_model(
     {
         Ok(snapshot) => snapshot,
         Err(err) => {
-            tracing::warn!(
+            tracing::error!(
                 error = %err,
                 bear_id = %bear.id,
-                "Bear-scoped Bifrost catalog refresh before Pair preflight failed; proceeding without catalog validation"
+                "Bear-scoped Bifrost catalog refresh before Pair preflight failed"
             );
-            BifrostCatalogSnapshot::default()
+            return Err(CustomError::System(format!(
+                "Bifrost model catalog validation failed before run start: {err}"
+            )));
         }
     };
     let available = snapshot.models_vec();
-    let catalog_entry = snapshot.resolve(&resolved.handle);
+    let catalog_entry = snapshot.resolve(&resolved.handle).ok_or_else(|| {
+        CustomError::ValidationError(format!(
+            "selected model {} is not present in the Bifrost catalog; available models: {}",
+            resolved.handle,
+            available_model_sample(&available)
+        ))
+    })?;
+    let missing = missing_capability_metadata(catalog_entry);
+    if !missing.is_empty() {
+        return Err(CustomError::ValidationError(format!(
+            "selected model {} is missing Bifrost capability metadata: {}",
+            resolved.handle,
+            missing.join(", ")
+        )));
+    }
     let resolved = ResolvedRunModel {
         api_style: den_llm::preferred_api_style_for_model_with_catalog_support(
             &resolved.handle,
-            catalog_entry.and_then(|entry| entry.supports_responses_api),
+            catalog_entry.supports_responses_api,
         ),
         ..resolved
     };
@@ -2292,6 +2322,27 @@ mod tests {
             &available_model("openai/gpt-5.1", "gpt-5.1"),
             &resolved
         ));
+    }
+
+    #[test]
+    fn missing_capability_metadata_lists_unknown_fields() {
+        let entry = BifrostCatalogEntry {
+            available: true,
+            provider: "openai".to_string(),
+            provider_model_id: "gpt-5.6-terra".to_string(),
+            gateway_handle: "openai/gpt-5.6-terra".to_string(),
+            display_name: None,
+            context_window: 128_000,
+            max_output_tokens: Some(4096),
+            supports_tools: Some(true),
+            supports_responses_api: None,
+            supports_vision: None,
+        };
+
+        assert_eq!(
+            missing_capability_metadata(&entry),
+            vec!["supports_responses_api", "supports_vision"]
+        );
     }
 
     #[test]
