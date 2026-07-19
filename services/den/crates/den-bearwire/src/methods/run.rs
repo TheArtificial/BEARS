@@ -6,8 +6,8 @@ use std::{
 use axum::http::HeaderMap;
 use futures::StreamExt;
 use serde::Deserialize;
-use serde_json::{json, Value};
-use sqlx::{types::time::OffsetDateTime, Row};
+use serde_json::{Value, json};
+use sqlx::{Row, types::time::OffsetDateTime};
 use uuid::Uuid;
 
 use bearwire_protocol::{
@@ -27,18 +27,18 @@ use den_runtime::{
     turn_runs, turn_steps,
 };
 use den_service::{
-    bears::{db as bears_db, BearProfile},
+    DenState,
+    bears::{BearProfile, db as bears_db},
     bifrost::BifrostCatalogEntry,
     client_sessions,
     conversation::events::{
-        canonical_persistence_context, persist_canonical_conversation_record,
-        CanonicalConversationRecord, ConversationEventProvenance,
+        CanonicalConversationRecord, ConversationEventProvenance, canonical_persistence_context,
+        persist_canonical_conversation_record,
     },
-    DenState,
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::{parse_params, DEFAULT_CLIENT};
+use crate::methods::{DEFAULT_CLIENT, parse_params};
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -1341,12 +1341,15 @@ async fn finish_runtime_terminal_event(
             category,
             message,
             ..
-        }) => (
-            turn_runs::TurnRunState::Failed,
-            format!("{category:?}"),
-            "failed",
-            Some(json!({ "category": format!("{category:?}"), "message": message })),
-        ),
+        }) => {
+            let category = category.as_str();
+            (
+                turn_runs::TurnRunState::Failed,
+                category.to_string(),
+                "failed",
+                Some(json!({ "category": category, "message": message })),
+            )
+        }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => (
             turn_runs::TurnRunState::Cancelled,
             "cancelled".to_string(),

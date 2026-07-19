@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use den_core::{config::Config, DenError};
+use den_core::{DenError, config::Config};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
@@ -302,6 +302,22 @@ pub enum RuntimeErrorCategory {
     Internal,
 }
 
+impl RuntimeErrorCategory {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::Misconfigured => "misconfigured",
+            Self::InvalidIdentity => "invalid_identity",
+            Self::PermissionDenied => "permission_denied",
+            Self::ConflictPendingApproval => "conflict_pending_approval",
+            Self::Cancelled => "cancelled",
+            Self::Timeout => "timeout",
+            Self::BackendProtocol => "backend_protocol",
+            Self::Internal => "internal",
+        }
+    }
+}
+
 #[allow(async_fn_in_trait)]
 pub trait RuntimeHealthCheck {
     fn compatibility_backend_name(&self) -> &'static str;
@@ -425,4 +441,31 @@ pub fn runtime_error_is_no_active_runs_cancel(err: &DenError) -> bool {
     err.to_string()
         .to_ascii_lowercase()
         .contains("no active runs to cancel")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RuntimeErrorCategory;
+
+    #[test]
+    fn runtime_error_category_preserves_wire_strings() {
+        let cases = [
+            (RuntimeErrorCategory::Unavailable, "unavailable"),
+            (RuntimeErrorCategory::Misconfigured, "misconfigured"),
+            (RuntimeErrorCategory::InvalidIdentity, "invalid_identity"),
+            (RuntimeErrorCategory::PermissionDenied, "permission_denied"),
+            (
+                RuntimeErrorCategory::ConflictPendingApproval,
+                "conflict_pending_approval",
+            ),
+            (RuntimeErrorCategory::Cancelled, "cancelled"),
+            (RuntimeErrorCategory::Timeout, "timeout"),
+            (RuntimeErrorCategory::BackendProtocol, "backend_protocol"),
+            (RuntimeErrorCategory::Internal, "internal"),
+        ];
+
+        for (category, expected) in cases {
+            assert_eq!(category.as_str(), expected);
+        }
+    }
 }

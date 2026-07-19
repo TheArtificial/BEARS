@@ -26,6 +26,15 @@ Fixes have been applied in batches, with `cargo check`/`clippy` verification rec
 where available. This section is the recoverable log of what has been changed.
 
 ### Active Docket typing batch — in progress
+- [x] `den-protocol/src/lib.rs` and `den-bearwire/src/methods/run.rs` — runtime
+  failure categories now expose explicit stable snake-case strings through
+  `RuntimeErrorCategory::as_str()` instead of persisting/debugging
+  `format!("{category:?}")` through BearWire terminal run failure handling. Verified
+  with `cargo test -p den-protocol runtime_error_category_preserves_wire_strings`,
+  `cargo check -p den-bearwire -p den-protocol`, and `cargo clippy -p den-protocol
+  --all-targets -- -D warnings`. `cargo clippy -p den-bearwire --all-targets -- -D
+  warnings` remains blocked by the unrelated pre-existing `den-llm/src/client.rs`
+  `needless_range_loop` finding.
 - [x] `den-bearwire/src/methods/run.rs` and `den-runtime/src/agent_loop/step.rs` —
   Pair run preflight now derives API style from catalog support through a narrow typed
   helper instead of model-name heuristics, and checkpoint reasoning effort is omitted
