@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
+use crate::turn_ids::{ClientSessionId, TurnRunId};
 use crate::turn_obligations::TurnObligationState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +116,18 @@ pub async fn create_run(
     bear_id: Uuid,
     user_id: i32,
 ) -> Result<TurnRunRow, DenError> {
+    let run_id = TurnRunId::new(run_id.to_owned())?;
+    let session_id = ClientSessionId::new(session_id.to_owned())?;
+    create_run_with_ids(pool, &run_id, &session_id, bear_id, user_id).await
+}
+
+pub async fn create_run_with_ids(
+    pool: &PgPool,
+    run_id: &TurnRunId,
+    session_id: &ClientSessionId,
+    bear_id: Uuid,
+    user_id: i32,
+) -> Result<TurnRunRow, DenError> {
     let row = sqlx::query(&format!(
         r"
         INSERT INTO turn_runs (run_id, session_id, bear_id, user_id, state)
@@ -122,8 +135,8 @@ pub async fn create_run(
         RETURNING {RUN_RETURNING}
         "
     ))
-    .bind(run_id)
-    .bind(session_id)
+    .bind(run_id.as_str())
+    .bind(session_id.as_str())
     .bind(bear_id)
     .bind(user_id)
     .fetch_one(pool)
@@ -496,7 +509,10 @@ pub async fn transition_run(
 
 #[cfg(test)]
 mod tests {
+    use den_core::DenError;
+
     use super::TurnRunState;
+    use crate::turn_ids::{ClientSessionId, TurnRunId};
 
     #[test]
     fn terminal_run_with_open_obligation_is_invalid() {
@@ -513,5 +529,22 @@ mod tests {
         }
 
         assert!(TurnRunState::WaitingForClient.allows_open_obligation());
+    }
+
+    #[test]
+    fn turn_run_boundary_ids_reject_blank_strings() {
+        assert!(matches!(
+            TurnRunId::new("  "),
+            Err(DenError::ValidationError(message)) if message == "TurnRunId must not be empty"
+        ));
+        assert!(matches!(
+            ClientSessionId::new(""),
+            Err(DenError::ValidationError(message)) if message == "ClientSessionId must not be empty"
+        ));
+
+        let run_id = TurnRunId::new("run_abc").expect("valid run id");
+        let session_id = ClientSessionId::new("session_xyz").expect("valid session id");
+        assert_eq!(run_id.as_str(), "run_abc");
+        assert_eq!(session_id.as_str(), "session_xyz");
     }
 }

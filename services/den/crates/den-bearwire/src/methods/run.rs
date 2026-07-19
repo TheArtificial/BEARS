@@ -6,8 +6,8 @@ use std::{
 use axum::http::HeaderMap;
 use futures::StreamExt;
 use serde::Deserialize;
-use serde_json::{Value, json};
-use sqlx::{Row, types::time::OffsetDateTime};
+use serde_json::{json, Value};
+use sqlx::{types::time::OffsetDateTime, Row};
 use uuid::Uuid;
 
 use bearwire_protocol::{
@@ -22,23 +22,24 @@ use den_runtime::{
     runtime::bearwire_projection::wire::runtime_stream_event_to_bearwire_events,
     runtime_error_ux::{log_sample, run_failure_projection, runtime_event_history_marker},
     surface_projection::bearwire_client_method_for_action,
+    turn_ids::{ClientSessionId, TurnRunId},
     turn_obligations,
     turn_runner::TurnStartRequest,
     turn_runs, turn_steps,
 };
 use den_service::{
-    DenState,
-    bears::{BearProfile, db as bears_db},
+    bears::{db as bears_db, BearProfile},
     bifrost::BifrostCatalogEntry,
     client_sessions,
     conversation::events::{
-        CanonicalConversationRecord, ConversationEventProvenance, canonical_persistence_context,
-        persist_canonical_conversation_record,
+        canonical_persistence_context, persist_canonical_conversation_record,
+        CanonicalConversationRecord, ConversationEventProvenance,
     },
+    DenState,
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::{DEFAULT_CLIENT, parse_params};
+use crate::methods::{parse_params, DEFAULT_CLIENT};
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -1671,14 +1672,17 @@ pub(crate) async fn run_start_result(
         .await?;
     }
 
-    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let run_id = TurnRunId::new(format!("run_{}", Uuid::new_v4().simple()))?;
+    let session_run_id = run_id.to_string();
+    let session_id = ClientSessionId::new(session_id.clone())?;
+    let session_id_string = session_id.to_string();
     let superseded = settle_active_run_for_session(
         state,
-        &session_id,
+        session_id.as_str(),
         bear.id,
         user_id,
         "superseded_by_new_run",
-        Some(&run_id),
+        Some(run_id.as_str()),
     )
     .await?;
     if superseded.settled() {
@@ -1695,21 +1699,22 @@ pub(crate) async fn run_start_result(
     }
 
     let run =
-        turn_runs::create_run(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id).await?;
+        turn_runs::create_run_with_ids(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id)
+            .await?;
     let mut accepted = BearWireEvent::ephemeral(
         "run.accepted",
         json!({
-            "run_id": run_id.clone(),
-            "session_id": session_id.clone(),
+            "run_id": run_id.as_str(),
+            "session_id": session_id.as_str(),
         }),
     );
     accepted.bear_id = Some(bear.id.to_string());
     accepted.human_id = Some(user_id.to_string());
-    accepted.session_id = Some(session_id.clone());
-    accepted.run_id = Some(run_id.clone());
+    accepted.session_id = Some(session_id.to_string());
+    accepted.run_id = Some(run_id.to_string());
     let accepted = bearwire_events::append_bearwire_event(
         &state.sqlx_pool,
-        &session_id,
+        session_id.as_str(),
         Some(bear.id),
         Some(user_id),
         accepted,
@@ -1718,23 +1723,23 @@ pub(crate) async fn run_start_result(
 
     let request_id = Uuid::new_v4();
     let (cancel_handle, mut cancel_rx) = state.turn_cancellations.register(
-        session_id.clone(),
+        session_id_string.clone(),
         request_id,
         Some(upstream_target.clone()),
     );
-    let _ = cancel_handle.record_run_id(&run_id);
+    let _ = cancel_handle.record_run_id(run_id.as_str());
 
     let pool = state.sqlx_pool.clone();
     let config = state.config.clone();
     let memory_stores = state.memory_stores.clone();
     let bear_slug = bear.slug.clone();
     let bear_id = bear.id;
-    let session_for_task = session_id.clone();
+    let session_for_task = session_id_string.clone();
     let conversation_for_task = conversation_id.clone();
     let upstream_target_for_task = upstream_target.clone();
     let prompt_for_task = prompt.clone();
     let read_only_runtime_context_for_task = read_only_runtime_context.clone();
-    let run_id_for_task = run_id.clone();
+    let run_id_for_task = session_run_id.clone();
     let client_tools_for_task = client_tools.clone();
     let api_style_for_task = resolved_model.api_style;
     let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<()>();
