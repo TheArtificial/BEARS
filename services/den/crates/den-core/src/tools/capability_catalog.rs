@@ -45,6 +45,27 @@ pub struct CapabilityToolRef {
     pub schema_ref: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CapabilityRisk {
+    ApprovalRequired,
+    Mutating,
+    ExternalNetwork,
+    ReadOnly,
+    DependsOnInvokedCapabilities,
+}
+
+impl CapabilityRisk {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ApprovalRequired => "approval_required",
+            Self::Mutating => "mutating",
+            Self::ExternalNetwork => "external_network",
+            Self::ReadOnly => "read_only",
+            Self::DependsOnInvokedCapabilities => "depends_on_invoked_capabilities",
+        }
+    }
+}
+
 impl CapabilityEntry {
     fn searchable_text(&self) -> String {
         format!(
@@ -77,10 +98,10 @@ pub fn tool_descriptor_to_capability(descriptor: DenToolDescriptor) -> Capabilit
         authority: authority_for_tool(&descriptor).to_string(),
         lifetime: lifetime_for_tool(&descriptor).to_string(),
         surface: descriptor.scope.to_string(),
-        risk: risk.clone(),
+        risk: risk.as_str().to_string(),
         good_for: good_for_tool(&descriptor),
-        not_good_for: not_good_for_tool(&descriptor, &risk),
-        execution_options: execution_options_for_tool(&descriptor, &risk),
+        not_good_for: not_good_for_tool(&descriptor, risk),
+        execution_options: execution_options_for_tool(&descriptor, risk),
         tool: Some(CapabilityToolRef {
             canonical_name: descriptor.name.to_string(),
             provider_name: descriptor.provider_name.clone(),
@@ -105,7 +126,9 @@ pub fn code_mode_capability(role: BearProfile) -> CapabilityEntry {
         authority: "current Bear/session policy; only explicitly mediated capabilities".to_string(),
         lifetime: "not yet executable; catalog guidance only".to_string(),
         surface: "allowed Den capability calls".to_string(),
-        risk: "depends_on_invoked_capabilities".to_string(),
+        risk: CapabilityRisk::DependsOnInvokedCapabilities
+            .as_str()
+            .to_string(),
         good_for: vec![
             "more than a few related calls".to_string(),
             "loops or batching".to_string(),
@@ -205,20 +228,20 @@ fn compact_result(entry: &CapabilityEntry) -> Value {
     })
 }
 
-fn risk_for_tool(descriptor: &DenToolDescriptor) -> String {
+fn risk_for_tool(descriptor: &DenToolDescriptor) -> CapabilityRisk {
     if descriptor.approval_policy != "never" {
-        return "approval_required".to_string();
+        return CapabilityRisk::ApprovalRequired;
     }
     if descriptor
         .permissions
         .iter()
         .any(|permission| permission.ends_with(".write") || permission.contains("write"))
     {
-        "mutating".to_string()
+        CapabilityRisk::Mutating
     } else if descriptor.domain == "web" {
-        "external_network".to_string()
+        CapabilityRisk::ExternalNetwork
     } else {
-        "read_only".to_string()
+        CapabilityRisk::ReadOnly
     }
 }
 
@@ -268,9 +291,9 @@ fn good_for_tool(descriptor: &DenToolDescriptor) -> Vec<String> {
     )]
 }
 
-fn not_good_for_tool(descriptor: &DenToolDescriptor, risk: &str) -> Vec<String> {
+fn not_good_for_tool(descriptor: &DenToolDescriptor, risk: CapabilityRisk) -> Vec<String> {
     let mut notes = vec!["assuming access to a different surface with a similar name".to_string()];
-    if risk != "read_only" {
+    if risk != CapabilityRisk::ReadOnly {
         notes.push("unreviewed bulk execution; consider direct review or Code Mode only with explicit approval".to_string());
     }
     if descriptor.provider == "den" {
@@ -281,9 +304,12 @@ fn not_good_for_tool(descriptor: &DenToolDescriptor, risk: &str) -> Vec<String> 
     notes
 }
 
-fn execution_options_for_tool(_descriptor: &DenToolDescriptor, risk: &str) -> Vec<String> {
+fn execution_options_for_tool(_descriptor: &DenToolDescriptor, risk: CapabilityRisk) -> Vec<String> {
     let mut options = vec!["direct invocation".to_string()];
-    if risk == "read_only" || risk == "external_network" {
+    if matches!(
+        risk,
+        CapabilityRisk::ReadOnly | CapabilityRisk::ExternalNetwork
+    ) {
         options.push("Code Mode when batching/composition is available".to_string());
     }
     options
@@ -293,6 +319,18 @@ fn execution_options_for_tool(_descriptor: &DenToolDescriptor, risk: &str) -> Ve
 mod tests {
     use super::*;
     use crate::tools::descriptor::builtin_den_tool_descriptors_for_profile;
+
+    #[test]
+    fn capability_risk_preserves_wire_strings() {
+        assert_eq!(CapabilityRisk::ApprovalRequired.as_str(), "approval_required");
+        assert_eq!(CapabilityRisk::Mutating.as_str(), "mutating");
+        assert_eq!(CapabilityRisk::ExternalNetwork.as_str(), "external_network");
+        assert_eq!(CapabilityRisk::ReadOnly.as_str(), "read_only");
+        assert_eq!(
+            CapabilityRisk::DependsOnInvokedCapabilities.as_str(),
+            "depends_on_invoked_capabilities"
+        );
+    }
 
     #[test]
     fn search_finds_memory_tool_by_tag_and_query() {
