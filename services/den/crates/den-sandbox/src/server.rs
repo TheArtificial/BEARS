@@ -36,6 +36,67 @@ const REAPER_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_LOG_TAIL_BYTES: u64 = 64 * 1024;
 const DEFAULT_MAX_PATCH_BYTES: u64 = 512 * 1024;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SandboxErrorKind {
+    Unauthorized,
+    UnimplementedType,
+    ReadonlyWriteConflict,
+    UnknownRoot,
+    UnknownImage,
+    PublishUnsupported,
+    DefaultRefRefused,
+    RootSyncFailed,
+    InvalidManagedConfig,
+    ManagedPersistFailed,
+    RootsError,
+    InvalidReference,
+    BuildUnavailable,
+    ImageInUse,
+    RemoveFailed,
+    UnknownOperation,
+    RuntimeUnavailable,
+    QueueFull,
+    BackendError,
+    NoImage,
+    BindSource,
+    UnknownSandbox,
+    NoWorkspace,
+    DiffFailed,
+    PublishFailed,
+}
+
+impl SandboxErrorKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unauthorized => "unauthorized",
+            Self::UnimplementedType => "unimplemented_type",
+            Self::ReadonlyWriteConflict => "readonly_write_conflict",
+            Self::UnknownRoot => "unknown_root",
+            Self::UnknownImage => "unknown_image",
+            Self::PublishUnsupported => "publish_unsupported",
+            Self::DefaultRefRefused => "default_ref_refused",
+            Self::RootSyncFailed => "root_sync_failed",
+            Self::InvalidManagedConfig => "invalid_managed_config",
+            Self::ManagedPersistFailed => "managed_persist_failed",
+            Self::RootsError => "roots_error",
+            Self::InvalidReference => "invalid_reference",
+            Self::BuildUnavailable => "build_unavailable",
+            Self::ImageInUse => "image_in_use",
+            Self::RemoveFailed => "remove_failed",
+            Self::UnknownOperation => "unknown_operation",
+            Self::RuntimeUnavailable => "runtime_unavailable",
+            Self::QueueFull => "queue_full",
+            Self::BackendError => "backend_error",
+            Self::NoImage => "no_image",
+            Self::BindSource => "bind_source",
+            Self::UnknownSandbox => "unknown_sandbox",
+            Self::NoWorkspace => "no_workspace",
+            Self::DiffFailed => "diff_failed",
+            Self::PublishFailed => "publish_failed",
+        }
+    }
+}
+
 /// Settings the provider needs, extracted from [`den_core::config::Config`]
 /// at the composition root so this crate never reads the environment itself.
 #[derive(Clone, Debug)]
@@ -236,17 +297,21 @@ async fn require_service_token(
     } else {
         error_response(
             StatusCode::UNAUTHORIZED,
-            "unauthorized",
+            SandboxErrorKind::Unauthorized,
             "missing or invalid sandbox service token",
         )
     }
 }
 
-fn error_response(status: StatusCode, kind: &str, message: impl Into<String>) -> Response {
+fn error_response(
+    status: StatusCode,
+    kind: SandboxErrorKind,
+    message: impl Into<String>,
+) -> Response {
     (
         status,
         Json(ErrorBody {
-            kind: kind.to_string(),
+            kind: kind.as_str().to_string(),
             error: message.into(),
         }),
     )
@@ -255,57 +320,66 @@ fn error_response(status: StatusCode, kind: &str, message: impl Into<String>) ->
 
 fn policy_error_response(err: &PolicyError) -> Response {
     let (status, kind) = match err {
-        PolicyError::UnimplementedType { .. } => {
-            (StatusCode::UNPROCESSABLE_ENTITY, "unimplemented_type")
+        PolicyError::UnimplementedType { .. } => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            SandboxErrorKind::UnimplementedType,
+        ),
+        PolicyError::ReadonlyWriteConflict => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            SandboxErrorKind::ReadonlyWriteConflict,
+        ),
+        PolicyError::RuntimeUnavailable { .. } => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            SandboxErrorKind::RuntimeUnavailable,
+        ),
+        PolicyError::QueueFull { .. } => {
+            (StatusCode::TOO_MANY_REQUESTS, SandboxErrorKind::QueueFull)
         }
-        PolicyError::ReadonlyWriteConflict => {
-            (StatusCode::UNPROCESSABLE_ENTITY, "readonly_write_conflict")
-        }
-        PolicyError::RuntimeUnavailable { .. } => {
-            (StatusCode::SERVICE_UNAVAILABLE, "runtime_unavailable")
-        }
-        PolicyError::QueueFull { .. } => (StatusCode::TOO_MANY_REQUESTS, "queue_full"),
-        PolicyError::UnknownRoot { .. } => (StatusCode::NOT_FOUND, "unknown_root"),
+        PolicyError::UnknownRoot { .. } => (StatusCode::NOT_FOUND, SandboxErrorKind::UnknownRoot),
     };
     error_response(status, kind, err.to_string())
 }
 
 fn roots_error_response(err: &RootsError) -> Response {
     match err {
-        RootsError::UnknownRoot(_) => {
-            error_response(StatusCode::NOT_FOUND, "unknown_root", err.to_string())
-        }
+        RootsError::UnknownRoot(_) => error_response(
+            StatusCode::NOT_FOUND,
+            SandboxErrorKind::UnknownRoot,
+            err.to_string(),
+        ),
         RootsError::UnknownImage { .. } => error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "unknown_image",
+            SandboxErrorKind::UnknownImage,
             err.to_string(),
         ),
         RootsError::PublishUnsupported { .. } => error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "publish_unsupported",
+            SandboxErrorKind::PublishUnsupported,
             err.to_string(),
         ),
         RootsError::DefaultRefRefused { .. } => error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "default_ref_refused",
+            SandboxErrorKind::DefaultRefRefused,
             err.to_string(),
         ),
-        RootsError::Git { .. } => {
-            error_response(StatusCode::CONFLICT, "root_sync_failed", err.to_string())
-        }
+        RootsError::Git { .. } => error_response(
+            StatusCode::CONFLICT,
+            SandboxErrorKind::RootSyncFailed,
+            err.to_string(),
+        ),
         RootsError::InvalidManagedConfig(_) => error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_managed_config",
+            SandboxErrorKind::InvalidManagedConfig,
             err.to_string(),
         ),
         RootsError::ManagedPersist(_) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "managed_persist_failed",
+            SandboxErrorKind::ManagedPersistFailed,
             err.to_string(),
         ),
         _ => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "roots_error",
+            SandboxErrorKind::RootsError,
             err.to_string(),
         ),
     }
@@ -368,7 +442,7 @@ fn image_reference_is_valid(reference: &str) -> bool {
 fn invalid_reference_response(reference: &str) -> Response {
     error_response(
         StatusCode::UNPROCESSABLE_ENTITY,
-        "invalid_reference",
+        SandboxErrorKind::InvalidReference,
         format!("invalid image reference '{reference}'"),
     )
 }
@@ -454,7 +528,7 @@ async fn build_image(
     else {
         return error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "build_unavailable",
+            SandboxErrorKind::BuildUnavailable,
             "image builds are disabled: SANDBOX_BUILD_CONTEXT_DIR is not configured",
         );
     };
@@ -525,11 +599,13 @@ async fn remove_image(
     match state.backend.remove_image(reference).await {
         Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
         Ok(Err(detail)) if detail.contains("is being used") || detail.contains("in use") => {
-            error_response(StatusCode::CONFLICT, "image_in_use", detail)
+            error_response(StatusCode::CONFLICT, SandboxErrorKind::ImageInUse, detail)
         }
-        Ok(Err(detail)) => {
-            error_response(StatusCode::UNPROCESSABLE_ENTITY, "remove_failed", detail)
-        }
+        Ok(Err(detail)) => error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            SandboxErrorKind::RemoveFailed,
+            detail,
+        ),
         Err(err) => backend_error_response(&err),
     }
 }
@@ -546,7 +622,7 @@ async fn get_operation(
         Some(descriptor) => Json(descriptor).into_response(),
         None => error_response(
             StatusCode::NOT_FOUND,
-            "unknown_operation",
+            SandboxErrorKind::UnknownOperation,
             format!("operation {id} not found (operations do not survive provider restarts)"),
         ),
     }
@@ -556,10 +632,14 @@ fn backend_error_response(err: &BackendError) -> Response {
     match err {
         BackendError::RuntimeUnavailable(_) => error_response(
             StatusCode::SERVICE_UNAVAILABLE,
-            "runtime_unavailable",
+            SandboxErrorKind::RuntimeUnavailable,
             err.to_string(),
         ),
-        _ => error_response(StatusCode::BAD_GATEWAY, "backend_error", err.to_string()),
+        _ => error_response(
+            StatusCode::BAD_GATEWAY,
+            SandboxErrorKind::BackendError,
+            err.to_string(),
+        ),
     }
 }
 
@@ -621,7 +701,7 @@ async fn create_sandbox(
     if image.trim().is_empty() {
         return error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "no_image",
+            SandboxErrorKind::NoImage,
             "no image in request, no catalog default, and no SANDBOX_IMAGE configured",
         );
     }
@@ -757,7 +837,13 @@ async fn provision(
         &state.config.workspaces_dir,
         state.config.workspaces_host_dir.as_deref(),
     )
-    .map_err(|detail| error_response(StatusCode::INTERNAL_SERVER_ERROR, "bind_source", detail))?;
+    .map_err(|detail| {
+        error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            SandboxErrorKind::BindSource,
+            detail,
+        )
+    })?;
     let spec = ProvisionSpec {
         id: sandbox_id.to_string(),
         workspace,
@@ -857,7 +943,7 @@ async fn get_sandbox(
         Some(record) => Json(record.descriptor(state.backend.strength_label())).into_response(),
         None => error_response(
             StatusCode::NOT_FOUND,
-            "unknown_sandbox",
+            SandboxErrorKind::UnknownSandbox,
             format!("no sandbox {id}"),
         ),
     }
@@ -876,7 +962,7 @@ async fn sandbox_logs(
     if !state.registry.lock().await.contains_key(&id) {
         return error_response(
             StatusCode::NOT_FOUND,
-            "unknown_sandbox",
+            SandboxErrorKind::UnknownSandbox,
             format!("no sandbox {id}"),
         );
     }
@@ -911,7 +997,7 @@ async fn sandbox_diff(
             None => {
                 return error_response(
                     StatusCode::NOT_FOUND,
-                    "unknown_sandbox",
+                    SandboxErrorKind::UnknownSandbox,
                     format!("no sandbox {id}"),
                 )
             }
@@ -920,7 +1006,7 @@ async fn sandbox_diff(
     let Some(workspace) = workspace else {
         return error_response(
             StatusCode::CONFLICT,
-            "no_workspace",
+            SandboxErrorKind::NoWorkspace,
             "sandbox has no workspace (adopted orphan or cleanup already ran)",
         );
     };
@@ -930,7 +1016,11 @@ async fn sandbox_diff(
         .min(state.config.max_log_bytes.max(DEFAULT_MAX_PATCH_BYTES));
     match compute_diff(&workspace, max_patch_bytes).await {
         Ok(diff) => Json(diff).into_response(),
-        Err(detail) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "diff_failed", detail),
+        Err(detail) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            SandboxErrorKind::DiffFailed,
+            detail,
+        ),
     }
 }
 
@@ -1010,7 +1100,7 @@ async fn destroy_sandbox(
     if !state.registry.lock().await.contains_key(&id) {
         return error_response(
             StatusCode::NOT_FOUND,
-            "unknown_sandbox",
+            SandboxErrorKind::UnknownSandbox,
             format!("no sandbox {id}"),
         );
     }
@@ -1073,7 +1163,7 @@ async fn publish_sandbox(
             None => {
                 return error_response(
                     StatusCode::NOT_FOUND,
-                    "unknown_sandbox",
+                    SandboxErrorKind::UnknownSandbox,
                     format!("no sandbox {id}"),
                 )
             }
@@ -1087,7 +1177,7 @@ async fn publish_sandbox(
     let Some(workspace) = workspace else {
         return error_response(
             StatusCode::CONFLICT,
-            "no_workspace",
+            SandboxErrorKind::NoWorkspace,
             "sandbox has no workspace (adopted orphan or cleanup already ran)",
         );
     };
@@ -1111,9 +1201,11 @@ async fn publish_sandbox(
             Json(outcome).into_response()
         }
         // A push rejection is a conflict with upstream state, not a sync issue.
-        Err(err @ RootsError::Git { .. }) => {
-            error_response(StatusCode::CONFLICT, "publish_failed", err.to_string())
-        }
+        Err(err @ RootsError::Git { .. }) => error_response(
+            StatusCode::CONFLICT,
+            SandboxErrorKind::PublishFailed,
+            err.to_string(),
+        ),
         Err(err) => roots_error_response(&err),
     }
 }
@@ -1328,6 +1420,19 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::util::ServiceExt;
 
+    #[test]
+    fn sandbox_error_kind_preserves_wire_strings() {
+        assert_eq!(SandboxErrorKind::UnknownRoot.as_str(), "unknown_root");
+        assert_eq!(
+            SandboxErrorKind::RuntimeUnavailable.as_str(),
+            "runtime_unavailable"
+        );
+        assert_eq!(
+            SandboxErrorKind::InvalidManagedConfig.as_str(),
+            "invalid_managed_config"
+        );
+    }
+
     fn test_config(token: &str) -> SandboxServerConfig {
         SandboxServerConfig {
             service_token: token.into(),
@@ -1416,7 +1521,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(error.kind, "unknown_root");
+        assert_eq!(error.kind, SandboxErrorKind::UnknownRoot.as_str());
     }
 
     #[tokio::test]
@@ -1548,7 +1653,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(error.kind, "unknown_image");
+        assert_eq!(error.kind, SandboxErrorKind::UnknownImage.as_str());
         assert!(
             error.error.contains("base"),
             "lists catalog: {}",
@@ -1690,7 +1795,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(error.kind, "invalid_managed_config");
+        assert_eq!(error.kind, SandboxErrorKind::InvalidManagedConfig.as_str());
         let _ = std::fs::remove_dir_all(&workspaces_dir);
     }
 
@@ -1729,7 +1834,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(error.kind, "invalid_reference");
+        assert_eq!(error.kind, SandboxErrorKind::InvalidReference.as_str());
 
         // Builds are disabled without a configured context dir.
         let response = app
@@ -1747,7 +1852,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(error.kind, "build_unavailable");
+        assert_eq!(error.kind, SandboxErrorKind::BuildUnavailable.as_str());
 
         // Unknown operations 404 with the restart caveat.
         let response = app
@@ -1763,7 +1868,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let error: ErrorBody = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(error.kind, "unknown_operation");
+        assert_eq!(error.kind, SandboxErrorKind::UnknownOperation.as_str());
 
         // Operations listing is empty but well-formed.
         let response = app

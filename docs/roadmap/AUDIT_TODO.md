@@ -25,6 +25,13 @@ signals unless a Docket task explicitly scopes them out.
 Fixes have been applied in batches, with `cargo check`/`clippy` verification recorded
 where available. This section is the recoverable log of what has been changed.
 
+### Active Docket typing batch — in progress
+- [x] `den-sandbox/src/server.rs` — sandbox provider error response kinds now use a local
+  `SandboxErrorKind` enum instead of arbitrary `&str` plumbing, preserving stable wire
+  strings through `as_str()`. Verified with `cargo test -p den-sandbox
+  sandbox_error_kind_preserves_wire_strings` and `cargo clippy -p den-sandbox
+  --all-targets -- -D warnings`.
+
 ### Batch 1 — panic-safety + clippy-gate green (upstream crates) — DONE
 Key discovery: the repo clippy gate (`cargo clippy --workspace --all-targets -- -D
 warnings`, see `scripts/lint.sh`) was **red** under clippy 1.96.1. Fixing it is
