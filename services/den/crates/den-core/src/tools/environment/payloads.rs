@@ -4,6 +4,7 @@
 //! the per-call context plus runtime-supplied snapshots (memory status, adapter
 //! runtime). Identity comes in as the runtime-neutral [`CurrentUser`] DTO.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::BearProfile;
@@ -19,21 +20,55 @@ use crate::tools::{
     work_surface::infer_work_surface_hint,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrustedWorkspaceSnapshot {
+    cwd: Option<String>,
+    #[serde(default)]
+    roots: Vec<String>,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+impl TrustedWorkspaceSnapshot {
+    fn from_context(context: &DenToolInvocationContext) -> Self {
+        Self {
+            cwd: context.workspace_roots.first().cloned(),
+            roots: context.workspace_roots.clone(),
+            source: Some(if context.workspace_roots.is_empty() {
+                "none".to_string()
+            } else {
+                "trusted_session".to_string()
+            }),
+        }
+    }
+
+    fn from_adapter_runtime(adapter_runtime: Option<&Value>) -> Option<Self> {
+        adapter_runtime
+            .and_then(|value| value.get("trusted_workspace"))
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .ok()
+            .flatten()
+    }
+
+    fn into_value(self) -> Value {
+        json!({
+            "cwd": self.cwd,
+            "roots": self.roots,
+            "source": self.source,
+        })
+    }
+}
+
 fn trusted_workspace_from_context(
     context: &DenToolInvocationContext,
     adapter_runtime: Option<&Value>,
 ) -> Value {
-    if let Some(trusted) = adapter_runtime
-        .and_then(|value| value.get("trusted_workspace"))
-        .cloned()
-    {
-        return trusted;
-    }
-    json!({
-        "cwd": context.workspace_roots.first().cloned(),
-        "roots": context.workspace_roots,
-        "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" },
-    })
+    TrustedWorkspaceSnapshot::from_adapter_runtime(adapter_runtime)
+        .unwrap_or_else(|| TrustedWorkspaceSnapshot::from_context(context))
+        .into_value()
 }
 
 fn memory_context_layers(

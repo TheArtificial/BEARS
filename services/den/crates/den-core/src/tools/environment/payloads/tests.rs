@@ -339,6 +339,32 @@ fn bear_environment_prefers_trusted_workspace_snapshot_when_present() {
 }
 
 #[test]
+fn bear_environment_rejects_unknown_trusted_workspace_fields() {
+    let context = pair_context();
+    let payload = bear_environment_payload(
+        &context,
+        BearProfile::Pair,
+        None,
+        2,
+        &json!({ "configured": false, "available": false }),
+        &json!({ "status": "ok" }),
+        &json!({
+            "status": "ok",
+            "trusted_workspace": {
+                "cwd": "/untrusted/typo",
+                "roots": ["/untrusted/typo"],
+                "source": "trusted_session",
+                "roooots": ["/typo"]
+            }
+        }),
+    );
+
+    assert_eq!(payload["workspace"]["cwd"], "/workspace");
+    assert_eq!(payload["workspace"]["roots"], json!(["/workspace"]));
+    assert_eq!(payload["workspace"]["source"], "trusted_session");
+}
+
+#[test]
 fn session_info_context_surfaces_degrade_to_explicit_unknowns() {
     let context = pair_context();
     let payload =
