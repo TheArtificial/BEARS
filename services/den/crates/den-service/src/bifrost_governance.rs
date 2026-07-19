@@ -161,15 +161,51 @@ fn bifrost_virtual_key_quota_transient_error(err: &DenError) -> bool {
         || text.contains("authentication is not enabled")
 }
 
+fn capability_string_list(
+    attributes: &serde_json::Value,
+    field: &'static str,
+    model_handle: &str,
+) -> Result<Option<Vec<String>>, DenError> {
+    let Some(value) = attributes.get(field) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+
+    let parsed = match value {
+        serde_json::Value::Array(_) => serde_json::from_value::<Vec<String>>(value.clone()),
+        serde_json::Value::String(encoded) => serde_json::from_str::<Vec<String>>(encoded.trim()),
+        _ => {
+            return Err(DenError::Parsing(format!(
+                "Bifrost capability metadata field {field} for {model_handle} must be an array of strings or a JSON-encoded array string; got {value}"
+            )));
+        }
+    };
+    parsed.map(Some).map_err(|err| {
+        DenError::Parsing(format!(
+            "Bifrost capability metadata field {field} for {model_handle} is malformed: {err}; value: {value}"
+        ))
+    })
+}
+
 impl ModelDetailsEntry {
-    fn into_metadata(self) -> Option<crate::bifrost::BifrostModelMetadata> {
+    fn into_metadata(self) -> Result<Option<crate::bifrost::BifrostModelMetadata>, DenError> {
         let provider = self.provider.trim().to_string();
         let model = self.name.trim().to_string();
-        if provider.is_empty()
-            || model.is_empty()
-            || den_llm::model_registry::is_routing_wildcard_model_handle(&model)
-        {
-            return None;
+        if provider.is_empty() {
+            return Err(DenError::Parsing(format!(
+                "Bifrost /api/models/details returned a model with an empty provider: {:?}",
+                self.name
+            )));
+        }
+        if model.is_empty() {
+            return Err(DenError::Parsing(format!(
+                "Bifrost /api/models/details returned an empty model name for provider {provider}"
+            )));
+        }
+        if den_llm::model_registry::is_routing_wildcard_model_handle(&model) {
+            return Ok(None);
         }
         let handle = if model.contains('/') {
             model.clone()
@@ -177,24 +213,17 @@ impl ModelDetailsEntry {
             format!("{provider}/{model}")
         };
         let attributes = &self.additional_attributes;
-        let supported_parameters = attributes
-            .get("supported_parameters")
-            .and_then(serde_json::Value::as_array);
-        let supported_methods = attributes
-            .get("supported_methods")
-            .and_then(serde_json::Value::as_array);
-        let supports_tools = supported_parameters.map(|parameters| {
+        let supported_parameters =
+            capability_string_list(attributes, "supported_parameters", &handle)?;
+        let supported_methods = capability_string_list(attributes, "supported_methods", &handle)?;
+        let supports_tools = supported_parameters.as_ref().map(|parameters| {
             parameters
                 .iter()
-                .filter_map(serde_json::Value::as_str)
-                .any(|value| matches!(value, "tools" | "tool_choice" | "function_calling"))
+                .any(|value| matches!(value.as_str(), "tools" | "tool_choice" | "function_calling"))
         });
-        let supports_responses_api = supported_methods.map(|methods| {
-            methods
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .any(|value| value.contains("response"))
-        });
+        let supports_responses_api = supported_methods
+            .as_ref()
+            .map(|methods| methods.iter().any(|value| value.contains("response")));
         let supports_vision = self.architecture.as_ref().map(|architecture| {
             architecture
                 .input_modalities
@@ -203,24 +232,38 @@ impl ModelDetailsEntry {
                 .flatten()
                 .any(|value| matches!(value.as_str(), "image" | "vision"))
         });
-        Some(crate::bifrost::BifrostModelMetadata {
+        let context_window = self
+            .context_length
+            .or(self.max_input_tokens)
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|err| {
+                DenError::Parsing(format!(
+                    "Bifrost context window for {handle} is out of range: {err}"
+                ))
+            })?
+            .unwrap_or(0);
+        let max_output_tokens = self
+            .max_output_tokens
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|err| {
+                DenError::Parsing(format!(
+                    "Bifrost max output tokens for {handle} is out of range: {err}"
+                ))
+            })?;
+        Ok(Some(crate::bifrost::BifrostModelMetadata {
             handle,
             provider,
             model: self.name,
             display_name: None,
-            context_window: self
-                .context_length
-                .or(self.max_input_tokens)
-                .and_then(|value| u32::try_from(value).ok())
-                .unwrap_or(0),
-            max_output_tokens: self
-                .max_output_tokens
-                .and_then(|value| u32::try_from(value).ok()),
+            context_window,
+            max_output_tokens,
             enabled: true,
             supports_tools,
             supports_responses_api,
             supports_vision,
-        })
+        }))
     }
 }
 
@@ -493,7 +536,10 @@ impl BifrostGovernanceClient {
         let mut models = payload
             .models
             .into_iter()
-            .filter_map(ModelDetailsEntry::into_metadata)
+            .map(ModelDetailsEntry::into_metadata)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
             .collect::<Vec<_>>();
         models.sort_by(|left, right| left.handle.cmp(&right.handle));
         models.dedup_by(|left, right| left.handle == right.handle);

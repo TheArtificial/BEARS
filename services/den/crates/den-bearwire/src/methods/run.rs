@@ -244,7 +244,19 @@ fn available_model_sample(models: &[den_service::bifrost::BifrostModelMetadata])
     handles.join(", ")
 }
 
-fn missing_capability_metadata(entry: &BifrostCatalogEntry) -> Vec<&'static str> {
+fn ensure_pair_model_capabilities(
+    entry: &BifrostCatalogEntry,
+    model_handle: &str,
+) -> Result<(), CustomError> {
+    if entry.supports_tools == Some(false) {
+        return Err(CustomError::ValidationError(format!(
+            "selected model {model_handle} does not support tool calling, which is required for Pair runs"
+        )));
+    }
+    Ok(())
+}
+
+fn unknown_capability_metadata(entry: &BifrostCatalogEntry) -> Vec<&'static str> {
     let mut missing = Vec::new();
     if entry.supports_tools.is_none() {
         missing.push("supports_tools");
@@ -386,13 +398,18 @@ async fn preflight_pair_run_model(
             available_model_sample(&available)
         ))
     })?;
-    let missing = missing_capability_metadata(catalog_entry);
-    if !missing.is_empty() {
-        return Err(CustomError::ValidationError(format!(
-            "selected model {} is missing Bifrost capability metadata: {}",
-            resolved.handle,
-            missing.join(", ")
-        )));
+    ensure_pair_model_capabilities(catalog_entry, &resolved.handle)?;
+    let unknown_capabilities = unknown_capability_metadata(catalog_entry);
+    if !unknown_capabilities.is_empty() {
+        tracing::warn!(
+            session_id,
+            bear_id = %bear.id,
+            conversation_id,
+            model_handle = %resolved.handle,
+            unknown_capabilities = %unknown_capabilities.join(", "),
+            catalog_source = %snapshot.source,
+            "Bifrost omitted optional model capability metadata; using runtime fallbacks"
+        );
     }
     let resolved = ResolvedRunModel {
         api_style: den_llm::preferred_api_style_for_model_with_catalog_support(
@@ -2325,7 +2342,49 @@ mod tests {
     }
 
     #[test]
-    fn missing_capability_metadata_lists_unknown_fields() {
+    fn pair_model_capabilities_allow_unknown_tool_support() {
+        let entry = BifrostCatalogEntry {
+            available: true,
+            provider: "openai".to_string(),
+            provider_model_id: "gpt-5.6-terra".to_string(),
+            gateway_handle: "openai/gpt-5.6-terra".to_string(),
+            display_name: None,
+            context_window: 128_000,
+            max_output_tokens: Some(4096),
+            supports_tools: None,
+            supports_responses_api: None,
+            supports_vision: None,
+        };
+
+        ensure_pair_model_capabilities(&entry, &entry.gateway_handle)
+            .expect("unknown optional metadata must not block Pair");
+    }
+
+    #[test]
+    fn pair_model_capabilities_reject_explicit_tool_denial() {
+        let mut entry = BifrostCatalogEntry {
+            available: true,
+            provider: "openai".to_string(),
+            provider_model_id: "gpt-no-tools".to_string(),
+            gateway_handle: "openai/gpt-no-tools".to_string(),
+            display_name: None,
+            context_window: 128_000,
+            max_output_tokens: Some(4096),
+            supports_tools: Some(false),
+            supports_responses_api: None,
+            supports_vision: None,
+        };
+
+        let err = ensure_pair_model_capabilities(&entry, &entry.gateway_handle)
+            .expect_err("explicit tool denial must block Pair");
+        assert!(err.to_string().contains("does not support tool calling"));
+        entry.supports_tools = Some(true);
+        ensure_pair_model_capabilities(&entry, &entry.gateway_handle)
+            .expect("explicit tool support must allow Pair");
+    }
+
+    #[test]
+    fn unknown_capability_metadata_lists_unknown_fields() {
         let entry = BifrostCatalogEntry {
             available: true,
             provider: "openai".to_string(),
@@ -2340,7 +2399,7 @@ mod tests {
         };
 
         assert_eq!(
-            missing_capability_metadata(&entry),
+            unknown_capability_metadata(&entry),
             vec!["supports_responses_api", "supports_vision"]
         );
     }
