@@ -6,9 +6,9 @@
 
 [Bifrost](https://github.com/maximhq/bifrost) is the BEARS **model gateway**: OpenAI-compatible `/v1` API, multi-provider routing. Den calls Bifrost using `LLM_API_URL`.
 
-This repository uses **file-based (GitOps) configuration**: `services/bifrost/config.json` is baked into the configured Bifrost image and placed at `/app/data/config.json` at startup. The file sets `config_store.enabled: false`, so Bifrost treats `config.json` as the source of truth instead of reconciling through its SQLite/UI-backed config database. This prevents stale DB-backed provider/key rows from shadowing the checked-in provider configuration.
+This repository uses **file-based (GitOps) provider configuration**: `services/bifrost/config.json` is baked into the configured Bifrost image and placed at `/app/data/config.json` at startup. The SQLite config store remains enabled because Bifrost governance persists Den-provisioned Bear virtual keys there; the checked-in file remains the declared source for provider configuration.
 
-Model availability is driven entirely by the **live provider catalog**: the OpenAI key uses a wildcard (`"models": ["*"]`), so `/v1/models` reflects whatever the provider exposes. There is **no BEARS metadata sidecar** — Den reads availability and capability metadata from `/v1/models` directly.
+Model availability starts with the **live provider catalog** and is filtered by the OpenAI provider key's explicit `models` allowlist in `services/bifrost/config.json`. Adding a model as a Bear default in Den does not grant it at the gateway: operators must also add it to this Bifrost allowlist and redeploy Bifrost. There is **no BEARS metadata sidecar** — Den reads the resulting availability and capability metadata from `/v1/models` directly.
 
 The root compose stack also runs `bears-bifrost-valkey` (`valkey/valkey-bundle`) for Bifrost Redis/Valkey-compatible storage. Bifrost uses it as the `vector_store` for direct hash caching (`semantic_cache` with `dimension: 1`), and Den sends `x-bf-session-id`, `x-bf-cache-key`, and `x-bf-cache-type: direct` on LLM requests.
 
