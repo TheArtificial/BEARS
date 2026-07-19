@@ -469,7 +469,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
         )
         .map_err(|e| {
             tracing::error!("Failed to create sandbox provider: {}", e);
-            StartupError::Message(format!("sandbox provider startup: {e}"))
+            StartupError::SandboxProvider(e.to_string())
         })?;
 
         task_set.spawn(async move {

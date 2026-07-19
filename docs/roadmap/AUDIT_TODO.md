@@ -31,6 +31,14 @@ where available. This section is the recoverable log of what has been changed.
   strings through `as_str()`. Verified with `cargo test -p den-sandbox
   sandbox_error_kind_preserves_wire_strings` and `cargo clippy -p den-sandbox
   --all-targets -- -D warnings`.
+- [x] `den/src/startup.rs` — startup configuration failures now use distinct
+  `StartupError` variants (`MissingDatabaseUrl`, `MissingJwtSecret`, `MissingLlmApiUrl`)
+  instead of the former catch-all message variant, preserving the existing operator-facing
+  messages through `thiserror`. `den/src/lib.rs` now maps sandbox provider startup errors
+  through `StartupError::SandboxProvider`. Verified with `cargo test -p den startup::tests`
+  and `cargo check -p den -p den-runtime`. Full `cargo clippy -p den --all-targets -- -D
+  warnings` is still blocked by unrelated pre-existing clippy findings in `den-llm` and
+  `src/core/tools/workflow/mod.rs`.
 
 ### Batch 1 — panic-safety + clippy-gate green (upstream crates) — DONE
 Key discovery: the repo clippy gate (`cargo clippy --workspace --all-targets -- -D
@@ -186,7 +194,7 @@ tests are verified to COMPILE only — they were not executed (no database avail
 - [x] `internal_tools.rs:106` — `raw.to_str().unwrap_or_default()` silently treats non-UTF8 Authorization header as empty/unauthorized — add a comment, easy to misread as a bug. **DONE** (clarity batch): added comment explaining invalid non-UTF8 Authorization values cannot match the configured token and are intentionally unauthorized.
 - [x] `seeds.rs:145` — `ensure_bear(pool, slug, _config)` has unused `_config` param — wire through or drop. **DONE** (cleanup batch): removed the unused parameter and updated the local caller; root `den` clippy green.
 - [x] `seeds.rs:116,118` — allocates owned `String`s from `&'static str` constants inconsistently with borrow-friendly style elsewhere. **DONE** (borrow cleanup): `ensure_user` no longer allocates a username just for lookup after `user_by_username_opt` was changed to take `&str`; root `den` clippy green.
-- [x] `startup.rs:11` — `StartupError::Message`/`Tracing`/`SessionStore` are stringly-typed catch-alls inside an otherwise well-structured `thiserror` enum — give truly distinct errors their own variants. **DEFERRED**: cross-cutting error-model redesign; too broad for TODO item, concrete panic/swallowing issues remain actionable.
+- [x] `startup.rs:11` — `StartupError::Message`/`Tracing`/`SessionStore` are stringly-typed catch-alls inside an otherwise well-structured `thiserror` enum — give truly distinct errors their own variants. **DONE** (startup typing batch): removed `StartupError::Message` and gave runtime config failures plus sandbox provider startup their own variants; retained `Tracing`/`SessionStore` as boundary wrappers for external error strings.
 - [x] `startup.rs:43-52` — `sqlx_migrate_ignore_missing_from_env` hand-rolls bool-env parsing instead of a shared helper/`.parse::<bool>()`. **DONE** (cleanup batch): uses `trim().parse::<bool>()` with default-false fallback for unset/invalid values; root `den` clippy green.
 - [x] `reindex.rs:43` — `--help` calls `std::process::exit(0)` inside a function typed to return `anyhow::Result`, mixing process-exit side effects into a "pure" parser. **DONE** (CLI cleanup): parser returns `Ok(None)` instead of exiting; root `den` clippy green.
 - [x] `lib.rs:39-94` — `NativeWebChatRuntime` composition-root glue has no doc comment explaining the indirection, unlike other documented composition decisions in the same file. **DEFERRED**: style/organization improvement; defer to subsystem refactor unless tied to a concrete correctness issue.

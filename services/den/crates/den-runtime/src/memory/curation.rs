@@ -305,7 +305,7 @@ fn sqlite_observation_to_row(
         payload_ref: None,
         source: sqlite.source_json.clone(),
         logical_path: sqlite.logical_path.clone(),
-        status: sqlite.status.clone(),
+        status: sqlite.status.as_str().to_string(),
         proposal_id: sqlite
             .proposal_id
             .as_ref()
