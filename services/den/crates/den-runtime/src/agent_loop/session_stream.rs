@@ -880,6 +880,15 @@ impl SessionTrackingStream {
         )
     }
 
+    fn checkpoint_has_task_followthrough_context(request: &RuntimeCheckpointRequest) -> bool {
+        request.task_context.as_ref().is_some_and(|context| {
+            context.task_list_id.is_some()
+                || context.active_item_id.is_some()
+                || context.docket_job_id.is_some()
+                || context.docket_task_id.is_some()
+        })
+    }
+
     fn pending_checkpoint_task_action(&self) -> Option<crate::agent_loop::CheckpointNextAction> {
         self.store
             .get(&self.session_key)
@@ -921,10 +930,16 @@ impl SessionTrackingStream {
         request: RuntimeCheckpointRequest,
         response: RuntimeCheckpointResponse,
     ) {
-        let required_task_action = response.task_state_change_needed.as_ref().and_then(|_| {
-            Self::checkpoint_next_action_can_satisfy_task_state_change(&response.next_action)
-                .then_some(response.next_action.clone())
-        });
+        let required_task_action = Self::checkpoint_has_task_followthrough_context(&request)
+            .then(|| {
+                response.task_state_change_needed.as_ref().and_then(|_| {
+                    Self::checkpoint_next_action_can_satisfy_task_state_change(
+                        &response.next_action,
+                    )
+                    .then_some(response.next_action.clone())
+                })
+            })
+            .flatten();
         self.store.update(&self.session_key, |session| {
             session.pending_checkpoint_request = None;
             session.pending_checkpoint_recovery_attempts = 0;
@@ -2058,6 +2073,20 @@ mod tests {
         }
     }
 
+    fn task_checkpoint_request(checkpoint_id: &str) -> RuntimeCheckpointRequest {
+        RuntimeCheckpointRequest {
+            task_context: Some(crate::agent_loop::CheckpointTaskContext {
+                task_list_id: Some("task-list-test".to_string()),
+                task_list_version: Some("1".to_string()),
+                active_item_id: Some("task-item-test".to_string()),
+                active_item_title: Some("Update task state".to_string()),
+                docket_job_id: None,
+                docket_task_id: None,
+            }),
+            ..checkpoint_request(checkpoint_id)
+        }
+    }
+
     fn checkpoint_response_json(
         checkpoint_id: &str,
         next_action: serde_json::Value,
@@ -2216,7 +2245,7 @@ mod tests {
     #[tokio::test]
     async fn validated_checkpoint_response_sets_required_task_action_follow_through() {
         let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
-        session.pending_checkpoint_request = Some(checkpoint_request("ckpt-follow-through"));
+        session.pending_checkpoint_request = Some(task_checkpoint_request("ckpt-follow-through"));
         session.checkpoint_state.read_search_since_mutation = 5;
         session.checkpoint_state.consecutive_failures = 2;
         session.checkpoint_state.same_signature_repeat_count = 2;
@@ -2257,6 +2286,32 @@ mod tests {
             .enforce_required_checkpoint_task_action(DEN_TASK_LISTS_UPDATE_PROVIDER)
             .is_ok());
         assert!(stream.pending_checkpoint_task_action().is_none());
+    }
+
+    #[tokio::test]
+    async fn checkpoint_task_state_change_without_task_context_does_not_require_follow_through() {
+        let mut session = test_session("den-conv-test:client-test", uuid::Uuid::new_v4());
+        session.pending_checkpoint_request = Some(checkpoint_request("ckpt-no-task-context"));
+        let mut stream = test_tracking_stream_with_session(&session);
+        let arguments: serde_json::Value = serde_json::from_str(&checkpoint_response_json(
+            "ckpt-no-task-context",
+            serde_json::json!("update_task_list"),
+            serde_json::json!({
+                "target_state": "blocked",
+                "reason": "No active task context should not force task follow-through",
+                "evidence_refs": []
+            }),
+        ))
+        .expect("checkpoint response json");
+
+        let event = stream.handle_checkpoint_tool_call("call-checkpoint".to_string(), arguments);
+        assert!(matches!(
+            event,
+            RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallFinished { .. })
+        ));
+        assert!(stream.pending_checkpoint_request().is_none());
+        assert!(stream.pending_checkpoint_task_action().is_none());
+        assert!(stream.fail_if_checkpoint_task_action_pending().is_ok());
     }
 
     #[tokio::test]
