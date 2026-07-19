@@ -2,7 +2,7 @@ use den_core::tools::result_compaction::ToolResultStatus;
 use den_core::DenError;
 use den_protocol::ContextBudgetReport;
 use serde::{Deserialize, Serialize};
-use sqlx::{types::Json, PgPool, Row};
+use sqlx::{postgres::PgRow, types::Json, PgPool, Row};
 use uuid::Uuid;
 
 use crate::archived_conversations;
@@ -56,6 +56,12 @@ async fn rollback_append_message_tx(
     tx.rollback()
         .await
         .map_err(db_err("rollback append conversation message tx"))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversationHistoryProjection {
+    UserHistory,
+    ModelTranscript,
 }
 
 #[derive(Debug, Clone)]
@@ -895,6 +901,44 @@ pub async fn list_messages_page(
     .await
     .map_err(db_err("list conversation messages"))?;
 
+    decode_message_rows(rows)
+}
+
+pub async fn list_projected_messages_page(
+    pool: &PgPool,
+    conversation_id: Uuid,
+    before_sequence_no: Option<i64>,
+    limit: i64,
+    projection: ConversationHistoryProjection,
+) -> Result<Vec<PersistedConversationMessage>, DenError> {
+    const RAW_PAGE_SIZE: i64 = 100;
+    let projected_limit = limit.clamp(1, 100) as usize;
+    let mut cursor = before_sequence_no;
+    let mut projected = Vec::with_capacity(projected_limit);
+
+    loop {
+        let rows = list_messages_page(pool, conversation_id, cursor, RAW_PAGE_SIZE).await?;
+        let raw_count = rows.len();
+        cursor = rows.last().map(|row| row.sequence_no);
+        for row in rows {
+            let included = match projection {
+                ConversationHistoryProjection::UserHistory => row.is_user_history_visible(),
+                ConversationHistoryProjection::ModelTranscript => row.is_model_transcript_visible(),
+            };
+            if included {
+                projected.push(row);
+                if projected.len() == projected_limit {
+                    return Ok(projected);
+                }
+            }
+        }
+        if raw_count < RAW_PAGE_SIZE as usize || cursor.is_none() {
+            return Ok(projected);
+        }
+    }
+}
+
+fn decode_message_rows(rows: Vec<PgRow>) -> Result<Vec<PersistedConversationMessage>, DenError> {
     rows.into_iter()
         .map(|row| {
             Ok(PersistedConversationMessage {

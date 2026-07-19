@@ -320,11 +320,12 @@ async fn conversation_history_like_result(
         return Ok(response);
     };
 
-    let rows = persistence::list_messages_page(
+    let rows = persistence::list_projected_messages_page(
         &state.sqlx_pool,
         conversation.id,
         before_sequence_no,
         limit,
+        persistence::ConversationHistoryProjection::UserHistory,
     )
     .await?;
     let has_more = rows.len() >= limit as usize;

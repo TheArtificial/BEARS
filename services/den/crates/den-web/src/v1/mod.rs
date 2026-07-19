@@ -433,11 +433,12 @@ async fn chat_history(
         return Ok(empty());
     };
 
-    let rows = conversation_persistence::list_messages_page(
+    let rows = conversation_persistence::list_projected_messages_page(
         state.sqlx_pool(),
         conversation.id,
         before_sequence_no,
         limit,
+        conversation_persistence::ConversationHistoryProjection::UserHistory,
     )
     .await?;
     let (messages, has_more, next_before) = map_persisted_history_page(&rows, limit as usize);

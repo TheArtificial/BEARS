@@ -549,8 +549,14 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
                 raw_payload: None,
             });
         };
-        let rows =
-            conversation_persistence::list_messages_page(pool, canonical.id, None, 100).await?;
+        let rows = conversation_persistence::list_projected_messages_page(
+            pool,
+            canonical.id,
+            None,
+            100,
+            conversation_persistence::ConversationHistoryProjection::ModelTranscript,
+        )
+        .await?;
         let mut records = Vec::new();
         for row in rows.into_iter().rev() {
             match row.to_model_transcript_record() {
@@ -1059,36 +1065,34 @@ pub async fn start_native_profile_turn_event_stream(
         },
     )
     .await?;
-    if request.runtime_context.is_none() {
-        let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
-        let mut content_json = provenance.as_content_json("user_prompt");
-        content_json["role"] = serde_json::json!("user");
-        content_json["client_session_id"] = serde_json::json!(client_session_id);
-        content_json["client"] = serde_json::json!(request.client);
-        content_json["request_id"] = serde_json::json!(request.request_id.to_string());
-        if let Some(prompt_context) = request.prompt_context.clone() {
-            content_json["prompt_context"] = prompt_context.clone();
-            if let Some(host_context) = prompt_context.get("host_context") {
-                content_json["host_context"] = host_context.clone();
-            }
+    let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
+    let mut content_json = provenance.as_content_json("user_prompt");
+    content_json["role"] = serde_json::json!("user");
+    content_json["client_session_id"] = serde_json::json!(client_session_id);
+    content_json["client"] = serde_json::json!(request.client);
+    content_json["request_id"] = serde_json::json!(request.request_id.to_string());
+    if let Some(prompt_context) = request.prompt_context.clone() {
+        content_json["prompt_context"] = prompt_context.clone();
+        if let Some(host_context) = prompt_context.get("host_context") {
+            content_json["host_context"] = host_context.clone();
         }
-        let record =
-            CanonicalConversationRecord::visible_user_message(request.prompt, content_json, None);
-        persist_canonical_conversation_record(
-            &canonical_persistence_context(
-                request.sqlx_pool.clone(),
-                request.bear_id,
-                Some(request.user_id),
-                conversation_id.clone(),
-                Some(client_session_id.to_string()),
-                Some(request.request_id.to_string()),
-                client_session_id.to_string(),
-                false,
-            ),
-            &record,
-        )
-        .await?;
     }
+    let record =
+        CanonicalConversationRecord::visible_user_message(request.prompt, content_json, None);
+    persist_canonical_conversation_record(
+        &canonical_persistence_context(
+            request.sqlx_pool.clone(),
+            request.bear_id,
+            Some(request.user_id),
+            conversation_id.clone(),
+            Some(client_session_id.to_string()),
+            Some(request.request_id.to_string()),
+            client_session_id.to_string(),
+            false,
+        ),
+        &record,
+    )
+    .await?;
     let llm = LlmClient::new(request.config);
     let config = Arc::new(request.config.clone());
     let overflow = overflow_context(request.sqlx_pool.clone(), config.clone(), role);

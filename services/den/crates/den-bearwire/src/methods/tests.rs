@@ -32,7 +32,8 @@ use den_service::{
         CanonicalConversationRecord, CanonicalToolResultRecord, ConversationEventProvenance,
     },
     conversation::persistence::{
-        append_message, ensure_conversation_for_external_id, update_latest_context_budget,
+        append_message, ensure_conversation_for_external_id, list_projected_messages_page,
+        update_latest_context_budget, ConversationHistoryProjection,
     },
     conversation_message_types::{
         ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
@@ -1016,6 +1017,38 @@ async fn native_history_loader_replays_canonical_user_and_assistant_rows(pool: s
     )
     .await
     .expect("append assistant message");
+    for index in 0..100 {
+        append_message(
+            &pool,
+            canonical.id,
+            &ConversationMessageWrite {
+                message_type: ConversationMessageType::WorkflowEvent,
+                role: Some(ConversationMessageRole::System),
+                visibility: ConversationMessageVisibility::DiagnosticOnly,
+                content_text: format!("diagnostic-{index}"),
+                content_json: json!({"index": index}),
+                provider_message_id: None,
+                source_event_id: None,
+                created_at: None,
+            },
+        )
+        .await
+        .expect("append diagnostic message");
+    }
+
+    let user_history = list_projected_messages_page(
+        &pool,
+        canonical.id,
+        None,
+        2,
+        ConversationHistoryProjection::UserHistory,
+    )
+    .await
+    .expect("load projected user history");
+    assert_eq!(user_history.len(), 2);
+    assert!(user_history
+        .iter()
+        .all(|message| message.visibility == "default"));
 
     let backend = NativeRuntimeConversationBackend::with_pool(pool.clone());
     let binding = RoleRuntimeBinding {

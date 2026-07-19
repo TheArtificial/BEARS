@@ -457,18 +457,52 @@ pub fn prune_messages_for_native_pair_with_diagnostics(
     while tail_start < messages.len() && messages[tail_start].role == "tool" {
         tail_start += 1;
     }
-    let pruned_message_count = tail_start.saturating_sub(system_count) as u32;
+    const DIALOGUE_ANCHOR_LIMIT: usize = 8;
+    let dialogue_anchor_indices = messages
+        .iter()
+        .enumerate()
+        .take(tail_start)
+        .skip(system_count)
+        .filter(|(_, message)| {
+            message.role == "user"
+                || (message.role == "assistant"
+                    && message.tool_calls.as_ref().is_none_or(Vec::is_empty))
+        })
+        .map(|(index, _)| index)
+        .rev()
+        .take(DIALOGUE_ANCHOR_LIMIT)
+        .collect::<std::collections::HashSet<_>>();
+    tail_start = tail_start
+        .saturating_add(dialogue_anchor_indices.len())
+        .min(messages.len());
+    while tail_start < messages.len() && messages[tail_start].role == "tool" {
+        tail_start += 1;
+    }
+    let pruned_message_count = tail_start
+        .saturating_sub(system_count)
+        .saturating_sub(dialogue_anchor_indices.len()) as u32;
     let pruned_character_count = messages
         .iter()
+        .enumerate()
         .skip(system_count)
-        .take(pruned_message_count as usize)
-        .filter_map(|message| message.content.as_deref())
+        .take(tail_start.saturating_sub(system_count))
+        .filter(|(index, _)| !dialogue_anchor_indices.contains(index))
+        .filter_map(|(_, message)| message.content.as_deref())
         .map(|value| value.chars().count() as u32)
         .sum();
-    let mut pruned = Vec::with_capacity(MAX_TAIL_MESSAGES);
+    let mut pruned = Vec::with_capacity(MAX_TAIL_MESSAGES + DIALOGUE_ANCHOR_LIMIT);
     if let Some(system_message) = system {
         pruned.push(system_message);
     }
+    pruned.extend(
+        messages
+            .iter()
+            .enumerate()
+            .skip(system_count)
+            .take(tail_start.saturating_sub(system_count))
+            .filter(|(index, _)| dialogue_anchor_indices.contains(index))
+            .map(|(_, message)| message.clone()),
+    );
     pruned.extend(messages.into_iter().skip(tail_start));
     PrunedTranscriptMessages {
         messages: repair_tool_call_message_chain(pruned),
@@ -705,6 +739,67 @@ mod tests {
             pruned.last().and_then(|message| message.content.as_deref()),
             Some("what happened?")
         );
+    }
+
+    #[test]
+    fn prune_messages_for_native_pair_keeps_recent_dialogue_before_tool_heavy_tail() {
+        let mut messages = vec![ChatMessage {
+            role: "system".to_string(),
+            content: Some("system".to_string()),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        }];
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: Some("make the requested change".to_string()),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        });
+        messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: Some("I will inspect it".to_string()),
+            tool_call_id: None,
+            name: None,
+            tool_calls: None,
+        });
+        for index in 0..40 {
+            let tool_call_id = format!("call_{index}");
+            messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![ChatToolCall {
+                    id: tool_call_id.clone(),
+                    call_type: "function".to_string(),
+                    function: ChatToolCallFunction {
+                        name: "fs_read_text_file".to_string(),
+                        arguments: json!({"path": format!("file-{index}")}).to_string(),
+                    },
+                }]),
+            });
+            messages.push(ChatMessage {
+                role: "tool".to_string(),
+                content: Some(format!("result-{index}")),
+                tool_call_id: Some(tool_call_id),
+                name: Some("fs_read_text_file".to_string()),
+                tool_calls: None,
+            });
+        }
+
+        let pruned = prune_messages_for_native_pair(messages);
+
+        assert!(pruned
+            .iter()
+            .any(|message| { message.content.as_deref() == Some("make the requested change") }));
+        assert!(pruned
+            .iter()
+            .any(|message| message.content.as_deref() == Some("I will inspect it")));
+        assert!(pruned
+            .iter()
+            .any(|message| message.content.as_deref() == Some("result-39")));
     }
 
     #[test]
