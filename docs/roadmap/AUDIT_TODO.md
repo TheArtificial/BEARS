@@ -26,6 +26,10 @@ Fixes have been applied in batches, with `cargo check`/`clippy` verification rec
 where available. This section is the recoverable log of what has been changed.
 
 ### Active Docket typing batch — in progress
+- [x] JSON Value/config-shape inventory for Docket child task `8ceae5b3-2826-4b15-af47-1aa5b65cf078` — current Den Rust JSON usage was reviewed by pattern rather than stale line number. Classification:
+  - Intentionally open/provider/protocol payloads: BearWire JSON-RPC request/response parameters, protocol passthrough metadata, LLM/provider event bodies, tool descriptors/schemas, tool argument/result summaries, persisted diagnostic payloads, UI projection JSON, and memory/entity record payloads where arbitrary external or model-authored JSON is the contract.
+  - Closed Den-owned config candidates: sandbox managed config and catalog shape (`den-sandbox` protocol/server), runtime/bear runtime-plan JSON merge (`den-service/src/bears/runtime_plan.rs`), adapter runtime/session environment workspace shape (`den-core/src/tools/environment/payloads.rs`), ACP/MCP server config parsing still noted outside Den service scope, and recurring BearWire diagnostic/event shapes consumed with raw `.get()` chains.
+  - Highest-risk first target: sandbox managed config/catalog, because it crosses an HTTP/provider trust boundary, is persisted as provider config, and already has protocol structs (`ManagedConfig`, catalog roots/images) that can make malformed input fail explicitly. Next target: small typed structs for Den-owned runtime-plan/environment shapes only where the shape is closed; leave open provider/tool/model payloads as `serde_json::Value`.
 - [x] `den-core/src/tools/prompt_memory/types.rs`, `den-web/src/bear/settings.rs`,
   and `den-http/src/errors.rs` — prompt-memory admin rows now use
   `PromptMemoryBlockType::as_str()` instead of Debug-derived variant names for a
