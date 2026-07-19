@@ -60,6 +60,29 @@ impl TrustedWorkspaceSnapshot {
             "source": self.source,
         })
     }
+
+    fn roots_or_cwd(self) -> Vec<String> {
+        let roots: Vec<String> = self
+            .roots
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect();
+        if !roots.is_empty() {
+            return roots;
+        }
+        self.cwd
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect()
+    }
+}
+
+pub(super) fn trusted_workspace_roots_from_adapter_runtime(adapter_runtime: &Value) -> Vec<String> {
+    TrustedWorkspaceSnapshot::from_adapter_runtime(Some(adapter_runtime))
+        .map(TrustedWorkspaceSnapshot::roots_or_cwd)
+        .unwrap_or_default()
 }
 
 fn trusted_workspace_from_context(

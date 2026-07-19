@@ -7,6 +7,7 @@
 mod payloads;
 mod store;
 
+use payloads::trusted_workspace_roots_from_adapter_runtime;
 pub use payloads::{bear_environment_payload, session_info_payload};
 pub use store::EnvironmentOps;
 
@@ -55,30 +56,8 @@ pub async fn session_info(
     let mut context = context.clone();
     if context.workspace_roots.is_empty() {
         if let Ok(Some(adapter_runtime)) = env.fetch_adapter_environment(&context).await {
-            if let Some(roots) = adapter_runtime
-                .get("trusted_workspace")
-                .and_then(|value| value.get("roots"))
-                .and_then(Value::as_array)
-            {
-                context.workspace_roots = roots
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string)
-                    .collect();
-            }
-            if context.workspace_roots.is_empty() {
-                if let Some(cwd) = adapter_runtime
-                    .get("trusted_workspace")
-                    .and_then(|value| value.get("cwd"))
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    context.workspace_roots.push(cwd.to_string());
-                }
-            }
+            context.workspace_roots =
+                trusted_workspace_roots_from_adapter_runtime(&adapter_runtime);
         }
     }
     let member_count = dir.member_count(context.bear_id).await.unwrap_or(0);
