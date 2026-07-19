@@ -316,6 +316,7 @@ pub struct ErrorBody {
 /// the provider persists a copy on its volume so provisioning works between
 /// pushes and across restarts.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManagedConfig {
     pub surfaces: Vec<ManagedSurface>,
     pub images: Vec<ManagedImage>,
@@ -327,6 +328,7 @@ pub struct ManagedConfig {
 
 /// One managed work surface: a git upstream the provider serves as a root.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManagedSurface {
     /// Root name (path-safe slug; the provider re-validates).
     pub name: String,
@@ -342,7 +344,7 @@ pub struct ManagedSurface {
 /// Credential material for a managed surface's upstream. Values are written
 /// to 0600 files on the provider and never logged — `Debug` is redacted.
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ManagedCredential {
     SshKey { private_key: String },
     HttpsToken { token: String },
@@ -359,6 +361,7 @@ impl std::fmt::Debug for ManagedCredential {
 
 /// One managed catalog image: name -> container image reference.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManagedImage {
     pub name: String,
     pub image: String,
@@ -366,6 +369,40 @@ pub struct ManagedImage {
     pub description: Option<String>,
     #[serde(default)]
     pub default: bool,
+}
+
+#[cfg(test)]
+mod managed_config_tests {
+    use super::*;
+
+    #[test]
+    fn managed_config_rejects_unknown_json_fields() {
+        let config_with_typo = serde_json::json!({
+            "surfaces": [{
+                "name": "site",
+                "upstream_url": "https://example.invalid/repo.git",
+                "default_ref": "main",
+                "default_image": "base",
+                "credential": {
+                    "kind": "https_token",
+                    "token": "sekrit"
+                },
+                "upstream_urrl": "typo should not be ignored"
+            }],
+            "images": [{
+                "name": "base",
+                "image": "bears/sandbox:latest",
+                "default": true
+            }],
+            "version": "v-test"
+        });
+
+        let err = serde_json::from_value::<ManagedConfig>(config_with_typo).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field"),
+            "unexpected serde error: {err}"
+        );
+    }
 }
 
 /// Non-secret summary of the provider's applied managed config.
