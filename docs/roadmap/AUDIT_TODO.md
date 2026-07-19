@@ -26,6 +26,12 @@ Fixes have been applied in batches, with `cargo check`/`clippy` verification rec
 where available. This section is the recoverable log of what has been changed.
 
 ### Active Docket typing batch — in progress
+- [x] `den-bearwire/src/methods/conversation.rs` — Docket diagnostic surface-event ids now
+  use a tiny `DocketSurfaceEventId` display type instead of repeating raw
+  `format!("docket:{}", row.id)` prefix construction. Verified with `cargo test -p
+  den-bearwire docket_surface_event_id_preserves_wire_string`. `cargo clippy -p
+  den-bearwire --all-targets -- -D warnings` remains blocked by unrelated pre-existing
+  strict-clippy findings in dependency/test code under clippy 1.96.1.
 - [x] `den-sandbox/src/server.rs` — sandbox provider error response kinds now use a local
   `SandboxErrorKind` enum instead of arbitrary `&str` plumbing, preserving stable wire
   strings through `as_str()`. Verified with `cargo test -p den-sandbox

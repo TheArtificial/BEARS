@@ -1,3 +1,5 @@
+use std::fmt;
+
 use axum::http::HeaderMap;
 use serde_json::{json, Value};
 use sqlx::types::time::OffsetDateTime;
@@ -15,6 +17,21 @@ use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
 
 pub(crate) const FOCUS_TITLE_PREFIX: &str = "⌖ ";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DocketSurfaceEventId(Uuid);
+
+impl fmt::Display for DocketSurfaceEventId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "docket:{}", self.0)
+    }
+}
+
+impl DocketSurfaceEventId {
+    fn new(id: Uuid) -> Self {
+        Self(id)
+    }
+}
 
 pub(crate) fn project_focus_title(title: Option<String>, focused: bool) -> Option<String> {
     title.map(|title| {
@@ -34,7 +51,7 @@ pub(crate) async fn conversation_has_active_focus(
     client_session_id: Option<&str>,
 ) -> Result<bool, den_core::DenError> {
     let focused = sqlx::query_scalar::<_, bool>(
-        r#"
+        r"
         SELECT EXISTS (
             SELECT 1
             FROM docket_execution_sessions
@@ -46,7 +63,7 @@ pub(crate) async fn conversation_has_active_focus(
                 OR ($3::TEXT IS NOT NULL AND session_id = $3)
               )
         )
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(conversation_id)
@@ -76,7 +93,7 @@ async fn list_docket_diagnostic_events(
     limit: i64,
 ) -> Result<Vec<DocketDiagnosticEventRow>, den_core::DenError> {
     sqlx::query_as::<_, DocketDiagnosticEventRow>(
-        r#"
+        r"
         WITH focused_jobs AS (
             SELECT DISTINCT ON (job_id) job_id, task_id
             FROM docket_execution_sessions
@@ -110,7 +127,7 @@ async fn list_docket_diagnostic_events(
         FROM docket_events
         ORDER BY created_at ASC
         LIMIT $3
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(conversation_id)
@@ -123,7 +140,7 @@ async fn list_docket_diagnostic_events(
 fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Value> {
     match row.event_type.as_str() {
         "focus_selected" => Some(json!(SurfaceHistoryEvent::Message {
-            id: Some(format!("docket:{}", row.id)),
+            id: Some(DocketSurfaceEventId::new(row.id).to_string()),
             role: "system".to_string(),
             text: format!(
                 "Docket focus selected: job={} goal={} status={} task={} state={}",
@@ -146,7 +163,7 @@ fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Valu
                 .and_then(Value::as_str)
                 .unwrap_or("untitled task");
             Some(json!(SurfaceHistoryEvent::Message {
-                id: Some(format!("docket:{}", row.id)),
+                id: Some(DocketSurfaceEventId::new(row.id).to_string()),
                 role: "system".to_string(),
                 text: format!(
                     "Docket task {}: {} ({})",
@@ -530,7 +547,7 @@ async fn conversation_history_like_result(
             &state.sqlx_pool,
             bear.id,
             &conversation_id,
-            i64::from(limit),
+            limit,
         )
         .await?
         {
@@ -562,4 +579,18 @@ async fn conversation_history_like_result(
     });
     response[records_key] = json!(messages);
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docket_surface_event_id_preserves_wire_string() {
+        let id = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+        assert_eq!(
+            DocketSurfaceEventId::new(id).to_string(),
+            "docket:11111111-2222-3333-4444-555555555555"
+        );
+    }
 }
