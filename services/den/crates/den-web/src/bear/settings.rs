@@ -2882,7 +2882,7 @@ async fn context_view(
             standing_notes.push(PromptMemoryAdminRow {
                 block_id: block.id,
                 scope: applies_to,
-                block_type: format!("{:?}", block.block_type),
+                block_type: block.block_type.as_str().to_string(),
                 state: String::new(),
                 title: block.title,
                 body_preview,

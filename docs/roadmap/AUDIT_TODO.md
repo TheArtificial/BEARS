@@ -26,6 +26,13 @@ Fixes have been applied in batches, with `cargo check`/`clippy` verification rec
 where available. This section is the recoverable log of what has been changed.
 
 ### Active Docket typing batch — in progress
+- [x] `den-core/src/tools/prompt_memory/types.rs`, `den-web/src/bear/settings.rs`,
+  and `den-http/src/errors.rs` — prompt-memory admin rows now use
+  `PromptMemoryBlockType::as_str()` instead of Debug-derived variant names for a
+  wire/UI-facing block-type string, and validation errors use their Display output
+  instead of `format!("{:?}")`. Verified with `cargo test -p den-core
+  prompt_memory_block_type_preserves_wire_strings` and `cargo check -p den-web -p
+  den-http`.
 - [x] `den-protocol/src/lib.rs` and `den-bearwire/src/methods/run.rs` — runtime
   failure categories now expose explicit stable snake-case strings through
   `RuntimeErrorCategory::as_str()` instead of persisting/debugging

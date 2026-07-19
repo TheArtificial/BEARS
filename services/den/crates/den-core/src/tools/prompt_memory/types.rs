@@ -16,6 +16,17 @@ pub enum PromptMemoryBlockType {
     UserInstruction,
 }
 
+impl PromptMemoryBlockType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RoleGuidance => "role_guidance",
+            Self::WorkSurfaceContext => "work_surface_context",
+            Self::SessionFocus => "session_focus",
+            Self::UserInstruction => "user_instruction",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptMemoryBlockScope {
@@ -77,4 +88,23 @@ pub struct PromptMemoryBlockPatch {
     pub priority: i32,
     pub supersedes_block_id: Option<String>,
     pub metadata: Value,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PromptMemoryBlockType;
+
+    #[test]
+    fn prompt_memory_block_type_preserves_wire_strings() {
+        assert_eq!(PromptMemoryBlockType::RoleGuidance.as_str(), "role_guidance");
+        assert_eq!(
+            PromptMemoryBlockType::WorkSurfaceContext.as_str(),
+            "work_surface_context"
+        );
+        assert_eq!(PromptMemoryBlockType::SessionFocus.as_str(), "session_focus");
+        assert_eq!(
+            PromptMemoryBlockType::UserInstruction.as_str(),
+            "user_instruction"
+        );
+    }
 }
