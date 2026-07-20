@@ -447,6 +447,9 @@ services:
             context: ./services/den
             dockerfile: Dockerfile
             target: sandbox-provider
+            additional_contexts:
+                sandbox_packaging: ./packaging/sandbox-image
+                bear_armature: ./tools/bear-armature
             args:
                 SQLX_OFFLINE: ${SQLX_OFFLINE:-true}
                 CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
@@ -486,16 +489,8 @@ services:
             # Also holds the persisted Den-managed config (surfaces + image
             # catalog, synced from Den; manage them in the web UI).
             - bears-sandbox-workspaces:/var/lib/bears/sandbox-workspaces
-            # Shipped sandbox-image build context. The variants live outside
-            # the provider's own build context (services/den); the docker CLI
-            # tars these provider-side and ships them to the engine. The base
-            # Dockerfile COPYs tools/bear-armature from the context root.
-            - ./packaging/sandbox-image:/opt/bears/sandbox-build/packaging/sandbox-image:ro
-            - ./tools/bear-armature:/opt/bears/sandbox-build/tools/bear-armature:ro
-            # The base image builds bear-armature, whose path dependency inherits
-            # workspace metadata from the Den manifest.
-            - ./services/den/Cargo.toml:/opt/bears/sandbox-build/services/den/Cargo.toml:ro
-            - ./services/den/crates/bearwire-protocol:/opt/bears/sandbox-build/services/den/crates/bearwire-protocol:ro
+            # The one-click sandbox-image build context is baked into the
+            # provider image; do not depend on a PaaS-managed repository checkout.
         healthcheck:
             test:
                 [
