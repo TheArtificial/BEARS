@@ -53,6 +53,53 @@ struct RunStateRequest {
     limit: Option<i64>,
 }
 
+/// Stable, system-generated reasons for a BearWire run failure.
+///
+/// These values are persisted and emitted on the wire, so keep their explicit
+/// string forms stable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunFailureReason {
+    DescriptorResolutionFailed,
+    InitialStreamWatchdogTimeout,
+    StreamError,
+    StreamEndedWithoutRuntimeTerminal,
+    StartFailed,
+    ClientObligationTimeout,
+    #[cfg(test)]
+    RuntimeInternal,
+    ContinuationWatchdogTimeout,
+    ContinuationStreamError,
+    ContinuationStreamEndedWithoutRuntimeTerminal,
+    ContinuationStartFailed,
+}
+
+impl RunFailureReason {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::DescriptorResolutionFailed => "descriptor_resolution_failed",
+            Self::InitialStreamWatchdogTimeout => "initial_stream_watchdog_timeout",
+            Self::StreamError => "stream_error",
+            Self::StreamEndedWithoutRuntimeTerminal => "stream_ended_without_runtime_terminal",
+            Self::StartFailed => "start_failed",
+            Self::ClientObligationTimeout => "client_obligation_timeout",
+            #[cfg(test)]
+            Self::RuntimeInternal => "runtime_internal",
+            Self::ContinuationWatchdogTimeout => "continuation_watchdog_timeout",
+            Self::ContinuationStreamError => "continuation_stream_error",
+            Self::ContinuationStreamEndedWithoutRuntimeTerminal => {
+                "continuation_stream_ended_without_runtime_terminal"
+            }
+            Self::ContinuationStartFailed => "continuation_start_failed",
+        }
+    }
+}
+
+impl fmt::Display for RunFailureReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 fn den_owned_tool_call(tool_name: &str) -> bool {
     matches!(
         den_runtime::turn_waits::resolve_tool_execution_owner(tool_name),
@@ -922,7 +969,7 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
                     run_id,
                     bear_id,
                     user_id,
-                    "descriptor_resolution_failed",
+                    RunFailureReason::DescriptorResolutionFailed,
                     err.to_string(),
                     Some(json!({
                         "tool_call_id": tool_call_id,
@@ -1032,12 +1079,12 @@ pub(crate) async fn fail_run_lifecycle(
     run_id: &str,
     bear_id: uuid::Uuid,
     user_id: i32,
-    reason: &str,
+    reason: RunFailureReason,
     message: String,
     context: Option<serde_json::Value>,
 ) {
     let bear_name = bear_display_name(pool, bear_id).await;
-    let projection = run_failure_projection(reason, &message, run_id, &bear_name, context);
+    let projection = run_failure_projection(reason.as_str(), &message, run_id, &bear_name, context);
     let user_message = projection.user_message.as_deref();
     let context = projection.diagnostic_context.clone();
     tracing::warn!(
@@ -1045,7 +1092,7 @@ pub(crate) async fn fail_run_lifecycle(
         run_id,
         bear_id = %bear_id,
         user_id,
-        reason,
+        reason = %reason,
         user_message = user_message,
         error_message = %log_sample(&message),
         "BearWire run failed"
@@ -1056,7 +1103,7 @@ pub(crate) async fn fail_run_lifecycle(
             "run_id": run_id,
             "message": message,
             "user_message": user_message,
-            "reason": reason,
+            "reason": reason.as_str(),
             "context": context,
         }),
     );
@@ -1071,12 +1118,12 @@ pub(crate) async fn fail_run_lifecycle(
         bear_id,
         user_id,
         turn_runs::TurnRunState::Failed,
-        Some(reason),
+        Some(reason.as_str()),
         event,
     )
     .await
     .unwrap_or_else(|err| {
-        tracing::error!(session_id, run_id, reason, error = %err, "failed to atomically persist BearWire run failure");
+        tracing::error!(session_id, run_id, reason = %reason, error = %err, "failed to atomically persist BearWire run failure");
         None
     });
     if finished.is_none() {
@@ -1087,7 +1134,7 @@ pub(crate) async fn fail_run_lifecycle(
         session_id,
         run_id,
         "failed",
-        Some(json!({ "category": reason, "message": message.clone() })),
+        Some(json!({ "category": reason.as_str(), "message": message.clone() })),
     )
     .await;
     if let Ok(Some(session)) =
@@ -1132,7 +1179,7 @@ pub(crate) async fn fail_run_lifecycle(
                 "operational_outcome",
                 marker,
                 json!({
-                    "reason": reason,
+                    "reason": reason.as_str(),
                     "kind": marker_kind,
                     "retryable": marker_retryable,
                 }),
@@ -1148,7 +1195,7 @@ pub(crate) async fn persist_run_failed(
     run_id: &str,
     bear_id: uuid::Uuid,
     user_id: i32,
-    reason: &str,
+    reason: RunFailureReason,
     message: String,
     context: Option<serde_json::Value>,
 ) {
@@ -1904,7 +1951,7 @@ pub(crate) async fn run_start_result(
                                         &run_id_for_task,
                                         bear_id,
                                         user_id,
-                                        "initial_stream_watchdog_timeout",
+                                        RunFailureReason::InitialStreamWatchdogTimeout,
                                         if provider_activity_seen {
                                             format!("Provider activity stopped for {}ms before the run reached a terminal or client-wait event.", watchdog_timeout.as_millis())
                                         } else {
@@ -1980,7 +2027,7 @@ pub(crate) async fn run_start_result(
                                         &run_id_for_task,
                                         bear_id,
                                         user_id,
-                                        "stream_error",
+                                        RunFailureReason::StreamError,
                                         err.to_string(),
                                         None,
                                     )
@@ -2001,7 +2048,7 @@ pub(crate) async fn run_start_result(
                         &run_id_for_task,
                         bear_id,
                         user_id,
-                        "stream_ended_without_runtime_terminal",
+                        RunFailureReason::StreamEndedWithoutRuntimeTerminal,
                         if first_event_seen {
                             "The model stream ended after non-terminal runtime events but did not emit a tool request, completion, cancellation, or error.".to_string()
                         } else {
@@ -2025,7 +2072,7 @@ pub(crate) async fn run_start_result(
                     &run_id_for_task,
                     bear_id,
                     user_id,
-                    "start_failed",
+                    RunFailureReason::StartFailed,
                     err.to_string(),
                     None,
                 )
@@ -2295,6 +2342,26 @@ mod tests {
             .iter()
             .filter_map(|item| item.get("name").and_then(Value::as_str))
             .collect()
+    }
+
+    #[test]
+    fn run_failure_reasons_preserve_persisted_strings() {
+        assert_eq!(
+            RunFailureReason::ContinuationWatchdogTimeout.as_str(),
+            "continuation_watchdog_timeout"
+        );
+        assert_eq!(
+            RunFailureReason::ContinuationStreamError.as_str(),
+            "continuation_stream_error"
+        );
+        assert_eq!(
+            RunFailureReason::ContinuationStreamEndedWithoutRuntimeTerminal.as_str(),
+            "continuation_stream_ended_without_runtime_terminal"
+        );
+        assert_eq!(
+            RunFailureReason::ContinuationStartFailed.as_str(),
+            "continuation_start_failed"
+        );
     }
 
     #[test]

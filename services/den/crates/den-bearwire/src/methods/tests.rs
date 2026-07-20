@@ -44,7 +44,10 @@ use den_service::{
 
 use crate::{
     events::{events_page, EventPageQuery},
-    methods::{conversation::project_focus_title, run::persist_run_failed},
+    methods::{
+        conversation::project_focus_title,
+        run::{persist_run_failed, RunFailureReason},
+    },
     rpc::rpc,
 };
 use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
@@ -1740,7 +1743,7 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
         &run_id,
         bear_id,
         user_id,
-        "runtime_internal",
+        RunFailureReason::RuntimeInternal,
         "I stopped because this turn exhausted its wall-clock budget (elapsed=252985ms/limit=240000ms).".to_string(),
         None,
     )

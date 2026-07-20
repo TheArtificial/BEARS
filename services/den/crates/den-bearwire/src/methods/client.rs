@@ -50,7 +50,7 @@ use den_service::{
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
 use crate::methods::run::{
-    fail_run_lifecycle, persist_run_progress, persist_runtime_event_as_bearwire,
+    fail_run_lifecycle, persist_run_progress, persist_runtime_event_as_bearwire, RunFailureReason,
 };
 
 fn deserialize_tool_result_status<'de, D>(deserializer: D) -> Result<ToolResultStatus, D::Error>
@@ -638,7 +638,7 @@ fn spawn_continuation_task(
                                             &run.run_id,
                                             run.bear_id,
                                             run.user_id,
-                                            "continuation_watchdog_timeout",
+                                            RunFailureReason::ContinuationWatchdogTimeout,
                                             message,
                                             Some(context),
                                         )
@@ -727,7 +727,7 @@ fn spawn_continuation_task(
                                     &run.run_id,
                                     run.bear_id,
                                     run.user_id,
-                                    "continuation_stream_error",
+                                    RunFailureReason::ContinuationStreamError,
                                     err_message,
                                     Some(json!({
                                         "attempt": attempt_number,
@@ -805,7 +805,7 @@ fn spawn_continuation_task(
                         &run.run_id,
                         run.bear_id,
                         run.user_id,
-                        "continuation_stream_ended_without_runtime_terminal",
+                        RunFailureReason::ContinuationStreamEndedWithoutRuntimeTerminal,
                         if first_event_seen {
                             "Continuation stream ended after non-terminal runtime events but did not emit a tool request, completion, cancellation, or error.".to_string()
                         } else {
@@ -885,7 +885,7 @@ fn spawn_continuation_task(
                         &run.run_id,
                         run.bear_id,
                         run.user_id,
-                        "continuation_start_failed",
+                        RunFailureReason::ContinuationStartFailed,
                         err_message,
                         Some(json!({
                             "attempt": attempt_number,
