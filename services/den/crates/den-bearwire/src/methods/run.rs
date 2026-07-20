@@ -53,6 +53,17 @@ struct RunStateRequest {
     limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CanonicalClientWaitingEvent {
+    permission: CanonicalClientWaitingReference,
+    tool_call: CanonicalClientWaitingReference,
+}
+
+#[derive(Debug, Deserialize)]
+struct CanonicalClientWaitingReference {
+    id: String,
+}
+
 /// Stable, system-generated reasons for a BearWire run failure.
 ///
 /// These values are persisted and emitted on the wire, so keep their explicit
@@ -690,22 +701,12 @@ pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'
     }
 }
 
-fn canonical_client_waiting_ids(event: &BearWireEvent) -> Option<(&str, &str)> {
-    let permission_id = event
-        .data
-        .get("permission")
-        .and_then(|permission| permission.get("id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|id| !id.is_empty())?;
-    let tool_call_id = event
-        .data
-        .get("tool_call")
-        .and_then(|tool_call| tool_call.get("id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|id| !id.is_empty())?;
-    Some((permission_id, tool_call_id))
+fn canonical_client_waiting_ids(event: &BearWireEvent) -> Option<(String, String)> {
+    let event = serde_json::from_value::<CanonicalClientWaitingEvent>(event.data.clone()).ok()?;
+    let permission_id = event.permission.id.trim();
+    let tool_call_id = event.tool_call.id.trim();
+    (!permission_id.is_empty() && !tool_call_id.is_empty())
+        .then(|| (permission_id.to_string(), tool_call_id.to_string()))
 }
 
 async fn append_answerable_client_waiting_event(
@@ -2513,8 +2514,34 @@ mod tests {
 
         assert_eq!(
             canonical_client_waiting_ids(&event),
-            Some(("perm-1", "call-1"))
+            Some(("perm-1".to_string(), "call-1".to_string()))
         );
+    }
+
+    #[test]
+    fn canonical_client_waiting_ids_require_string_ids() {
+        let event = BearWireEvent::ephemeral(
+            "client.waiting",
+            json!({
+                "tool_call": { "id": 1 },
+                "permission": { "id": "perm-1" }
+            }),
+        );
+
+        assert_eq!(canonical_client_waiting_ids(&event), None);
+    }
+
+    #[test]
+    fn canonical_client_waiting_ids_reject_blank_ids() {
+        let event = BearWireEvent::ephemeral(
+            "client.waiting",
+            json!({
+                "tool_call": { "id": "  " },
+                "permission": { "id": "perm-1" }
+            }),
+        );
+
+        assert_eq!(canonical_client_waiting_ids(&event), None);
     }
 
     #[test]
