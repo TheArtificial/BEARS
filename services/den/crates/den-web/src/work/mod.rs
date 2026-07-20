@@ -23,9 +23,9 @@ use crate::{
 };
 use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow, SCRATCH_ROOT_NAME};
 use den_docket::{
-    DocketCommitPolicy, DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter,
-    DocketJobStatus, DocketService, DocketTaskInput, DocketTaskKind, DocketTaskScope,
-    PgDocketService, TaskListVisibility,
+    DocketCommitPolicy, DocketEffortHint, DocketJobCreate, DocketJobCriterionInput,
+    DocketJobListFilter, DocketJobStatus, DocketService, DocketTaskDifficulty, DocketTaskInput,
+    DocketTaskKind, DocketTaskScope, PgDocketService, TaskListVisibility,
 };
 use den_sandbox::protocol::CatalogResponse;
 use den_sandbox::SandboxClient;
@@ -42,6 +42,7 @@ pub fn router() -> Router<AppState> {
         .route("/work", get(index))
         .route("/work/new", get(new_job_form).post(create_job))
         .route("/work/jobs/{job_id}", get(job_detail))
+        .route("/work/jobs/{job_id}/duplicate", post(duplicate_job))
         .route("/work/runs/{run_id}", get(run_detail))
         .route("/work/tasks/{task_id}/dispatch", post(dispatch_task))
         .route("/work/runs/{run_id}/cancel", post(cancel_run))
@@ -517,6 +518,117 @@ async fn create_job(
     Ok(Redirect::to(&format!("/work/jobs/{}", job.job.id)).into_response())
 }
 
+fn parse_docket_enum<T: serde::de::DeserializeOwned>(
+    field: &str,
+    value: &str,
+) -> Result<T, CustomError> {
+    serde_json::from_value(serde_json::json!(value)).map_err(|_| {
+        CustomError::ValidationError(format!("job contains invalid {field} value '{value}'"))
+    })
+}
+
+async fn duplicate_job(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(job_id): Path<Uuid>,
+) -> Result<Response, CustomError> {
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+
+    let source = PgDocketService::from_pool(state.sqlx_pool())
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    let task_keys: std::collections::HashMap<Uuid, String> = source
+        .tasks
+        .iter()
+        .map(|task| (task.id, format!("duplicate-{}", task.id.simple())))
+        .collect();
+    let tasks = source
+        .tasks
+        .iter()
+        .map(|task| {
+            Ok(DocketTaskInput {
+                client_key: task_keys.get(&task.id).cloned(),
+                parent_client_key: task
+                    .parent_task_id
+                    .and_then(|parent_id| task_keys.get(&parent_id).cloned()),
+                parent_task_id: None,
+                sibling_order: task.sibling_order,
+                kind: parse_docket_enum("task kind", &task.kind)?,
+                scope: parse_docket_enum("task scope", &task.scope)?,
+                title: task.title.clone(),
+                body: task.body.clone(),
+                completion_criteria: task.completion_criteria.0.clone(),
+                difficulty: task
+                    .difficulty
+                    .as_deref()
+                    .map(|value| {
+                        parse_docket_enum::<DocketTaskDifficulty>("task difficulty", value)
+                    })
+                    .transpose()?,
+                effort_hint: task
+                    .effort_hint
+                    .as_deref()
+                    .map(|value| parse_docket_enum::<DocketEffortHint>("task effort", value))
+                    .transpose()?,
+                assigned_to_role: task
+                    .assigned_to_role
+                    .as_deref()
+                    .map(|value| parse_docket_enum::<BearProfile>("assigned role", value))
+                    .transpose()?,
+            })
+        })
+        .collect::<Result<Vec<_>, CustomError>>()?;
+    let criteria = source
+        .criteria
+        .iter()
+        .map(|criterion| {
+            Ok(DocketJobCriterionInput {
+                kind: parse_docket_enum("criterion kind", &criterion.kind)?,
+                description: criterion.description.clone(),
+                spec: criterion.spec.as_ref().map(|spec| spec.0.clone()),
+                sibling_order: criterion.sibling_order,
+            })
+        })
+        .collect::<Result<Vec<_>, CustomError>>()?;
+    let commit_policy = source
+        .job
+        .commit_policy
+        .as_deref()
+        .map(|value| parse_docket_enum::<DocketCommitPolicy>("commit policy", value))
+        .transpose()?;
+    let visibility = parse_docket_enum::<TaskListVisibility>("visibility", &source.job.visibility)?;
+
+    let duplicate = PgDocketService::from_pool(state.sqlx_pool())
+        .create_job(DocketJobCreate {
+            bear_id,
+            created_by_user_id: user_id,
+            created_by_role: "ui".to_string(),
+            goal: format!("{} (copy)", source.job.goal),
+            work_surface_ref: source.job.work_surface_ref,
+            work_surface_id: source.job.work_surface_id,
+            commit_policy,
+            work_branch: None,
+            status: DocketJobStatus::Ready,
+            visibility,
+            source_conversation_id: None,
+            objective_kind: source.job.objective_kind,
+            criteria,
+            tasks,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{}", duplicate.job.id)).into_response())
+}
+
 async fn job_detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -637,6 +749,19 @@ async fn run_detail(
         .unwrap_or_default();
     let armature_report = refs.get("armature_report").cloned();
     let turn_outcome = refs.get("turn_outcome").cloned();
+    let conversation_id: Option<String> = match run.bearwire_session_id.as_deref() {
+        Some(session_id) => sqlx::query_scalar(
+            "SELECT COALESCE(NULLIF(resolved_conversation_id, ''), conversation_id) \
+             FROM client_sessions WHERE client_session_id = $1 AND bear_id = $2 \
+             ORDER BY updated_at DESC LIMIT 1",
+        )
+        .bind(session_id)
+        .bind(run.bear_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?,
+        None => None,
+    };
     let work_surface = run.work_surface.clone();
     let usage = run.usage.clone();
     let mut views = vec![run_view(&run, &bear_slug)];
@@ -657,6 +782,7 @@ async fn run_detail(
             changed_files => changed_files,
             armature_report => armature_report,
             turn_outcome => turn_outcome,
+            conversation_id => conversation_id,
             work_surface => work_surface,
             usage => usage,
             can_retry => can_retry,

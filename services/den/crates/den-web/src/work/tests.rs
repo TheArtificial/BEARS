@@ -217,6 +217,113 @@ async fn create_job_form_creates_work_job_with_tasks() {
 }
 
 #[tokio::test]
+async fn duplicate_job_copies_definition_and_resets_execution_state() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let (user_id, bear_id) = seed_member(&pool).await;
+    let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, user_id).await;
+
+    let response = post_form(
+        &app,
+        &cookie,
+        "/work/new",
+        format!(
+            "bear_id={bear_id}&goal=Reusable+job&root=site&commit_policy=per_task\
+             &work_branch=&task_title=Build+artifact&task_criteria=artifact+exists%3Btests+pass"
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let source_id = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|location| location.rsplit('/').next())
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .expect("source job redirect");
+    sqlx::query("UPDATE bear_jobs SET work_branch = 'feature/original' WHERE id = $1")
+        .bind(source_id)
+        .execute(&pool)
+        .await
+        .expect("set source branch");
+    let source_run_id: Uuid =
+        sqlx::query_scalar("SELECT current_run_id FROM bear_jobs WHERE id = $1")
+            .bind(source_id)
+            .fetch_one(&pool)
+            .await
+            .expect("source run id");
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{source_id}/duplicate"),
+        String::new(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let duplicate_id = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|location| location.rsplit('/').next())
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .expect("duplicate job redirect");
+    assert_ne!(duplicate_id, source_id);
+
+    let (goal, surface, policy, branch, status, current_run): (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<Uuid>,
+    ) = sqlx::query_as(
+        "SELECT goal, work_surface_ref, commit_policy, work_branch, status, current_run_id \
+         FROM bear_jobs WHERE id = $1",
+    )
+    .bind(duplicate_id)
+    .fetch_one(&pool)
+    .await
+    .expect("duplicate job row");
+    assert_eq!(goal, "Reusable job (copy)");
+    assert_eq!(surface.as_deref(), Some("site"));
+    assert_eq!(policy.as_deref(), Some("per_task"));
+    assert!(branch.is_none());
+    assert_eq!(status, "ready");
+    let duplicate_run_id = current_run.expect("fresh duplicate run");
+    assert_ne!(duplicate_run_id, source_run_id);
+
+    let tasks: Vec<(
+        String,
+        String,
+        sqlx::types::Json<Vec<String>>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT title, body, completion_criteria, assigned_to_role \
+             FROM bear_tasks WHERE job_id = $1 ORDER BY sibling_order",
+    )
+    .bind(duplicate_id)
+    .fetch_all(&pool)
+    .await
+    .expect("duplicate tasks");
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].0, "Build artifact");
+    assert_eq!(tasks[0].1, "Build artifact");
+    assert_eq!(tasks[0].2 .0, vec!["artifact exists", "tests pass"]);
+    assert_eq!(tasks[0].3.as_deref(), Some("work"));
+    let task_statuses: Vec<String> =
+        sqlx::query_scalar("SELECT status FROM bear_task_run_state WHERE run_id = $1")
+            .bind(duplicate_run_id)
+            .fetch_all(&pool)
+            .await
+            .expect("duplicate task states");
+    assert_eq!(task_statuses, vec!["pending"]);
+}
+
+#[tokio::test]
 async fn dispatch_form_enqueues_run_with_root_and_image() {
     let _guard = TEST_DB_LOCK.lock().await;
     let Some(pool) = test_pool().await else {

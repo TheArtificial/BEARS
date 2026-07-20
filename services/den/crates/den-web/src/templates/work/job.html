@@ -9,6 +9,10 @@
     {% if commit_policy %} · commit policy <code>{{ commit_policy }}</code>{% endif %}
     {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
 </p>
+<form method="post" action="/work/jobs/{{ job_id }}/duplicate">
+    <button type="submit">Duplicate job</button>
+    <small>Copies job intent, criteria, work-surface settings, and task definitions into a fresh job.</small>
+</form>
 {% if tasks_complete and status not in ["completed", "cancelled"] %}
 <p>
     ✅ <strong>All tasks are done.</strong>
