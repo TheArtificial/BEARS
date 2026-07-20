@@ -359,6 +359,14 @@ pub(crate) async fn handle_process_run(
         exit_code,
         started.elapsed().as_millis(),
     );
+    if crate::headless_mode() && (!display_stdout.is_empty() || !display_stderr.is_empty()) {
+        eprintln!(
+            "bear-armature: process_run output session_id={} stdout={:?} stderr={:?}",
+            session_id,
+            crate::truncate_for_log(display_stdout, 2048),
+            crate::truncate_for_log(display_stderr, 2048),
+        );
+    }
     Ok(json!({
         "ok": ok,
         "command": command,

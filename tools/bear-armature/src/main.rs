@@ -10968,7 +10968,14 @@ fn normalize_thought_chunk_text(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(format!("{text}.\n"))
 }
 
+fn should_emit_notification(is_headless: bool, method: &str) -> bool {
+    !(is_headless && method == "session/update")
+}
+
 async fn write_notification(method: &str, params: Value) -> Result<()> {
+    if !should_emit_notification(headless_mode(), method) {
+        return Ok(());
+    }
     JsonRpcTransport::default().notify(method, params).await
 }
 
@@ -11135,6 +11142,13 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    #[test]
+    fn headless_suppresses_only_acp_session_updates() {
+        assert!(!should_emit_notification(true, "session/update"));
+        assert!(should_emit_notification(true, "session/request_permission"));
+        assert!(should_emit_notification(false, "session/update"));
+    }
 
     #[derive(Clone)]
     struct BearWireTestServerState {
