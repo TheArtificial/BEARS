@@ -459,14 +459,7 @@ pub async fn settle_tool_result(
         });
     }
 
-    let transitioned =
-        turn_runs::transition_run(pool, &run.run_id, turn_runs::TurnRunState::Continuing, None)
-            .await?;
-    let _ = turn_obligations::mark_continued(pool, obligation.id).await?;
-    if let Some(step_id) = obligation.turn_step_id {
-        let _ = turn_steps::transition_step(pool, step_id, turn_steps::TurnStepState::Continued)
-            .await?;
-    }
+    let transitioned = continue_after_client_result(pool, run, obligation).await?;
     Ok(ToolResultCoordinatorOutcome::ContinueModel {
         run: transitioned,
         result: None,
@@ -494,6 +487,18 @@ pub async fn settle_permission_result(
         return dispatch_local_tool_after_grant(pool, run, obligation).await;
     }
 
+    let transitioned = continue_after_client_result(pool, run, obligation).await?;
+    Ok(PermissionResultCoordinatorOutcome::ContinueModel {
+        run: transitioned,
+        result: None,
+    })
+}
+
+async fn continue_after_client_result(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+) -> Result<Option<turn_runs::TurnRunRow>, DenError> {
     let transitioned =
         turn_runs::transition_run(pool, &run.run_id, turn_runs::TurnRunState::Continuing, None)
             .await?;
@@ -502,10 +507,7 @@ pub async fn settle_permission_result(
         let _ = turn_steps::transition_step(pool, step_id, turn_steps::TurnStepState::Continued)
             .await?;
     }
-    Ok(PermissionResultCoordinatorOutcome::ContinueModel {
-        run: transitioned,
-        result: None,
-    })
+    Ok(transitioned)
 }
 
 async fn dispatch_local_tool_after_grant(
