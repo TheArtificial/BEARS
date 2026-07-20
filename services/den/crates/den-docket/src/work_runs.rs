@@ -841,9 +841,8 @@ pub struct WorkRunCheckout {
 }
 
 /// The armature side of `work.checkout`: bind the session to its run, open
-/// the Docket execution session (owner_profile = work, which satisfies the
-/// Work-stance gate), and build the non-interactive prompt from the durable
-/// task definition.
+/// the Docket execution session whose job/task focus satisfies the Work-stance
+/// gate, and build the non-interactive prompt from the durable task definition.
 pub async fn checkout_work_run_for_session(
     pool: &PgPool,
     run_id: Uuid,

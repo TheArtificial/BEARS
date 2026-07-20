@@ -1,8 +1,9 @@
 use den_core::config::Config;
 use den_core::DenError;
 use den_docket::{
-    task_list_projection_from_session_tasks, DocketService, DocketTaskListFilter, PgDocketService,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListProjection,
+    task_list_projection_from_session_tasks, DocketExecutionSessionRow, DocketService,
+    DocketTaskListFilter, PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource,
+    TaskListProjection,
 };
 use den_memory::MemoryStoreManager;
 use den_service::{
@@ -101,19 +102,13 @@ pub struct AssembledNativeTurn {
 
 async fn load_cached_activity_plan_projection(
     ctx: &AssembleTurnContext<'_>,
+    service: &PgDocketService,
+    active_execution: Option<&DocketExecutionSessionRow>,
 ) -> Result<Option<TaskListProjection>, DenError> {
     let Some(user_id) = ctx.user_id else {
         return Ok(None);
     };
-    let service = PgDocketService::from_pool(ctx.pool);
-    if let Some(execution) = service
-        .get_active_execution_session(
-            ctx.bear_id,
-            ctx.profile,
-            active_docket_execution_lookup(ctx.session_id, ctx.conversation_id),
-        )
-        .await?
-    {
+    if let Some(execution) = active_execution {
         return service
             .checkout_task_list(
                 ctx.bear_id,
@@ -128,7 +123,7 @@ async fn load_cached_activity_plan_projection(
             )
             .await;
     }
-    load_session_anchored_activity_plan(ctx, &service).await
+    load_session_anchored_activity_plan(ctx, service).await
 }
 
 async fn load_session_anchored_activity_plan(
@@ -294,13 +289,27 @@ async fn record_objective_orientation_event(
 
 fn objective_orientation_input(
     cached_activity_plan_projection: Option<&TaskListProjection>,
+    active_execution: Option<&DocketExecutionSessionRow>,
     work_enabled: bool,
 ) -> ObjectiveOrientationResolutionInput {
     ObjectiveOrientationResolutionInput {
         focused_job_id: cached_activity_plan_projection
-            .and_then(|plan| plan.source_ref.docket_job_id.clone()),
+            .and_then(|plan| plan.source_ref.docket_job_id.clone())
+            .or_else(|| active_execution.map(|execution| execution.job_id.to_string())),
         focused_job_mutable: true,
-        active_task_ref: cached_activity_plan_projection.and_then(active_orientation_task_ref),
+        active_task_ref: cached_activity_plan_projection
+            .and_then(active_orientation_task_ref)
+            .or_else(|| {
+                active_execution.and_then(|execution| {
+                    execution
+                        .task_id
+                        .map(|task_id| OrientationTaskRef::DocketTask {
+                            job_id: Some(execution.job_id.to_string()),
+                            task_id: task_id.to_string(),
+                            title: None,
+                        })
+                })
+            }),
         freeform_policy: if work_enabled {
             FreeformPolicy::task_definition_permitted()
         } else {
@@ -482,9 +491,19 @@ pub async fn assemble_native_turn_for_bear(
         ctx.profile,
     )
     .await?;
-    let cached_activity_plan_projection = load_cached_activity_plan_projection(&ctx).await?;
+    let docket = PgDocketService::from_pool(ctx.pool);
+    let active_execution = docket
+        .get_active_execution_session(
+            ctx.bear_id,
+            ctx.profile,
+            active_docket_execution_lookup(ctx.session_id, ctx.conversation_id),
+        )
+        .await?;
+    let cached_activity_plan_projection =
+        load_cached_activity_plan_projection(&ctx, &docket, active_execution.as_ref()).await?;
     let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
         cached_activity_plan_projection.as_ref(),
+        active_execution.as_ref(),
         bear.work_enabled,
     ));
     record_objective_orientation_event(&ctx, &objective_orientation).await?;
@@ -660,6 +679,44 @@ mod tests {
         assert_eq!(
             lookup.source_conversation_id.as_deref(),
             Some("conversation-1")
+        );
+    }
+
+    #[test]
+    fn headless_execution_without_user_projection_focuses_its_job() {
+        let job_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let execution = DocketExecutionSessionRow {
+            id: Uuid::nil(),
+            bear_id: Uuid::nil(),
+            owner_profile: "work".to_string(),
+            session_id: "headless-session".to_string(),
+            source_conversation_id: None,
+            source_client_session_id: Some("headless-session".to_string()),
+            job_id,
+            run_id: Uuid::nil(),
+            task_id: Some(task_id),
+            state: "active".to_string(),
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        };
+
+        let orientation = crate::agent_loop::resolve_objective_orientation(
+            objective_orientation_input(None, Some(&execution), true),
+        );
+        assert_eq!(
+            orientation,
+            ObjectiveOrientation::Focused {
+                job: crate::agent_loop::JobOrientation {
+                    job_id: job_id.to_string(),
+                    active_task_ref: Some(OrientationTaskRef::DocketTask {
+                        job_id: Some(job_id.to_string()),
+                        task_id: task_id.to_string(),
+                        title: None,
+                    }),
+                    mutable: true,
+                }
+            }
         );
     }
 

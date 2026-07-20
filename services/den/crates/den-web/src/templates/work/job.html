@@ -46,7 +46,7 @@
                         {% if work_surface_ref %}
                         <p><small>Using job work surface <code>{{ work_surface_ref }}</code> unless a root is selected.</small></p>
                         {% else %}
-                        <p><small>This job has no work surface. Choose an existing root, or explicitly use an empty scratch workspace. Scratch returns reports/artifacts only; it does not imply publishable repo changes.</small></p>
+                        <p><small><strong>Workspace selection:</strong> This job has no default work surface. Choose an existing root, or explicitly use an empty scratch workspace. Scratch returns reports/artifacts only; it does not imply publishable repo changes. This guidance is not the job's blocked reason; see the latest run result below.</small></p>
                         {% endif %}
                         {% if catalog and catalog.roots %}
                         <select name="root" title="sandbox root">
