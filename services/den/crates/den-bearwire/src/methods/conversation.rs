@@ -1,6 +1,7 @@
 use std::fmt;
 
 use axum::http::HeaderMap;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::types::time::OffsetDateTime;
 use uuid::Uuid;
@@ -31,6 +32,12 @@ impl DocketSurfaceEventId {
     fn new(id: Uuid) -> Self {
         Self(id)
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DocketTaskDefinition {
+    title: Option<String>,
 }
 
 pub(crate) fn project_focus_title(title: Option<String>, focused: bool) -> Option<String> {
@@ -157,11 +164,11 @@ fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Valu
             created_at: Some(row.created_at.to_string()),
         })),
         "created" | "updated" => {
-            let definition = row.payload.get("definition")?;
-            let title = definition
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or("untitled task");
+            let definition = serde_json::from_value::<DocketTaskDefinition>(
+                row.payload.get("definition")?.clone(),
+            )
+            .ok()?;
+            let title = definition.title.as_deref().unwrap_or("untitled task");
             Some(json!(SurfaceHistoryEvent::Message {
                 id: Some(DocketSurfaceEventId::new(row.id).to_string()),
                 role: "system".to_string(),
@@ -592,5 +599,14 @@ mod tests {
             DocketSurfaceEventId::new(id).to_string(),
             "docket:11111111-2222-3333-4444-555555555555"
         );
+    }
+
+    #[test]
+    fn docket_task_definition_rejects_unknown_fields() {
+        assert!(serde_json::from_value::<DocketTaskDefinition>(json!({
+            "title": "Ship it",
+            "unexpected": true,
+        }))
+        .is_err());
     }
 }
