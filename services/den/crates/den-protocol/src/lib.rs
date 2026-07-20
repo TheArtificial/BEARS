@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use den_core::{DenError, config::Config};
+use den_core::{config::Config, DenError};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;

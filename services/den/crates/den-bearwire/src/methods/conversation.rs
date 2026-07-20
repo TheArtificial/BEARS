@@ -550,13 +550,8 @@ async fn conversation_history_like_result(
             }
         }
 
-        for row in list_docket_diagnostic_events(
-            &state.sqlx_pool,
-            bear.id,
-            &conversation_id,
-            limit,
-        )
-        .await?
+        for row in list_docket_diagnostic_events(&state.sqlx_pool, bear.id, &conversation_id, limit)
+            .await?
         {
             if let Some(event) = docket_diagnostic_surface_event(row) {
                 messages.push(event);

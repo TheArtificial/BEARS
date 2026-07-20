@@ -304,7 +304,10 @@ fn not_good_for_tool(descriptor: &DenToolDescriptor, risk: CapabilityRisk) -> Ve
     notes
 }
 
-fn execution_options_for_tool(_descriptor: &DenToolDescriptor, risk: CapabilityRisk) -> Vec<String> {
+fn execution_options_for_tool(
+    _descriptor: &DenToolDescriptor,
+    risk: CapabilityRisk,
+) -> Vec<String> {
     let mut options = vec!["direct invocation".to_string()];
     if matches!(
         risk,
@@ -322,7 +325,10 @@ mod tests {
 
     #[test]
     fn capability_risk_preserves_wire_strings() {
-        assert_eq!(CapabilityRisk::ApprovalRequired.as_str(), "approval_required");
+        assert_eq!(
+            CapabilityRisk::ApprovalRequired.as_str(),
+            "approval_required"
+        );
         assert_eq!(CapabilityRisk::Mutating.as_str(), "mutating");
         assert_eq!(CapabilityRisk::ExternalNetwork.as_str(), "external_network");
         assert_eq!(CapabilityRisk::ReadOnly.as_str(), "read_only");

@@ -162,8 +162,14 @@ mod tests {
 
     #[test]
     fn memory_observation_status_preserves_persisted_strings() {
-        assert_eq!(MemoryObservationStatus::PendingReview.as_str(), "pending_review");
-        assert_eq!(MemoryObservationStatus::ReviewQueued.as_str(), "review_queued");
+        assert_eq!(
+            MemoryObservationStatus::PendingReview.as_str(),
+            "pending_review"
+        );
+        assert_eq!(
+            MemoryObservationStatus::ReviewQueued.as_str(),
+            "review_queued"
+        );
         assert_eq!(
             MemoryObservationStatus::parse("pending_review").unwrap(),
             MemoryObservationStatus::PendingReview

@@ -96,12 +96,18 @@ mod tests {
 
     #[test]
     fn prompt_memory_block_type_preserves_wire_strings() {
-        assert_eq!(PromptMemoryBlockType::RoleGuidance.as_str(), "role_guidance");
+        assert_eq!(
+            PromptMemoryBlockType::RoleGuidance.as_str(),
+            "role_guidance"
+        );
         assert_eq!(
             PromptMemoryBlockType::WorkSurfaceContext.as_str(),
             "work_surface_context"
         );
-        assert_eq!(PromptMemoryBlockType::SessionFocus.as_str(), "session_focus");
+        assert_eq!(
+            PromptMemoryBlockType::SessionFocus.as_str(),
+            "session_focus"
+        );
         assert_eq!(
             PromptMemoryBlockType::UserInstruction.as_str(),
             "user_instruction"

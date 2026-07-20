@@ -540,11 +540,8 @@ fn checkpoint_thinking_effort_for_session(
         .enabled
         .then_some(policy.checkpoint_turn_effort)
         .flatten();
-    let compatible_effort = api_compatible_thinking_effort(
-        session.api_style,
-        has_function_tools,
-        configured_effort,
-    );
+    let compatible_effort =
+        api_compatible_thinking_effort(session.api_style, has_function_tools, configured_effort);
     if configured_effort.is_some() && compatible_effort.is_none() {
         tracing::warn!(
             session_key = %session.session_key,
