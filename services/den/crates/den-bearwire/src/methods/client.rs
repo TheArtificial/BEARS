@@ -269,6 +269,7 @@ struct WebFetchPermissionPayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WebFetchPermissionArguments {
     url: Option<String>,
     host: Option<String>,
@@ -1408,6 +1409,16 @@ mod tests {
             "arguments": {"url": "https://example.com"},
             "approval_required": true,
             "unexpected": true,
+        });
+
+        assert!(serde_json::from_value::<WebFetchPermissionPayload>(payload).is_err());
+    }
+
+    #[test]
+    fn web_fetch_permission_arguments_reject_unknown_fields() {
+        let payload = json!({
+            "tool_name": DEN_WEB_FETCH,
+            "arguments": {"url": "https://example.com", "unexpected": true},
         });
 
         assert!(serde_json::from_value::<WebFetchPermissionPayload>(payload).is_err());
