@@ -105,6 +105,10 @@ impl ClientToolResultRequest {
     }
 }
 
+fn permission_reason_text(reason: &Option<Value>) -> Option<String> {
+    reason.as_ref().and_then(Value::as_str).map(str::to_string)
+}
+
 fn require_settlement_result(
     result: Option<turn_runs::TurnObligationResultRow>,
     context: &'static str,
@@ -1154,6 +1158,7 @@ pub(crate) async fn client_permission_result_result(
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: ClientPermissionResultRequest = parse_params(params)?;
+    let reason = permission_reason_text(&request.reason);
     let run_id = request.run_id;
     let session_id = request.session_id;
     let permission_id = request.permission_id;
@@ -1370,10 +1375,6 @@ pub(crate) async fn client_permission_result_result(
             } else {
                 RuntimeApprovalDecision::Deny
             };
-            let reason = params
-                .get("reason")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
             spawn_continuation_task(
                 state,
                 transitioned.clone().unwrap_or_else(|| run.clone()),
@@ -1401,6 +1402,19 @@ pub(crate) async fn client_permission_result_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permission_reason_text_accepts_only_string_reasons() {
+        assert_eq!(
+            permission_reason_text(&Some(json!("network access"))),
+            Some("network access".to_string())
+        );
+        assert_eq!(
+            permission_reason_text(&Some(json!({"code": "denied"}))),
+            None
+        );
+        assert_eq!(permission_reason_text(&None), None);
+    }
 
     #[test]
     fn web_fetch_permission_payload_rejects_unknown_fields() {
