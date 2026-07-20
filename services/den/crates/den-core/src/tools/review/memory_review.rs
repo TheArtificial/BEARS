@@ -17,8 +17,8 @@ use crate::tools::{
 };
 
 use super::store::{
-    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ProposalProjection,
-    RequestReviewRequest, ResolveProposalRequest,
+    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore,
+    ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -145,25 +145,17 @@ fn validate_optional_review_text(
         .transpose()
 }
 
-fn normalize_proposal_status_filter(value: Option<&str>) -> Result<Option<String>, DenError> {
+fn normalize_proposal_status_filter(
+    value: Option<&str>,
+) -> Result<Option<MemoryProposalStatus>, DenError> {
     let Some(value) = value.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
-    if matches!(
-        value,
-        "pending"
-            | "rejected"
-            | "retained_local"
-            | "deferred"
-            | "superseded"
-            | "needs_human_review"
-    ) {
-        Ok(Some(value.to_string()))
-    } else {
-        Err(DenError::ValidationError(format!(
+    MemoryProposalStatus::parse(value).map(Some).ok_or_else(|| {
+        DenError::ValidationError(format!(
             "status must be pending, rejected, retained_local, deferred, superseded, or needs_human_review; got {value}"
-        )))
-    }
+        ))
+    })
 }
 
 fn bounded_proposal_limit(value: Option<i64>) -> i64 {
@@ -463,7 +455,11 @@ mod tests {
         assert_eq!(normalize_proposal_status_filter(None).unwrap(), None);
         assert_eq!(
             normalize_proposal_status_filter(Some(" pending ")).unwrap(),
-            Some("pending".to_string())
+            Some(MemoryProposalStatus::Pending)
+        );
+        assert_eq!(
+            MemoryProposalStatus::NeedsHumanReview.as_str(),
+            "needs_human_review"
         );
         assert!(normalize_proposal_status_filter(Some("done")).is_err());
         assert_eq!(bounded_proposal_limit(None), 50);

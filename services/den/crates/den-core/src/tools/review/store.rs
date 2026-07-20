@@ -11,6 +11,42 @@ use crate::{BearProfile, DenError};
 use serde_json::Value;
 use uuid::Uuid;
 
+/// Closed persisted states accepted by the memory-proposal list filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryProposalStatus {
+    Pending,
+    Rejected,
+    RetainedLocal,
+    Deferred,
+    Superseded,
+    NeedsHumanReview,
+}
+
+impl MemoryProposalStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Rejected => "rejected",
+            Self::RetainedLocal => "retained_local",
+            Self::Deferred => "deferred",
+            Self::Superseded => "superseded",
+            Self::NeedsHumanReview => "needs_human_review",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "rejected" => Some(Self::Rejected),
+            "retained_local" => Some(Self::RetainedLocal),
+            "deferred" => Some(Self::Deferred),
+            "superseded" => Some(Self::Superseded),
+            "needs_human_review" => Some(Self::NeedsHumanReview),
+            _ => None,
+        }
+    }
+}
+
 /// The observation fields the `observation_write` payload needs.
 #[derive(Debug, Clone)]
 pub struct ObservationRecord {
@@ -126,11 +162,11 @@ pub trait MemoryReviewStore: Send + Sync {
         request: ObservationWriteRequest,
     ) -> Result<ObservationRecord, DenError>;
 
-    /// Proposals matching `status` (already trimmed) — serialized JSON array.
+    /// Proposals matching the closed persisted status domain, if filtered.
     async fn list_proposals(
         &self,
         bear_id: Uuid,
-        status: Option<String>,
+        status: Option<MemoryProposalStatus>,
         limit: i64,
     ) -> Result<Value, DenError>;
 

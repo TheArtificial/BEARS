@@ -10,6 +10,7 @@ pub use memory_review::{
 };
 pub use observations::{write_observation, ObservationWriteArguments};
 pub use store::{
-    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ObservationRecord,
-    ObservationWriteRequest, ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
+    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore,
+    ObservationRecord, ObservationWriteRequest, ProposalProjection, RequestReviewRequest,
+    ResolveProposalRequest,
 };

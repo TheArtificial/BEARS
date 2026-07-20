@@ -12,8 +12,9 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::tools::review::{
-    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ObservationRecord,
-    ObservationWriteRequest, ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
+    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore,
+    ObservationRecord, ObservationWriteRequest, ProposalProjection, RequestReviewRequest,
+    ResolveProposalRequest,
 };
 
 use crate::{config::Config, errors::DenError};
@@ -227,7 +228,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
     async fn list_proposals(
         &self,
         bear_id: Uuid,
-        status: Option<String>,
+        status: Option<MemoryProposalStatus>,
         limit: i64,
     ) -> Result<Value, DenError> {
         let proposals = db_list_proposals(
@@ -235,7 +236,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             self.config,
             self.stores,
             bear_id,
-            status.as_deref(),
+            status.map(MemoryProposalStatus::as_str),
             limit,
         )
         .await?;
