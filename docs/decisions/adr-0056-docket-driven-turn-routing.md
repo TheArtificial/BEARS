@@ -468,6 +468,8 @@ Job: Improve auth reliability
     Routing: inline
 ```
 
+Human vocabulary is a strict subset of the model's. Client copy should surface **job, task, task list, run status, results, and approvals** — the vocabulary the Phase-1 UX surfaces already standardize. Conversation bindings, other sessions' cursors, routing decisions, and turn intents are trace/debug tier: available to every client, shown by default in none.
+
 The GUI should not need to reverse-engineer this from transcripts. Den should provide first-class APIs for Docket cursors, routing decisions, task/conversation bindings, transcripts, and result rollups. Transcript review rests on ADR-0043's fenced requirement that tool activity is core replay state: every model-relevant tool call and result is persisted in a replayable Den transcript shape, so a log-review UI reads core state, not adapter decoration.
 
 ## Den API requirements
@@ -569,6 +571,8 @@ The `conversation.strategy` vocabulary is deliberately small — `continue_curre
 ## Watching and steering
 
 Observation and steering of a running job follow **bear rights — jobs introduce no new ACL.** Anyone with rights to the Bear may watch a run's conversation projection and job event stream live, full transcript included, from any surface (`pair`, `chat`, GUI).
+
+Watching is pull; **attention is push**. Blocked, decision-needed, completed, and failed events must reach the user as notifications on their active surface, with a link back to the job — not wait in a pull-only queue. Silent stalling is autonomy's primary failure mode: an unattended run that blocks invisibly has not "completed autonomously," it has quietly stopped.
 
 Steering is deliberately small:
 
