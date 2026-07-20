@@ -110,10 +110,11 @@ Production leaves `BEARS_INSTANCE_SUFFIX` empty and retains `bears-sandbox-provi
 
    The dispatch worker pushes the managed config at startup — watch for
    `surface_sync: managed config pushed to sandbox provider`.
-3. **Images**: the migration seeds catalog entries for
-   `bears/sandbox:latest` (+ rust/node/godot variants). Get them into the
-   engine's store from **`/admin/sandbox`** (build buttons or a registry
-   pull), or with `scripts/build-sandbox-image.sh all` /
+3. **Images**: the migration seeds catalog entries for local tags
+   `bears/sandbox:latest` (+ rust/node/godot variants); catalog rows do not
+   create image artifacts. Before the first run on a fresh engine volume,
+   build at least **base** from **`/admin/sandbox`** (or use a real registry
+   reference and pull it). Alternatively run `scripts/build-sandbox-image.sh all` /
    `docker compose --profile sandbox-build run --rm bears-sandbox-images`.
    Rebuild whenever `tools/bear-armature` changes (the armature binary is
    baked in).

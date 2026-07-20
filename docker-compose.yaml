@@ -492,6 +492,10 @@ services:
             # Dockerfile COPYs tools/bear-armature from the context root.
             - ./packaging/sandbox-image:/opt/bears/sandbox-build/packaging/sandbox-image:ro
             - ./tools/bear-armature:/opt/bears/sandbox-build/tools/bear-armature:ro
+            # The base image builds bear-armature, whose path dependency inherits
+            # workspace metadata from the Den manifest.
+            - ./services/den/Cargo.toml:/opt/bears/sandbox-build/services/den/Cargo.toml:ro
+            - ./services/den/crates/bearwire-protocol:/opt/bears/sandbox-build/services/den/crates/bearwire-protocol:ro
         healthcheck:
             test:
                 [
