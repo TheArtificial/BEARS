@@ -263,7 +263,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 proposal_id: request.proposal_id,
                 reviewer_profile: request.reviewer_profile,
                 reviewer_agent_id: Some(request.binding_id.as_str()),
-                status: &request.status,
+                status: request.status.as_str(),
                 review_notes: request.review_notes.as_deref(),
                 decision_summary: request.decision_summary.as_deref(),
                 result_path: None,
@@ -327,7 +327,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         let record = mark_memory_record_lifecycle(
             &store,
             &request.memory_id,
-            &request.status,
+            request.status.as_str(),
             request.reason.as_deref(),
         )
         .await?;

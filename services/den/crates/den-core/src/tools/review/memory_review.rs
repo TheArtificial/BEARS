@@ -17,8 +17,9 @@ use crate::tools::{
 };
 
 use super::store::{
-    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore,
-    ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
+    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryLifecycleStatus,
+    MemoryProposalResolution, MemoryProposalStatus, MemoryReviewStore, ProposalProjection,
+    RequestReviewRequest, ResolveProposalRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -228,15 +229,11 @@ pub async fn mark_memory_lifecycle(
     }
     let args: MemoryMarkLifecycleArguments = serde_json::from_value(arguments)?;
     let memory_id = validate_bounded_text("memory_id", &args.memory_id, 1, 200)?;
-    let status = args.status.trim();
-    if !matches!(
-        status,
-        "active" | "stale" | "superseded" | "archived" | "archive-candidate"
-    ) {
-        return Err(DenError::ValidationError(
+    let status = MemoryLifecycleStatus::parse(args.status.trim()).ok_or_else(|| {
+        DenError::ValidationError(
             "status must be active, stale, superseded, archived, or archive-candidate".to_string(),
-        ));
-    }
+        )
+    })?;
     let reason = args
         .reason
         .as_deref()
@@ -248,7 +245,7 @@ pub async fn mark_memory_lifecycle(
             reviewer_profile: role,
             binding_id: context.binding_id.clone(),
             memory_id,
-            status: status.to_string(),
+            status,
             reason,
         })
         .await?;
@@ -305,23 +302,19 @@ pub async fn resolve_memory_proposal(
         ));
     }
     let args: MemoryResolveProposalArguments = serde_json::from_value(arguments)?;
-    let status = args.status.trim();
-    if !matches!(
-        status,
-        "rejected" | "retained_local" | "deferred" | "superseded" | "needs_human_review"
-    ) {
-        return Err(DenError::ValidationError(
+    let status = MemoryProposalResolution::parse(args.status.trim()).ok_or_else(|| {
+        DenError::ValidationError(
             "status must be rejected, retained_local, deferred, superseded, or needs_human_review"
                 .to_string(),
-        ));
-    }
+        )
+    })?;
     let proposal = store
         .resolve_proposal(ResolveProposalRequest {
             bear_id: context.bear_id,
             reviewer_profile: role,
             binding_id: context.binding_id.clone(),
             proposal_id: args.proposal_id,
-            status: status.to_string(),
+            status,
             review_notes: args.review_notes,
             decision_summary: args.decision_summary,
             projection: projection(context, context.bear_id, role),
@@ -448,6 +441,28 @@ mod tests {
             Some("ok".to_string())
         );
         assert!(validate_optional_review_text("proposed_content", Some("too long"), 3).is_err());
+    }
+
+    #[test]
+    fn memory_review_statuses_preserve_storage_strings_and_reject_unknown_values() {
+        assert_eq!(
+            MemoryProposalResolution::NeedsHumanReview.as_str(),
+            "needs_human_review"
+        );
+        assert_eq!(
+            MemoryProposalResolution::parse("deferred"),
+            Some(MemoryProposalResolution::Deferred)
+        );
+        assert_eq!(MemoryProposalResolution::parse("pending"), None);
+        assert_eq!(
+            MemoryLifecycleStatus::ArchiveCandidate.as_str(),
+            "archive-candidate"
+        );
+        assert_eq!(
+            MemoryLifecycleStatus::parse("archived"),
+            Some(MemoryLifecycleStatus::Archived)
+        );
+        assert_eq!(MemoryLifecycleStatus::parse("deleted"), None);
     }
 
     #[test]

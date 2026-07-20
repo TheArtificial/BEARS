@@ -47,6 +47,72 @@ impl MemoryProposalStatus {
     }
 }
 
+/// Closed terminal states accepted when resolving a memory proposal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryProposalResolution {
+    Rejected,
+    RetainedLocal,
+    Deferred,
+    Superseded,
+    NeedsHumanReview,
+}
+
+impl MemoryProposalResolution {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rejected => "rejected",
+            Self::RetainedLocal => "retained_local",
+            Self::Deferred => "deferred",
+            Self::Superseded => "superseded",
+            Self::NeedsHumanReview => "needs_human_review",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "rejected" => Some(Self::Rejected),
+            "retained_local" => Some(Self::RetainedLocal),
+            "deferred" => Some(Self::Deferred),
+            "superseded" => Some(Self::Superseded),
+            "needs_human_review" => Some(Self::NeedsHumanReview),
+            _ => None,
+        }
+    }
+}
+
+/// Closed lifecycle states accepted when marking a memory record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryLifecycleStatus {
+    Active,
+    Stale,
+    Superseded,
+    Archived,
+    ArchiveCandidate,
+}
+
+impl MemoryLifecycleStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Stale => "stale",
+            Self::Superseded => "superseded",
+            Self::Archived => "archived",
+            Self::ArchiveCandidate => "archive-candidate",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "active" => Some(Self::Active),
+            "stale" => Some(Self::Stale),
+            "superseded" => Some(Self::Superseded),
+            "archived" => Some(Self::Archived),
+            "archive-candidate" => Some(Self::ArchiveCandidate),
+            _ => None,
+        }
+    }
+}
+
 /// The observation fields the `observation_write` payload needs.
 #[derive(Debug, Clone)]
 pub struct ObservationRecord {
@@ -90,7 +156,7 @@ pub struct ResolveProposalRequest {
     pub reviewer_profile: BearProfile,
     pub binding_id: String,
     pub proposal_id: Uuid,
-    pub status: String,
+    pub status: MemoryProposalResolution,
     pub review_notes: Option<String>,
     pub decision_summary: Option<String>,
     pub projection: ProposalProjection,
@@ -141,7 +207,7 @@ pub struct MarkMemoryLifecycleRequest {
     pub reviewer_profile: BearProfile,
     pub binding_id: String,
     pub memory_id: String,
-    pub status: String,
+    pub status: MemoryLifecycleStatus,
     pub reason: Option<String>,
 }
 
