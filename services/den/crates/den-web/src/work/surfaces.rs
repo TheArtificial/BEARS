@@ -124,6 +124,33 @@ pub(crate) async fn push_surfaces_best_effort(state: &AppState) -> Option<String
     }
 }
 
+async fn prepare_surface(state: &AppState, name: &str) -> Result<String, String> {
+    if let Some(note) = push_surfaces_best_effort(state).await {
+        return Err(note);
+    }
+    let url = state
+        .config
+        .sandbox_server_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| "No sandbox provider configured.".to_string())?;
+    let result = SandboxClient::new(url, &state.config.sandbox_server_token)
+        .sync_root(name)
+        .await
+        .map_err(|err| format!("Provider root test failed: {err}"))?;
+    if result.synced {
+        Ok(match result.head {
+            Some(head) => format!("Surface is ready at commit {head}."),
+            None => "Surface is ready.".to_string(),
+        })
+    } else {
+        Err(result
+            .error
+            .unwrap_or_else(|| "Provider could not prepare the surface.".to_string()))
+    }
+}
+
 fn surface_redirect(surface_id: Uuid, message: &str, sync_note: Option<String>) -> Response {
     let full = format!("{message}{}", sync_note.unwrap_or_default());
     Redirect::to(&format!(
@@ -330,15 +357,15 @@ async fn create(
                 .await?;
         }
     }
-    let sync_note = push_surfaces_best_effort(&state).await;
-    if let Some(job_id) = form.return_job_id {
+    let prepared = prepare_surface(&state, &surface.name).await;
+    if let (Some(job_id), Ok(_)) = (form.return_job_id, &prepared) {
         return Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response());
     }
-    Ok(surface_redirect(
-        surface.id,
-        "Work surface created.",
-        sync_note,
-    ))
+    let message = match prepared {
+        Ok(message) => format!("Work surface created. {message}"),
+        Err(error) => format!("Work surface created, but is not ready: {error}"),
+    };
+    Ok(surface_redirect(surface.id, &message, None))
 }
 
 async fn detail(
@@ -352,6 +379,21 @@ async fn detail(
     let managers = work_surfaces::list_managers(state.sqlx_pool(), surface_id).await?;
     let assigned = work_surfaces::list_assigned_bears(state.sqlx_pool(), surface_id).await?;
     let images = work_surfaces::list_catalog_images(state.sqlx_pool()).await?;
+    let provider_root_status = match state.config.sandbox_server_url.as_deref() {
+        Some(url) if !url.trim().is_empty() => {
+            SandboxClient::new(url.trim(), &state.config.sandbox_server_token)
+                .health()
+                .await
+                .ok()
+                .and_then(|health| {
+                    health
+                        .roots
+                        .into_iter()
+                        .find(|root| root.name == surface.name)
+                })
+        }
+        _ => None,
+    };
 
     // Bears the viewer can assign: their member bears (admins: all bears),
     // minus ones already assigned.
@@ -405,6 +447,7 @@ async fn detail(
             assigned_bears => assigned,
             assignable_bears => assignable,
             images => images,
+            provider_root_status => provider_root_status,
             message => query.message,
         },
     )
@@ -607,21 +650,10 @@ async fn sync_now(
     auth_session: AuthSession,
     Path(surface_id): Path<Uuid>,
 ) -> Result<Response, CustomError> {
-    load_managed_surface(&state, &auth_session, surface_id).await?;
-    let message = match push_surfaces_best_effort(&state).await {
-        None => {
-            if state
-                .config
-                .sandbox_server_url
-                .as_deref()
-                .is_some_and(|url| !url.trim().is_empty())
-            {
-                "Synced to the sandbox provider."
-            } else {
-                "No sandbox provider configured (SANDBOX_SERVER_URL unset)."
-            }
-        }
-        Some(_) => "Provider sync failed — the dispatch worker retries within 5 minutes.",
+    let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
+    let message = match prepare_surface(&state, &surface.name).await {
+        Ok(message) => message,
+        Err(error) => format!("Surface is not ready: {error}"),
     };
-    Ok(surface_redirect(surface_id, message, None))
+    Ok(surface_redirect(surface_id, &message, None))
 }

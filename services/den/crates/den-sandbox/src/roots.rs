@@ -311,14 +311,9 @@ impl RootsManager {
         }
 
         let head = self
-            .git(
-                root,
-                Some(&pristine),
-                &env,
-                &["rev-parse", &upstream.default_ref],
-            )
+            .resolve_commit(root, &pristine, &env, &upstream.default_ref)
             .await?;
-        Ok(Some(head.trim().to_string()))
+        Ok(Some(head))
     }
 
     /// Materialize a workspace for one sandbox: a self-contained local clone
@@ -359,14 +354,7 @@ impl RootsManager {
             )
             .await?;
             let reference = git_ref.unwrap_or(&upstream.default_ref);
-            let checkout = self
-                .git(
-                    root,
-                    Some(&workspace),
-                    &[],
-                    &["checkout", "--detach", reference],
-                )
-                .await;
+            let checkout = self.checkout_detached(root, &workspace, reference).await;
             match checkout {
                 Ok(_) => {}
                 // A requested ref that does not exist yet (e.g. a job work
@@ -379,16 +367,11 @@ impl RootsManager {
                         fallback = %upstream.default_ref,
                         "requested ref missing; provisioning at the default ref"
                     );
-                    self.git(
-                        root,
-                        Some(&workspace),
-                        &[],
-                        &["checkout", "--detach", &upstream.default_ref],
-                    )
-                    .await
-                    .inspect_err(|_| {
-                        let _ = std::fs::remove_dir_all(&workspace);
-                    })?;
+                    self.checkout_detached(root, &workspace, &upstream.default_ref)
+                        .await
+                        .inspect_err(|_| {
+                            let _ = std::fs::remove_dir_all(&workspace);
+                        })?;
                 }
                 Err(err) => {
                     let _ = std::fs::remove_dir_all(&workspace);
@@ -534,6 +517,49 @@ impl RootsManager {
             tokio::fs::remove_dir_all(&workspace).await?;
         }
         Ok(())
+    }
+
+    async fn resolve_commit(
+        &self,
+        root: &SyncableRoot,
+        repository: &Path,
+        env: &[(String, String)],
+        reference: &str,
+    ) -> Result<String, RootsError> {
+        let expression = format!("{reference}^{{commit}}");
+        let resolved = self
+            .git(
+                root,
+                Some(repository),
+                env,
+                &["rev-parse", "--verify", "--end-of-options", &expression],
+            )
+            .await?;
+        let oid = resolved.trim();
+        if !matches!(oid.len(), 40 | 64) || !oid.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return Err(RootsError::Git {
+                name: root.name.clone(),
+                detail: format!("ref {reference:?} resolved to an invalid commit object id"),
+            });
+        }
+        Ok(oid.to_string())
+    }
+
+    async fn checkout_detached(
+        &self,
+        root: &SyncableRoot,
+        workspace: &Path,
+        reference: &str,
+    ) -> Result<String, RootsError> {
+        let commit = self.resolve_commit(root, workspace, &[], reference).await?;
+        self.git(
+            root,
+            Some(workspace),
+            &[],
+            &["checkout", "--detach", &commit],
+        )
+        .await?;
+        Ok(commit)
     }
 
     async fn git(
@@ -895,6 +921,21 @@ mod tests {
             allow_default_ref: false,
             run_label: Some("test-run".to_string()),
         }
+    }
+
+    #[tokio::test]
+    async fn option_like_requested_ref_falls_back_without_checkout_option_injection() {
+        let fx = publish_fixture();
+        fx.manager.sync_root(&fx.root).await.unwrap();
+        let workspace = fx
+            .manager
+            .provision_workspace(&fx.root, Some("-b"), "sbx-option-ref")
+            .await
+            .expect("option-like ref should fall back to default");
+        assert_eq!(
+            sh_git(&workspace, &["rev-parse", "HEAD"]).trim(),
+            fx.base_commit
+        );
     }
 
     #[tokio::test]

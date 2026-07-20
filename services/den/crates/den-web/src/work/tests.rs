@@ -443,13 +443,12 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response
-            .headers()
-            .get(header::LOCATION)
-            .and_then(|value| value.to_str().ok()),
-        Some(format!("/work/jobs/{job_id}").as_str())
-    );
+    let redirect = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
     let (surface_ref, surface_id): (Option<String>, Option<Uuid>) =
         sqlx::query_as("SELECT work_surface_ref, work_surface_id FROM bear_jobs WHERE id = $1")
             .bind(job_id)
@@ -458,6 +457,8 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
             .expect("attached job surface");
     assert_eq!(surface_ref.as_deref(), Some(surface_name.as_str()));
     let surface_id = surface_id.expect("surface id");
+    assert!(redirect.starts_with(&format!("/work/surfaces/{surface_id}?message=")));
+    assert!(redirect.contains("not%20ready"));
     let assignment_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2",
     )

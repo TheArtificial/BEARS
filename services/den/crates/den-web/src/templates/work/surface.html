@@ -144,13 +144,22 @@
 </section>
 
 <section>
-    <h2>Provider sync</h2>
+    <h2>Readiness</h2>
+    {% if provider_root_status %}
     <p>
-        Changes push to the sandbox provider automatically; the dispatch worker
-        also reconciles every 5 minutes.
+        </p>Provider root: {% if provider_root_status.ok %}<strong>read</strong>y</strong>{% else %}<strong>not ready</</strong>strong>{% endif %}
+        {% if provider_root_status.detail %}— {{ provider_root_status.detail }}{% endif %}
+    </p>
+    {% else %}
+    <p></p>Provider readiness has not been verified.</p>
+    {% endif %}
+    <p></p>
+        <strong></strong>Test &amp; prepare</strong> pushes current configuration, verifies credentials and
+        upstream reachability, clones/fetches the pristine mirror, and resolves the default ref.
+        This does not launch a work sandbox.
     </p>
     <form method="post" action="/work/surfaces/{{ surface_id }}/sync">
-        <p><button type="submit">Sync now</button></p>
+        <p><button type="submit">Test &amp; prepare surface</button></p>
     </form>
 </section>
 
