@@ -1,4 +1,4 @@
-# Bear Den stack — single Docker Compose project with one shared network (`bears-stack`).
+# Bear Den stack — one Compose resource; deployment platforms own project/network identity.
 #
 # Recommended for Coolify: Add Resource → Docker Compose → this repository,
 # Base Directory: `.` (repo root), Compose file: `docker-compose.yaml`.
@@ -22,9 +22,9 @@
 # Run manually: `docker compose run --rm bears-preflight-config`.
 
 # Production keeps the historic `bears-*` identities. Shared-network secondary
-# deployments set BEARS_INSTANCE_SUFFIX (for example `-test`) so DNS names,
-# project resources, and volumes cannot collide with production.
-name: bears-stack${BEARS_INSTANCE_SUFFIX:-}
+# deployments set BEARS_INSTANCE_SUFFIX (for example `-test`) so internal DNS
+# names and volumes cannot collide. Coolify owns the Compose project/network
+# identity; persistent volume names are pinned explicitly below.
 
 x-preflight-build: &preflight-build
     context: .
@@ -109,10 +109,6 @@ services:
     # add external reachability monitors (see docs/guides/infrastructure-and-ops.md).
     bears-qdrant:
         hostname: bears-qdrant${BEARS_INSTANCE_SUFFIX:-}
-        networks:
-            default:
-                aliases:
-                    - bears-qdrant${BEARS_INSTANCE_SUFFIX:-}
         profiles:
             - recall
         image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.12.4}
@@ -142,10 +138,6 @@ services:
 
     bears-bifrost:
         hostname: bears-bifrost${BEARS_INSTANCE_SUFFIX:-}
-        networks:
-            default:
-                aliases:
-                    - bears-bifrost${BEARS_INSTANCE_SUFFIX:-}
         depends_on:
             <<: *preflight-depends
             bears-bifrost-valkey:
@@ -199,10 +191,9 @@ services:
 
     bears-den:
         hostname: bears-den${BEARS_INSTANCE_SUFFIX:-}
-        networks:
-            default:
-                aliases:
-                    - bears-den${BEARS_INSTANCE_SUFFIX:-}
+        # Coolify owns proxy-facing network attachment. Do not add an explicit
+        # Compose `default` network here: it creates an extra unshared network
+        # that Traefik may select for the upstream address.
         # No `pull_policy: build`. Coolify deploys in two phases — `docker compose
         # build` then `docker compose up -d` — from two different directories.
         # `pull_policy: build` forces `up` to recompile the image a second time
@@ -411,10 +402,6 @@ services:
     # host-root-equivalent docker.sock mount).
     bears-sandbox-engine:
         hostname: bears-sandbox-engine${BEARS_INSTANCE_SUFFIX:-}
-        networks:
-            default:
-                aliases:
-                    - bears-sandbox-engine${BEARS_INSTANCE_SUFFIX:-}
         image: ${SANDBOX_ENGINE_IMAGE:-docker:27-dind}
         restart: unless-stopped
         privileged: true
@@ -441,10 +428,6 @@ services:
     # docker CLI, talking to the engine over TLS TCP.
     bears-sandbox-provider:
         hostname: bears-sandbox-provider${BEARS_INSTANCE_SUFFIX:-}
-        networks:
-            default:
-                aliases:
-                    - bears-sandbox-provider${BEARS_INSTANCE_SUFFIX:-}
         build:
             context: ./services/den
             dockerfile: Dockerfile
@@ -532,11 +515,21 @@ services:
             - .:/src:ro
 
 volumes:
+    # Keep existing data names stable while allowing Coolify to own the project
+    # and proxy-network lifecycle.
     bears-postgres-data:
+        name: bears-stack${BEARS_INSTANCE_SUFFIX:-}_bears-postgres-data
     bears-den-sqlite-data:
+        name: bears-stack${BEARS_INSTANCE_SUFFIX:-}_bears-den-sqlite-data
     bears-qdrant-data:
+        name: bears-stack${BEARS_INSTANCE_SUFFIX:-}_bears-qdrant-data
     bears-bifrost-valkey-data:
+        name: bears-stack${BEARS_INSTANCE_SUFFIX:-}_bears-bifrost-valkey-data
     bears-bifrost-data:
+        name: bears-stack${BEARS_INSTANCE_SUFFIX:-}_bears-bifrost-data
     bears-sandbox-engine-data:
+        name: bears-stack${BEARS_INSTANCE_SUFFIX:-}_bears-sandbox-engine-data
     bears-sandbox-certs:
+        name: bears-stack${BEARS_INSTANCE_SUFFIX:-}_bears-sandbox-certs
     bears-sandbox-workspaces:
+        name: bears-stack${BEARS_INSTANCE_SUFFIX:-}_bears-sandbox-workspaces

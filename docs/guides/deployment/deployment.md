@@ -1,6 +1,6 @@
 # Bear Den Stack — Coolify Deployment Guide
 
-Deploy Bear Den on Coolify from the repository root [`docker-compose.yaml`](../../../docker-compose.yaml). This is the supported path for operators: each Compose resource has an instance-scoped default network for internal traffic and may also attach to Coolify's predefined shared network for platform routing and managed resources.
+Deploy Bear Den on Coolify from the repository root [`docker-compose.yaml`](../../../docker-compose.yaml). This is the supported path for operators: Coolify owns each resource's project/network identity and may also attach it to the predefined shared network for platform routing and managed resources.
 
 The default stack runs the **in-process Den agent loop** (`AGENT_RUNTIME=native`): inference via Bifrost, Bear memory in per-Bear SQLite on a mounted volume. See [den-runtime.md](../../architecture/den-runtime.md) for the architecture and [den-deploy.md](../den-deploy.md) for single-image env details.
 
@@ -69,7 +69,7 @@ In the Compose resource advanced settings:
 2. Enable **Connect To Predefined Network**.
 3. Save.
 
-This attaches the stack to Coolify's shared network while Compose retains its instance-scoped default network. Production keeps stable internal URLs such as `http://bears-bifrost:8080` and `http://bears-den:3001`. When multiple deployments share the predefined network, configure `BEARS_INSTANCE_SUFFIX` as described below so secondary deployments do not advertise or call production identities.
+This attaches the stack to Coolify's shared network while Coolify retains ownership of the resource network used by its proxy. Production keeps stable internal URLs such as `http://bears-bifrost:8080` and `http://bears-den:3001`. When multiple deployments share the predefined network, configure `BEARS_INSTANCE_SUFFIX` as described below so secondary deployments do not advertise or call production identities.
 
 ## 5. Set Environment Variables
 
@@ -104,7 +104,7 @@ Production retains the historic unsuffixed identities by leaving `BEARS_INSTANCE
 BEARS_INSTANCE_SUFFIX=-test
 ```
 
-The test deployment then uses `bears-den-test`, `bears-bifrost-test`, `bears-qdrant-test`, `bears-sandbox-provider-test`, and `bears-sandbox-engine-test`. The suffix also changes the Compose project name from `bears-stack` to `bears-stack-test`, isolating its named volumes and default project resources. Docker-in-Docker includes the suffixed engine hostname in its TLS certificate.
+The test deployment then uses `bears-den-test`, `bears-bifrost-test`, `bears-qdrant-test`, `bears-sandbox-provider-test`, and `bears-sandbox-engine-test`. Named volumes are explicitly pinned to `bears-stack-test_*`, preserving test data without overriding Coolify's project/network lifecycle. Docker-in-Docker includes the suffixed engine hostname in its TLS certificate.
 
 The value must be empty or a lowercase DNS suffix beginning with `-`. Do not set production to `-prod`: keeping production empty preserves its existing DNS names and volume names.
 
