@@ -628,6 +628,15 @@ async fn publish_wiring_image_branch_and_prompt() {
     let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
         .await
         .unwrap();
+    assert!(checkout.prompt.contains(&format!("job_id: {}", run.job_id)));
+    assert!(checkout
+        .prompt
+        .contains(&format!("run_id: {}", run.job_run_id)));
+    assert!(checkout
+        .prompt
+        .contains(&format!("task_id: {}", run.task_id)));
+    assert!(checkout.prompt.contains("status `done`"));
+    assert!(checkout.prompt.contains("non-empty result_summary"));
     assert!(
         checkout.prompt.contains("Commit your work"),
         "{}",

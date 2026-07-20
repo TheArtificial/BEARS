@@ -113,6 +113,12 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
         deadline.as_secs()
     );
 
+    // Headless bypasses ACP's session/prompt request handler, so register the
+    // turn explicitly. Without this, streamed output and armature-local tool
+    // updates are incorrectly discarded as stale.
+    let turn_token = Uuid::new_v4();
+    crate::register_prompt_turn_for_session(&shared_state, &session_id, turn_token, None).await;
+
     // ponytail: bearwire::handle_prompt has its own 600s internal ceiling per
     // turn; long work orders hit that before multi-hour deadlines. Upgrade
     // path: thread the checkout deadline into the poll loop.
@@ -130,7 +136,7 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
             context.raw.clone(),
             None,
             MODE_WRITE,
-            Uuid::new_v4(),
+            turn_token,
         ),
     )
     .await;

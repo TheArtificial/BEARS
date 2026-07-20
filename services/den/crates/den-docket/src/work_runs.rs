@@ -880,7 +880,16 @@ pub async fn checkout_work_run_for_session(
     .await?;
 
     let (task_title, task_body, criteria) = (task.0, task.1, task.2 .0);
-    let prompt = build_work_prompt(&goal, &task_title, &task_body, &criteria, publishes);
+    let prompt = build_work_prompt(
+        run.job_id,
+        run.job_run_id,
+        run.task_id,
+        &goal,
+        &task_title,
+        &task_body,
+        &criteria,
+        publishes,
+    );
     Ok(WorkRunCheckout {
         run,
         prompt,
@@ -889,6 +898,9 @@ pub async fn checkout_work_run_for_session(
 }
 
 fn build_work_prompt(
+    job_id: Uuid,
+    run_id: Uuid,
+    task_id: Uuid,
     goal: &str,
     title: &str,
     body: &str,
@@ -902,6 +914,10 @@ fn build_work_prompt(
          or ask questions.\n\n",
     );
     prompt.push_str(&format!("Job objective: {goal}\n\n"));
+    prompt.push_str("Docket execution identifiers:\n");
+    prompt.push_str(&format!("- job_id: {job_id}\n"));
+    prompt.push_str(&format!("- run_id: {run_id}\n"));
+    prompt.push_str(&format!("- task_id: {task_id}\n\n"));
     prompt.push_str(&format!("Task: {title}\n"));
     if !body.trim().is_empty() {
         prompt.push_str(&format!("{body}\n"));
@@ -913,8 +929,9 @@ fn build_work_prompt(
     prompt.push_str(
         "\nRules:\n\
          - Operate only inside the sandbox workspace; it contains the work surface.\n\
-         - When every criterion is satisfied, mark the task done using the \
-           update_current_task_status tool — this is how success is recorded.\n\
+         - When every criterion is satisfied, call update_current_task_status with the \
+           job_id, run_id, and task_id above, status `done`, and a non-empty result_summary \
+           explaining how the criteria were satisfied — this is how success is recorded.\n\
          - If you cannot make progress, mark the task blocked with a specific reason \
            using update_current_task_status instead of guessing or stopping silently.\n",
     );
