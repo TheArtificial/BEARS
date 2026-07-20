@@ -364,6 +364,14 @@ def validate_config_shape() -> None:
     validate_http_url("WEB_SERVER_URL", web)
     info(f"WEB_SERVER_URL OK ({web})")
 
+    sandbox_server = require_non_empty("SANDBOX_SERVER_URL")
+    if sandbox_server.lower() == "auto":
+        suffix = os.environ.get("BEARS_INSTANCE_SUFFIX", "").strip()
+        sandbox_port = os.environ.get("SANDBOX_PORT", "3002").strip()
+        sandbox_server = f"http://bears-sandbox-provider{suffix}:{sandbox_port}"
+    validate_http_url("SANDBOX_SERVER_URL", sandbox_server)
+    info(f"SANDBOX_SERVER_URL OK ({sandbox_server})")
+
     callback = require_non_empty("SANDBOX_CALLBACK_API_URL")
     if callback.lower() == "auto":
         suffix = os.environ.get("BEARS_INSTANCE_SUFFIX", "").strip()

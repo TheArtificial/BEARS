@@ -566,7 +566,12 @@ impl Config {
                 );
                 DEFAULT_QDRANT_PORT
             });
-        let qdrant_url = qdrant_url_from_env(std::env::var("QDRANT_URL").ok(), qdrant_port);
+        let instance_suffix = std::env::var("BEARS_INSTANCE_SUFFIX").unwrap_or_default();
+        let qdrant_url = qdrant_url_from_env(
+            std::env::var("QDRANT_URL").ok(),
+            qdrant_port,
+            &instance_suffix,
+        );
         let embedding_standard = std::env::var("EMBEDDING_STANDARD")
             .ok()
             .map(|s| s.trim().to_string())
@@ -633,13 +638,14 @@ impl Config {
             run_workers,
             run_sandbox,
             sandbox_port,
+            &instance_suffix,
         );
         let sandbox_server_token = std::env::var("SANDBOX_SERVER_TOKEN").unwrap_or_default();
         let sandbox_callback_api_url = sandbox_callback_api_url_from_env(
             std::env::var("SANDBOX_CALLBACK_API_URL").ok(),
             &api_server_url,
             api_port,
-            &std::env::var("BEARS_INSTANCE_SUFFIX").unwrap_or_default(),
+            &instance_suffix,
         );
         let work_dispatch_auto = parse_bool_env("WORK_DISPATCH_AUTO", false);
         let work_sandbox_network = std::env::var("WORK_SANDBOX_NETWORK")
@@ -756,7 +762,11 @@ impl Config {
     }
 }
 
-fn qdrant_url_from_env(raw: Option<String>, qdrant_port: u16) -> Option<String> {
+fn qdrant_url_from_env(
+    raw: Option<String>,
+    qdrant_port: u16,
+    instance_suffix: &str,
+) -> Option<String> {
     match raw.and_then(normalize_auto_url_env) {
         Some(value) => {
             let value = value.trim().trim_end_matches('/').to_string();
@@ -766,7 +776,10 @@ fn qdrant_url_from_env(raw: Option<String>, qdrant_port: u16) -> Option<String> 
                 Some(value)
             }
         }
-        None => Some(format!("http://{DEFAULT_QDRANT_HOST}:{qdrant_port}")),
+        None => Some(format!(
+            "http://{DEFAULT_QDRANT_HOST}{}:{qdrant_port}",
+            instance_suffix.trim()
+        )),
     }
 }
 
@@ -776,6 +789,7 @@ fn sandbox_server_url_from_env(
     run_workers: bool,
     run_sandbox: bool,
     sandbox_port: u16,
+    instance_suffix: &str,
 ) -> Option<String> {
     match raw.and_then(normalize_auto_url_env) {
         Some(value) => {
@@ -787,7 +801,8 @@ fn sandbox_server_url_from_env(
             }
         }
         None if (run_web || run_workers) && !run_sandbox => Some(format!(
-            "http://{DEFAULT_SANDBOX_SERVER_HOST}:{sandbox_port}"
+            "http://{DEFAULT_SANDBOX_SERVER_HOST}{}:{sandbox_port}",
+            instance_suffix.trim()
         )),
         None => None,
     }
@@ -999,17 +1014,17 @@ mod tests {
     #[test]
     fn qdrant_url_defaults_to_compose_service_port() {
         assert_eq!(
-            qdrant_url_from_env(None, 6334).as_deref(),
+            qdrant_url_from_env(None, 6334, "").as_deref(),
             Some("http://bears-qdrant:6334")
         );
-        assert_eq!(qdrant_url_from_env(Some(String::new()), 6333), None);
+        assert_eq!(qdrant_url_from_env(Some(String::new()), 6333, ""), None);
         assert_eq!(
-            qdrant_url_from_env(Some(" http://qdrant:6333/ ".into()), 6333).as_deref(),
+            qdrant_url_from_env(Some(" http://qdrant:6333/ ".into()), 6333, "").as_deref(),
             Some("http://qdrant:6333")
         );
         assert_eq!(
-            qdrant_url_from_env(Some("auto".into()), 6334).as_deref(),
-            Some("http://bears-qdrant:6334")
+            qdrant_url_from_env(Some("auto".into()), 6334, "-test").as_deref(),
+            Some("http://bears-qdrant-test:6334")
         );
     }
 
@@ -1033,23 +1048,24 @@ mod tests {
     #[test]
     fn sandbox_server_url_defaults_for_den_processes() {
         assert_eq!(
-            sandbox_server_url_from_env(None, false, true, false, 3137).as_deref(),
+            sandbox_server_url_from_env(None, false, true, false, 3137, "").as_deref(),
             Some("http://bears-sandbox-provider:3137")
         );
         assert_eq!(
-            sandbox_server_url_from_env(None, true, false, false, 3138).as_deref(),
+            sandbox_server_url_from_env(None, true, false, false, 3138, "").as_deref(),
             Some("http://bears-sandbox-provider:3138")
         );
         assert_eq!(
-            sandbox_server_url_from_env(Some("auto".into()), true, false, false, 3139).as_deref(),
-            Some("http://bears-sandbox-provider:3139")
+            sandbox_server_url_from_env(Some("auto".into()), true, false, false, 3139, "-test",)
+                .as_deref(),
+            Some("http://bears-sandbox-provider-test:3139")
         );
         assert_eq!(
-            sandbox_server_url_from_env(Some(String::new()), true, true, false, 3002),
+            sandbox_server_url_from_env(Some(String::new()), true, true, false, 3002, ""),
             None
         );
         assert_eq!(
-            sandbox_server_url_from_env(None, false, false, true, 3002),
+            sandbox_server_url_from_env(None, false, false, true, 3002, ""),
             None
         );
         assert_eq!(
@@ -1058,7 +1074,8 @@ mod tests {
                 true,
                 true,
                 false,
-                3002
+                3002,
+                ""
             )
             .as_deref(),
             Some("http://sandbox:3002")
