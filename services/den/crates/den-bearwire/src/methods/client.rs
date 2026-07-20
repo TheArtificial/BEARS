@@ -252,6 +252,29 @@ fn continuation_conversation_id(session: &client_sessions::ClientSessionRow) -> 
         .unwrap_or_else(|| session.conversation_id.clone())
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WebFetchPermissionPayload {
+    #[serde(rename = "tool_name")]
+    _tool_name: String,
+    arguments: WebFetchPermissionArguments,
+    #[serde(default, rename = "tool_call_id")]
+    _tool_call_id: Option<String>,
+    #[serde(default, rename = "approval_required")]
+    _approval_required: Option<bool>,
+    #[serde(default, rename = "approval_request_id")]
+    _approval_request_id: Option<String>,
+    #[serde(default, rename = "request_id")]
+    _request_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebFetchPermissionArguments {
+    url: Option<String>,
+    host: Option<String>,
+    site_account: Option<String>,
+}
+
 async fn record_web_fetch_approval_from_permission(
     pool: &sqlx::PgPool,
     bear_id: uuid::Uuid,
@@ -259,13 +282,13 @@ async fn record_web_fetch_approval_from_permission(
     decision: &str,
     obligation_payload: &Value,
 ) -> Result<(), CustomError> {
-    if !matches!(decision, "allow_once" | "allow_site_account" | "allow_host") {
-        return Ok(());
-    }
     let tool_name = obligation_payload
         .get("tool_name")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    if !matches!(decision, "allow_once" | "allow_site_account" | "allow_host") {
+        return Ok(());
+    }
     let Some(descriptor) =
         den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
     else {
@@ -274,22 +297,26 @@ async fn record_web_fetch_approval_from_permission(
     if descriptor.name != DEN_WEB_FETCH {
         return Ok(());
     }
-    let args = obligation_payload
-        .get("arguments")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let url = args
-        .get("url")
-        .and_then(Value::as_str)
+    let payload: WebFetchPermissionPayload = serde_json::from_value(obligation_payload.clone())
+        .map_err(|_| {
+            CustomError::ValidationError(
+                "web_fetch permission payload has an invalid shape".to_string(),
+            )
+        })?;
+    let url = payload
+        .arguments
+        .url
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             CustomError::ValidationError("web_fetch permission payload missing url".to_string())
         })?;
     let (scope_kind, scope_value) = if decision == "allow_host" {
-        let host = match args
-            .get("host")
-            .and_then(Value::as_str)
+        let host = match payload
+            .arguments
+            .host
+            .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
@@ -298,9 +325,10 @@ async fn record_web_fetch_approval_from_permission(
         };
         ("host", host)
     } else if decision == "allow_site_account" {
-        let scope_value = args
-            .get("site_account")
-            .and_then(Value::as_str)
+        let scope_value = payload
+            .arguments
+            .site_account
+            .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
@@ -324,9 +352,10 @@ async fn record_web_fetch_approval_from_permission(
             })?;
         ("site_account", scope_value)
     } else {
-        let host = match args
-            .get("host")
-            .and_then(Value::as_str)
+        let host = match payload
+            .arguments
+            .host
+            .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
@@ -1371,6 +1400,18 @@ pub(crate) async fn client_permission_result_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_fetch_permission_payload_rejects_unknown_fields() {
+        let payload = json!({
+            "tool_name": DEN_WEB_FETCH,
+            "arguments": {"url": "https://example.com"},
+            "approval_required": true,
+            "unexpected": true,
+        });
+
+        assert!(serde_json::from_value::<WebFetchPermissionPayload>(payload).is_err());
+    }
 
     #[test]
     fn continuation_retry_schedule_and_idle_error_classification() {
