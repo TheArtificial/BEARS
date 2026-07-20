@@ -16,6 +16,10 @@
 - [ADR-0050: Agent loop control, adaptive budgets, and runtime checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
 - [ADR-0052: Three-Layer Agent Steering](adr-0052-three-layer-agent-steering.md)
 
+> **Amended by [ADR-0056](adr-0056-docket-driven-turn-routing.md).** A Docket task with `routing_strategy: delegated` resolves to a delegated run through this ADR's broker: the router decides where the transcript lives; the broker decides what the run may do. Router placement is never a bypass around delegation authorization. Until the broker exists, `delegated` resolves to the `work` work-run lane; the broker generalizes that lane without changing task metadata. Execution profiles for delegated runs are resolved by the ADR-0033 model-tasks layer, not by this ADR's capability bundles.
+>
+> ADR-0056 also narrows this ADR for Docket-driven runs: the `ParentCommand` vocabulary reduces to run control (`start | pause | resume | stop`); `AddContext`, `NarrowScope`, `ReviseObjective`, and `AnswerDecision` are realized as ordinary audited Docket task-tree mutations (e.g. updating a blocked `decision` task) picked up at turn/task boundaries, not as a parallel message channel. Steering and observation rights follow bear rights — jobs introduce no new ACL. And **execution surface** (Den-provisioned sandbox armature vs. a user's live armature) is a third explicit authorization axis alongside stance and mode: `work` on a user's armature is still `work`, never a new stance and never `pair`.
+
 ## Context
 
 A Bear feels like one assistant to the user, but internally Den uses multiple stances such as `chat`, `pair`, `work`, `curate`, and `watch`. As Den grows more background-capable, a Bear in one stance often needs to delegate work to another loop: implementation work, memory curation, monitoring, archive review, or longer analysis.

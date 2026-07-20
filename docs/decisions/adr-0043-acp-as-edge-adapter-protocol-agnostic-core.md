@@ -14,6 +14,8 @@
 - [ACP Runtime Contract](../architecture/acp-runtime-contract.md)
 - [Den crate split plan](../roadmap/DEN_CRATE_SPLIT_PLAN.md)
 
+> **Amended by [ADR-0056](adr-0056-docket-driven-turn-routing.md).** The turn router — placement of turn intents (user, continuation, dispatch, rollup) into conversations — is a core, protocol-neutral concern alongside the turn/loop machinery this ADR protects. The ACP "one continuous session" illusion over multiple routed conversations is an adapter projection over BearWire semantic events, never a core behavior.
+
 ## Context
 
 ACP (Agent Client Protocol) is a wire protocol for editor/agent clients (Zed, Cursor, and the like). It should be one **edge** among several — a thin adapter that translates ACP requests into core operations and projects the core's canonical event stream back out as ACP wire events. The Den server's core — bears, memory, the agent loop, turns, sessions, tools — should be unaware that ACP exists.

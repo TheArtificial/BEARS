@@ -6,6 +6,8 @@
 
 > **Amended by [ADR-0045](adr-0045-session-task-lists-and-docket-checkout.md).** Docket remains canonical for durable jobs/tasks, but session task lists are the Bear/human working projection. A task-list item may be local-only or backed by a Docket task, and authorized task-list changes may sync back to Docket. Read this ADR's "session-bound tasks" language through that checkout/projection model rather than as a claim that every session task-list item is itself a Docket task.
 
+> **Amended by [ADR-0056](adr-0056-docket-driven-turn-routing.md).** Tasks gain routing/placement metadata (`routing_strategy`, plus advisory `expected_context_size` and `result_rollup_policy`); result rollups are recorded as append-only, run-scoped `bear_task_events` entries read latest-per-child by the parent. This ADR's invariants stand unchanged: task rows still hold no status, result, or model name; execution profiles are resolved by the ADR-0033 model-tasks layer at dispatch and recorded on routing decisions and runs.
+
 ## Context
 
 BEARS already has several overlapping work-management surfaces:

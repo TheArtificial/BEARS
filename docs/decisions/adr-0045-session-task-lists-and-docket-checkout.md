@@ -7,6 +7,8 @@
 
 > **State-inventory maintenance.** This ADR owns session task-list projections, Docket checkout/sync boundaries, and the task-list continuation gate. Changes to task-list source-of-truth rules, focus authority, or stop/continue behavior must update the state inventory and include tests that stale projections cannot force continuation.
 
+> **Amended by [ADR-0056](adr-0056-docket-driven-turn-routing.md).** The checkout/sync model and continuation gate stand. ADR-0056 adds the distinct concept of a **Docket cursor**: a per-session attention viewport over a job's task tree, separate from both the session task list (working projection of items) and run-scoped execution state (which alone owns "what task is underway"). The continuation gate becomes one producer of `continuation`-source turn intents into the ADR-0056 turn router.
+
 ## Context
 
 BEARS has accumulated several task/planning concepts that are useful but easy to confuse:

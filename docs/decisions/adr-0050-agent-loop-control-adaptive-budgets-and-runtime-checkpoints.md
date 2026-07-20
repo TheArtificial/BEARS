@@ -16,7 +16,10 @@
 - [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md)
 - [ADR-0037: Work sandbox, egress gateway, and upstream auth](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)
 - [ADR-0051: Reflection performance assessments](adr-0051-reflection-performance-assessments.md)
+- [ADR-0056: Docket-driven turn routing](adr-0056-docket-driven-turn-routing.md)
 - [Den state machine inventory](../architecture/den-state-machine-inventory.md)
+
+> **Relationship to [ADR-0056](adr-0056-docket-driven-turn-routing.md).** The focused Job remains the durable execution focus this ADR defines; ADR-0056's Docket cursors are a different axis — per-session attention viewports that grant no continuation authority and never contend with the focused Job or run state. Loop-control continuation ("Den prompts the model toward the next logical incomplete, unblocked task") is one producer of `continuation`/`dispatch` turn intents into the ADR-0056 turn router, and control-level ↔ model-capability mirroring is an input to that ADR's escalation-vs-checkpoint-overhead cost policy.
 
 > **State-inventory maintenance.** This ADR defines several runtime state axes: governance, focused Job, task focus, budgets, checkpoints, task gates, and completion/continuation reasons. Any implementation change that alters those axes or their transitions must update the Den state machine inventory and add or adjust executable invariants/replay assertions for the affected behavior.
 
