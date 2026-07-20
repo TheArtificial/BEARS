@@ -127,7 +127,7 @@ Surface selection rules:
 
 - From `pair`, the default is always the session's attached work surface via its own armature. Sandbox dispatch happens only by explicit user choice.
 - From `chat` or UI, dispatch defaults to the sandbox; an armature target must be named explicitly.
-- The surface is **never inferred from prose**. When intent is ambiguous, the model resolves it through the single elicitation tool (ADR-0050), because changing the surface changes the risk envelope.
+- The surface is selected only from a typed API/UI field, an already authorized session attachment, or the documented source default — **never inferred from prose**. `pair` therefore does not re-confirm its existing attached armature on every turn. If a request explicitly asks to change surface without naming one, the model resolves that ambiguity through the single elicitation tool (ADR-0050), because changing the surface changes the risk envelope.
 - The resolved surface is recorded on every routing decision.
 
 **Armature-attached dispatch** (unattended `work` on a user's armature) carries these semantics:
@@ -229,6 +229,26 @@ UI is projection.
 
 The router respects ADR-0034's dispatch invariants: at most one `in_progress` task per run, sibling execution serialized by `sibling_order`, and no intra-job fan-out in v1. Conversation placement never changes execution sequencing; scoping a task's transcript does not license executing it concurrently with its siblings.
 
+### Claim and commit contract
+
+Routing is not a read-then-act race. For a dispatch or continuation turn, Den must atomically compare the expected job/run version, claim the eligible task for that run, and reserve a stable turn idempotency key before model or tool execution begins. The claim is run-scoped, has one owner, and carries a renewable lease so a crashed worker cannot hold it forever. A competing worker that loses the compare-and-swap observes the winner's state and does not execute the turn.
+
+Conversation creation and binding use the same idempotency key. A retry therefore resumes the reserved conversation/turn rather than creating a second scoped conversation. External side effects remain subject to each tool's own idempotency and permission contract; the router does not claim that arbitrary tool calls are transactionally reversible.
+
+The durable sequence is:
+
+```text
+resolve candidate from current Docket state
+  -> atomically claim task/run position and reserve turn key
+  -> persist immutable routing decision
+  -> execute the turn
+  -> persist transcript and outcome
+  -> atomically finalize task/run state and append rollup/outbox events
+  -> release claim and select again only at the next boundary
+```
+
+Task completion must compare the run id, task id, attempt, claim owner, and expected state version. A late result from an earlier attempt is retained as attempt history but cannot complete the current attempt.
+
 ## Conversation placement rules
 
 Den should prefer boring default behavior. For `dispatch` and `continuation` intents, placement is a deterministic policy over task metadata — there is nobody to negotiate with. For `user` intents, interactive forks (reopen a completed task, choose an execution surface) resolve through the single elicitation tool (ADR-0050) rather than a negotiation protocol.
@@ -301,6 +321,8 @@ Where:
 - `delegated` means the task should be handled as a stance-scoped delegated run per ADR-0053: the router submits a delegation request; the broker resolves stance and mints capabilities. Until the broker exists, `delegated` resolves to the work-run lane (see **Delegated framing** below).
 - `auto` means the router may choose based on task kind, difficulty, expected noise, turn source, or user/client preference.
 
+For v1, `auto` is deliberately not a policy engine. It is a typed, deterministic rule table: an existing valid binding is resumed; trivial siblings are `inline`; non-trivial investigations and child tasks are `scoped`; tasks assigned to the work lane are `delegated`; all other tasks are `inline`. Explicit `inline | scoped | delegated` metadata wins. The decision records the matched rule. Configurable scoring, learned heuristics, and `auto` sub-policy hints are deferred.
+
 Additional advisory fields may refine placement and rollup:
 
 ```text
@@ -354,6 +376,8 @@ The resolved profile is recorded on the routing decision and the run. Policy rul
 2. **Price the control overhead, not just the tokens.** ADR-0050 mirrors control levels to model capability: weaker models run `careful`, with earlier checkpoints and stronger nudges. The true cost of a cheap delegated run is model price × expected turns × checkpoint overhead. Escalating one tier is sometimes cheaper than three careful failed attempts. The escalation policy lives where both signals are visible — loop control plus the model-tasks layer — which is a further reason profiles do not live on Docket rows.
 3. **Models may recommend, policy decides.** Per ADR-0033, a capable controller model may recommend bounded delegation of a subtask to a cheaper approved model, and a weaker model may request escalation; runtime/model-task policy validates both directions, and routing targets are symbolic model refs only.
 4. **Close the loop with recorded decisions.** Persisted routing decisions plus ADR-0034's chronic-vs-anomalous-effort observability form the dataset for tuning the difficulty → profile mapping. ADR-0051 reflection assessments may grade rollup quality per profile. Rollup generation itself is a cheap, schema-validated model task.
+
+Delivery is staged: router v1 begins with a small typed profile enum and deterministic registry mapping. It records the symbolic profile and attribution from the first turn, but bounded automatic escalation is enabled only after claim/recovery behavior and attribution are verified. There is no general profile DSL in v1.
 
 ## Delegated framing
 
@@ -521,7 +545,8 @@ setRoutingStrategy(task_id, strategy)
 listRoutingDecisions(job_id | task_id | run_id)
 streamJobEvents(job_id)                  -- task/run/rollup/routing events, live
 
-completeTask(task_id, result_summary)    -- records a rollup event
+completeTask(run_id, task_id, attempt, expected_state_version,
+             result_summary, completion_evidence)  -- finalizes attempt + records rollup
 ```
 
 The API should distinguish between:
@@ -537,7 +562,15 @@ It should not require every client to understand ACP-specific behavior.
 
 ## Routing decision shape
 
-The router should produce an inspectable decision object for **every** routed turn, autonomous or interactive.
+The router should produce an inspectable decision object for **every** routed turn, autonomous or interactive. The routing decision is immutable placement intent: it records the resolved inputs, policy version/rule, target, binding, surface, profile, attempt, and stable turn idempotency key. It is never rewritten to imply that execution succeeded.
+
+Execution progress is a separate lifecycle keyed to the decision:
+
+```text
+reserved -> executing -> completed | failed | abandoned
+```
+
+A crash may therefore leave an inspectable `reserved` or `executing` attempt without falsifying the placement record. Recovery either resumes the same idempotent turn or marks that attempt `abandoned` before a new attempt is claimed. Transcript/run outcome events carry the actual result.
 
 Example:
 
@@ -570,9 +603,11 @@ The `conversation.strategy` vocabulary is deliberately small — `continue_curre
 
 ## Watching and steering
 
-Observation and steering of a running job follow **bear rights — jobs introduce no new ACL.** Anyone with rights to the Bear may watch a run's conversation projection and job event stream live, full transcript included, from any surface (`pair`, `chat`, GUI).
+Observation and steering of a running job follow **bear rights — jobs introduce no new ACL.** Anyone whose current authorization grants access to the Bear **and to the referenced conversation/work surface** may watch the permitted conversation projection and job event stream live from any surface (`pair`, `chat`, GUI). Bear membership is not a shortcut around conversation, workspace, tool-output, or secret-redaction policy. APIs must authorize each transcript/resource read at request time; clients receive redacted metadata when they may see the job but not a bound transcript.
 
 Watching is pull; **attention is push**. Blocked, decision-needed, completed, and failed events must reach the user as notifications on their active surface, with a link back to the job — not wait in a pull-only queue. Silent stalling is autonomy's primary failure mode: an unattended run that blocks invisibly has not "completed autonomously," it has quietly stopped.
+
+Docket owns the durable attention event; it does not deliver UI notifications directly. Finalization appends the event and a notification-outbox record in the same transaction. Session/adapter notification workers own presentation, delivery attempts, and acknowledgements. The stable deduplication key is `(recipient, job_id, run_id, event_sequence, channel)`, so recovery is at-least-once without presenting the same event twice on one channel. An unacknowledged delivery remains retryable; an active surface may coalesce events but must preserve the link to each durable event.
 
 Steering is deliberately small:
 
@@ -585,14 +620,15 @@ There is no parallel command channel. Revising an objective is editing the job g
 
 Pickup semantics:
 
-- Tree edits land in Docket immediately and take effect at the next turn/task boundary — steering never yanks a task mid-flight.
-- Editing the currently in-progress task requires pausing the run first.
-- `stop` is terminal for the run; the job remains resumable via a new run.
-- `pause` is durable run state, not session state — the pausing client may disconnect.
+- Tree edits land in Docket immediately and take effect at the next turn/task boundary — steering never yanks a task mid-flight. Mutations compare the current tree/state version; stale edits are rejected for refresh rather than silently rebased.
+- Editing, reparenting, or deleting the currently in-progress task requires pausing the run first. Pending-task edits may land while execution continues and are re-resolved at the next boundary.
+- `pause` first records `pause_requested`. The active model stream or tool call is allowed to reach the next safe boundary; only then does the run become `paused`. Den does not report `paused` while a side effect is in flight.
+- `stop` is terminal for the run; the job remains resumable via a new run. Like pause, stop is honored at a safe boundary unless the active operation supports safe cancellation.
+- `pause` and `pause_requested` are durable run state, not session state — the pausing client may disconnect.
 
 ## Result rollup
 
-When a scoped child task reaches a terminal state, Den records a **rollup event**: an append-only, run-scoped `bear_task_events` entry carrying a concise result. This upholds ADR-0034's invariant that task rows hold no results — run-scoped `result_summary` fields remain the raw material; the rollup event is the durable, parent-visible record.
+When a scoped child task reaches a terminal state, Den records a **rollup event**: an append-only, run-scoped `bear_task_events` entry carrying a concise result. This upholds ADR-0034's invariant that task rows hold no results — run-scoped `result_summary` fields remain the raw material; the rollup event is the durable, parent-visible record. Terminal means `completed | failed | cancelled | timed_out | stopped`; every terminal child produces a rollup, not only successful children. Failure-shaped rollups state what happened, what evidence or partial output is usable, whether retry is safe, and what human action is required.
 
 Example:
 
@@ -603,7 +639,7 @@ instead of the injected test clock. Patch should update the helper to use
 the test clock consistently.
 ```
 
-The parent context reads the **latest rollup per child**. A child conversation that continues after an earlier summary simply appends a new rollup event — there is no versioning problem, only history.
+The parent context reads the **latest rollup per child**, ordered by the canonical per-run task-event sequence assigned transactionally by Docket — never by wall-clock timestamp. A child conversation that continues after an earlier summary simply appends a new rollup event. The API may maintain a replaceable latest-per-child read projection for efficiency, but event history remains canonical and the projection is rebuildable.
 
 For autonomous execution the rollup is the *entire product* of a child task: no human is present to synthesize across transcripts mid-run. The rollup contract is therefore strict — schema-validated, tied to completion-criteria evidence — and rollup generation is itself a cheap, validated model task (ADR-0033).
 
@@ -614,6 +650,20 @@ A1 complete. Root cause found. Ready for A2: patch helper.
 ```
 
 This avoids requiring the parent conversation to include every detailed child transcript.
+
+## Recovery contract
+
+Recovery is deterministic and uses durable state, not worker memory:
+
+- An unexpired claim remains owned; another worker does not steal it. After lease expiry, recovery inspects persisted transcript/outcome state before reclaiming.
+- A reserved decision with no execution may be resumed with the same turn key or abandoned. It is never treated as completed.
+- If transcript execution completed but finalization did not, the same idempotent finalization compares attempt/version and appends at most one terminal rollup and outbox event.
+- A stale worker cannot finalize after its lease or attempt was superseded.
+- `pause_requested` survives restart and prevents selection of another turn; recovery advances it to `paused` once no operation is in flight.
+- Notifications are retried from the durable outbox and deduplicated by their stable delivery key.
+- On recovery, a job selects a new task only after the prior attempt is durably terminal or abandoned.
+
+The smallest required recovery checks cover duplicate workers racing for one task, a crash between transcript persistence and finalization, a stale late result, and notification replay.
 
 ## Staleness and authority
 
@@ -655,6 +705,22 @@ Migration splits it along the attention/authority seam:
 
 No behavior regresses for the single-actor case: when the only attention on a tree is the executing run itself, binding + run state reproduce today's focus semantics without a cursor record at all.
 
+## Delivery sequence
+
+V1 is a release made of small vertical slices, not one schema-and-UI change:
+
+1. Add strong routing/surface/decision types and persistence.
+2. Route one existing dispatcher turn through the router, including atomic claim and idempotent conversation binding.
+3. Add recovery and stale-worker checks before unattended continuation.
+4. Add success and failure rollups, deterministic latest-per-child projection, and evidence-checked completion.
+5. Continue serially at clean boundaries until the job completes or blocks.
+6. Add durable pause/resume/stop and version-checked boundary-safe edits.
+7. Add `pair` cursors, browsing, transcript access, and event streaming.
+8. Add notification outbox delivery and acknowledgement.
+9. Enable bounded profile escalation after attribution data and recovery checks exist.
+
+No slice introduces parallel task execution, arbitrary mid-operation mutation, a policy DSL, or a generalized event-sourcing framework.
+
 ## Scope (v1)
 
 Autonomous execution **leads**. In scope for v1:
@@ -664,11 +730,14 @@ Autonomous execution **leads**. In scope for v1:
 - conversation bindings (migrated from `docket_execution_sessions`) and scoped-conversation creation;
 - persisted routing decisions;
 - rollup events and the parent read path;
-- execution-profile resolution via the model-tasks layer with cheap-by-default + typed escalation;
+- execution-profile resolution via a small typed model-tasks mapping, with the resolved profile and cost/latency attribution recorded from the first turn; bounded automatic escalation follows after recovery and attribution are verified;
 - **`pair` visibility and task-tree mutation**: per-session cursors, tree/transcript/browsing APIs, live job-event streaming, and `pair`-side task-tree edits through the existing checkout/sync surface (ADR-0045) plus user-editable `routing_strategy`;
 - **run steering**: pause/resume/stop plus tree-mutation-as-steering with boundary pickup, rights keyed to bear rights.
 
 Explicitly deferred beyond v1:
+
+- automatic profile escalation beyond the initial deterministic symbolic mapping;
+- a configurable/learned `auto` policy beyond the fixed v1 rule table;
 
 - armature-attached dispatch (unattended `work` on a user's armature; semantics fixed in **Execution surface** above, build deferred);
 - the ACP one-continuous-session illusion (adapter projection; the core router makes it possible per ADR-0043, but no chat client requires it yet);
@@ -795,17 +864,20 @@ Previously open questions this revision resolves:
 5. **Conversation-binding cardinality?** Task-to-preferred-conversation, plus per-run historical conversation refs.
 6. **How is model selection surfaced in the Docket API?** It isn't stored there. Tasks carry advisory descriptors (`kind`, `difficulty`, `effort_hint`, `expected_context_size`); the model-tasks layer resolves symbolic profiles at dispatch; routing decisions and runs record the resolution.
 7. **Should routing hints be user-editable in GUI clients?** Yes — `routing_strategy` is durable task metadata editable through the same authorized task-edit path as other definition fields.
-8. **What are steering rights, and who may see cursors and transcripts?** Bear rights. Jobs introduce no new ACL; observation and steering follow existing Bear access.
-9. **What is the steering vocabulary?** Run control (`start | pause | resume | stop`) plus ordinary audited Docket tree mutation, picked up at turn/task boundaries; editing the in-progress task requires pause. No parallel command channel.
-10. **How is the execution surface chosen?** Explicitly, never from prose. `pair` defaults to the session's attached work surface via its own armature; sandbox dispatch is a deliberate choice; `chat`/UI default to sandbox. Ambiguity resolves through the elicitation tool.
+8. **What are steering rights, and who may see cursors and transcripts?** Existing Bear rights remain the job-level authority; each referenced conversation/work-surface resource is also authorized and redacted at read time. Jobs add no ACL and do not broaden transcript access.
+9. **What is the steering vocabulary?** Run control (`start | pause | resume | stop`) plus ordinary audited, version-checked Docket tree mutation, picked up at safe turn/task boundaries; editing the in-progress task requires a confirmed pause. No parallel command channel.
+10. **How is the execution surface chosen?** From a typed API/UI field, an authorized existing session attachment, or a documented source default — never from prose. `pair` uses its attached armature without repetitive confirmation; changing surface ambiguously uses elicitation.
 11. **Is armature-attached work a new stance?** No. Surface is an authorization axis, not a stance; `work` via armature is `work` — indeed sandboxed work also executes through a (Den-provisioned) armature.
+12. **How are duplicate workers and crashes handled?** An atomic version-checked leased claim plus stable turn key serializes execution. Decisions are immutable intent; attempt lifecycle records outcomes; idempotent finalization and an outbox recover rollups and notifications.
+13. **What does a terminal rollup cover?** Success, failure, cancellation, timeout, and stop. Docket event sequence, not timestamps, defines latest-per-child.
+14. **Who delivers notifications?** Docket transactionally records the durable attention event and outbox entry; adapters/sessions deliver and acknowledge it with a stable per-channel deduplication key.
+15. **What is `auto` in v1?** The four-value enum is `inline | scoped | delegated | auto`; `auto` is a fixed typed rule table, not a policy engine.
 
 ## Open questions
 
-1. What should the exact `routing_strategy` enum be, and does `auto` need sub-policy hints?
-2. How much routing metadata should ACP expose by default when the illusion projection is built?
-3. What policy determines when an `auto` task is promoted from `inline` to `scoped` (beyond the initial rule table)?
-4. When should the three run-shaped records (turn runs, job runs, work runs) be unified, and under what name?
+1. How much routing metadata should ACP expose by default when the illusion projection is built?
+2. What evidence and operational data should justify replacing the fixed `auto` rule table or enabling bounded profile escalation?
+3. When should the three run-shaped records (turn runs, job runs, work runs) be unified, and under what name?
 
 ## Summary
 
