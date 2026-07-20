@@ -696,6 +696,21 @@ async fn docket_execution_focus_prefers_conversation_over_client_session() {
     assert_eq!(active_execution.run_id, run_id);
     assert_eq!(active_execution.task_id, Some(first_task_id));
 
+    let session_fallback = service
+        .get_active_execution_session(
+            bear_id,
+            BearProfile::Pair,
+            DocketExecutionLookup {
+                session_id: Some(active_execution.session_id.clone()),
+                source_conversation_id: Some("missing-conversation".to_string()),
+                source_client_session_id: Some("missing-client-session".to_string()),
+            },
+        )
+        .await
+        .expect("fallback lookup active execution")
+        .expect("session-bound active execution");
+    assert_eq!(session_fallback.id, active_execution.id);
+
     service
         .execute_job(DocketJobExecuteRequest {
             bear_id,

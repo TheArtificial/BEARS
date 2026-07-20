@@ -778,31 +778,38 @@ pub(super) async fn get_active_execution_session(
     owner_profile: BearProfile,
     lookup: DocketExecutionLookup,
 ) -> Result<Option<DocketExecutionSessionRow>, DenError> {
-    let row = if let Some(source_conversation_id) = lookup.source_conversation_id {
-        sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_CONVERSATION)
+    if let Some(source_conversation_id) = lookup.source_conversation_id {
+        let row = sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_CONVERSATION)
             .bind(bear_id)
             .bind(owner_profile.as_str())
             .bind(source_conversation_id)
             .fetch_optional(pool)
-            .await?
-    } else if let Some(session_id) = lookup.session_id {
-        sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_SESSION)
+            .await?;
+        if row.is_some() {
+            return Ok(row);
+        }
+    }
+    if let Some(session_id) = lookup.session_id {
+        let row = sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_SESSION)
             .bind(bear_id)
             .bind(owner_profile.as_str())
             .bind(session_id)
             .fetch_optional(pool)
-            .await?
-    } else if let Some(source_client_session_id) = lookup.source_client_session_id {
-        sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_ACP_SESSION)
+            .await?;
+        if row.is_some() {
+            return Ok(row);
+        }
+    }
+    if let Some(source_client_session_id) = lookup.source_client_session_id {
+        return sqlx::query_as::<_, DocketExecutionSessionRow>(SELECT_EXECUTION_BY_ACP_SESSION)
             .bind(bear_id)
             .bind(owner_profile.as_str())
             .bind(source_client_session_id)
             .fetch_optional(pool)
-            .await?
-    } else {
-        None
-    };
-    Ok(row)
+            .await
+            .map_err(Into::into);
+    }
+    Ok(None)
 }
 
 pub(super) async fn clear_active_execution_sessions(
