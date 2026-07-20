@@ -10,6 +10,10 @@ pub async fn run_open_session_reflection_loop(
     interval: Duration,
 ) -> Result<(), CustomError> {
     let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Maintenance must not compete with startup readiness and proxy cutover.
+    // Tokio intervals tick immediately unless the first tick is consumed.
+    ticker.tick().await;
     loop {
         tokio::select! {
             _ = token.cancelled() => return Ok(()),

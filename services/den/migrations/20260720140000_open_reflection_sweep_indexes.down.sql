@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_client_sessions_open_reflection;
+DROP INDEX IF EXISTS idx_bearwire_events_session_identity_type_created;
