@@ -8,7 +8,6 @@ pub(crate) struct ToolTaskRegistry {
     tasks: Arc<TokioMutex<HashMap<String, ToolTaskRecord>>>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ToolTaskRecord {
     pub(crate) session_id: String,
@@ -63,22 +62,12 @@ impl ToolTaskRegistry {
         input_args: Value,
     ) {
         let mut tasks = self.tasks.lock().await;
-        let now = std::time::Instant::now();
-        let entry = tasks
-            .entry(Self::key(session_id, tool_call_id))
-            .or_insert_with(|| ToolTaskRecord {
-                session_id: session_id.to_string(),
-                tool_call_id: tool_call_id.to_string(),
-                tool_name: tool_name.to_string(),
-                turn_token: None,
-                phase: ToolTaskPhase::Received,
-                input_args: None,
-                started_at: now,
-                updated_at: now,
-            });
+        let Some(entry) = tasks.get_mut(&Self::key(session_id, tool_call_id)) else {
+            return;
+        };
         entry.tool_name = tool_name.to_string();
         entry.input_args = Some(input_args);
-        entry.updated_at = now;
+        entry.updated_at = std::time::Instant::now();
     }
 
     pub(crate) async fn get(&self, session_id: &str, tool_call_id: &str) -> Option<ToolTaskRecord> {
@@ -97,18 +86,10 @@ impl ToolTaskRegistry {
         phase: ToolTaskPhase,
     ) {
         let mut tasks = self.tasks.lock().await;
-        let key = Self::key(session_id, tool_call_id);
         let now = std::time::Instant::now();
-        let entry = tasks.entry(key).or_insert_with(|| ToolTaskRecord {
-            session_id: session_id.to_string(),
-            tool_call_id: tool_call_id.to_string(),
-            tool_name: tool_name.to_string(),
-            turn_token: None,
-            phase,
-            input_args: None,
-            started_at: now,
-            updated_at: now,
-        });
+        let Some(entry) = tasks.get_mut(&Self::key(session_id, tool_call_id)) else {
+            return;
+        };
         let previous_phase = entry.phase;
         let previous_elapsed_ms = now.duration_since(entry.updated_at).as_millis();
         let total_elapsed_ms = now.duration_since(entry.started_at).as_millis();
@@ -160,28 +141,27 @@ impl ToolTaskRegistry {
     async fn cancel_matching(&self, session_id: &str, turn_token: Option<Uuid>) {
         let mut tasks = self.tasks.lock().await;
         let now = std::time::Instant::now();
-        for task in tasks.values_mut().filter(|task| {
-            task.session_id == session_id
-                && turn_token.is_none_or(|token| task.turn_token == Some(token))
-        }) {
+        tasks.retain(|_, task| {
+            let matches = task.session_id == session_id
+                && turn_token.is_none_or(|token| task.turn_token == Some(token));
+            if !matches {
+                return true;
+            }
             if task.phase != ToolTaskPhase::ResultPosted {
-                let previous_phase = task.phase;
-                task.phase = ToolTaskPhase::Cancelled;
-                task.updated_at = now;
                 eprintln!(
                     "bear-armature: tool_task cancelled session_id={} turn_token={:?} tool_call_id={} tool_name={} from_phase={} total_duration_ms={}",
                     task.session_id,
                     task.turn_token,
                     task.tool_call_id,
                     task.tool_name,
-                    previous_phase.as_str(),
+                    task.phase.as_str(),
                     now.duration_since(task.started_at).as_millis(),
                 );
             }
-        }
+            false
+        });
     }
 
-    #[allow(dead_code)]
     pub(crate) async fn list_for_session(&self, session_id: &str) -> Vec<ToolTaskRecord> {
         self.tasks
             .lock()
@@ -258,6 +238,63 @@ pub(crate) fn log_tool_task_phase(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelling_session_evicts_all_matching_task_records() {
+        let registry = ToolTaskRegistry::default();
+        let turn = Uuid::new_v4();
+        assert!(
+            registry
+                .try_register("session-a", "call-a", "list_jobs", Some(turn))
+                .await
+        );
+        assert!(
+            registry
+                .try_register("session-a", "call-b", "create_job", Some(Uuid::new_v4()))
+                .await
+        );
+        assert!(
+            registry
+                .try_register("session-b", "call-c", "list_jobs", Some(turn))
+                .await
+        );
+
+        registry.cancel_session("session-a").await;
+
+        assert!(registry.list_for_session("session-a").await.is_empty());
+        assert_eq!(registry.list_for_session("session-b").await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn phase_and_input_updates_do_not_recreate_cancelled_records() {
+        let registry = ToolTaskRegistry::default();
+        let turn = Uuid::new_v4();
+        assert!(
+            registry
+                .try_register("session-a", "call-a", "fs_read_text_file", Some(turn))
+                .await
+        );
+        registry.cancel_session("session-a").await;
+
+        registry
+            .remember_input(
+                "session-a",
+                "call-a",
+                "fs_read_text_file",
+                serde_json::json!({"path":"README.md"}),
+            )
+            .await;
+        registry
+            .set_phase(
+                "session-a",
+                "call-a",
+                "fs_read_text_file",
+                ToolTaskPhase::ExecutionStarted,
+            )
+            .await;
+
+        assert!(registry.list_for_session("session-a").await.is_empty());
+    }
 
     #[tokio::test]
     async fn registry_tracks_phase_and_session_entries() {

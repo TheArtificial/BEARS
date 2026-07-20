@@ -34,6 +34,8 @@ den-llm = { path = "../den-llm" }
 den-memory = { path = "../den-memory" }
 den-http = { path = "../den-http" }
 den-docket = { path = "../den-docket" }
+den-runtime = { path = "../den-runtime" }
+bearwire-protocol = { path = "../bearwire-protocol" }
 den-oauth = { path = "../den-oauth" }
 # Client + protocol only: the work UI fetches the sandbox provider's
 # root/image catalog for its dispatch and job-creation forms.

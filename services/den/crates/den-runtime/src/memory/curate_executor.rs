@@ -285,14 +285,9 @@ pub async fn execute_memory_curate_proposals(
         .iter()
         .map(|outcome| outcome.proposal_id.to_string())
         .collect::<Vec<_>>();
-    let mut status_counts = serde_json::Map::new();
+    let mut status_counts = std::collections::HashMap::<String, u64>::new();
     for outcome in &outcomes {
-        let count = status_counts
-            .entry(outcome.status.clone())
-            .or_insert(serde_json::Value::from(0));
-        if let Some(number) = count.as_i64() {
-            *count = serde_json::Value::from(number + 1);
-        }
+        *status_counts.entry(outcome.status.clone()).or_default() += 1;
     }
     let resolution_status = aggregate_resolution_status(&outcomes);
     let briefing = build_curate_briefing(pool, config, stores, bear_id, &outcomes).await?;
@@ -301,7 +296,9 @@ pub async fn execute_memory_curate_proposals(
         resolved_proposal_ids,
         outcomes,
         resolution_status,
-        status_counts: serde_json::Value::Object(status_counts),
+        status_counts: serde_json::to_value(status_counts).map_err(|err| {
+            DenError::System(format!("serialize curate status counts failed: {err}"))
+        })?,
         briefing,
     })
 }

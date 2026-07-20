@@ -13,8 +13,8 @@ use crate::{
     is_den_server_tool_request, plan_entries_from_plan_update_event,
     project_den_owned_tool_request, send_agent_message_chunk_for_turn,
     send_agent_thought_chunk_for_turn, send_tool_call_update_for_turn, spawn_tool_request_task,
-    stream_has_successful_terminal_condition, truncate_for_log, AdapterSharedState, AdapterState,
-    Config, SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
+    stream_allows_prompt_end_response, truncate_for_log, AdapterSharedState, AdapterState, Config,
+    SseFrameOutcome, SseStreamDiagnostics, ToolCallUpdatePayload,
 };
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -94,6 +94,44 @@ fn default_tool_status_summary(tool_name: &str, failed: bool) -> String {
     }
 }
 
+fn normalized_tool_arguments(data: &Value) -> Option<Value> {
+    const ARGUMENT_POINTERS: &[&str] = &[
+        "/args",
+        "/arguments",
+        "/input",
+        "/raw_input",
+        "/data/args",
+        "/data/arguments",
+        "/data/input",
+        "/data/raw_input",
+        "/tool_call/args",
+        "/tool_call/arguments",
+        "/tool_call/input",
+        "/tool_call/raw_input",
+        "/data/tool_call/args",
+        "/data/tool_call/arguments",
+        "/data/tool_call/input",
+        "/data/tool_call/raw_input",
+    ];
+
+    ARGUMENT_POINTERS.iter().find_map(|pointer| {
+        let candidate = data.pointer(pointer)?;
+        match candidate {
+            Value::String(raw) => serde_json::from_str(raw).ok(),
+            Value::Object(_) => Some(candidate.clone()),
+            _ => None,
+        }
+    })
+}
+
+fn display_command_arg(arg: &str) -> String {
+    if arg.chars().any(char::is_whitespace) {
+        serde_json::to_string(arg).unwrap_or_else(|_| arg.to_string())
+    } else {
+        arg.to_string()
+    }
+}
+
 fn command_name_from_tool_event(data: &Value) -> Option<String> {
     let tool_name = data.get("tool_name").and_then(Value::as_str)?;
     if !matches!(
@@ -102,16 +140,15 @@ fn command_name_from_tool_event(data: &Value) -> Option<String> {
     ) {
         return None;
     }
-    let command = data
-        .get("args")
-        .and_then(|args| args.get("command"))
+    let arguments = normalized_tool_arguments(data)?;
+    let command = arguments
+        .get("command")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|command| !command.is_empty())
         .map(str::to_string)?;
-    let arg_list = data
+    let arg_list = arguments
         .get("args")
-        .and_then(|args| args.get("args"))
         .and_then(Value::as_array)
         .map(|items| {
             items
@@ -121,21 +158,35 @@ fn command_name_from_tool_event(data: &Value) -> Option<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let summary = match command.as_str() {
-        "git" | "cargo" => arg_list
-            .first()
-            .map(|subcommand| format!("{command} {subcommand}"))
-            .unwrap_or(command),
-        "python" | "python3" if arg_list.first().is_some_and(|arg| arg == "-m") => arg_list
-            .get(1)
-            .map(|module| format!("{command} -m {module}"))
-            .unwrap_or(command),
-        _ => command,
+    let summary = if arg_list.is_empty() {
+        command
+    } else {
+        format!(
+            "{} {}",
+            command,
+            arg_list
+                .iter()
+                .map(|arg| display_command_arg(arg))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
     };
     Some(summary)
 }
 
 fn default_tool_status_summary_with_context(data: &Value, tool_name: &str, failed: bool) -> String {
+    if tool_name == "set_conversation_title" && !failed {
+        if let Some(title) = normalized_tool_arguments(data)
+            .as_ref()
+            .and_then(|args| args.get("title"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            return format!("Set conversation title to {title:?}.");
+        }
+    }
+
     let base = default_tool_status_summary(tool_name, failed);
     let Some(command) = command_name_from_tool_event(data) else {
         return base;
@@ -500,7 +551,7 @@ pub(crate) async fn handle_prompt(
                                 &state,
                                 turn_token,
                             )
-                            .await;
+                            .await?;
                         }
                         Err(state_err) => {
                             tracing::debug!(
@@ -645,7 +696,7 @@ pub(crate) async fn handle_prompt(
                         &state,
                         turn_token,
                     )
-                    .await;
+                    .await?;
                 }
                 Err(err) => {
                     tracing::debug!(
@@ -661,7 +712,7 @@ pub(crate) async fn handle_prompt(
         sleep(BEARWIRE_POLL_INTERVAL).await;
     }
 
-    if !stream_has_successful_terminal_condition(
+    if !stream_allows_prompt_end_response(
         saw_visible_output,
         saw_error,
         saw_done,
@@ -1025,6 +1076,42 @@ fn actionable_tool_request_event_from_obligation(
     }))
 }
 
+fn unsupported_required_client_obligation_error(obligation: &Value) -> Option<anyhow::Error> {
+    if !obligation_open_for_client(obligation) {
+        return None;
+    }
+    let request = obligation_request_payload(obligation);
+    if obligation_execution_target_is_den(request, obligation) {
+        return None;
+    }
+
+    let id = obligation_id(obligation).unwrap_or("<unknown>");
+    let kind = obligation
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    let expected = obligation
+        .get("expected_responder_action")
+        .or_else(|| obligation.get("expected_client_method"))
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown>");
+    let tool_call_id = request
+        .get("tool_call_id")
+        .or_else(|| obligation.get("tool_call_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("<none>");
+    let permission_id = request
+        .get("approval_request_id")
+        .or_else(|| obligation.get("permission_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("<none>");
+    let sample = truncate_for_log(&obligation.to_string(), 1000);
+
+    Some(anyhow!(
+        "unsupported required BearWire client obligation: id={id} kind={kind} expected={expected} tool_call={tool_call_id} permission={permission_id} sample={sample}"
+    ))
+}
+
 async fn service_run_state_tool_obligations(
     config: &Config,
     shared_state: &AdapterSharedState,
@@ -1032,12 +1119,15 @@ async fn service_run_state_tool_obligations(
     run_id: &str,
     state: &Value,
     turn_token: Uuid,
-) {
+) -> Result<()> {
     let Some(open) = state.get("open_obligations").and_then(Value::as_array) else {
-        return;
+        return Ok(());
     };
     for obligation in open {
         let Some(event) = actionable_tool_request_event_from_obligation(run_id, obligation) else {
+            if let Some(err) = unsupported_required_client_obligation_error(obligation) {
+                return Err(err);
+            }
             continue;
         };
         let tool_call_id = event
@@ -1091,6 +1181,8 @@ async fn service_run_state_tool_obligations(
                     "failed to service permission obligation from BearWire run.state"
                 );
             }
+        } else if is_den_server_tool_request(&event) {
+            project_den_owned_tool_request(shared_state, session_id, &event, turn_token).await?;
         } else {
             spawn_tool_request_task(
                 config.clone(),
@@ -1101,6 +1193,7 @@ async fn service_run_state_tool_obligations(
             );
         }
     }
+    Ok(())
 }
 
 pub(crate) async fn post_permission_result(
@@ -1668,6 +1761,7 @@ async fn handle_bearwire_event(
                 adapter_state,
                 shared_state,
                 session_id,
+                turn_token,
                 title,
                 updated_at,
                 context_budget,
@@ -1686,6 +1780,7 @@ async fn handle_bearwire_event(
                     adapter_state,
                     shared_state,
                     session_id,
+                    turn_token,
                     conversation_id,
                 )
                 .await?;
@@ -2239,6 +2334,52 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_open_client_obligation_becomes_prompt_error() {
+        let obligation = json!({
+            "id": "obl-context",
+            "kind": "added_context",
+            "expected_responder_action": "context_result",
+            "state": "waiting_for_client",
+            "request_payload": {
+                "resource_id": "ctx-1",
+                "execution_target": "armature_local"
+            }
+        });
+
+        let err = unsupported_required_client_obligation_error(&obligation)
+            .expect("unsupported open client obligation should fail the prompt");
+        let message = err.to_string();
+
+        assert!(message.contains("unsupported required BearWire client obligation"));
+        assert!(message.contains("obl-context"));
+        assert!(message.contains("added_context"));
+        assert!(message.contains("context_result"));
+    }
+
+    #[test]
+    fn unsupported_obligation_error_ignores_closed_and_den_obligations() {
+        let closed = json!({
+            "id": "obl-closed",
+            "kind": "added_context",
+            "expected_responder_action": "context_result",
+            "state": "completed"
+        });
+        assert!(unsupported_required_client_obligation_error(&closed).is_none());
+
+        let den_owned = json!({
+            "id": "obl-den",
+            "kind": "tool_result",
+            "expected_responder_action": "tool_result",
+            "state": "waiting_for_client",
+            "request_payload": {
+                "tool_call_id": "call-title",
+                "execution_target": "den"
+            }
+        });
+        assert!(unsupported_required_client_obligation_error(&den_owned).is_none());
+    }
+
+    #[test]
     fn compact_json_preview_truncates_large_raw_output() {
         let value = json!({ "content": "x".repeat(40 * 1024), "status": "ok" });
 
@@ -2381,7 +2522,7 @@ mod tests {
     }
 
     #[test]
-    fn set_conversation_title_finished_summary_is_specific_for_acp_tool_card() {
+    fn set_conversation_title_finished_summary_includes_requested_title_for_acp_tool_card() {
         let data = json!({
             "tool_call": {
                 "id": "call-title",
@@ -2393,7 +2534,24 @@ mod tests {
 
         assert_eq!(
             tool_call_finished_summary(&data, "set_conversation_title", false),
-            "Set conversation title."
+            "Set conversation title to \"Test Armature ACP conversation title tool\"."
+        );
+    }
+
+    #[test]
+    fn set_conversation_title_finished_summary_reads_stringified_normalized_arguments() {
+        let data = json!({
+            "tool_call": {
+                "id": "call-title",
+                "name": "set_conversation_title",
+                "arguments": r#"{"title":"Stringified ACP title"}"#
+            },
+            "summary": "Finished set_conversation_title"
+        });
+
+        assert_eq!(
+            tool_call_finished_summary(&data, "set_conversation_title", false),
+            "Set conversation title to \"Stringified ACP title\"."
         );
     }
 
@@ -2428,7 +2586,34 @@ mod tests {
         let summary = tool_call_finished_summary(&data, "process_run", false);
 
         assert!(summary.contains("Run process completed."), "{summary}");
-        assert!(summary.contains("Command: `git status`."), "{summary}");
+        assert!(
+            summary.contains("Command: `git status --short`."),
+            "{summary}"
+        );
+    }
+
+    #[test]
+    fn tool_argument_normalization_covers_known_event_shapes() {
+        let cases = [
+            json!({ "args": { "command": "cargo", "args": ["test"] } }),
+            json!({ "arguments": { "command": "cargo", "args": ["test"] } }),
+            json!({ "input": { "command": "cargo", "args": ["test"] } }),
+            json!({ "raw_input": { "command": "cargo", "args": ["test"] } }),
+            json!({ "data": { "args": { "command": "cargo", "args": ["test"] } } }),
+            json!({ "tool_call": { "arguments": { "command": "cargo", "args": ["test"] } } }),
+            json!({ "data": { "tool_call": { "raw_input": { "command": "cargo", "args": ["test"] } } } }),
+            json!({ "tool_call": { "arguments": r#"{"command":"cargo","args":["test"]}"# } }),
+        ];
+
+        for mut data in cases {
+            data["tool_name"] = json!("run_command");
+            data["summary"] = json!("Tool completed.");
+            let summary = tool_call_finished_summary(&data, "run_command", false);
+            assert!(
+                summary.contains("Command: `cargo test`."),
+                "{data}: {summary}"
+            );
+        }
     }
 
     #[test]

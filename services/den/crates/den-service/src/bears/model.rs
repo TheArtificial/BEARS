@@ -7,6 +7,8 @@ use sqlx::FromRow;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use den_core::DenError;
+
 /// Bear plus `user_bear.role` for the current user (`list_bears_for_user`).
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct BearWithMembership {
@@ -24,6 +26,7 @@ pub struct Bear {
     pub default_model: Option<String>,
     pub default_tool_budget_multiplier: Option<f64>,
     pub tools_enabled: Option<Json<serde_json::Value>>,
+    pub work_enabled: bool,
     /// Optional runtime plan JSON.
     pub runtime_plan: Option<Json<serde_json::Value>>,
     /// Optional profile-aware context composition profile.
@@ -35,6 +38,30 @@ pub struct Bear {
     pub birthday: Option<time::Date>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
+    #[serde(default = "default_live_reflection_enabled")]
+    pub live_reflection_enabled: bool,
+    #[serde(default = "default_live_reflection_stale_after_minutes")]
+    pub live_reflection_stale_after_minutes: i32,
+    #[serde(default = "default_live_reflection_activity_threshold")]
+    pub live_reflection_activity_threshold: i32,
+    #[serde(default = "default_live_reflection_sweep_limit")]
+    pub live_reflection_sweep_limit: i32,
+}
+
+fn default_live_reflection_enabled() -> bool {
+    true
+}
+
+fn default_live_reflection_stale_after_minutes() -> i32 {
+    30
+}
+
+fn default_live_reflection_activity_threshold() -> i32 {
+    20
+}
+
+fn default_live_reflection_sweep_limit() -> i32 {
+    25
 }
 
 fn default_provisioning_version() -> i32 {
@@ -61,8 +88,8 @@ pub struct BearProfileBinding {
 }
 
 impl BearProfileBinding {
-    pub fn parsed_profile(&self) -> Result<BearProfile, String> {
-        self.profile.parse()
+    pub fn parsed_profile(&self) -> Result<BearProfile, DenError> {
+        self.profile.parse().map_err(DenError::ValidationError)
     }
 }
 

@@ -60,12 +60,35 @@ pub struct RecallProjection {
     pub diagnostic: Value,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DisabledRecallReason {
+    QdrantUnset,
+    EmbeddingsUnset,
+    NoEntities,
+    VectorError,
+}
+
+impl DisabledRecallReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::QdrantUnset => "qdrant_unset",
+            Self::EmbeddingsUnset => "embeddings_unset",
+            Self::NoEntities => "no_entities",
+            Self::VectorError => "vector_error",
+        }
+    }
+}
+
 /// An empty projection tagged `disabled` (never an error) so config-driven callers can fall
 /// back to keyword search when recall isn't fully wired (`QDRANT_URL` / embeddings unset).
-fn disabled_projection(reason: &str) -> RecallProjection {
+fn disabled_projection(reason: DisabledRecallReason) -> RecallProjection {
     RecallProjection {
         passages: Vec::new(),
-        diagnostic: json!({ "source": "recall_query", "status": "disabled", "reason": reason }),
+        diagnostic: json!({
+            "source": "recall_query",
+            "status": "disabled",
+            "reason": reason.as_str(),
+        }),
     }
 }
 
@@ -279,11 +302,11 @@ pub async fn semantic_search_for_bear(
     limit: usize,
 ) -> Result<RecallProjection, DenError> {
     let Some(qdrant) = QdrantRecall::from_config(config) else {
-        return Ok(disabled_projection("qdrant_unset"));
+        return Ok(disabled_projection(DisabledRecallReason::QdrantUnset));
     };
     let embedder = den_llm::EmbeddingClient::new(config);
     if !embedder.is_enabled() {
-        return Ok(disabled_projection("embeddings_unset"));
+        return Ok(disabled_projection(DisabledRecallReason::EmbeddingsUnset));
     }
     let filter = json!({ "must": bear_scope_conditions(bear_id, &config.embedding_standard) });
     search_passages(
@@ -309,11 +332,11 @@ pub async fn search_bear_memory_for_role(
     limit: usize,
 ) -> Result<RecallProjection, DenError> {
     let Some(qdrant) = QdrantRecall::from_config(config) else {
-        return Ok(disabled_projection("qdrant_unset"));
+        return Ok(disabled_projection(DisabledRecallReason::QdrantUnset));
     };
     let embedder = den_llm::EmbeddingClient::new(config);
     if !embedder.is_enabled() {
-        return Ok(disabled_projection("embeddings_unset"));
+        return Ok(disabled_projection(DisabledRecallReason::EmbeddingsUnset));
     }
     let filter = role_scope_filter(bear_id, &config.embedding_standard, role);
     search_passages(
@@ -341,14 +364,14 @@ pub async fn search_bear_memory_for_entities(
     limit: usize,
 ) -> Result<RecallProjection, DenError> {
     if entity_ids.is_empty() {
-        return Ok(disabled_projection("no_entities"));
+        return Ok(disabled_projection(DisabledRecallReason::NoEntities));
     }
     let Some(qdrant) = QdrantRecall::from_config(config) else {
-        return Ok(disabled_projection("qdrant_unset"));
+        return Ok(disabled_projection(DisabledRecallReason::QdrantUnset));
     };
     let embedder = den_llm::EmbeddingClient::new(config);
     if !embedder.is_enabled() {
-        return Ok(disabled_projection("embeddings_unset"));
+        return Ok(disabled_projection(DisabledRecallReason::EmbeddingsUnset));
     }
     let filter = entity_scope_filter(bear_id, &config.embedding_standard, entity_ids);
     search_passages(
@@ -497,7 +520,7 @@ pub async fn hybrid_memory_search(
         Ok(projection) => projection,
         Err(error) => {
             tracing::warn!(%error, "recall vector leg failed; returning keyword results only");
-            disabled_projection("vector_error")
+            disabled_projection(DisabledRecallReason::VectorError)
         }
     };
 
@@ -770,6 +793,21 @@ mod tests {
             lifecycle_status: "active".into(),
             freshness_trend: "stable".into(),
             text: "the quick brown fox jumps over the lazy dog".into(),
+        }
+    }
+
+    #[test]
+    fn disabled_recall_reason_preserves_diagnostic_strings() {
+        let cases = [
+            (DisabledRecallReason::QdrantUnset, "qdrant_unset"),
+            (DisabledRecallReason::EmbeddingsUnset, "embeddings_unset"),
+            (DisabledRecallReason::NoEntities, "no_entities"),
+            (DisabledRecallReason::VectorError, "vector_error"),
+        ];
+
+        for (reason, expected) in cases {
+            let projection = disabled_projection(reason);
+            assert_eq!(projection.diagnostic["reason"], expected);
         }
     }
 

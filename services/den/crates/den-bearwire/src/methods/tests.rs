@@ -32,7 +32,8 @@ use den_service::{
         CanonicalConversationRecord, CanonicalToolResultRecord, ConversationEventProvenance,
     },
     conversation::persistence::{
-        append_message, ensure_conversation_for_external_id, update_latest_context_budget,
+        append_message, ensure_conversation_for_external_id, list_projected_messages_page,
+        update_latest_context_budget, ConversationHistoryProjection,
     },
     conversation_message_types::{
         ConversationMessageRole, ConversationMessageType, ConversationMessageVisibility,
@@ -43,10 +44,29 @@ use den_service::{
 
 use crate::{
     events::{events_page, EventPageQuery},
-    methods::run::persist_run_failed,
+    methods::{
+        conversation::project_focus_title,
+        run::{persist_run_failed, RunFailureReason},
+    },
     rpc::rpc,
 };
 use bearwire_protocol::{rpc::JsonRpcRequest, surface::SurfaceHistoryEvent, wire::BearWireEvent};
+
+#[test]
+fn project_focus_title_prefix_is_projection_only_and_idempotent() {
+    assert_eq!(
+        project_focus_title(Some("Title".to_string()), true).as_deref(),
+        Some("⌖ Title")
+    );
+    assert_eq!(
+        project_focus_title(Some("⌖ Title".to_string()), true).as_deref(),
+        Some("⌖ Title")
+    );
+    assert_eq!(
+        project_focus_title(Some("⌖ Title".to_string()), false).as_deref(),
+        Some("Title")
+    );
+}
 
 fn test_state(pool: sqlx::PgPool) -> DenState {
     test_state_with_config(pool, den_core::config::Config::test_stub())
@@ -177,7 +197,7 @@ async fn upsert_test_session(
             resolved_conversation_id: None,
             client: "bearwire-test".to_string(),
             cwd: Some("/workspace".to_string()),
-            current_mode: Some("write".to_string()),
+            current_mode: Some(client_sessions::ClientSessionMode::Write),
         },
     )
     .await
@@ -273,6 +293,107 @@ async fn session_open_persists_event_and_events_replay(pool: sqlx::PgPool) {
     .expect("events page response after cursor")
     .0;
     assert!(replay_after["events"].as_array().unwrap().is_empty());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn session_open_mode_change_clears_active_focus(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let token = create_token_for_bear(&pool, user_id, bear_id).await;
+    let state = test_state(pool.clone());
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let conversation_id = format!("conv-{}", Uuid::new_v4().simple());
+
+    let initial = rpc_value(
+        state.clone(),
+        &token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "client": "bearwire-test",
+            "mode": "write"
+        }),
+    )
+    .await;
+    assert_eq!(initial["result"]["ok"], true);
+    assert_eq!(initial["result"]["cleared_focus_count"], 0);
+
+    let docket_job_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal, status)
+        VALUES ($1, $2, 'pair', 'Focused job', 'running')
+        RETURNING id
+        "#,
+    )
+    .bind(bear_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("insert docket job");
+    let docket_run_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO bear_job_runs (job_id, state, started_at)
+        VALUES ($1, 'running', NOW())
+        RETURNING id
+        "#,
+    )
+    .bind(docket_job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("insert docket run");
+    sqlx::query("UPDATE bear_jobs SET current_run_id = $2 WHERE id = $1")
+        .bind(docket_job_id)
+        .bind(docket_run_id)
+        .execute(&pool)
+        .await
+        .expect("attach docket run");
+    sqlx::query(
+        r#"
+        INSERT INTO docket_execution_sessions (
+            bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id, job_id, run_id
+        )
+        VALUES ($1, 'pair', $2, $3, $2, $4, $5)
+        "#,
+    )
+    .bind(bear_id)
+    .bind(&session_id)
+    .bind(&conversation_id)
+    .bind(docket_job_id)
+    .bind(docket_run_id)
+    .execute(&pool)
+    .await
+    .expect("insert active docket execution session");
+
+    let changed = rpc_value(
+        state,
+        &token,
+        "session.open",
+        json!({
+            "bear_slug": bear_slug,
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "client": "bearwire-test",
+            "mode": "plan"
+        }),
+    )
+    .await;
+    assert_eq!(changed["result"]["ok"], true);
+    assert_eq!(changed["result"]["cleared_focus_count"], 1);
+
+    let execution_state: String = sqlx::query_scalar(
+        r#"
+        SELECT state FROM docket_execution_sessions
+        WHERE bear_id = $1 AND source_client_session_id = $2
+        "#,
+    )
+    .bind(bear_id)
+    .bind(&session_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch docket execution state");
+    assert_eq!(execution_state, "cancelled");
 }
 
 fn start_mock_openai_sse_server() -> String {
@@ -899,6 +1020,38 @@ async fn native_history_loader_replays_canonical_user_and_assistant_rows(pool: s
     )
     .await
     .expect("append assistant message");
+    for index in 0..100 {
+        append_message(
+            &pool,
+            canonical.id,
+            &ConversationMessageWrite {
+                message_type: ConversationMessageType::WorkflowEvent,
+                role: Some(ConversationMessageRole::System),
+                visibility: ConversationMessageVisibility::DiagnosticOnly,
+                content_text: format!("diagnostic-{index}"),
+                content_json: json!({"index": index}),
+                provider_message_id: None,
+                source_event_id: None,
+                created_at: None,
+            },
+        )
+        .await
+        .expect("append diagnostic message");
+    }
+
+    let user_history = list_projected_messages_page(
+        &pool,
+        canonical.id,
+        None,
+        2,
+        ConversationHistoryProjection::UserHistory,
+    )
+    .await
+    .expect("load projected user history");
+    assert_eq!(user_history.len(), 2);
+    assert!(user_history
+        .iter()
+        .all(|message| message.visibility == "default"));
 
     let backend = NativeRuntimeConversationBackend::with_pool(pool.clone());
     let binding = RoleRuntimeBinding {
@@ -948,7 +1101,7 @@ async fn run_start_uses_resolved_conversation_history_for_existing_session(pool:
             resolved_conversation_id: Some(resolved_conversation_id.clone()),
             client: "zed".to_string(),
             cwd: Some("/workspace".to_string()),
-            current_mode: Some("write".to_string()),
+            current_mode: Some(client_sessions::ClientSessionMode::Write),
         },
     )
     .await
@@ -1193,7 +1346,7 @@ async fn session_state_includes_latest_context_budget_for_resolved_conversation(
             resolved_conversation_id: Some(resolved_conversation_id.clone()),
             client: "zed".to_string(),
             cwd: Some("/workspace".to_string()),
-            current_mode: Some("write".to_string()),
+            current_mode: Some(client_sessions::ClientSessionMode::Write),
         },
     )
     .await
@@ -1521,6 +1674,7 @@ async fn run_state_reports_run_obligations_results_and_events(pool: sqlx::PgPool
     let result = &response["result"];
     assert_eq!(result["kind"], "run_state", "{response}");
     assert_eq!(result["run"]["run_id"], run_id);
+    assert_eq!(result["blocking_reason"], "tool_result");
     assert_eq!(result["obligations"][0]["id"], obligation.id.to_string());
     assert_eq!(result["results"][0]["obligation_id"], "call-state");
     assert_eq!(
@@ -1589,7 +1743,7 @@ async fn persist_run_failed_writes_hidden_model_visible_operational_outcome(pool
         &run_id,
         bear_id,
         user_id,
-        "runtime_internal",
+        RunFailureReason::RuntimeInternal,
         "I stopped because this turn exhausted its wall-clock budget (elapsed=252985ms/limit=240000ms).".to_string(),
         None,
     )
@@ -1838,6 +1992,131 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .await
     .expect("persist unsupported reasoning replay policy event");
 
+    let docket_job_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal, status)
+        VALUES ($1, $2, 'pair', 'Surface diagnostics job', 'running')
+        RETURNING id
+        "#,
+    )
+    .bind(bear_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("insert docket job");
+    let docket_run_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO bear_job_runs (job_id, state, started_at)
+        VALUES ($1, 'running', NOW())
+        RETURNING id
+        "#,
+    )
+    .bind(docket_job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("insert docket run");
+    sqlx::query("UPDATE bear_jobs SET current_run_id = $2 WHERE id = $1")
+        .bind(docket_job_id)
+        .bind(docket_run_id)
+        .execute(&pool)
+        .await
+        .expect("attach docket run");
+    let docket_task_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO bear_tasks (
+            bear_id, job_id, kind, scope, title, body, completion_criteria, created_by_role, created_by_user_id
+        )
+        VALUES ($1, $2, 'execution', 'template', 'Diagnostic task', 'Check projection', '["projection includes task"]'::jsonb, 'pair', $3)
+        RETURNING id
+        "#,
+    )
+    .bind(bear_id)
+    .bind(docket_job_id)
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("insert docket task");
+    sqlx::query(
+        r#"
+        INSERT INTO docket_execution_sessions (
+            bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id, job_id, run_id, task_id
+        )
+        VALUES ($1, 'pair', $2, $3, $2, $4, $5, $6)
+        "#,
+    )
+    .bind(bear_id)
+    .bind(&session_id)
+    .bind(&conversation_id)
+    .bind(docket_job_id)
+    .bind(docket_run_id)
+    .bind(docket_task_id)
+    .execute(&pool)
+    .await
+    .expect("insert docket execution session");
+    sqlx::query(
+        r#"
+        INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, by_user_id, payload)
+        VALUES ($1, $2, 'focus_selected', 'pair', $3, '{"state":"active"}'::jsonb)
+        "#,
+    )
+    .bind(docket_job_id)
+    .bind(docket_run_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .expect("insert focus event");
+    sqlx::query(
+        r#"
+        INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_user_id, payload)
+        VALUES ($1, $2, 'created', 'pair', $3, $4::jsonb)
+        "#,
+    )
+    .bind(docket_task_id)
+    .bind(docket_run_id)
+    .bind(user_id)
+    .bind(json!({
+        "definition": {
+            "task_id": docket_task_id,
+            "job_id": docket_job_id,
+            "title": "Diagnostic task",
+            "body": "Check projection",
+            "completion_criteria": ["projection includes task"]
+        }
+    }))
+    .execute(&pool)
+    .await
+    .expect("insert task definition event");
+    bearwire_events::append_bearwire_event(
+        &pool,
+        &session_id,
+        Some(bear_id),
+        Some(user_id),
+        bearwire_protocol::wire::BearWireEvent::ephemeral(
+            "runtime.objective_orientation",
+            json!({
+                "source": "turn_assembly",
+                "profile": "pair",
+                "conversation_id": conversation_id,
+                "kind": "focused",
+                "orientation": {
+                    "kind": "focused",
+                    "job": {
+                        "job_id": docket_job_id.to_string(),
+                        "active_task_ref": {
+                            "kind": "docket_task",
+                            "job_id": docket_job_id.to_string(),
+                            "task_id": docket_task_id.to_string(),
+                            "title": "Diagnostic task"
+                        },
+                        "mutable": true
+                    }
+                }
+            }),
+        ),
+    )
+    .await
+    .expect("persist orientation diagnostic event");
+
     let surface_response = rpc_value(
         test_state(pool),
         &token,
@@ -1881,7 +2160,7 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     assert!(
         surface_events.iter().any(|event| {
             event.get("kind").and_then(Value::as_str) == Some("session_info_update")
-                && event.get("title").and_then(Value::as_str) == Some("History replay title")
+                && event.get("title").and_then(Value::as_str) == Some("⌖ History replay title")
                 && event.get("current_mode").and_then(Value::as_str) == Some("write")
         }),
         "surface history should expose typed session metadata update from latest session state: {surface_response}"
@@ -1936,6 +2215,48 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
                     && event.get("status").and_then(Value::as_str) == Some("ok")
             ),
         "surface history should expose structured ok tool result: {surface_response}"
+    );
+    assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("message")
+                && event.get("role").and_then(Value::as_str) == Some("system")
+                && event
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| {
+                        text.contains("Docket focus selected")
+                            && text.contains("goal=Surface diagnostics job")
+                            && text.contains("status=running")
+                            && text.contains("task=Diagnostic task")
+                    })
+        }),
+        "surface history should expose Docket focus diagnostics: {surface_response}"
+    );
+    assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("message")
+                && event.get("role").and_then(Value::as_str) == Some("system")
+                && event
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| text.contains("Docket task created: Diagnostic task"))
+        }),
+        "surface history should expose Docket task definition diagnostics: {surface_response}"
+    );
+    assert!(
+        surface_events.iter().any(|event| {
+            event.get("kind").and_then(Value::as_str) == Some("message")
+                && event.get("role").and_then(Value::as_str) == Some("system")
+                && event
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| {
+                        text.contains("Runtime orientation: kind=focused")
+                            && text.contains(&format!("focused_job={docket_job_id}"))
+                            && text.contains(&format!("task={docket_task_id}"))
+                    })
+        }),
+        "surface history should expose persisted orientation diagnostics: {surface_response}"
     );
 }
 

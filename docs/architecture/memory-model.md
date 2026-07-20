@@ -152,3 +152,7 @@ See [den-runtime](den-runtime.md) for the exact context assembly model.
 - [pair stance](pair-stance.md)
 - [reflection system](reflection-system.md)
 - [tasks and autonomy](tasks-and-autonomy.md)
+
+## Open-session reflection and memory
+
+Reflection may happen before a session is closed. These open-session reflection runs are checkpoints over bounded activity windows, not implicit promotion of session material into shared memory. Durable shared-memory changes still follow the normal memory curation path.

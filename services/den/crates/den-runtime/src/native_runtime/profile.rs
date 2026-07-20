@@ -150,9 +150,9 @@ fn scaled_count(value: u32, multiplier: f64) -> u32 {
     if !multiplier.is_finite() || multiplier <= 0.0 {
         return value;
     }
-    ((value as f64) * multiplier)
+    (f64::from(value) * multiplier)
         .ceil()
-        .clamp(1.0, u32::MAX as f64) as u32
+        .clamp(1.0, f64::from(u32::MAX)) as u32
 }
 
 fn scaled_turn_budget(mut budget: TurnBudgetPolicy, multiplier: f64) -> TurnBudgetPolicy {
@@ -231,11 +231,11 @@ mod tests {
             .turn_budget;
         assert_eq!(
             scaled.tool_call_limits.total,
-            ((base.tool_call_limits.total as f64) * 1.5).ceil() as u32
+            (f64::from(base.tool_call_limits.total) * 1.5).ceil() as u32
         );
         assert_eq!(
             scaled.emergency_hard_steps,
-            ((base.emergency_hard_steps as f64) * 1.5).ceil() as u32
+            (f64::from(base.emergency_hard_steps) * 1.5).ceil() as u32
         );
     }
 }

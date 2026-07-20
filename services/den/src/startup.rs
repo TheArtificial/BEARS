@@ -8,8 +8,6 @@ use thiserror::Error;
 /// Failures while initializing the process (config, database, migrations, tracing).
 #[derive(Debug, Error)]
 pub enum StartupError {
-    #[error("{0}")]
-    Message(String),
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
     #[error(transparent)]
@@ -21,6 +19,22 @@ pub enum StartupError {
     Io(#[from] std::io::Error),
     #[error("tracing subscriber: {0}")]
     Tracing(String),
+    #[error(
+        "DATABASE_URL must be set when RUN_WEB, RUN_API, or RUN_WORKERS is enabled. Only a standalone sandbox server (RUN_SANDBOX only) can run without it."
+    )]
+    MissingDatabaseUrl,
+    #[error(
+        "JWT_SECRET must be set to a non-empty value when the binary is built with `--features production`, or when RUN_API=true (OAuth access tokens use HS256)."
+    )]
+    MissingJwtSecret,
+    #[error(
+        "LLM_API_URL (or BIFROST_BASE_URL) must be set when RUN_API=true (Den-native agent loop)."
+    )]
+    MissingLlmApiUrl,
+    #[error("SANDBOX_CALLBACK_API_URL is invalid: {0}")]
+    InvalidSandboxCallbackUrl(String),
+    #[error("sandbox provider startup: {0}")]
+    SandboxProvider(String),
     /// Database connection failed with operator-actionable context.
     #[error("database error: {message} (url={db_url})\n  hint: {hint}")]
     Database {
@@ -42,12 +56,8 @@ pub enum StartupError {
 /// `SQLX_MIGRATE_IGNORE_MISSING=true` only when you understand the risk.
 pub fn sqlx_migrate_ignore_missing_from_env() -> bool {
     std::env::var("SQLX_MIGRATE_IGNORE_MISSING")
-        .map(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
+        .ok()
+        .and_then(|value| value.trim().parse::<bool>().ok())
         .unwrap_or(false)
 }
 
@@ -107,27 +117,40 @@ pub fn needs_database(config: &Config) -> bool {
 /// Validate secrets and other invariants before connecting to the database.
 pub fn validate_runtime_config(config: &Config) -> Result<(), StartupError> {
     if needs_database(config) && config.database_url.trim().is_empty() {
-        return Err(StartupError::Message(
-            "DATABASE_URL must be set when RUN_WEB, RUN_API, or RUN_WORKERS is enabled. \
-             Only a standalone sandbox server (RUN_SANDBOX only) can run without it."
-                .into(),
-        ));
+        return Err(StartupError::MissingDatabaseUrl);
     }
     if requires_jwt_secret(config) {
         let secret = std::env::var("JWT_SECRET").unwrap_or_default();
         if secret.trim().is_empty() {
-            return Err(StartupError::Message(
-                "JWT_SECRET must be set to a non-empty value when the binary is built with \
-                 `--features production`, or when RUN_API=true (OAuth access tokens use HS256)."
-                    .into(),
-            ));
+            return Err(StartupError::MissingJwtSecret);
         }
     }
     if edge_gateway_requires_runtime(config) && config.llm_api_url.trim().is_empty() {
-        return Err(StartupError::Message(
-            "LLM_API_URL (or BIFROST_BASE_URL) must be set when RUN_API=true (Den-native agent loop)."
-                .into(),
-        ));
+        return Err(StartupError::MissingLlmApiUrl);
+    }
+    if config.sandbox_server_url.is_some() {
+        let callback = url::Url::parse(config.sandbox_callback_api_url.trim()).map_err(|err| {
+            StartupError::InvalidSandboxCallbackUrl(format!(
+                "expected an absolute http(s) URL, got {:?}: {err}",
+                config.sandbox_callback_api_url
+            ))
+        })?;
+        if callback.host_str().is_none() {
+            return Err(StartupError::InvalidSandboxCallbackUrl(
+                "URL must include a host".to_string(),
+            ));
+        }
+        if !matches!(callback.scheme(), "http" | "https") {
+            return Err(StartupError::InvalidSandboxCallbackUrl(format!(
+                "expected http or https, got {}",
+                callback.scheme()
+            )));
+        }
+        if config.work_sandbox_network == "restricted" && callback.scheme() != "http" {
+            return Err(StartupError::InvalidSandboxCallbackUrl(
+                "restricted sandbox networking requires an http callback; use WORK_SANDBOX_NETWORK=open for https callbacks".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -177,11 +200,20 @@ async fn bootstrap_recall_index(config: &Config) {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use std::sync::{Mutex, OnceLock};
+
+    fn jwt_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("JWT_SECRET test env lock poisoned")
+    }
 
     #[test]
     fn validate_jwt_rules_when_not_production_build() {
+        let _guard = jwt_env_lock();
         let prev = std::env::var("JWT_SECRET").ok();
-        // SAFETY: single-threaded test; no concurrent env reads in this process.
+        // SAFETY: JWT_SECRET mutation is serialized by jwt_env_lock().
         unsafe {
             std::env::remove_var("JWT_SECRET");
         }
@@ -194,7 +226,10 @@ mod tests {
         // Satisfy the separate RUN_API LLM requirement so this test only exercises JWT rules.
         api_on.llm_api_url = "http://bears-bifrost:8080/v1".into();
         assert!(
-            validate_runtime_config(&api_on).is_err(),
+            matches!(
+                validate_runtime_config(&api_on),
+                Err(StartupError::MissingJwtSecret)
+            ),
             "RUN_API=true requires JWT_SECRET"
         );
 
@@ -211,6 +246,7 @@ mod tests {
 
     #[test]
     fn validate_requires_llm_when_api_enabled() {
+        let _guard = jwt_env_lock();
         let prev = std::env::var("JWT_SECRET").ok();
         unsafe {
             std::env::set_var("JWT_SECRET", "test-jwt-secret-for-unit-tests-min-length-ok");
@@ -219,7 +255,10 @@ mod tests {
         let mut api_on = Config::test_stub();
         api_on.run_api = true;
         assert!(
-            validate_runtime_config(&api_on).is_err(),
+            matches!(
+                validate_runtime_config(&api_on),
+                Err(StartupError::MissingLlmApiUrl)
+            ),
             "API runtime requires LLM_API_URL"
         );
 
@@ -240,6 +279,27 @@ mod tests {
     }
 
     #[test]
+    fn validate_sandbox_callback_url_rules() {
+        let mut config = Config::test_stub();
+        config.sandbox_server_url = Some("http://sandbox:3002".into());
+        config.sandbox_callback_api_url = "auto".into();
+        assert!(matches!(
+            validate_runtime_config(&config),
+            Err(StartupError::InvalidSandboxCallbackUrl(_))
+        ));
+
+        config.sandbox_callback_api_url = "https://api.example.com".into();
+        config.work_sandbox_network = "restricted".into();
+        assert!(matches!(
+            validate_runtime_config(&config),
+            Err(StartupError::InvalidSandboxCallbackUrl(_))
+        ));
+
+        config.sandbox_callback_api_url = "http://bears-den-test:3036".into();
+        validate_runtime_config(&config).expect("absolute HTTP callback should be valid");
+    }
+
+    #[test]
     fn validate_database_url_rules() {
         let mut sandbox_only = Config::test_stub();
         sandbox_only.database_url = String::new();
@@ -251,7 +311,10 @@ mod tests {
         let mut web_no_db = sandbox_only;
         web_no_db.run_web = true;
         assert!(
-            validate_runtime_config(&web_no_db).is_err(),
+            matches!(
+                validate_runtime_config(&web_no_db),
+                Err(StartupError::MissingDatabaseUrl)
+            ),
             "RUN_WEB requires DATABASE_URL"
         );
     }

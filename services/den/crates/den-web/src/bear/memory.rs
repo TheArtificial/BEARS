@@ -14,6 +14,7 @@ use axum::{
 };
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
+use bearwire_protocol::wire::BearWireEvent;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -31,11 +32,12 @@ use crate::{
 
 use super::settings::{bear_nav_context, load_session_bear, session_user};
 use den_memory::{
-    self as store, bear_memory_admin_stats, count_records_by_kind, count_records_by_profile,
-    get_memory_proposal as get_sqlite_memory_proposal, get_memory_record_detail, head_entry_count,
-    import_legacy_memory_bundle, list_memory_proposals as list_sqlite_memory_proposals,
-    list_path_summaries, list_recent_memory_records, list_relations_for_entity,
-    list_relations_for_source, resolve_memory_proposal as resolve_sqlite_memory_proposal,
+    self as store, bear_memory_admin_stats, count_memory_proposals, count_records_by_kind,
+    count_records_by_profile, get_memory_proposal as get_sqlite_memory_proposal,
+    get_memory_record_detail, head_entry_count, import_legacy_memory_bundle,
+    list_memory_proposals as list_sqlite_memory_proposals, list_path_summaries,
+    list_recent_memory_records, list_relations_for_entity, list_relations_for_source,
+    list_reviewable_memory_proposals, resolve_memory_proposal as resolve_sqlite_memory_proposal,
     search_memory_records, LegacyMemoryImportOptions, MemoryRecordRow, MemoryStoreManager,
     PathSummary, SqliteMemoryProposal,
 };
@@ -51,6 +53,10 @@ use super::member::{email_verify_redirect, load_bear_member, viewer_can_manage_b
 pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/bear/{slug}/memory", get(dashboard_view))
+        .route_with_tsr(
+            "/bear/{slug}/memory/review-queue/clear",
+            post(clear_review_queue_post),
+        )
         .route_with_tsr(
             "/bear/{slug}/memory/import-legacy",
             post(import_legacy_memory_post),
@@ -88,6 +94,10 @@ struct DashboardQuery {
     import_notice: Option<String>,
     #[serde(default)]
     import_error: Option<String>,
+    #[serde(default)]
+    review_notice: Option<String>,
+    #[serde(default)]
+    review_error: Option<String>,
     #[serde(default)]
     reflection_lane: Option<String>,
     #[serde(default)]
@@ -150,6 +160,14 @@ struct MemoryProposalResolutionForm {
     review_notes: Option<String>,
     #[serde(default)]
     decision_summary: Option<String>,
+    #[serde(default)]
+    after_save: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClearReviewQueueForm {
+    #[serde(default)]
+    confirm: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +248,9 @@ struct ReflectionRunView {
     queued_age_label: String,
     proposal_count: Option<usize>,
     scanned_artifacts: Option<i64>,
+    candidate_count: Option<i64>,
+    discarded_count: Option<i64>,
+    no_candidate_count: Option<i64>,
     output_summary: Value,
     error: Option<String>,
 }
@@ -344,6 +365,21 @@ struct MemoryProposalView {
     decision_summary: Option<String>,
     created_at: String,
     reviewed_at: Option<String>,
+    extraction: MemoryProposalExtractionView,
+}
+
+#[derive(Debug, Serialize, Clone, Default)]
+struct MemoryProposalExtractionView {
+    is_memory_extraction: bool,
+    source_kind: Option<String>,
+    source_ref: Option<String>,
+    candidate_kind: Option<String>,
+    source_message_count: usize,
+    source_artifact_count: usize,
+    confidence_label: Option<String>,
+    detector: Option<String>,
+    discarded_count: usize,
+    discarded_preview: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -557,6 +593,64 @@ fn scanned_artifacts_from_summary(output: &Value) -> Option<i64> {
     output.get("scanned_artifacts").and_then(Value::as_i64)
 }
 
+fn i64_field_from_summary(output: &Value, key: &str) -> Option<i64> {
+    output.get(key).and_then(Value::as_i64)
+}
+
+fn string_field(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn array_len_field(value: &Value, key: &str) -> usize {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+fn proposal_extraction_view(source_refs: &Value, refs: &Value) -> MemoryProposalExtractionView {
+    let quality = refs.get("quality").unwrap_or(&Value::Null);
+    let discarded = refs
+        .get("discarded")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let discarded_preview = discarded
+        .iter()
+        .filter_map(|value| string_field(value, "reason"))
+        .take(3)
+        .collect();
+    let confidence_label = quality
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .map(|value| format!("{value:.2}"));
+    let is_memory_extraction = source_refs.get("source").and_then(Value::as_str)
+        == Some("memory_extraction")
+        || refs
+            .get("memory_extraction")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+    MemoryProposalExtractionView {
+        is_memory_extraction,
+        source_kind: string_field(source_refs, "source_kind"),
+        source_ref: string_field(source_refs, "source_ref"),
+        candidate_kind: string_field(source_refs, "candidate_kind"),
+        source_message_count: array_len_field(source_refs, "source_message_ids"),
+        source_artifact_count: array_len_field(source_refs, "source_artifact_ids"),
+        confidence_label,
+        detector: string_field(quality, "detector"),
+        discarded_count: discarded.len(),
+        discarded_preview,
+    }
+}
+
 fn reflection_summary(runs: &[ReflectionRunView]) -> ReflectionRunSummary {
     let mut completed_durations = Vec::new();
     for run in runs {
@@ -701,6 +795,12 @@ async fn list_recent_reflection_runs(
                     queued_age_label: duration_label(queued_age_ms),
                     proposal_count: proposal_count_from_summary(&output_summary),
                     scanned_artifacts: scanned_artifacts_from_summary(&output_summary),
+                    candidate_count: i64_field_from_summary(&output_summary, "candidate_count"),
+                    discarded_count: i64_field_from_summary(&output_summary, "discarded_count"),
+                    no_candidate_count: i64_field_from_summary(
+                        &output_summary,
+                        "no_candidate_count",
+                    ),
                     output_summary,
                     error,
                 }
@@ -915,6 +1015,9 @@ async fn get_reflection_run_detail(
             queued_age_label: duration_label(queued_age_ms),
             proposal_count: proposal_count_from_summary(&output_summary),
             scanned_artifacts: scanned_artifacts_from_summary(&output_summary),
+            candidate_count: i64_field_from_summary(&output_summary, "candidate_count"),
+            discarded_count: i64_field_from_summary(&output_summary, "discarded_count"),
+            no_candidate_count: i64_field_from_summary(&output_summary, "no_candidate_count"),
             output_summary: output_summary.clone(),
             error,
         },
@@ -1197,6 +1300,7 @@ async fn get_reflection_evidence(
 }
 
 fn proposal_view_from_postgres(row: memory_proposals::MemoryProposalRow) -> MemoryProposalView {
+    let extraction = proposal_extraction_view(&row.source_refs, &row.refs);
     MemoryProposalView {
         id: row.id.to_string(),
         store: "postgres".to_string(),
@@ -1221,11 +1325,18 @@ fn proposal_view_from_postgres(row: memory_proposals::MemoryProposalRow) -> Memo
         decision_summary: row.decision_summary,
         created_at: row.created_at.to_string(),
         reviewed_at: row.reviewed_at.map(|value| value.to_string()),
+        extraction,
     }
 }
 
 fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
     let payload = row.payload_json;
+    let source_refs = payload
+        .get("source_refs")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let refs = payload.get("refs").cloned().unwrap_or_else(|| json!({}));
+    let extraction = proposal_extraction_view(&source_refs, &refs);
     let string_field = |key: &str, default: &str| {
         payload
             .get(key)
@@ -1252,10 +1363,7 @@ fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
             .and_then(Value::as_str)
             .map(str::to_string),
         source_paths,
-        source_refs: payload
-            .get("source_refs")
-            .cloned()
-            .unwrap_or_else(|| json!({})),
+        source_refs,
         suggested_action: string_field("suggested_action", "unspecified"),
         target_ref: payload
             .get("target_ref")
@@ -1272,7 +1380,7 @@ fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
             .get("proposed_patch")
             .and_then(Value::as_str)
             .map(str::to_string),
-        refs: payload.get("refs").cloned().unwrap_or_else(|| json!({})),
+        refs,
         sensitivity: string_field("sensitivity", "normal"),
         requires_human: payload
             .get("requires_human")
@@ -1297,6 +1405,7 @@ fn proposal_view_from_sqlite(row: SqliteMemoryProposal) -> MemoryProposalView {
             .map(str::to_string),
         created_at: row.created_at,
         reviewed_at: None,
+        extraction,
     }
 }
 
@@ -1327,6 +1436,26 @@ async fn list_dashboard_proposals(
     proposals.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     proposals.truncate(limit.clamp(1, 200) as usize);
     proposals
+}
+
+async fn count_dashboard_proposals(
+    state: &AppState,
+    manager: &MemoryStoreManager,
+    bear_id: Uuid,
+    status: &str,
+) -> i64 {
+    let postgres_count =
+        memory_proposals::count_for_bear_status(state.sqlx_pool(), bear_id, status)
+            .await
+            .unwrap_or(0);
+    let sqlite_count = if let Ok(store) = manager.store_for_bear(bear_id).await {
+        count_memory_proposals(&store, Some(status))
+            .await
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    postgres_count + sqlite_count
 }
 
 fn record_list_item(row: MemoryRecordRow, score: Option<f32>) -> RecordListItem {
@@ -1361,6 +1490,178 @@ const LEGACY_IMPORT_MAX_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
 fn dashboard_redirect_with_query(slug: &str, key: &str, message: &str) -> Response {
     let encoded = urlencoding::encode(message);
     Redirect::to(&format!("/bear/{slug}/memory?{key}={encoded}")).into_response()
+}
+
+fn collect_review_source_refs(
+    source_refs: &Value,
+    session_ids: &mut BTreeSet<String>,
+    conversation_ids: &mut BTreeSet<String>,
+) {
+    for key in ["session_id", "client_session_id"] {
+        if let Some(value) = source_refs
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            session_ids.insert(value.to_string());
+        }
+    }
+    for key in ["conversation_id", "conversation_uuid"] {
+        if let Some(value) = source_refs
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            conversation_ids.insert(value.to_string());
+        }
+    }
+}
+
+async fn requeue_source_reflection_sessions(
+    state: &AppState,
+    bear_id: Uuid,
+    session_ids: &BTreeSet<String>,
+    conversation_ids: &BTreeSet<String>,
+) -> Result<usize, CustomError> {
+    if session_ids.is_empty() && conversation_ids.is_empty() {
+        return Ok(0);
+    }
+    let session_ids = session_ids.iter().cloned().collect::<Vec<_>>();
+    let conversation_ids = conversation_ids.iter().cloned().collect::<Vec<_>>();
+    let rows = sqlx::query_as::<_, (String, i32)>(
+        r"
+        SELECT DISTINCT client_session_id, user_id
+        FROM client_sessions
+        WHERE bear_id = $1
+          AND (
+              client_session_id = ANY($2::text[])
+              OR conversation_id = ANY($3::text[])
+              OR resolved_conversation_id = ANY($3::text[])
+          )
+        ",
+    )
+    .bind(bear_id)
+    .bind(&session_ids)
+    .bind(&conversation_ids)
+    .fetch_all(state.sqlx_pool())
+    .await?;
+
+    let mut requeued = 0;
+    for (session_id, user_id) in rows {
+        let mut event = BearWireEvent::ephemeral(
+            "session.reflection_requeued",
+            json!({
+                "reason": "memory_review_queue_cleared",
+                "source_session_ids": &session_ids,
+                "source_conversation_ids": &conversation_ids,
+            }),
+        );
+        event.bear_id = Some(bear_id.to_string());
+        event.human_id = Some(user_id.to_string());
+        event.session_id = Some(session_id.clone());
+        den_runtime::bearwire_events::append_bearwire_event(
+            state.sqlx_pool(),
+            &session_id,
+            Some(bear_id),
+            Some(user_id),
+            event,
+        )
+        .await?;
+        requeued += 1;
+    }
+    Ok(requeued)
+}
+
+async fn clear_review_queue_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: crate::auth_backend::AuthSession,
+    Form(form): Form<ClearReviewQueueForm>,
+) -> Result<Response, CustomError> {
+    let user = session_user(&auth_session).await?;
+    if let Some(r) = email_verify_redirect(state.sqlx_pool(), user.id).await? {
+        return Ok(r.into_response());
+    }
+    let bear = load_bear_member(state.sqlx_pool(), user.id, &slug).await?;
+    if !viewer_can_manage_bear(state.sqlx_pool(), user, bear.id).await? {
+        return Err(CustomError::Authorization(
+            "bear admin role required".to_string(),
+        ));
+    }
+    if form.confirm.trim() != "clear review queue" {
+        return Ok(dashboard_redirect_with_query(
+            &bear.slug,
+            "review_error",
+            "Type “clear review queue” to confirm clearing reviewable memory proposals.",
+        ));
+    }
+
+    let mut cleared = 0usize;
+    let mut session_ids = BTreeSet::new();
+    let mut conversation_ids = BTreeSet::new();
+    for proposal in memory_proposals::list_reviewable_for_bear(state.sqlx_pool(), bear.id).await? {
+        collect_review_source_refs(
+            &proposal.source_refs,
+            &mut session_ids,
+            &mut conversation_ids,
+        );
+        memory_proposals::resolve_for_bear(
+            state.sqlx_pool(),
+            memory_proposals::ProposalResolutionParams {
+                bear_id: bear.id,
+                proposal_id: proposal.id,
+                reviewer_profile: BearProfile::Curate,
+                reviewer_agent_id: None,
+                status: "rejected",
+                review_notes: Some("Cleared from the review queue; source session marked for reflection retry when identifiable."),
+                decision_summary: Some("Queue cleared without accepting proposal."),
+                result_path: None,
+                result_commit: None,
+                project_to_conversation: false,
+            },
+        )
+        .await?;
+        cleared += 1;
+    }
+
+    let manager = MemoryStoreManager::new(state.config.as_ref());
+    if let Ok(store) = manager.store_for_bear(bear.id).await {
+        for proposal in list_reviewable_memory_proposals(&store).await? {
+            let source_refs = proposal
+                .payload_json
+                .get("source_refs")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            collect_review_source_refs(&source_refs, &mut session_ids, &mut conversation_ids);
+            resolve_sqlite_memory_proposal(
+                &store,
+                &proposal.proposal_id,
+                "rejected",
+                &json!({
+                    "reviewer_profile": BearProfile::Curate.as_str(),
+                    "review_notes": "Cleared from the review queue; source session marked for reflection retry when identifiable.",
+                    "decision_summary": "Queue cleared without accepting proposal.",
+                }),
+            )
+            .await?;
+            cleared += 1;
+        }
+    }
+
+    let requeued =
+        requeue_source_reflection_sessions(&state, bear.id, &session_ids, &conversation_ids)
+            .await?;
+    Ok(dashboard_redirect_with_query(
+        &bear.slug,
+        "review_notice",
+        &format!(
+            "Cleared {cleared} reviewable proposal{} and marked {requeued} source session{} for reflection retry.",
+            if cleared == 1 { "" } else { "s" },
+            if requeued == 1 { "" } else { "s" },
+        ),
+    ))
 }
 
 fn looks_like_git_bundle(bytes: &[u8]) -> bool {
@@ -1468,8 +1769,17 @@ async fn dashboard_view(
         .collect();
 
     let proposals = list_dashboard_proposals(&state, &manager, id, None, 10).await;
-    let pending_proposals =
+    let pending_review_count = count_dashboard_proposals(&state, &manager, id, "pending").await;
+    let needs_human_review_count =
+        count_dashboard_proposals(&state, &manager, id, "needs_human_review").await;
+    let reviewable_proposal_count = pending_review_count + needs_human_review_count;
+    let mut pending_proposals =
         list_dashboard_proposals(&state, &manager, id, Some("pending"), 10).await;
+    pending_proposals.extend(
+        list_dashboard_proposals(&state, &manager, id, Some("needs_human_review"), 10).await,
+    );
+    pending_proposals.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    pending_proposals.truncate(10);
     let pair_reflection_runs = pair_reflection::list_recent_for_bear(state.sqlx_pool(), id, 8)
         .await
         .unwrap_or_default();
@@ -1509,6 +1819,9 @@ async fn dashboard_view(
             recent,
             proposals,
             pending_proposals,
+            pending_review_count,
+            needs_human_review_count,
+            reviewable_proposal_count,
             pair_reflection_runs,
             reflection_runs,
             reflection_run_summary,
@@ -1516,6 +1829,8 @@ async fn dashboard_view(
             reflection_slo,
             import_notice => query.import_notice.as_deref().map(str::trim).filter(|s| !s.is_empty()),
             import_error => query.import_error.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            review_notice => query.review_notice.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            review_error => query.review_error.as_deref().map(str::trim).filter(|s| !s.is_empty()),
             legacy_import_locked,
             can_manage_bear,
             native_runtime => true,
@@ -2393,11 +2708,35 @@ async fn proposal_post(
         resolve_sqlite_memory_proposal(&store, &proposal_id.to_string(), status, &review_payload)
             .await?;
     }
-    Ok(Redirect::to(&format!(
-        "/bear/{}/memory/proposals/{proposal_id}",
-        bear.slug
-    ))
-    .into_response())
+    if form.after_save.as_deref() == Some("next") {
+        let manager = MemoryStoreManager::new(state.config.as_ref());
+        if let Some(next) = next_review_proposal(&state, &manager, bear.id, proposal_id).await {
+            return Ok(
+                Redirect::to(&format!("/bear/{}/memory/proposals/{}", bear.slug, next.id))
+                    .into_response(),
+            );
+        }
+    }
+    Ok(Redirect::to(&format!("/bear/{}/memory", bear.slug)).into_response())
+}
+
+async fn next_review_proposal(
+    state: &AppState,
+    manager: &MemoryStoreManager,
+    bear_id: Uuid,
+    current_id: Uuid,
+) -> Option<MemoryProposalView> {
+    let current_id = current_id.to_string();
+    // ponytail: scans the first 200 reviewable proposals; upgrade to a cursor query if queues grow.
+    let mut proposals =
+        list_dashboard_proposals(state, manager, bear_id, Some("pending"), 200).await;
+    proposals.extend(
+        list_dashboard_proposals(state, manager, bear_id, Some("needs_human_review"), 200).await,
+    );
+    proposals.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    proposals
+        .into_iter()
+        .find(|proposal| proposal.id != current_id)
 }
 
 #[cfg(test)]

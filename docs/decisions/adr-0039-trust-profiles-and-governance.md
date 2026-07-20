@@ -1,4 +1,4 @@
-# ADR-0039 — Trust profiles and governance modes
+# ADR-0039 — Trust profiles and governance states
 
 **Status:** Accepted (2026-06-12)
 **Deciders:** Hans
@@ -9,8 +9,12 @@
 - [ADR-0034 — Jobs and tasks (Docket)](adr-0034-jobs-and-tasks-work-management.md)
 - [ADR-0026 — Work handoff and human escalation](adr-0026-work-handoff-and-human-escalation.md)
 - [ADR-0006 — Bear work surfaces](adr-0006-bear-work-surfaces.md)
+- [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
 - [`interactive-stances-and-role-axes.md`](../architecture/interactive-stances-and-role-axes.md)
 - [`work-surfaces-and-conversations.md`](../guides/work-surfaces-and-conversations.md)
+- [`den-state-machine-inventory.md`](../architecture/den-state-machine-inventory.md)
+
+> **State-inventory maintenance.** This ADR owns the trust-profile and governance axes in the Den state machine inventory. Changes to trust profiles, governance values, governance transitions, or effective-policy derivation must update that inventory and include behavior-level tests or replay assertions for affected transitions.
 
 ## Context
 
@@ -48,9 +52,9 @@ Values are unchanged: `chat`, `pair`, `curate`, `work`, `watch`. This is exactly
 
 A trust profile is **not** the identity of a long-running sandbox or run. It is applied **per turn** as a template.
 
-### 2. Governance mode (`Mode` in code)
+### 2. Governance (`Governance` in code)
 
-A **governance mode** is the fast-changing supervision contract on a **run / workspace session**: *how is this execution being supervised right now?* It is run-scoped and mutable over the life of one run.
+A **governance** is the fast-changing supervision contract on a **run / workspace session**: *how is this execution being supervised right now?* It is run-scoped and mutable over the life of one run.
 
 Initial modes:
 
@@ -62,18 +66,18 @@ Initial modes:
 | `observational` | Present, read-only | Inspect/interrogate a run without owning its turns |
 | `frozen` | Panic / handoff | Turn cancelled; worktree checkpointed; awaiting disposition |
 
-Governance mode is documented as **governance mode**; the **code shorthand is `Mode`**. It generalizes ADR-0037 `run_mode`: `interactive`/`autonomous` become projections of governance mode onto `RunAuthContext` (e.g. `autonomous_continuation` ⇒ `run_mode = autonomous`).
+Governance is documented as **governance**; the **code shorthand is `Governance`**. It generalizes ADR-0037 `run_mode`: `interactive`/`autonomous` become projections of governance onto `RunAuthContext` (e.g. `autonomous_continuation` ⇒ `run_mode = autonomous`).
 
 ### 3. Effective policy is a product, not a label
 
 The runtime computes, per turn:
 
 ```text
-EffectivePolicy = TrustProfile × GovernanceMode × Armature × RunAuthContext
+EffectivePolicy = TrustProfile × Governance × Armature × RunAuthContext
 ```
 
 - **TrustProfile** — durable boundaries and defaults (this ADR / ADR-0036).
-- **GovernanceMode** — supervision dial (this ADR).
+- **Governance** — supervision dial (this ADR).
 - **Armature** — where actuators live: ACP client tools, Den sandbox, or none (`interactive-stances-and-role-axes.md`).
 - **RunAuthContext** — git/auth/operation actor selection ([ADR-0037](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)).
 
@@ -85,19 +89,19 @@ The model never *infers* this cross product. Den enforces the tool roster, memor
 |--------|----------|-------|
 | **Work surface** | Bear-durable | Bear ([ADR-0006](adr-0006-bear-work-surfaces.md)) |
 | **Workspace session** | Run-scoped materialization (one clone + egress gateway pair) | Docket run ([ADR-0037](adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)) |
-| **Governance mode** | Per-run, mutable timeline | Docket run |
+| **Governance** | Per-run, mutable timeline | Docket run |
 | **Trust profile** | Applied per turn as a template | `bear_profile_bindings` ([ADR-0036](adr-0036-bear-profile-registry.md)) |
 
-The **same** workspace session can span multiple governance modes. A trust profile change is a change of template for *new* work, not a re-pointing of the sandbox.
+The **same** workspace session can span multiple governance states. A trust profile change is a change of template for *new* work, not a re-pointing of the sandbox.
 
 ### 5. Invariants that must not bend
 
-Governance mode changes supervision; it must never be used to launder trust:
+Governance changes supervision; it must never be used to launder trust:
 
 - `work`-class effective policy **must not read raw `pair/` or `chat/`**, even under `observational` inspection by a human.
 - Outbound git/auth always follows `RunAuthContext`, never "whatever mode feels convenient".
 - Approvals are authoritative in **Den**, not "maybe the disconnected client will answer" ([ADR-0026](adr-0026-work-handoff-and-human-escalation.md)).
-- `curate` and `watch` remain distinct trust profiles; they are **not** governance modes of an interactive session.
+- `curate` and `watch` remain distinct trust profiles; they are **not** governance states of an interactive session.
 
 ### 6. Transitions are durable and model-visible
 
@@ -114,7 +118,7 @@ governance.changed {
 }
 ```
 
-`session_info` exposes `trust_profile`, `governance_mode`, `armature`, `work_surface`, and `workspace_session_id`, plus `linked_runs` so an interactive session re-entry can reference background runs by id, branch, and PR rather than implying local edits.
+`session_info` exposes `trust_profile`, `governance`, `armature`, `work_surface`, and `workspace_session_id`, plus `linked_runs` so an interactive session re-entry can reference background runs by id, branch, and PR rather than implying local edits.
 
 ### 7. Timing and intervention (policy hooks, not hard-coded)
 
@@ -127,13 +131,13 @@ governance.changed {
 | Documentation term | Code shorthand | Notes |
 |--------------------|----------------|-------|
 | **Trust profile** | `Profile` | `chat`/`pair`/`curate`/`work`/`watch`; existing `BearProfile`, `profile`, `profile_slug` symbols unchanged |
-| **Governance mode** | `Mode` | `interactive`/`grace`/`autonomous_continuation`/`observational`/`frozen` |
+| **Governance** | `Governance` | `interactive`/`grace`/`autonomous_continuation`/`observational`/`frozen` |
 | Profile (bare) | — | Legacy alias for **trust profile**; avoid in new runtime prose |
-| `run_mode` (ADR-0037) | — | Coarse `interactive`/`autonomous`; derived from governance mode |
+| `run_mode` (ADR-0037) | — | Coarse `interactive`/`autonomous`; derived from governance |
 
-Do not reuse `Mode` for human-identity trust, channel selection, or work-surface resolution state.
+Do not reuse `Governance` for human-identity trust, channel selection, or work-surface resolution state.
 
-**"Governance" is reserved for runtime context/run supervision** (this ADR). The `curate` role's review/promotion of durable memory is **memory curation**, not "memory governance"; the code module is `core/memory/curation.rs` (`uses_sqlite_curation`) and the skill-proposal side effect is `ToolSideEffectKind::SkillReview`. The memory-curation roadmap lives at [`MEMORY_CURATION_PLAN.md`](../roadmap/MEMORY_CURATION_PLAN.md). Remaining "governance" uses are intentional: runtime governance mode (this ADR), RBAC/cost governance, and BearWire control-plane diagnostics.
+**"Governance" is reserved for runtime context/run supervision** (this ADR). The `curate` role's review/promotion of durable memory is **memory curation**, not "memory governance"; the code module is `core/memory/curation.rs` (`uses_sqlite_curation`) and the skill-proposal side effect is `ToolSideEffectKind::SkillReview`. The memory-curation roadmap lives at [`MEMORY_CURATION_PLAN.md`](../roadmap/MEMORY_CURATION_PLAN.md). Remaining "governance" uses are intentional: runtime governance (this ADR), RBAC/cost governance, and BearWire control-plane diagnostics.
 
 ## Relationship to continuation supervision and acceptance criteria
 
@@ -142,18 +146,20 @@ The "keep the loop on-task" machinery from [ADR-0023 (Task focus supervisor)](ad
 | Question | Owner |
 |----------|-------|
 | What counts as finished / on-task? | **Acceptance criteria** (`bear_job_criteria`, ADR-0034) — durable definition of done; `command` criteria are hard completion gates. |
-| How hard to drive, when to yield, who is watching? | **Governance mode** (this ADR) — `interactive` yields/asks, `autonomous_continuation` drives to completion, `grace` transitions, `frozen` stops, `observational` never nudges. |
-| Is *this* candidate yield premature right now? | **Task focus** — an ephemeral projection of `(governance mode × acceptance-criteria state × run/task status)`, evaluated as a phase of the native loop, **not** a fourth state machine. |
+| How hard to drive, when to yield, who is watching? | **Governance** (this ADR) — `interactive` yields/asks, `autonomous_continuation` drives to completion, `grace` transitions, `frozen` stops, `observational` never nudges. |
+| Is *this* candidate yield premature right now? | **Task focus** — an ephemeral projection of `(governance × focused Job × acceptance-criteria state × run/task status)`, evaluated as a phase of the native loop, **not** a fourth state machine. |
 
-Consequently, continuation bias is **governance-mode-driven, not trust-profile-driven**. ADR-0023's "`work` drives harder than `pair`" is re-expressed as: the trust profile *defaults* a run's governance mode (a `work` run typically starts more autonomous, a `pair`/`chat` run interactive), but a `pair` run in `autonomous_continuation` is driven just as hard. Focus nudges are governance-mode-aware and reference acceptance criteria as the success contract.
+Consequently, continuation bias is **governance-driven, not trust-profile-driven**. ADR-0023's "`work` drives harder than `pair`" is re-expressed as: the trust profile *defaults* a run's governance (a `work` run typically starts more autonomous, a `pair`/`chat` run interactive), but a `pair` run in `autonomous_continuation` is driven just as hard. Focus nudges are governance-aware and reference acceptance criteria as the success contract.
+
+A **focused Job** is the Docket Job designated as the durable objective for a run. `work` normally requires one; `pair` normally has none, but may designate one explicitly through Bear conversation or a client command. While a focused Job is active, Den asks the model to address the next logical incomplete, unblocked task for that Job until the Job completes, blocks, is cancelled, focus is cleared, or loop-control checkpoints/budgets stop the run. This is intentionally not generalized into `focus_target` yet; the only supported durable focus object is a Docket Job.
 
 The concrete budget/checkpoint machinery for this relationship is specified by [ADR-0050 (Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints)](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md) and sequenced in [`AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md`](../roadmap/AGENT_LOOP_CONTROL_IMPLEMENTATION_PLAN.md): tool-call and wall-clock budgets, repeated-tool/ko detection, failure thresholds, runtime checkpoints, and task-list/Docket reconciliation are loop-control policy, while task/job state remains Docket-owned.
 
 ## Consequences
 
-- **`pair` ↔ `work` flipping largely disappears** as a runtime mechanism. Offline continuation, interrogation, and panic/resume are governance-mode transitions on a stable run + workspace session.
+- **`pair` ↔ `work` flipping largely disappears** as a runtime mechanism. Offline continuation, interrogation, and panic/resume are governance transitions on a stable run + workspace session.
 - **Profiles keep their meaning** as durable trust contracts and prompt/tool defaults, and as product language (`bear-stances.md`). They stop being sandbox-lifetime identifiers.
-- **Schema impact is additive.** Governance mode is a new run-scoped field plus a transition log; trust profile vocabulary and `bear_profile_bindings` are unchanged. ADR-0037 `run_mode` becomes a derived projection.
-- **`curate` and `watch` are unaffected**; they are not interactive runs and do not carry governance modes beyond a fixed autonomous supervision.
-- **UX can stay continuous** ("your session is still running") while ops truth stays honest (`governance_mode = autonomous_continuation`, executor-leaning effective policy on the same `workspace_session_id`).
+- **Schema impact is additive.** Governance is a new run-scoped field plus a transition log; trust profile vocabulary and `bear_profile_bindings` are unchanged. ADR-0037 `run_mode` becomes a derived projection.
+- **`curate` and `watch` are unaffected**; they are not interactive runs and do not carry governance states beyond a fixed autonomous supervision.
+- **UX can stay continuous** ("your session is still running") while ops truth stays honest (`governance = autonomous_continuation`, executor-leaning effective policy on the same `workspace_session_id`).
 - **Follow-up (not decided here):** the concrete `WorkspaceSession` + governance-timeline schema, transition guards, and whether `chat`/`pair` eventually collapse into one `interactive` trust profile distinguished only by armature.

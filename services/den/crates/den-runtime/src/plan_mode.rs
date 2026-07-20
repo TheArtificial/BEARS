@@ -44,6 +44,31 @@ impl PlanModeState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClosedPlanModeState {
+    Approved,
+    Rejected,
+    Cancelled,
+}
+
+impl ClosedPlanModeState {
+    const fn as_state(self) -> PlanModeState {
+        match self {
+            Self::Approved => PlanModeState::Approved,
+            Self::Rejected => PlanModeState::Rejected,
+            Self::Cancelled => PlanModeState::Cancelled,
+        }
+    }
+
+    const fn event_type(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::Rejected => "rejected",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
 impl fmt::Display for PlanModeState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -129,10 +154,9 @@ pub struct SubmitPlanModeParams {
 }
 
 fn clean_optional(value: Option<String>) -> Option<String> {
-    value.and_then(|v| {
-        let trimmed = v.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
-    })
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 fn row_from_sql(row: &PgRow) -> PlanModeSessionRow {
@@ -248,33 +272,56 @@ pub async fn get_for_session(
     client_session_id: &str,
     plan_mode_id: Option<Uuid>,
 ) -> Result<Option<PlanModeSessionRow>, DenError> {
-    let query = if plan_mode_id.is_some() {
-        format!(
-            r"
-            SELECT {SELECT_COLUMNS}
-            FROM client_plan_mode_sessions
-            WHERE id = $4 AND user_id = $1 AND bear_id = $2 AND client_session_id = $3
-            "
-        )
-    } else {
-        format!(
-            r"
-            SELECT {SELECT_COLUMNS}
-            FROM client_plan_mode_sessions
-            WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
-            ORDER BY updated_at DESC
-            LIMIT 1
-            "
-        )
-    };
-    let mut q = sqlx::query(&query)
-        .bind(user_id)
-        .bind(bear_id)
-        .bind(client_session_id);
     if let Some(id) = plan_mode_id {
-        q = q.bind(id);
+        get_for_session_by_id(pool, user_id, bear_id, client_session_id, id).await
+    } else {
+        latest_for_session(pool, user_id, bear_id, client_session_id).await
     }
-    let row = q.fetch_optional(pool).await?;
+}
+
+async fn get_for_session_by_id(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    client_session_id: &str,
+    plan_mode_id: Uuid,
+) -> Result<Option<PlanModeSessionRow>, DenError> {
+    let row = sqlx::query(&format!(
+        r"
+        SELECT {SELECT_COLUMNS}
+        FROM client_plan_mode_sessions
+        WHERE id = $1 AND user_id = $2 AND bear_id = $3 AND client_session_id = $4
+        "
+    ))
+    .bind(plan_mode_id)
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(client_session_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.as_ref().map(row_from_sql))
+}
+
+async fn latest_for_session(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    client_session_id: &str,
+) -> Result<Option<PlanModeSessionRow>, DenError> {
+    let row = sqlx::query(&format!(
+        r"
+        SELECT {SELECT_COLUMNS}
+        FROM client_plan_mode_sessions
+        WHERE user_id = $1 AND bear_id = $2 AND client_session_id = $3
+        ORDER BY updated_at DESC
+        LIMIT 1
+        "
+    ))
+    .bind(user_id)
+    .bind(bear_id)
+    .bind(client_session_id)
+    .fetch_optional(pool)
+    .await?;
     Ok(row.as_ref().map(row_from_sql))
 }
 
@@ -429,21 +476,21 @@ pub async fn approve_plan_mode(
     client_session_id: &str,
     plan_mode_id: Uuid,
 ) -> Result<PlanModeSessionRow, DenError> {
-    let current = get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id)
-        .await?
-        .ok_or_else(|| DenError::NotFound("client plan mode session not found".to_string()))?;
+    let current = current_plan_mode_for_close(
+        pool,
+        user_id,
+        bear_id,
+        client_session_id,
+        Some(plan_mode_id),
+    )
+    .await?;
     close_with_state(
         pool,
         user_id,
         bear_id,
-        if client_session_id.trim().is_empty() {
-            &current.client_session_id
-        } else {
-            client_session_id
-        },
+        effective_client_session_id(client_session_id, &current),
         plan_mode_id,
-        PlanModeState::Approved,
-        "approved",
+        ClosedPlanModeState::Approved,
     )
     .await
 }
@@ -455,21 +502,21 @@ pub async fn reject_plan_mode(
     client_session_id: &str,
     plan_mode_id: Uuid,
 ) -> Result<PlanModeSessionRow, DenError> {
-    let current = get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id)
-        .await?
-        .ok_or_else(|| DenError::NotFound("client plan mode session not found".to_string()))?;
+    let current = current_plan_mode_for_close(
+        pool,
+        user_id,
+        bear_id,
+        client_session_id,
+        Some(plan_mode_id),
+    )
+    .await?;
     close_with_state(
         pool,
         user_id,
         bear_id,
-        if client_session_id.trim().is_empty() {
-            &current.client_session_id
-        } else {
-            client_session_id
-        },
+        effective_client_session_id(client_session_id, &current),
         plan_mode_id,
-        PlanModeState::Rejected,
-        "rejected",
+        ClosedPlanModeState::Rejected,
     )
     .await
 }
@@ -481,22 +528,41 @@ pub async fn cancel_plan_mode(
     client_session_id: &str,
     plan_mode_id: Option<Uuid>,
 ) -> Result<PlanModeSessionRow, DenError> {
-    let current = if let Some(plan_mode_id) = plan_mode_id {
-        get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id).await?
-    } else {
-        get_for_session(pool, user_id, bear_id, client_session_id, None).await?
-    }
-    .ok_or_else(|| DenError::NotFound("client plan mode session not found".to_string()))?;
+    let current =
+        current_plan_mode_for_close(pool, user_id, bear_id, client_session_id, plan_mode_id)
+            .await?;
     close_with_state(
         pool,
         user_id,
         bear_id,
         &current.client_session_id,
         current.id,
-        PlanModeState::Cancelled,
-        "cancelled",
+        ClosedPlanModeState::Cancelled,
     )
     .await
+}
+
+async fn current_plan_mode_for_close(
+    pool: &PgPool,
+    user_id: i32,
+    bear_id: Uuid,
+    client_session_id: &str,
+    plan_mode_id: Option<Uuid>,
+) -> Result<PlanModeSessionRow, DenError> {
+    let current = if let Some(plan_mode_id) = plan_mode_id {
+        get_by_id_for_bear(pool, user_id, bear_id, plan_mode_id).await?
+    } else {
+        get_for_session(pool, user_id, bear_id, client_session_id, None).await?
+    };
+    current.ok_or_else(|| DenError::NotFound("client plan mode session not found".to_string()))
+}
+
+fn effective_client_session_id<'a>(requested: &'a str, current: &'a PlanModeSessionRow) -> &'a str {
+    if requested.trim().is_empty() {
+        &current.client_session_id
+    } else {
+        requested
+    }
 }
 
 async fn close_with_state(
@@ -505,14 +571,10 @@ async fn close_with_state(
     bear_id: Uuid,
     client_session_id: &str,
     plan_mode_id: Uuid,
-    state: PlanModeState,
-    event_type: &str,
+    state: ClosedPlanModeState,
 ) -> Result<PlanModeSessionRow, DenError> {
-    if matches!(state, PlanModeState::Active | PlanModeState::Submitted) {
-        return Err(DenError::System(
-            "close_with_state requires a closed state".to_string(),
-        ));
-    }
+    let event_type = state.event_type();
+    let state = state.as_state();
     let mut tx = pool.begin().await?;
     let query = format!(
         r"

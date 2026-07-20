@@ -7,6 +7,78 @@ use std::{
     thread,
 };
 
+#[test]
+fn model_details_entry_maps_enriched_catalog_metadata() {
+    let entry: ModelDetailsEntry = serde_json::from_value(serde_json::json!({
+        "name": "gpt-5.5",
+        "provider": "openai",
+        "context_length": 400000,
+        "max_output_tokens": 128000,
+        "architecture": {
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["text"]
+        },
+        "additional_attributes": {
+            "supported_parameters": ["tools", "temperature"],
+            "supported_methods": ["chat_completion", "responses"]
+        }
+    }))
+    .expect("model details entry");
+
+    let model = entry
+        .into_metadata()
+        .expect("valid capability metadata")
+        .expect("model metadata");
+    assert_eq!(model.handle, "openai/gpt-5.5");
+    assert_eq!(model.provider, "openai");
+    assert_eq!(model.model, "gpt-5.5");
+    assert_eq!(model.context_window, 400000);
+    assert_eq!(model.max_output_tokens, Some(128000));
+    assert_eq!(model.supports_tools, Some(true));
+    assert_eq!(model.supports_responses_api, Some(true));
+    assert_eq!(model.supports_vision, Some(true));
+}
+
+#[test]
+fn model_details_entry_parses_json_encoded_capability_lists() {
+    let entry: ModelDetailsEntry = serde_json::from_value(serde_json::json!({
+        "name": "model-encoded-capabilities",
+        "provider": "provider-a",
+        "additional_attributes": {
+            "supported_parameters": "[\"tools\",\"temperature\"]",
+            "supported_methods": "[\"chat_completion\",\"responses\"]"
+        }
+    }))
+    .expect("model details entry");
+
+    let model = entry
+        .into_metadata()
+        .expect("valid encoded capability metadata")
+        .expect("model metadata");
+    assert_eq!(model.supports_tools, Some(true));
+    assert_eq!(model.supports_responses_api, Some(true));
+    assert_eq!(model.supports_vision, None);
+}
+
+#[test]
+fn model_details_entry_rejects_malformed_capability_lists() {
+    let entry: ModelDetailsEntry = serde_json::from_value(serde_json::json!({
+        "name": "model-malformed-capabilities",
+        "provider": "provider-a",
+        "additional_attributes": {
+            "supported_parameters": "tools,temperature"
+        }
+    }))
+    .expect("model details entry");
+
+    let err = entry
+        .into_metadata()
+        .expect_err("malformed capability metadata must fail");
+    let message = err.to_string();
+    assert!(message.contains("supported_parameters"));
+    assert!(message.contains("provider-a/model-malformed-capabilities"));
+}
+
 #[derive(Debug, Clone)]
 struct RequestRecord {
     path: String,

@@ -13,19 +13,15 @@ use den_core::{config::Config, DenError};
 #[derive(Debug, Clone, Deserialize)]
 pub struct BifrostModelMetadata {
     pub handle: String,
-    #[allow(dead_code)]
     pub provider: String,
-    #[allow(dead_code)]
     pub model: String,
     pub display_name: Option<String>,
     pub context_window: u32,
     pub max_output_tokens: Option<u32>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    #[allow(dead_code)]
     pub supports_tools: Option<bool>,
     pub supports_responses_api: Option<bool>,
-    #[allow(dead_code)]
     pub supports_vision: Option<bool>,
 }
 
@@ -172,22 +168,24 @@ pub fn spawn_catalog_refresh_with_virtual_key(
 }
 
 pub fn spawn_managed_catalog_refresh(
-    client: Arc<BifrostClient>,
+    _client: Arc<BifrostClient>,
     store: BifrostCatalogStore,
     refresh_secs: u64,
     config: Arc<Config>,
 ) {
     tokio::spawn(async move {
         loop {
-            match crate::bifrost_governance::BifrostGovernanceClient::new(&config)
-                .ensure_catalog_virtual_key()
-                .await
-            {
-                Ok(virtual_key) => {
-                    refresh_catalog_with_virtual_key(&client, &store, &virtual_key.value).await;
+            let governance = crate::bifrost_governance::BifrostGovernanceClient::new(&config);
+            match governance.list_model_catalog().await {
+                Ok(models) => {
+                    let mut snapshot = BifrostCatalogSnapshot::from_available_models(models);
+                    snapshot.source = "api_models_details".to_string();
+                    if let Ok(mut guard) = store.write() {
+                        *guard = snapshot;
+                    }
                 }
                 Err(err) => {
-                    tracing::warn!(error = %err, "Bifrost catalog virtual key ensure failed");
+                    tracing::warn!(error = %err, "Bifrost management model catalog refresh failed");
                     mark_catalog_stale(&store);
                 }
             }
@@ -370,7 +368,10 @@ impl BifrostClient {
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(5))
             .build()
-            .expect("reqwest client");
+            .unwrap_or_else(|err| {
+                tracing::warn!(error = %err, "failed to build tuned Bifrost HTTP client; using default client");
+                reqwest::Client::new()
+            });
         Self {
             http,
             llm_api_url: config.llm_api_url.trim_end_matches('/').to_string(),

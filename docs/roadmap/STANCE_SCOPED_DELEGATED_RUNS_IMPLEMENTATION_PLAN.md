@@ -3,7 +3,7 @@
 **Status:** Proposed — delay until artifact refs are in place  
 **Primary ADR:** [ADR-0053: Stance-Scoped Delegated Runs](../decisions/adr-0053-stance-scoped-delegated-runs.md)  
 **Prerequisite:** [Artifact refs implementation plan](ARTIFACT_REFS_IMPLEMENTATION_PLAN.md) / [ADR-0004](../decisions/adr-0004-artifacts-garage.md)  
-**Related ADRs:** [ADR-0014](../decisions/adr-0014-multi-role-runtime-architecture.md), [ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md), [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance-modes.md), [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md), [ADR-0050](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
+**Related ADRs:** [ADR-0014](../decisions/adr-0014-multi-role-runtime-architecture.md), [ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md), [ADR-0039](../decisions/adr-0039-trust-profiles-and-governance.md), [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md), [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md), [ADR-0050](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
 
 ## Goal
 

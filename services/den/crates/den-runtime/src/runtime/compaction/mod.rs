@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::runtime::compaction::grouping::semantic_group_from_runtime_message;
+use crate::runtime::text::push_unique;
 use crate::runtime_conversations::{
     RuntimeCompactionArtifactKind, RuntimeCompactionArtifactRef, RuntimeCompactionBoundary,
     RuntimeCompactionTriggerKind, RuntimeIterativeSummary, RuntimeSemanticGroup,
@@ -54,64 +56,10 @@ pub struct RuntimeCompactionDecision {
 }
 
 pub fn semantic_groups_from_runtime_messages(messages: &[Value]) -> Vec<RuntimeSemanticGroup> {
-    let mut groups = Vec::new();
-    for message in messages {
-        let role = message
-            .get("role")
-            .or_else(|| message.get("message_type"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("message");
-        let content = message
-            .get("content")
-            .and_then(|v| v.as_str())
-            .or_else(|| message.get("text").and_then(|v| v.as_str()))
-            .unwrap_or_default();
-        let tool_call_id = message
-            .get("tool_call_id")
-            .or_else(|| message.get("id"))
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned);
-
-        let kind = if role.eq_ignore_ascii_case("tool")
-            || message.get("tool_name").is_some()
-            || message.get("tool_call_id").is_some()
-        {
-            RuntimeSemanticGroupKind::ToolInteraction
-        } else if message.get("approval_request_id").is_some()
-            || message.get("approvals").is_some()
-            || content.contains("approval")
-        {
-            RuntimeSemanticGroupKind::ApprovalInteraction
-        } else if content.contains("workflow_state") || content.contains("plan_mode") {
-            RuntimeSemanticGroupKind::WorkflowUpdate
-        } else if content.contains("artifact") || content.contains("file://") {
-            RuntimeSemanticGroupKind::ArtifactUpdate
-        } else if role.eq_ignore_ascii_case("user") {
-            RuntimeSemanticGroupKind::UserTurn
-        } else if role.eq_ignore_ascii_case("assistant") {
-            RuntimeSemanticGroupKind::AssistantReply
-        } else if role.eq_ignore_ascii_case("system") {
-            RuntimeSemanticGroupKind::SystemEvent
-        } else {
-            RuntimeSemanticGroupKind::AssistantReply
-        };
-
-        let protected = matches!(
-            kind,
-            RuntimeSemanticGroupKind::ToolInteraction
-                | RuntimeSemanticGroupKind::ApprovalInteraction
-                | RuntimeSemanticGroupKind::WorkflowUpdate
-        );
-
-        groups.push(RuntimeSemanticGroup {
-            kind,
-            start_message_id: tool_call_id.clone(),
-            end_message_id: tool_call_id,
-            message_count: 1,
-            protected,
-        });
-    }
-    groups
+    messages
+        .iter()
+        .map(semantic_group_from_runtime_message)
+        .collect()
 }
 
 pub fn choose_compaction_decision(
@@ -123,10 +71,14 @@ pub fn choose_compaction_decision(
         trigger,
         RuntimeCompactionTriggerKind::ModelSafetyMargin | RuntimeCompactionTriggerKind::Manual
     );
+    let conversation_review = matches!(trigger, RuntimeCompactionTriggerKind::ConversationReview);
     if groups.is_empty() {
         return None;
     }
-    if !force && groups.len() <= policy.max_groups_before_compaction {
+    // ponytail: ConversationReview reuses the iterative-summary pass for memory discovery even
+    // below prompt-pressure thresholds. Ceiling: it still uses compaction artifact storage and the
+    // protected recent floor; upgrade path is a first-class conversation-review artifact/watermark.
+    if !force && !conversation_review && groups.len() <= policy.max_groups_before_compaction {
         return None;
     }
 
@@ -220,8 +172,8 @@ pub fn merge_iterative_summary(
         };
 
         let label = format!(
-            "{:?}:{}:{}",
-            group.kind,
+            "{}:{}:{}",
+            group.kind.as_str(),
             group.start_message_id.as_deref().unwrap_or("start"),
             group.end_message_id.as_deref().unwrap_or("end")
         );
@@ -229,18 +181,12 @@ pub fn merge_iterative_summary(
         if group.protected {
             push_unique(
                 &mut summary.important_constraints,
-                format!("protected:{:?}", group.kind),
+                format!("protected:{}", group.kind.as_str()),
             );
         }
     }
 
     summary
-}
-
-fn push_unique(values: &mut Vec<String>, value: String) {
-    if !values.iter().any(|existing| existing == &value) {
-        values.push(value);
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

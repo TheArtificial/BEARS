@@ -70,6 +70,7 @@ Tool projection is for model-visible tool exchanges whose results matter to cont
 
 - Den-hosted / Den-owned tool events are display-only from the armature's perspective. ACP may render them as tool cards, but the armature must not execute them locally or answer them with `client.tool.result`.
 - Armature-local tool requests are client obligations. The armature may request permission, execute the local action, and return the result to Den.
+- Execution ownership is descriptor-resolved once in Den. Live events and `run.state` recovery use the same owner; recovery must not turn a Den-owned display event into local execution.
 
 Live ACP tool-card projection should be idempotent and monotonic for each tool call. Terminal card states such as `completed` and `failed` are final for the live surface, and stale updates from older turns/runs should not regress the visible card state.
 
@@ -85,9 +86,13 @@ When Den needs an armature action, it emits a structured client obligation such 
 - local tool execution request
 - local tool result wait
 
+### Completion
+
+Den may make an ephemeral policy decision to continue focused work or accept a final response. That decision is not ACP-visible lifecycle state. A persisted turn ends only when Den atomically transitions the run, settles obligations and active steps, and appends the matching `run.completed`, `run.failed`, or `run.cancelled` event. Assistant output and internal turn-completed semantic events are not substitutes for that durable terminal event.
+
 ### Cancellation
 
-ACP can request cancellation of the current active turn or operation through Den-owned cancellation semantics.
+ACP can request cancellation of the current active turn or operation through Den-owned cancellation semantics. For a persisted run, cancellation becomes visible only when Den atomically transitions the run, settles its obligations and active steps, and appends `run.cancelled`. Local tool-card cancellation is not a substitute for the run terminal event.
 
 ### History and replay
 

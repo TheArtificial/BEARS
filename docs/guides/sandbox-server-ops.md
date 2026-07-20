@@ -83,6 +83,10 @@ images can run. There is no config file on the provider
   upstream shows up as a sync *error*, never a local overwrite — resolve by
   deleting the pristine clone and letting it re-clone.
 
+## Multiple instances on one Docker host
+
+Production leaves `BEARS_INSTANCE_SUFFIX` empty and retains `bears-sandbox-provider` / `bears-sandbox-engine`. A secondary Compose deployment on the same host and shared predefined network sets a DNS-safe suffix such as `BEARS_INSTANCE_SUFFIX=-test`; Compose then uses `bears-sandbox-provider-test` / `bears-sandbox-engine-test` and explicitly named, separate sandbox engine, certificate, and workspace volumes. Coolify remains responsible for the resource project/network identity. The suffix is also included in the Docker-in-Docker server certificate SAN and every generated client endpoint.
+
 ## Bring-up checklist
 
 1. **Run the provider** (compose does all of this for you):
@@ -106,10 +110,11 @@ images can run. There is no config file on the provider
 
    The dispatch worker pushes the managed config at startup — watch for
    `surface_sync: managed config pushed to sandbox provider`.
-3. **Images**: the migration seeds catalog entries for
-   `bears/sandbox:latest` (+ rust/node/godot variants). Get them into the
-   engine's store from **`/admin/sandbox`** (build buttons or a registry
-   pull), or with `scripts/build-sandbox-image.sh all` /
+3. **Images**: the migration seeds catalog entries for local tags
+   `bears/sandbox:latest` (+ rust/node/godot variants); catalog rows do not
+   create image artifacts. Before the first run on a fresh engine volume,
+   build at least **base** from **`/admin/sandbox`** (or use a real registry
+   reference and pull it). Alternatively run `scripts/build-sandbox-image.sh all` /
    `docker compose --profile sandbox-build run --rm bears-sandbox-images`.
    Rebuild whenever `tools/bear-armature` changes (the armature binary is
    baked in).

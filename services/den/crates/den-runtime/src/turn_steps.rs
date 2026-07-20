@@ -1,10 +1,12 @@
+use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::DenError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnStepState {
     StreamingModel,
     WaitingForClient,
@@ -26,6 +28,10 @@ impl TurnStepState {
         }
     }
 
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Continued | Self::Failed | Self::Cancelled)
+    }
+
     pub fn try_from_storage(value: &str) -> Result<Self, DenError> {
         match value {
             "streaming_model" => Ok(Self::StreamingModel),
@@ -40,6 +46,10 @@ impl TurnStepState {
         }
     }
 }
+
+const STEP_RETURNING: &str =
+    "id, run_id, step_index, state, provider_response_id, opened_at, closed_at";
+const ACTIVE_STEP_STATES_SQL: &str = "'streaming_model', 'waiting_for_client', 'ready_to_continue'";
 
 #[derive(Debug, Clone)]
 pub struct TurnStepRow {
@@ -71,16 +81,16 @@ fn row_to_step(row: sqlx::postgres::PgRow) -> TurnStepRow {
 }
 
 pub async fn ensure_active_step(pool: &PgPool, run_id: &str) -> Result<TurnStepRow, DenError> {
-    if let Some(row) = sqlx::query(
+    if let Some(row) = sqlx::query(&format!(
         r"
-        SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
+        SELECT {STEP_RETURNING}
         FROM turn_steps
         WHERE run_id = $1
-          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
+          AND state IN ({ACTIVE_STEP_STATES_SQL})
         ORDER BY step_index DESC
         LIMIT 1
-        ",
-    )
+        "
+    ))
     .bind(run_id)
     .fetch_optional(pool)
     .await?
@@ -88,7 +98,7 @@ pub async fn ensure_active_step(pool: &PgPool, run_id: &str) -> Result<TurnStepR
         return Ok(row_to_step(row));
     }
 
-    let row = sqlx::query(
+    let row = sqlx::query(&format!(
         r"
         WITH next_step AS (
             SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
@@ -98,9 +108,9 @@ pub async fn ensure_active_step(pool: &PgPool, run_id: &str) -> Result<TurnStepR
         INSERT INTO turn_steps (run_id, step_index, state)
         SELECT $1, step_index, 'streaming_model'
         FROM next_step
-        RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-        ",
-    )
+        RETURNING {STEP_RETURNING}
+        "
+    ))
     .bind(run_id)
     .fetch_one(pool)
     .await?;
@@ -110,53 +120,22 @@ pub async fn ensure_active_step(pool: &PgPool, run_id: &str) -> Result<TurnStepR
 pub async fn transition_step(
     pool: &PgPool,
     turn_step_id: Uuid,
-    state: &str,
+    state: TurnStepState,
 ) -> Result<Option<TurnStepRow>, DenError> {
-    let state = TurnStepState::try_from_storage(state)?;
-    let terminal = matches!(
-        state,
-        TurnStepState::Continued | TurnStepState::Failed | TurnStepState::Cancelled
-    );
-    let row = sqlx::query(
+    let terminal = state.is_terminal();
+    let row = sqlx::query(&format!(
         r"
         UPDATE turn_steps
         SET state = $2,
             closed_at = CASE WHEN $3 THEN COALESCE(closed_at, NOW()) ELSE closed_at END
         WHERE id = $1
-        RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-        ",
-    )
+        RETURNING {STEP_RETURNING}
+        "
+    ))
     .bind(turn_step_id)
     .bind(state.as_str())
     .bind(terminal)
     .fetch_optional(pool)
     .await?;
     Ok(row.map(row_to_step))
-}
-
-pub async fn transition_active_steps_for_run(
-    pool: &PgPool,
-    run_id: &str,
-    state: &str,
-) -> Result<u64, DenError> {
-    let state = TurnStepState::try_from_storage(state)?;
-    let terminal = matches!(
-        state,
-        TurnStepState::Continued | TurnStepState::Failed | TurnStepState::Cancelled
-    );
-    let result = sqlx::query(
-        r"
-        UPDATE turn_steps
-        SET state = $2,
-            closed_at = CASE WHEN $3 THEN COALESCE(closed_at, NOW()) ELSE closed_at END
-        WHERE run_id = $1
-          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
-        ",
-    )
-    .bind(run_id)
-    .bind(state.as_str())
-    .bind(terminal)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
 }

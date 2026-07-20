@@ -3,11 +3,19 @@
 use serde::Serialize;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BearProfileSyncStatus {
+    Synced,
+    Failed,
+    SkippedMissingBinding,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BearProfileSyncOutcome {
     pub profile: String,
     pub runtime_binding_id: Option<String>,
-    pub status: String,
+    pub status: BearProfileSyncStatus,
     pub message: Option<String>,
 }
 
@@ -18,34 +26,29 @@ pub struct BearSyncSummary {
 }
 
 impl BearSyncSummary {
-    pub fn failed_profiles(&self) -> Vec<&BearProfileSyncOutcome> {
+    pub fn failed_profiles(&self) -> impl Iterator<Item = &BearProfileSyncOutcome> + '_ {
         self.outcomes
             .iter()
-            .filter(|o| o.status == "failed")
-            .collect()
+            .filter(|o| o.status == BearProfileSyncStatus::Failed)
     }
 
-    pub fn skipped_profiles(&self) -> Vec<&BearProfileSyncOutcome> {
+    pub fn skipped_profiles(&self) -> impl Iterator<Item = &BearProfileSyncOutcome> + '_ {
         self.outcomes
             .iter()
-            .filter(|o| o.status == "skipped_missing_binding")
-            .collect()
+            .filter(|o| o.status == BearProfileSyncStatus::SkippedMissingBinding)
     }
 
     pub fn synced_count(&self) -> usize {
         self.outcomes
             .iter()
-            .filter(|o| o.status == "synced")
+            .filter(|o| o.status == BearProfileSyncStatus::Synced)
             .count()
     }
 
     pub fn diagnostic_message(&self) -> Option<String> {
-        let failed = self.failed_profiles();
-        if failed.is_empty() {
-            return None;
-        }
+        let mut failed = self.failed_profiles().peekable();
+        failed.peek()?;
         let parts = failed
-            .into_iter()
             .map(|o| {
                 format!(
                     "{} ({})",

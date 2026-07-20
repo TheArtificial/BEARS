@@ -5,7 +5,7 @@ use den_runtime::{turn_obligations, turn_runs};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::methods::run::persist_run_failed;
+use crate::methods::run::{persist_run_failed, RunFailureReason};
 
 const DEFAULT_EXPIRY_BATCH_LIMIT: i64 = 1_000;
 
@@ -20,11 +20,11 @@ pub async fn run_client_obligation_expiry_loop(
     );
     loop {
         tokio::select! {
-            _ = token.cancelled() => {
+            () = token.cancelled() => {
                 tracing::info!("BearWire client-obligation expiry loop stopped");
                 return Ok(());
             }
-            _ = tokio::time::sleep(interval) => {
+            () = tokio::time::sleep(interval) => {
                 if let Err(err) = expire_client_obligations_once(&pool, DEFAULT_EXPIRY_BATCH_LIMIT).await {
                     tracing::warn!(error = %err, "BearWire client-obligation expiry sweep failed");
                 }
@@ -75,7 +75,7 @@ pub async fn expire_client_obligations_once(
             &run.run_id,
             run.bear_id,
             run.user_id,
-            "client_obligation_timeout",
+            RunFailureReason::ClientObligationTimeout,
             "A required client obligation timed out before the armature/client responded."
                 .to_string(),
             Some(json!({

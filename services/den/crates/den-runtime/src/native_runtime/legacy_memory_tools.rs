@@ -1,5 +1,7 @@
 //! Native-runtime guards that reject removed legacy memory client tools.
 
+use std::borrow::Cow;
+
 use serde_json::Value;
 
 pub fn is_legacy_memory_client_tool_name(name: &str) -> bool {
@@ -10,9 +12,12 @@ pub fn is_legacy_memory_client_tool_name(name: &str) -> bool {
     )
 }
 
-pub fn filter_client_tools_for_native_runtime(client_tools: Option<&Value>) -> Option<Value> {
-    let Some(items) = client_tools.and_then(|v| v.as_array()) else {
-        return client_tools.cloned();
+pub fn filter_client_tools_for_native_runtime(
+    client_tools: Option<&Value>,
+) -> Option<Cow<'_, Value>> {
+    let value = client_tools?;
+    let Some(items) = value.as_array() else {
+        return Some(Cow::Borrowed(value));
     };
     let filtered: Vec<Value> = items
         .iter()
@@ -24,5 +29,5 @@ pub fn filter_client_tools_for_native_runtime(client_tools: Option<&Value>) -> O
         })
         .cloned()
         .collect();
-    Some(Value::Array(filtered))
+    Some(Cow::Owned(Value::Array(filtered)))
 }

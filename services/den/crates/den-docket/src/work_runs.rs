@@ -16,6 +16,10 @@ use den_core::{BearProfile, DenError};
 
 use crate::model::DocketExecutionSessionUpsert;
 
+/// Explicit root name for a provider-managed empty workspace. Absence is not
+/// scratch: callers must opt in so rootless dispatch stays invalid.
+pub const SCRATCH_ROOT_NAME: &str = "scratch";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkRunState {
     Queued,
@@ -114,6 +118,21 @@ impl WorkRunRow {
     }
 }
 
+pub fn effective_work_run_root(
+    requested_root: Option<&str>,
+    job_work_surface_ref: Option<&str>,
+) -> Option<String> {
+    requested_root
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            job_work_surface_ref
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+        })
+        .map(ToOwned::to_owned)
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkRunEnqueue {
     pub bear_id: Uuid,
@@ -188,6 +207,21 @@ pub async fn enqueue_work_run(
         )));
     }
 
+    let job_work_surface_ref: Option<String> =
+        sqlx::query_scalar("SELECT work_surface_ref FROM bear_jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let root_name = effective_work_run_root(
+        enqueue.root_name.as_deref(),
+        job_work_surface_ref.as_deref(),
+    );
+    if root_name.is_none() {
+        return Err(DenError::ValidationError(
+            "no sandbox root configured: choose a root, set work_surface_ref on the job, or explicitly dispatch to scratch".into(),
+        ));
+    }
+
     // Managed-surface enforcement: a job bound to a work surface (and any
     // explicit root override naming one) requires the bear to be assigned to
     // that surface. Free-text roots matching no managed surface pass through;
@@ -204,12 +238,7 @@ pub async fn enqueue_work_run(
         ensure_bear_assigned_to_surface(&mut tx, enqueue.bear_id, *surface_id, surface_name)
             .await?;
     }
-    if let Some(root_name) = enqueue
-        .root_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-    {
+    if let Some(root_name) = root_name.as_deref() {
         let named_surface: Option<(Uuid,)> =
             sqlx::query_as("SELECT id FROM work_surfaces WHERE name = $1")
                 .bind(root_name)
@@ -274,7 +303,7 @@ pub async fn enqueue_work_run(
     .bind(enqueue.task_id)
     .bind(job_run_id)
     .bind(attempt)
-    .bind(enqueue.root_name.as_deref())
+    .bind(root_name.as_deref())
     .bind(enqueue.git_ref.as_deref())
     .bind(enqueue.image_name.as_deref())
     .fetch_one(&mut *tx)
@@ -529,7 +558,8 @@ pub async fn jobs_awaiting_completion(
 ) -> Result<Vec<crate::model::DocketJobRow>, DenError> {
     let rows = sqlx::query_as::<_, crate::model::DocketJobRow>(
         "SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-                work_surface_id, commit_policy, work_branch, status, visibility, current_run_id,
+                work_surface_id, commit_policy, work_branch, status, visibility,
+                source_conversation_id, objective_kind, current_run_id,
                 created_at, updated_at
          FROM bear_jobs j
          WHERE j.bear_id = $1
@@ -811,9 +841,8 @@ pub struct WorkRunCheckout {
 }
 
 /// The armature side of `work.checkout`: bind the session to its run, open
-/// the Docket execution session (owner_profile = work, which satisfies the
-/// Work-stance gate), and build the non-interactive prompt from the durable
-/// task definition.
+/// the Docket execution session whose job/task focus satisfies the Work-stance
+/// gate, and build the non-interactive prompt from the durable task definition.
 pub async fn checkout_work_run_for_session(
     pool: &PgPool,
     run_id: Uuid,
@@ -851,7 +880,16 @@ pub async fn checkout_work_run_for_session(
     .await?;
 
     let (task_title, task_body, criteria) = (task.0, task.1, task.2 .0);
-    let prompt = build_work_prompt(&goal, &task_title, &task_body, &criteria, publishes);
+    let prompt = build_work_prompt(
+        run.job_id,
+        run.job_run_id,
+        run.task_id,
+        &goal,
+        &task_title,
+        &task_body,
+        &criteria,
+        publishes,
+    );
     Ok(WorkRunCheckout {
         run,
         prompt,
@@ -860,6 +898,9 @@ pub async fn checkout_work_run_for_session(
 }
 
 fn build_work_prompt(
+    job_id: Uuid,
+    run_id: Uuid,
+    task_id: Uuid,
     goal: &str,
     title: &str,
     body: &str,
@@ -873,6 +914,10 @@ fn build_work_prompt(
          or ask questions.\n\n",
     );
     prompt.push_str(&format!("Job objective: {goal}\n\n"));
+    prompt.push_str("Docket execution identifiers:\n");
+    prompt.push_str(&format!("- job_id: {job_id}\n"));
+    prompt.push_str(&format!("- run_id: {run_id}\n"));
+    prompt.push_str(&format!("- task_id: {task_id}\n\n"));
     prompt.push_str(&format!("Task: {title}\n"));
     if !body.trim().is_empty() {
         prompt.push_str(&format!("{body}\n"));
@@ -884,8 +929,9 @@ fn build_work_prompt(
     prompt.push_str(
         "\nRules:\n\
          - Operate only inside the sandbox workspace; it contains the work surface.\n\
-         - When every criterion is satisfied, mark the task done using the \
-           update_current_task_status tool — this is how success is recorded.\n\
+         - When every criterion is satisfied, call update_current_task_status with the \
+           job_id, run_id, and task_id above, status `done`, and a non-empty result_summary \
+           explaining how the criteria were satisfied — this is how success is recorded.\n\
          - If you cannot make progress, mark the task blocked with a specific reason \
            using update_current_task_status instead of guessing or stopping silently.\n",
     );
@@ -1108,4 +1154,22 @@ async fn append_task_event(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_work_run_root;
+
+    #[test]
+    fn effective_work_run_root_prefers_trimmed_request_then_job_default() {
+        assert_eq!(
+            effective_work_run_root(Some(" requested "), Some("job-default")),
+            Some("requested".to_string())
+        );
+        assert_eq!(
+            effective_work_run_root(Some("   "), Some(" job-default ")),
+            Some("job-default".to_string())
+        );
+        assert_eq!(effective_work_run_root(None, Some("   ")), None);
+    }
 }

@@ -86,6 +86,31 @@ struct VirtualKey {
     value: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ModelDetailsResponse {
+    #[serde(default)]
+    models: Vec<ModelDetailsEntry>,
+    total: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelDetailsEntry {
+    name: String,
+    provider: String,
+    context_length: Option<u64>,
+    max_input_tokens: Option<u64>,
+    max_output_tokens: Option<u64>,
+    architecture: Option<ModelDetailsArchitecture>,
+    #[serde(default)]
+    additional_attributes: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelDetailsArchitecture {
+    input_modalities: Option<Vec<String>>,
+    output_modalities: Option<Vec<String>>,
+}
+
 #[derive(Debug, Serialize)]
 struct CreateVirtualKeyRequest<'a> {
     name: &'a str,
@@ -134,6 +159,112 @@ fn bifrost_virtual_key_quota_transient_error(err: &DenError) -> bool {
     text.contains("virtual_key_not_found")
         || text.contains("virtual key not found")
         || text.contains("authentication is not enabled")
+}
+
+fn capability_string_list(
+    attributes: &serde_json::Value,
+    field: &'static str,
+    model_handle: &str,
+) -> Result<Option<Vec<String>>, DenError> {
+    let Some(value) = attributes.get(field) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+
+    let parsed = match value {
+        serde_json::Value::Array(_) => serde_json::from_value::<Vec<String>>(value.clone()),
+        serde_json::Value::String(encoded) => serde_json::from_str::<Vec<String>>(encoded.trim()),
+        _ => {
+            return Err(DenError::Parsing(format!(
+                "Bifrost capability metadata field {field} for {model_handle} must be an array of strings or a JSON-encoded array string; got {value}"
+            )));
+        }
+    };
+    parsed.map(Some).map_err(|err| {
+        DenError::Parsing(format!(
+            "Bifrost capability metadata field {field} for {model_handle} is malformed: {err}; value: {value}"
+        ))
+    })
+}
+
+impl ModelDetailsEntry {
+    fn into_metadata(self) -> Result<Option<crate::bifrost::BifrostModelMetadata>, DenError> {
+        let provider = self.provider.trim().to_string();
+        let model = self.name.trim().to_string();
+        if provider.is_empty() {
+            return Err(DenError::Parsing(format!(
+                "Bifrost /api/models/details returned a model with an empty provider: {:?}",
+                self.name
+            )));
+        }
+        if model.is_empty() {
+            return Err(DenError::Parsing(format!(
+                "Bifrost /api/models/details returned an empty model name for provider {provider}"
+            )));
+        }
+        if den_llm::model_registry::is_routing_wildcard_model_handle(&model) {
+            return Ok(None);
+        }
+        let handle = if model.contains('/') {
+            model.clone()
+        } else {
+            format!("{provider}/{model}")
+        };
+        let attributes = &self.additional_attributes;
+        let supported_parameters =
+            capability_string_list(attributes, "supported_parameters", &handle)?;
+        let supported_methods = capability_string_list(attributes, "supported_methods", &handle)?;
+        let supports_tools = supported_parameters.as_ref().map(|parameters| {
+            parameters
+                .iter()
+                .any(|value| matches!(value.as_str(), "tools" | "tool_choice" | "function_calling"))
+        });
+        let supports_responses_api = supported_methods
+            .as_ref()
+            .map(|methods| methods.iter().any(|value| value.contains("response")));
+        let supports_vision = self.architecture.as_ref().map(|architecture| {
+            architecture
+                .input_modalities
+                .iter()
+                .chain(architecture.output_modalities.iter())
+                .flatten()
+                .any(|value| matches!(value.as_str(), "image" | "vision"))
+        });
+        let context_window = self
+            .context_length
+            .or(self.max_input_tokens)
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|err| {
+                DenError::Parsing(format!(
+                    "Bifrost context window for {handle} is out of range: {err}"
+                ))
+            })?
+            .unwrap_or(0);
+        let max_output_tokens = self
+            .max_output_tokens
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|err| {
+                DenError::Parsing(format!(
+                    "Bifrost max output tokens for {handle} is out of range: {err}"
+                ))
+            })?;
+        Ok(Some(crate::bifrost::BifrostModelMetadata {
+            handle,
+            provider,
+            model: self.name,
+            display_name: None,
+            context_window,
+            max_output_tokens,
+            enabled: true,
+            supports_tools,
+            supports_responses_api,
+            supports_vision,
+        }))
+    }
 }
 
 impl BifrostGovernanceClient {
@@ -359,6 +490,60 @@ impl BifrostGovernanceClient {
         Ok(BifrostVirtualKeyValidation {
             auth_mode: quota.auth_mode,
         })
+    }
+
+    pub async fn list_model_catalog(
+        &self,
+    ) -> Result<Vec<crate::bifrost::BifrostModelMetadata>, DenError> {
+        let auth = self.login().await?;
+        let url = format!("{}/models/details", self.management_url);
+        let response = self
+            .apply_management_auth(
+                self.http
+                    .get(&url)
+                    .query(&[("limit", "10000"), ("unfiltered", "true")]),
+                &auth,
+            )
+            .send()
+            .await
+            .map_err(|err| {
+                DenError::System(format!("Bifrost model catalog request failed: {err}"))
+            })?;
+        let status = response.status();
+        let text = response.text().await.map_err(|err| {
+            DenError::System(format!("Bifrost model catalog response body: {err}"))
+        })?;
+        if !status.is_success() {
+            return Err(DenError::System(format!(
+                "Bifrost /api/models/details HTTP {status}: {text}"
+            )));
+        }
+        let payload = serde_json::from_str::<ModelDetailsResponse>(&text).map_err(|err| {
+            DenError::Parsing(format!(
+                "Bifrost /api/models/details JSON: {err}; body: {text}"
+            ))
+        })?;
+        if payload
+            .total
+            .is_some_and(|total| total > payload.models.len())
+        {
+            return Err(DenError::System(format!(
+                "Bifrost /api/models/details returned {} of {} catalog models; refusing to cache a truncated catalog",
+                payload.models.len(),
+                payload.total.unwrap_or_default()
+            )));
+        }
+        let mut models = payload
+            .models
+            .into_iter()
+            .map(ModelDetailsEntry::into_metadata)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        models.sort_by(|left, right| left.handle.cmp(&right.handle));
+        models.dedup_by(|left, right| left.handle == right.handle);
+        Ok(models)
     }
 
     fn apply_management_auth(

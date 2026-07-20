@@ -1,7 +1,9 @@
 use den_core::client_tools::{
     client_tool_policy, client_tool_policy_json_for_provider, ClientToolName,
 };
-use den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name;
+use den_core::tools::{
+    constants::DEN_WEB_FETCH, descriptor::builtin_den_tool_descriptor_for_provider_name,
+};
 use den_protocol::RuntimeSemanticEvent;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -17,6 +19,11 @@ pub fn provider_tool_supports_unilateral_execution(provider_name: &str) -> bool 
         return descriptor.approval_policy == "never";
     }
     !provider_tool_requires_approval(provider_name)
+}
+
+pub fn provider_tool_is_den_web_fetch(provider_name: &str) -> bool {
+    builtin_den_tool_descriptor_for_provider_name(provider_name)
+        .is_some_and(|descriptor| descriptor.name == DEN_WEB_FETCH)
 }
 
 pub fn provider_tool_requires_approval(provider_name: &str) -> bool {

@@ -13,7 +13,9 @@ use tokio::time::timeout;
 use crate::{
     agent_loop::{
         context::repair_tool_call_message_chain,
+        evaluate_turn_context_budget,
         overflow_retry::compact_session_messages_for_overflow,
+        record_context_budget_pressure_decision,
         session_store::{AgentLoopSession, AgentLoopSessionStore},
     },
     context_budget::estimate_context_budget,
@@ -516,13 +518,39 @@ impl Stream for LazyAgentStepStream {
 /// that wait on `POST /prompt` with no timeout.
 pub const RUNTIME_CHECKPOINT_TOOL_NAME: &str = "checkpoint";
 
-fn checkpoint_thinking_effort_for_session(session: &AgentLoopSession) -> Option<ThinkingEffort> {
+fn api_compatible_thinking_effort(
+    api_style: Option<LlmApiStyle>,
+    has_function_tools: bool,
+    thinking_effort: Option<ThinkingEffort>,
+) -> Option<ThinkingEffort> {
+    if api_style == Some(LlmApiStyle::ChatCompletionsStream) && has_function_tools {
+        None
+    } else {
+        thinking_effort
+    }
+}
+
+fn checkpoint_thinking_effort_for_session(
+    session: &AgentLoopSession,
+    has_function_tools: bool,
+) -> Option<ThinkingEffort> {
     session.checkpoint_state.last_checkpoint_reason?;
     let policy = session.agent_loop_control.profile.thinking;
-    policy
+    let configured_effort = policy
         .enabled
         .then_some(policy.checkpoint_turn_effort)
-        .flatten()
+        .flatten();
+    let compatible_effort =
+        api_compatible_thinking_effort(session.api_style, has_function_tools, configured_effort);
+    if configured_effort.is_some() && compatible_effort.is_none() {
+        tracing::warn!(
+            session_key = %session.session_key,
+            model = %session.model,
+            api_style = LlmApiStyle::ChatCompletionsStream.as_str(),
+            "omitting checkpoint reasoning effort because Chat Completions with function tools is incompatible"
+        );
+    }
+    compatible_effort
 }
 
 fn checkpoint_tool_definition() -> crate::llm::LlmToolDefinition {
@@ -593,6 +621,18 @@ fn checkpoint_tool_definition() -> crate::llm::LlmToolDefinition {
     }
 }
 
+fn should_try_preflight_context_compaction(
+    stop_requested: bool,
+    recovered_this_step: bool,
+    retry_already_attempted: bool,
+    compaction_mode: &str,
+) -> bool {
+    stop_requested
+        && !recovered_this_step
+        && !retry_already_attempted
+        && CompactionMode::parse(compaction_mode) == CompactionMode::Active
+}
+
 fn tools_with_checkpoint_tool(session: &AgentLoopSession) -> Vec<crate::llm::LlmToolDefinition> {
     let mut tools = session.tools.clone();
     if session.pending_checkpoint_request.is_some()
@@ -610,7 +650,9 @@ pub async fn run_agent_step_stream(
     session: &AgentLoopSession,
     overflow: Option<AgentStepOverflowContext>,
 ) -> Result<RuntimeEventStream, DenError> {
-    let messages = repair_tool_call_message_chain(session.messages.clone());
+    let mut session = session.clone();
+    let mut recovered_from_preflight_context_budget = false;
+    let mut messages = repair_tool_call_message_chain(session.messages.clone());
     tracing::info!(
         session_key = %session.session_key,
         model = %session.model,
@@ -621,24 +663,105 @@ pub async fn run_agent_step_stream(
         overflow_recovery = overflow.is_some(),
         "native agent step starting LLM stream"
     );
-    let request = ChatCompletionRequest {
-        model: session.model.clone(),
-        messages,
-        tools: tools_with_checkpoint_tool(session),
-        stream: true,
-        tool_choice: None,
-        temperature: None,
-        max_tokens: None,
-        thinking_effort: checkpoint_thinking_effort_for_session(session),
-        telemetry: Some(session.llm_telemetry()),
+    let (request, budget, context_budget_evaluation) = loop {
+        let tools = tools_with_checkpoint_tool(&session);
+        let thinking_effort = checkpoint_thinking_effort_for_session(&session, !tools.is_empty());
+        let request = ChatCompletionRequest {
+            model: session.model.clone(),
+            messages,
+            tools,
+            stream: true,
+            tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+            thinking_effort,
+            telemetry: Some(session.llm_telemetry()),
+        };
+        let budget = estimate_context_budget(
+            &request,
+            &session.budget_components,
+            session.model_context_window,
+            session.model_max_output_tokens,
+        );
+        let context_budget_evaluation =
+            evaluate_turn_context_budget(&session.turn_budget_state, budget);
+        let budget = context_budget_evaluation
+            .next_state
+            .latest_context_budget
+            .clone()
+            .expect("context budget evaluation stores the latest report");
+        if let Some(overflow) = overflow.as_ref() {
+            overflow
+                .session_store
+                .update(&session.session_key, |stored| {
+                    stored.latest_context_budget = Some(budget.clone());
+                    stored.turn_budget_state = context_budget_evaluation.next_state.clone();
+                });
+            let _ = den_service::conversation::persistence::update_latest_context_budget(
+                &overflow.pool,
+                session.bear_id,
+                &session.conversation_id,
+                Some(&session.client_session_id),
+                &budget,
+            )
+            .await;
+            if budget.near_budget || budget.over_budget {
+                if let Some(run_id) = session.run_id.as_deref() {
+                    let _ = record_context_budget_pressure_decision(
+                        &overflow.pool,
+                        run_id,
+                        None,
+                        Some(session.objective_orientation.kind().to_string()),
+                        &budget,
+                    )
+                    .await;
+                }
+            }
+        }
+        if overflow.as_ref().is_none_or(|overflow| {
+            !should_try_preflight_context_compaction(
+                context_budget_evaluation.stop_reason.is_some(),
+                recovered_from_preflight_context_budget,
+                session.overflow_retry_attempted,
+                &overflow.config.compaction_mode,
+            )
+        }) {
+            break (request, budget, context_budget_evaluation);
+        }
+        let Some(overflow) = overflow.as_ref() else {
+            break (request, budget, context_budget_evaluation);
+        };
+        tracing::info!(
+            session_key = %session.session_key,
+            conversation_id = %session.conversation_id,
+            profile = %overflow.profile.as_str(),
+            "context budget exceeded before LLM call; running emergency compaction"
+        );
+        let (new_messages, recovered) = compact_session_messages_for_overflow(
+            &overflow.pool,
+            &overflow.config,
+            &session,
+            overflow.profile,
+        )
+        .await?;
+        overflow
+            .session_store
+            .update(&session.session_key, |stored| {
+                stored.messages.clone_from(&new_messages);
+                stored.overflow_retry_attempted = true;
+                stored.overflow_compaction_recovered = recovered;
+            });
+        if !recovered {
+            break (request, budget, context_budget_evaluation);
+        }
+        session.messages = new_messages;
+        session.overflow_retry_attempted = true;
+        session.overflow_compaction_recovered = true;
+        session.turn_budget_state = context_budget_evaluation.next_state.clone();
+        messages = repair_tool_call_message_chain(session.messages.clone());
+        recovered_from_preflight_context_budget = true;
     };
-    let budget = estimate_context_budget(
-        &request,
-        &session.budget_components,
-        session.model_context_window,
-        session.model_max_output_tokens,
-    );
-    if budget.near_budget {
+    if let Some(warning) = context_budget_evaluation.warning.as_ref() {
         tracing::warn!(
             session_key = %session.session_key,
             model = %budget.model,
@@ -646,19 +769,30 @@ pub async fn run_agent_step_stream(
             estimated_input_tokens = budget.estimated_input_tokens,
             reserved_output_tokens = budget.reserved_output_tokens,
             estimated_total_tokens = budget.estimated_total_tokens,
+            warning_code = warning.code,
             "context budget is near model limit"
         );
     }
-    if budget.over_budget {
-        return Err(DenError::ValidationError(format!(
-            "Compiled request exceeds model context budget for {}: estimated_input_tokens={}, reserved_output_tokens={}, estimated_total_tokens={}, context_window={}. Reduce transcript/context, compact the conversation, or select a larger-context model.",
-            budget.model,
-            budget.estimated_input_tokens,
-            budget.reserved_output_tokens,
-            budget.estimated_total_tokens,
-            budget.context_window.unwrap_or_default(),
-        )));
+    if let Some(reason) = context_budget_evaluation.stop_reason.as_ref() {
+        return Err(DenError::ValidationError(reason.user_message()));
     }
+    let context_budget_pressure_event = context_budget_evaluation.warning.as_ref().map(|warning| {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
+            kind: "context_budget_pressure".to_string(),
+            text: Some(warning.model_message().to_string()),
+            phase: Some("agent_loop_control".to_string()),
+            detail: Some(serde_json::json!({
+                "model": budget.model,
+                "context_window": budget.context_window,
+                "estimated_input_tokens": budget.estimated_input_tokens,
+                "reserved_output_tokens": budget.reserved_output_tokens,
+                "estimated_total_tokens": budget.estimated_total_tokens,
+                "near_budget": budget.near_budget,
+                "over_budget": budget.over_budget,
+                "action": "prefer_checkpoint_before_more_context_growth",
+            })),
+        })
+    });
     let checkpoint_thinking_event = request.thinking_effort.map(|effort| {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunProgress {
             kind: "checkpoint_thinking_override_applied".to_string(),
@@ -675,21 +809,6 @@ pub async fn run_agent_step_stream(
             })),
         })
     });
-    if let Some(overflow) = overflow.as_ref() {
-        overflow
-            .session_store
-            .update(&session.session_key, |stored| {
-                stored.latest_context_budget = Some(budget.clone());
-            });
-        let _ = den_service::conversation::persistence::update_latest_context_budget(
-            &overflow.pool,
-            session.bear_id,
-            &session.conversation_id,
-            Some(&session.client_session_id),
-            &budget,
-        )
-        .await;
-    }
     let base_stream = Box::pin(LazyAgentStepStream::new(
         llm.clone(),
         request,
@@ -697,10 +816,15 @@ pub async fn run_agent_step_stream(
         session.api_style,
         overflow,
     )) as RuntimeEventStream;
-    if let Some(event) = checkpoint_thinking_event {
-        Ok(Box::pin(stream::iter(vec![Ok(event)]).chain(base_stream)) as RuntimeEventStream)
-    } else {
+    let prefix_events = [context_budget_pressure_event, checkpoint_thinking_event]
+        .into_iter()
+        .flatten()
+        .map(Ok)
+        .collect::<Vec<_>>();
+    if prefix_events.is_empty() {
         Ok(base_stream)
+    } else {
+        Ok(Box::pin(stream::iter(prefix_events).chain(base_stream)) as RuntimeEventStream)
     }
 }
 
@@ -709,10 +833,76 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reasoning_effort_is_omitted_for_chat_completions_with_function_tools() {
+        let effort = Some(ThinkingEffort::Medium);
+
+        assert_eq!(
+            api_compatible_thinking_effort(Some(LlmApiStyle::ChatCompletionsStream), true, effort),
+            None
+        );
+        assert_eq!(
+            api_compatible_thinking_effort(Some(LlmApiStyle::ChatCompletionsStream), false, effort),
+            effort
+        );
+        assert_eq!(
+            api_compatible_thinking_effort(Some(LlmApiStyle::ResponsesStream), true, effort),
+            effort
+        );
+        assert_eq!(api_compatible_thinking_effort(None, true, effort), effort);
+    }
+
+    #[test]
+    fn preflight_context_compaction_only_runs_once_for_active_overflow_recovery() {
+        assert!(should_try_preflight_context_compaction(
+            true, false, false, "active"
+        ));
+        assert!(!should_try_preflight_context_compaction(
+            false, false, false, "active"
+        ));
+        assert!(!should_try_preflight_context_compaction(
+            true, true, false, "active"
+        ));
+        assert!(!should_try_preflight_context_compaction(
+            true, false, true, "active"
+        ));
+        assert!(!should_try_preflight_context_compaction(
+            true, false, false, "off"
+        ));
+    }
+
+    #[test]
     fn native_llm_handshake_timeout_defaults_to_cold_start_tolerant_value() {
         assert_eq!(
             native_llm_handshake_timeout_from_raw(None),
             DEFAULT_NATIVE_LLM_HANDSHAKE_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn chat_completions_with_tools_omits_incompatible_thinking_effort() {
+        assert_eq!(
+            api_compatible_thinking_effort(
+                Some(LlmApiStyle::ChatCompletionsStream),
+                true,
+                Some(ThinkingEffort::Low),
+            ),
+            None
+        );
+        assert_eq!(
+            api_compatible_thinking_effort(
+                Some(LlmApiStyle::ChatCompletionsStream),
+                false,
+                Some(ThinkingEffort::Low),
+            ),
+            Some(ThinkingEffort::Low)
+        );
+        assert_eq!(
+            api_compatible_thinking_effort(
+                Some(LlmApiStyle::ResponsesStream),
+                true,
+                Some(ThinkingEffort::Low),
+            ),
+            Some(ThinkingEffort::Low)
         );
     }
 

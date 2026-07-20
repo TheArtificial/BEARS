@@ -24,7 +24,7 @@ use den_runtime::{
     },
     turn_state,
 };
-use den_service::{bears::BearProfile, client_sessions};
+use den_service::{bears::BearProfile, client_sessions, client_sessions::ClientSessionMode};
 
 type WorkplanPayloadFn = fn(&PlanModeSessionRow) -> Value;
 type NoActiveWorkplanFn = fn() -> Value;
@@ -81,7 +81,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             context.user_id,
             context.bear_id,
             client_session_id,
-            "plan",
+            ClientSessionMode::Plan,
         )
         .await?;
         Ok(PlanModeView {
@@ -154,7 +154,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             context.user_id,
             context.bear_id,
             client_session_id,
-            "write",
+            ClientSessionMode::Write,
         )
         .await?;
         Ok(PlanModeView {
@@ -238,7 +238,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             context.user_id,
             context.bear_id,
             client_session_id,
-            "plan",
+            ClientSessionMode::Plan,
         )
         .await?;
         let storage = "sqlite";
@@ -279,7 +279,7 @@ impl PlanModeOps for DenPlanModeOps<'_> {
             context.user_id,
             context.bear_id,
             client_session_id,
-            "ask",
+            ClientSessionMode::Ask,
         )
         .await?;
         Ok(PlanModeView {

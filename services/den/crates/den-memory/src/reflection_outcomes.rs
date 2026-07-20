@@ -1,8 +1,6 @@
-use time::OffsetDateTime;
-
 use den_core::DenError;
 
-use super::records::BearMemoryStore;
+use super::{clock::now_rfc3339, records::BearMemoryStore};
 
 pub async fn create_reflection_run_outcome(
     store: &BearMemoryStore,
@@ -12,9 +10,7 @@ pub async fn create_reflection_run_outcome(
     input_summary: Option<&str>,
 ) -> Result<(), DenError> {
     let sequence_no = store.next_sequence().await?;
-    let created_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let created_at = now_rfc3339()?;
     sqlx::query(
         r"
         INSERT INTO reflection_run_outcomes (
@@ -43,9 +39,7 @@ pub async fn complete_reflection_run_outcome(
     output_summary: Option<&str>,
     proposal_ids: &[String],
 ) -> Result<(), DenError> {
-    let completed_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let completed_at = now_rfc3339()?;
     let ids_json = serde_json::to_string(proposal_ids)
         .map_err(|e| DenError::System(format!("proposal ids json failed: {e}")))?;
     sqlx::query(
@@ -67,14 +61,17 @@ pub async fn complete_reflection_run_outcome(
     Ok(())
 }
 
-pub async fn reflection_outcome_exists(store: &BearMemoryStore, run_id: &str) -> bool {
-    sqlx::query_scalar::<_, i64>(
+pub async fn reflection_outcome_exists(
+    store: &BearMemoryStore,
+    run_id: &str,
+) -> Result<bool, DenError> {
+    let count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM reflection_run_outcomes WHERE bear_id = ? AND run_id = ?",
     )
     .bind(store.bear_id().to_string())
     .bind(run_id)
     .fetch_one(store.pool())
     .await
-    .unwrap_or(0)
-        > 0
+    .map_err(|e| DenError::System(format!("sqlite check reflection outcome failed: {e}")))?;
+    Ok(count > 0)
 }

@@ -541,7 +541,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_LIST,
             "List task lists",
-            "List visible planning and task-list context for the current Bear/session, including checked-out Docket task-list projections, submitted plan-mode gates, and saved plan artifacts where available. Session task lists are working projections; durable jobs/tasks live in Docket. Call session_info first if current thread/session/work-surface scope is unclear.",
+            "List visible planning and task-list context for the current Bear/conversation, including checked-out Docket task-list projections, submitted plan-mode gates, and saved plan artifacts where available. Docket-backed task lists are user-visible, durable/resumable plans, checklists, next steps, and roadmap slices for Docket jobs or the current conversation objective. Call session_info first if current conversation/session/work-surface scope is unclear.",
             "bear.activity",
             &["task_list.read"],
             TASK_LIST_READ_PROFILES,
@@ -550,7 +550,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_GET_STATUS,
             "Get task list status",
-            "Return this session's active Docket-backed task-list projection when one exists. Use to recover focus before continuing, syncing, or handing off task-list work; call session_info first if session scope is unclear.",
+            "Return the active Docket-backed task-list projection for this conversation/session when one exists. Use to recover focus before continuing, syncing, or handing off task-list work; call session_info first if conversation or session scope is unclear.",
             "bear.activity",
             &["task_list.read"],
             TASK_LIST_READ_PROFILES,
@@ -559,7 +559,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_UPDATE,
             "Update task list",
-            "Deprecated compatibility tool: update_task_list no longer writes session-local task lists. For new durable work use create_job. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status, which infers the active run. Do not call this tool to create visible progress UI.",
+            "Use durable Docket job/task tools for user-visible task and job state. For pair conversation-scoped plans, checklists, next steps, and roadmap slices, create or reuse the current conversation's implied Docket objective; create an explicit Docket job only for distinct objectives with their own lifecycle, focus, delegation, work surface, commit policy, or execution tracking. Keep session_anchor_id only for compatibility with legacy session task projections. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status with job_id and run_id when known; otherwise it infers the active run. Docket tools record durable state and do not authorize autonomous execution by themselves.",
             "bear.activity",
             &["task_list.write"],
             TASK_LIST_UPDATE_PROFILES,
@@ -577,7 +577,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_CREATE,
             "Create job",
-            "Create a durable job with acceptance criteria and an optional initial task tree. Jobs are durable work containers larger than individual tasks, and every initial task requires concrete completion_criteria so execution has a stopping condition. Use this when the human asks to create, track, or delegate durable work, or when a task-list handoff should become canonical work. Does not execute the job; execution flows through Bear runtime dispatch.",
+            "Create a durable Docket job with acceptance criteria and an optional initial task tree. Explicit Jobs are user-visible work containers for distinct objectives with their own lifecycle, focus, delegation, work surface, commit policy, or execution tracking; for pair conversation-scoped plans or checklists, prefer the implied conversation objective instead. Every initial task requires concrete completion_criteria so execution has a stopping condition. Does not execute the job; execution flows through Bear runtime dispatch.",
             "bear.docket",
             &["docket.job.write"],
             CHAT_AND_PAIR_PROFILES,
@@ -586,7 +586,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_LIST,
             "List Docket jobs",
-            "List durable Docket jobs for the current Bear. Use for canonical job status, not session-local task-list focus.",
+            "List durable Docket jobs for the current Bear. Use for canonical job status.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -631,7 +631,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_CREATE,
             "Create Docket task",
-            "Create a durable Docket task under a job or client session anchor. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition.",
+            "Create a durable Docket task under an explicit Docket job or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. session_anchor_id remains legacy compatibility only. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
@@ -640,7 +640,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LIST,
             "List Docket tasks",
-            "List durable Docket task definitions for a job/session subtree, including current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for session working focus.",
+            "List durable Docket task definitions for an explicit job/task subtree or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Includes current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for conversation/job working focus.",
             "bear.docket",
             &["docket.task.read"],
             TASK_LIST_READ_PROFILES,
@@ -649,7 +649,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_UPDATE,
             "Update Docket task definition",
-            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort/assignment. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, in progress, done, blocked, or cancelled without passing a run_id.",
+            "Update durable Docket task definition fields only: title/body/completion_criteria/hierarchy/kind/scope/difficulty/effort/assignment. Do not use for status or result changes; status/results are run-scoped. Use update_current_task_status to mark the active-run task pending, in progress, done, blocked, or cancelled; pass job_id/run_id when known to avoid ambiguous active-run inference.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
@@ -658,20 +658,20 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_UPDATE_CURRENT_STATUS,
             "Update current task status",
-            "Update a Docket task's status/results in the current active Docket run for this session. The tool infers run_id from active job/run context; do not pass run_id. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not edit durable task definitions or execute task bodies.",
+            "Update a Docket task's status/results in a Docket run. Prefer passing job_id and run_id from get_job/execute_job for unambiguous updates; when omitted, the tool falls back to the focused active job/run context. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not edit durable task definitions or execute task bodies.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
-            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id","status"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},"task_id":{"type":"string","format":"uuid"},"status":{"enum":["pending","in_progress","done","blocked","cancelled"]},"result_refs":{"type":"object"},"result_summary":{"type":"string","description":"Required when status is done; describe what was actually completed or verified."}},"required":["task_id","status"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_TASK_LIST_CHECKOUT,
             "Checkout task list",
-            "Create a session task-list projection from a Docket job/root task subtree. Use this when you want to work Docket tasks through the current session task list. Checkout does not execute tasks and does not change Docket state by itself.",
+            "Create a task-list projection from an explicit Docket job/root task subtree or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Use this when you want to work Docket tasks through the current conversation/task-list focus. Checkout records focus/projection state only; it does not execute tasks or change task definitions by itself.",
             "bear.docket",
             &["docket.task.checkout"],
             &["pair", "work"],
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"}},"required":["job_id"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"parent_task_id":{"type":"string","format":"uuid"}},"additionalProperties":false}),
         ),
         descriptor(
             DEN_WORK_DISPATCH,
@@ -721,7 +721,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LIST_SYNC,
             "Sync task list to Docket",
-            "Apply authorized changes from a checked-out session task list back to Docket-backed tasks. Docket-backed items update task definitions and run-scoped status; local-only items in a Docket checkout become new child tasks. Conflicts are reported instead of overwritten.",
+            "Apply authorized changes from a checked-out Docket-backed task-list projection back to Docket-backed tasks. Docket-backed items update task definitions and run-scoped status; local-only items in a Docket checkout become new child tasks. Conflicts are reported instead of overwritten.",
             "bear.docket",
             &["docket.task.sync"],
             &["pair", "work"],
@@ -757,7 +757,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_PLAN_MODE_EXIT,
             "Submit implementation plan",
-            "Submit a markdown implementation workplan artifact for user approval. This is for durable implementation workplans, not for the live visible task list; use update_task_list for visible session task-list tracking.",
+            "Submit a markdown implementation workplan artifact for user approval. This is for durable implementation workplans, not for the live visible task list; use Docket task-list projections for visible conversation/task-list tracking.",
             "bear.workplan",
             &["plan_mode.exit"],
             PAIR_PROFILES,
@@ -1430,6 +1430,15 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             sensitive_arg_keys: &[],
             approval_summary: "Read Docket task definitions and current run state.",
         },
+        DEN_TASK_UPDATE_CURRENT_STATUS => ToolDisplayDescriptor {
+            label,
+            category: "docket",
+            progress_verb: "Marking task status",
+            complete_verb: "Marked task status",
+            target_arg_keys: &["status", "task_id", "result_summary"],
+            sensitive_arg_keys: &["result_refs", "result_summary"],
+            approval_summary: "Record this task's run-scoped status and result.",
+        },
         DEN_TASK_UPDATE => ToolDisplayDescriptor {
             label,
             category: "docket",
@@ -1451,7 +1460,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             complete_verb: "Checked out task list",
             target_arg_keys: &["job_id", "parent_task_id"],
             sensitive_arg_keys: &[],
-            approval_summary: "Create a session task-list projection from Docket state.",
+            approval_summary: "Create a Docket-backed task-list projection.",
         },
         DEN_TASK_LIST_SYNC => ToolDisplayDescriptor {
             label,
@@ -1460,7 +1469,7 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             complete_verb: "Synced task list",
             target_arg_keys: &[],
             sensitive_arg_keys: &["task_list"],
-            approval_summary: "Sync checked-out session task-list changes to Docket.",
+            approval_summary: "Sync checked-out Docket-backed task-list changes to Docket.",
         },
         DEN_PLAN_MODE_ENTER => ToolDisplayDescriptor {
             label,

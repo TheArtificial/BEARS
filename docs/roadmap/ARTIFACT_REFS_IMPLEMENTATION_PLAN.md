@@ -62,6 +62,30 @@ This plan fulfills ADR-0004 by implementing:
 
 ## Implementation phases
 
+### Phase 0 — Inventory and initial decisions
+
+**Goal:** Identify current artifact-like storage and lock the smallest initial contract before implementation.
+
+Current ad hoc artifact-like stores:
+
+- `tool_output_artifacts` (`services/den/migrations/20260625120000_tool_output_artifacts.up.sql`, `services/den/crates/den-runtime/src/tool_output_artifacts.rs`): stores compacted/full tool outputs as Postgres text or JSON and exposes `tool-output://<uuid>` refs. Access is currently scoped by `bear_id` and `session_id`, so these refs are session-local tool-output handles, not durable Den artifact refs.
+- `conversation_compaction_artifacts` (`services/den/migrations/20260530213000_conversation_persistence.up.sql`, `services/den/crates/den-runtime/src/runtime/compaction/artifact_store.rs`): stores iterative summaries and other compaction payloads as conversation-scoped JSON with source-span provenance. These are durable conversation artifacts in shape, but not registry-backed `artifact_...` refs.
+- Docket task/run evidence payloads (`services/den/migrations/20260622120000_docket_jobs_tasks.up.sql`, `services/den/migrations/20260710120000_docket_work_runs.up.sql`): `bear_task_run_state.result_refs`, `bear_job_criteria_state.evidence`, and `bear_work_runs.result_refs` are untyped JSONB bags. They can cite evidence today, but they do not enforce artifact identity, lifecycle, storage hiding, or authorization through a registry.
+- Runtime checkpoint/audit outputs: loop-control checkpoints are currently runtime/audit events rather than a permanent artifact store. When retained beyond transient logs, they should become `runtime_checkpoint` artifacts linked to runs instead of creating another checkpoint-specific durable store.
+- Garage/S3 config already exists in Den config (`S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, credentials, public URL, path-style flag). Phase 1 does not need new storage config or a new dependency.
+
+Initial implementation decisions:
+
+- **Ref format:** Den-minted `artifact_` + UUID v4, using the already-installed `uuid` crate. Do not add ULID/UUIDv7 unless ordered refs become a real requirement.
+- **First storage kinds:** `db_text` for metadata-only/small text JSON/diff artifacts in the registry service, and `garage_artifacts` for byte-backed artifacts in the next phase. Avoid a storage-backend trait until a second implemented backend makes it pay for itself.
+- **Lifecycle values:** start with `pending`, `finalized`, `ephemeral`, `promoted`, `cabinet_durable`, `archived`, and `deleted`. Reads of complete content require a non-pending, non-deleted finalized/promoted/durable state; finalize is one-way.
+- **Visibility/auth model:** begin with bear-scoped ownership plus visibility values aligned with Docket (`private_to_profile`, `same_user`, `bear_visible`) and optional subject links. Artifact links may justify access, but every read/write/attach/delete operation must still pass through the artifact service authorization check.
+- **Link model:** use the generic `artifact_links` table from this plan for conversation, job, task, run, criterion, delegated-run, and Cabinet-item subjects. Do not add per-surface attachment tables in the first slice.
+- **Migration strategy:** new code should emit canonical `artifact_...` refs. Existing `tool-output://...`, compaction artifact IDs, and Docket JSON evidence remain readable only until their callers are migrated, then the pre-release parallel paths should be removed or replaced cleanly rather than kept as deprecated models.
+- **Dependency strategy:** no new dependency for Phase 1. Use `uuid`, `serde`, `serde_json`, `sqlx`, and existing config/service patterns.
+
+**Exit gate:** The inventory above is reflected in the Phase 1 schema/service shape, and no new dependency or broad abstraction is introduced before code proves it is needed.
+
 ### Phase 1 — Registry and core service
 
 **Goal:** Create the canonical artifact identity and lifecycle API.
@@ -98,7 +122,7 @@ This plan fulfills ADR-0004 by implementing:
 
 - [ ] Allow conversation events/messages to cite artifact refs for attachments and generated outputs.
 - [ ] Add generic artifact link/attachment records for Den subjects, including at least conversation, job, task, run, criterion, and delegated-run anchors.
-- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `input`, `source`, `output`, `evidence`, `test_report`, `diff`, or `completion_receipt`.
+- [ ] Allow Docket jobs/tasks/runs/criteria evidence to attach artifact refs with roles such as `input`, `source`, `output`, `evidence`, `test_report`, `diff`, `runtime_checkpoint`, or `completion_receipt`.
 - [ ] Add run/task provenance when artifacts are created by work/runtime activity.
 - [ ] Render artifact refs in task/run completion receipts.
 - [ ] Keep criterion/task/job state separate from artifact presence; completion decisions cite evidence refs but are not implied by them.
@@ -128,6 +152,19 @@ This plan fulfills ADR-0004 by implementing:
 - [ ] Add a small check that a work-surface-produced artifact records provenance and can be resolved after the workspace path changes.
 
 **Exit gate:** Work surfaces can produce artifacts and consume uploaded artifacts without treating paths as artifact identity.
+
+### Runtime checkpoint artifacts
+
+Agent loop-control checkpoints should revisit this artifact-ref plan when checkpoint retention is implemented. Runtime checkpoint reports are artifacts rather than status reports: durable audit/debug payloads attached primarily to runs, optionally linked to focused Jobs/tasks as audit evidence, and never task/job status transitions by themselves.
+
+Expected shape:
+
+- artifact kind: `runtime_checkpoint`;
+- primary link: `subject_kind = run`, `role = checkpoint`;
+- optional links: focused Job/task with an audit/evidence role;
+- checkpoint presence does not imply task completion, blockage, waiver, cancellation, or Docket history-visible progress.
+
+If loop-control lands before artifact refs, any temporary checkpoint table should include a migration path to `runtime_checkpoint` artifact refs instead of becoming a permanent competing store.
 
 ## Human UI affordances
 

@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    fmt,
+    time::{Duration, Instant},
+};
 
 use axum::http::HeaderMap;
 use futures::StreamExt;
@@ -19,13 +22,14 @@ use den_runtime::{
     runtime::bearwire_projection::wire::runtime_stream_event_to_bearwire_events,
     runtime_error_ux::{log_sample, run_failure_projection, runtime_event_history_marker},
     surface_projection::bearwire_client_method_for_action,
+    turn_ids::{ClientSessionId, TurnRunId},
     turn_obligations,
     turn_runner::TurnStartRequest,
     turn_runs, turn_steps,
 };
 use den_service::{
     bears::{db as bears_db, BearProfile},
-    bifrost::BifrostCatalogSnapshot,
+    bifrost::BifrostCatalogEntry,
     client_sessions,
     conversation::events::{
         canonical_persistence_context, persist_canonical_conversation_record,
@@ -35,7 +39,7 @@ use den_service::{
 };
 
 use crate::auth::authenticated_bear;
-use crate::methods::parse_params;
+use crate::methods::{parse_params, DEFAULT_CLIENT};
 
 const BEARWIRE_EAGER_PREFIX_DRIVE_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -49,9 +53,69 @@ struct RunStateRequest {
     limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct CanonicalClientWaitingEvent {
+    permission: CanonicalClientWaitingReference,
+    tool_call: CanonicalClientWaitingReference,
+}
+
+#[derive(Debug, Deserialize)]
+struct CanonicalClientWaitingReference {
+    id: String,
+}
+
+/// Stable, system-generated reasons for a BearWire run failure.
+///
+/// These values are persisted and emitted on the wire, so keep their explicit
+/// string forms stable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunFailureReason {
+    DescriptorResolutionFailed,
+    InitialStreamWatchdogTimeout,
+    StreamError,
+    StreamEndedWithoutRuntimeTerminal,
+    StartFailed,
+    ClientObligationTimeout,
+    #[cfg(test)]
+    RuntimeInternal,
+    ContinuationWatchdogTimeout,
+    ContinuationStreamError,
+    ContinuationStreamEndedWithoutRuntimeTerminal,
+    ContinuationStartFailed,
+}
+
+impl RunFailureReason {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::DescriptorResolutionFailed => "descriptor_resolution_failed",
+            Self::InitialStreamWatchdogTimeout => "initial_stream_watchdog_timeout",
+            Self::StreamError => "stream_error",
+            Self::StreamEndedWithoutRuntimeTerminal => "stream_ended_without_runtime_terminal",
+            Self::StartFailed => "start_failed",
+            Self::ClientObligationTimeout => "client_obligation_timeout",
+            #[cfg(test)]
+            Self::RuntimeInternal => "runtime_internal",
+            Self::ContinuationWatchdogTimeout => "continuation_watchdog_timeout",
+            Self::ContinuationStreamError => "continuation_stream_error",
+            Self::ContinuationStreamEndedWithoutRuntimeTerminal => {
+                "continuation_stream_ended_without_runtime_terminal"
+            }
+            Self::ContinuationStartFailed => "continuation_start_failed",
+        }
+    }
+}
+
+impl fmt::Display for RunFailureReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 fn den_owned_tool_call(tool_name: &str) -> bool {
-    den_core::tools::descriptor::builtin_den_tool_descriptor_for_provider_name(tool_name)
-        .is_some_and(|descriptor| descriptor.execution_target == "den")
+    matches!(
+        den_runtime::turn_waits::resolve_tool_execution_owner(tool_name),
+        Ok(den_runtime::turn_waits::ToolExecutionOwner::Den)
+    )
 }
 
 // Runtime status/error UX policy is surface-agnostic. Keep product copy,
@@ -109,19 +173,15 @@ async fn persist_visible_runtime_marker(
     .await;
 }
 
-fn client_tool_descriptors_from_context(
+fn client_tool_descriptors_from_context_with_authority(
     client_context: Option<&Value>,
-    requested_mode: Option<&str>,
+    authority: &den_core::client_tools::TurnAuthority,
 ) -> Value {
     let context = client_context.unwrap_or(&Value::Null);
-    let policy = den_core::client_tools::resolve_session_policy_for_mode(
-        requested_mode.unwrap_or("ask"),
-        None,
-    );
     let mut descriptors = Vec::new();
     for tool in den_core::client_tools::ClientToolName::all() {
         if *tool == den_core::client_tools::ClientToolName::McpCallTool
-            || !policy.allows_tool(*tool)
+            || !authority.allows_tool(*tool)
         {
             continue;
         }
@@ -172,14 +232,40 @@ fn runtime_upstream_target(
         .to_string()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolvedRunModelSource {
+    ConversationExplicit,
+    ConversationAuto,
+    ProfileDefault,
+    BearDefault,
+    SystemDefault,
+}
+
+impl ResolvedRunModelSource {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::ConversationExplicit => "conversation_explicit",
+            Self::ConversationAuto => "conversation_auto",
+            Self::ProfileDefault => "profile_default",
+            Self::BearDefault => "bear_default",
+            Self::SystemDefault => "system_default",
+        }
+    }
+}
+
+impl fmt::Display for ResolvedRunModelSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 struct ResolvedRunModel {
     handle: String,
     provider_model_id: String,
     /// Set authoritatively by `preflight_pair_run_model` from the catalog
     /// snapshot; `resolve_pair_run_model` leaves it at a placeholder.
     api_style: den_llm::LlmApiStyle,
-    source: &'static str,
+    source: ResolvedRunModelSource,
 }
 
 /// Placeholder used while resolving model identity; overwritten by preflight.
@@ -217,6 +303,41 @@ fn available_model_sample(models: &[den_service::bifrost::BifrostModelMetadata])
     handles.join(", ")
 }
 
+fn pair_api_style_for_catalog_support(
+    supports_responses_api: Option<bool>,
+) -> den_llm::LlmApiStyle {
+    match supports_responses_api {
+        Some(false) => den_llm::LlmApiStyle::ChatCompletionsStream,
+        Some(true) | None => den_llm::LlmApiStyle::ResponsesStream,
+    }
+}
+
+fn ensure_pair_model_capabilities(
+    entry: &BifrostCatalogEntry,
+    model_handle: &str,
+) -> Result<(), CustomError> {
+    if entry.supports_tools == Some(false) {
+        return Err(CustomError::ValidationError(format!(
+            "selected model {model_handle} does not support tool calling, which is required for Pair runs"
+        )));
+    }
+    Ok(())
+}
+
+fn unknown_capability_metadata(entry: &BifrostCatalogEntry) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    if entry.supports_tools.is_none() {
+        missing.push("supports_tools");
+    }
+    if entry.supports_responses_api.is_none() {
+        missing.push("supports_responses_api");
+    }
+    if entry.supports_vision.is_none() {
+        missing.push("supports_vision");
+    }
+    missing
+}
+
 async fn resolve_pair_run_model(
     state: &DenState,
     bear: &den_service::bears::Bear,
@@ -251,7 +372,7 @@ async fn resolve_pair_run_model(
                         api_style: RESOLVE_PLACEHOLDER_API_STYLE,
                         provider_model_id,
                         handle,
-                        source: "conversation_explicit",
+                        source: ResolvedRunModelSource::ConversationExplicit,
                     });
                 }
             } else if let Some(model) = model_state
@@ -265,7 +386,7 @@ async fn resolve_pair_run_model(
                     api_style: RESOLVE_PLACEHOLDER_API_STYLE,
                     provider_model_id,
                     handle,
-                    source: "conversation_auto",
+                    source: ResolvedRunModelSource::ConversationAuto,
                 });
             }
         }
@@ -278,7 +399,7 @@ async fn resolve_pair_run_model(
             api_style: RESOLVE_PLACEHOLDER_API_STYLE,
             provider_model_id,
             handle,
-            source: "profile_default",
+            source: ResolvedRunModelSource::ProfileDefault,
         });
     }
 
@@ -294,7 +415,7 @@ async fn resolve_pair_run_model(
             api_style: RESOLVE_PLACEHOLDER_API_STYLE,
             provider_model_id,
             handle,
-            source: "bear_default",
+            source: ResolvedRunModelSource::BearDefault,
         });
     }
 
@@ -304,7 +425,7 @@ async fn resolve_pair_run_model(
         api_style: RESOLVE_PLACEHOLDER_API_STYLE,
         provider_model_id,
         handle,
-        source: "system_default",
+        source: ResolvedRunModelSource::SystemDefault,
     })
 }
 
@@ -327,21 +448,39 @@ async fn preflight_pair_run_model(
     {
         Ok(snapshot) => snapshot,
         Err(err) => {
-            tracing::warn!(
+            tracing::error!(
                 error = %err,
                 bear_id = %bear.id,
-                "Bear-scoped Bifrost catalog refresh before Pair preflight failed; proceeding without catalog validation"
+                "Bear-scoped Bifrost catalog refresh before Pair preflight failed"
             );
-            BifrostCatalogSnapshot::default()
+            return Err(CustomError::System(format!(
+                "Bifrost model catalog validation failed before run start: {err}"
+            )));
         }
     };
     let available = snapshot.models_vec();
-    let catalog_entry = snapshot.resolve(&resolved.handle);
+    let catalog_entry = snapshot.resolve(&resolved.handle).ok_or_else(|| {
+        CustomError::ValidationError(format!(
+            "selected model {} is not present in the Bifrost catalog; available models: {}",
+            resolved.handle,
+            available_model_sample(&available)
+        ))
+    })?;
+    ensure_pair_model_capabilities(catalog_entry, &resolved.handle)?;
+    let unknown_capabilities = unknown_capability_metadata(catalog_entry);
+    if !unknown_capabilities.is_empty() {
+        tracing::warn!(
+            session_id,
+            bear_id = %bear.id,
+            conversation_id,
+            model_handle = %resolved.handle,
+            unknown_capabilities = %unknown_capabilities.join(", "),
+            catalog_source = %snapshot.source,
+            "Bifrost omitted optional model capability metadata; using runtime fallbacks"
+        );
+    }
     let resolved = ResolvedRunModel {
-        api_style: den_llm::preferred_api_style_for_model_with_catalog_support(
-            &resolved.handle,
-            catalog_entry.and_then(|entry| entry.supports_responses_api),
-        ),
+        api_style: pair_api_style_for_catalog_support(catalog_entry.supports_responses_api),
         ..resolved
     };
     if available
@@ -354,7 +493,7 @@ async fn preflight_pair_run_model(
             conversation_id,
             model_handle = %resolved.handle,
             provider_model_id = %resolved.provider_model_id,
-            model_selection_source = resolved.source,
+            model_selection_source = %resolved.source,
             api_style = %resolved.api_style.as_str(),
             catalog_stale = snapshot.stale,
             catalog_fetched_at = ?snapshot.fetched_at,
@@ -369,7 +508,7 @@ async fn preflight_pair_run_model(
         conversation_id,
         model_handle = %resolved.handle,
         provider_model_id = %resolved.provider_model_id,
-        model_selection_source = resolved.source,
+        model_selection_source = %resolved.source,
         api_style = %resolved.api_style.as_str(),
         available_models = %available_model_sample(&available),
         catalog_stale = snapshot.stale,
@@ -482,19 +621,50 @@ fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent
     )
 }
 
-fn runtime_event_is_terminal_or_wait(event: &den_protocol::RuntimeStreamEvent) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeStreamBoundary {
+    Continue,
+    ClientWait,
+    Terminal,
+}
+
+pub(crate) fn runtime_stream_boundary(
+    event: &den_protocol::RuntimeStreamEvent,
+) -> RuntimeStreamBoundary {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
-    matches!(
-        event,
+    match event {
         RuntimeStreamEvent::Semantic(
-            RuntimeSemanticEvent::ToolCallRequested { .. }
-                | RuntimeSemanticEvent::RunPaused { .. }
-                | RuntimeSemanticEvent::TurnCompleted { .. }
-                | RuntimeSemanticEvent::TurnFailed { .. }
-                | RuntimeSemanticEvent::TurnCancelled { .. }
-                | RuntimeSemanticEvent::Error { .. }
-        )
-    )
+            RuntimeSemanticEvent::TurnCompleted { .. }
+            | RuntimeSemanticEvent::TurnFailed { .. }
+            | RuntimeSemanticEvent::TurnCancelled { .. }
+            | RuntimeSemanticEvent::Error { .. },
+        ) => RuntimeStreamBoundary::Terminal,
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::RunPaused { .. }) => {
+            RuntimeStreamBoundary::ClientWait
+        }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
+            tool_name,
+            approval_required,
+            approval_request_id,
+            ..
+        }) => {
+            let approval_wait = *approval_required
+                && approval_request_id
+                    .as_deref()
+                    .is_some_and(|id| !id.trim().is_empty());
+            let den_owned = den_owned_tool_call(tool_name);
+            if approval_wait || !den_owned {
+                RuntimeStreamBoundary::ClientWait
+            } else {
+                RuntimeStreamBoundary::Continue
+            }
+        }
+        _ => RuntimeStreamBoundary::Continue,
+    }
+}
+
+fn runtime_event_is_terminal_or_wait(event: &den_protocol::RuntimeStreamEvent) -> bool {
+    runtime_stream_boundary(event) != RuntimeStreamBoundary::Continue
 }
 
 pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'static str {
@@ -526,26 +696,17 @@ pub(crate) fn runtime_event_kind(event: &den_protocol::RuntimeStreamEvent) -> &'
             "turn_cancelled"
         }
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error { .. }) => "error",
+        RuntimeStreamEvent::ProviderActivity => "provider_activity",
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => "untranslated_provider_event",
     }
 }
 
-fn canonical_client_waiting_ids(event: &BearWireEvent) -> Option<(&str, &str)> {
-    let permission_id = event
-        .data
-        .get("permission")
-        .and_then(|permission| permission.get("id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|id| !id.is_empty())?;
-    let tool_call_id = event
-        .data
-        .get("tool_call")
-        .and_then(|tool_call| tool_call.get("id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|id| !id.is_empty())?;
-    Some((permission_id, tool_call_id))
+fn canonical_client_waiting_ids(event: &BearWireEvent) -> Option<(String, String)> {
+    let event = serde_json::from_value::<CanonicalClientWaitingEvent>(event.data.clone()).ok()?;
+    let permission_id = event.permission.id.trim();
+    let tool_call_id = event.tool_call.id.trim();
+    (!permission_id.is_empty() && !tool_call_id.is_empty())
+        .then(|| (permission_id.to_string(), tool_call_id.to_string()))
 }
 
 async fn append_answerable_client_waiting_event(
@@ -689,13 +850,13 @@ async fn persist_tool_call_requested_transactionally(
             request_id,
             tool_call_id,
             tool_name,
-            title,
-            kind,
+            title: title.as_deref(),
+            kind: kind.as_deref(),
             arguments,
-            approval_request_id,
+            approval_request_id: approval_request_id.as_deref(),
             approval_required,
-            approval_reason,
-            event_run_id,
+            approval_reason: approval_reason.as_deref(),
+            event_run_id: event_run_id.as_deref(),
         },
     )
     .await?;
@@ -809,7 +970,7 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
                     run_id,
                     bear_id,
                     user_id,
-                    "descriptor_resolution_failed",
+                    RunFailureReason::DescriptorResolutionFailed,
                     err.to_string(),
                     Some(json!({
                         "tool_call_id": tool_call_id,
@@ -832,6 +993,7 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
         }
     }
 
+    let terminal_event = runtime_event_is_terminal(&runtime_event);
     let active_obligation = update_run_state_for_runtime_event(
         pool,
         session_id,
@@ -855,6 +1017,9 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
             marker.metadata,
         )
         .await;
+    }
+    if terminal_event {
+        return;
     }
     for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
         if event.event_type == "client.waiting" {
@@ -915,12 +1080,12 @@ pub(crate) async fn fail_run_lifecycle(
     run_id: &str,
     bear_id: uuid::Uuid,
     user_id: i32,
-    reason: &str,
+    reason: RunFailureReason,
     message: String,
     context: Option<serde_json::Value>,
 ) {
     let bear_name = bear_display_name(pool, bear_id).await;
-    let projection = run_failure_projection(reason, &message, run_id, &bear_name, context);
+    let projection = run_failure_projection(reason.as_str(), &message, run_id, &bear_name, context);
     let user_message = projection.user_message.as_deref();
     let context = projection.diagnostic_context.clone();
     tracing::warn!(
@@ -928,46 +1093,18 @@ pub(crate) async fn fail_run_lifecycle(
         run_id,
         bear_id = %bear_id,
         user_id,
-        reason,
+        reason = %reason,
         user_message = user_message,
         error_message = %log_sample(&message),
         "BearWire run failed"
     );
-    let transitioned =
-        turn_runs::transition_run(pool, run_id, turn_runs::TurnRunState::Failed, Some(reason))
-            .await
-            .ok()
-            .flatten();
-    if transitioned.is_none() {
-        tracing::debug!(
-            session_id,
-            run_id,
-            reason,
-            "skipping BearWire run.failed persistence for already-terminal run"
-        );
-        return;
-    }
-    record_work_run_outcome_if_bound(
-        pool,
-        session_id,
-        run_id,
-        "failed",
-        Some(json!({ "category": reason, "message": message.clone() })),
-    )
-    .await;
-    let _ = turn_obligations::settle_outstanding_for_run(
-        pool,
-        run_id,
-        turn_obligations::TurnObligationState::Failed,
-    )
-    .await;
     let mut event = BearWireEvent::ephemeral(
         "run.failed",
         json!({
             "run_id": run_id,
             "message": message,
             "user_message": user_message,
-            "reason": reason,
+            "reason": reason.as_str(),
             "context": context,
         }),
     );
@@ -975,12 +1112,30 @@ pub(crate) async fn fail_run_lifecycle(
     event.human_id = Some(user_id.to_string());
     event.session_id = Some(session_id.to_string());
     event.run_id = Some(run_id.to_string());
-    let _ = bearwire_events::append_bearwire_event(
+    let finished = turn_runs::finish_run_with_bearwire_event(
         pool,
         session_id,
-        Some(bear_id),
-        Some(user_id),
+        run_id,
+        bear_id,
+        user_id,
+        turn_runs::TurnRunState::Failed,
+        Some(reason.as_str()),
         event,
+    )
+    .await
+    .unwrap_or_else(|err| {
+        tracing::error!(session_id, run_id, reason = %reason, error = %err, "failed to atomically persist BearWire run failure");
+        None
+    });
+    if finished.is_none() {
+        return;
+    }
+    record_work_run_outcome_if_bound(
+        pool,
+        session_id,
+        run_id,
+        "failed",
+        Some(json!({ "category": reason.as_str(), "message": message.clone() })),
     )
     .await;
     if let Ok(Some(session)) =
@@ -1025,7 +1180,7 @@ pub(crate) async fn fail_run_lifecycle(
                 "operational_outcome",
                 marker,
                 json!({
-                    "reason": reason,
+                    "reason": reason.as_str(),
                     "kind": marker_kind,
                     "retryable": marker_retryable,
                 }),
@@ -1041,7 +1196,7 @@ pub(crate) async fn persist_run_failed(
     run_id: &str,
     bear_id: uuid::Uuid,
     user_id: i32,
-    reason: &str,
+    reason: RunFailureReason,
     message: String,
     context: Option<serde_json::Value>,
 ) {
@@ -1078,28 +1233,46 @@ async fn settle_active_run_for_session(
     let stream_cancel = state.turn_cancellations.cancel_session(session_id);
     let active_turn = state.tool_turns.cancel_active_turn(session_id);
     let active_run = turn_runs::active_run_for_session(&state.sqlx_pool, session_id).await?;
+    let stream_run_ids = stream_cancel
+        .as_ref()
+        .map(|turn| turn.run_ids.clone())
+        .unwrap_or_default();
+    let cancelled_stream = stream_cancel.is_some();
+    let cancelled_tool_turn = active_turn.is_some();
     let mut settled_obligations = 0;
+    let mut event_sequence = None;
     if let Some(run) = &active_run {
-        let transitioned = turn_runs::transition_run(
+        let mut event = BearWireEvent::ephemeral(
+            "run.cancelled",
+            json!({
+                "session_id": session_id,
+                "cancelled": true,
+                "run_ids": stream_run_ids.clone(),
+                "run_id": run.run_id,
+                "reason": reason,
+                "superseded_by_run_id": superseded_by_run_id,
+                "cancelled_stream": cancelled_stream,
+                "cancelled_tool_turn": cancelled_tool_turn,
+            }),
+        );
+        event.bear_id = Some(bear_id.to_string());
+        event.human_id = Some(user_id.to_string());
+        event.session_id = Some(session_id.to_string());
+        event.run_id = Some(run.run_id.clone());
+        if let Some(finished) = turn_runs::finish_run_with_bearwire_event(
             &state.sqlx_pool,
+            session_id,
             &run.run_id,
+            bear_id,
+            user_id,
             turn_runs::TurnRunState::Cancelled,
             Some(reason),
+            event,
         )
-        .await?;
-        if transitioned.is_some() {
-            settled_obligations = turn_obligations::settle_outstanding_for_run(
-                &state.sqlx_pool,
-                &run.run_id,
-                turn_obligations::TurnObligationState::Cancelled,
-            )
-            .await?;
-            let _ = turn_steps::transition_active_steps_for_run(
-                &state.sqlx_pool,
-                &run.run_id,
-                "cancelled",
-            )
-            .await;
+        .await?
+        {
+            settled_obligations = finished.settled_obligations;
+            event_sequence = Some(finished.event_sequence);
             record_work_run_outcome_if_bound(
                 &state.sqlx_pool,
                 session_id,
@@ -1109,26 +1282,15 @@ async fn settle_active_run_for_session(
             )
             .await;
         }
-    }
-    let stream_run_ids = stream_cancel
-        .as_ref()
-        .map(|turn| turn.run_ids.clone())
-        .unwrap_or_default();
-    let cancelled_stream = stream_cancel.is_some();
-    let cancelled_tool_turn = active_turn.is_some();
-    let should_emit = active_run.is_some() || cancelled_stream || cancelled_tool_turn;
-    let event_sequence = if should_emit {
-        let run_id = active_run.as_ref().map(|run| run.run_id.clone());
+    } else if cancelled_stream || cancelled_tool_turn {
         let mut event = BearWireEvent::ephemeral(
             "run.cancelled",
             json!({
                 "session_id": session_id,
                 "cancelled": true,
                 "run_ids": stream_run_ids.clone(),
-                "run_id": run_id.clone(),
                 "reason": reason,
                 "superseded_by_run_id": superseded_by_run_id,
-                "settled_obligations": settled_obligations,
                 "cancelled_stream": cancelled_stream,
                 "cancelled_tool_turn": cancelled_tool_turn,
             }),
@@ -1136,8 +1298,7 @@ async fn settle_active_run_for_session(
         event.bear_id = Some(bear_id.to_string());
         event.human_id = Some(user_id.to_string());
         event.session_id = Some(session_id.to_string());
-        event.run_id = active_run.as_ref().map(|run| run.run_id.clone());
-        Some(
+        event_sequence = Some(
             bearwire_events::append_bearwire_event(
                 &state.sqlx_pool,
                 session_id,
@@ -1147,10 +1308,8 @@ async fn settle_active_run_for_session(
             )
             .await?
             .sequence_no,
-        )
-    } else {
-        None
-    };
+        );
+    }
     Ok(SettledRunLifecycle {
         run: active_run,
         stream_run_ids,
@@ -1198,6 +1357,108 @@ async fn record_work_run_outcome_if_bound(
     }
 }
 
+fn runtime_event_is_terminal(event: &den_protocol::RuntimeStreamEvent) -> bool {
+    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    matches!(
+        event,
+        RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::TurnCompleted { .. }
+                | RuntimeSemanticEvent::TurnFailed { .. }
+                | RuntimeSemanticEvent::TurnCancelled { .. }
+                | RuntimeSemanticEvent::Error { .. }
+        )
+    )
+}
+
+async fn finish_runtime_terminal_event(
+    pool: &sqlx::PgPool,
+    session_id: &str,
+    run_id: &str,
+    bear_id: uuid::Uuid,
+    user_id: i32,
+    event: &den_protocol::RuntimeStreamEvent,
+) {
+    use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    let (state, reason, outcome, detail) = match event {
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => (
+            turn_runs::TurnRunState::Completed,
+            "completed".to_string(),
+            "completed",
+            None,
+        ),
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
+            category,
+            message,
+            ..
+        }) => {
+            let category = category.as_str();
+            (
+                turn_runs::TurnRunState::Failed,
+                category.to_string(),
+                "failed",
+                Some(json!({ "category": category, "message": message })),
+            )
+        }
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => (
+            turn_runs::TurnRunState::Cancelled,
+            "cancelled".to_string(),
+            "cancelled",
+            None,
+        ),
+        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
+            message,
+            error_type,
+            ..
+        }) => (
+            turn_runs::TurnRunState::Failed,
+            error_type.clone().unwrap_or_else(|| "error".to_string()),
+            "failed",
+            Some(json!({ "category": error_type, "message": message })),
+        ),
+        _ => return,
+    };
+    let Some(mut terminal_event) = runtime_stream_event_to_bearwire_events(event.clone())
+        .into_iter()
+        .find(|event| {
+            matches!(
+                event.event_type.as_str(),
+                "run.completed" | "run.failed" | "run.cancelled"
+            )
+        })
+    else {
+        tracing::error!(
+            session_id,
+            run_id,
+            "terminal runtime event had no BearWire terminal projection"
+        );
+        return;
+    };
+    terminal_event.bear_id = Some(bear_id.to_string());
+    terminal_event.human_id = Some(user_id.to_string());
+    terminal_event.session_id = Some(session_id.to_string());
+    terminal_event.run_id = Some(run_id.to_string());
+    match turn_runs::finish_run_with_bearwire_event(
+        pool,
+        session_id,
+        run_id,
+        bear_id,
+        user_id,
+        state,
+        Some(&reason),
+        terminal_event,
+    )
+    .await
+    {
+        Ok(Some(_)) => {
+            record_work_run_outcome_if_bound(pool, session_id, run_id, outcome, detail).await;
+        }
+        Ok(None) => {}
+        Err(err) => {
+            tracing::error!(session_id, run_id, error = %err, "failed to atomically persist terminal runtime event");
+        }
+    }
+}
+
 async fn update_run_state_for_runtime_event(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -1209,6 +1470,10 @@ async fn update_run_state_for_runtime_event(
     started_at: Option<Instant>,
 ) -> Option<turn_obligations::TurnObligationRow> {
     use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+    if runtime_event_is_terminal(event) {
+        finish_runtime_terminal_event(pool, session_id, run_id, bear_id, user_id, event).await;
+        return None;
+    }
     match event {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
             tool_call_id,
@@ -1235,12 +1500,13 @@ async fn update_run_state_for_runtime_event(
             if den_owned_tool_call(tool_name) {
                 return None;
             }
-            let state = if effective_approval_required {
-                turn_runs::TurnRunState::WaitingForPermission
-            } else {
-                turn_runs::TurnRunState::WaitingForToolResult
-            };
-            let _ = turn_runs::transition_run(pool, run_id, state, None).await;
+            let _ = turn_runs::transition_run(
+                pool,
+                run_id,
+                turn_runs::TurnRunState::WaitingForClient,
+                None,
+            )
+            .await;
             let turn_step_id = match turn_steps::ensure_active_step(pool, run_id).await {
                 Ok(step) => Some(step.id),
                 Err(err) => {
@@ -1345,128 +1611,7 @@ async fn update_run_state_for_runtime_event(
             }
             obligation
         }
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { .. }) => {
-            let _ = turn_runs::transition_run(
-                pool,
-                run_id,
-                turn_runs::TurnRunState::Completed,
-                Some("completed"),
-            )
-            .await;
-            record_work_run_outcome_if_bound(pool, session_id, run_id, "completed", None).await;
-            let _ = turn_obligations::settle_outstanding_for_run(
-                pool,
-                run_id,
-                turn_obligations::TurnObligationState::Continued,
-            )
-            .await;
-            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "continued").await;
-            None
-        }
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
-            category,
-            message,
-            ..
-        }) => {
-            let reason = format!("{:?}", category);
-            tracing::warn!(
-                session_id,
-                run_id,
-                bear_id = %bear_id,
-                user_id,
-                %request_id,
-                elapsed_ms = started_at.map(|started| started.elapsed().as_millis()),
-                reason = %reason,
-                error_message = %log_sample(message),
-                "BearWire runtime turn failed"
-            );
-            let _ = turn_runs::transition_run(
-                pool,
-                run_id,
-                turn_runs::TurnRunState::Failed,
-                Some(&reason),
-            )
-            .await;
-            record_work_run_outcome_if_bound(
-                pool,
-                session_id,
-                run_id,
-                "failed",
-                Some(json!({ "category": reason, "message": message })),
-            )
-            .await;
-            let _ = turn_obligations::settle_outstanding_for_run(
-                pool,
-                run_id,
-                turn_obligations::TurnObligationState::Failed,
-            )
-            .await;
-            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
-            None
-        }
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => {
-            let _ = turn_runs::transition_run(
-                pool,
-                run_id,
-                turn_runs::TurnRunState::Cancelled,
-                Some("cancelled"),
-            )
-            .await;
-            record_work_run_outcome_if_bound(pool, session_id, run_id, "cancelled", None).await;
-            let _ = turn_obligations::settle_outstanding_for_run(
-                pool,
-                run_id,
-                turn_obligations::TurnObligationState::Cancelled,
-            )
-            .await;
-            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "cancelled").await;
-            None
-        }
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::Error {
-            message,
-            detail,
-            error_type,
-            request_id: event_request_id,
-            context,
-        }) => {
-            tracing::warn!(
-                session_id,
-                run_id,
-                bear_id = %bear_id,
-                user_id,
-                %request_id,
-                event_request_id = event_request_id.as_deref(),
-                elapsed_ms = started_at.map(|started| started.elapsed().as_millis()),
-                error_type = error_type.as_deref(),
-                error_message = %log_sample(message),
-                detail = detail.as_deref().map(log_sample),
-                context = context.as_ref().map(|value| log_sample(value.to_string())),
-                "BearWire runtime emitted error event"
-            );
-            let _ = turn_runs::transition_run(
-                pool,
-                run_id,
-                turn_runs::TurnRunState::Failed,
-                error_type.as_deref().or(Some("error")),
-            )
-            .await;
-            record_work_run_outcome_if_bound(
-                pool,
-                session_id,
-                run_id,
-                "error",
-                Some(json!({ "error_type": error_type, "message": message })),
-            )
-            .await;
-            let _ = turn_obligations::settle_outstanding_for_run(
-                pool,
-                run_id,
-                turn_obligations::TurnObligationState::Failed,
-            )
-            .await;
-            let _ = turn_steps::transition_active_steps_for_run(pool, run_id, "failed").await;
-            None
-        }
+
         _ => None,
     }
 }
@@ -1481,7 +1626,7 @@ pub(crate) async fn run_start_result(
     let session_id = request.session_id;
     let prompt = request.prompt;
     let prompt_context = request.prompt_context;
-    let client = request.client.unwrap_or_else(|| "bearwire".to_string());
+    let client = request.client.unwrap_or_else(|| DEFAULT_CLIENT.to_string());
     let existing = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
         user_id,
@@ -1506,8 +1651,20 @@ pub(crate) async fn run_start_result(
     let client_context = request.client_context;
     let workspace_roots = workspace_roots_from_client_context(client_context.as_ref());
     let requested_mode = request.requested_mode;
-    let client_tools =
-        client_tool_descriptors_from_context(client_context.as_ref(), requested_mode.as_deref());
+    // `TurnAuthority` is the single local authority seam for BearWire's tool
+    // surface and prompt permission envelope. The concrete stance is resolved
+    // below for runtime binding; BearWire sessions use Pair-equivalent tool
+    // authority unless a later typed work-run authority input says otherwise.
+    let turn_authority = den_core::client_tools::TurnAuthority::for_session_mode(
+        den_core::BearStance::Pair,
+        requested_mode.as_deref().unwrap_or("ask"),
+        None,
+    );
+    let client_tools = client_tool_descriptors_from_context_with_authority(
+        client_context.as_ref(),
+        &turn_authority,
+    );
+    let read_only_runtime_context = turn_authority.read_only_runtime_context();
     // Stance signal: a session bound to a live work run via `work.checkout`
     // runs in the Work stance; every other BearWire session stays Pair.
     let stance =
@@ -1522,8 +1679,8 @@ pub(crate) async fn run_start_result(
     let binding_id = bears_db::profile_binding_id(&state.sqlx_pool, bear.id, stance)
         .await?
         .ok_or_else(|| {
-            CustomError::NotFound(format!(
-                "Bear {} profile binding not found",
+            CustomError::System(format!(
+                "Bear {} profile binding not configured",
                 stance.as_str()
             ))
         })?;
@@ -1563,14 +1720,17 @@ pub(crate) async fn run_start_result(
         .await?;
     }
 
-    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let run_id = TurnRunId::new(format!("run_{}", Uuid::new_v4().simple()))?;
+    let session_run_id = run_id.to_string();
+    let session_id = ClientSessionId::new(session_id.clone())?;
+    let session_id_string = session_id.to_string();
     let superseded = settle_active_run_for_session(
         state,
-        &session_id,
+        session_id.as_str(),
         bear.id,
         user_id,
         "superseded_by_new_run",
-        Some(&run_id),
+        Some(run_id.as_str()),
     )
     .await?;
     if superseded.settled() {
@@ -1587,21 +1747,22 @@ pub(crate) async fn run_start_result(
     }
 
     let run =
-        turn_runs::create_run(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id).await?;
+        turn_runs::create_run_with_ids(&state.sqlx_pool, &run_id, &session_id, bear.id, user_id)
+            .await?;
     let mut accepted = BearWireEvent::ephemeral(
         "run.accepted",
         json!({
-            "run_id": run_id.clone(),
-            "session_id": session_id.clone(),
+            "run_id": run_id.as_str(),
+            "session_id": session_id.as_str(),
         }),
     );
     accepted.bear_id = Some(bear.id.to_string());
     accepted.human_id = Some(user_id.to_string());
-    accepted.session_id = Some(session_id.clone());
-    accepted.run_id = Some(run_id.clone());
+    accepted.session_id = Some(session_id.to_string());
+    accepted.run_id = Some(run_id.to_string());
     let accepted = bearwire_events::append_bearwire_event(
         &state.sqlx_pool,
-        &session_id,
+        session_id.as_str(),
         Some(bear.id),
         Some(user_id),
         accepted,
@@ -1610,22 +1771,23 @@ pub(crate) async fn run_start_result(
 
     let request_id = Uuid::new_v4();
     let (cancel_handle, mut cancel_rx) = state.turn_cancellations.register(
-        session_id.clone(),
+        session_id_string.clone(),
         request_id,
         Some(upstream_target.clone()),
     );
-    let _ = cancel_handle.record_run_id(&run_id);
+    let _ = cancel_handle.record_run_id(run_id.as_str());
 
     let pool = state.sqlx_pool.clone();
     let config = state.config.clone();
     let memory_stores = state.memory_stores.clone();
     let bear_slug = bear.slug.clone();
     let bear_id = bear.id;
-    let session_for_task = session_id.clone();
+    let session_for_task = session_id_string.clone();
     let conversation_for_task = conversation_id.clone();
     let upstream_target_for_task = upstream_target.clone();
     let prompt_for_task = prompt.clone();
-    let run_id_for_task = run_id.clone();
+    let read_only_runtime_context_for_task = read_only_runtime_context.clone();
+    let run_id_for_task = session_run_id.clone();
     let client_tools_for_task = client_tools.clone();
     let api_style_for_task = resolved_model.api_style;
     let (eager_prefix_tx, eager_prefix_rx) = tokio::sync::oneshot::channel::<()>();
@@ -1715,8 +1877,11 @@ pub(crate) async fn run_start_result(
                 prompt: &prompt_for_task,
                 prompt_context: prompt_context.clone(),
                 client_tools: Some(client_tools_for_task),
-                runtime_context: None,
-                runtime_context_len: 0,
+                runtime_context: read_only_runtime_context_for_task.as_deref(),
+                runtime_context_len: read_only_runtime_context_for_task
+                    .as_deref()
+                    .map(str::len)
+                    .unwrap_or(0),
                 stream_tokens: true,
                 api_style: Some(api_style_for_task),
             },
@@ -1742,9 +1907,22 @@ pub(crate) async fn run_start_result(
                 )
                 .await;
                 let mut first_event_seen = false;
+                let mut provider_activity_seen = false;
                 let mut terminal_or_wait_seen = false;
                 let mut cancellation_seen = false;
+                let idle_watchdog_timeout = crate::methods::client::continuation_watchdog_timeout();
+                let handshake_timeout = den_runtime::agent_loop::native_llm_handshake_timeout();
+                let first_event_watchdog_timeout =
+                    crate::methods::client::continuation_first_event_watchdog_timeout(
+                        handshake_timeout,
+                        idle_watchdog_timeout,
+                    );
                 loop {
+                    let watchdog_timeout = if first_event_seen || provider_activity_seen {
+                        idle_watchdog_timeout
+                    } else {
+                        first_event_watchdog_timeout
+                    };
                     tokio::select! {
                         changed = cancel_rx.changed() => {
                             if changed.is_ok() && *cancel_rx.borrow() {
@@ -1761,11 +1939,44 @@ pub(crate) async fn run_start_result(
                                 break;
                             }
                         }
-                        item = stream.next() => {
+                        timed = tokio::time::timeout(watchdog_timeout, stream.next()) => {
+                            let item = match timed {
+                                Ok(item) => item,
+                                Err(_) => {
+                                    if let Some(tx) = eager_prefix_tx.take() {
+                                        let _ = tx.send(());
+                                    }
+                                    persist_run_failed(
+                                        &pool,
+                                        &session_for_task,
+                                        &run_id_for_task,
+                                        bear_id,
+                                        user_id,
+                                        RunFailureReason::InitialStreamWatchdogTimeout,
+                                        if provider_activity_seen {
+                                            format!("Provider activity stopped for {}ms before the run reached a terminal or client-wait event.", watchdog_timeout.as_millis())
+                                        } else {
+                                            format!("The provider did not begin streaming within the {}ms initial handshake window.", watchdog_timeout.as_millis())
+                                        },
+                                        Some(json!({
+                                            "request_id": request_id,
+                                            "provider_activity_seen": provider_activity_seen,
+                                            "first_event_seen": first_event_seen,
+                                            "watchdog_timeout_ms": watchdog_timeout.as_millis(),
+                                        })),
+                                    )
+                                    .await;
+                                    break;
+                                }
+                            };
                             let Some(item) = item else {
                                 break;
                             };
                             match item {
+                                Ok(den_protocol::RuntimeStreamEvent::ProviderActivity) => {
+                                    provider_activity_seen = true;
+                                    continue;
+                                }
                                 Ok(runtime_event) => {
                                     if runtime_event_is_terminal_or_wait(&runtime_event) {
                                         terminal_or_wait_seen = true;
@@ -1817,7 +2028,7 @@ pub(crate) async fn run_start_result(
                                         &run_id_for_task,
                                         bear_id,
                                         user_id,
-                                        "stream_error",
+                                        RunFailureReason::StreamError,
                                         err.to_string(),
                                         None,
                                     )
@@ -1838,7 +2049,7 @@ pub(crate) async fn run_start_result(
                         &run_id_for_task,
                         bear_id,
                         user_id,
-                        "stream_ended_without_runtime_terminal",
+                        RunFailureReason::StreamEndedWithoutRuntimeTerminal,
                         if first_event_seen {
                             "The model stream ended after non-terminal runtime events but did not emit a tool request, completion, cancellation, or error.".to_string()
                         } else {
@@ -1862,7 +2073,7 @@ pub(crate) async fn run_start_result(
                     &run_id_for_task,
                     bear_id,
                     user_id,
-                    "start_failed",
+                    RunFailureReason::StartFailed,
                     err.to_string(),
                     None,
                 )
@@ -2042,6 +2253,17 @@ pub(crate) async fn run_state_result(
         })
         .cloned()
         .collect::<Vec<_>>();
+    let blocking_reason = turn_obligations::BlockingReason::from_expected_actions(
+        open_obligations.iter().filter_map(|obligation| {
+            obligation
+                .get("expected_responder_action")
+                .and_then(Value::as_str)
+                .and_then(|action| {
+                    turn_obligations::ExpectedResponderAction::try_from_storage(action).ok()
+                })
+        }),
+    )
+    .map(turn_obligations::BlockingReason::as_str);
     let results = run_results_payload(&state.sqlx_pool, &run.run_id).await?;
     let events = run_recent_events_payload(
         &state.sqlx_pool,
@@ -2053,6 +2275,7 @@ pub(crate) async fn run_state_result(
     Ok(json!({
         "kind": "run_state",
         "run": run,
+        "blocking_reason": blocking_reason,
         "open_obligations": open_obligations,
         "obligations": obligations,
         "results": results,
@@ -2123,6 +2346,26 @@ mod tests {
     }
 
     #[test]
+    fn run_failure_reasons_preserve_persisted_strings() {
+        assert_eq!(
+            RunFailureReason::ContinuationWatchdogTimeout.as_str(),
+            "continuation_watchdog_timeout"
+        );
+        assert_eq!(
+            RunFailureReason::ContinuationStreamError.as_str(),
+            "continuation_stream_error"
+        );
+        assert_eq!(
+            RunFailureReason::ContinuationStreamEndedWithoutRuntimeTerminal.as_str(),
+            "continuation_stream_ended_without_runtime_terminal"
+        );
+        assert_eq!(
+            RunFailureReason::ContinuationStartFailed.as_str(),
+            "continuation_start_failed"
+        );
+    }
+
+    #[test]
     fn runtime_upstream_target_prefers_resolved_conversation_for_history() {
         assert_eq!(
             runtime_upstream_target("new-acp-zed-pending", Some("den-conv-existing")),
@@ -2163,7 +2406,7 @@ mod tests {
             handle: "openai/gpt-5.5".to_string(),
             provider_model_id: "gpt-5.5".to_string(),
             api_style: den_llm::LlmApiStyle::ResponsesStream,
-            source: "conversation_explicit",
+            source: ResolvedRunModelSource::ConversationExplicit,
         };
 
         assert!(available_model_matches(
@@ -2181,6 +2424,85 @@ mod tests {
     }
 
     #[test]
+    fn pair_api_style_prefers_responses_unless_catalog_explicitly_denies_support() {
+        assert_eq!(
+            pair_api_style_for_catalog_support(None),
+            den_llm::LlmApiStyle::ResponsesStream
+        );
+        assert_eq!(
+            pair_api_style_for_catalog_support(Some(true)),
+            den_llm::LlmApiStyle::ResponsesStream
+        );
+        assert_eq!(
+            pair_api_style_for_catalog_support(Some(false)),
+            den_llm::LlmApiStyle::ChatCompletionsStream
+        );
+    }
+
+    #[test]
+    fn pair_model_capabilities_allow_unknown_tool_support() {
+        let entry = BifrostCatalogEntry {
+            available: true,
+            provider: "provider-a".to_string(),
+            provider_model_id: "model-unknown-tools".to_string(),
+            gateway_handle: "provider-a/model-unknown-tools".to_string(),
+            display_name: None,
+            context_window: 128_000,
+            max_output_tokens: Some(4096),
+            supports_tools: None,
+            supports_responses_api: None,
+            supports_vision: None,
+        };
+
+        ensure_pair_model_capabilities(&entry, &entry.gateway_handle)
+            .expect("unknown optional metadata must not block Pair");
+    }
+
+    #[test]
+    fn pair_model_capabilities_reject_explicit_tool_denial() {
+        let mut entry = BifrostCatalogEntry {
+            available: true,
+            provider: "provider-a".to_string(),
+            provider_model_id: "model-no-tools".to_string(),
+            gateway_handle: "provider-a/model-no-tools".to_string(),
+            display_name: None,
+            context_window: 128_000,
+            max_output_tokens: Some(4096),
+            supports_tools: Some(false),
+            supports_responses_api: None,
+            supports_vision: None,
+        };
+
+        let err = ensure_pair_model_capabilities(&entry, &entry.gateway_handle)
+            .expect_err("explicit tool denial must block Pair");
+        assert!(err.to_string().contains("does not support tool calling"));
+        entry.supports_tools = Some(true);
+        ensure_pair_model_capabilities(&entry, &entry.gateway_handle)
+            .expect("explicit tool support must allow Pair");
+    }
+
+    #[test]
+    fn unknown_capability_metadata_lists_unknown_fields() {
+        let entry = BifrostCatalogEntry {
+            available: true,
+            provider: "provider-a".to_string(),
+            provider_model_id: "model-partial-metadata".to_string(),
+            gateway_handle: "provider-a/model-partial-metadata".to_string(),
+            display_name: None,
+            context_window: 128_000,
+            max_output_tokens: Some(4096),
+            supports_tools: Some(true),
+            supports_responses_api: None,
+            supports_vision: None,
+        };
+
+        assert_eq!(
+            unknown_capability_metadata(&entry),
+            vec!["supports_responses_api", "supports_vision"]
+        );
+    }
+
+    #[test]
     fn canonical_client_waiting_ids_require_nested_ids() {
         let event = BearWireEvent::ephemeral(
             "client.waiting",
@@ -2192,8 +2514,34 @@ mod tests {
 
         assert_eq!(
             canonical_client_waiting_ids(&event),
-            Some(("perm-1", "call-1"))
+            Some(("perm-1".to_string(), "call-1".to_string()))
         );
+    }
+
+    #[test]
+    fn canonical_client_waiting_ids_require_string_ids() {
+        let event = BearWireEvent::ephemeral(
+            "client.waiting",
+            json!({
+                "tool_call": { "id": 1 },
+                "permission": { "id": "perm-1" }
+            }),
+        );
+
+        assert_eq!(canonical_client_waiting_ids(&event), None);
+    }
+
+    #[test]
+    fn canonical_client_waiting_ids_reject_blank_ids() {
+        let event = BearWireEvent::ephemeral(
+            "client.waiting",
+            json!({
+                "tool_call": { "id": "  " },
+                "permission": { "id": "perm-1" }
+            }),
+        );
+
+        assert_eq!(canonical_client_waiting_ids(&event), None);
     }
 
     #[test]
@@ -2229,7 +2577,13 @@ mod tests {
                 }]
             }
         });
-        let descriptors = client_tool_descriptors_from_context(Some(&context), Some("write"));
+        let authority = den_core::client_tools::TurnAuthority::for_session_mode(
+            den_core::BearStance::Pair,
+            "write",
+            None,
+        );
+        let descriptors =
+            client_tool_descriptors_from_context_with_authority(Some(&context), &authority);
         let names = descriptor_names(&descriptors);
         assert!(names.contains(&"fs_read_text_file"));
         assert!(names.contains(&"fs_find_paths"));
@@ -2260,7 +2614,13 @@ mod tests {
                 }]
             }
         });
-        let descriptors = client_tool_descriptors_from_context(Some(&context), Some("ask"));
+        let authority = den_core::client_tools::TurnAuthority::for_session_mode(
+            den_core::BearStance::Pair,
+            "ask",
+            None,
+        );
+        let descriptors =
+            client_tool_descriptors_from_context_with_authority(Some(&context), &authority);
         let names = descriptor_names(&descriptors);
         assert!(names.contains(&"mcp__chrome_devtools_custom__click"));
     }

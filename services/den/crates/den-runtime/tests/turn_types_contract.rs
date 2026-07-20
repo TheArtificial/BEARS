@@ -11,15 +11,15 @@ use uuid::Uuid;
 
 #[test]
 fn typed_string_ids_reject_empty_values() {
-    assert!(TurnRunId::new("run-1").is_some());
-    assert!(ClientSessionId::new("session-1").is_some());
-    assert!(ToolCallId::new("call-1").is_some());
-    assert!(PermissionId::new("perm-1").is_some());
-    assert!(ResponderRefId::new("slack-thread-1").is_some());
-    assert!(SurfaceActionId::new("action-1").is_some());
+    assert!(TurnRunId::new("run-1").is_ok());
+    assert!(ClientSessionId::new("session-1").is_ok());
+    assert!(ToolCallId::new("call-1").is_ok());
+    assert!(PermissionId::new("perm-1").is_ok());
+    assert!(ResponderRefId::new("slack-thread-1").is_ok());
+    assert!(SurfaceActionId::new("action-1").is_ok());
 
-    assert!(TurnRunId::new("").is_none());
-    assert!(ClientSessionId::new("   ").is_none());
+    assert!(TurnRunId::new("").is_err());
+    assert!(ClientSessionId::new("   ").is_err());
 }
 
 #[test]
@@ -37,10 +37,8 @@ fn turn_state_parsers_accept_known_values_and_reject_unknown_values() {
         TurnRunState::try_from_storage("waiting_for_client").unwrap(),
         TurnRunState::WaitingForClient
     );
-    assert_eq!(
-        TurnRunState::try_from_storage("waiting_for_tool_result").unwrap(),
-        TurnRunState::WaitingForToolResult
-    );
+    assert!(TurnRunState::try_from_storage("waiting_for_tool_result").is_err());
+    assert!(TurnRunState::try_from_storage("waiting_for_permission").is_err());
     assert!(TurnRunState::try_from_storage("bearwire_waiting").is_err());
 
     assert_eq!(

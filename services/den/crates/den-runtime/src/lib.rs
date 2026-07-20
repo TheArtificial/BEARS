@@ -64,6 +64,8 @@ pub mod agent_loop;
 /// The native runtime provider: profile turns, OpenAI streaming, web-chat loop.
 pub mod native_runtime;
 
+/// Internal ops/audit conversation lifecycle review records.
+pub mod conversation_review;
 /// Pair-session reflection proposal extraction.
 pub mod pair_reflection;
 /// Reflection/curation worker subsystem: the memory-curate conductor + conversation lanes.
@@ -86,6 +88,7 @@ pub use runtime::compaction as runtime_compaction;
 pub use runtime::compaction_observability as runtime_compaction_observability;
 pub use runtime::compaction_store as runtime_compaction_store;
 pub use runtime::conversations as runtime_conversations;
+pub use runtime::focus_context as runtime_focus_context;
 pub use runtime::pair_turn;
 pub use runtime::provider as runtime_provider;
 pub use runtime::role as role_runtime;

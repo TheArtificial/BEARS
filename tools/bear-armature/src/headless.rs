@@ -113,6 +113,12 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
         deadline.as_secs()
     );
 
+    // Headless bypasses ACP's session/prompt request handler, so register the
+    // turn explicitly. Without this, streamed output and armature-local tool
+    // updates are incorrectly discarded as stale.
+    let turn_token = Uuid::new_v4();
+    crate::register_prompt_turn_for_session(&shared_state, &session_id, turn_token, None).await;
+
     // ponytail: bearwire::handle_prompt has its own 600s internal ceiling per
     // turn; long work orders hit that before multi-hour deadlines. Upgrade
     // path: thread the checkout deadline into the poll loop.
@@ -130,7 +136,7 @@ pub(crate) async fn run_headless(http: &reqwest::Client, runtime: &RuntimeConfig
             context.raw.clone(),
             None,
             MODE_WRITE,
-            Uuid::new_v4(),
+            turn_token,
         ),
     )
     .await;
@@ -169,6 +175,7 @@ fn headless_adapter_state() -> (AdapterState, AdapterSharedState) {
         client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
         last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
+        surface_tool_statuses: Arc::new(TokioMutex::new(HashMap::new())),
         tool_tasks: crate::tool_tasks::ToolTaskRegistry::default(),
         mcp_registry: crate::tools::mcp::McpRegistry::default(),
         approval_cache: crate::approvals::ApprovalCache::default(),

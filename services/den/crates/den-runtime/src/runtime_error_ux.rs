@@ -1,3 +1,6 @@
+use den_service::bears::prompt_fragments::{
+    render_turn_fragment, repository_prompt_fragment_registry,
+};
 use serde_json::{json, Value};
 
 const LOG_SAMPLE_CHARS: usize = 2_000;
@@ -16,6 +19,87 @@ pub struct RuntimeHistoryMarkerProjection {
     pub kind: String,
     pub text: String,
     pub metadata: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeIssueSeverity {
+    Info,
+    Warning,
+    Recoverable,
+    UserActionRequired,
+    Fatal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeIssueDisposition {
+    LogOnly,
+    SurfaceDiagnostic,
+    SteerModelAndContinue,
+    AskUserAndPause,
+    AbortRun,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeIssuePolicy {
+    pub severity: RuntimeIssueSeverity,
+    pub disposition: RuntimeIssueDisposition,
+    pub code: &'static str,
+    pub side_effects_blocked: bool,
+    pub required_next_tool: Option<&'static str>,
+}
+
+impl RuntimeIssuePolicy {
+    pub const fn soft_warning(code: &'static str) -> Self {
+        Self {
+            severity: RuntimeIssueSeverity::Warning,
+            disposition: RuntimeIssueDisposition::SurfaceDiagnostic,
+            code,
+            side_effects_blocked: true,
+            required_next_tool: None,
+        }
+    }
+
+    pub const fn user_action_required(code: &'static str) -> Self {
+        Self {
+            severity: RuntimeIssueSeverity::UserActionRequired,
+            disposition: RuntimeIssueDisposition::AskUserAndPause,
+            code,
+            side_effects_blocked: true,
+            required_next_tool: None,
+        }
+    }
+
+    pub const fn fatal(code: &'static str) -> Self {
+        Self {
+            severity: RuntimeIssueSeverity::Fatal,
+            disposition: RuntimeIssueDisposition::AbortRun,
+            code,
+            side_effects_blocked: false,
+            required_next_tool: None,
+        }
+    }
+
+    pub const fn recoverable_required_next_tool(
+        code: &'static str,
+        required_next_tool: &'static str,
+    ) -> Self {
+        Self {
+            severity: RuntimeIssueSeverity::Recoverable,
+            disposition: RuntimeIssueDisposition::SteerModelAndContinue,
+            code,
+            side_effects_blocked: true,
+            required_next_tool: Some(required_next_tool),
+        }
+    }
+}
+
+pub const fn checkpoint_follow_through_required_policy(
+    required_next_tool: &'static str,
+) -> RuntimeIssuePolicy {
+    RuntimeIssuePolicy::recoverable_required_next_tool(
+        "checkpoint_follow_through_required",
+        required_next_tool,
+    )
 }
 
 pub fn log_sample(value: impl AsRef<str>) -> String {
@@ -57,39 +141,17 @@ pub fn normalized_operational_outcome(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let (kind, retryable, subsystem, summary) = match reason {
-        "continuation_stream_error" => (
-            "provider_stream_error",
-            true,
-            "llm_stream_transport",
-            "Previous turn ended with a retryable provider stream transport error after continuation started. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
-        ),
-        "continuation_watchdog_timeout" => (
-            "continuation_timeout",
-            true,
-            "continuation_runtime",
-            "Previous turn timed out after a client/local-tool result was received and continuation started, but the resumed runtime produced no event before the watchdog expired. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
-        ),
-        "continuation_start_failed" => (
-            "continuation_start_failed",
-            true,
-            "continuation_runtime",
-            "Previous turn failed while starting continuation after client results were delivered. Recent tool results were preserved, but no final answer was delivered. Continue from the latest successful state rather than assuming the task completed.",
-        ),
-        "runtime_internal" if is_budget_or_loop_failure(reason, message) => (
-            "turn_budget_exhausted",
-            false,
-            "turn_budget",
-            "Previous turn stopped for budget or loop-safety reasons before delivering a final answer. Recent tool results were preserved. There is no infrastructure repair action for the model; continue from the latest successful state only if the user asks to proceed.",
-        ),
-        _ => (
-            "operational_failure",
-            false,
-            "runtime",
-            "Previous turn ended with an operational failure before final answer delivery. Do not assume the requested work completed; continue from the latest successful state.",
-        ),
+    let (kind, retryable, subsystem) = match reason {
+        "continuation_stream_error" => ("provider_stream_error", true, "llm_stream_transport"),
+        "continuation_watchdog_timeout" => ("continuation_timeout", true, "continuation_runtime"),
+        "continuation_start_failed" => ("continuation_start_failed", true, "continuation_runtime"),
+        "runtime_internal" if is_budget_or_loop_failure(reason, message) => {
+            ("turn_budget_exhausted", false, "turn_budget")
+        }
+        _ => ("operational_failure", false, "runtime"),
     };
-    let summary = autonomous_resume.unwrap_or(summary);
+    let rendered_summary = render_operational_outcome_summary(kind);
+    let summary = autonomous_resume.unwrap_or(&rendered_summary);
     let mut content = json!({
             "source": "den.runtime",
             "event": "operational_outcome",
@@ -109,6 +171,24 @@ pub fn normalized_operational_outcome(
     (summary.to_string(), content)
 }
 
+fn render_operational_outcome_summary(kind: &str) -> String {
+    render_operational_outcome_summary_from_fragments(kind).unwrap_or_else(|_| {
+        // ponytail: fallback avoids losing runtime error reporting if fragment loading fails;
+        // upgrade path is to plumb DenError through normalized_operational_outcome callers.
+        "Previous turn ended before final answer delivery. Verify persisted state, recent tool results, and any task/worktree status before deciding whether there is work left to do."
+            .to_string()
+    })
+}
+
+fn render_operational_outcome_summary_from_fragments(
+    kind: &str,
+) -> Result<String, den_core::DenError> {
+    let fragments = repository_prompt_fragment_registry()?;
+    let fragment = fragments.require("runtime_operational_outcome_summary")?;
+    render_turn_fragment(fragment, &json!({ "outcome": { "kind": kind } }))
+        .map(|text| text.trim().to_string())
+}
+
 pub fn is_budget_or_loop_failure(reason: &str, message: &str) -> bool {
     reason == "runtime_internal" && (message.contains("budget") || message.contains("rule of ko"))
 }
@@ -120,7 +200,29 @@ pub fn run_failed_user_message(reason: &str, message: &str, bear_name: &str) -> 
             display_bear_name(bear_name)
         ));
     }
+    if is_llm_provider_retry_exhausted(message) {
+        return Some(format!(
+            "{} could not reach the LLM provider after retrying this turn. Den already waited 2 seconds, then 4 seconds, then 54 seconds before giving up. You can send another message to retry, or close this session if you do not want to wait for another timeout.",
+            display_bear_name(bear_name)
+        ));
+    }
+    if is_llm_stream_idle_timeout(reason, message) {
+        return Some(format!(
+            "{} lost the LLM provider stream after it produced no data for 30 seconds. Recent tool results were preserved, but no final answer was delivered. You can send another message to retry, or close this session if you do not want to wait for another timeout.",
+            display_bear_name(bear_name)
+        ));
+    }
     None
+}
+
+fn is_llm_provider_retry_exhausted(message: &str) -> bool {
+    message.contains("LLM provider hiccup persisted after")
+        && message.contains("ending the turn after retry backoff")
+}
+
+fn is_llm_stream_idle_timeout(reason: &str, message: &str) -> bool {
+    reason == "continuation_stream_error"
+        && message.contains("LLM byte stream produced no data for 30s")
 }
 
 pub fn run_failed_history_marker(reason: &str, message: &str, bear_name: &str) -> Option<String> {
@@ -167,6 +269,14 @@ pub fn failure_context_with_diagnostics(
         if let Some(limit_ms) = numeric_message_field(message, "limit=") {
             diagnostic["limit_ms"] = json!(limit_ms);
         }
+    } else if is_llm_provider_retry_exhausted(message) {
+        diagnostic["class"] = json!("llm_provider_retry_exhausted");
+        diagnostic["model_action"] = json!("report_retry_pause_and_wait_for_user_retry");
+        diagnostic["retry_pauses_seconds"] = json!([2, 4, 54]);
+    } else if is_llm_stream_idle_timeout(reason, message) {
+        diagnostic["class"] = json!("llm_stream_idle_timeout");
+        diagnostic["model_action"] = json!("wait_for_user_retry_after_reporting_stream_timeout");
+        diagnostic["idle_timeout_seconds"] = json!(30);
     }
     object.insert("diagnostic".to_string(), diagnostic);
     Some(context)
@@ -264,6 +374,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn runtime_issue_policy_classifies_checkpoint_follow_through_as_recoverable() {
+        let policy = checkpoint_follow_through_required_policy("checkpoint");
+
+        assert_eq!(policy.severity, RuntimeIssueSeverity::Recoverable);
+        assert_eq!(
+            policy.disposition,
+            RuntimeIssueDisposition::SteerModelAndContinue
+        );
+        assert_eq!(policy.code, "checkpoint_follow_through_required");
+        assert!(policy.side_effects_blocked);
+        assert_eq!(policy.required_next_tool, Some("checkpoint"));
+    }
+
+    #[test]
+    fn runtime_issue_policy_keeps_user_pauses_and_fatals_distinct() {
+        let pause = RuntimeIssuePolicy::user_action_required("confirmation_required");
+        assert_eq!(pause.severity, RuntimeIssueSeverity::UserActionRequired);
+        assert_eq!(pause.disposition, RuntimeIssueDisposition::AskUserAndPause);
+        assert!(pause.side_effects_blocked);
+
+        let fatal = RuntimeIssuePolicy::fatal("database_invariant_failed");
+        assert_eq!(fatal.severity, RuntimeIssueSeverity::Fatal);
+        assert_eq!(fatal.disposition, RuntimeIssueDisposition::AbortRun);
+        assert!(!fatal.side_effects_blocked);
+    }
+
+    #[test]
     fn budget_failure_has_friendly_user_message_and_diagnostics() {
         let message = "I stopped because this turn exhausted its wall-clock budget \
             (elapsed=252985ms/limit=240000ms).";
@@ -306,6 +443,88 @@ mod tests {
             .contains("Operational note from Den"));
         assert_eq!(projection.content["kind"], "turn_budget_exhausted");
         assert_eq!(projection.content["retryable"], false);
+    }
+
+    #[test]
+    fn generic_operational_outcome_tells_model_to_verify_persisted_state() {
+        let projection = run_failure_projection(
+            "runtime_internal_unknown",
+            "unexpected runtime failure",
+            "run-1",
+            "Builder Bear",
+            None,
+        );
+
+        assert!(
+            projection.model_summary.contains("Verify persisted state"),
+            "{}",
+            projection.model_summary
+        );
+        assert!(
+            projection
+                .model_summary
+                .contains("before deciding whether there is work left to do"),
+            "{}",
+            projection.model_summary
+        );
+        assert!(!projection
+            .model_summary
+            .contains("continue from the latest successful state"));
+        assert_eq!(projection.content["kind"], "operational_failure");
+        assert_eq!(projection.content["retryable"], false);
+    }
+
+    #[test]
+    fn llm_provider_retry_exhaustion_has_friendly_user_message_and_diagnostics() {
+        let message = "LLM provider hiccup persisted after 4 attempts for responses_stream model openai/gpt-5.5; retry pauses were 2s, 4s, and 54s; ending the turn after retry backoff. Last error: HTTP 503 Service Unavailable: overloaded";
+
+        let projection =
+            run_failure_projection("runtime_internal", message, "run-1", "Builder Bear", None);
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("waited 2 seconds, then 4 seconds, then 54 seconds"));
+        assert!(user_message.contains("send another message to retry"));
+        assert!(user_message.contains("close this session"));
+
+        let context = projection.diagnostic_context.expect("diagnostic context");
+        assert_eq!(
+            context["diagnostic"]["class"],
+            "llm_provider_retry_exhausted"
+        );
+        assert_eq!(
+            context["diagnostic"]["model_action"],
+            "report_retry_pause_and_wait_for_user_retry"
+        );
+        assert_eq!(
+            context["diagnostic"]["retry_pauses_seconds"],
+            json!([2, 4, 54])
+        );
+    }
+
+    #[test]
+    fn llm_stream_idle_timeout_has_friendly_user_message_and_diagnostics() {
+        let message = "Server Error: LLM byte stream produced no data for 30s";
+
+        let projection = run_failure_projection(
+            "continuation_stream_error",
+            message,
+            "run-1",
+            "Builder Bear",
+            None,
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("produced no data for 30 seconds"));
+        assert!(user_message.contains("send another message to retry"));
+        assert!(user_message.contains("close this session"));
+
+        let context = projection.diagnostic_context.expect("diagnostic context");
+        assert_eq!(context["diagnostic"]["class"], "llm_stream_idle_timeout");
+        assert_eq!(
+            context["diagnostic"]["model_action"],
+            "wait_for_user_retry_after_reporting_stream_timeout"
+        );
+        assert_eq!(context["diagnostic"]["idle_timeout_seconds"], 30);
     }
 
     #[test]

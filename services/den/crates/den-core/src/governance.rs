@@ -1,6 +1,6 @@
-//! Governance mode (`Mode`) — the run-scoped supervision dial from ADR-0039.
+//! Governance — the run-scoped supervision dial from ADR-0039.
 //!
-//! A governance mode answers *how is this execution being supervised right now?*
+//! Governance answers *how is this execution being supervised right now?*
 //! It is orthogonal to the trust profile ([`crate::BearProfile`], the durable
 //! trust/memory contract) and mutable over the life of one run. This seeds the
 //! code half of ADR-0039 in `den-core`; the concrete `WorkspaceSession` +
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// Run-scoped supervision contract (ADR-0039 §2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GovernanceMode {
+pub enum Governance {
     /// Human present (client/web); live collaboration, approvals via client/channel.
     Interactive,
     /// Human recently disconnected; finish in-flight turn, await return.
@@ -27,7 +27,7 @@ pub enum GovernanceMode {
     Frozen,
 }
 
-impl GovernanceMode {
+impl Governance {
     pub const ALL: [Self; 5] = [
         Self::Interactive,
         Self::Grace,
@@ -71,13 +71,13 @@ impl GovernanceMode {
     }
 }
 
-impl fmt::Display for GovernanceMode {
+impl fmt::Display for Governance {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl FromStr for GovernanceMode {
+impl FromStr for Governance {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -87,13 +87,13 @@ impl FromStr for GovernanceMode {
             "autonomous_continuation" => Ok(Self::AutonomousContinuation),
             "observational" => Ok(Self::Observational),
             "frozen" => Ok(Self::Frozen),
-            other => Err(format!("unknown governance mode: {other}")),
+            other => Err(format!("unknown governance: {other}")),
         }
     }
 }
 
 /// Coarse interactive/autonomous run axis (ADR-0037), derived from
-/// [`GovernanceMode`].
+/// [`Governance`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunMode {

@@ -1,5 +1,10 @@
+use std::fmt;
+
 use axum::http::HeaderMap;
+use serde::Deserialize;
 use serde_json::{json, Value};
+use sqlx::types::time::OffsetDateTime;
+use uuid::Uuid;
 
 use bearwire_protocol::{
     methods::ConversationHistoryRequest,
@@ -11,6 +16,203 @@ use den_service::{client_sessions, conversation::persistence, DenState};
 
 use crate::auth::authenticated_bear;
 use crate::methods::parse_params;
+
+pub(crate) const FOCUS_TITLE_PREFIX: &str = "⌖ ";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DocketSurfaceEventId(Uuid);
+
+impl fmt::Display for DocketSurfaceEventId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "docket:{}", self.0)
+    }
+}
+
+impl DocketSurfaceEventId {
+    fn new(id: Uuid) -> Self {
+        Self(id)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DocketTaskDefinition {
+    title: Option<String>,
+}
+
+pub(crate) fn project_focus_title(title: Option<String>, focused: bool) -> Option<String> {
+    title.map(|title| {
+        let bare = title.strip_prefix(FOCUS_TITLE_PREFIX).unwrap_or(&title);
+        if focused {
+            format!("{FOCUS_TITLE_PREFIX}{bare}")
+        } else {
+            bare.to_string()
+        }
+    })
+}
+
+pub(crate) async fn conversation_has_active_focus(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+    client_session_id: Option<&str>,
+) -> Result<bool, den_core::DenError> {
+    let focused = sqlx::query_scalar::<_, bool>(
+        r"
+        SELECT EXISTS (
+            SELECT 1
+            FROM docket_execution_sessions
+            WHERE bear_id = $1
+              AND state IN ('active', 'blocked', 'completing', 'paused')
+              AND (
+                source_conversation_id = $2
+                OR ($3::TEXT IS NOT NULL AND source_client_session_id = $3)
+                OR ($3::TEXT IS NOT NULL AND session_id = $3)
+              )
+        )
+        ",
+    )
+    .bind(bear_id)
+    .bind(conversation_id)
+    .bind(client_session_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(focused)
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct DocketDiagnosticEventRow {
+    id: Uuid,
+    created_at: OffsetDateTime,
+    event_type: String,
+    payload: Value,
+    job_id: Option<Uuid>,
+    job_goal: Option<String>,
+    job_status: Option<String>,
+    task_id: Option<Uuid>,
+    task_title: Option<String>,
+}
+
+async fn list_docket_diagnostic_events(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    conversation_id: &str,
+    limit: i64,
+) -> Result<Vec<DocketDiagnosticEventRow>, den_core::DenError> {
+    sqlx::query_as::<_, DocketDiagnosticEventRow>(
+        r"
+        WITH focused_jobs AS (
+            SELECT DISTINCT ON (job_id) job_id, task_id
+            FROM docket_execution_sessions
+            WHERE bear_id = $1
+              AND source_conversation_id = $2
+            ORDER BY job_id, updated_at DESC
+        ), docket_events AS (
+            SELECT events.id, events.created_at, events.event_type, events.payload,
+                   events.job_id, jobs.goal AS job_goal, jobs.status AS job_status,
+                   focused_jobs.task_id AS task_id,
+                   focus_tasks.title AS task_title
+            FROM bear_job_events events
+            JOIN bear_jobs jobs ON jobs.id = events.job_id
+            JOIN focused_jobs ON focused_jobs.job_id = events.job_id
+            LEFT JOIN bear_tasks focus_tasks ON focus_tasks.id = focused_jobs.task_id
+            WHERE events.job_id IN (SELECT job_id FROM focused_jobs)
+              AND events.event_type = 'focus_selected'
+            UNION ALL
+            SELECT events.id, events.created_at, events.event_type, events.payload,
+                   tasks.job_id, jobs.goal AS job_goal, jobs.status AS job_status,
+                   events.task_id,
+                   tasks.title AS task_title
+            FROM bear_task_events events
+            JOIN bear_tasks tasks ON tasks.id = events.task_id
+            JOIN bear_jobs jobs ON jobs.id = tasks.job_id
+            WHERE tasks.job_id IN (SELECT job_id FROM focused_jobs)
+              AND events.event_type IN ('created', 'updated')
+              AND events.payload ? 'definition'
+        )
+        SELECT id, created_at, event_type, payload, job_id, job_goal, job_status, task_id, task_title
+        FROM docket_events
+        ORDER BY created_at ASC
+        LIMIT $3
+        ",
+    )
+    .bind(bear_id)
+    .bind(conversation_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|err| den_core::DenError::Database(format!("list docket diagnostic events: {err}")))
+}
+
+fn docket_diagnostic_surface_event(row: DocketDiagnosticEventRow) -> Option<Value> {
+    match row.event_type.as_str() {
+        "focus_selected" => Some(json!(SurfaceHistoryEvent::Message {
+            id: Some(DocketSurfaceEventId::new(row.id).to_string()),
+            role: "system".to_string(),
+            text: format!(
+                "Docket focus selected: job={} goal={} status={} task={} state={}",
+                row.job_id?,
+                row.job_goal.as_deref().unwrap_or("unknown"),
+                row.job_status.as_deref().unwrap_or("unknown"),
+                row.task_title.as_deref().unwrap_or("unknown task"),
+                row.payload
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("active")
+            ),
+            resources: Vec::<SurfaceResourceRef>::new(),
+            created_at: Some(row.created_at.to_string()),
+        })),
+        "created" | "updated" => {
+            let definition = serde_json::from_value::<DocketTaskDefinition>(
+                row.payload.get("definition")?.clone(),
+            )
+            .ok()?;
+            let title = definition.title.as_deref().unwrap_or("untitled task");
+            Some(json!(SurfaceHistoryEvent::Message {
+                id: Some(DocketSurfaceEventId::new(row.id).to_string()),
+                role: "system".to_string(),
+                text: format!(
+                    "Docket task {}: {} ({})",
+                    row.event_type,
+                    title,
+                    row.task_id
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "unknown task".to_string())
+                ),
+                resources: Vec::<SurfaceResourceRef>::new(),
+                created_at: Some(row.created_at.to_string()),
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn orientation_diagnostic_text(data: &Value) -> String {
+    let kind = data
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let orientation = data.get("orientation").unwrap_or(&Value::Null);
+    let focused_job = orientation
+        .pointer("/job/job_id")
+        .and_then(Value::as_str)
+        .unwrap_or("none");
+    let task_ref = orientation
+        .pointer("/task/task_ref")
+        .or_else(|| orientation.pointer("/job/active_task_ref"));
+    let task = task_ref
+        .and_then(|task| {
+            task.get("task_id")
+                .or_else(|| task.get("item_id"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("none");
+    format!(
+        "Runtime orientation: kind={} focused_job={} task={}",
+        kind, focused_job, task
+    )
+}
 
 fn trimmed_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
@@ -142,11 +344,12 @@ async fn conversation_history_like_result(
         return Ok(response);
     };
 
-    let rows = persistence::list_messages_page(
+    let rows = persistence::list_projected_messages_page(
         &state.sqlx_pool,
         conversation.id,
         before_sequence_no,
         limit,
+        persistence::ConversationHistoryProjection::UserHistory,
     )
     .await?;
     let has_more = rows.len() >= limit as usize;
@@ -223,13 +426,20 @@ async fn conversation_history_like_result(
         )
         .await?
         {
+            let focused = conversation_has_active_focus(
+                &state.sqlx_pool,
+                bear.id,
+                &conversation_id,
+                Some(&session.client_session_id),
+            )
+            .await?;
             messages.insert(
                 0,
                 json!(SurfaceHistoryEvent::SessionInfoUpdate {
                     id: Some(format!("session-info:{}", session.client_session_id)),
                     role: Some("system".to_string()),
                     session_id: Some(session.client_session_id.clone()),
-                    title: session.conversation_title.clone(),
+                    title: project_focus_title(session.conversation_title.clone(), focused),
                     title_updated_at: session
                         .conversation_title_updated_at
                         .map(|value| value.to_string()),
@@ -251,6 +461,21 @@ async fn conversation_history_like_result(
             )
             .await?;
             for row in surface_event_rows {
+                if row.event_type == "runtime.objective_orientation" {
+                    let event_id = row
+                        .event
+                        .event_id
+                        .unwrap_or_else(|| format!("bearwire:{}", row.id));
+                    messages.push(json!(SurfaceHistoryEvent::Message {
+                        id: Some(event_id),
+                        role: "system".to_string(),
+                        text: orientation_diagnostic_text(&row.event.data),
+                        resources: Vec::<SurfaceResourceRef>::new(),
+                        created_at: Some(row.created_at.to_string()),
+                    }));
+                    continue;
+                }
+
                 if row.event_type == "session_info_update" {
                     let title = row
                         .event
@@ -271,7 +496,7 @@ async fn conversation_history_like_result(
                         id: Some(event_id),
                         role: Some("system".to_string()),
                         session_id: Some(session.client_session_id.clone()),
-                        title: title.map(str::to_string),
+                        title: project_focus_title(title.map(str::to_string), focused),
                         title_updated_at: updated_at.map(str::to_string),
                         current_mode: None,
                         created_at: Some(row.created_at.to_string()),
@@ -324,6 +549,14 @@ async fn conversation_history_like_result(
                 }));
             }
         }
+
+        for row in list_docket_diagnostic_events(&state.sqlx_pool, bear.id, &conversation_id, limit)
+            .await?
+        {
+            if let Some(event) = docket_diagnostic_surface_event(row) {
+                messages.push(event);
+            }
+        }
     }
 
     if records_key == "surface_events" {
@@ -348,4 +581,27 @@ async fn conversation_history_like_result(
     });
     response[records_key] = json!(messages);
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docket_surface_event_id_preserves_wire_string() {
+        let id = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+        assert_eq!(
+            DocketSurfaceEventId::new(id).to_string(),
+            "docket:11111111-2222-3333-4444-555555555555"
+        );
+    }
+
+    #[test]
+    fn docket_task_definition_rejects_unknown_fields() {
+        assert!(serde_json::from_value::<DocketTaskDefinition>(json!({
+            "title": "Ship it",
+            "unexpected": true,
+        }))
+        .is_err());
+    }
 }

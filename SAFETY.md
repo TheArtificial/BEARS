@@ -47,9 +47,9 @@ Memory boundaries are the load-bearing part of the stance model ([docs/architect
 - Cross-stance sharing flows through reflection and curation, never through raw transcript leakage.
 - Transcript history is not memory; unreviewed proposals and observations are never proactively projected into prompts (see [MODEL_EXPERIENCE.md](MODEL_EXPERIENCE.md)).
 
-## Stance is not supervision: governance modes
+## Stance is not supervision: governance
 
-A second, orthogonal axis handles "who is watching right now" ([ADR-0039](docs/decisions/adr-0039-trust-profiles-and-governance-modes.md)). The **trust profile** (stance) is the slow-changing trust contract; the **governance mode** is the fast-changing, run-scoped supervision dial:
+A second, orthogonal axis handles "who is watching right now" ([ADR-0039](docs/decisions/adr-0039-trust-profiles-and-governance.md)). The **trust profile** (stance) is the slow-changing trust contract; the **governance** is the fast-changing, run-scoped supervision dial:
 
 | Mode | Human | Meaning |
 |------|-------|---------|
@@ -59,9 +59,9 @@ A second, orthogonal axis handles "who is watching right now" ([ADR-0039](docs/d
 | `observational` | Present, read-only | Inspect a run without owning its turns |
 | `frozen` | Panic / handoff | Turn cancelled; worktree checkpointed; awaiting disposition |
 
-Why this matters for safety: when a `pair` session loses its client, the session keeps running as a **governance-mode transition**, not a silent flip to `work` — so memory scope and approval semantics never change out from under a run. Governance mode changes supervision; **it must never be used to launder trust**. Every transition is a durable, model-visible event.
+Why this matters for safety: when a `pair` session loses its client, the session keeps running as a **governance transition**, not a silent flip to `work` — so memory scope and approval semantics never change out from under a run. Governance changes supervision; **it must never be used to launder trust**. Every transition is a durable, model-visible event.
 
-Per turn, Den computes the effective policy as a product — `TrustProfile × GovernanceMode × Armature × RunAuthContext` — and enforces the resulting tool roster, memory write target, and approval class. The model never infers its own permissions.
+Per turn, Den computes the effective policy as a product — `TrustProfile × Governance × Armature × RunAuthContext` — and enforces the resulting tool roster, memory write target, and approval class. The model never infers its own permissions.
 
 ## Approvals and human gating
 
@@ -91,10 +91,10 @@ The boundaries above are enforced structurally, which is what makes them trustwo
 ## Canonical sources
 
 - [docs/architecture/bear-stances.md](docs/architecture/bear-stances.md) — the five stances, responsibilities, and limits
-- [docs/architecture/interactive-stances-and-role-axes.md](docs/architecture/interactive-stances-and-role-axes.md) — stance vs channel vs armature vs governance mode
-- [ADR-0039](docs/decisions/adr-0039-trust-profiles-and-governance-modes.md) — trust profiles and governance modes
+- [docs/architecture/interactive-stances-and-role-axes.md](docs/architecture/interactive-stances-and-role-axes.md) — stance vs channel vs armature vs governance
+- [ADR-0039](docs/decisions/adr-0039-trust-profiles-and-governance.md) — trust profiles and governance
 - [ADR-0037](docs/decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md) — sandbox, egress gateway, upstream auth
 - [ADR-0026](docs/decisions/adr-0026-work-handoff-and-human-escalation.md) — handoff and human escalation
 - [ADR-0034](docs/decisions/adr-0034-jobs-and-tasks-work-management.md) — Docket jobs/tasks and acceptance criteria
 - [docs/architecture/memory-model.md](docs/architecture/memory-model.md) — memory boundaries and promotion
-- [docs/GLOSSARY.md](docs/GLOSSARY.md) — trust stance, governance mode, armature, continuation bias
+- [docs/GLOSSARY.md](docs/GLOSSARY.md) — trust stance, governance, armature, continuation bias

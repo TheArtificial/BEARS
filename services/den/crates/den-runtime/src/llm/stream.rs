@@ -8,6 +8,14 @@ use serde_json::Value;
 
 use den_protocol::{RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent};
 
+fn decode_utf8_or_system_error<'a>(
+    bytes: &'a [u8],
+    context: &str,
+) -> Result<&'a str, den_core::DenError> {
+    std::str::from_utf8(bytes)
+        .map_err(|err| den_core::DenError::System(format!("invalid UTF-8 in {context}: {err}")))
+}
+
 fn delta_assistant_text(delta: &Value) -> Option<String> {
     for key in ["content", "text"] {
         if let Some(text) = delta
@@ -235,6 +243,7 @@ fn runtime_event_kind(event: &RuntimeStreamEvent) -> &'static str {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCancelled { .. }) => {
             "turn_cancelled"
         }
+        RuntimeStreamEvent::ProviderActivity => "provider_activity",
         RuntimeStreamEvent::UntranslatedProviderEvent { .. } => "untranslated_provider_event",
     }
 }
@@ -428,6 +437,7 @@ pub struct ResponsesStreamAccumulator {
     tool_call_ids: HashMap<String, String>,
     tool_args: HashMap<String, String>,
     emitted_tool_call_keys: HashSet<String>,
+    reasoning_output_item_keys: HashSet<String>,
     completed: bool,
     saw_tool_call: bool,
 }
@@ -508,7 +518,7 @@ impl ResponsesStreamDiagnostics {
         }
         if let Some(arguments) = json.get("arguments").and_then(Value::as_str) {
             if event_type == "response.function_call_arguments.done" {
-                self.tool_arg_lengths.insert(key.clone(), arguments.len());
+                self.tool_arg_lengths.insert(key, arguments.len());
             }
         }
         if let Some(item) = json.get("item") {
@@ -681,7 +691,28 @@ impl ResponsesStreamAccumulator {
         }
         let event_type = json.get("type").and_then(Value::as_str).unwrap_or_default();
         match event_type {
-            "response.output_text.delta" | "response.refusal.delta" => {
+            "response.output_text.delta" => {
+                if let Some(delta) = json
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    let event = if self
+                        .reasoning_output_item_keys
+                        .contains(&response_item_key(json))
+                    {
+                        RuntimeSemanticEvent::ReasoningTextDelta {
+                            text: delta.to_string(),
+                        }
+                    } else {
+                        RuntimeSemanticEvent::AssistantTextDelta {
+                            text: delta.to_string(),
+                        }
+                    };
+                    out.events.push(RuntimeStreamEvent::Semantic(event));
+                }
+            }
+            "response.refusal.delta" => {
                 if let Some(delta) = json
                     .get("delta")
                     .and_then(Value::as_str)
@@ -724,6 +755,12 @@ impl ResponsesStreamAccumulator {
             }
             "response.output_item.added" | "response.output_item.done" => {
                 if let Some(item) = json.get("item") {
+                    if response_item_is_reasoning_output(item) {
+                        self.reasoning_output_item_keys
+                            .insert(response_item_key_from_item(json, item));
+                        self.reasoning_output_item_keys
+                            .insert(response_item_key(json));
+                    }
                     if item.get("type").and_then(Value::as_str) == Some("function_call") {
                         self.saw_tool_call = true;
                         let key = response_item_key_from_item(json, item);
@@ -781,7 +818,7 @@ impl ResponsesStreamAccumulator {
             }
             _ => {}
         }
-        if let Some(diagnostics) = diagnostics.as_deref_mut() {
+        if let Some(diagnostics) = diagnostics {
             diagnostics.observe_response_parse(event_type, &out.events);
         }
         out
@@ -863,6 +900,19 @@ impl ResponsesStreamAccumulator {
     }
 }
 
+fn response_item_is_reasoning_output(item: &Value) -> bool {
+    [item.get("phase"), item.get("channel")]
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "commentary" | "analysis" | "reasoning"
+            )
+        })
+}
+
 fn response_item_key(json: &Value) -> String {
     json.get("item_id")
         .or_else(|| json.get("output_index"))
@@ -897,9 +947,7 @@ pub fn responses_sse_frame_to_runtime_events_with_diagnostics(
     if let Some(diagnostics) = diagnostics.as_deref_mut() {
         diagnostics.observe_sse_frame(body.len());
     }
-    let text = std::str::from_utf8(body).map_err(|_| {
-        den_core::DenError::System("invalid UTF-8 in LLM Responses SSE frame".to_string())
-    })?;
+    let text = decode_utf8_or_system_error(body, "LLM Responses SSE frame")?;
     let mut events = Vec::new();
     for line in text.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);
@@ -935,8 +983,7 @@ pub fn openai_sse_chunk_to_runtime_events(
     chunk_body: &[u8],
 ) -> Result<Vec<RuntimeStreamEvent>, den_core::DenError> {
     let mut events = Vec::new();
-    let text = std::str::from_utf8(chunk_body)
-        .map_err(|_| den_core::DenError::System("invalid UTF-8 in LLM SSE chunk".to_string()))?;
+    let text = decode_utf8_or_system_error(chunk_body, "LLM SSE chunk")?;
     let mut accumulator = OpenAiStreamAccumulator::default();
     for line in text.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);
@@ -982,8 +1029,7 @@ pub fn openai_sse_frame_to_runtime_events_with_diagnostics(
     if let Some(diagnostics) = diagnostics.as_deref_mut() {
         diagnostics.observe_sse_frame(body.len());
     }
-    let text = std::str::from_utf8(body)
-        .map_err(|_| den_core::DenError::System("invalid UTF-8 in LLM SSE frame".to_string()))?;
+    let text = decode_utf8_or_system_error(body, "LLM SSE frame")?;
     let mut events = Vec::new();
     for line in text.split('\n') {
         let line = line.strip_suffix('\r').unwrap_or(line);
@@ -1066,6 +1112,65 @@ mod tests {
 
         assert!(parsed.events.is_empty());
         assert!(!accumulator.should_detach_upstream());
+    }
+
+    #[test]
+    fn responses_stream_maps_commentary_output_text_to_reasoning() {
+        let mut accumulator = ResponsesStreamAccumulator::default();
+        let added = accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "id": "msg_commentary",
+                "type": "message",
+                "role": "assistant",
+                "phase": "commentary",
+                "content": []
+            }
+        }));
+        assert!(added.events.is_empty());
+
+        let delta = accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.output_text.delta",
+            "output_index": 0,
+            "item_id": "msg_commentary",
+            "content_index": 0,
+            "delta": "I should inspect the stream format."
+        }));
+        assert!(matches!(
+            delta.events.as_slice(),
+            [RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ReasoningTextDelta { text })]
+                if text == "I should inspect the stream format."
+        ));
+    }
+
+    #[test]
+    fn responses_stream_keeps_final_answer_output_text_as_assistant_text() {
+        let mut accumulator = ResponsesStreamAccumulator::default();
+        accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.output_item.added",
+            "output_index": 1,
+            "item": {
+                "id": "msg_final",
+                "type": "message",
+                "role": "assistant",
+                "phase": "final_answer",
+                "content": []
+            }
+        }));
+
+        let delta = accumulator.ingest_sse_data_line(&serde_json::json!({
+            "type": "response.output_text.delta",
+            "output_index": 1,
+            "item_id": "msg_final",
+            "content_index": 0,
+            "delta": "Here is the result."
+        }));
+        assert!(matches!(
+            delta.events.as_slice(),
+            [RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text })]
+                if text == "Here is the result."
+        ));
     }
 
     #[test]

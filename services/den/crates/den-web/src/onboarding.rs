@@ -16,8 +16,9 @@ use crate::{
     web::{
         bear::create_support::{
             bear_new_form_context, build_context_profile_json_for_template,
-            insert_new_bear_row_with_context_profile, provision_bifrost_virtual_key_for_bear,
-            validate_default_model_for_catalog, NewBearForm,
+            insert_new_bear_row_with_context_profile, is_valid_bear_slug,
+            provision_bifrost_virtual_key_for_bear, validate_default_model_for_catalog,
+            NewBearForm, BEAR_SLUG_VALIDATION_MESSAGE,
         },
         render_template, AppState,
     },
@@ -207,20 +208,8 @@ async fn first_bear_post(
     if den_service::bears::templates::first_bear_template(&form.template_id).is_none() {
         validation_errors.add("template_id", ValidationError::new("Choose a template."));
     }
-    let slug_trim = form.slug.trim();
-    let slug_ok = !slug_trim.is_empty()
-        && slug_trim.len() <= 120
-        && slug_trim
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        && !slug_trim.starts_with('-')
-        && !slug_trim.ends_with('-')
-        && !slug_trim.contains("--");
-    if !slug_ok {
-        validation_errors.add(
-            "slug",
-            ValidationError::new("Use lowercase letters, numbers, and single hyphens."),
-        );
+    if !is_valid_bear_slug(&form.slug) {
+        validation_errors.add("slug", ValidationError::new(BEAR_SLUG_VALIDATION_MESSAGE));
     }
     let default_model_trim = form.default_model.trim();
     validate_default_model_for_catalog(&model_fetch, default_model_trim, &mut validation_errors);
@@ -265,7 +254,14 @@ async fn first_bear_post(
     if let Err(e) =
         provision_bifrost_virtual_key_for_bear(&state, id, new_bear_form.slug.trim()).await
     {
-        let _ = bears_db::delete_bear(state.sqlx_pool(), id).await;
+        if let Err(rollback_err) = bears_db::delete_bear(state.sqlx_pool(), id).await {
+            tracing::warn!(
+                bear_id = %id,
+                provision_error = %e,
+                error = %rollback_err,
+                "failed to roll back Bear after Bifrost virtual key provisioning failure"
+            );
+        }
         return render_first_bear_form(
             &state,
             auth_session,

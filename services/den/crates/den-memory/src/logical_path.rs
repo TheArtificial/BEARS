@@ -1,3 +1,5 @@
+use std::{fmt, str::FromStr};
+
 use serde::{Deserialize, Serialize};
 
 use crate::descriptors;
@@ -18,10 +20,24 @@ impl MemoryScopeType {
     }
 
     pub fn parse(raw: &str) -> Option<Self> {
+        raw.parse().ok()
+    }
+}
+
+impl fmt::Display for MemoryScopeType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for MemoryScopeType {
+    type Err = ();
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
         match raw {
-            "profile_local" | "role_local" => Some(Self::ProfileLocal),
-            "shared" => Some(Self::Shared),
-            _ => None,
+            "profile_local" | "role_local" => Ok(Self::ProfileLocal),
+            "shared" => Ok(Self::Shared),
+            _ => Err(()),
         }
     }
 }
@@ -80,12 +96,8 @@ impl LogicalMemoryPath {
 
     pub fn from_logical_path(path: &str) -> Self {
         let trimmed = path.trim().trim_start_matches('/');
-        if trimmed.starts_with("core/work_surfaces/") {
-            let rest = trimmed.trim_start_matches("core/work_surfaces/");
-            let mut parts = rest.split('/');
-            let ws = parts.next().unwrap_or("unknown").to_string();
-            let file = parts.next().unwrap_or("index.md");
-            let kind = file.trim_end_matches(".md").to_string();
+        if let Some(rest) = trimmed.strip_prefix("core/work_surfaces/") {
+            let (ws, kind) = parse_work_surface_path(rest);
             return Self {
                 scope_type: MemoryScopeType::Shared,
                 scope_profile: None,
@@ -101,12 +113,8 @@ impl LogicalMemoryPath {
             return Self::shared_core(&kind);
         }
         if let Some((profile, rest)) = trimmed.split_once('/') {
-            if rest.starts_with("work_surfaces/") {
-                let sub = rest.trim_start_matches("work_surfaces/");
-                let mut parts = sub.split('/');
-                let ws = parts.next().unwrap_or("unknown").to_string();
-                let file = parts.next().unwrap_or("index.md");
-                let kind = file.trim_end_matches(".md").to_string();
+            if let Some(rest) = rest.strip_prefix("work_surfaces/") {
+                let (ws, kind) = parse_work_surface_path(rest);
                 return Self {
                     scope_type: MemoryScopeType::ProfileLocal,
                     scope_profile: Some(profile.to_string()),
@@ -119,6 +127,14 @@ impl LogicalMemoryPath {
         }
         Self::shared_core("note")
     }
+}
+
+fn parse_work_surface_path(path: &str) -> (String, String) {
+    let mut parts = path.split('/');
+    let work_surface = parts.next().unwrap_or("unknown").to_string();
+    let file = parts.next().unwrap_or("index.md");
+    let kind = file.trim_end_matches(".md").to_string();
+    (work_surface, kind)
 }
 
 fn sanitize_anchor_segment(raw: &str) -> String {

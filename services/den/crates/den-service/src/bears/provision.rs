@@ -70,7 +70,7 @@ async fn reconcile_one_native_profile(
     bear: &Bear,
     profile: BearProfile,
 ) -> Result<crate::bears::sync::BearProfileSyncOutcome, DenError> {
-    use crate::bears::sync::BearProfileSyncOutcome;
+    use crate::bears::sync::{BearProfileSyncOutcome, BearProfileSyncStatus};
 
     let binding_id = format!("den-native:{}:{}", bear.id, profile.as_str());
     let config_hash = profile_config_hash(pool, bear, profile).await?;
@@ -96,12 +96,20 @@ async fn reconcile_one_native_profile(
         .await
         {
             let message = format!("failed to record native profile binding: {err}");
-            let _ =
-                bears_db::mark_bear_profile_binding_failed(pool, bear.id, profile, &message).await;
+            if let Err(mark_err) =
+                bears_db::mark_bear_profile_binding_failed(pool, bear.id, profile, &message).await
+            {
+                tracing::warn!(
+                    bear_id = %bear.id,
+                    profile = %profile.as_str(),
+                    error = %mark_err,
+                    "failed to mark native profile binding failed after ready-write error"
+                );
+            }
             return Ok(BearProfileSyncOutcome {
                 profile: profile.as_str().to_string(),
                 runtime_binding_id: Some(binding_id),
-                status: "failed".to_string(),
+                status: BearProfileSyncStatus::Failed,
                 message: Some(message),
             });
         }
@@ -110,7 +118,7 @@ async fn reconcile_one_native_profile(
     Ok(BearProfileSyncOutcome {
         profile: profile.as_str().to_string(),
         runtime_binding_id: Some(binding_id),
-        status: "synced".to_string(),
+        status: BearProfileSyncStatus::Synced,
         message: None,
     })
 }

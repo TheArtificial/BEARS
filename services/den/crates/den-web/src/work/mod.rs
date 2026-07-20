@@ -21,11 +21,12 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
-use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow};
+use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow, SCRATCH_ROOT_NAME};
 use den_docket::{
-    DocketCommitPolicy, DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter,
-    DocketJobStatus, DocketService, DocketTaskInput, DocketTaskKind, DocketTaskScope,
-    PgDocketService, TaskListVisibility,
+    DocketCommitPolicy, DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint,
+    DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter, DocketJobStatus,
+    DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskInput,
+    DocketTaskKind, DocketTaskScope, PgDocketService, TaskListVisibility,
 };
 use den_sandbox::protocol::CatalogResponse;
 use den_sandbox::SandboxClient;
@@ -42,6 +43,9 @@ pub fn router() -> Router<AppState> {
         .route("/work", get(index))
         .route("/work/new", get(new_job_form).post(create_job))
         .route("/work/jobs/{job_id}", get(job_detail))
+        .route("/work/jobs/{job_id}/duplicate", post(duplicate_job))
+        .route("/work/jobs/{job_id}/complete", post(complete_job))
+        .route("/work/jobs/{job_id}/extend", post(extend_job))
         .route("/work/runs/{run_id}", get(run_detail))
         .route("/work/tasks/{task_id}/dispatch", post(dispatch_task))
         .route("/work/runs/{run_id}/cancel", post(cancel_run))
@@ -503,6 +507,8 @@ async fn create_job(
                 .filter(|branch| !branch.is_empty()),
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::SameUser,
+            source_conversation_id: None,
+            objective_kind: None,
             criteria: vec![DocketJobCriterionInput {
                 kind: den_docket::DocketCriterionKind::Narrative,
                 description: "All tasks completed to their criteria".to_string(),
@@ -513,6 +519,295 @@ async fn create_job(
         })
         .await?;
     Ok(Redirect::to(&format!("/work/jobs/{}", job.job.id)).into_response())
+}
+
+fn parse_docket_enum<T: serde::de::DeserializeOwned>(
+    field: &str,
+    value: &str,
+) -> Result<T, CustomError> {
+    serde_json::from_value(serde_json::json!(value)).map_err(|_| {
+        CustomError::ValidationError(format!("job contains invalid {field} value '{value}'"))
+    })
+}
+
+async fn duplicate_job(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(job_id): Path<Uuid>,
+) -> Result<Response, CustomError> {
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+
+    let source = PgDocketService::from_pool(state.sqlx_pool())
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    let task_keys: std::collections::HashMap<Uuid, String> = source
+        .tasks
+        .iter()
+        .map(|task| (task.id, format!("duplicate-{}", task.id.simple())))
+        .collect();
+    let tasks = source
+        .tasks
+        .iter()
+        .map(|task| {
+            Ok(DocketTaskInput {
+                client_key: task_keys.get(&task.id).cloned(),
+                parent_client_key: task
+                    .parent_task_id
+                    .and_then(|parent_id| task_keys.get(&parent_id).cloned()),
+                parent_task_id: None,
+                sibling_order: task.sibling_order,
+                kind: parse_docket_enum("task kind", &task.kind)?,
+                scope: parse_docket_enum("task scope", &task.scope)?,
+                title: task.title.clone(),
+                body: task.body.clone(),
+                completion_criteria: task.completion_criteria.0.clone(),
+                difficulty: task
+                    .difficulty
+                    .as_deref()
+                    .map(|value| {
+                        parse_docket_enum::<DocketTaskDifficulty>("task difficulty", value)
+                    })
+                    .transpose()?,
+                effort_hint: task
+                    .effort_hint
+                    .as_deref()
+                    .map(|value| parse_docket_enum::<DocketEffortHint>("task effort", value))
+                    .transpose()?,
+                assigned_to_role: task
+                    .assigned_to_role
+                    .as_deref()
+                    .map(|value| parse_docket_enum::<BearProfile>("assigned role", value))
+                    .transpose()?,
+            })
+        })
+        .collect::<Result<Vec<_>, CustomError>>()?;
+    let criteria = source
+        .criteria
+        .iter()
+        .map(|criterion| {
+            Ok(DocketJobCriterionInput {
+                kind: parse_docket_enum("criterion kind", &criterion.kind)?,
+                description: criterion.description.clone(),
+                spec: criterion.spec.as_ref().map(|spec| spec.0.clone()),
+                sibling_order: criterion.sibling_order,
+            })
+        })
+        .collect::<Result<Vec<_>, CustomError>>()?;
+    let commit_policy = source
+        .job
+        .commit_policy
+        .as_deref()
+        .map(|value| parse_docket_enum::<DocketCommitPolicy>("commit policy", value))
+        .transpose()?;
+    let visibility = parse_docket_enum::<TaskListVisibility>("visibility", &source.job.visibility)?;
+
+    let duplicate = PgDocketService::from_pool(state.sqlx_pool())
+        .create_job(DocketJobCreate {
+            bear_id,
+            created_by_user_id: user_id,
+            created_by_role: "ui".to_string(),
+            goal: format!("{} (copy)", source.job.goal),
+            work_surface_ref: source.job.work_surface_ref,
+            work_surface_id: source.job.work_surface_id,
+            commit_policy,
+            work_branch: None,
+            status: DocketJobStatus::Ready,
+            visibility,
+            source_conversation_id: None,
+            objective_kind: source.job.objective_kind,
+            criteria,
+            tasks,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{}", duplicate.job.id)).into_response())
+}
+
+async fn complete_job(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(job_id): Path<Uuid>,
+) -> Result<Response, CustomError> {
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let projection = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    let report = den_docket::docket_job_status_report(&projection);
+    if !report.tasks_complete {
+        return Err(CustomError::ValidationError(
+            "complete every task before marking the job completed".to_string(),
+        ));
+    }
+    let run_id = projection
+        .job
+        .current_run_id
+        .ok_or_else(|| CustomError::ValidationError("job has no current Docket run".to_string()))?;
+    let criterion_states: std::collections::HashMap<Uuid, &str> = projection
+        .criteria_states
+        .iter()
+        .map(|state| (state.criterion_id, state.status.as_str()))
+        .collect();
+    for criterion in &projection.criteria {
+        if !matches!(
+            criterion_states.get(&criterion.id).copied(),
+            Some("met" | "waived")
+        ) {
+            service
+                .evaluate_criterion(DocketCriterionStateUpdate {
+                    bear_id,
+                    job_id,
+                    run_id,
+                    criterion_id: criterion.id,
+                    status: DocketCriterionStatus::Met,
+                    evidence: Some(serde_json::json!({
+                        "source": "work_ui_human_completion",
+                        "accepted_by_user_id": user_id,
+                    })),
+                    actor_role: BearProfile::Pair,
+                    actor_user_id: Some(user_id),
+                    actor_agent_id: None,
+                })
+                .await?;
+        }
+    }
+    service
+        .update_job(DocketJobUpdate {
+            bear_id,
+            job_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            goal: None,
+            work_surface_ref: None,
+            work_surface_id: None,
+            commit_policy: None,
+            status: Some(DocketJobStatus::Completed),
+            visibility: None,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct ExtendJobForm {
+    title: String,
+    #[serde(default)]
+    body: String,
+    criteria: String,
+}
+
+async fn extend_job(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(job_id): Path<Uuid>,
+    Form(form): Form<ExtendJobForm>,
+) -> Result<Response, CustomError> {
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let projection = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    if matches!(projection.job.status.as_str(), "completed" | "cancelled") {
+        return Err(CustomError::ValidationError(
+            "completed or cancelled jobs cannot be extended; duplicate the job instead".to_string(),
+        ));
+    }
+    let title = form.title.trim();
+    if title.is_empty() {
+        return Err(CustomError::ValidationError(
+            "extension task title is required".to_string(),
+        ));
+    }
+    let criteria: Vec<String> = form
+        .criteria
+        .split(';')
+        .map(str::trim)
+        .filter(|criterion| !criterion.is_empty())
+        .map(str::to_string)
+        .collect();
+    if criteria.is_empty() {
+        return Err(CustomError::ValidationError(
+            "extension task needs at least one semicolon-separated criterion".to_string(),
+        ));
+    }
+    let run_id = projection
+        .job
+        .current_run_id
+        .ok_or_else(|| CustomError::ValidationError("job has no current Docket run".to_string()))?;
+    let sibling_order = projection
+        .tasks
+        .iter()
+        .map(|task| task.sibling_order)
+        .max()
+        .unwrap_or(-1)
+        .saturating_add(1);
+    service
+        .create_task(DocketTaskCreate {
+            bear_id,
+            job_id: Some(job_id),
+            session_anchor_id: None,
+            parent_task_id: None,
+            sibling_order,
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Template,
+            title: title.to_string(),
+            body: clean_form_field(&form.body).unwrap_or_else(|| title.to_string()),
+            completion_criteria: criteria,
+            difficulty: None,
+            effort_hint: None,
+            assigned_to_role: Some(BearProfile::Work),
+            created_by_role: "ui".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: Some(run_id),
+        })
+        .await?;
+    service
+        .update_job(DocketJobUpdate {
+            bear_id,
+            job_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            goal: None,
+            work_surface_ref: None,
+            work_surface_id: None,
+            commit_policy: None,
+            status: Some(DocketJobStatus::Ready),
+            visibility: None,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
 }
 
 async fn job_detail(
@@ -584,6 +879,7 @@ async fn job_detail(
         auth_session,
         context! {
             title => "Work job",
+            bear_id => bear_id.to_string(),
             bear_slug => bear_slug,
             job_id => job_id.to_string(),
             goal => projection.job.goal,
@@ -635,6 +931,19 @@ async fn run_detail(
         .unwrap_or_default();
     let armature_report = refs.get("armature_report").cloned();
     let turn_outcome = refs.get("turn_outcome").cloned();
+    let conversation_id: Option<String> = match run.bearwire_session_id.as_deref() {
+        Some(session_id) => sqlx::query_scalar(
+            "SELECT COALESCE(NULLIF(resolved_conversation_id, ''), conversation_id) \
+             FROM client_sessions WHERE client_session_id = $1 AND bear_id = $2 \
+             ORDER BY updated_at DESC LIMIT 1",
+        )
+        .bind(session_id)
+        .bind(run.bear_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?,
+        None => None,
+    };
     let work_surface = run.work_surface.clone();
     let usage = run.usage.clone();
     let mut views = vec![run_view(&run, &bear_slug)];
@@ -655,6 +964,7 @@ async fn run_detail(
             changed_files => changed_files,
             armature_report => armature_report,
             turn_outcome => turn_outcome,
+            conversation_id => conversation_id,
             work_surface => work_surface,
             usage => usage,
             can_retry => can_retry,
@@ -667,6 +977,8 @@ async fn run_detail(
 struct DispatchForm {
     #[serde(default)]
     root: String,
+    #[serde(default)]
+    scratch: bool,
     #[serde(default)]
     image: String,
     #[serde(default)]
@@ -694,12 +1006,17 @@ async fn dispatch_task(
     let Some((bear_id, job_id)) = row.filter(|(bear_id, _)| bears.contains_key(bear_id)) else {
         return Err(CustomError::NotFound("task not found".to_string()));
     };
+    let root_name = if form.scratch {
+        Some(SCRATCH_ROOT_NAME.to_string())
+    } else {
+        clean_form_field(&form.root)
+    };
     work_runs::enqueue_work_run(
         state.sqlx_pool(),
         work_runs::WorkRunEnqueue {
             bear_id,
             task_id,
-            root_name: clean_form_field(&form.root),
+            root_name,
             git_ref: clean_form_field(&form.git_ref),
             image_name: clean_form_field(&form.image),
             requested_by_user_id: Some(user_id),

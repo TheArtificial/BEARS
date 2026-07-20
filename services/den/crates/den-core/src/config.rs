@@ -21,6 +21,38 @@ pub const DEFAULT_LLM_API_URL: &str = "http://bears-bifrost:8080/v1";
 /// Sandbox provider host used by the default Docker Compose stack.
 const DEFAULT_SANDBOX_SERVER_HOST: &str = "bears-sandbox-provider";
 
+/// Qdrant host used by the default Docker Compose recall profile.
+const DEFAULT_QDRANT_HOST: &str = "bears-qdrant";
+const DEFAULT_QDRANT_PORT: u16 = 6333;
+
+/// GitHub account type used for GHCR REST API paths.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GhcrPackagesOwnerKind {
+    #[default]
+    Unconfigured,
+    Organization,
+    User,
+}
+
+impl GhcrPackagesOwnerKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unconfigured => "",
+            Self::Organization => "org",
+            Self::User => "user",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "" => Some(Self::Unconfigured),
+            "org" => Some(Self::Organization),
+            "user" => Some(Self::User),
+            _ => None,
+        }
+    }
+}
+
 pub fn session_cookie_secure_from_env(default: bool) -> bool {
     std::env::var("SESSION_COOKIE_SECURE")
         .map(|v| match v.trim().to_ascii_lowercase().as_str() {
@@ -175,8 +207,8 @@ pub struct Config {
     pub github_packages_token: String,
     /// GitHub org or username that owns BEARS images on GHCR (e.g. `theartificial`).
     pub ghcr_packages_owner: String,
-    /// `org` or `user` — used with GitHub Packages REST paths.
-    pub ghcr_packages_owner_kind: String,
+    /// GitHub account type used for GHCR REST API paths.
+    pub ghcr_packages_owner_kind: GhcrPackagesOwnerKind,
 
     /// Search provider for Den web search tools (`DEN_SEARCH_PROVIDER`, e.g. `brave`). Empty disables search.
     pub den_search_provider: String,
@@ -526,17 +558,14 @@ impl Config {
             .unwrap_or_default()
             .trim()
             .to_string();
-        let ghcr_packages_owner_kind = std::env::var("GHCR_PACKAGES_OWNER_KIND")
-            .unwrap_or_default()
-            .trim()
-            .to_lowercase();
-        let ghcr_packages_owner_kind = if ghcr_packages_owner_kind.is_empty()
-            || matches!(ghcr_packages_owner_kind.as_str(), "org" | "user")
-        {
-            ghcr_packages_owner_kind
-        } else {
-            tracing::warn!("Invalid GHCR_PACKAGES_OWNER_KIND (expected org|user). Leaving empty.");
-            String::new()
+        let ghcr_packages_owner_kind = match std::env::var("GHCR_PACKAGES_OWNER_KIND") {
+            Ok(value) => GhcrPackagesOwnerKind::parse(&value).unwrap_or_else(|| {
+                tracing::warn!(
+                    "Invalid GHCR_PACKAGES_OWNER_KIND (expected org|user). Leaving empty."
+                );
+                GhcrPackagesOwnerKind::Unconfigured
+            }),
+            Err(_) => GhcrPackagesOwnerKind::Unconfigured,
         };
 
         let den_search_provider = std::env::var("DEN_SEARCH_PROVIDER")
@@ -553,10 +582,21 @@ impl Config {
             })
             .clamp(1, 10);
 
-        let qdrant_url = std::env::var("QDRANT_URL")
-            .ok()
-            .map(|s| s.trim().trim_end_matches('/').to_string())
-            .filter(|s| !s.is_empty());
+        let qdrant_port = std::env::var("QDRANT_PORT")
+            .unwrap_or_else(|_| DEFAULT_QDRANT_PORT.to_string())
+            .parse::<u16>()
+            .unwrap_or_else(|_| {
+                tracing::warn!(
+                    "Invalid QDRANT_PORT environment variable. Defaulting to {DEFAULT_QDRANT_PORT}"
+                );
+                DEFAULT_QDRANT_PORT
+            });
+        let instance_suffix = std::env::var("BEARS_INSTANCE_SUFFIX").unwrap_or_default();
+        let qdrant_url = qdrant_url_from_env(
+            std::env::var("QDRANT_URL").ok(),
+            qdrant_port,
+            &instance_suffix,
+        );
         let embedding_standard = std::env::var("EMBEDDING_STANDARD")
             .ok()
             .map(|s| s.trim().to_string())
@@ -619,16 +659,19 @@ impl Config {
 
         let sandbox_server_url = sandbox_server_url_from_env(
             std::env::var("SANDBOX_SERVER_URL").ok(),
+            run_web,
             run_workers,
             run_sandbox,
             sandbox_port,
+            &instance_suffix,
         );
         let sandbox_server_token = std::env::var("SANDBOX_SERVER_TOKEN").unwrap_or_default();
-        let sandbox_callback_api_url = std::env::var("SANDBOX_CALLBACK_API_URL")
-            .ok()
-            .map(|s| s.trim().trim_end_matches('/').to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| api_server_url.clone());
+        let sandbox_callback_api_url = sandbox_callback_api_url_from_env(
+            std::env::var("SANDBOX_CALLBACK_API_URL").ok(),
+            &api_server_url,
+            api_port,
+            &instance_suffix,
+        );
         let work_dispatch_auto = parse_bool_env("WORK_DISPATCH_AUTO", false);
         let work_sandbox_network = std::env::var("WORK_SANDBOX_NETWORK")
             .map(|value| value.trim().to_lowercase())
@@ -744,13 +787,12 @@ impl Config {
     }
 }
 
-fn sandbox_server_url_from_env(
+fn qdrant_url_from_env(
     raw: Option<String>,
-    run_workers: bool,
-    run_sandbox: bool,
-    sandbox_port: u16,
+    qdrant_port: u16,
+    instance_suffix: &str,
 ) -> Option<String> {
-    match raw {
+    match raw.and_then(normalize_auto_url_env) {
         Some(value) => {
             let value = value.trim().trim_end_matches('/').to_string();
             if value.is_empty() {
@@ -759,44 +801,60 @@ fn sandbox_server_url_from_env(
                 Some(value)
             }
         }
-        None if run_workers && !run_sandbox => Some(format!(
-            "http://{DEFAULT_SANDBOX_SERVER_HOST}:{sandbox_port}"
+        None => Some(format!(
+            "http://{DEFAULT_QDRANT_HOST}{}:{qdrant_port}",
+            instance_suffix.trim()
+        )),
+    }
+}
+
+fn sandbox_server_url_from_env(
+    raw: Option<String>,
+    run_web: bool,
+    run_workers: bool,
+    run_sandbox: bool,
+    sandbox_port: u16,
+    instance_suffix: &str,
+) -> Option<String> {
+    match raw.and_then(normalize_auto_url_env) {
+        Some(value) => {
+            let value = value.trim().trim_end_matches('/').to_string();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        None if (run_web || run_workers) && !run_sandbox => Some(format!(
+            "http://{DEFAULT_SANDBOX_SERVER_HOST}{}:{sandbox_port}",
+            instance_suffix.trim()
         )),
         None => None,
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sandbox_server_url_defaults_for_worker_only_processes() {
-        assert_eq!(
-            sandbox_server_url_from_env(None, true, false, 3137).as_deref(),
-            Some("http://bears-sandbox-provider:3137")
-        );
-        assert_eq!(
-            sandbox_server_url_from_env(Some("".into()), true, false, 3002),
-            None
-        );
-        assert_eq!(sandbox_server_url_from_env(None, false, true, 3002), None);
-        assert_eq!(
-            sandbox_server_url_from_env(Some(" http://sandbox:3002/ ".into()), true, false, 3002)
-                .as_deref(),
-            Some("http://sandbox:3002")
-        );
+fn sandbox_callback_api_url_from_env(
+    raw: Option<String>,
+    api_server_url: &str,
+    api_port: u16,
+    instance_suffix: &str,
+) -> String {
+    match raw.map(|value| value.trim().trim_end_matches('/').to_string()) {
+        Some(value) if value.eq_ignore_ascii_case("auto") => {
+            format!("http://bears-den{}:{api_port}", instance_suffix.trim())
+        }
+        Some(value) if !value.is_empty() => value,
+        _ => api_server_url.to_string(),
     }
+}
 
-    #[test]
-    fn parses_model_tool_budget_multipliers() {
-        let parsed = parse_model_tool_budget_multipliers_env(Some(
-            "openai/gpt-5=1.5, gpt-4.1 = 0.75, bad, empty=0, huge=99",
-        ));
-        assert_eq!(parsed.get("openai/gpt-5"), Some(&1.5));
-        assert_eq!(parsed.get("gpt-4.1"), Some(&0.75));
-        assert!(!parsed.contains_key("empty"));
-        assert!(!parsed.contains_key("huge"));
+fn normalize_auto_url_env(value: String) -> Option<String> {
+    if value.trim().eq_ignore_ascii_case("auto") {
+        // ponytail: Compose can warn on nested defaults inside URL defaults in some deployers.
+        // `auto` is a local sentinel that lets Rust use the parsed *_PORT fallback.
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -924,7 +982,7 @@ impl Config {
             db_idle_timeout_secs: 600,
             github_packages_token: String::new(),
             ghcr_packages_owner: String::new(),
-            ghcr_packages_owner_kind: String::new(),
+            ghcr_packages_owner_kind: GhcrPackagesOwnerKind::Unconfigured,
             den_search_provider: String::new(),
             brave_search_api_key: String::new(),
             den_search_max_results: 5,
@@ -971,5 +1029,108 @@ pub fn requires_jwt_secret(config: &Config) -> bool {
     #[cfg(not(feature = "production"))]
     {
         config.run_api
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ghcr_packages_owner_kind_preserves_api_path_strings() {
+        assert_eq!(
+            GhcrPackagesOwnerKind::parse(" org "),
+            Some(GhcrPackagesOwnerKind::Organization)
+        );
+        assert_eq!(
+            GhcrPackagesOwnerKind::parse("USER"),
+            Some(GhcrPackagesOwnerKind::User)
+        );
+        assert_eq!(GhcrPackagesOwnerKind::parse("team"), None);
+        assert_eq!(GhcrPackagesOwnerKind::Unconfigured.as_str(), "");
+        assert_eq!(GhcrPackagesOwnerKind::Organization.as_str(), "org");
+        assert_eq!(GhcrPackagesOwnerKind::User.as_str(), "user");
+    }
+
+    #[test]
+    fn qdrant_url_defaults_to_compose_service_port() {
+        assert_eq!(
+            qdrant_url_from_env(None, 6334, "").as_deref(),
+            Some("http://bears-qdrant:6334")
+        );
+        assert_eq!(qdrant_url_from_env(Some(String::new()), 6333, ""), None);
+        assert_eq!(
+            qdrant_url_from_env(Some(" http://qdrant:6333/ ".into()), 6333, "").as_deref(),
+            Some("http://qdrant:6333")
+        );
+        assert_eq!(
+            qdrant_url_from_env(Some("auto".into()), 6334, "-test").as_deref(),
+            Some("http://bears-qdrant-test:6334")
+        );
+    }
+
+    #[test]
+    fn sandbox_callback_auto_uses_instance_dns_name() {
+        assert_eq!(
+            sandbox_callback_api_url_from_env(
+                Some("auto".into()),
+                "https://api.example.com",
+                3036,
+                "-test",
+            ),
+            "http://bears-den-test:3036"
+        );
+        assert_eq!(
+            sandbox_callback_api_url_from_env(None, "https://api.example.com", 3001, ""),
+            "https://api.example.com"
+        );
+    }
+
+    #[test]
+    fn sandbox_server_url_defaults_for_den_processes() {
+        assert_eq!(
+            sandbox_server_url_from_env(None, false, true, false, 3137, "").as_deref(),
+            Some("http://bears-sandbox-provider:3137")
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(None, true, false, false, 3138, "").as_deref(),
+            Some("http://bears-sandbox-provider:3138")
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(Some("auto".into()), true, false, false, 3139, "-test",)
+                .as_deref(),
+            Some("http://bears-sandbox-provider-test:3139")
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(Some(String::new()), true, true, false, 3002, ""),
+            None
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(None, false, false, true, 3002, ""),
+            None
+        );
+        assert_eq!(
+            sandbox_server_url_from_env(
+                Some(" http://sandbox:3002/ ".into()),
+                true,
+                true,
+                false,
+                3002,
+                ""
+            )
+            .as_deref(),
+            Some("http://sandbox:3002")
+        );
+    }
+
+    #[test]
+    fn parses_model_tool_budget_multipliers() {
+        let parsed = parse_model_tool_budget_multipliers_env(Some(
+            "openai/gpt-5=1.5, gpt-4.1 = 0.75, bad, empty=0, huge=99",
+        ));
+        assert_eq!(parsed.get("openai/gpt-5"), Some(&1.5));
+        assert_eq!(parsed.get("gpt-4.1"), Some(&0.75));
+        assert!(!parsed.contains_key("empty"));
+        assert!(!parsed.contains_key("huge"));
     }
 }

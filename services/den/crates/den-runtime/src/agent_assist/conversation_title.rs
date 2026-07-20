@@ -6,6 +6,7 @@
 //! title derivation; structured `role: system` user rows are skipped when present.
 
 use serde_json::Value;
+use uuid::Uuid;
 
 /// Generic UI label when nothing better is available (not persisted to provider).
 pub const UNTITLED_THREAD: &str = "Untitled thread";
@@ -106,7 +107,7 @@ pub fn derive_title_from_user_message(raw: &str) -> Option<String> {
         return None;
     }
     // If the first line is still huge, cut at punctuation or hard limit.
-    if line.len() > 120 {
+    if line.chars().count() > 120 {
         line = truncate_at_word_boundary(&line, 120);
     }
 
@@ -259,22 +260,17 @@ fn looks_like_json_blob(s: &str) -> bool {
         || (t.starts_with('[') && t.ends_with(']') && t.len() > 40)
 }
 
-fn truncate_at_word_boundary(s: &str, max: usize) -> String {
-    if s.len() <= max {
+fn truncate_at_word_boundary(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
         return s.to_string();
     }
-    // Back off to a UTF-8 char boundary so multi-byte input can't panic.
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    let slice = &s[..end];
-    if let Some(pos) = slice.rfind(|c: char| c.is_whitespace()) {
+    let mut truncated = s.chars().take(max_chars).collect::<String>();
+    if let Some(pos) = truncated.rfind(|c: char| c.is_whitespace()) {
         if pos > 10 {
-            return slice[..pos].trim().to_string();
+            truncated.truncate(pos);
         }
     }
-    slice.trim().to_string()
+    truncated.trim().to_string()
 }
 
 fn truncate_to_title_length(s: &str) -> String {
@@ -296,14 +292,8 @@ fn truncate_to_title_length(s: &str) -> String {
         out.push_str(w);
     }
     if out.is_empty() {
-        // First word alone exceeds MAX_CHARS — hard cut.
-        let mut t = s.chars().take(MAX_CHARS).collect::<String>();
-        if let Some(pos) = t.rfind(|c: char| c.is_whitespace()) {
-            if pos > 5 {
-                t.truncate(pos);
-            }
-        }
-        return t.trim().to_string();
+        // First word alone exceeds MAX_CHARS — hard cut through the shared truncation helper.
+        return truncate_at_word_boundary(s, MAX_CHARS);
     }
     out
 }
@@ -319,54 +309,42 @@ fn trim_trailing_punct(mut s: String) -> String {
 }
 
 fn is_uuid_like(s: &str) -> bool {
-    let t = s.trim();
-    // 8-4-4-4-12
-    if t.len() == 36 && t.chars().filter(|c| *c == '-').count() == 4 {
-        return t.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
-    }
-    // 32 hex (no hyphens)
-    if t.len() == 32 && t.chars().all(|c| c.is_ascii_hexdigit()) {
-        return true;
-    }
-    false
+    Uuid::try_parse(s.trim()).is_ok()
 }
 
 fn looks_like_machine_or_opaque_title(s: &str, conversation_id: &str) -> bool {
-    let t = s.trim();
-    if t == conversation_id {
-        return true;
+    let title = s.trim();
+    title_matches_conversation_id(title, conversation_id)
+        || title_is_uuid_or_conv_uuid(title)
+        || title_is_legacy_chat_id(title, conversation_id)
+        || title_is_long_hex_token(title)
+}
+
+fn title_matches_conversation_id(title: &str, conversation_id: &str) -> bool {
+    title == conversation_id || conversation_id.strip_prefix("conv-") == Some(title)
+}
+
+fn title_is_uuid_or_conv_uuid(title: &str) -> bool {
+    is_uuid_like(title) || title.strip_prefix("conv-").is_some_and(is_uuid_like)
+}
+
+fn title_is_legacy_chat_id(title: &str, conversation_id: &str) -> bool {
+    let Some(inner) = title
+        .strip_prefix("Chat (")
+        .and_then(|value| value.strip_suffix(')'))
+        .map(str::trim)
+    else {
+        return false;
+    };
+    is_uuid_like(inner) || conversation_id.strip_prefix("conv-") == Some(inner)
+}
+
+fn title_is_long_hex_token(title: &str) -> bool {
+    if title.len() < 24 || !title.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return false;
     }
-    if let Some(rest) = t.strip_prefix("conv-") {
-        if is_uuid_like(rest) {
-            return true;
-        }
-    }
-    if is_uuid_like(t) {
-        return true;
-    }
-    if conversation_id.starts_with("conv-") {
-        let suf = conversation_id
-            .strip_prefix("conv-")
-            .unwrap_or(conversation_id);
-        if t == suf {
-            return true;
-        }
-    }
-    // Legacy UI fallback: "Chat (uuid-fragment)"
-    if let Some(inner) = t.strip_prefix("Chat (").and_then(|x| x.strip_suffix(')')) {
-        let inner = inner.trim();
-        if is_uuid_like(inner) || inner == conversation_id.strip_prefix("conv-").unwrap_or("") {
-            return true;
-        }
-    }
-    // Long hex-only tokens (opaque ids)
-    if t.len() >= 24 && t.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-        let hexish = t.chars().filter(|c| c.is_ascii_hexdigit()).count();
-        if hexish * 10 >= t.len() * 7 {
-            return true;
-        }
-    }
-    false
+    let hexish = title.chars().filter(|c| c.is_ascii_hexdigit()).count();
+    hexish * 10 >= title.len() * 7
 }
 
 fn is_generic_thread_placeholder(s: &str) -> bool {

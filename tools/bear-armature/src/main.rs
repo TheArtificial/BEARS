@@ -84,9 +84,7 @@ use tools::chrome::{
 };
 use tower_service::Service;
 
-use tools::adapter_env::{
-    collect_bear_environment, fetch_den_runtime_state, handle_bear_environment,
-};
+use tools::adapter_env::{collect_bear_environment, fetch_den_runtime_state};
 use tools::fs::{
     handle_apply_patch, handle_copy_path, handle_create_directory, handle_create_text_file,
     handle_delete_path, handle_find_paths, handle_list_directory, handle_move_path,
@@ -152,6 +150,7 @@ struct AdapterSharedState {
     client_capabilities: Arc<TokioMutex<Value>>,
     session_contexts: Arc<TokioMutex<HashMap<String, SessionContext>>>,
     last_plan_update_hashes: Arc<TokioMutex<HashMap<String, u64>>>,
+    surface_tool_statuses: Arc<TokioMutex<HashMap<String, SurfaceToolStatus>>>,
     tool_tasks: ToolTaskRegistry,
     mcp_registry: McpRegistry,
     approval_cache: ApprovalCache,
@@ -323,9 +322,17 @@ struct ToolPolicy {
 const MODE_ASK: &str = "ask";
 const MODE_PLAN: &str = "plan";
 const MODE_WRITE: &str = "write";
+const FOCUS_TITLE_PREFIX: &str = "⌖ ";
 const DEN_ACP_ADAPTER_CONTRACT_NAME: &str = "bears.acp.adapter";
 const DEN_ACP_ADAPTER_CONTRACT_VERSION: u32 = 1;
 const LOCAL_DEN_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn project_focused_acp_title(title: Option<String>) -> Option<String> {
+    title.map(|title| {
+        let bare = title.strip_prefix(FOCUS_TITLE_PREFIX).unwrap_or(&title);
+        format!("{FOCUS_TITLE_PREFIX}{bare}")
+    })
+}
 
 pub(crate) fn adapter_version() -> &'static str {
     env!("DEN_ACP_ADAPTER_VERSION")
@@ -1250,13 +1257,13 @@ impl SseStreamDiagnostics {
     }
 }
 
-fn stream_has_successful_terminal_condition(
-    saw_visible_output: bool,
-    saw_error: bool,
+fn stream_allows_prompt_end_response(
+    _saw_visible_output: bool,
+    _saw_error: bool,
     saw_done: bool,
-    saw_tool_activity: bool,
+    _saw_tool_activity: bool,
 ) -> bool {
-    saw_visible_output || saw_error || (saw_done && saw_tool_activity)
+    saw_done
 }
 
 #[derive(Clone, Default)]
@@ -1619,6 +1626,7 @@ async fn run() -> Result<()> {
         client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
         session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
         last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
+        surface_tool_statuses: Arc::new(TokioMutex::new(HashMap::new())),
         tool_tasks: ToolTaskRegistry::default(),
         mcp_registry: McpRegistry::default(),
         approval_cache,
@@ -2586,6 +2594,7 @@ async fn handle_request(
                     }
                 }
                 notify_mode_state(session_id, mode).await?;
+                send_available_commands_update(session_id).await?;
                 write_response(
                     id,
                     Ok(json!({
@@ -2687,6 +2696,7 @@ async fn handle_request(
                     }
                 }
                 notify_mode_state(session_id, mode).await?;
+                send_available_commands_update(session_id).await?;
                 write_response(
                     id,
                     Ok(json!({
@@ -3800,7 +3810,7 @@ async fn execute_local_tool(
             .await
         }
         "bear_environment" => {
-            handle_bear_environment(adapter_state, session_id, None, None, &args).await
+            collect_bear_environment(adapter_state, session_id, None, None, &args).await
         }
         "local_web_fetch" => handle_local_web_fetch(session_id, &args, policy).await,
         "chrome_open" => handle_chrome_open(&args, policy).await,
@@ -4927,6 +4937,7 @@ async fn handle_session_close(
         .await
         .remove(session_id);
     shared_state.active_prompts.lock().await.remove(session_id);
+    clear_surface_tool_statuses_for_session(shared_state, session_id).await;
     shared_state.tool_tasks.cancel_session(session_id).await;
     let _ = shared_state.cancellation_tx.send(CancellationNotice {
         session_id: session_id.to_string(),
@@ -4953,6 +4964,7 @@ async fn handle_session_cancel(
         .await
         .remove(session_id);
     shared_state.active_prompts.lock().await.remove(session_id);
+    clear_surface_tool_statuses_for_session(shared_state, session_id).await;
     shared_state.tool_tasks.cancel_session(session_id).await;
     let _ = shared_state.cancellation_tx.send(CancellationNotice {
         session_id: session_id.to_string(),
@@ -5082,6 +5094,16 @@ async fn handle_local_slash_prompt(
     send_user_message_chunk(session_id, &display_prompt).await?;
     let report = if command == LocalSlashCommand::Debug {
         debug_report(debug_argument_from_prompt(&prompt))
+    } else if command == LocalSlashCommand::Focus {
+        focus_report(
+            http,
+            config,
+            adapter_state,
+            shared_state,
+            session_id,
+            &prompt,
+        )
+        .await
     } else {
         handle_local_slash_command(
             http,
@@ -5313,6 +5335,7 @@ enum LocalSlashCommand {
     Capabilities,
     Runtime,
     Status,
+    Focus,
     Version,
     Debug,
 }
@@ -5368,6 +5391,13 @@ const LOCAL_SLASH_COMMANDS: &[LocalSlashCommandDescriptor] = &[
         description: "Show concise BEARS status from adapter-local environment plus optional Den health.",
         command: LocalSlashCommand::Status,
         den_required: false,
+    },
+    LocalSlashCommandDescriptor {
+        name: "focus",
+        aliases: &[],
+        description: "Focus this pair session on a Docket job: /focus [job_id].",
+        command: LocalSlashCommand::Focus,
+        den_required: true,
     },
     LocalSlashCommandDescriptor {
         name: "version",
@@ -5464,8 +5494,390 @@ async fn handle_local_slash_command(
         LocalSlashCommand::Status => {
             status_report(http, config, adapter_state, shared_state, session_id).await
         }
+        LocalSlashCommand::Focus => "Den ACP /focus usage: /focus [job_id]".to_string(),
         LocalSlashCommand::Version => version_report(http, config).await,
         LocalSlashCommand::Debug => debug_report(None),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FocusPromptTarget {
+    ConversationAssociated,
+    JobId(String),
+    Invalid,
+}
+
+fn focus_prompt_target(prompt: &str) -> FocusPromptTarget {
+    let mut parts = prompt.split_whitespace();
+    let _command = parts.next();
+    let Some(candidate) = parts.next() else {
+        return FocusPromptTarget::ConversationAssociated;
+    };
+    if Uuid::parse_str(candidate).is_ok() && parts.next().is_none() {
+        FocusPromptTarget::JobId(candidate.to_string())
+    } else {
+        FocusPromptTarget::Invalid
+    }
+}
+
+#[cfg(test)]
+fn focus_job_id_from_prompt(prompt: &str) -> Option<String> {
+    match focus_prompt_target(prompt) {
+        FocusPromptTarget::JobId(job_id) => Some(job_id),
+        FocusPromptTarget::ConversationAssociated | FocusPromptTarget::Invalid => None,
+    }
+}
+
+fn collect_docket_job_refs(value: &Value, jobs: &mut std::collections::BTreeSet<String>) {
+    match value {
+        Value::String(text) => {
+            if let Some(job_id) = text.strip_prefix("docket_job:") {
+                if job_id != "<none>" && Uuid::parse_str(job_id).is_ok() {
+                    jobs.insert(job_id.to_string());
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                collect_docket_job_refs(value, jobs);
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values() {
+                collect_docket_job_refs(value, jobs);
+            }
+        }
+        Value::Bool(_) | Value::Number(_) | Value::Null => {}
+    }
+}
+
+fn docket_job_ids_from_task_list_status(value: &Value) -> Vec<String> {
+    let mut jobs = std::collections::BTreeSet::new();
+    collect_docket_job_refs(value, &mut jobs);
+    jobs.into_iter().collect()
+}
+
+fn docket_job_ids_from_den_session_state(value: &Value) -> Vec<String> {
+    let mut jobs = std::collections::BTreeSet::new();
+    if let Some(plan) = value.pointer("/diagnostics/active_activity_plan") {
+        collect_docket_job_refs(plan, &mut jobs);
+    }
+    jobs.into_iter().collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DocketJobListEntry {
+    id: String,
+    goal: String,
+    status: String,
+}
+
+impl DocketJobListEntry {
+    fn is_completed(&self) -> bool {
+        self.status.eq_ignore_ascii_case("completed")
+    }
+}
+
+async fn den_list_docket_jobs_for_session(
+    http: &reqwest::Client,
+    config: &Config,
+    session_id: &str,
+) -> Result<Vec<DocketJobListEntry>> {
+    let value = bearwire::rpc_call(
+        http,
+        config,
+        "docket.jobs.list",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "limit": 50,
+        }),
+    )
+    .await
+    .with_context(|| format!("list BearWire Docket jobs for session {session_id}"))?;
+    let jobs = value
+        .get("jobs")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|job| {
+            Some(DocketJobListEntry {
+                id: job.get("id")?.as_str()?.to_string(),
+                goal: job
+                    .get("goal")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
+                status: job
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .trim()
+                    .to_string(),
+            })
+        })
+        .filter(|job| Uuid::parse_str(&job.id).is_ok())
+        .collect();
+    Ok(jobs)
+}
+
+fn truncate_for_focus_list(text: &str) -> String {
+    const LIMIT: usize = 120;
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= LIMIT {
+        return trimmed.to_string();
+    }
+    format!("{}...", trimmed.chars().take(LIMIT - 3).collect::<String>())
+}
+
+fn focus_job_choice_lines(jobs: &[DocketJobListEntry]) -> String {
+    jobs.iter()
+        .map(|job| {
+            let goal = truncate_for_focus_list(&job.goal);
+            if goal.is_empty() {
+                format!("- /focus {}\n  {}", job.id, job.status)
+            } else {
+                format!("- /focus {}\n  {} — {}", job.id, job.status, goal)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn focus_noncompleted_jobs(jobs: &[DocketJobListEntry]) -> Vec<DocketJobListEntry> {
+    jobs.iter()
+        .filter(|job| !job.is_completed())
+        .cloned()
+        .collect()
+}
+
+fn focus_choice_jobs(jobs: &[DocketJobListEntry]) -> Vec<DocketJobListEntry> {
+    const MAX_CHOICES: usize = 10;
+
+    let mut choices = jobs
+        .iter()
+        .filter(|job| !job.is_completed())
+        .take(MAX_CHOICES)
+        .cloned()
+        .collect::<Vec<_>>();
+    let remaining = MAX_CHOICES.saturating_sub(choices.len());
+    if remaining > 0 {
+        choices.extend(
+            jobs.iter()
+                .filter(|job| job.is_completed())
+                .take(remaining)
+                .cloned(),
+        );
+    }
+    choices
+}
+
+fn session_title_from_adapter_state(
+    adapter_state: &AdapterState,
+    session_id: &str,
+) -> Option<String> {
+    adapter_state
+        .session_contexts
+        .get(session_id)
+        .and_then(|context| context.thread_title.as_deref())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+}
+
+async fn session_title_from_shared_state(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> Option<String> {
+    shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get(session_id)
+        .and_then(|context| context.thread_title.as_deref())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+}
+
+async fn publish_focus_title_update(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) -> Result<()> {
+    let den_session = den_get_acp_session(http, config, session_id).await.ok();
+    let mut title = den_session
+        .as_ref()
+        .and_then(den_session_display_title)
+        .or_else(|| session_title_from_adapter_state(adapter_state, session_id));
+    if title.is_none() {
+        title = session_title_from_shared_state(shared_state, session_id).await;
+    }
+    let Some(title) = project_focused_acp_title(title) else {
+        return Ok(());
+    };
+    let updated_at = den_session.as_ref().and_then(|session| {
+        session
+            .get("conversation_title_updated_at")
+            .or_else(|| session.get("title_updated_at"))
+            .or_else(|| session.get("updated_at"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    if let Some(context) = shared_state
+        .session_contexts
+        .lock()
+        .await
+        .get_mut(session_id)
+    {
+        context.thread_title = Some(title.clone());
+    }
+    send_session_info_update(session_id, Some(title), updated_at).await
+}
+
+async fn focus_job_report(
+    http: &reqwest::Client,
+    config: &Config,
+    adapter_state: &AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    job_id: String,
+) -> String {
+    match bearwire::rpc_call(
+        http,
+        config,
+        "docket.jobs.execute",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "job_id": job_id.clone(),
+        }),
+    )
+    .await
+    {
+        Ok(result) => {
+            if let Err(err) = publish_focus_title_update(
+                http,
+                config,
+                adapter_state,
+                shared_state,
+                session_id,
+            )
+            .await
+            {
+                if bear_debug_verbose() {
+                    eprintln!(
+                        "bear-armature: failed to publish /focus title update session_id={} error={err:#}",
+                        session_id
+                    );
+                }
+            }
+            format!(
+                "Den ACP focus set\n\n- Job: {job_id}\n- Docket execution: {}",
+                compact_json_for_status(&result)
+            )
+        },
+        Err(err) => format!(
+            "Den ACP /focus could not start focus for job {job_id}: {err:#}\n\nRetry after reconnecting if this session was opened before the latest Den/armature deploy."
+        ),
+    }
+}
+
+async fn focus_report(
+    http: Option<&reqwest::Client>,
+    config: Option<&Config>,
+    adapter_state: &AdapterState,
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+    prompt: &str,
+) -> String {
+    match focus_prompt_target(prompt) {
+        FocusPromptTarget::JobId(job_id) => {
+            let (Some(http), Some(config)) = (http, config) else {
+                return den_required_slash_command_unavailable(LocalSlashCommand::Focus);
+            };
+            focus_job_report(
+                http,
+                config,
+                adapter_state,
+                shared_state,
+                session_id,
+                job_id,
+            )
+            .await
+        }
+        FocusPromptTarget::Invalid => {
+            "Den ACP /focus needs zero arguments or exactly one Docket job UUID: /focus [job_id]"
+                .to_string()
+        }
+        FocusPromptTarget::ConversationAssociated => {
+            let (Some(http), Some(config)) = (http, config) else {
+                return den_required_slash_command_unavailable(LocalSlashCommand::Focus);
+            };
+            match den_list_docket_jobs_for_session(http, config, session_id).await {
+                Ok(jobs) => match focus_noncompleted_jobs(&jobs).as_slice() {
+                    [job] => focus_job_report(
+                        http,
+                        config,
+                        adapter_state,
+                        shared_state,
+                        session_id,
+                        job.id.clone(),
+                    )
+                    .await,
+                    [] => "Den ACP /focus found no non-completed Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
+                        .to_string(),
+                    many => {
+                        let choices = focus_choice_jobs(&jobs);
+                        format!(
+                            "Den ACP /focus found multiple non-completed Jobs associated with this conversation. Choose one explicitly:\n\n{}",
+                            focus_job_choice_lines(if choices.is_empty() { many } else { &choices })
+                        )
+                    }
+                },
+                Err(err) => {
+                    let session_state = match den_get_acp_session(http, config, session_id).await {
+                        Ok(session_state) => session_state,
+                        Err(state_err) => {
+                            return format!(
+                                "Den ACP /focus could not list this conversation's Docket Jobs: {err:#}\n\nIt also could not inspect this conversation's Den session state: {state_err:#}\n\nBare /focus uses Den's recorded Docket/session projection, not ACP MCP tool registration. Reconnect this ACP session after deploying Den/armature, then retry /focus."
+                            );
+                        }
+                    };
+                    let mut job_ids = docket_job_ids_from_den_session_state(&session_state);
+                    if job_ids.is_empty() {
+                        if let Ok(context) = session_context(adapter_state, session_id) {
+                            job_ids = docket_job_ids_from_task_list_status(&context.raw);
+                        }
+                    }
+                    match job_ids.as_slice() {
+                        [job_id] => focus_job_report(
+                            http,
+                            config,
+                            adapter_state,
+                            shared_state,
+                            session_id,
+                            job_id.clone(),
+                        )
+                        .await,
+                        [] => format!(
+                            "Den ACP /focus could not list this conversation's Docket Jobs: {err:#}\n\nIt found no Job-backed task list associated with this conversation. Use /focus <job_id>, or create a durable Job before focusing."
+                        ),
+                        many => format!(
+                            "Den ACP /focus could not list Docket Job descriptions: {err:#}\n\nIt found multiple Job-backed task lists associated with this conversation. Choose one explicitly:\n\n{}",
+                            many.iter()
+                                .map(|job_id| format!("- /focus {job_id}"))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        ),
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -5705,6 +6117,32 @@ async fn status_report(
     let mut report = render_status_report(&environment, &tasks);
     report.push_str("\n- Debug: ");
     report.push_str(bear_debug_mode().as_str());
+    if let (Some(http), Some(config)) = (http, config) {
+        match timeout(
+            LOCAL_DEN_INSPECTION_TIMEOUT,
+            fetch_den_runtime_state(http, config, session_id),
+        )
+        .await
+        {
+            Ok(Ok(runtime_state)) => {
+                for line in render_den_runtime_status(&runtime_state) {
+                    report.push('\n');
+                    report.push_str(&line);
+                }
+            }
+            Ok(Err(err)) => {
+                report.push_str(&format!("\n- Run: unavailable ({err:#})"));
+            }
+            Err(_) => {
+                report.push_str(&format!(
+                    "\n- Run: unavailable (timed out after {}ms)",
+                    LOCAL_DEN_INSPECTION_TIMEOUT.as_millis()
+                ));
+            }
+        }
+    } else {
+        report.push_str("\n- Run: unavailable (adapter is not configured for Den)");
+    }
     let bearwire_status = if let (Some(http), Some(config)) = (http, config) {
         bearwire::protocol_status(http, config).await
     } else {
@@ -5718,6 +6156,67 @@ async fn status_report(
 fn compact_json_for_status(value: &Value) -> String {
     let text = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
     truncate_for_log(&text, 600)
+}
+
+fn status_scalar(value: &Value, path: &str) -> Option<String> {
+    match value.pointer(path)? {
+        Value::String(text) => Some(text.clone()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Null => None,
+        other => Some(compact_json_for_status(other)),
+    }
+}
+
+fn render_den_runtime_status(runtime_state_response: &Value) -> Vec<String> {
+    let Some(session) = runtime_state_response.pointer("/session") else {
+        return vec!["- Run: unavailable (no BearWire session state)".to_string()];
+    };
+    let live = status_scalar(session, "/diagnostics/runtime_session_live")
+        .unwrap_or_else(|| "unknown".to_string());
+    let Some(runtime) = session.pointer("/diagnostics/runtime_state") else {
+        return vec![format!("- Run: live={live} runtime_state=<none>")];
+    };
+    let run_id = status_scalar(runtime, "/run/run_id").unwrap_or_else(|| "<none>".to_string());
+    let stance = status_scalar(runtime, "/run/stance").unwrap_or_else(|| "unknown".to_string());
+    let governance =
+        status_scalar(runtime, "/run/governance").unwrap_or_else(|| "unknown".to_string());
+    let orientation = status_scalar(runtime, "/run/objective_orientation_kind")
+        .unwrap_or_else(|| "unknown".to_string());
+    let focused_job =
+        status_scalar(runtime, "/run/focused_job_id").unwrap_or_else(|| "<none>".to_string());
+    let loop_level = status_scalar(runtime, "/agent_loop_control/level")
+        .unwrap_or_else(|| "unknown".to_string());
+    let active_execution = session.pointer("/diagnostics/active_docket_execution");
+    let execution_job = active_execution.and_then(|execution| status_scalar(execution, "/job_id"));
+    let execution_task =
+        active_execution.and_then(|execution| status_scalar(execution, "/task_id"));
+    let task_active = status_scalar(runtime, "/task_focus/active")
+        .or_else(|| execution_job.as_ref().map(|_| "true".to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
+    let next_task = status_scalar(runtime, "/task_focus/next_incomplete_task_title")
+        .or_else(|| {
+            execution_task
+                .as_ref()
+                .map(|task_id| format!("task {task_id}"))
+        })
+        .unwrap_or_else(|| "<none>".to_string());
+    let docket_job = status_scalar(runtime, "/docket/active_job_id")
+        .or(execution_job)
+        .unwrap_or_else(|| "<none>".to_string());
+    let docket_task = status_scalar(runtime, "/docket/active_task_id")
+        .or(execution_task)
+        .unwrap_or_else(|| "<none>".to_string());
+    let docket_source = status_scalar(runtime, "/docket/source")
+        .or_else(|| active_execution.map(|_| "docket_execution_session".to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
+    vec![
+        format!(
+            "- Run: live={live} id={run_id} stance={stance} governance={governance} orientation={orientation} focused_job={focused_job} loop={loop_level}"
+        ),
+        format!("- Focus: active={task_active} next={next_task}"),
+        format!("- Docket: job={docket_job} task={docket_task} source={docket_source}"),
+    ]
 }
 
 async fn runtime_report(
@@ -6809,7 +7308,7 @@ enum ToolTaskWaitOutcome<T> {
 }
 
 async fn wait_for_tool_future_or_matching_cancellation<F>(
-    shared_state: &AdapterSharedState,
+    mut cancellation_rx: broadcast::Receiver<CancellationNotice>,
     session_id: &str,
     turn_token: Uuid,
     conversation_id: Option<&str>,
@@ -6818,7 +7317,6 @@ async fn wait_for_tool_future_or_matching_cancellation<F>(
 where
     F: std::future::Future,
 {
-    let mut cancellation_rx = shared_state.cancellation_tx.subscribe();
     let mut cancellation_closed = false;
     tokio::pin!(tool_future);
     loop {
@@ -6862,6 +7360,9 @@ pub(crate) fn spawn_tool_request_task(
     event: Value,
     turn_token: Uuid,
 ) {
+    // Subscribe before spawning or registering the task so cancellation cannot be lost
+    // between task publication and the first poll of its execution future.
+    let cancellation_rx = shared_state.cancellation_tx.subscribe();
     tokio::spawn(async move {
         let canonical = match BearWireToolCallRequestData::parse(&event) {
             Ok(canonical) => canonical,
@@ -6965,7 +7466,7 @@ pub(crate) fn spawn_tool_request_task(
             turn_token,
         );
         let result = match wait_for_tool_future_or_matching_cancellation(
-            &shared_state,
+            cancellation_rx,
             &session_id,
             turn_token,
             None,
@@ -7091,7 +7592,7 @@ pub(crate) async fn project_den_owned_tool_request(
     let canonical = BearWireToolCallRequestData::parse(event)?;
     let tool_call_id = canonical.tool_call.id.as_str();
     let tool_name = canonical.tool_call.name.as_str();
-    if current_surface_tool_status(session_id, tool_call_id)
+    if current_surface_tool_status(shared_state, session_id, tool_call_id)
         .await
         .is_some_and(SurfaceToolStatus::is_terminal)
     {
@@ -8329,7 +8830,7 @@ async fn send_permission_request(
         return Err(anyhow!("permission request failed: {error}"));
     }
     let result = response.get("result").cloned().unwrap_or(Value::Null);
-    parse_permission_decision(&result)
+    Ok(parse_permission_decision(&result))
 }
 
 async fn post_permission_result(
@@ -8590,11 +9091,22 @@ pub(crate) async fn handle_session_info_projection(
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
+    turn_token: Uuid,
     title: Option<String>,
     updated_at: Option<String>,
     context_budget: Option<Value>,
     runtime: Option<Value>,
 ) -> Result<()> {
+    if !is_current_prompt_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        "session_info_projection",
+    )
+    .await
+    {
+        return Ok(());
+    }
     apply_session_title_projection_state(adapter_state, shared_state, session_id, title.clone())
         .await;
     send_session_info_update(session_id, title, updated_at).await?;
@@ -8664,8 +9176,19 @@ pub(crate) async fn handle_conversation_resolved_projection(
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
     session_id: &str,
+    turn_token: Uuid,
     conversation_id: &str,
 ) -> Result<()> {
+    if !is_current_prompt_turn(
+        shared_state,
+        session_id,
+        turn_token,
+        "conversation_resolved_projection",
+    )
+    .await
+    {
+        return Ok(());
+    }
     let conversation_id = conversation_id.trim();
     if !conversation_id.starts_with("conv-") {
         return Ok(());
@@ -9808,6 +10331,17 @@ fn tool_call_title(tool_name: &str, event: &Value) -> String {
         // plain static label over pretending the requested title was `conversation`.
         return "Set conversation title".to_string();
     }
+    if matches!(tool_name, "create_job") {
+        if let Some(goal) = tool_args_from_event(event)
+            .and_then(|args| args.get("goal"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|goal| !goal.is_empty())
+        {
+            return format!("Create job: {}", truncate_title(goal));
+        }
+        return "Create job".to_string();
+    }
     if matches!(
         tool_name,
         "run_command" | "process_run" | "terminal_run_command"
@@ -10153,32 +10687,40 @@ fn should_emit_surface_tool_status(
     next.rank() >= previous.rank()
 }
 
-static SURFACE_TOOL_STATUSES: OnceLock<TokioMutex<HashMap<String, SurfaceToolStatus>>> =
-    OnceLock::new();
-
 async fn current_surface_tool_status(
+    shared_state: &AdapterSharedState,
     session_id: &str,
     tool_call_id: &str,
 ) -> Option<SurfaceToolStatus> {
     let key = format!("{session_id}\n{tool_call_id}");
-    SURFACE_TOOL_STATUSES
-        .get_or_init(|| TokioMutex::new(HashMap::new()))
+    shared_state
+        .surface_tool_statuses
         .lock()
         .await
         .get(&key)
         .copied()
 }
 
+async fn clear_surface_tool_statuses_for_session(
+    shared_state: &AdapterSharedState,
+    session_id: &str,
+) {
+    let prefix = format!("{session_id}\n");
+    shared_state
+        .surface_tool_statuses
+        .lock()
+        .await
+        .retain(|key, _| !key.starts_with(&prefix));
+}
+
 async fn record_surface_tool_status(
+    shared_state: &AdapterSharedState,
     session_id: &str,
     tool_call_id: &str,
     next: SurfaceToolStatus,
 ) -> bool {
     let key = format!("{session_id}\n{tool_call_id}");
-    let mut statuses = SURFACE_TOOL_STATUSES
-        .get_or_init(|| TokioMutex::new(HashMap::new()))
-        .lock()
-        .await;
+    let mut statuses = shared_state.surface_tool_statuses.lock().await;
     let previous = statuses.get(&key).copied();
     if !should_emit_surface_tool_status(previous, next) {
         if bear_debug_verbose()
@@ -10263,6 +10805,11 @@ pub(crate) async fn send_tool_call_update_for_turn(
     payload: ToolCallUpdatePayload<'_>,
 ) -> Result<()> {
     if is_current_prompt_turn(shared_state, session_id, turn_token, "tool_call_update").await {
+        let surface_status = SurfaceToolStatus::from_str(payload.status);
+        if !record_surface_tool_status(shared_state, session_id, tool_call_id, surface_status).await
+        {
+            return Ok(());
+        }
         send_tool_call_update(session_id, tool_call_id, tool_name, payload).await
     } else {
         Ok(())
@@ -10282,10 +10829,6 @@ async fn send_tool_call_update(
         raw_output,
         extra_content,
     } = payload;
-    let surface_status = SurfaceToolStatus::from_str(status);
-    if !record_surface_tool_status(session_id, tool_call_id, surface_status).await {
-        return Ok(());
-    }
     let display = event
         .map(|event| ToolDisplay::from_event(tool_name, event))
         .unwrap_or_else(|| tool_display(tool_name));
@@ -10425,7 +10968,14 @@ fn normalize_thought_chunk_text(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(format!("{text}.\n"))
 }
 
+fn should_emit_notification(is_headless: bool, method: &str) -> bool {
+    !(is_headless && method == "session/update")
+}
+
 async fn write_notification(method: &str, params: Value) -> Result<()> {
+    if !should_emit_notification(headless_mode(), method) {
+        return Ok(());
+    }
     JsonRpcTransport::default().notify(method, params).await
 }
 
@@ -10592,6 +11142,13 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    #[test]
+    fn headless_suppresses_only_acp_session_updates() {
+        assert!(!should_emit_notification(true, "session/update"));
+        assert!(should_emit_notification(true, "session/request_permission"));
+        assert!(should_emit_notification(false, "session/update"));
+    }
 
     #[derive(Clone)]
     struct BearWireTestServerState {
@@ -10938,6 +11495,7 @@ mod tests {
             client_capabilities: Arc::new(TokioMutex::new(Value::Null)),
             session_contexts: Arc::new(TokioMutex::new(HashMap::new())),
             last_plan_update_hashes: Arc::new(TokioMutex::new(HashMap::new())),
+            surface_tool_statuses: Arc::new(TokioMutex::new(HashMap::new())),
             tool_tasks: ToolTaskRegistry::default(),
             mcp_registry: McpRegistry::default(),
             approval_cache: ApprovalCache::default(),
@@ -11003,6 +11561,49 @@ mod tests {
         let paths = paths.lock().await.clone();
         assert_eq!(paths, vec!["/bearwire/v1/rpc"]);
         assert!(!paths.iter().any(|path| path.contains("/acp/")));
+    }
+
+    #[test]
+    fn render_den_runtime_status_includes_orientation_and_governance() {
+        let runtime_state = json!({
+            "session": {
+                "diagnostics": {
+                    "runtime_session_live": true,
+                    "runtime_state": {
+                        "run": {
+                            "run_id": "run-123",
+                            "stance": "pair",
+                            "governance": "interactive",
+                            "objective_orientation_kind": "focused",
+                            "focused_job_id": "job-123"
+                        },
+                        "agent_loop_control": { "level": "careful" },
+                        "task_focus": {
+                            "active": true,
+                            "next_incomplete_task_title": "Ship status command"
+                        },
+                        "docket": {
+                            "active_job_id": "job-123",
+                            "active_task_id": "task-456",
+                            "source": "objective_orientation"
+                        }
+                    }
+                }
+            }
+        });
+
+        let lines = render_den_runtime_status(&runtime_state);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].contains("live=true"));
+        assert!(lines[0].contains("governance=interactive"));
+        assert!(lines[0].contains("orientation=focused"));
+        assert!(lines[0].contains("focused_job=job-123"));
+        assert!(lines[0].contains("loop=careful"));
+        assert!(lines[1].contains("active=true"));
+        assert!(lines[1].contains("next=Ship status command"));
+        assert!(lines[2].contains("job=job-123"));
+        assert!(lines[2].contains("task=task-456"));
+        assert!(lines[2].contains("source=objective_orientation"));
     }
 
     #[test]
@@ -11528,9 +12129,11 @@ mod tests {
             .await
             .get("acp-session")
             .is_none());
-        let tasks = shared.tool_tasks.list_for_session("acp-session").await;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
+        assert!(shared
+            .tool_tasks
+            .list_for_session("acp-session")
+            .await
+            .is_empty());
         let notice = cancel_rx.recv().await.expect("cancellation notice");
         assert_eq!(notice.session_id, "acp-session");
         assert_eq!(notice.turn_token, None);
@@ -11636,9 +12239,11 @@ mod tests {
             .await
             .get("acp-session")
             .is_none());
-        let tasks = shared.tool_tasks.list_for_session("acp-session").await;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
+        assert!(shared
+            .tool_tasks
+            .list_for_session("acp-session")
+            .await
+            .is_empty());
         let notice = cancel_rx.recv().await.expect("close cancellation notice");
         assert_eq!(notice.session_id, "acp-session");
         assert_eq!(notice.turn_token, None);
@@ -11731,9 +12336,11 @@ mod tests {
             .await
             .get("acp-session")
             .is_none());
-        let tasks = shared.tool_tasks.list_for_session("acp-session").await;
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].phase, ToolTaskPhase::Cancelled);
+        assert!(shared
+            .tool_tasks
+            .list_for_session("acp-session")
+            .await
+            .is_empty());
         let notice = cancel_rx.recv().await.expect("cancellation notice");
         assert_eq!(notice.session_id, "acp-session");
         assert_eq!(notice.turn_token, None);
@@ -11809,6 +12416,7 @@ mod tests {
     async fn adapter_tool_wait_ignores_unrelated_cancellation_notice() {
         let shared = test_shared_state();
         let turn_token = Uuid::new_v4();
+        let cancellation_rx = shared.cancellation_tx.subscribe();
         let sender = shared.cancellation_tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -11820,7 +12428,7 @@ mod tests {
         });
 
         let outcome = wait_for_tool_future_or_matching_cancellation(
-            &shared,
+            cancellation_rx,
             "acp-session",
             turn_token,
             None,
@@ -11840,9 +12448,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn adapter_tool_wait_observes_cancellation_sent_before_wait_begins() {
+        let shared = test_shared_state();
+        let turn_token = Uuid::new_v4();
+        let cancellation_rx = shared.cancellation_tx.subscribe();
+        let side_effect_reached = Arc::new(TokioMutex::new(false));
+        let side_effect_for_future = side_effect_reached.clone();
+        shared
+            .cancellation_tx
+            .send(CancellationNotice {
+                session_id: "acp-session".to_string(),
+                turn_token: Some(turn_token),
+                conversation_id: None,
+            })
+            .expect("send cancellation before wait");
+
+        let outcome = wait_for_tool_future_or_matching_cancellation(
+            cancellation_rx,
+            "acp-session",
+            turn_token,
+            None,
+            async move {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                *side_effect_for_future.lock().await = true;
+            },
+        )
+        .await;
+
+        assert!(matches!(outcome, ToolTaskWaitOutcome::Cancelled(_)));
+        assert!(!*side_effect_reached.lock().await);
+    }
+
+    #[tokio::test]
     async fn adapter_tool_wait_stops_on_matching_cancellation_notice() {
         let shared = test_shared_state();
         let turn_token = Uuid::new_v4();
+        let cancellation_rx = shared.cancellation_tx.subscribe();
         let sender = shared.cancellation_tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -11854,7 +12495,7 @@ mod tests {
         });
 
         let outcome = wait_for_tool_future_or_matching_cancellation(
-            &shared,
+            cancellation_rx,
             "acp-session",
             turn_token,
             None,
@@ -11882,6 +12523,153 @@ mod tests {
             parse_local_slash_command("/status"),
             Some(LocalSlashCommand::Status)
         );
+    }
+
+    #[test]
+    fn parse_focus_job_id_from_prompt() {
+        let job_id = "11111111-1111-1111-1111-111111111111";
+        assert_eq!(
+            focus_job_id_from_prompt(&format!("/focus {job_id}")),
+            Some(job_id.to_string())
+        );
+        assert_eq!(
+            focus_prompt_target("/focus"),
+            FocusPromptTarget::ConversationAssociated
+        );
+        assert_eq!(focus_job_id_from_prompt("/focus"), None);
+        assert_eq!(
+            focus_prompt_target("/focus nope"),
+            FocusPromptTarget::Invalid
+        );
+        assert_eq!(focus_job_id_from_prompt("/focus nope"), None);
+        assert_eq!(
+            focus_prompt_target(&format!("/focus {job_id} extra")),
+            FocusPromptTarget::Invalid
+        );
+        assert_eq!(
+            focus_job_id_from_prompt(&format!("/focus {job_id} extra")),
+            None
+        );
+    }
+
+    #[test]
+    fn project_focused_acp_title_is_idempotent() {
+        assert_eq!(
+            project_focused_acp_title(Some("Roadmap".to_string())).as_deref(),
+            Some("⌖ Roadmap")
+        );
+        assert_eq!(
+            project_focused_acp_title(Some("⌖ Roadmap".to_string())).as_deref(),
+            Some("⌖ Roadmap")
+        );
+    }
+
+    #[test]
+    fn task_list_status_docket_jobs_ignore_session_only_refs() {
+        let job_id = "11111111-1111-1111-1111-111111111111";
+        let other_job_id = "22222222-2222-2222-2222-222222222222";
+        let status = json!({
+            "task_list": {
+                "items": [
+                    {"source_ref": {"refs": ["docket_job:<none>", "docket_task:task-only"]}},
+                    {"source_ref": {"refs": [format!("docket_job:{job_id}")]}},
+                    {"source_ref": {"refs": [format!("docket_job:{job_id}")]}},
+                    {"source_ref": {"refs": [format!("docket_job:{other_job_id}")]}}
+                ]
+            }
+        });
+
+        assert_eq!(
+            docket_job_ids_from_task_list_status(&status),
+            vec![job_id.to_string(), other_job_id.to_string()]
+        );
+    }
+
+    #[test]
+    fn den_session_state_docket_jobs_use_active_activity_plan() {
+        let job_id = "11111111-1111-1111-1111-111111111111";
+        let session_state = json!({
+            "diagnostics": {
+                "active_activity_plan": {
+                    "items": [
+                        {"source_ref": {"refs": ["docket_job:<none>"]}},
+                        {"source_ref": {"refs": [format!("docket_job:{job_id}")]}}
+                    ]
+                }
+            },
+            "adapter_environment": {
+                "stale": {"refs": ["docket_job:22222222-2222-2222-2222-222222222222"]}
+            }
+        });
+
+        assert_eq!(
+            docket_job_ids_from_den_session_state(&session_state),
+            vec![job_id.to_string()]
+        );
+    }
+
+    #[test]
+    fn focus_job_choice_lines_include_status_and_goal() {
+        let lines = focus_job_choice_lines(&[DocketJobListEntry {
+            id: "11111111-1111-1111-1111-111111111111".to_string(),
+            status: "ready".to_string(),
+            goal: "Advance the roadmap with evidence-backed slices".to_string(),
+        }]);
+
+        assert!(lines.contains("/focus 11111111-1111-1111-1111-111111111111"));
+        assert!(lines.contains("ready — Advance the roadmap with evidence-backed slices"));
+    }
+
+    #[test]
+    fn focus_noncompleted_jobs_ignore_completed_candidates() {
+        let jobs = vec![
+            DocketJobListEntry {
+                id: "11111111-1111-1111-1111-111111111111".to_string(),
+                status: "completed".to_string(),
+                goal: "Done work".to_string(),
+            },
+            DocketJobListEntry {
+                id: "22222222-2222-2222-2222-222222222222".to_string(),
+                status: "ready".to_string(),
+                goal: "Current work".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            focus_noncompleted_jobs(&jobs),
+            vec![DocketJobListEntry {
+                id: "22222222-2222-2222-2222-222222222222".to_string(),
+                status: "ready".to_string(),
+                goal: "Current work".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn focus_choice_jobs_append_completed_only_when_under_cap() {
+        let mut jobs = (0..11)
+            .map(|index| DocketJobListEntry {
+                id: format!("00000000-0000-0000-0000-{index:012}"),
+                status: "ready".to_string(),
+                goal: format!("Ready job {index}"),
+            })
+            .collect::<Vec<_>>();
+        jobs.push(DocketJobListEntry {
+            id: "99999999-9999-9999-9999-999999999999".to_string(),
+            status: "completed".to_string(),
+            goal: "Completed overflow".to_string(),
+        });
+
+        let choices = focus_choice_jobs(&jobs);
+        assert_eq!(choices.len(), 10);
+        assert!(choices.iter().all(|job| !job.is_completed()));
+
+        let choices = focus_choice_jobs(&jobs[0..2]);
+        assert_eq!(choices.len(), 2);
+
+        let choices = focus_choice_jobs(&jobs[10..]);
+        assert_eq!(choices.len(), 2);
+        assert_eq!(choices[1].status, "completed");
     }
 
     #[test]
@@ -12311,27 +13099,27 @@ mod tests {
     }
 
     #[test]
-    fn permission_request_activity_is_successful_without_stream_terminal() {
-        assert!(stream_has_successful_terminal_condition(
-            true, false, false, true
+    fn error_without_run_terminal_does_not_allow_prompt_end_response() {
+        assert!(!stream_allows_prompt_end_response(
+            false, true, false, false
         ));
     }
 
     #[test]
-    fn stream_terminal_condition_allows_visible_output_error_or_tool_completion() {
-        assert!(stream_has_successful_terminal_condition(
+    fn visible_output_without_terminal_does_not_allow_prompt_end_response() {
+        assert!(!stream_allows_prompt_end_response(
             true, false, false, false
         ));
-        assert!(stream_has_successful_terminal_condition(
-            false, true, false, false
-        ));
-        assert!(stream_has_successful_terminal_condition(
-            false, false, true, true
-        ));
-        assert!(!stream_has_successful_terminal_condition(
-            false, false, true, false
-        ));
-        assert!(!stream_has_successful_terminal_condition(
+    }
+
+    #[test]
+    fn run_done_allows_prompt_end_response_without_output_or_tool_activity() {
+        assert!(stream_allows_prompt_end_response(false, false, true, false));
+    }
+
+    #[test]
+    fn tool_activity_alone_does_not_allow_prompt_end_response() {
+        assert!(!stream_allows_prompt_end_response(
             false, false, false, true
         ));
     }
@@ -12564,6 +13352,28 @@ mod tests {
                 .and_then(|args| args.get("title"))
                 .and_then(Value::as_str),
             Some("Actual ACP card title")
+        );
+        assert_eq!(
+            tool_call_title(
+                "create_job",
+                &json!({ "args": { "goal": "Ship ACP card title tests" } })
+            ),
+            "Create job: Ship ACP card title tests"
+        );
+        assert_eq!(
+            tool_call_title(
+                "create_job",
+                &json!({ "data": { "tool_call": { "arguments": { "goal": "Avoid prominent Docket branding" } } } })
+            ),
+            "Create job: Avoid prominent Docket branding"
+        );
+        assert_eq!(
+            tool_call_title("create_job", &json!({ "args": {} })),
+            "Create job"
+        );
+        assert!(
+            !tool_call_title("create_job", &json!({ "args": { "goal": "Plan release" } }))
+                .contains("Docket")
         );
         assert_eq!(
             tool_call_title(
@@ -16096,6 +16906,49 @@ mod tests {
         assert!(late.needs_attention());
     }
 
+    #[tokio::test]
+    async fn surface_tool_status_cache_is_session_scoped_and_clearable() {
+        let shared = test_shared_state();
+        assert!(
+            record_surface_tool_status(
+                &shared,
+                "session-a",
+                "call-reused",
+                SurfaceToolStatus::Completed,
+            )
+            .await
+        );
+        assert!(
+            record_surface_tool_status(
+                &shared,
+                "session-b",
+                "call-reused",
+                SurfaceToolStatus::InProgress,
+            )
+            .await
+        );
+
+        clear_surface_tool_statuses_for_session(&shared, "session-a").await;
+
+        assert_eq!(
+            current_surface_tool_status(&shared, "session-a", "call-reused").await,
+            None
+        );
+        assert_eq!(
+            current_surface_tool_status(&shared, "session-b", "call-reused").await,
+            Some(SurfaceToolStatus::InProgress)
+        );
+        assert!(
+            record_surface_tool_status(
+                &shared,
+                "session-a",
+                "call-reused",
+                SurfaceToolStatus::Pending,
+            )
+            .await
+        );
+    }
+
     #[test]
     fn surface_tool_status_updates_are_monotonic_and_idempotent() {
         assert!(should_emit_surface_tool_status(
@@ -16167,8 +17020,10 @@ mod tests {
         });
 
         let (result, output) = capture_json_output_for_test(|| async {
-            send_tool_call_update(
+            send_tool_call_update_for_turn(
+                &shared,
                 &session_id,
+                turn_token,
                 requested_event
                     .pointer("/data/tool_call/id")
                     .and_then(Value::as_str)
@@ -16207,6 +17062,65 @@ mod tests {
         assert!(
             tool_frames[0].to_string().contains("completed"),
             "expected only terminal card: {output:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_session_info_projection_cannot_mutate_session_state() {
+        let shared = test_shared_state();
+        let session_id = format!("session-{}", Uuid::new_v4());
+        let current_turn = Uuid::new_v4();
+        shared.active_prompts.lock().await.insert(
+            session_id.clone(),
+            ActivePromptTurn {
+                token: current_turn,
+                conversation_id: Some("conv-current".to_string()),
+            },
+        );
+        let mut adapter_state = AdapterState {
+            client_capabilities: Value::Null,
+            session_contexts: HashMap::new(),
+            transport: shared.transport.clone(),
+        };
+
+        handle_session_info_projection(
+            &mut adapter_state,
+            &shared,
+            &session_id,
+            Uuid::new_v4(),
+            Some("stale title".to_string()),
+            None,
+            Some(json!({"remaining": 1})),
+            Some(json!({"state":"stale"})),
+        )
+        .await
+        .expect("stale projection is ignored");
+
+        handle_conversation_resolved_projection(
+            &test_config("http://127.0.0.1:1".to_string()),
+            &mut adapter_state,
+            &shared,
+            &session_id,
+            Uuid::new_v4(),
+            "conv-stale",
+        )
+        .await
+        .expect("stale binding projection is ignored");
+
+        assert!(!adapter_state.session_contexts.contains_key(&session_id));
+        assert!(!shared
+            .session_contexts
+            .lock()
+            .await
+            .contains_key(&session_id));
+        assert_eq!(
+            shared
+                .active_prompts
+                .lock()
+                .await
+                .get(&session_id)
+                .and_then(|turn| turn.conversation_id.as_deref()),
+            Some("conv-current")
         );
     }
 
@@ -16877,7 +17791,7 @@ mod tests {
             },
         );
 
-        let value = handle_bear_environment(
+        let value = collect_bear_environment(
             &adapter_state,
             "session-1",
             None,

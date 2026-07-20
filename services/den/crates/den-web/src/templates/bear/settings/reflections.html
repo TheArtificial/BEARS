@@ -1,0 +1,66 @@
+{% extends "bear/_manage.html" %}
+
+{% block title %}Reflections · {{ bear.slug }}{% endblock %}
+
+{% block manage %}
+<div class="box">
+<h2>Reflections</h2>
+<p class="form-hint">Latest pair reflection runs recorded for this Bear. Close-triggered runs are logged as <code>session.closed</code>; open-session sweeps are logged as <code>session.reflected</code>.</p>
+
+{% if reflections and reflections | length > 0 %}
+<table>
+  <thead><tr><th>When</th><th>Conversation</th><th>Session</th><th>Event</th><th>Status</th><th>Counts</th><th>Action</th></tr></thead>
+  <tbody>
+  {% for reflection in reflections %}
+    <tr>
+      <td>{{ reflection.created_at }}</td>
+      <td>
+        {% if reflection.conversation_id %}
+          <a href="/bear/{{ bear.slug | e }}/conversations/{{ reflection.conversation_id }}">{% if reflection.conversation_title %}{{ reflection.conversation_title | e }}{% else %}Conversation{% endif %}</a>
+        {% else %}
+          <em>unknown</em>
+        {% endif %}
+      </td>
+      <td><code>{{ reflection.session_id | e }}</code></td>
+      <td>{{ reflection.event_type | e }}{% if reflection.trigger %}<br><small>{{ reflection.trigger | e }}</small>{% endif %}</td>
+      <td>
+        <strong>{{ reflection.status_label | e }}</strong>
+        <br><small>{{ reflection.status_explanation | e }}</small>
+        {% if reflection.skipped_reason %}<br><small><code>{{ reflection.skipped_reason | e }}</code></small>{% endif %}
+      </td>
+      <td>
+        {{ reflection.counts_label | e }}
+        {% if reflection.proposal_links and reflection.proposal_links | length > 0 %}
+          <br><small>Proposals:
+          {% for proposal_id in reflection.proposal_links %}
+            <a href="/bear/{{ bear.slug | e }}/memory/proposals/{{ proposal_id | e }}">review {{ loop.index }}</a>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+          </small>
+        {% elif reflection.proposal_count > 0 %}
+          <br><small><a href="/bear/{{ bear.slug | e }}/memory">Open Memory review queue</a></small>
+        {% endif %}
+      </td>
+      <td>
+        {% if reflection.needs_attention %}
+          <strong>Needs attention</strong>
+          {% if can_manage_bear and reflection.retry_href %}
+          <form method="post" action="/bear/{{ bear.slug | e }}/{{ reflection.retry_href | e }}">
+            <button type="submit">Retry now</button>
+          </form>
+          {% endif %}
+        {% else %}
+          —
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td colspan="7"><details><summary>Payload</summary><pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ reflection.payload_json | e }}</pre></details></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No pair reflection events recorded yet.</em></p>
+{% endif %}
+</div>
+{% endblock %}

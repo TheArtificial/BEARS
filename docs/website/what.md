@@ -21,3 +21,14 @@ The writer doesn't remember anything, but every turn it reads the entire script,
 Some of the props are very complex. They can be notebooks that allow the character to remember things between plays, or calculators that let the writer get math done without mistakes.
 
 Bear Den makes all of this happen with templates for scripts, some really useful props, and stages on which a bear puppet can perform for you.
+
+---
+
+What makes Den work:
+
+- the agent loop (above)
+- memory (explicit, implicit by reflection, proactive retrieval) and skills
+- context management (prompt compilation, compaction)
+- tools for doing things (including armatures, MCP)
+- task orientation and work planning (Docket)
+- wiki and artifacts (Cabinet)

@@ -20,6 +20,6 @@ pub mod tools;
 
 pub use agent_loop_control::{AgentLoopControlLevel, ThinkingEffort};
 pub use error::DenError;
-pub use governance::{GovernanceMode, RunMode};
+pub use governance::{Governance, RunMode};
 pub use ids::{BearId, ConversationId, SessionId, UserId};
 pub use profile::{BearProfile, BearStance};

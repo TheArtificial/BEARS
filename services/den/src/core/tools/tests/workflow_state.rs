@@ -269,6 +269,45 @@ async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memo
     );
 }
 
+#[tokio::test]
+async fn create_task_preserves_explicit_session_anchor_without_current_session_lookup() {
+    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
+    let anchor = uuid::Uuid::new_v4();
+    let args: super::super::DocketTaskCreateArguments = serde_json::from_value(json!({
+        "session_anchor_id": anchor,
+        "title": "Session task",
+        "body": "Track the slice.",
+        "completion_criteria": ["task is tracked"]
+    }))
+    .unwrap();
+
+    let resolved = super::super::default_task_session_anchor_id(&pool, &pair_context(), &args)
+        .await
+        .unwrap();
+
+    assert_eq!(resolved, Some(anchor));
+}
+
+#[tokio::test]
+async fn create_task_without_job_defaults_to_current_session_or_fails_before_db() {
+    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
+    let mut context = pair_context();
+    context.client_session_id = None;
+    let args: super::super::DocketTaskCreateArguments = serde_json::from_value(json!({
+        "title": "Session task",
+        "body": "Track the slice.",
+        "completion_criteria": ["task is tracked"]
+    }))
+    .unwrap();
+
+    let err = super::super::default_task_session_anchor_id(&pool, &context, &args)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("current client session"));
+}
+
 #[test]
 fn tool_warning_payload_has_expected_shape() {
     let payload = tool_warning_payload(

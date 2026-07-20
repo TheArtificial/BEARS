@@ -23,6 +23,11 @@ pub enum ProcError {
         #[source]
         source: std::io::Error,
     },
+    #[error("spawned {program} without piped {stream}")]
+    MissingPipedStream {
+        program: String,
+        stream: &'static str,
+    },
 }
 
 /// Which end of the stream to keep when output exceeds the byte cap.
@@ -106,8 +111,20 @@ pub async fn run_command(spec: CommandSpec<'_>) -> Result<CommandOutput, ProcErr
         source,
     })?;
 
-    let stdout = child.stdout.take().expect("piped stdout");
-    let stderr = child.stderr.take().expect("piped stderr");
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ProcError::MissingPipedStream {
+            program: spec.program.to_string(),
+            stream: "stdout",
+        })?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ProcError::MissingPipedStream {
+            program: spec.program.to_string(),
+            stream: "stderr",
+        })?;
     let limit = spec.max_output_bytes;
     let window = spec.window;
     let stdout_task = tokio::spawn(read_limited(stdout, limit, window));
@@ -275,8 +292,20 @@ pub async fn run_streaming(
         source,
     })?;
 
-    let stdout = child.stdout.take().expect("piped stdout");
-    let stderr = child.stderr.take().expect("piped stderr");
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ProcError::MissingPipedStream {
+            program: spec.program.to_string(),
+            stream: "stdout",
+        })?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ProcError::MissingPipedStream {
+            program: spec.program.to_string(),
+            stream: "stderr",
+        })?;
     let stdout_task = tokio::spawn(stream_into(stdout, sink.clone()));
     let stderr_task = tokio::spawn(stream_into(stderr, sink));
 

@@ -98,6 +98,31 @@ fn rejects_unknown_turn_time_variables_in_compile_time_text() {
 }
 
 #[test]
+fn focused_runtime_fragments_keep_execution_moving_across_tasks() {
+    let registry = repository_prompt_fragment_registry().unwrap();
+
+    let focused = registry.require("runtime_objective_focused").unwrap();
+    assert!(focused
+        .body
+        .contains("active objective across task boundaries"));
+    assert!(focused
+        .body
+        .contains("continue the next incomplete unblocked task"));
+
+    let execution = registry.require("runtime_docket_execution_active").unwrap();
+    assert!(execution.body.contains("satisfy the Job's commit policy"));
+    assert!(execution
+        .body
+        .contains("refresh the focused Job/task state"));
+    assert!(execution
+        .body
+        .contains("continue the next incomplete unblocked task"));
+    assert!(execution
+        .body
+        .contains("Final-answer only when the Job is complete"));
+}
+
+#[test]
 fn repository_source_version_is_stable() {
     assert_eq!(
         repository_prompt_source_version(),

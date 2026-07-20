@@ -7,6 +7,9 @@
 <p><a href="/work">← Work</a> · <a href="/work/jobs/{{ run.job_id }}">Job</a></p>
 <h1>Run {{ run.id[:8] }}… <small>({{ run.state }})</small></h1>
 <p>{{ job_goal }}</p>
+{% if conversation_id %}
+<p><a href="/bear/{{ run.bear_slug | urlencode }}/?conversation_id={{ conversation_id | urlencode }}">Open headless conversation transcript →</a></p>
+{% endif %}
 
 <section>
     <h2>Execution</h2>
@@ -87,10 +90,18 @@
 </section>
 {% endif %}
 
-{% if log_tail %}
+{% if conversation_id or log_tail %}
 <section>
-    <h2>Log tail</h2>
-    <pre><code>{{ log_tail }}</code></pre>
+    <h2>Run output</h2>
+    {% if conversation_id %}
+    <p>The model transcript is stored as a Den conversation. <a href="/bear/{{ run.bear_slug | urlencode }}/?conversation_id={{ conversation_id | urlencode }}">Open the conversation</a>.</p>
+    {% endif %}
+    {% if log_tail %}
+    <details open>
+        <summary>Sandbox stdout/stderr and armature lifecycle log</summary>
+        <pre><code>{{ log_tail }}</code></pre>
+    </details>
+    {% endif %}
 </section>
 {% endif %}
 {% endblock %}

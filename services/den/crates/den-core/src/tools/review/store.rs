@@ -11,6 +11,189 @@ use crate::{BearProfile, DenError};
 use serde_json::Value;
 use uuid::Uuid;
 
+/// Closed actions used when requesting a memory review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemorySuggestedAction {
+    Unspecified,
+    SummarizeIntoCore,
+    PromoteToCore,
+    CabinetUpdate,
+    SkillReview,
+    RetainProfileLocal,
+    DeleteAfterReview,
+    HumanReview,
+    ArchiveIndex,
+    TaskContext,
+}
+
+impl MemorySuggestedAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unspecified => "unspecified",
+            Self::SummarizeIntoCore => "summarize_into_core",
+            Self::PromoteToCore => "promote_to_core",
+            Self::CabinetUpdate => "cabinet_update",
+            Self::SkillReview => "skill_review",
+            Self::RetainProfileLocal => "retain_profile_local",
+            Self::DeleteAfterReview => "delete_after_review",
+            Self::HumanReview => "human_review",
+            Self::ArchiveIndex => "archive_index",
+            Self::TaskContext => "task_context",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "unspecified" => Some(Self::Unspecified),
+            "summarize_into_core" => Some(Self::SummarizeIntoCore),
+            "promote_to_core" => Some(Self::PromoteToCore),
+            "cabinet_update" => Some(Self::CabinetUpdate),
+            "skill_review" => Some(Self::SkillReview),
+            "retain_profile_local" => Some(Self::RetainProfileLocal),
+            "delete_after_review" => Some(Self::DeleteAfterReview),
+            "human_review" => Some(Self::HumanReview),
+            "archive_index" => Some(Self::ArchiveIndex),
+            "task_context" => Some(Self::TaskContext),
+            _ => None,
+        }
+    }
+}
+
+/// Closed sensitivity labels used when requesting a memory review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemorySensitivity {
+    Normal,
+    Person,
+    SecretRisk,
+    ExternalUntrusted,
+    Unknown,
+}
+
+impl MemorySensitivity {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Person => "person",
+            Self::SecretRisk => "secret_risk",
+            Self::ExternalUntrusted => "external_untrusted",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "normal" => Some(Self::Normal),
+            "person" => Some(Self::Person),
+            "secret_risk" => Some(Self::SecretRisk),
+            "external_untrusted" => Some(Self::ExternalUntrusted),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+/// Closed persisted states accepted by the memory-proposal list filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryProposalStatus {
+    Pending,
+    Rejected,
+    RetainedLocal,
+    Deferred,
+    Superseded,
+    NeedsHumanReview,
+}
+
+impl MemoryProposalStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Rejected => "rejected",
+            Self::RetainedLocal => "retained_local",
+            Self::Deferred => "deferred",
+            Self::Superseded => "superseded",
+            Self::NeedsHumanReview => "needs_human_review",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "rejected" => Some(Self::Rejected),
+            "retained_local" => Some(Self::RetainedLocal),
+            "deferred" => Some(Self::Deferred),
+            "superseded" => Some(Self::Superseded),
+            "needs_human_review" => Some(Self::NeedsHumanReview),
+            _ => None,
+        }
+    }
+}
+
+/// Closed terminal states accepted when resolving a memory proposal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryProposalResolution {
+    Rejected,
+    RetainedLocal,
+    Deferred,
+    Superseded,
+    NeedsHumanReview,
+}
+
+impl MemoryProposalResolution {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rejected => "rejected",
+            Self::RetainedLocal => "retained_local",
+            Self::Deferred => "deferred",
+            Self::Superseded => "superseded",
+            Self::NeedsHumanReview => "needs_human_review",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "rejected" => Some(Self::Rejected),
+            "retained_local" => Some(Self::RetainedLocal),
+            "deferred" => Some(Self::Deferred),
+            "superseded" => Some(Self::Superseded),
+            "needs_human_review" => Some(Self::NeedsHumanReview),
+            _ => None,
+        }
+    }
+}
+
+/// Closed lifecycle states accepted when marking a memory record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryLifecycleStatus {
+    Active,
+    Stale,
+    Superseded,
+    Archived,
+    ArchiveCandidate,
+}
+
+impl MemoryLifecycleStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Stale => "stale",
+            Self::Superseded => "superseded",
+            Self::Archived => "archived",
+            Self::ArchiveCandidate => "archive-candidate",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "active" => Some(Self::Active),
+            "stale" => Some(Self::Stale),
+            "superseded" => Some(Self::Superseded),
+            "archived" => Some(Self::Archived),
+            "archive-candidate" => Some(Self::ArchiveCandidate),
+            _ => None,
+        }
+    }
+}
+
 /// The observation fields the `observation_write` payload needs.
 #[derive(Debug, Clone)]
 pub struct ObservationRecord {
@@ -54,7 +237,7 @@ pub struct ResolveProposalRequest {
     pub reviewer_profile: BearProfile,
     pub binding_id: String,
     pub proposal_id: Uuid,
-    pub status: String,
+    pub status: MemoryProposalResolution,
     pub review_notes: Option<String>,
     pub decision_summary: Option<String>,
     pub projection: ProposalProjection,
@@ -68,7 +251,7 @@ pub struct RequestReviewRequest {
     pub binding_id: Option<String>,
     pub source_paths: Vec<String>,
     pub source_refs: Value,
-    pub suggested_action: String,
+    pub suggested_action: MemorySuggestedAction,
     pub target_ref: Option<String>,
     pub title: String,
     pub summary: String,
@@ -76,7 +259,7 @@ pub struct RequestReviewRequest {
     pub proposed_content: Option<String>,
     pub proposed_patch: Option<String>,
     pub refs: Value,
-    pub sensitivity: String,
+    pub sensitivity: MemorySensitivity,
     pub requires_human: bool,
     pub projection: ProposalProjection,
 }
@@ -105,7 +288,7 @@ pub struct MarkMemoryLifecycleRequest {
     pub reviewer_profile: BearProfile,
     pub binding_id: String,
     pub memory_id: String,
-    pub status: String,
+    pub status: MemoryLifecycleStatus,
     pub reason: Option<String>,
 }
 
@@ -126,11 +309,11 @@ pub trait MemoryReviewStore: Send + Sync {
         request: ObservationWriteRequest,
     ) -> Result<ObservationRecord, DenError>;
 
-    /// Proposals matching `status` (already trimmed) — serialized JSON array.
+    /// Proposals matching the closed persisted status domain, if filtered.
     async fn list_proposals(
         &self,
         bear_id: Uuid,
-        status: Option<String>,
+        status: Option<MemoryProposalStatus>,
         limit: i64,
     ) -> Result<Value, DenError>;
 

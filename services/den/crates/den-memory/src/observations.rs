@@ -1,9 +1,36 @@
 use serde_json::Value;
-use time::OffsetDateTime;
 
 use den_core::DenError;
 
-use super::records::BearMemoryStore;
+use super::{clock::now_rfc3339, records::BearMemoryStore};
+
+const PENDING_REVIEW: &str = "pending_review";
+const REVIEW_QUEUED: &str = "review_queued";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryObservationStatus {
+    PendingReview,
+    ReviewQueued,
+}
+
+impl MemoryObservationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PendingReview => PENDING_REVIEW,
+            Self::ReviewQueued => REVIEW_QUEUED,
+        }
+    }
+
+    fn parse(raw: &str) -> Result<Self, DenError> {
+        match raw {
+            PENDING_REVIEW => Ok(Self::PendingReview),
+            REVIEW_QUEUED => Ok(Self::ReviewQueued),
+            other => Err(DenError::System(format!(
+                "unknown memory observation status: {other}"
+            ))),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SqliteMemoryObservation {
@@ -11,7 +38,7 @@ pub struct SqliteMemoryObservation {
     pub sequence_no: i64,
     pub summary: String,
     pub logical_path: String,
-    pub status: String,
+    pub status: MemoryObservationStatus,
     pub proposal_id: Option<String>,
     pub source_json: Value,
     pub created_at: String,
@@ -26,15 +53,13 @@ pub async fn create_memory_observation(
     source: &Value,
 ) -> Result<SqliteMemoryObservation, DenError> {
     let sequence_no = store.next_sequence().await?;
-    let created_at = OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))?;
+    let created_at = now_rfc3339()?;
     sqlx::query(
         r"
         INSERT INTO memory_observations (
             observation_id, bear_id, sequence_no, summary, salience, logical_path,
             source_json, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_review', ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ",
     )
     .bind(observation_id)
@@ -44,6 +69,7 @@ pub async fn create_memory_observation(
     .bind(salience)
     .bind(logical_path)
     .bind(source.to_string())
+    .bind(MemoryObservationStatus::PendingReview.as_str())
     .bind(&created_at)
     .execute(store.pool())
     .await
@@ -53,7 +79,7 @@ pub async fn create_memory_observation(
         sequence_no,
         summary: summary.to_string(),
         logical_path: logical_path.to_string(),
-        status: "pending_review".to_string(),
+        status: MemoryObservationStatus::PendingReview,
         proposal_id: None,
         source_json: source.clone(),
         created_at,
@@ -77,7 +103,7 @@ pub async fn get_memory_observation(
     .fetch_optional(store.pool())
     .await
     .map_err(|e| DenError::System(format!("sqlite get observation failed: {e}")))?;
-    Ok(row.map(ObservationSqlRow::into_row))
+    row.map(ObservationSqlRow::try_into_row).transpose()
 }
 
 pub async fn mark_observation_review_queued(
@@ -88,10 +114,11 @@ pub async fn mark_observation_review_queued(
     sqlx::query(
         r"
         UPDATE memory_observations
-        SET status = 'review_queued', proposal_id = ?
+        SET status = ?, proposal_id = ?
         WHERE bear_id = ? AND observation_id = ?
         ",
     )
+    .bind(MemoryObservationStatus::ReviewQueued.as_str())
     .bind(proposal_id)
     .bind(store.bear_id().to_string())
     .bind(observation_id)
@@ -114,17 +141,39 @@ struct ObservationSqlRow {
 }
 
 impl ObservationSqlRow {
-    fn into_row(self) -> SqliteMemoryObservation {
-        SqliteMemoryObservation {
+    fn try_into_row(self) -> Result<SqliteMemoryObservation, DenError> {
+        Ok(SqliteMemoryObservation {
             observation_id: self.observation_id,
             sequence_no: self.sequence_no,
             summary: self.summary,
             logical_path: self.logical_path,
-            status: self.status,
+            status: MemoryObservationStatus::parse(&self.status)?,
             proposal_id: self.proposal_id,
             source_json: serde_json::from_str(&self.source_json)
                 .unwrap_or_else(|_| serde_json::json!({})),
             created_at: self.created_at,
-        }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MemoryObservationStatus;
+
+    #[test]
+    fn memory_observation_status_preserves_persisted_strings() {
+        assert_eq!(
+            MemoryObservationStatus::PendingReview.as_str(),
+            "pending_review"
+        );
+        assert_eq!(
+            MemoryObservationStatus::ReviewQueued.as_str(),
+            "review_queued"
+        );
+        assert_eq!(
+            MemoryObservationStatus::parse("pending_review").unwrap(),
+            MemoryObservationStatus::PendingReview
+        );
+        assert!(MemoryObservationStatus::parse("done").is_err());
     }
 }

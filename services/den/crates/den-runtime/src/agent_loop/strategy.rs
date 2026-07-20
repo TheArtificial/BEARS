@@ -6,6 +6,7 @@ pub struct StrategyProfile {
     pub plan: bool,
     pub reflect_on_fail: bool,
     pub critique: bool,
+    /// Number of parallel strategy branches to explore; `0` disables fanout.
     pub fanout_n: u8,
 }
 

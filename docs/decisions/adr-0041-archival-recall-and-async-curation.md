@@ -1,6 +1,6 @@
 # ADR-0041 — Archival Recall and Asynchronous Curation
 
-**Status:** Accepted (2026-06-13)
+**Status:** Accepted (2026-06-13); amended (2026-07-15)
 **Deciders:** Hans
 **Related:**
 - [ADR-0031 — SQLite-first canonical store](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)
@@ -28,6 +28,47 @@ This ADR decides how those ideas are realized **without breaking the bears invar
 
 ## Decision
 
+### 0. 2026-07 amendment: compaction may schedule harvest, but must not define memory
+
+Den originally aligned archive harvest with context compaction because compaction is a useful lifecycle signal: it identifies long-lived or closed session material, produces provenance-bounded summaries, and helps curation avoid rereading an unbounded transcript every time. That alignment remains useful for **scheduling, source selection, and retrieval hints**.
+
+It is not a semantic contract. Compaction artifacts optimize for **continuing a session under a context budget**; durable memory optimizes for **future reusable truth**. Therefore:
+
+- compaction artifacts are episodic source material, never memory-shaped truth;
+- compaction summary buckets must not be promoted directly into `memory_proposals`;
+- archive harvest may use compaction artifacts to choose candidate source spans, but the extraction pass must be memory-specific and evidence-backed;
+- when a claim matters, harvest should prefer canonical transcript/message evidence over assistant-written continuation summaries;
+- if only a compaction bucket supports a candidate and no durable semantic claim can be stated, harvest emits no proposal;
+- task state, workflow refs, unresolved follow-ups, and artifact refs are not memory candidates unless the extraction pass can state a durable preference, decision, constraint, fact, or lesson with provenance.
+
+The intended relationship is:
+
+> Compaction decides what context may be worth rereading. Reflection decides what is worth remembering.
+
+This amendment supersedes any implementation reading of this ADR that treated compaction buckets as proposal categories. Bucket filtering is acceptable only as a temporary guardrail to reduce junk; the target architecture is an extraction-first memory pass over episodic sources with explicit discard reasons and positive acceptance tests for meaningful memory.
+
+The useful coupling is operational, not semantic:
+
+- **Triggering:** compaction/session-close events are cheap signals that a span has aged out of hot context and may be worth reflection.
+- **Scoping:** compacted spans bound the transcript window so harvest does not scan every message on every run.
+- **Indexing hints:** summary sections may hint that a decision, preference, constraint, or conflict occurred, but the extractor must verify against source evidence before proposing memory.
+- **Watermarking and backpressure:** compaction/span identifiers provide idempotency, requeue, and "not yet reflected" bookkeeping.
+- **Debuggability:** proposals can trace from semantic candidate → evidence messages/artifacts → compaction span/run that scheduled the harvest.
+
+The rejected shortcut is:
+
+```text
+compaction bucket → memory proposal
+```
+
+The accepted pipeline is:
+
+```text
+compaction event/span → memory-specific extraction over evidence → proposal or discard reason
+```
+
+The first acceptance bar for the replacement is deliberately small: given a source span where the user clearly states one durable preference/decision/fact plus transient task residue, harvest must produce one future-useful semantic proposal with evidence and discard the residue. If that positive smoke test fails, the system has not demonstrated meaningful memory regardless of queue or recall plumbing.
+
 ### 1. "Archival memory" is the derived recall index, not a new store
 
 There is **no new canonical "archival" tier**. The Letta-archival replacement is:
@@ -52,7 +93,7 @@ The episodic → semantic boundary is crossed **only** by an explicit curation d
 Curation (`curate` role) runs **off the hot path** as bounded Reflection runs ([ADR-0018](adr-0018-reflection-system.md)), analogous to Letta sleep-time compute. The live turn never blocks on memory management. It does three jobs:
 
 1. **Proposal review** (exists): resolve pending `memory_proposals`.
-2. **Archive harvest** (new — the "proactively review session archives" requirement): scan un-mined closed sessions / compaction artifacts via an **extraction-first** pass that distills durable facts/decisions/preferences/lessons into candidate semantic entries → `memory_proposals`. Conversational filler is discarded.
+2. **Archive harvest** (new — the "proactively review session archives" requirement): scan un-mined closed sessions using compaction artifacts as scheduling/source-selection hints, then run an **extraction-first** memory pass over episodic evidence that distills durable facts/decisions/preferences/lessons into candidate semantic entries → `memory_proposals`. Conversational filler and continuation-only compaction residue are discarded with reasons. The harvest result may be empty.
 3. **Consolidation** (new): dedupe candidates against existing canonical memory; on contradiction, **supersede** rather than overwrite, encoding the transition; synthesize higher-level `reflection` records when cumulative salience crosses a threshold; promote low-risk results to `core/`.
 
 Harvest is delivered as a new Reflection lane, **`archive_harvest`** ([reflection-run-taxonomy.md](../architecture/reflection-run-taxonomy.md)), triggered event-driven (session close, cumulative-salience threshold) plus a throttled/adaptive heartbeat — never a fixed cron. Curation stays bounded, audited, risk-classed, and human-overrideable; `requires_human` / high-sensitivity items escalate rather than auto-applying.
@@ -114,6 +155,7 @@ The Qdrant passage registry and vector lifecycle remain as specified in ADR-0038
 **Negative / costs**
 - Harvest and consolidation are LLM passes with real token cost; must be budgeted and throttled.
 - **Hallucination propagation**: a bad extraction can become durable knowledge — mitigated by quality/confidence filtering at harvest, `requires_human` for sensitive items, and mandatory provenance back to source `conversation_messages`.
+- **False confidence from compaction summaries**: continuation summaries can sound authoritative while encoding assistant interpretation, task residue, or outdated state. Harvest must treat them as hints and require a memory-specific claim plus provenance before proposal creation.
 - Dedup must reconcile candidates against canonical SQLite (and the Qdrant registry) — content-hash + semantic dedup.
 - Additive schema migration and new consolidation logic in `curate`.
 
@@ -132,12 +174,12 @@ The Qdrant passage registry and vector lifecycle remain as specified in ADR-0038
 | Per-item importance signal | **salience** |
 | Background, off-hot-path curation posture | **sleep-time** curation |
 
-"Governance" remains reserved for runtime context management; memory review is **curation** ([ADR-0039](adr-0039-trust-profiles-and-governance-modes.md), `AGENTS.md`).
+"Governance" remains reserved for runtime context management; memory review is **curation** ([ADR-0039](adr-0039-trust-profiles-and-governance.md), `AGENTS.md`).
 
 ## Follow-ups (not decided here)
 
 - Cumulative-salience reflection threshold and deeper freshness weighting. The stored salience scale is currently `low|normal|high|critical`.
-- Extraction prompt/schema for harvest (what counts as a durable fact vs. filler) and quality-filter thresholds.
+- Extraction prompt/schema for harvest (what counts as a durable fact vs. filler), quality-filter thresholds, and golden positive tests proving that obvious user preferences/decisions produce meaningful proposals while assistant prose/task residue is discarded.
 - Semantic-dedup strategy and similarity threshold for consolidation (and whether it reuses the recall index).
 - Whether typed entity links (§7) are derived on demand or persisted, and their vocabulary.
 - Sequencing lives in [Memory Automation Roadmap](../roadmap/MEMORY_AUTOMATION_ROADMAP.md) and the [Derived recall index plan](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md).

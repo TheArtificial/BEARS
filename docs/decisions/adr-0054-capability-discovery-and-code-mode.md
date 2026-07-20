@@ -9,7 +9,7 @@
 - [ADR-0016: Pair Tool Discovery and Scope Orientation](adr-0016-pair-tool-discovery-and-scope-orientation.md)
 - [ADR-0025: Tool Naming and Execution Strategy](adr-0025-tool-naming-and-execution-strategy.md)
 - [ADR-0028: Environment Affordance and Resource Boundaries](adr-0028-environment-affordance-and-resource-boundaries.md)
-- [ADR-0039: Trust Profiles and Governance Modes](adr-0039-trust-profiles-and-governance-modes.md)
+- [ADR-0039: Trust Profiles and Governance Modes](adr-0039-trust-profiles-and-governance.md)
 - [ADR-0050: Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
 - [ADR-0055: Bear Capability Configuration, Connections, and Portability](adr-0055-bear-capability-configuration-connections-and-portability.md)
 - [Capabilities and Skills](../architecture/capabilities-and-skills.md)

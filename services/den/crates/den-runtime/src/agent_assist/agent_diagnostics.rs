@@ -3,6 +3,8 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use super::json_fields::pick_str;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentBlockRow {
     pub id: Option<String>,
@@ -48,17 +50,6 @@ fn block_body_text(b: &Value) -> Option<String> {
         serde_json::to_string_pretty(v).ok()
     }
     from_field(b, "value").or_else(|| from_field(b, "content"))
-}
-
-fn pick_str(v: &Value, keys: &[&str]) -> Option<String> {
-    for k in keys {
-        if let Some(s) = v.get(*k).and_then(|x| x.as_str()) {
-            if !s.is_empty() {
-                return Some(s.to_string());
-            }
-        }
-    }
-    None
 }
 
 fn tool_rows_from_array(arr: &[Value]) -> Vec<AgentToolRow> {

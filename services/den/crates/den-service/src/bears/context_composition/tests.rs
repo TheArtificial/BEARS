@@ -12,7 +12,9 @@ fn test_bear(profile: Option<BearContextProfile>) -> Bear {
         name: "Builder Bear".to_string(),
         description: String::new(),
         default_model: Some("openai/gpt-4o".to_string()),
+        default_tool_budget_multiplier: None,
         tools_enabled: None,
+        work_enabled: false,
         runtime_plan: None,
         context_profile: profile
             .as_ref()
@@ -24,6 +26,10 @@ fn test_bear(profile: Option<BearContextProfile>) -> Bear {
         birthday: None,
         created_at: OffsetDateTime::UNIX_EPOCH,
         updated_at: OffsetDateTime::UNIX_EPOCH,
+        live_reflection_enabled: true,
+        live_reflection_stale_after_minutes: 30,
+        live_reflection_activity_threshold: 20,
+        live_reflection_sweep_limit: 25,
     }
 }
 
@@ -193,7 +199,7 @@ fn managed_resolved_blocks_override_profile_and_repository_defaults() {
         blocks: vec![
             resolved_block("den_baseline", "Managed baseline for {{ bear_name }}."),
             resolved_block(
-                managed_space_block_key(BearProfile::Chat),
+                &managed_space_block_key(BearProfile::Chat),
                 "Managed chat for {{ bear_slug }}.",
             ),
         ],

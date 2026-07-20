@@ -11,6 +11,7 @@ use axum::{
 use axum_extra::extract::Form;
 use axum_extra::routing::RouterExt;
 use axum_login::tower_sessions::Session;
+use bearwire_protocol::wire::BearWireEvent;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -31,6 +32,12 @@ use crate::{
 use den_core::{AgentLoopControlLevel, DenError};
 use den_memory::{bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager};
 use den_protocol::ContextBudgetReport;
+use den_runtime::{
+    bearwire_events,
+    pair_reflection::create_pair_reflection_proposals_from_latest_summary,
+    runtime::compaction::{prepare_turn_compaction, TurnCompactionTrigger},
+    runtime::compaction_observability::RuntimeCompactionEventStatus,
+};
 use den_service::prompt_memory_block_store::list_prompt_memory_blocks_for_bear_profile;
 use den_service::{
     bears::{
@@ -49,7 +56,7 @@ use crate::web::admin::bears::{
     BearMemberAdminRow, BearPlanModeRow, BearWebApprovalRow, BearWebFetchRow, BearWebSourceRow,
 };
 use crate::web::bear::create_support::{
-    all_model_catalog_options_context_for_bear, canonical_default_model_handle,
+    all_model_catalog_options_context_for_bear, bear_slug_base, canonical_default_model_handle,
     provision_bifrost_virtual_key_for_bear,
 };
 use den_llm::ModelOption;
@@ -84,12 +91,29 @@ pub fn router() -> Router<AppState> {
         .route_with_tsr("/bear/{slug}/activity", get(conversations_view))
         .route_with_tsr("/bear/{slug}/conversations", get(conversations_view))
         .route_with_tsr(
+            "/bear/{slug}/conversations/reflect",
+            post(reflect_conversations_post),
+        )
+        .route_with_tsr("/bear/{slug}/reflections", get(reflections_view))
+        .route_with_tsr(
             "/bear/{slug}/conversations/{conversation_id}",
             get(conversation_detail_view),
+        )
+        .route_with_tsr(
+            "/bear/{slug}/conversations/{conversation_id}/reflect",
+            post(reflect_conversation_post),
+        )
+        .route_with_tsr(
+            "/bear/{slug}/conversations/{conversation_id}/reconsider",
+            post(reconsider_conversation_post),
         )
         .route_with_tsr("/bear/{slug}/context", get(context_view))
         .route_with_tsr("/bear/{slug}/resources", get(policy_view))
         .route_with_tsr("/bear/{slug}/advanced", get(advanced_view))
+        .route_with_tsr(
+            "/bear/{slug}/advanced/live-reflection",
+            post(live_reflection_post),
+        )
         .route_with_tsr("/bear/{slug}/export.bear", get(export_bear_bundle))
         .route_with_tsr("/bears/import", post(import_bear_bundle))
         .route_with_tsr("/bear/{slug}/members/grant", post(grant_member_action))
@@ -127,6 +151,8 @@ struct DomainQuery {
     message: Option<String>,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    compaction: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -177,6 +203,47 @@ struct BearModelsForm {
     bifrost_virtual_key_value: String,
     #[serde(default)]
     bifrost_virtual_key_clear: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveReflectionForm {
+    #[serde(default)]
+    enabled: String,
+    #[serde(default)]
+    stale_after_minutes: i32,
+    #[serde(default)]
+    activity_threshold: i32,
+    #[serde(default)]
+    sweep_limit: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReflectConversationsForm {
+    #[serde(default)]
+    conversation_ids: Vec<Uuid>,
+    #[serde(default)]
+    bulk_action: String,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct ManualReflectionResult {
+    compaction_applied: bool,
+    compaction_skipped: bool,
+    compaction_status: String,
+    compaction_diagnostic: Option<String>,
+    compaction_artifact_json: String,
+    candidate_count: usize,
+    discarded_count: usize,
+    discarded_reasons: Vec<String>,
+    dropped_followup_count: usize,
+    proposals_created: usize,
+    proposal_ids: Vec<Uuid>,
+    skipped_reason: Option<&'static str>,
+    source_message_start_seq: Option<i64>,
+    source_message_end_seq: Option<i64>,
+    reflection_event_id: Option<Uuid>,
+    reflection_event_sequence_no: Option<i64>,
+    reflection_payload_json: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,6 +365,7 @@ struct ConversationAdminRow {
     compaction_status: String,
     compaction_event_count: i64,
     latest_compaction_at: Option<String>,
+    compaction_explanation: String,
     latest_context_budget: Option<ContextBudgetReport>,
     latest_context_budget_updated_at: Option<String>,
     latest_context_budget_summary: Option<String>,
@@ -310,6 +378,59 @@ struct MessageAdminRow {
     role: String,
     visibility: String,
     preview: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ReflectionAdminRow {
+    created_at: String,
+    event_type: String,
+    session_id: String,
+    conversation_id: Option<Uuid>,
+    conversation_title: Option<String>,
+    trigger: Option<String>,
+    status: Option<String>,
+    skipped_reason: Option<String>,
+    status_label: String,
+    status_explanation: String,
+    counts_label: String,
+    needs_attention: bool,
+    retry_href: Option<String>,
+    candidate_count: Option<i64>,
+    dropped_followup_count: Option<i64>,
+    proposal_count: Option<i64>,
+    proposal_links: Vec<String>,
+    source_message_start_seq: Option<i64>,
+    source_message_end_seq: Option<i64>,
+    payload_json: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LiveReflectionStatusAdmin {
+    enabled: bool,
+    workers_enabled: bool,
+    status_label: String,
+    status_explanation: String,
+    last_event_at: Option<String>,
+    checked_24h: i64,
+    processed_24h: i64,
+    skipped_24h: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct ConversationTimelineRow {
+    created_at: String,
+    kind: String,
+    label: String,
+    details: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReflectionWatermarkAdmin {
+    latest_message_sequence_no: Option<i64>,
+    last_reflected_at: Option<String>,
+    reflected_through_sequence_no: Option<i64>,
+    new_message_count: Option<i64>,
+    explanation: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -366,6 +487,27 @@ fn context_budget_summary(report: &ContextBudgetReport) -> String {
             "{} tokens estimated (reserve {})",
             report.estimated_total_tokens, report.reserved_output_tokens
         ),
+    }
+}
+
+fn compaction_status_explanation(
+    status: Option<&str>,
+    budget: Option<&ContextBudgetReport>,
+) -> String {
+    match status {
+        Some("Applied") | Some("applied") => {
+            "A compaction artifact exists; reflection can mine the compacted summary.".to_string()
+        }
+        Some("Skipped") | Some("skipped") => {
+            "Compaction evaluated this conversation but did not create an artifact, usually because the visible transcript is still below the configured context-pressure thresholds.".to_string()
+        }
+        Some(other) => format!("Latest compaction event status: {other}."),
+        None => match budget.and_then(|b| b.context_window.map(|limit| (b.estimated_total_tokens, limit))) {
+            Some((used, limit)) => format!(
+                "No compaction event yet. Latest context estimate is {used}/{limit} tokens, so proactive/live reflection may wait until threshold pressure unless you trigger reflection manually."
+            ),
+            None => "No compaction event yet. This usually means proactive processing has not touched this conversation since tracking was added, or the conversation has no context budget record yet.".to_string(),
+        },
     }
 }
 
@@ -500,31 +642,324 @@ fn sqlite_string_literal(path: &FsPath) -> Result<String, CustomError> {
     Ok(format!("'{}'", raw.replace('\'', "''")))
 }
 
-fn slug_base(raw: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in raw.trim().to_ascii_lowercase().chars() {
-        let mapped = if ch.is_ascii_alphanumeric() { ch } else { '-' };
-        if mapped == '-' {
-            if !last_dash && !out.is_empty() {
-                out.push('-');
-                last_dash = true;
-            }
-        } else {
-            out.push(mapped);
-            last_dash = false;
-        }
-    }
-    let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() {
-        "imported-bear".to_string()
-    } else {
-        trimmed
+fn pretty_json(value: serde_json::Value) -> String {
+    // `Value` serialization is expected to be infallible; fall back to compact JSON if the pretty
+    // formatter ever errors so the admin page can still render diagnostic payloads.
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+}
+
+fn json_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_u64().and_then(|n| i64::try_from(n).ok()))
+    })
+}
+
+fn reflection_status_copy(
+    status: Option<&str>,
+    skipped_reason: Option<&str>,
+    candidate_count: Option<i64>,
+    proposal_count: Option<i64>,
+) -> (String, String, String) {
+    match skipped_reason {
+        Some("no_compaction_artifact") => (
+            "Not inspected".to_string(),
+            "No compaction artifact exists yet, so reflection did not inspect conversation content. Trigger manual reflection to force a checkpoint first.".to_string(),
+            "not extracted".to_string(),
+        ),
+        Some("below_compaction_threshold") => (
+            "Below threshold".to_string(),
+            "Live reflection checked this conversation, but normal compaction rules decided a summary would squeeze the transcript too aggressively right now.".to_string(),
+            "not extracted".to_string(),
+        ),
+        Some("no_uncompacted_content") => (
+            "No new content".to_string(),
+            "The latest compaction artifact already covers the available transcript; reflection is waiting for new conversation content.".to_string(),
+            "not extracted".to_string(),
+        ),
+        Some("live_reflection_disabled") => (
+            "Live reflection disabled".to_string(),
+            "This Bear is configured not to proactively spend tokens on live/open conversation reflection.".to_string(),
+            "not extracted".to_string(),
+        ),
+        Some(reason) => (
+            "Skipped".to_string(),
+            format!("Reflection skipped this run: {reason}."),
+            "not extracted".to_string(),
+        ),
+        None if matches!(status, Some("processed")) && candidate_count == Some(0) => (
+            "Inspected, no memories found".to_string(),
+            "Reflection inspected a compaction artifact and did not find durable memory candidates.".to_string(),
+            format!("candidates 0, proposals {}", proposal_count.unwrap_or(0)),
+        ),
+        None => (
+            status.unwrap_or("unknown").to_string(),
+            "Reflection inspected a compaction artifact.".to_string(),
+            format!(
+                "candidates {}, proposals {}",
+                candidate_count
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".to_string()),
+                proposal_count
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "—".to_string())
+            ),
+        ),
     }
 }
 
-fn pretty_json(value: serde_json::Value) -> String {
-    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+fn reflection_needs_attention(status: Option<&str>, skipped_reason: Option<&str>) -> bool {
+    matches!(status, Some("failed") | Some("error"))
+        || matches!(
+            skipped_reason,
+            Some(reason)
+                if !matches!(
+                    reason,
+                    "below_compaction_threshold"
+                        | "no_uncompacted_content"
+                        | "live_reflection_disabled"
+                )
+        )
+}
+
+async fn live_reflection_status_for_bear(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    enabled: bool,
+    workers_enabled: bool,
+) -> Result<LiveReflectionStatusAdmin, CustomError> {
+    let row = sqlx::query_as::<_, (Option<time::OffsetDateTime>, i64, i64, i64)>(
+        r#"
+        SELECT MAX(created_at) AS last_event_at,
+               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::bigint AS checked_24h,
+               COUNT(*) FILTER (
+                   WHERE created_at > NOW() - INTERVAL '24 hours'
+                     AND COALESCE(event_json->'data'->'pair_reflection'->>'status', event_json->'data'->>'status') = 'processed'
+               )::bigint AS processed_24h,
+               COUNT(*) FILTER (
+                   WHERE created_at > NOW() - INTERVAL '24 hours'
+                     AND COALESCE(event_json->'data'->'pair_reflection'->>'status', event_json->'data'->>'status') = 'skipped'
+               )::bigint AS skipped_24h
+        FROM bearwire_events
+        WHERE bear_id = $1
+          AND event_type = 'session.reflected'
+          AND COALESCE(event_json->'data'->'pair_reflection'->>'trigger', event_json->'data'->>'trigger') = 'open-session-stale'
+        "#,
+    )
+    .bind(bear_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("live reflection status: {err}")))?;
+
+    let (status_label, status_explanation) = if !enabled {
+        (
+            "Off".to_string(),
+            "This Bear will not proactively spend tokens reflecting open conversations."
+                .to_string(),
+        )
+    } else if !workers_enabled {
+        (
+            "Configured on; worker not running".to_string(),
+            "RUN_WORKERS is off for this Den process, so proactive sweeps will not run here."
+                .to_string(),
+        )
+    } else if row.0.is_some() {
+        (
+            "On".to_string(),
+            "The background worker has recorded live reflection sweep activity for this Bear."
+                .to_string(),
+        )
+    } else {
+        (
+            "On; waiting for first sweep".to_string(),
+            "The background worker is enabled, but no live reflection event has been recorded for this Bear yet.".to_string(),
+        )
+    };
+
+    Ok(LiveReflectionStatusAdmin {
+        enabled,
+        workers_enabled,
+        status_label,
+        status_explanation,
+        last_event_at: row.0.map(|value| value.to_string()),
+        checked_24h: row.1,
+        processed_24h: row.2,
+        skipped_24h: row.3,
+    })
+}
+
+async fn reflection_rows_for_bear(
+    pool: &sqlx::PgPool,
+    bear_id: Uuid,
+    conversation_id: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<ReflectionAdminRow>, CustomError> {
+    let rows = sqlx::query_as::<
+        _,
+        (
+            time::OffsetDateTime,
+            String,
+            String,
+            Option<Uuid>,
+            Option<String>,
+            serde_json::Value,
+        ),
+    >(
+        r#"
+        SELECT e.created_at,
+               e.event_type,
+               e.session_id,
+               c.id AS conversation_id,
+               c.current_title AS conversation_title,
+               COALESCE(e.event_json->'data'->'pair_reflection', e.event_json->'data') AS payload
+        FROM bearwire_events e
+        LEFT JOIN client_sessions s ON s.bear_id = e.bear_id
+             AND s.user_id = e.user_id
+             AND s.client_session_id = e.session_id
+        LEFT JOIN LATERAL (
+            SELECT c.id, c.current_title
+            FROM conversations c
+            WHERE c.bear_id = e.bear_id
+              AND (c.source_client_session_id = e.session_id
+                   OR c.external_conversation_id = s.conversation_id
+                   OR c.external_conversation_id = s.resolved_conversation_id)
+            ORDER BY c.updated_at DESC, c.id DESC
+            LIMIT 1
+        ) c ON TRUE
+        WHERE e.bear_id = $1
+          AND e.event_type IN ('session.reflected', 'session.closed')
+          AND ($2::uuid IS NULL OR c.id = $2)
+          AND COALESCE(e.event_json->'data'->'pair_reflection', e.event_json->'data') IS NOT NULL
+        ORDER BY e.created_at DESC, e.sequence_no DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(bear_id)
+    .bind(conversation_id)
+    .bind(limit.clamp(1, 100))
+    .fetch_all(pool)
+    .await
+    .map_err(|err| CustomError::Database(format!("list reflection events: {err}")))?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(created_at, event_type, session_id, conversation_id, conversation_title, payload)| {
+                let proposal_ids = payload
+                    .get("proposal_ids")
+                    .and_then(serde_json::Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let proposal_count = i64::try_from(proposal_ids.len()).ok();
+                let status = payload
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                let skipped_reason = payload
+                    .get("skipped_reason")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                let candidate_count = json_i64(&payload, "candidate_count");
+                let dropped_followup_count = json_i64(&payload, "dropped_followup_count");
+                let (status_label, status_explanation, counts_label) = reflection_status_copy(
+                    status.as_deref(),
+                    skipped_reason.as_deref(),
+                    candidate_count,
+                    proposal_count,
+                );
+                let needs_attention =
+                    reflection_needs_attention(status.as_deref(), skipped_reason.as_deref());
+                ReflectionAdminRow {
+                    created_at: created_at.to_string(),
+                    event_type,
+                    session_id,
+                    conversation_id,
+                    conversation_title,
+                    trigger: payload
+                        .get("trigger")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    status,
+                    skipped_reason,
+                    status_label,
+                    status_explanation,
+                    counts_label,
+                    needs_attention,
+                    retry_href: conversation_id.map(|id| format!("conversations/{id}/reflect")),
+                    candidate_count,
+                    dropped_followup_count,
+                    proposal_count,
+                    proposal_links: proposal_ids
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect(),
+                    source_message_start_seq: json_i64(&payload, "source_message_start_seq"),
+                    source_message_end_seq: json_i64(&payload, "source_message_end_seq"),
+                    payload_json: pretty_json(payload),
+                }
+            },
+        )
+        .collect())
+}
+
+fn reflection_watermark_admin(
+    latest_message_sequence_no: Option<i64>,
+    reflections: &[ReflectionAdminRow],
+) -> ReflectionWatermarkAdmin {
+    let latest_reflection = reflections.first();
+    let reflected_through_sequence_no =
+        latest_reflection.and_then(|row| row.source_message_end_seq);
+    let new_message_count = latest_message_sequence_no
+        .zip(reflected_through_sequence_no)
+        .map(|(latest, reflected_through)| latest.saturating_sub(reflected_through));
+    let explanation = match latest_reflection {
+        None => "This conversation has not been reflected yet.".to_string(),
+        Some(row) if reflected_through_sequence_no.is_some() => {
+            "Reflection events carry a source-message watermark, so repeated runs can show whether new transcript content exists.".to_string()
+        }
+        Some(row) => format!(
+            "Last reflected at {}; this older event has no source-message watermark, so duplicate-prevention visibility is timestamp-only.",
+            row.created_at
+        ),
+    };
+    ReflectionWatermarkAdmin {
+        latest_message_sequence_no,
+        last_reflected_at: latest_reflection.map(|row| row.created_at.clone()),
+        reflected_through_sequence_no,
+        new_message_count,
+        explanation,
+    }
+}
+
+fn conversation_timeline_rows(
+    compaction_events: &[CompactionEventAdminRow],
+    reflections: &[ReflectionAdminRow],
+) -> Vec<ConversationTimelineRow> {
+    let mut rows = Vec::new();
+    rows.extend(compaction_events.iter().map(|event| {
+        ConversationTimelineRow {
+            created_at: event.created_at.clone(),
+            kind: "Compaction".to_string(),
+            label: event.status.clone(),
+            details: event
+                .diagnostic
+                .clone()
+                .unwrap_or_else(|| format!("{} · {}", event.trigger, event.policy_version)),
+        }
+    }));
+    rows.extend(
+        reflections
+            .iter()
+            .map(|reflection| ConversationTimelineRow {
+                created_at: reflection.created_at.clone(),
+                kind: "Reflection".to_string(),
+                label: reflection.status_label.clone(),
+                details: reflection.status_explanation.clone(),
+            }),
+    );
+    rows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    rows
 }
 
 async fn conversation_compaction_events(
@@ -768,7 +1203,7 @@ async fn conversation_compaction_artifacts(
 }
 
 async fn unique_import_slug(pool: &sqlx::PgPool, requested: &str) -> Result<String, CustomError> {
-    let base = slug_base(requested);
+    let base = bear_slug_base(requested);
     if !bears_db::bear_slug_exists(pool, &base).await? {
         return Ok(base);
     }
@@ -988,7 +1423,7 @@ async fn export_bear_bundle(
         .map_err(|err| CustomError::System(format!("serialize bear.yaml failed: {err}")))?;
     let memory_sqlite = snapshot_memory_sqlite(&state, bear.id).await?;
     let bundle = build_bear_bundle(&manifest_yaml, &memory_sqlite)?;
-    let filename = format!("{}.bear", slug_base(&bear.slug));
+    let filename = format!("{}.bear", bear_slug_base(&bear.slug));
 
     Response::builder()
         .status(StatusCode::OK)
@@ -1039,27 +1474,40 @@ async fn import_bear_bundle(
         .filter(|bytes| !bytes.is_empty())
         .ok_or_else(|| CustomError::ValidationError("please select a .bear bundle".to_string()))?;
     let (manifest, memory_sqlite) = read_bear_bundle(&bundle_bytes)?;
-    let slug = unique_import_slug(state.sqlx_pool(), &manifest.bear.slug).await?;
+    let BearBundleManifest {
+        bear:
+            BearBundleIdentity {
+                slug: imported_slug,
+                name,
+                description,
+                birthdate,
+                default_model,
+                tools_enabled,
+            },
+        prompts:
+            BearBundlePrompts {
+                system_prompt,
+                context_profile,
+            },
+        ..
+    } = manifest;
+    let slug = unique_import_slug(state.sqlx_pool(), &imported_slug).await?;
 
     let bear_id = bears_db::create_bear_with_context_profile(
         state.sqlx_pool(),
         bears_db::BearParams {
             slug: &slug,
-            name: &manifest.bear.name,
-            description: &manifest.bear.description,
-            system_prompt: &manifest.prompts.system_prompt,
-            default_model: manifest.bear.default_model.as_deref(),
-            tools_enabled: manifest.bear.tools_enabled.clone().map(sqlx::types::Json),
-            context_profile: manifest
-                .prompts
-                .context_profile
-                .clone()
-                .map(sqlx::types::Json),
+            name: &name,
+            description: &description,
+            system_prompt: &system_prompt,
+            default_model: default_model.as_deref(),
+            tools_enabled: tools_enabled.map(sqlx::types::Json),
+            context_profile: context_profile.map(sqlx::types::Json),
         },
     )
     .await?;
 
-    let birthdate = manifest.bear.birthdate.trim();
+    let birthdate = birthdate.trim();
     if !birthdate.is_empty() {
         sqlx::query("UPDATE bears SET birthday = $1::date, updated_at = NOW() WHERE id = $2")
             .bind(birthdate)
@@ -2139,6 +2587,7 @@ async fn stance_model_post(
 
 async fn conversations_view(
     Path(slug): Path<String>,
+    Query(query): Query<DomainQuery>,
     State(state): State<AppState>,
     auth_session: AuthSession,
 ) -> Result<Response, CustomError> {
@@ -2179,7 +2628,7 @@ async fn conversations_view(
             })
             .collect()
         };
-    let conversations: Vec<ConversationAdminRow> = rows
+    let mut conversations: Vec<ConversationAdminRow> = rows
         .into_iter()
         .map(|c| {
             let external_id = c
@@ -2202,6 +2651,10 @@ async fn conversations_view(
                     .unwrap_or_else(|| "none".to_string()),
                 compaction_event_count: stats.map(|(count, _, _)| *count).unwrap_or(0),
                 latest_compaction_at: stats.map(|(_, _, created_at)| created_at.to_string()),
+                compaction_explanation: compaction_status_explanation(
+                    stats.map(|(_, status, _)| status.as_str()),
+                    c.latest_context_budget.as_ref(),
+                ),
                 latest_context_budget_updated_at: c
                     .latest_context_budget_updated_at
                     .map(|value| value.to_string()),
@@ -2213,15 +2666,66 @@ async fn conversations_view(
             }
         })
         .collect();
+    let compaction_filter = query.compaction.as_deref().unwrap_or("all");
+    if compaction_filter != "all" {
+        conversations.retain(|c| match compaction_filter {
+            "none" => c.compaction_event_count == 0,
+            "skipped" => c.compaction_status.eq_ignore_ascii_case("skipped"),
+            "applied" => c.compaction_status.eq_ignore_ascii_case("applied"),
+            // ponytail: this is a latest-event filter; upgrade to durable
+            // reflected-through watermarks when duplicate-prevention state lands.
+            "needs_action" => {
+                c.compaction_event_count == 0 || c.compaction_status.eq_ignore_ascii_case("skipped")
+            }
+            _ => true,
+        });
+    }
+    let live_reflection_status = live_reflection_status_for_bear(
+        state.sqlx_pool(),
+        bear.id,
+        bear.live_reflection_enabled,
+        state.config.run_workers,
+    )
+    .await?;
     web::render_template(
         &state,
         "bear/settings/conversations.html",
         auth_session,
         context! {
             conversations,
+            live_reflection_status,
             can_manage_bear,
             native_runtime => true,
+            live_reflection_enabled => bear.live_reflection_enabled,
+            message => query.message,
+            error => query.error,
+            compaction_filter,
             ..bear_nav_context(&bear, "activity"),
+        },
+    )
+    .await
+}
+
+async fn reflections_view(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let (bear, can_manage_bear) = match load_session_bear(&state, &auth_session, &slug).await? {
+        Ok(v) => v,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let reflections = reflection_rows_for_bear(state.sqlx_pool(), bear.id, None, 100).await?;
+    web::render_template(
+        &state,
+        "bear/settings/reflections.html",
+        auth_session,
+        context! {
+            reflections,
+            can_manage_bear,
+            native_runtime => true,
+            live_reflection_enabled => bear.live_reflection_enabled,
+            ..bear_nav_context(&bear, "reflections"),
         },
     )
     .await
@@ -2258,6 +2762,11 @@ async fn conversation_detail_view(
         20,
     )
     .await?;
+    let reflections =
+        reflection_rows_for_bear(state.sqlx_pool(), bear.id, Some(conversation_id), 20).await?;
+    let processing_timeline = conversation_timeline_rows(&compaction_events, &reflections);
+    let reflection_watermark =
+        reflection_watermark_admin(messages.iter().map(|m| m.sequence_no).max(), &reflections);
     let message_rows: Vec<MessageAdminRow> = messages
         .into_iter()
         .rev()
@@ -2282,8 +2791,12 @@ async fn conversation_detail_view(
             compaction_events,
             compaction_artifacts,
             checkpoint_artifacts,
+            reflections,
+            processing_timeline,
+            reflection_watermark,
             can_manage_bear,
             native_runtime => true,
+            live_reflection_enabled => bear.live_reflection_enabled,
             ..bear_nav_context(&bear, "activity"),
         },
     )
@@ -2369,7 +2882,7 @@ async fn context_view(
             standing_notes.push(PromptMemoryAdminRow {
                 block_id: block.id,
                 scope: applies_to,
-                block_type: format!("{:?}", block.block_type),
+                block_type: block.block_type.as_str().to_string(),
                 state: String::new(),
                 title: block.title,
                 body_preview,
@@ -2516,6 +3029,339 @@ async fn advanced_view(
         },
     )
     .await
+}
+
+async fn live_reflection_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<LiveReflectionForm>,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(b) => b,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let enabled = matches!(form.enabled.as_str(), "1" | "true" | "on" | "yes");
+    bears_db::update_live_reflection_settings(
+        state.sqlx_pool(),
+        bear.id,
+        enabled,
+        form.stale_after_minutes,
+        form.activity_threshold,
+        form.sweep_limit,
+    )
+    .await?;
+    let message = if enabled {
+        "Live reflection settings saved."
+    } else {
+        "Live reflection disabled; sweep settings saved."
+    };
+    Ok(Redirect::to(&format!(
+        "/bear/{}/advanced?message={}",
+        bear.slug,
+        urlencoding::encode(message)
+    ))
+    .into_response())
+}
+
+async fn reflect_conversations_post(
+    Path(slug): Path<String>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Form(form): Form<ReflectConversationsForm>,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(b) => b,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let selected_ids = conversation_ids_for_reflection_action(&state, bear.id, &form).await?;
+    if selected_ids.is_empty() {
+        return Ok(Redirect::to(&format!(
+            "/bear/{}/conversations?message={}",
+            bear.slug,
+            urlencoding::encode("No conversations matched that reflection action.")
+        ))
+        .into_response());
+    }
+    let mut processed = 0usize;
+    let mut compaction_applied = 0usize;
+    let mut compaction_skipped = 0usize;
+    let mut proposals_created = 0usize;
+    let mut reflection_skipped = 0usize;
+    for conversation_id in selected_ids.into_iter().take(25) {
+        let conv = match conversation_persistence::get_conversation_by_id(
+            state.sqlx_pool(),
+            conversation_id,
+        )
+        .await?
+        {
+            Some(conv) if conv.bear_id == bear.id => conv,
+            _ => continue,
+        };
+        let result = reflect_persisted_conversation(
+            &state,
+            auth_session.user.as_ref().map(|u| u.id),
+            &bear,
+            &conv,
+            "manual_bulk",
+        )
+        .await?;
+        processed += 1;
+        compaction_applied += usize::from(result.compaction_applied);
+        compaction_skipped += usize::from(result.compaction_skipped);
+        proposals_created += result.proposals_created;
+        reflection_skipped += usize::from(result.skipped_reason.is_some());
+    }
+    Ok(Redirect::to(&format!(
+        "/bear/{}/conversations?message={}",
+        bear.slug,
+        urlencoding::encode(&format!(
+            "Manual reflection complete: {processed} conversation(s) processed; {compaction_applied} checkpoint(s) created; {compaction_skipped} compaction check(s) skipped; {proposals_created} proposal(s) created; {reflection_skipped} reflection run(s) skipped."
+        ))
+    ))
+    .into_response())
+}
+
+async fn reflect_conversation_post(
+    Path((slug, conversation_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(b) => b,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let conv = conversation_persistence::get_conversation_by_id(state.sqlx_pool(), conversation_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("conversation not found".to_string()))?;
+    if conv.bear_id != bear.id {
+        return Err(CustomError::NotFound("conversation not found".to_string()));
+    }
+    let result = reflect_persisted_conversation(
+        &state,
+        auth_session.user.as_ref().map(|u| u.id),
+        &bear,
+        &conv,
+        "manual",
+    )
+    .await?;
+    Ok(Redirect::to(&format!(
+        "/bear/{}/conversations/{}?message={}",
+        bear.slug,
+        conversation_id,
+        urlencoding::encode(&format!(
+            "Manual reflection complete: {} checkpoint; {} proposal(s) created; reflection {}.",
+            if result.compaction_applied {
+                "created"
+            } else if result.compaction_skipped {
+                "skipped"
+            } else {
+                "not needed"
+            },
+            result.proposals_created,
+            result.skipped_reason.unwrap_or("processed")
+        ))
+    ))
+    .into_response())
+}
+
+async fn reconsider_conversation_post(
+    Path((slug, conversation_id)): Path<(String, Uuid)>,
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+) -> Result<Response, CustomError> {
+    let bear = match load_session_bear_manage(&state, &auth_session, &slug).await? {
+        Ok(b) => b,
+        Err(r) => return Ok(r.into_response()),
+    };
+    let conv = conversation_persistence::get_conversation_by_id(state.sqlx_pool(), conversation_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("conversation not found".to_string()))?;
+    if conv.bear_id != bear.id {
+        return Err(CustomError::NotFound("conversation not found".to_string()));
+    }
+    let result = reflect_persisted_conversation(
+        &state,
+        auth_session.user.as_ref().map(|u| u.id),
+        &bear,
+        &conv,
+        "manual_reconsider",
+    )
+    .await?;
+    web::render_template(
+        &state,
+        "bear/settings/reconsider_result.html",
+        auth_session,
+        context! {
+            conv,
+            result,
+            can_manage_bear => true,
+            native_runtime => true,
+            ..bear_nav_context(&bear, "activity"),
+        },
+    )
+    .await
+}
+
+async fn conversation_ids_for_reflection_action(
+    state: &AppState,
+    bear_id: Uuid,
+    form: &ReflectConversationsForm,
+) -> Result<Vec<Uuid>, CustomError> {
+    match form.bulk_action.as_str() {
+        "all_no_compaction" => sqlx::query_scalar::<_, Uuid>(
+            r"
+            SELECT c.id
+            FROM conversations c
+            WHERE c.bear_id = $1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM runtime_compaction_events e
+                  WHERE e.conversation_id = c.external_conversation_id
+              )
+            ORDER BY c.updated_at DESC
+            LIMIT 25
+            ",
+        )
+        .bind(bear_id)
+        .fetch_all(state.sqlx_pool())
+        .await
+        .map_err(|err| {
+            CustomError::Database(format!("select conversations without compaction: {err}"))
+        }),
+        "all_skipped_compaction" => sqlx::query_scalar::<_, Uuid>(
+            r"
+            SELECT c.id
+            FROM conversations c
+            JOIN LATERAL (
+                SELECT e.status
+                FROM runtime_compaction_events e
+                WHERE e.conversation_id = c.external_conversation_id
+                ORDER BY e.created_at DESC
+                LIMIT 1
+            ) latest ON TRUE
+            WHERE c.bear_id = $1
+              AND lower(latest.status) = 'skipped'
+            ORDER BY c.updated_at DESC
+            LIMIT 25
+            ",
+        )
+        .bind(bear_id)
+        .fetch_all(state.sqlx_pool())
+        .await
+        .map_err(|err| {
+            CustomError::Database(format!("select skipped-compaction conversations: {err}"))
+        }),
+        "selected" | "" => Ok(form.conversation_ids.clone()),
+        _ => Ok(Vec::new()),
+    }
+}
+
+async fn reflect_persisted_conversation(
+    state: &AppState,
+    user_id: Option<i32>,
+    bear: &den_service::bears::Bear,
+    conv: &conversation_persistence::ConversationRecord,
+    trigger: &str,
+) -> Result<ManualReflectionResult, CustomError> {
+    let conversation_external_id = conv
+        .external_conversation_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            CustomError::ValidationError("conversation has no external id".to_string())
+        })?;
+    let session_id = conv
+        .source_client_session_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(conversation_external_id);
+    let compaction_state = prepare_turn_compaction(
+        state.sqlx_pool(),
+        &state.config,
+        bear.id,
+        conversation_external_id,
+        BearProfile::Pair,
+        TurnCompactionTrigger::ConversationReview,
+    )
+    .await?;
+    let compaction_status = compaction_state.as_ref().map(|state| &state.event.status);
+    let memory_stores = MemoryStoreManager::new(&state.config);
+    let output = create_pair_reflection_proposals_from_latest_summary(
+        state.sqlx_pool(),
+        &state.config,
+        &memory_stores,
+        bear.id,
+        conversation_external_id,
+        session_id,
+    )
+    .await?;
+    let payload = json!({
+        "session_id": session_id,
+        "bear_slug": bear.slug,
+        "trigger": trigger,
+        "pair_reflection": {
+            "status": if output.skipped_reason.is_some() { "skipped" } else { "processed" },
+            "trigger": trigger,
+            "skipped_reason": output.skipped_reason,
+            "candidate_count": output.candidate_count,
+            "discarded_count": output.discarded_count,
+            "discarded_reasons": output.discarded_reasons,
+            "dropped_followup_count": output.dropped_followup_count,
+            "proposal_ids": output.created_proposal_ids,
+            "source_message_start_seq": output.source_message_start_seq,
+            "source_message_end_seq": output.source_message_end_seq,
+        }
+    });
+    let reflection_payload_json =
+        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
+    let mut event = BearWireEvent::ephemeral("session.reflected", payload);
+    event.bear_id = Some(bear.id.to_string());
+    event.human_id = user_id.map(|id| id.to_string());
+    event.session_id = Some(session_id.to_string());
+    let persisted_event = bearwire_events::append_bearwire_event(
+        state.sqlx_pool(),
+        session_id,
+        Some(bear.id),
+        user_id,
+        event,
+    )
+    .await?;
+    let proposals_created = output.created_proposal_ids.len();
+    Ok(ManualReflectionResult {
+        compaction_applied: matches!(
+            compaction_status,
+            Some(RuntimeCompactionEventStatus::Applied)
+        ),
+        compaction_skipped: matches!(
+            compaction_status,
+            Some(RuntimeCompactionEventStatus::Skipped)
+        ),
+        compaction_status: compaction_status
+            .map(RuntimeCompactionEventStatus::as_str)
+            .unwrap_or("Not run")
+            .to_string(),
+        compaction_diagnostic: compaction_state
+            .as_ref()
+            .and_then(|state| state.event.diagnostic.clone()),
+        compaction_artifact_json: compaction_state
+            .as_ref()
+            .and_then(|state| state.event.artifact.as_ref())
+            .and_then(|artifact| serde_json::to_string_pretty(artifact).ok())
+            .unwrap_or_default(),
+        candidate_count: output.candidate_count,
+        discarded_count: output.discarded_count,
+        discarded_reasons: output.discarded_reasons,
+        dropped_followup_count: output.dropped_followup_count,
+        proposals_created,
+        proposal_ids: output.created_proposal_ids,
+        skipped_reason: output.skipped_reason,
+        source_message_start_seq: output.source_message_start_seq,
+        source_message_end_seq: output.source_message_end_seq,
+        reflection_event_id: Some(persisted_event.id),
+        reflection_event_sequence_no: Some(persisted_event.sequence_no),
+        reflection_payload_json,
+    })
 }
 
 async fn grant_member_action(

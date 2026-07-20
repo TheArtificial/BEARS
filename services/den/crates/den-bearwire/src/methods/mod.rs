@@ -1,3 +1,8 @@
+//! BearWire JSON-RPC method handlers.
+//!
+//! The crate-level router owns transport (`/v1/rpc`, SSE pages); this module tree owns typed
+//! method parsing and result construction for session/run/client/resource/work operations.
+
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
@@ -5,6 +10,7 @@ use den_service::DenState;
 
 pub(crate) mod client;
 pub(crate) mod conversation;
+pub(crate) mod docket;
 pub(crate) mod resource;
 pub(crate) mod run;
 pub(crate) mod session;
@@ -12,6 +18,8 @@ pub(crate) mod work;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) const DEFAULT_CLIENT: &str = "bearwire";
 
 pub(crate) fn initialize_result(_state: &DenState) -> Value {
     json!({
@@ -23,8 +31,8 @@ pub(crate) fn initialize_result(_state: &DenState) -> Value {
             "git_sha": den_http::build_info::snapshot().git_sha,
         },
         "bearwire": {
-            "rpc": "/bearwire/v1/rpc",
-            "events_page": "/bearwire/v1/sessions/{session_id}/events/page"
+            "rpc": "/v1/rpc",
+            "events_page": "/v1/sessions/{session_id}/events/page"
         },
         "legacy_acp_enabled": false,
         "legacy_acp_deprecated": true,

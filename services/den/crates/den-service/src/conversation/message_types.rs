@@ -1,6 +1,8 @@
 //! Typed conversation message storage values aligned with Postgres CHECK constraints
 //! on `conversation_messages` ([`super::persistence`]).
 
+use std::fmt;
+
 use serde_json::Value;
 
 use den_core::DenError;
@@ -16,6 +18,12 @@ pub enum ConversationMessageType {
     ToolResult,
     WorkflowEvent,
     CompactionMarker,
+}
+
+impl fmt::Display for ConversationMessageType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl ConversationMessageType {
@@ -69,6 +77,12 @@ pub enum ConversationMessageVisibility {
     DiagnosticOnly,
 }
 
+impl fmt::Display for ConversationMessageVisibility {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 impl ConversationMessageVisibility {
     pub const ALL: [Self; 4] = [
         Self::Default,
@@ -118,6 +132,12 @@ pub enum ConversationMessageRole {
     Assistant,
     System,
     Developer,
+}
+
+impl fmt::Display for ConversationMessageRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl ConversationMessageRole {

@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    http::{header::AUTHORIZATION, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Json, Response},
     routing::get,
     Router,
@@ -11,7 +11,10 @@ use utoipa::ToSchema;
 use crate::service::DenState;
 use den_http::errors::CustomError;
 use den_http::user;
-use den_oauth::oauth::{error::OAuthError, jwt::create_jwt_manager};
+use den_oauth::{
+    auth::extract_bearer_token_oauth,
+    oauth::{error::OAuthError, jwt::create_jwt_manager},
+};
 
 #[derive(Serialize, ToSchema)]
 pub struct ProfileResponse {
@@ -57,9 +60,9 @@ pub async fn get_profile(
     headers: HeaderMap,
 ) -> Result<Response, CustomError> {
     // Extract Bearer token from Authorization header
-    let access_token = match extract_bearer_token(&headers) {
+    let access_token = match extract_bearer_token_oauth(&headers) {
         Ok(token) => token,
-        Err(response) => return Ok(*response),
+        Err(oauth_error) => return Ok(bearer_error_response(oauth_error)),
     };
 
     // Validate JWT access token
@@ -76,10 +79,7 @@ pub async fn get_profile(
     };
 
     // Get user information from database
-    let user = match user::user_by_id(&state.sqlx_pool, user_id).await {
-        Ok(user) => user,
-        Err(_) => return Ok(internal_server_error("Database error")),
-    };
+    let user = user::user_by_id(&state.sqlx_pool, user_id).await?;
 
     let profile = ProfileResponse {
         id: user.id,
@@ -94,55 +94,11 @@ pub async fn get_profile(
     Ok(Json(profile).into_response())
 }
 
-/// Extract Bearer token from Authorization header
-fn extract_bearer_token(headers: &HeaderMap) -> Result<String, Box<Response>> {
-    let auth_header = headers.get(AUTHORIZATION).ok_or_else(|| {
-        Box::new(bearer_error_response(OAuthError::InvalidRequest(
-            "Missing Authorization header".to_string(),
-        )))
-    })?;
-
-    let auth_str = auth_header.to_str().map_err(|_| {
-        Box::new(bearer_error_response(OAuthError::InvalidRequest(
-            "Invalid Authorization header encoding".to_string(),
-        )))
-    })?;
-
-    if !auth_str.starts_with("Bearer ") {
-        return Err(Box::new(bearer_error_response(OAuthError::InvalidRequest(
-            "Authorization header must use Bearer scheme".to_string(),
-        ))));
-    }
-
-    let token = auth_str[7..].trim();
-    if token.is_empty() {
-        return Err(Box::new(bearer_error_response(OAuthError::InvalidToken)));
-    }
-
-    Ok(token.to_string())
-}
-
 /// Create Bearer token error response
 fn bearer_error_response(error: OAuthError) -> Response {
-    let (status_code, error_code, error_description) = match error {
-        OAuthError::InvalidRequest(desc) => (StatusCode::BAD_REQUEST, "invalid_request", desc),
-        OAuthError::InvalidToken => (
-            StatusCode::UNAUTHORIZED,
-            "invalid_token",
-            "The access token provided is expired, revoked, malformed, or invalid".to_string(),
-        ),
-        OAuthError::InsufficientScope => (
-            StatusCode::FORBIDDEN,
-            "insufficient_scope",
-            "The request requires higher privileges than provided by the access token".to_string(),
-        ),
-        OAuthError::ServerError(desc) => (StatusCode::INTERNAL_SERVER_ERROR, "server_error", desc),
-        _ => (
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "Invalid request".to_string(),
-        ),
-    };
+    let status_code = error.status_code();
+    let error_code = error.error_code();
+    let error_description = error.error_description();
 
     let www_authenticate = if status_code == StatusCode::UNAUTHORIZED {
         format!("Bearer error=\"{error_code}\", error_description=\"{error_description}\"")
@@ -163,14 +119,4 @@ fn bearer_error_response(error: OAuthError) -> Response {
     );
 
     response
-}
-
-/// Create internal server error response
-fn internal_server_error(message: &str) -> Response {
-    let error_response = serde_json::json!({
-        "error": "server_error",
-        "error_description": message
-    });
-
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response)).into_response()
 }

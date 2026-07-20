@@ -21,6 +21,9 @@ pub struct BearObservationRow {
     pub reviewed_at: Option<OffsetDateTime>,
 }
 
+const OBSERVATION_COLUMNS: &str =
+    "id, bear_id, observation_id, summary, salience, payload_ref, source, logical_path, status, proposal_id, created_at, reviewed_at";
+
 #[derive(Debug, Clone)]
 pub struct CreateBearObservation<'a> {
     pub bear_id: Uuid,
@@ -40,16 +43,15 @@ pub async fn create(
     params: CreateBearObservation<'_>,
 ) -> Result<BearObservationRow, DenError> {
     let logical_path = observation_logical_path(params.observation_id);
-    let row = sqlx::query_as::<_, BearObservationRow>(
+    let row = sqlx::query_as::<_, BearObservationRow>(&format!(
         r"
         INSERT INTO bear_observations (
             bear_id, observation_id, summary, salience, payload_ref, source, logical_path
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, bear_id, observation_id, summary, salience, payload_ref, source,
-                  logical_path, status, proposal_id, created_at, reviewed_at
-        ",
-    )
+        RETURNING {OBSERVATION_COLUMNS}
+        "
+    ))
     .bind(params.bear_id)
     .bind(params.observation_id)
     .bind(params.summary)
@@ -68,16 +70,15 @@ pub async fn mark_review_queued(
     observation_row_id: Uuid,
     proposal_id: Uuid,
 ) -> Result<BearObservationRow, DenError> {
-    let row = sqlx::query_as::<_, BearObservationRow>(
+    let row = sqlx::query_as::<_, BearObservationRow>(&format!(
         r"
         UPDATE bear_observations
         SET status = 'review_queued',
             proposal_id = $3
         WHERE bear_id = $1 AND id = $2
-        RETURNING id, bear_id, observation_id, summary, salience, payload_ref, source,
-                  logical_path, status, proposal_id, created_at, reviewed_at
-        ",
-    )
+        RETURNING {OBSERVATION_COLUMNS}
+        "
+    ))
     .bind(bear_id)
     .bind(observation_row_id)
     .bind(proposal_id)
@@ -91,14 +92,13 @@ pub async fn get_for_bear(
     bear_id: Uuid,
     observation_id: &str,
 ) -> Result<Option<BearObservationRow>, DenError> {
-    let row = sqlx::query_as::<_, BearObservationRow>(
+    let row = sqlx::query_as::<_, BearObservationRow>(&format!(
         r"
-        SELECT id, bear_id, observation_id, summary, salience, payload_ref, source,
-               logical_path, status, proposal_id, created_at, reviewed_at
+        SELECT {OBSERVATION_COLUMNS}
         FROM bear_observations
         WHERE bear_id = $1 AND observation_id = $2
-        ",
-    )
+        "
+    ))
     .bind(bear_id)
     .bind(observation_id)
     .fetch_optional(pool)

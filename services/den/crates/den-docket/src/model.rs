@@ -487,6 +487,10 @@ pub enum TaskListCheckoutSource {
         job_id: Uuid,
         parent_task_id: Option<Uuid>,
     },
+    ConversationObjective {
+        request: DocketConversationObjectiveRequest,
+        active_subtree: bool,
+    },
     LocalProjection(Box<TaskListProjection>),
 }
 
@@ -814,6 +818,8 @@ pub struct DocketJobRow {
     pub work_branch: Option<String>,
     pub status: String,
     pub visibility: String,
+    pub source_conversation_id: Option<String>,
+    pub objective_kind: Option<String>,
     pub current_run_id: Option<Uuid>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
@@ -997,14 +1003,25 @@ pub struct DocketJobCreate {
     pub work_branch: Option<String>,
     pub status: DocketJobStatus,
     pub visibility: TaskListVisibility,
+    pub source_conversation_id: Option<String>,
+    pub objective_kind: Option<String>,
     pub criteria: Vec<DocketJobCriterionInput>,
     pub tasks: Vec<DocketTaskInput>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocketConversationObjectiveRequest {
+    pub bear_id: Uuid,
+    pub created_by_user_id: i32,
+    pub created_by_role: String,
+    pub source_conversation_id: String,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct DocketJobListFilter {
     pub statuses: Option<Vec<DocketJobStatus>>,
     pub include_cancelled: bool,
+    pub source_conversation_id: Option<String>,
     pub limit: i64,
 }
 
@@ -1150,6 +1167,7 @@ pub struct DocketTaskDefinitionPatch {
 #[derive(Debug, Clone)]
 pub struct DocketTaskUpdate {
     pub bear_id: Uuid,
+    pub job_id: Option<Uuid>,
     pub task_id: Uuid,
     pub actor_role: BearProfile,
     pub actor_user_id: Option<i32>,
@@ -1313,6 +1331,19 @@ pub fn docket_job_status_report(projection: &DocketJobProjection) -> DocketJobSt
     }
 }
 
+pub fn active_task_parent_id(projection: &DocketJobProjection) -> Option<Uuid> {
+    let active_task_id = projection
+        .task_states
+        .iter()
+        .find(|state| state.status == "in_progress")?
+        .task_id;
+    projection
+        .tasks
+        .iter()
+        .find(|task| task.id == active_task_id)
+        .and_then(|task| task.parent_task_id)
+}
+
 pub fn task_list_projection_from_docket_job(
     projection: &DocketJobProjection,
     parent_task_id: Option<Uuid>,
@@ -1322,10 +1353,17 @@ pub fn task_list_projection_from_docket_job(
         .iter()
         .map(|state| (state.task_id, state))
         .collect::<std::collections::HashMap<_, _>>();
-    let items = projection
+    let mut tasks = projection
         .tasks
         .iter()
         .filter(|task| task.parent_task_id == parent_task_id)
+        .collect::<Vec<_>>();
+    // Keep projection order deterministic at the task-list boundary. Upstream DB
+    // queries usually order by sibling_order, but ACP "agent plan" rendering
+    // should not depend on every caller preserving that order.
+    tasks.sort_by_key(|task| (task.sibling_order, task.created_at, task.id));
+    let items = tasks
+        .into_iter()
         .map(|task| task_list_item_from_docket_task(task, states_by_task_id.get(&task.id).copied()))
         .collect::<Vec<_>>();
     let current_item = current_task_list_item(&items).cloned();
@@ -1350,7 +1388,7 @@ pub fn task_list_projection_from_docket_job(
         ),
         items,
         current_item,
-        source_conversation_id: None,
+        source_conversation_id: projection.job.source_conversation_id.clone(),
         source_client_session_id: None,
         handoff_intent_path: None,
         handoff_task_id: None,
@@ -1359,20 +1397,128 @@ pub fn task_list_projection_from_docket_job(
     }
 }
 
+pub fn task_list_projection_from_session_tasks(
+    bear_id: Uuid,
+    owner_profile: BearProfile,
+    conversation_id: &str,
+    session_anchor_id: Uuid,
+    tasks: &[DocketTaskProjection],
+) -> Option<TaskListProjection> {
+    let first_task = tasks.first()?;
+    let mut sorted_tasks = tasks.iter().collect::<Vec<_>>();
+    // See task_list_projection_from_docket_job: ACP plan projection must be
+    // deterministic even if the caller hands us an unordered task slice.
+    sorted_tasks.sort_by_key(|projection| {
+        (
+            projection.task.sibling_order,
+            projection.task.created_at,
+            projection.task.id,
+        )
+    });
+    let items = sorted_tasks
+        .into_iter()
+        .map(|projection| {
+            task_list_item_from_docket_task(&projection.task, projection.run_state.as_ref())
+        })
+        .collect::<Vec<_>>();
+    let current_item = current_task_list_item(&items).cloned();
+    let status = if items
+        .iter()
+        .all(|item| item.status == TaskListItemStatus::Completed)
+    {
+        "completed"
+    } else if items
+        .iter()
+        .any(|item| item.status == TaskListItemStatus::InProgress)
+    {
+        "active"
+    } else {
+        "planned"
+    };
+    Some(TaskListProjection {
+        id: session_anchor_id,
+        bear_id,
+        title: "Session tasks".to_string(),
+        summary: "Tasks anchored to the current client session".to_string(),
+        owner_profile: owner_profile.as_str().to_string(),
+        visibility: "private_to_profile".to_string(),
+        status: status.to_string(),
+        version: 1,
+        source_ref: TaskListSourceRef::local(vec![format!("session_anchor:{session_anchor_id}")]),
+        items,
+        current_item,
+        source_conversation_id: Some(conversation_id.to_string()),
+        source_client_session_id: Some(session_anchor_id.to_string()),
+        handoff_intent_path: None,
+        handoff_task_id: None,
+        created_at: first_task.task.created_at,
+        updated_at: tasks
+            .iter()
+            .map(|projection| projection.task.updated_at)
+            .max()
+            .unwrap_or(first_task.task.updated_at),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DocketSourceRef {
+    Job(Uuid),
+    ParentTask(Uuid),
+    Task(Uuid),
+    MissingJob,
+}
+
+impl DocketSourceRef {
+    const JOB_PREFIX: &'static str = "docket_job:";
+    const PARENT_TASK_PREFIX: &'static str = "docket_parent_task:";
+    const TASK_PREFIX: &'static str = "docket_task:";
+    const MISSING_JOB_REF: &'static str = "docket_job:<none>";
+
+    fn parse(raw: &str) -> Option<Self> {
+        let raw = raw.trim();
+        if raw == Self::MISSING_JOB_REF {
+            return Some(Self::MissingJob);
+        }
+        if let Some(id) = raw.strip_prefix(Self::JOB_PREFIX) {
+            return Uuid::parse_str(id.trim()).ok().map(Self::Job);
+        }
+        if let Some(id) = raw.strip_prefix(Self::PARENT_TASK_PREFIX) {
+            return Uuid::parse_str(id.trim()).ok().map(Self::ParentTask);
+        }
+        if let Some(id) = raw.strip_prefix(Self::TASK_PREFIX) {
+            return Uuid::parse_str(id.trim()).ok().map(Self::Task);
+        }
+        None
+    }
+}
+
+impl fmt::Display for DocketSourceRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Job(id) => write!(f, "{}{id}", Self::JOB_PREFIX),
+            Self::ParentTask(id) => write!(f, "{}{id}", Self::PARENT_TASK_PREFIX),
+            Self::Task(id) => write!(f, "{}{id}", Self::TASK_PREFIX),
+            Self::MissingJob => f.write_str(Self::MISSING_JOB_REF),
+        }
+    }
+}
+
 fn docket_checkout_refs(job_id: Uuid, parent_task_id: Option<Uuid>) -> Vec<String> {
-    let mut refs = vec![format!("docket_job:{job_id}")];
+    let mut refs = vec![DocketSourceRef::Job(job_id).to_string()];
     if let Some(parent_task_id) = parent_task_id {
-        refs.push(format!("docket_parent_task:{parent_task_id}"));
+        refs.push(DocketSourceRef::ParentTask(parent_task_id).to_string());
     }
     refs
 }
 
 pub fn docket_parent_task_ref(source_ref: &TaskListSourceRef) -> Option<Uuid> {
-    source_ref
-        .refs
-        .iter()
-        .find_map(|raw| raw.trim().strip_prefix("docket_parent_task:"))
-        .and_then(|raw| Uuid::parse_str(raw.trim()).ok())
+    source_ref.refs.iter().find_map(|raw| {
+        if let Some(DocketSourceRef::ParentTask(id)) = DocketSourceRef::parse(raw) {
+            Some(id)
+        } else {
+            None
+        }
+    })
 }
 
 pub fn task_list_item_status_from_docket_task_status(status: &str) -> TaskListItemStatus {
@@ -1417,9 +1563,10 @@ fn task_list_item_from_docket_task(
             task.id.to_string(),
             vec![
                 task.job_id
-                    .map(|job_id| format!("docket_job:{job_id}"))
-                    .unwrap_or_else(|| "docket_job:<none>".to_string()),
-                format!("docket_task:{}", task.id),
+                    .map(DocketSourceRef::Job)
+                    .unwrap_or(DocketSourceRef::MissingJob)
+                    .to_string(),
+                DocketSourceRef::Task(task.id).to_string(),
             ],
         ),
         sync_state: TaskListSyncState::Clean,
@@ -1675,6 +1822,25 @@ mod tests {
     }
 
     #[test]
+    fn docket_parent_task_ref_uses_typed_source_ref_parser() {
+        let parent_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let source_ref = TaskListSourceRef::docket_job(
+            task_id.to_string(),
+            vec![
+                DocketSourceRef::Task(task_id).to_string(),
+                format!("  {}  ", DocketSourceRef::ParentTask(parent_id)),
+            ],
+        );
+
+        assert_eq!(docket_parent_task_ref(&source_ref), Some(parent_id));
+        assert_eq!(
+            DocketSourceRef::parse(&DocketSourceRef::ParentTask(parent_id).to_string()),
+            Some(DocketSourceRef::ParentTask(parent_id))
+        );
+    }
+
+    #[test]
     fn deserializes_missing_item_ids_with_stable_generated_slugs() {
         let update: TaskListUpdate = serde_json::from_value(serde_json::json!({
             "title": "Fix ACP plan visibility",
@@ -1849,6 +2015,99 @@ mod tests {
     }
 
     #[test]
+    fn session_task_projection_is_planned_until_work_starts() {
+        let bear_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let session_anchor_id = Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let run_id = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+        let task = DocketTaskRow {
+            id: task_id,
+            bear_id,
+            job_id: None,
+            session_anchor_id: Some(session_anchor_id),
+            parent_task_id: None,
+            sibling_order: 0,
+            kind: "execution".to_string(),
+            scope: "run".to_string(),
+            title: "Check the plan".to_string(),
+            body: "Do not start yet.".to_string(),
+            completion_criteria: Json(vec!["Plan is visible".to_string()]),
+            difficulty: None,
+            effort_hint: None,
+            assigned_to_role: Some("pair".to_string()),
+            created_by_role: "pair".to_string(),
+            created_by_user_id: None,
+            created_by_agent_id: None,
+            created_in_run_id: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        let planned = task_list_projection_from_session_tasks(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[DocketTaskProjection {
+                task: task.clone(),
+                run_state: None,
+            }],
+        )
+        .expect("session projection");
+
+        assert_eq!(planned.status, "planned");
+        assert_eq!(
+            planned.current_item.as_ref().map(|item| item.id.as_str()),
+            Some(task_id.to_string().as_str())
+        );
+
+        let active = task_list_projection_from_session_tasks(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[DocketTaskProjection {
+                task: task.clone(),
+                run_state: Some(DocketTaskRunStateRow {
+                    run_id,
+                    task_id,
+                    status: "in_progress".to_string(),
+                    result_refs: None,
+                    result_summary: None,
+                    started_at: None,
+                    finished_at: None,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                }),
+            }],
+        )
+        .expect("active session projection");
+
+        assert_eq!(active.status, "active");
+
+        let completed = task_list_projection_from_session_tasks(
+            bear_id,
+            BearProfile::Pair,
+            "conversation-1",
+            session_anchor_id,
+            &[DocketTaskProjection {
+                task,
+                run_state: Some(DocketTaskRunStateRow {
+                    run_id,
+                    task_id,
+                    status: "done".to_string(),
+                    result_refs: None,
+                    result_summary: None,
+                    started_at: None,
+                    finished_at: Some(OffsetDateTime::UNIX_EPOCH),
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                }),
+            }],
+        )
+        .expect("completed session projection");
+
+        assert_eq!(completed.status, "completed");
+    }
+
+    #[test]
     fn validates_docket_job_created_by_human_surface() {
         let create = DocketJobCreate {
             bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
@@ -1861,6 +2120,8 @@ mod tests {
             work_branch: None,
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::BearVisible,
+            source_conversation_id: None,
+            objective_kind: None,
             criteria: Vec::new(),
             tasks: Vec::new(),
         };
@@ -1886,6 +2147,8 @@ mod tests {
             work_branch: None,
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::BearVisible,
+            source_conversation_id: None,
+            objective_kind: None,
             criteria: Vec::new(),
             tasks: vec![DocketTaskInput {
                 client_key: Some("child".to_string()),
@@ -1984,6 +2247,8 @@ mod tests {
                 work_branch: None,
                 status: "running".to_string(),
                 visibility: "bear_visible".to_string(),
+                source_conversation_id: Some("conversation-1".to_string()),
+                objective_kind: Some("conversation_task_list".to_string()),
                 current_run_id: Some(run_id),
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
@@ -2063,9 +2328,10 @@ mod tests {
     }
 
     #[test]
-    fn task_list_projection_from_docket_job_checks_out_root_children() {
+    fn task_list_projection_from_docket_job_projects_conversation_objective_level() {
         let job_id = Uuid::parse_str("00000000-0000-0000-0000-000000000777").unwrap();
         let root_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000888").unwrap();
+        let root_peer_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000889").unwrap();
         let child_task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap();
         let run_id = Uuid::parse_str("00000000-0000-0000-0000-000000000abc").unwrap();
         let projection = DocketJobProjection {
@@ -2081,6 +2347,8 @@ mod tests {
                 work_branch: None,
                 status: "running".to_string(),
                 visibility: "bear_visible".to_string(),
+                source_conversation_id: Some("conversation-1".to_string()),
+                objective_kind: Some("conversation_task_list".to_string()),
                 current_run_id: Some(run_id),
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
@@ -2100,6 +2368,28 @@ mod tests {
                     title: "Root task".to_string(),
                     body: "Do root work.".to_string(),
                     completion_criteria: sqlx::types::Json(vec!["Root work done".to_string()]),
+                    difficulty: None,
+                    effort_hint: None,
+                    assigned_to_role: Some("work".to_string()),
+                    created_by_role: "pair".to_string(),
+                    created_by_user_id: Some(42),
+                    created_by_agent_id: None,
+                    created_in_run_id: None,
+                    created_at: OffsetDateTime::UNIX_EPOCH,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                },
+                DocketTaskRow {
+                    id: root_peer_task_id,
+                    bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap(),
+                    job_id: Some(job_id),
+                    session_anchor_id: None,
+                    parent_task_id: None,
+                    sibling_order: -1,
+                    kind: "execution".to_string(),
+                    scope: "template".to_string(),
+                    title: "Root peer task".to_string(),
+                    body: "Do peer work.".to_string(),
+                    completion_criteria: sqlx::types::Json(vec!["Peer work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
                     assigned_to_role: Some("work".to_string()),
@@ -2148,15 +2438,38 @@ mod tests {
 
         let root_checkout = task_list_projection_from_docket_job(&projection, None);
         assert_eq!(root_checkout.source_ref.kind, "docket_job");
-        assert_eq!(root_checkout.items.len(), 1);
-        assert_eq!(root_checkout.items[0].id, root_task_id.to_string());
-        assert_eq!(root_checkout.items[0].sync_state, TaskListSyncState::Clean);
         assert_eq!(
-            root_checkout.items[0].status,
+            root_checkout.source_conversation_id.as_deref(),
+            Some("conversation-1")
+        );
+        assert_eq!(
+            root_checkout
+                .current_item
+                .as_ref()
+                .map(|item| item.id.as_str()),
+            Some(root_task_id.to_string().as_str())
+        );
+        assert_eq!(root_checkout.items.len(), 2);
+        assert_eq!(root_checkout.items[0].id, root_peer_task_id.to_string());
+        assert_eq!(root_checkout.items[1].id, root_task_id.to_string());
+        assert_eq!(root_checkout.items[1].sync_state, TaskListSyncState::Clean);
+        assert_eq!(
+            root_checkout.items[1].status,
             TaskListItemStatus::InProgress
         );
 
         let child_checkout = task_list_projection_from_docket_job(&projection, Some(root_task_id));
+        assert_eq!(
+            child_checkout.source_conversation_id.as_deref(),
+            Some("conversation-1")
+        );
+        assert_eq!(
+            child_checkout
+                .current_item
+                .as_ref()
+                .map(|item| item.id.as_str()),
+            Some(child_task_id.to_string().as_str())
+        );
         assert_eq!(child_checkout.items.len(), 1);
         assert_eq!(child_checkout.items[0].id, child_task_id.to_string());
         assert_eq!(

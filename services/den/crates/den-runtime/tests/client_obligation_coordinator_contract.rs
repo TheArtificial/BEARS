@@ -1,3 +1,4 @@
+use bearwire_protocol::wire::BearWireEvent;
 use den_runtime::{
     client_obligation_coordinator::{
         self, PermissionResultCoordinatorOutcome, ToolResultCoordinatorOutcome,
@@ -6,6 +7,32 @@ use den_runtime::{
 };
 use serde_json::json;
 use uuid::Uuid;
+
+async fn finish_test_run(
+    pool: &sqlx::PgPool,
+    run: &turn_runs::TurnRunRow,
+    state: turn_runs::TurnRunState,
+) {
+    let event_type = match state {
+        turn_runs::TurnRunState::Completed => "run.completed",
+        turn_runs::TurnRunState::Failed => "run.failed",
+        turn_runs::TurnRunState::Cancelled => "run.cancelled",
+        _ => panic!("test terminal helper requires terminal state"),
+    };
+    turn_runs::finish_run_with_bearwire_event(
+        pool,
+        &run.session_id,
+        &run.run_id,
+        run.bear_id,
+        run.user_id,
+        state,
+        Some("test terminal"),
+        BearWireEvent::ephemeral(event_type, json!({"run_id": run.run_id})),
+    )
+    .await
+    .expect("finish test run")
+    .expect("test run was active");
+}
 
 async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
     let suffix = Uuid::new_v4().simple().to_string();
@@ -211,21 +238,7 @@ async fn late_result_after_terminal_run_is_ignored_by_coordinator(pool: sqlx::Pg
     )
     .await
     .expect("create tool obligation");
-    turn_runs::transition_run(
-        &pool,
-        &run.run_id,
-        turn_runs::TurnRunState::Failed,
-        Some("test terminal"),
-    )
-    .await
-    .expect("mark run failed");
-    turn_obligations::settle_outstanding_for_run(
-        &pool,
-        &run.run_id,
-        turn_obligations::TurnObligationState::Failed,
-    )
-    .await
-    .expect("settle outstanding obligations");
+    finish_test_run(&pool, &run, turn_runs::TurnRunState::Failed).await;
     let failed_run = turn_runs::get_run(&pool, &run.run_id)
         .await
         .expect("load failed run")
@@ -254,6 +267,52 @@ async fn late_result_after_terminal_run_is_ignored_by_coordinator(pool: sqlx::Pg
             run_state,
             obligation_state
         } if run_state == "failed" && obligation_state == "failed"
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn late_tool_result_after_terminal_is_ignored(pool: sqlx::PgPool) {
+    let (run, step, session_id) = create_run_with_step(&pool).await;
+    let obligation = turn_obligations::upsert_tool_result_obligation_for_step(
+        &pool,
+        &run.run_id,
+        &session_id,
+        Some(step.id),
+        "call-late-exact-name",
+        None,
+        json!({ "tool_name": "fs_read_text_file" }),
+    )
+    .await
+    .expect("create tool obligation");
+    finish_test_run(&pool, &run, turn_runs::TurnRunState::Completed).await;
+    let completed_run = turn_runs::get_run(&pool, &run.run_id)
+        .await
+        .expect("load completed run")
+        .expect("run exists");
+    let completed_obligation =
+        turn_obligations::get_tool_call_obligation(&pool, &run.run_id, "call-late-exact-name")
+            .await
+            .expect("load completed obligation")
+            .expect("obligation exists");
+    assert_eq!(completed_obligation.id, obligation.id);
+
+    let outcome = client_obligation_coordinator::record_and_settle_tool_result(
+        &pool,
+        &completed_run,
+        &completed_obligation,
+        "tool",
+        "call-late-exact-name",
+        json!({ "status": "ok", "content": "too late" }),
+    )
+    .await
+    .expect("settle late tool result");
+
+    assert!(matches!(
+        outcome,
+        ToolResultCoordinatorOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state
+        } if run_state == "completed" && obligation_state == "continued"
     ));
 }
 
@@ -488,7 +547,7 @@ async fn stale_wrong_step_result_is_detected_before_settlement(pool: sqlx::PgPoo
     )
     .await
     .expect("create first-step obligation");
-    turn_steps::transition_step(&pool, first_step.id, "continued")
+    turn_steps::transition_step(&pool, first_step.id, turn_steps::TurnStepState::Continued)
         .await
         .expect("close first step");
     let second_step = turn_steps::ensure_active_step(&pool, &run.run_id)

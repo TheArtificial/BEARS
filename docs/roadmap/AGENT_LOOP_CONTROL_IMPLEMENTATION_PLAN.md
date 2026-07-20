@@ -2,9 +2,124 @@
 
 ## Status
 
-Planned. Implements [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md), and depends on the task-list/Docket boundaries in [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md) and [ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md).
+In progress. Implements [ADR-0050 — Agent Loop Control, Adaptive Budgets, and Runtime Checkpoints](../decisions/adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md), and depends on the task-list/Docket boundaries in [ADR-0045](../decisions/adr-0045-session-task-lists-and-docket-checkout.md) and [ADR-0034](../decisions/adr-0034-jobs-and-tasks-work-management.md). The runtime state axes and required invariants live in [Den state machine inventory](../architecture/den-state-machine-inventory.md); loop-control work that changes focus, orientation, completion, obligations, budgets, or governance must update that inventory in the same change.
 
-> **Companion plan (2026-07-06):** [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md) delivers the ADR-0050 amendment — surface-declared grounding probes (§7c), context/token budget as a loop dimension (§11), and an advisory-first rollout with a persisted replayable ledger and offline tuning harness. That plan reframes this plan's Phase 11 rollout as advisory-first and adds grounding as the arbiter for the "meaningful mutation" judgment in Phases 3–5. Land the companion plan's ledger + advisory foundation early; it is the measurement loop the rest of this plan is tuned against.
+> **Companion plan (2026-07-06, revised 2026-07-13):** [AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md](AGENT_LOOP_CONTROL_GROUNDING_AND_TUNING_PLAN.md) delivers the ADR-0050 amendment — surface-declared grounding probes (§7c), context/token budget as a loop dimension (§11), and a persisted replayable ledger/offline tuning harness. Because Den is still pre-release, development is staged but completed loop-control slices are active by default once tested; feature flags and long observation-only rollout periods are not the normal delivery mechanism. Land the companion plan's ledger foundation early; it is the measurement loop the rest of this plan is tuned against.
+
+### Current implementation status — 2026-07-15
+
+Recent slices have moved the plan through the governance/focus/orientation foundation and through the first replayable measurement spine. We are intentionally stopping short of a full policy simulator; the current replay layer is a transcript-free comparison/summary harness for tuning real recorded decisions. Broad policy-driven enforcement is still future work:
+
+- **Phase 2 / 2a partially complete:** runtime sessions carry governance, session info exposes governance/orientation/focus snapshots, final-gate continuations now mark governance as `autonomous_continuation`, and `work` stance is rejected before model invocation unless objective orientation is `focused`.
+- **Phase 2a focus persistence is intentionally minimal:** the current durable focus source is the conversation-linked Docket execution session (`docket_execution_sessions`) restored by live session id, ACP/client session id, then conversation id. Do not add a separate conversation-focus table unless we need history labels, explicit clear reasons, multi-job focus stacks, or richer title provenance.
+- **Phase 2b minimal UX is live:** armature has `/focus <job_id>` for exact UUID focus through the existing `execute_job` path, and runtime clears Docket focus on session mode changes. Search/matching and elicitation remain deferred UX work. Chat/runtime tool surfaces still need a first-class focus affordance if the assistant is expected to request focus for the current session without relying on an armature slash command.
+- **Phase 2c mostly complete for orientation/focus boundaries:** runtime has objective-orientation-derived prompt/session diagnostics and derives task snapshots from orientation. Focused work takes precedence where wired, closed freeform no longer exposes or server-executes task-definition/delegation tools when `may_define_task = false`, and server-side `create_task`/`update_task` enforce oriented child count/depth caps plus immutable-focused decomposition rejection. Budget-profile differences are still incomplete.
+- **Diagnostics/history improved:** armature `/status` shows runtime focus/orientation/governance, Docket task create/update events include task definitions, focus selection is logged as a lightweight Docket job event, BearWire conversation history surfaces focus/task-definition diagnostics including focused task titles, and persisted objective-orientation events are projected into conversation surface history.
+- **Checkpoint protocol is enforced enough for normal development:** runtime can request structured `checkpoint` tool calls with typed next-action fields, and enforce mode now requires a pending checkpoint to be answered through the checkpoint tool before another non-checkpoint tool call or final answer. The assistant-text/fenced-JSON fallback path has been removed. Artifact retention is still future work.
+- **Replay/measurement spine landed at the useful-minimum level:** the companion plan's transcript-free `bear_loop_control_ledger` exists and records checkpoint requests, context-budget pressure decisions, and grounding-probe results with typed metadata/evidence refs. Runtime now has pure replay helpers for typed decision observations, per-turn aggregates, expected-turn/profile comparisons, profile summaries, DB-backed `run_id -> profile summary` loading, profile-level reason counts, turn-level reason comparison, and checkpoint profile fingerprints. No full policy simulator is planned unless real tuning needs outgrow these comparisons.
+- **Context budget is integrated as the first real loop budget dimension:** latest ADR-0047 context-budget reports are carried in `TurnBudgetState`, near/over-budget pressure can be written to the ledger, near-budget pressure emits a loop-control diagnostic, and active overflow recovery attempts emergency compaction before stopping an over-budget model call. Low-budget checkpoint gating now distinguishes real budget-pressure warnings from KO/failure warnings. Code review currently supports deferring checkpoint-before-growth until recorded evidence shows compact-first behavior is insufficient.
+- **Grounding probes are integrated at the generic MVP level:** mutation-like tool results now produce grounding-probe decisions tied to tool-call evidence refs, and failed probe signals prevent mutation replenishment/checkpoint reset. Tool-observation lookup now requires matching tool-call attribution instead of falling back to an ambiguous run-level probe signal. The MVP producer deliberately uses tool status/error-shaped content; stronger read-after-write or diff probes should be added only for surfaces where recorded runs show this is too weak.
+- **Initial checkpoint/KO tuning has started from live recorded behavior:** light/standard exploratory-read checkpoint cadence has been relaxed to reduce noisy `over_exploration` checkpoints during bounded roadmap-directed investigation, checkpoint decisions now persist a stable profile fingerprint for profile-aware tuning, while careful/strict profiles, failure thresholds, same-signature KO thresholds, and hard-stop paths remain unchanged.
+
+### Implementation review and adjustments
+
+- Prefer **events over new state tables** for diagnostics. Focus and task-definition history fit well as existing Docket events; orientation transitions should use an existing conversation/BearWire event stream or similarly lightweight log rather than a new heavy table.
+- Keep **durable focus** and **diagnostic history** separate. The current Docket execution-session record can remain the focus source of truth; event logs explain how focus/orientation changed over time.
+- Treat `/focus` matching as a UX layer, not a runtime primitive. Exact-id focus is enough for now; empty `/focus` may use current-conversation Job association before falling back to recent Jobs. Broader fuzzy search and elicitation should be added only after the projection/clear/title semantics are stable.
+- Do not build a generic `FocusTarget`. The implementation experience still supports the existing constraint: durable focus is a Docket Job; task focus is derived and ephemeral.
+- Keep broad budget enforcement behind the replay/tuning spine. The ledger/replay slices are now in place; next budget/checkpoint changes should either be replayable through the existing summary/comparison helpers or recorded as typed loop-control decisions.
+- Reconcile this plan with the grounding/tuning companion before Phase 3/4 enforcement. Context-pressure and grounding signals now have ledger hooks and enough replay support to compare observed behavior against expected decision/profile shapes. Prefer those small comparisons over building a speculative policy simulator.
+
+Recommended next slices:
+
+1. **Evaluate the latest checkpoint/KO tuning against recorded ledger summaries.** Checkpoint responses are authoritative in enforce mode, light/standard exploratory cadence has been relaxed, KO warnings are surfaced to model context, low-budget checkpointing now ignores non-budget warning codes, and checkpoint decisions carry profile fingerprints. Next compare recorded reason distributions/profile summaries after those changes before moving thresholds again.
+2. **Refine context-budget policy with recorded evidence.** Add checkpoint-before-growth only where ledger/replay summaries show emergency compact-first behavior is insufficient; current code review supports deferring another context policy layer.
+3. **Strengthen grounding probes only where attribution-backed runs show the MVP is too weak.** Tool-observation lookup now requires tool-call attribution, so the next probe slice should be surface-specific rather than another generic fallback.
+4. **Only add more replay machinery when a concrete tuning question needs it.** The current no-simulator harness has profile reason counts, turn-level reason comparison, and profile fingerprints. Avoid a full policy simulator unless production traces prove summaries/comparators are too weak.
+
+### Roadmap item — collapse state authority dimensions
+
+The current [Den state machine inventory](../architecture/den-state-machine-inventory.md) is deliberately explicit, but several axes should be simplified before loop-control enforcement grows more complicated. The goal is not one giant enum; it is fewer canonical owners and more derived projections.
+
+Target canonical runtime objects:
+
+1. **`ActorContext`** is the resolved actor/access input for the run: Bear identity, user membership/access, and trust profile. It is not a derivation engine: membership may constrain authority, but must not silently change trust profile, and trust profile must not imply user access.
+2. **`ConversationSnapshot`** owns durable conversation inputs captured for the turn/run, including model-selection snapshot and the durable focus pointer. Ordinary policy decisions use the snapshot; mid-run changes enter through typed transitions rather than ad hoc row reads.
+3. **`TurnAuthority`** is the compiled authority view for a turn. It consumes trust/profile defaults, governance, session permission mode, workplan/approval state, armature capabilities, and tool descriptors, then produces mutation/execution gates, allowed tool classes, and approval requirements. Governance remains a run-supervision input; `TurnAuthority` owns only the derived permission surface.
+4. **`ResolvedFocus`** is the only focus input to completion policy. It may include Docket task state only after resolving the current durable focus pointer. Cached task lists, prompt diagnostics, and session-local task projections may inform display/model context, but cannot become focus or force continuation.
+5. **`TurnRunState`** owns lifecycle plus active wait reason. Waiting states should structurally carry their obligation handles. Terminal transitions should close/cancel open obligations transactionally and idempotently so late results are ignored by construction; retrying terminalization must not reopen obligations, schedule another continuation, or change a previously settled terminal outcome except through an explicit recovery transition.
+6. **`RunControl`** owns budgets, checkpoint state, failure/KO counters, retry policy, and recovery disposition. It may decide or record recovery, but lifecycle changes still occur through `TurnRunState`, and recovery must not mutate focus or authority except via explicit typed transitions.
+
+Derivation direction is one-way:
+
+```text
+ActorContext
+ConversationSnapshot
+Session/client capability snapshot
+Docket/workplan state
+Tool descriptors
+Governance
+        │
+        ▼
+TurnAuthority ───────► tool routing / prompt authority block / client projection
+
+ConversationSnapshot.durable_focus_pointer
+        │
+        ▼
+Docket focused execution lookup
+        │
+        ▼
+ResolvedFocus ───────► completion policy / task-orientation prompt projection
+
+TurnRunState + obligations
+        │
+        ▼
+continuation / wait / terminal behavior
+
+RunControl
+        │
+        ▼
+budget / checkpoint / retry decisions
+```
+
+Projections do not feed back into authority. A cached task-list projection cannot itself be a focus source; at most it can be reused as a display/cache optimization after identity/version checks against the durable focus.
+
+Demote these from state authorities to projections/caches or owned subrecords:
+
+- task focus and active-task display, derived from `ResolvedFocus` + Docket state;
+- cached task lists and operational-focus labels;
+- prompt/context/compaction state, as prompt projection over canonical runtime objects;
+- model choice as an input/capability snapshot, not an authority source;
+- work surface/sandbox state, owned by Docket `WorkRun` rather than conversation focus;
+- standalone recovery state, folded into `RunControl`.
+
+Do not collapse these boundaries:
+
+- trust profile vs governance;
+- focus vs work surface;
+- authority vs prompt/client labels;
+- user membership/access vs trust profile.
+
+Anti-goals:
+
+- do not introduce a monolithic `EffectiveTurnState` object that every subsystem mutates;
+- do not make prompt/client labels canonical state;
+- do not let cached projections participate in completion or permission decisions;
+- do not make model selection, compaction, title updates, or focus display updates authority sources;
+- do not collapse trust profile into governance or governance into permission mode.
+
+Implementation slices:
+
+| Slice | Done when |
+| --- | --- |
+| Introduce authority compiler seam | Tool routing, prompt assembly, and client projection all consume the same `TurnAuthority` result for write/mutation decisions, and no separate prompt/client/session-mode path can independently expand allowed tool classes. |
+| Make focus completion input explicit | Completion policy accepts `ResolvedFocus` and Docket-focused task state only. Session cached task lists are not accepted by the completion API and cannot be adapted into focus without resolving the durable focus pointer. |
+| Reify wait reasons in turn-run state | Waiting `TurnRunState` variants carry obligation ids, and terminal transitions reject or close open obligations transactionally and idempotently. |
+| Move work-surface ownership to WorkRun | Sandbox/workspace/branch state is resolved through Docket work execution records, not conversation focus. |
+| Demote projection-only axes | Prompt, compaction, client labels, and cached task lists cannot create focus, permissions, obligations, or governance. |
+| Update inventory/tests | The state-machine inventory documents the reduced authority model and keeps seam tests for stale focus, submitted plans, terminal obligations, late results, and projection-only state. |
+
+Exit gate: a turn's mutation authority, focus-driven continuation, and active obligations each have exactly one canonical owner, with projections unable to expand authority or manufacture work.
 
 ## Goal
 
@@ -17,9 +132,13 @@ The implementation must make Bear runs more efficient and auditable without lett
 In scope:
 
 - progressive agent loop control levels (`light`, `standard`, `careful`, `strict`),
+- governance as the continuation-pressure input (`interactive`, `grace`, `autonomous_continuation`, `observational`, `frozen`),
+- focused Job as the Docket objective input for long-running continuation,
+- objective orientation as the current outcome state (`freeform`, task-`oriented`, Job-`focused`),
+- freeform task-definition policy that controls whether the model may be told it can define a task and leave freeform mode,
 - model default control levels,
 - Bear-level and stance-level overrides mirroring model selection,
-- task/run escalation for risk, difficulty, or governance mode,
+- task/run escalation for risk, difficulty, or governance,
 - profile-owned budgets, ko/failure thresholds, checkpoint triggers, and task-gate behavior,
 - optional checkpoint-turn thinking-level escalation,
 - structured checkpoint artifacts/events,
@@ -37,11 +156,13 @@ Out of scope:
 
 ## Core invariants
 
-1. **Runtime controls continuation; task tools control task state.** Checkpoints may identify that task state should change, but only `update_task_list`, `sync_task_list`, `checkout_task_list`, `request_task_list_handoff`, or Docket service APIs may mutate session task-list/Docket state.
-2. **Checkpoints are structured artifacts, not informal prose.** A checkpoint report should arrive as a runtime-owned `checkpoint` tool call whose arguments are parsed into typed fields. Assistant prose/JSON fallback is degraded and never the primary control path.
-3. **Checkpoint artifacts can be auditable without becoming Docket events.** `work` runs may retain checkpoint artifacts as run audit evidence, but Docket `bear_task_events`/`bear_job_events` remain the report-visible source of task progress, blockers, completion, and criteria evaluation.
-4. **Thinking effort is a quality knob, not a safety boundary.** Budget, ko, task-gate, and stop enforcement remain runtime-authoritative even if a provider ignores thinking-level metadata.
-5. **Runtime code consumes resolved typed profiles.** Model names and provider quirks belong in registry/configuration; the runtime must not scatter model-name `match` arms.
+1. **Loop control is stance-wide, not focus-specific.** The same runtime regime governs freeform, task-oriented, focused, and autonomous runs. Focus is one objective-orientation state on a spectrum of freedom/grace; it is not a separate loop-control flavor.
+2. **Runtime controls continuation; task tools control task state.** Checkpoints may identify that task state should change, but only `update_task_list`, `sync_task_list`, `checkout_task_list`, `request_task_list_handoff`, or Docket service APIs may mutate session task-list/Docket state.
+3. **Checkpoints are structured artifacts, not informal prose.** A checkpoint report should arrive as a runtime-owned `checkpoint` tool call whose arguments are parsed into typed fields. Assistant prose/JSON fallback is degraded and never the primary control path.
+4. **Checkpoint artifacts can be auditable without becoming Docket events.** `work` runs may retain checkpoint artifacts as run audit evidence, but Docket `bear_task_events`/`bear_job_events` remain the report-visible source of task progress, blockers, completion, and criteria evaluation.
+5. **Checkpoint advice cannot expand authority.** Checkpoint reports are advisory inputs to runtime policy. They cannot expand budgets, reset stop conditions, bypass trust gates, or authorize actions the resolved loop-control profile disallows.
+6. **Thinking effort is a quality knob, not a safety boundary.** Budget, ko, task-gate, and stop enforcement remain runtime-authoritative even if a provider ignores thinking-level metadata.
+7. **Runtime code consumes resolved typed profiles.** Model names and provider quirks belong in registry/configuration; the runtime must not scatter model-name `match` arms.
 
 ## Conceptual model
 
@@ -152,6 +273,236 @@ Task/run escalation may raise intensity, but should not silently downgrade opera
 | Add tests | Model default, Bear override, stance override, unknown model fallback, and escalation precedence are covered. |
 
 **Exit gate:** runs can resolve and report a control profile without behavior changes.
+
+## Phase 2a — Governance and focused Job inputs
+
+**Goal:** make the loop controller consume explicit supervision and objective inputs before enforcement uses them.
+
+Suggested shape:
+
+```rust
+pub enum Governance {
+    Interactive,
+    Grace,
+    AutonomousContinuation,
+    Observational,
+    Frozen,
+}
+
+pub struct LoopControlContext {
+    pub governance: Governance,
+    pub focused_job_id: Option<JobId>,
+}
+```
+
+Do **not** introduce a generic `FocusTarget` enum yet. The only supported durable focus object is a Docket Job.
+
+Focused Job ownership is conversation-scoped. The durable source of truth is the conversation's current focused Job; live sessions project that state into their UI, and each run receives a snapshot in `LoopControlContext`. Work runs should also record the focused Job they were launched under for auditability, but they do not own focus. Governance is resolved per run and is not the same durable state as the focused Job.
+
+Minimal first shape:
+
+```rust
+pub struct ConversationFocusState {
+    pub focused_job_id: Option<JobId>,
+}
+```
+
+If debugging needs it, add timestamps/source later; do not build a broader focus subsystem up front.
+
+| Task | Done when |
+| --- | --- |
+| Rename docs/projections toward governance | New runtime prose says **governance** for the supervision axis, while preserving existing `Governance` code/API compatibility where already decided by ADR-0039. |
+| Persist conversation focus | The conversation can durably store `focused_job_id: Option<JobId>` as the source of truth for focus across turns and reconnects. |
+| Project focus to sessions | Live sessions derive their displayed Focused state and title from conversation focus. |
+| Snapshot focus into runs | Each run receives governance and the current focused Job as `LoopControlContext`; work runs persist the launched-under Job for audit. |
+| Add focused Job to run context | Runtime context can carry `focused_job_id: Option<JobId>` independently from governance. |
+| Enforce `work` designation | A `work` run must have a focused Job before model-driving continuation begins; missing Job is a hard rejection before model invocation. |
+| Allow explicit `pair` focus | `pair` can designate a focused Job through Bear conversation or a client command without changing trust stance. |
+| Derive task focus | Given governance + focused Job + Docket/task-list state, runtime derives the next logical incomplete/unblocked task as ephemeral task focus. |
+| Add diagnostics | Run diagnostics include governance, focused Job id if any, and derived task-focus refs without leaking hidden task-gate internals. |
+| Add tests | Normal `pair` has no focused Job; focused `pair` keeps `pair` trust stance; `work` without focused Job is rejected; `work` with focused Job derives a next task. |
+
+**Exit gate:** loop control has explicit governance and focused-Job inputs, but no generic focus-target abstraction.
+
+## Phase 2b — Client projection for Focus
+
+**Goal:** let UI-providing clients expose focused-Job state without pretending it is a user-selectable approval preset.
+
+UI-providing clients such as ACP should project focused-Job behavior as a special permissions/presentation state. The command and feature are called **Focus**; the visible permission/mode label while active is **Focused**. Focused is **not UI-selectable** as an ordinary permissions mode. It can be entered through Bear conversation or slash commands after Den designates a Job.
+
+Command shape:
+
+```text
+/focus [job]
+```
+
+Model/tool affordance:
+
+The slash command is the client UX. If a Bear in chat or pair is expected to request Focus without the user typing `/focus`, expose a small runtime affordance that designates or clears the focused Job for the current conversation/session. Keep it boring: accept an exact `job_id` and an explicit clear operation first; do not implement fuzzy matching in the model-facing tool. The runtime should still validate the Job, bind focus through the same Docket execution-session path as `/focus`, emit the same diagnostics/events, and project the same orientation snapshot on the next run.
+
+Do not make `execute_job` double as the whole focus API for every surface unless it also updates the current session's Focus projection. Starting or resuming Docket execution and making the current conversation **Focused** are related, but the user-visible invariant is session focus: subsequent turns should be steered toward that Job until it completes, blocks, is cancelled, focus is cleared, or loop control stops continuation.
+
+Minimal useful sequence:
+
+1. `/focus <uuid>` remains the exact-ID armature path and is the reference behavior.
+2. Add or expose a first-class current-session focus operation for assistant/client use, with exact `job_id` and clear only.
+3. Verify `session_info`, `/status`, objective orientation, title projection, and prompt diagnostics all reflect the same focused Job.
+4. Add search/matching/elicitation only after exact focus/clear semantics are stable across chat, pair, and armature surfaces.
+
+`[job]` resolution:
+
+- exact Job ID: focus that Job and begin execution immediately;
+- other text: search existing Jobs; if exactly one high-confidence match exists, focus it and begin execution immediately; otherwise show possible matches and ask the user to select one or begin defining a new Job;
+- empty: resolve from the current conversation first. If the conversation has exactly one active associated focused Job or Job-backed task list, focus that Job immediately. If it has multiple plausible associated Jobs, ask the user to choose. If it has only session-local tasks with no backing Job, do not silently convert them into Focus; offer to keep working in oriented/session-task mode or create/focus a durable Job. If there is no conversation-associated candidate, show the 5 most recent Jobs and ask the user to select one or begin defining a new Job.
+
+High-confidence focus matching is intentionally narrow. Exact Job IDs and explicit continuation references to the current focused Job qualify. Otherwise, a match needs strong lexical/semantic overlap plus recency, with no competing plausible Job. Ambiguous matches must elicit a choice. `work` requires an explicit focused Job and must not fuzzy-attach to a Job before model-driven continuation. `pair` may use conversational focus to suggest a Job, but must ask before making Docket-affecting focus/task updates. If no high-confidence match exists and the request is task-like, stay freeform or session-local and ask before creating a durable Job.
+
+Selection is mediated through one model-visible elicitation tool. The model should not know whether the client rendered a native picker or sent numbered text options. Clients without elicitation UI present numbered options and ask the user to reply with a number; the runtime normalizes the result as the same elicitation response.
+
+When focused:
+
+- the client permission/mode label is **Focused**;
+- the session title reflects focus;
+- the conversation title is updated to `[Job name] - [current task]` with simple fallbacks such as `[Job name]`, `[Job name] - selecting next task`, `[Job name] - blocked`, or `[Job name] - complete`;
+- changing the client mode away from Focused clears conversation focus and stops focused continuation.
+
+| Task | Done when |
+| --- | --- |
+| Define Focus projection | BearWire/ACP can project **Focused** as a special non-selectable state tied to conversation `focused_job_id`. |
+| Keep Den authoritative | Clients display Focus and may provide commands to request it, but Den validates/designates/clears the focused Job. |
+| Add slash-command hook | ACP/client command plumbing can handle `/focus [job]` with exact-id, conversation-associated empty invocation, search, ambiguous-selection, empty-recent, and define-new paths. |
+| Add current-session focus affordance | Chat/pair runtimes can designate or clear the current conversation's focused Job by exact `job_id` without relying on a user-typed armature slash command; the affordance shares validation/projection with `/focus`. |
+| Add focus matching policy | Focus matching considers at most 5 recent Jobs by default, auto-matches only exact/explicit or single high-confidence candidates, requires elicitation on ambiguity, and asks before durable Job creation or Docket-affecting `pair` attachment. |
+| Add elicitation path | Job selection uses one model-visible elicitation tool; client adapters choose native UI or numbered text fallback without exposing that choice to the model. |
+| Clear on mode change | If a client changes mode away from **Focused**, Den clears the conversation focused Job. |
+| Update focused titles | Focused conversations/sessions update title as `[Job name] - [current task]` with blocked/complete/selection fallbacks. |
+| Prevent permission laundering | Focus does not grant tools, approvals, memory access, or outbound auth beyond the effective policy from trust stance + governance + armature. |
+| Add projection tests | Focused appears when a focused Job is active, cannot be selected directly from normal permission UI, clears when Den clears focus, and clears when the client mode changes. |
+
+**Exit gate:** ACP-style clients can show/request Focus, but cannot select it as an ordinary permissions mode or use it to alter trust boundaries.
+
+## Phase 2c — Objective orientation and freeform task-definition policy
+
+**Goal:** make the loop controller consume an explicit objective-orientation state before budget/grace enforcement depends on it.
+
+Objective orientation answers one question: **what concrete outcome, if any, is this run currently pursuing?** It is distinct from governance/trust. Orientation may change steering strength, budget/grace profiles, task-list affordances, and prompt construction, but it must never expand authority, approvals, memory access, outbound auth, or destructive-action permissions by itself.
+
+Use exactly three orientation states:
+
+1. **`focused`** — a Docket Job is defined and centered. The loop's top priority is to complete the Job. Steering is strong and budget/grace are lenient while progress is evident. If the Job is mutable, child tasks can be added without a runtime-oriented cap; immutable/static Jobs reject or escalate decomposition.
+2. **`oriented`** — a Task is defined and is being worked on, but no focused Job is active. Steering and budget/grace are similar to focused but separately tunable. Task-scoped affordances may be available. Child task creation is capped: initially 6 children and 1 level below the oriented task.
+3. **`freeform`** — no outcome is defined. Budget/grace limits are strict. The model is just chatting unless the freeform policy permits task definition.
+
+Do **not** add a fourth orientation for "freeform but may orient/delegate." That is transition policy on `freeform`, not a different current-objective state. Orienting and delegation are locked behind the same gate: whether the model may define a task-shaped outcome.
+
+Suggested minimal shape:
+
+```rust
+pub enum ObjectiveOrientation {
+    Freeform { policy: FreeformPolicy },
+    Oriented(TaskOrientation),
+    Focused(JobOrientation),
+}
+
+pub struct FreeformPolicy {
+    pub may_define_task: bool,
+}
+
+pub struct TaskOrientation {
+    pub task_ref: OrientationTaskRef,
+    pub child_policy: OrientedChildTaskPolicy,
+}
+
+pub struct JobOrientation {
+    pub job_id: JobId,
+    pub mutability: JobMutability,
+    pub derived_task_ref: Option<OrientationTaskRef>,
+}
+
+pub enum OrientationTaskRef {
+    SessionTaskListItem(TaskListItemId),
+    DocketTask { job_id: Option<JobId>, task_id: TaskId },
+}
+
+pub struct OrientedChildTaskPolicy {
+    pub max_children: u8,
+    pub max_depth_below_oriented_task: u8,
+}
+
+pub const DEFAULT_ORIENTED_MAX_CHILDREN: u8 = 6;
+pub const DEFAULT_ORIENTED_MAX_DEPTH: u8 = 1;
+```
+
+Resolution order is deterministic:
+
+1. if a focused Job exists, resolve `Focused`;
+2. else if there is an explicit active/current task, resolve `Oriented`;
+3. else resolve `Freeform` with the run's resolved `FreeformPolicy`.
+
+The freeform task-definition policy affects both runtime legality and model-visible affordances:
+
+- `may_define_task: false`: do not tell the model that task definition, orientation, or delegation is possible. The runtime still defensively rejects task-definition/delegation attempts from this freeform run. The model should answer, ask a clarifying question, or stop within strict freeform limits.
+- `may_define_task: true`: the prompt may say the model can define a concrete task with completion criteria when the request needs sustained work. Defining a task can lead to local `oriented` continuation or to delegation/handoff through existing Docket/task-list paths, subject to governance and approval policy.
+
+ponytail: keep `may_define_task` as a single boolean until another real state is needed. Do not split `may_orient` and `may_delegate` while they are locked together.
+
+### Boundary with checkpoints
+
+Task orientation is state; checkpoints are interrupts. When orientation and checkpoint behavior overlap, prefer task orientation as the enforcement regime.
+
+Orientation owns the current objective and the policies that directly follow from it:
+
+- whether the run is `freeform`, `oriented`, or `focused`;
+- whether freeform may define a task-shaped outcome;
+- whether the model sees task-definition/orientation/delegation affordances;
+- which budget/grace profile applies for freeform vs oriented vs focused work;
+- whether child-task creation is allowed;
+- the oriented child cap and depth cap;
+- focused Job mutability/static-scope decomposition policy.
+
+Checkpoints should not infer, select, or launder the current objective. Do not keep a separate "task gate" or "plan-mode gate" whose job is to decide that freeform work has become task-shaped. That decision belongs to `ObjectiveOrientation` plus `FreeformPolicy.may_define_task` and the task-definition transition path.
+
+Checkpoints remain useful only as pause/continue/control boundaries, using the resolved orientation as context. Keep checkpoint triggers for boundaries such as:
+
+- low or exhausted budget;
+- stalled progress or repeated failures;
+- risky, destructive, or externally visible actions;
+- unresolved ambiguity that cannot be resolved locally;
+- long-running autonomous continuation;
+- attempted scope expansion beyond the current orientation policy;
+- attempted child-task creation beyond the oriented cap;
+- attempted decomposition of an immutable/static focused Job.
+
+Cleanup rule: if a checkpoint reason duplicates orientation enforcement, delete it, rename it, or fold it into orientation/task-definition policy. If it is a real pause point, keep it, but include the resolved orientation, relevant task/job refs, and policy violation details in the checkpoint context.
+
+### BearWire / ACP plan projection
+
+A currently oriented task should be visible to armature clients through BearWire as an ACP plan. The projection is a client-facing view of the current working level, not a new source of task state.
+
+ACP plan surfaces are treated as flat for this phase. If ACP has no native task-hierarchy concept, do not flatten an entire Docket tree into one visible plan and do not expose hidden descendants as peer items. Instead, project the plan at the level of the currently oriented task:
+
+- the ACP plan title/objective represents the current working task, or the focused Job's derived current task when focused work is task-scoped;
+- visible plan items are the current working task and its siblings at the same parent level;
+- direct children of the oriented task remain Docket/task-list structure and may be exposed only through future explicit hierarchy support or a deliberate drill-down projection;
+- when orientation changes, BearWire emits the corresponding plan replacement/update so the visible ACP plan follows the current working level;
+- ACP plan edits/status changes must round-trip through the existing task-list/Docket mutation paths, not mutate orientation or Docket state by projection side effect.
+
+This keeps the user-visible plan aligned with the current objective while avoiding a misleading flattened hierarchy. When in doubt, the oriented task's level is the projection boundary.
+
+| Task | Done when |
+| --- | --- |
+| Add orientation types | Runtime has typed `ObjectiveOrientation`, `FreeformPolicy`, `TaskOrientation`, `JobOrientation`, and oriented child-task constants. |
+| Resolve orientation per run | Runs resolve to exactly one of `freeform`, `oriented`, or `focused`; focused Job wins over active/current task. |
+| Keep freeform prompt gated | Prompt construction includes task-definition/orientation/delegation affordances only when `FreeformPolicy.may_define_task` is true. |
+| Defensively enforce freeform policy | Runtime rejects task-definition/delegation attempts from freeform runs where `may_define_task` is false, even though the prompt should not expose that option. |
+| Apply orientation budget profiles | Freeform uses strict budget/grace; oriented and focused use separately tunable lenient-while-progressing profiles. |
+| Enforce oriented child cap | Oriented runs can create at most 6 child tasks and only 1 level below the oriented task; attempts beyond the cap require finishing, focusing a Job, or handoff/escalation. |
+| Preserve focused Job decomposition | Mutable focused Jobs are not subject to the oriented cap; immutable/static focused Jobs reject or escalate child-task creation. |
+| Preserve trust boundaries | Orientation never grants tools, approvals, memory access, outbound auth, or destructive-action permission beyond effective governance/trust/armature policy. |
+| Add diagnostics | Run diagnostics include orientation kind, relevant task/job refs, `may_define_task` for freeform, and child-policy summary without leaking hidden gate internals. |
+| Add tests | Cover freeform closed prompt, freeform open → oriented, runtime rejection when closed, oriented child cap/depth cap, focused precedence over active task, focused mutable decomposition, and immutable focused Job rejection/escalation. |
+
+**Exit gate:** loop control has explicit objective orientation and can gate freeform task-definition affordances before budget/grace enforcement is tuned around orientation.
 
 ## Phase 3 — Budget/ko/failure integration
 
@@ -267,7 +618,21 @@ Do not force learned facts and uncertainty into required JSON arrays. Keep model
 
 **Goal:** make checkpoints useful for `work` run audit without polluting conversation history or Docket task events.
 
-Introduce a run-scoped checkpoint artifact store or event stream. Preferred shape:
+Checkpoint reports are artifacts, not status reports. They are durable audit/debug payloads attached to a run, not user-facing progress prose, conversation history, model replay context, or Docket task/job events.
+
+Preferred final shape: store checkpoint request/response payloads through the artifact-ref system as artifact kind `runtime_checkpoint`, then attach them with generic artifact links:
+
+```text
+artifact_links
+- artifact_ref
+- subject_kind = run
+- subject_id = run_id
+- role = checkpoint
+```
+
+When useful for audit/query, the same checkpoint artifact may also be linked to the focused Job or current task with an evidence/audit role. These links are evidence references only; they do not mutate task state and do not imply completion, blockage, waiver, or cancellation.
+
+Until artifact refs exist, a small temporary `bear_run_checkpoints` table is acceptable, but it should be shaped as a mechanical migration path to artifact refs rather than a competing permanent checkpoint store:
 
 ```text
 bear_run_checkpoints
@@ -280,24 +645,24 @@ bear_run_checkpoints
 - request jsonb not null
 - response jsonb nullable
 - validation_status text not null -- requested | valid | invalid | superseded
-- visibility text not null -- audit_only | live_ephemeral | model_visible_hidden
-- replay_policy text not null -- none | summary_once | until_superseded
+- replay_policy text not null -- none by default
 - related_task_list_id text nullable
 - related_task_item_id text nullable
 - related_docket_task_id uuid nullable
+- future_artifact_ref text nullable
 - created_at timestamptz not null
 ```
 
 Retention rules:
 
 - `pair` default: live/debug telemetry or short retention unless needed for recovery.
-- `work` default: audit-retained run artifact.
+- `work` default: audit-retained `runtime_checkpoint` artifact linked to the run.
 - Docket report-visible history still requires Docket/task events.
 - Model replay uses only explicit replay policies, never raw checkpoint prose by default.
 
 | Task | Done when |
 | --- | --- |
-| Add checkpoint artifact schema/service | Runtime can persist request/response artifacts by run id. |
+| Add checkpoint artifact API | Runtime can persist request/response payloads by run id, preferably as `runtime_checkpoint` artifact refs. |
 | Keep artifact outside Docket events | Checkpoints do not appear as `bear_task_events` or `bear_job_events`. |
 | Add `work` audit retention | `work` runs retain valid checkpoint artifacts with task refs where available. |
 | Add pair/chat retention policy | Interactive stances avoid durable clutter unless recovery policy requires it. |
@@ -308,7 +673,18 @@ Retention rules:
 
 ## Phase 7 — Checkpoint enforcement in the loop
 
-**Goal:** make checkpoint triggers affect continuation.
+**Goal:** make checkpoint triggers affect continuation without making checkpoint advice authoritative.
+
+Runtime enforcement is dominant. A checkpoint report may choose among actions still allowed by the resolved loop-control profile, but it cannot expand a budget, reset an exhausted stop condition, bypass a trust/task gate, or authorize a risky action that runtime policy disallows. Runtime may always downgrade a checkpoint recommendation to a safer action such as bounded retry, reconciliation, stop, or human/operator review.
+
+This enforcement model is not focus-specific. The same control regime applies across a spectrum of objective orientation:
+
+- **freeform**: broad interactive conversation with lighter task pressure and more grace;
+- **task-oriented**: an explicit task or acceptance target is in play, but no durable focused Job is active;
+- **focused**: a Docket Job is centered across turns/runs;
+- **autonomous work**: focused Job plus `work` stance, with no user-interaction path and stricter pre-model gates.
+
+Each point on the spectrum can tune freedom, grace, checkpoint thresholds, and reconciliation strictness through the resolved profile/governance, but the same runtime enforcement rules apply.
 
 When a trigger fires:
 
@@ -316,42 +692,69 @@ When a trigger fires:
 2. optional checkpoint thinking policy is resolved,
 3. next model inference should call the runtime-owned `checkpoint` tool before more exploration/risky action,
 4. runtime validates the tool arguments and records an advisory/audit artifact,
-5. runtime continues according to deterministic loop signals plus advisory `next_action`/task-gate state.
+5. runtime computes the effective next action from deterministic loop signals plus advisory `next_action`/task-gate state, with runtime policy winning conflicts.
 
 | Task | Done when |
 | --- | --- |
-| Enforce over-exploration checkpoints | Read/search threshold forces checkpoint before more read/search. |
-| Enforce failure checkpoints | Consecutive failures force checkpoint before retry. |
-| Enforce same-signature checkpoint | Near-ko repeated signature forces different action or checkpoint. |
-| Enforce task-gate checkpoint | First/repeated gate rejection can require checkpoint before stronger gate behavior. |
-| Enforce pre-risk checkpoint | `careful`/`strict` can require checkpoint before broad/destructive actions. |
+| Enforce over-exploration checkpoints | Read/search threshold forces checkpoint before more read/search; the checkpoint can justify only a bounded fresh window, not unlimited exploration. |
+| Enforce failure checkpoints | Consecutive failures force checkpoint before retry; retry is allowed only if runtime policy still permits it. |
+| Enforce same-signature checkpoint | Near-ko repeated signature forces different action or checkpoint; ko exhaustion still stops even if the checkpoint recommends retry. |
+| Enforce task-gate checkpoint | First/repeated gate rejection can require checkpoint before stronger gate behavior; checkpoint advice cannot satisfy the gate without task/Docket evidence. |
+| Enforce pre-risk checkpoint | `careful`/`strict` can require checkpoint before broad/destructive actions; checkpoint advice cannot bypass trust policy or permission requirements. |
 | Reset checkpoint observation window | A valid or degraded checkpoint report clears only checkpoint-trigger counters, giving the model a bounded fresh read/search or recovery window without resetting authoritative budgets/ko/fuses. |
-| Add loop tests | Simulated turns prove checkpoint tool calls are handled internally, invalid checkpoint reports degrade without killing the run, valid reports can require task-tool follow-through, and checkpoint reports open a fresh checkpoint-observation window. |
+| Add loop tests | Simulated turns prove checkpoint tool calls are handled internally, invalid checkpoint reports degrade without killing the run, valid reports can require task-tool follow-through, checkpoint reports open a fresh checkpoint-observation window, and checkpoint advice never expands budget/stop authority. |
 
 **Exit gate:** checkpoints are part of runtime continuation, not merely diagnostics, and a checkpoint report prevents immediate re-triggering of the same checkpoint while preserving budget/ko authority.
 
-## Phase 8 — Optional checkpoint thinking-level escalation
+## Phase 8 — Model-task routing and reasoning effort
 
-**Goal:** pair checkpoint turns with higher reasoning effort when policy/provider support allows.
+**Goal:** route loop-control model calls through the model tasks layer, with reasoning effort as one provider-neutral request-profile field.
+
+Loop control classifies the call, but it does not select raw provider/model identifiers directly. For foreground agent-loop calls, it passes `agent_primary` step metadata such as `ordinary_turn`, `planning`, `task_selection`, `execution`, `checkpoint`, `pre_risk_review`, `summarization`, or `cheap_probe` to the model tasks layer. The model tasks layer resolves an approved `ModelRequestProfile` from the Bear model library, registry capabilities, loop-control policy, risk, budget, governance, and objective orientation.
+
+Reasoning effort is one optional routing dimension, not a separate control path. Unsupported provider-specific thinking metadata degrades to diagnostics only; runtime enforcement remains dominant.
+
+Bounded delegation is allowed only through approved symbolic model refs. Capable controller/checkpoint models may recommend delegating routine scoped work to weaker or cheaper models; weaker models may request escalation. Runtime/model-task policy validates model eligibility, scope, risk, tools/files, and budget before any route changes.
 
 | Task | Done when |
 | --- | --- |
-| Add thinking metadata type | Provider request metadata can carry low/medium/high or provider-equivalent effort. |
-| Add capability detection | Model/provider support is known or safely treated as best-effort. |
-| Apply only on checkpoint/pre-risk turns | Escalation is bounded to the inference that needs synthesis unless profile says otherwise. |
-| Emit diagnostics | Run diagnostics include applied/skipped thinking override and reason. |
-| Add tests | Supported provider receives metadata; unsupported provider degrades without failure; enforcement remains independent. |
+| Add `agent_primary` step metadata | Loop-control calls can classify ordinary turns, planning, task selection, execution, checkpoints, pre-risk review, summaries, and cheap probes without new top-level task classes. |
+| Resolve `ModelRequestProfile` through model tasks | Runtime receives approved model ref plus optional reasoning effort and request parameters; it does not branch on raw provider model names. |
+| Add capability detection | Model/provider support for reasoning effort is known or safely treated as best-effort. |
+| Add bounded delegation/escalation checks | Delegation targets are Bear-library and registry approved, scoped, risk-aware, budgeted, and audited. |
+| Emit diagnostics | Run diagnostics include requested/resolved model profile, applied/skipped reasoning override, delegation/escalation reason, and provider support status. |
+| Add tests | Routing uses model-task policy; unsupported reasoning metadata degrades without failure; model recommendations cannot bypass budget, ko, task gates, trust policy, or permission checks. |
 
-**Exit gate:** checkpoint turns can request elevated thinking without changing budget/ko/task-gate authority.
+**Exit gate:** checkpoint/pre-risk and delegated foreground calls are routed through model-task policy, and reasoning effort/model delegation never changes budget/ko/task-gate authority.
 
 ## Phase 9 — Task-list/Docket integration
 
-**Goal:** weave checkpoints elegantly into task management without conflicting with history-visible task records.
+**Goal:** weave checkpoints, focused Job, and task management together without conflicting with history-visible task records.
 
-Checkpoint requests should include active task context when available:
+Focused Job behavior:
+
+- `focused_job_id` identifies the Docket Job that should remain centered across model/tool steps;
+- `work` dispatch requires a focused Job before autonomous continuation begins;
+- `pair` may designate a focused Job explicitly through conversation or client command;
+- focused Job does not itself mark tasks complete, blocked, cancelled, or waived;
+- Jobs are mutatable by default, so an executing agent may update the task tree through task/Docket tools;
+- a mutable focused Job with no tasks means the next work is defining the executable task tree, not declaring the Job complete;
+- a static/frozen Job with no tasks, or only blocked/non-actionable tasks, is an exception that should be flagged before execution continues;
+- task focus is derived from Docket/task-list state and remains ephemeral.
+
+Task focus derivation:
+
+- any `in_progress` task wins before pending work is considered;
+- if multiple tasks are `in_progress`, choose the first in depth-first task-tree order and emit a diagnostic;
+- otherwise choose the first actionable `pending` task in depth-first task-tree order;
+- siblings are ordered by `sibling_order`, then creation time, then task id;
+- parent tasks are actionable even when they have children unless their own state says otherwise.
+
+Checkpoint requests should include focused Job and active task context when available:
 
 ```json
 {
+  "focused_job_id": "...",
   "task_list_id": "...",
   "task_list_version": 12,
   "active_item_id": "...",
@@ -366,6 +769,7 @@ Checkpoint requests should include active task context when available:
 
 Required behavior:
 
+- focused Job is runtime objective context, not Docket task state;
 - checkpoint `task_state_change_needed` is advisory intent only;
 - task-state changes require `update_task_list`, `sync_task_list`, or `request_task_list_handoff`;
 - Docket-backed changes follow source/sync policy;
@@ -414,25 +818,29 @@ Visibility defaults:
 
 **Exit gate:** humans can understand why a run checkpointed, but task history and transcript remain clean.
 
-## Phase 11 — Rollout
+## Phase 11 — Pre-release delivery posture
 
-Recommended rollout flags:
+Den is pre-release, so loop control should be implemented aggressively. Development may still be staged for reviewability and testability, but completed slices are active by default once their tests pass. Do not make feature flags or long observation-only periods the primary safety mechanism. Safety comes from typed profiles, hard invariants, runtime-dominant enforcement, replayable ledgers, and tests.
 
-```text
-BEARS_AGENT_LOOP_CONTROL=off|observe|enforce
-BEARS_AGENT_LOOP_CHECKPOINTS=off|on
-BEARS_CHECKPOINT_THINKING=off|on
-BEARS_CHECKPOINT_AUDIT=off|work|all
-```
+Default control levels:
 
-Rollout order:
+| Context | Default level |
+| --- | --- |
+| `pair`/`chat` freeform | `standard` |
+| `pair` task-oriented | `standard` |
+| `pair` focused Job | `careful` |
+| `work` focused Job | `careful` |
+| pre-risk/destructive/external mutation | `strict` gate, regardless of base level |
 
-1. **Observe:** resolve profiles and emit diagnostics; no enforcement.
-2. **Checkpoint observe:** trigger would-checkpoint events and validate policy thresholds.
-3. **Checkpoint enforce for failures/over-exploration:** enable `standard` for `pair`/`chat` and `work`.
-4. **Checkpoint audit for `work`:** retain structured checkpoint request/response artifacts by run/job/task refs.
-5. **Thinking escalation:** enable checkpoint/pre-risk thinking overrides for supported models.
-6. **Strict/careful pre-risk:** enable broader `careful`/`strict` behaviors for high-risk workflows.
+Implementation order:
+
+1. **Types + resolver:** add typed profiles, resolution precedence, and diagnostics.
+2. **Hard invariants:** immediately enforce `work` focused-Job/context requirements, static/frozen Job blockers, trust/permission gates, and global fuses.
+3. **Checkpoint protocol + artifacts:** add runtime-owned checkpoint calls and artifact-ref-style retention, especially for `work`.
+4. **Checkpoint enforcement:** enforce repeated failure, over-exploration, task-state reconciliation, and bounded retry rules as each trigger class lands.
+5. **Grounding probes:** execute only when requested by policy/checkpoint/task criteria; feed evidence without expanding budgets or bypassing stop conditions.
+6. **Model-task routing:** resolve per-step `ModelRequestProfile` through ADR-0033; add reasoning effort and later bounded delegation.
+7. **Tune thresholds:** adjust profile constants from dogfooding, replay ledgers, Reflection assessments, and tests rather than rollout flags.
 
 ## Validation matrix
 
@@ -450,13 +858,13 @@ Rollout order:
 
 ## First implementation slice
 
-The safest first slice is:
+The first implementation slice is:
 
 1. add typed control levels/profiles;
 2. add resolver with model default + Bear/stance override support;
 3. emit `agent_loop_control_resolved` diagnostics;
-4. add checkpoint request/response DTOs behind an observe-only flag;
-5. add checkpoint artifact schema/service but retain only in `work` observe mode;
+4. enforce the already-decided hard invariants (`work` requires a focused Job/context; trust/permission gates and global fuses dominate);
+5. add checkpoint request/response DTOs and checkpoint artifact retention for `work`;
 6. add tests proving checkpoint artifacts are not conversation history, not model replay, and not Docket events.
 
-This slice creates the typed foundation and audit model before enforcement changes model behavior.
+This slice creates the typed foundation and audit model while enforcing the hard boundaries that are already product decisions.

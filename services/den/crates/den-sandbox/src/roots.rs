@@ -19,6 +19,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+pub const SCRATCH_ROOT_NAME: &str = "scratch";
+const SCRATCH_SOURCE_DIR: &str = "scratch-source";
 const GIT_TIMEOUT: Duration = Duration::from_secs(300);
 const GIT_OUTPUT_CAP: usize = 64 * 1024;
 
@@ -124,6 +126,28 @@ pub struct RootsManager {
 }
 
 impl RootsManager {
+    fn insert_builtin_roots(&mut self) {
+        let scratch_path = self.workspaces_dir.join(SCRATCH_SOURCE_DIR);
+        if let Err(err) = std::fs::create_dir_all(&scratch_path) {
+            tracing::warn!(
+                path = %scratch_path.display(),
+                error = %err,
+                "failed to create scratch root source directory"
+            );
+        }
+        // ponytail: one built-in scratch root is enough for now; if scratch
+        // needs variants later, make built-ins data-driven instead.
+        self.roots.insert(
+            SCRATCH_ROOT_NAME.to_string(),
+            SyncableRoot {
+                name: SCRATCH_ROOT_NAME.to_string(),
+                path: Some(scratch_path.to_string_lossy().into_owned()),
+                upstream: None,
+                default_image: None,
+            },
+        );
+    }
+
     /// Load the manager from the persisted managed config under
     /// `workspaces_dir`, starting empty when none has been pushed yet.
     pub fn load(workspaces_dir: &str) -> Result<Self, RootsError> {
@@ -135,6 +159,8 @@ impl RootsManager {
         };
         if let Some(persisted) = crate::managed::load(&manager.workspaces_dir)? {
             manager.apply_managed(persisted.roots, persisted.images, persisted.version);
+        } else {
+            manager.insert_builtin_roots();
         }
         Ok(manager)
     }
@@ -150,6 +176,7 @@ impl RootsManager {
             .into_iter()
             .map(|root| (root.name.clone(), root))
             .collect();
+        self.insert_builtin_roots();
         self.images = images;
         self.managed_version = version;
     }
@@ -705,12 +732,13 @@ mod tests {
             }],
             Some("v1".to_string()),
         );
-        assert_eq!(manager.names(), ["a", "b"]);
+        assert_eq!(manager.names(), ["a", "b", SCRATCH_ROOT_NAME]);
         assert_eq!(manager.images().len(), 1);
         assert_eq!(manager.managed_version(), Some("v1"));
         manager.apply_managed(vec![plain_root("c")], Vec::new(), Some("v2".to_string()));
-        assert_eq!(manager.names(), ["c"]);
+        assert_eq!(manager.names(), ["c", SCRATCH_ROOT_NAME]);
         assert!(manager.get("a").is_err());
+        assert!(manager.get(SCRATCH_ROOT_NAME).is_ok());
         assert!(manager.images().is_empty());
         assert_eq!(manager.managed_version(), Some("v2"));
     }

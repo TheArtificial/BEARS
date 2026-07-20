@@ -349,6 +349,30 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
         }
 
         if let Some(token) = worker_token_opt.clone() {
+            let t = token;
+            let worker_pool = sqlx_pool.clone();
+            let worker_config = config.clone();
+            task_set.spawn(async move {
+                tracing::info!("Workers: open-session pair reflection loop enabled");
+                let worker_state = den_service::DenState::new(
+                    worker_pool,
+                    worker_config.clone(),
+                    Arc::new(den_service::bifrost::BifrostClient::new(
+                        worker_config.as_ref(),
+                    )),
+                    den_memory::MemoryStoreManager::new(worker_config.as_ref()),
+                );
+                den_bearwire::run_open_session_reflection_loop(
+                    worker_state,
+                    t,
+                    std::time::Duration::from_secs(300),
+                )
+                .await
+                .map_err(std::io::Error::other)
+            });
+        }
+
+        if let Some(token) = worker_token_opt.clone() {
             if config.qdrant_url.is_some() {
                 let t = token;
                 let worker_pool = sqlx_pool.clone();
@@ -445,7 +469,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
         )
         .map_err(|e| {
             tracing::error!("Failed to create sandbox provider: {}", e);
-            StartupError::Message(format!("sandbox provider startup: {e}"))
+            StartupError::SandboxProvider(e.to_string())
         })?;
 
         task_set.spawn(async move {
@@ -488,35 +512,28 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
 }
 
 fn init_tracing() -> Result<(), StartupError> {
-    let tracing_filter: String;
     #[cfg(feature = "production")]
-    {
-        tracing_filter = "den=info,\
-            den::web=info,\
-            den::api=info,\
-            tower_sessions=info,\
-            tower_http=info,\
-            axum=info,\
-            axum_login=info"
-            .to_string();
-    }
+    let default_tracing_filter = "den=info,\
+        den::web=info,\
+        den::api=info,\
+        tower_sessions=info,\
+        tower_http=info,\
+        axum=info,\
+        axum_login=info";
     #[cfg(not(feature = "production"))]
-    {
-        tracing_filter = "den=info,\
-            den::core=debug,\
-            den::web=debug,\
-            den::api=debug,\
-            tower_sessions=info,\
-            tower_http=info,\
-            axum=info,\
-            axum_login=info"
-            .to_string();
-    }
+    let default_tracing_filter = "den=info,\
+        den::core=debug,\
+        den::web=debug,\
+        den::api=debug,\
+        tower_sessions=info,\
+        tower_http=info,\
+        axum=info,\
+        axum_login=info";
+    let tracing_filter =
+        std::env::var("RUST_LOG").unwrap_or_else(|_| default_tracing_filter.to_string());
 
     tracing_subscriber::registry()
-        .with(EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or(tracing_filter),
-        ))
+        .with(EnvFilter::new(tracing_filter))
         .with(tracing_subscriber::fmt::layer())
         .try_init()
         .map_err(|e| StartupError::Tracing(e.to_string()))

@@ -6,7 +6,7 @@
 
 use axum::{
     extract::{MatchedPath, State},
-    http::{HeaderValue, Request, StatusCode},
+    http::{HeaderValue, Method, Request, StatusCode},
     routing::get,
     Router,
 };
@@ -34,20 +34,21 @@ use std::sync::Arc;
 // so the retained `crate::service::DenState` paths in `v1`/`docs` resolve.
 pub use den_service::DenState;
 
+fn api_readiness_db_error(pool: &PgPool, error: sqlx::Error) -> StatusCode {
+    tracing::warn!(
+        error = %error,
+        pool_size = pool.size(),
+        pool_idle = pool.num_idle(),
+        "database readiness check failed (api)",
+    );
+    StatusCode::SERVICE_UNAVAILABLE
+}
+
 async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, StatusCode> {
     sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&state.sqlx_pool)
         .await
-        .map_err(|e| {
-            let pool = &state.sqlx_pool;
-            tracing::warn!(
-                error = %e,
-                pool_size = pool.size(),
-                pool_idle = pool.num_idle(),
-                "database readiness check failed (api)",
-            );
-            StatusCode::SERVICE_UNAVAILABLE
-        })?;
+        .map_err(|error| api_readiness_db_error(&state.sqlx_pool, error))?;
     Ok("OK")
 }
 
@@ -58,8 +59,10 @@ async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, St
 /// The API service is designed to be independent from the web service.
 ///
 /// # Arguments
-/// * `sqlx_pool` - Database connection pool
-/// * `session_store` - PostgreSQL session store for axum-login
+/// * `sqlx_pool` - Database connection pool.
+/// * `session_store` - PostgreSQL session store for axum-login.
+/// * `config` - Shared process configuration used for URLs, cookies, Bifrost, and memory stores.
+/// * `peer_routers` - Sibling edge routers mounted by the binary composition root.
 ///
 /// # Returns
 /// A configured Axum router ready for serving API requests
@@ -165,34 +168,34 @@ pub async fn create_api_app(
 ///
 /// # Returns
 /// Configured session manager layer
+fn base_session_layer(session_store: PostgresStore) -> SessionManagerLayer<PostgresStore> {
+    SessionManagerLayer::new(session_store)
+        .with_secure(den_core::config::session_cookie_secure_from_env(true))
+        .with_same_site(SameSite::Lax)
+        .with_expiry(Expiry::OnInactivity(Duration::days(1)))
+}
+
 fn create_session_layer(
     session_store: PostgresStore,
     config: &Config,
 ) -> SessionManagerLayer<PostgresStore> {
+    let session_layer = base_session_layer(session_store);
     #[cfg(feature = "production")]
     {
-        let session_cookie_domain: Option<String> = config
+        let session_cookie_domain = config
             .session_cookie_domain
             .as_ref()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        let mut session_layer = SessionManagerLayer::new(session_store)
-            .with_secure(den_core::config::session_cookie_secure_from_env(true))
-            .with_same_site(SameSite::Lax)
-            .with_expiry(Expiry::OnInactivity(Duration::days(1)));
         if let Some(domain) = session_cookie_domain {
-            session_layer = session_layer.with_domain(domain);
+            return session_layer.with_domain(domain);
         }
-        session_layer
     }
     #[cfg(not(feature = "production"))]
     {
         let _ = config;
-        SessionManagerLayer::new(session_store)
-            .with_secure(den_core::config::session_cookie_secure_from_env(true))
-            .with_same_site(SameSite::Lax)
-            .with_expiry(Expiry::OnInactivity(Duration::days(1)))
     }
+    session_layer
 }
 
 /// Create authentication layer
@@ -228,6 +231,26 @@ fn create_auth_layer(
 ///
 /// # Returns
 /// Configured CORS layer
+fn api_cors_headers() -> [axum::http::HeaderName; 4] {
+    [
+        axum::http::header::AUTHORIZATION,
+        axum::http::header::CONTENT_TYPE,
+        axum::http::header::ACCEPT,
+        axum::http::header::ORIGIN,
+    ]
+}
+
+fn api_cors_methods() -> [Method; 6] {
+    [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::DELETE,
+        Method::OPTIONS,
+        Method::PATCH,
+    ]
+}
+
 fn create_api_cors_layer(config: &Config) -> CorsLayer {
     #[cfg(feature = "production")]
     {
@@ -245,21 +268,9 @@ fn create_api_cors_layer(config: &Config) -> CorsLayer {
             // Restrict allowed origins to configured public web + API URLs
             .allow_origin(origins)
             // Allow standard API headers
-            .allow_headers([
-                axum::http::header::AUTHORIZATION,
-                axum::http::header::CONTENT_TYPE,
-                axum::http::header::ACCEPT,
-                axum::http::header::ORIGIN,
-            ])
+            .allow_headers(api_cors_headers())
             // Explicitly list allowed HTTP methods to comply with CORS spec
-            .allow_methods([
-                axum::http::Method::GET,
-                axum::http::Method::POST,
-                axum::http::Method::PUT,
-                axum::http::Method::DELETE,
-                axum::http::Method::OPTIONS,
-                axum::http::Method::PATCH,
-            ])
+            .allow_methods(api_cors_methods())
             // Include credentials for session-based authentication
             .allow_credentials(true)
     }
@@ -282,21 +293,9 @@ fn create_api_cors_layer(config: &Config) -> CorsLayer {
             // Typical localhost ports plus any `WEB_SERVER_URL` / `API_SERVER_URL` origins
             .allow_origin(dev_origins)
             // Allow standard API headers
-            .allow_headers([
-                axum::http::header::AUTHORIZATION,
-                axum::http::header::CONTENT_TYPE,
-                axum::http::header::ACCEPT,
-                axum::http::header::ORIGIN,
-            ])
+            .allow_headers(api_cors_headers())
             // Explicitly list allowed HTTP methods to comply with CORS spec
-            .allow_methods([
-                axum::http::Method::GET,
-                axum::http::Method::POST,
-                axum::http::Method::PUT,
-                axum::http::Method::DELETE,
-                axum::http::Method::OPTIONS,
-                axum::http::Method::PATCH,
-            ])
+            .allow_methods(api_cors_methods())
             // Include credentials for PKCE and session-based authentication
             .allow_credentials(true)
     }

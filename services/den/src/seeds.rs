@@ -92,7 +92,7 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
         .context("verify smoke user email")?;
 
     let config = Config::load();
-    let bear_id = ensure_bear(pool, SMOKE_BEAR_SLUG, &config)
+    let bear_id = ensure_bear(pool, SMOKE_BEAR_SLUG)
         .await
         .context("ensure smoke bear")?;
     ensure_smoke_bear_model(pool, bear_id, &config)
@@ -122,7 +122,7 @@ async fn seed_smoke(pool: &PgPool, profile: SeedProfile) -> Result<SeedReport> {
 
 async fn ensure_user(pool: &PgPool, username: &str, password: &str) -> Result<i32> {
     let passhash = generate_hash(password);
-    if let Some(existing) = user::user_by_username_opt(pool, username.to_string()).await? {
+    if let Some(existing) = user::user_by_username_opt(pool, username).await? {
         user_db::set_user_passhash_by_id(pool, existing.id, &passhash).await?;
         return Ok(existing.id);
     }
@@ -143,7 +143,7 @@ fn smoke_default_model(config: &Config) -> &str {
     }
 }
 
-async fn ensure_bear(pool: &PgPool, slug: &str, _config: &Config) -> Result<uuid::Uuid> {
+async fn ensure_bear(pool: &PgPool, slug: &str) -> Result<uuid::Uuid> {
     if let Some(id) = bear_id_by_slug(pool, slug).await? {
         return Ok(id);
     }

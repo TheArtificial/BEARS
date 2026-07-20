@@ -18,6 +18,12 @@ The core design goal is to reduce category confusion such as:
 - treating prior-turn assumptions as more authoritative than current-turn state;
 - forcing models or clients to reconcile several partially overlapping state machines.
 
+## Relationship to the state inventory
+
+This document explains the canonical current-turn workflow slice. The broader living reference for all conversation/session/turn/run axes is [Den state machine inventory](den-state-machine-inventory.md).
+
+When workflow fields, mode derivation, task orientation, execution unlock semantics, or `operational_focus` values change, update both this document and the state inventory in the same change. If the change affects runtime behavior, add or update an executable invariant or table-driven test.
+
 ## Normative principle
 
 The authoritative source of workflow truth is the **canonical current-turn workflow state**.

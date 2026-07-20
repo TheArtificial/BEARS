@@ -1,5 +1,7 @@
 use serde_json::json;
 
+use crate::BearStance;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolClass {
     ReadOnly,
@@ -43,6 +45,64 @@ pub struct ResolvedSessionPolicy {
     pub mode_label: &'static str,
     pub tool_enablement: ToolEnablementState,
     pub plan_mode_state: Option<String>,
+}
+
+/// Compiled authority view for one turn.
+///
+/// `TurnAuthority` is the seam between mutation-authority inputs (stance, session mode,
+/// workplan state) and consumers such as tool advertisement, tool routing, prompt assembly,
+/// and client projection. Run supervision/governance is intentionally not an input to this
+/// permission surface.
+#[derive(Debug, Clone)]
+pub struct TurnAuthority {
+    pub stance: BearStance,
+    pub session_policy: ResolvedSessionPolicy,
+}
+
+impl TurnAuthority {
+    pub fn for_session_mode(
+        stance: BearStance,
+        current_mode: &str,
+        plan_mode_state: Option<&str>,
+    ) -> Self {
+        Self {
+            stance,
+            session_policy: resolve_session_policy_for_mode(current_mode, plan_mode_state),
+        }
+    }
+
+    pub fn allows_tool(&self, tool: ClientToolName) -> bool {
+        self.session_policy.allows_tool(tool)
+    }
+
+    pub fn mode_label(&self) -> &'static str {
+        self.session_policy.mode_label
+    }
+
+    pub fn tool_enablement(&self) -> ToolEnablementState {
+        self.session_policy.tool_enablement
+    }
+
+    pub fn allowed_tool_classes(&self) -> Vec<&'static str> {
+        self.session_policy.allowed_tool_classes()
+    }
+
+    pub fn denied_tool_classes(&self) -> Vec<&'static str> {
+        self.session_policy.denied_tool_classes()
+    }
+
+    pub fn read_only_runtime_context(&self) -> Option<String> {
+        if self.tool_enablement().enables_non_read_tools() {
+            return None;
+        }
+
+        Some(format!(
+            "AUTHORITATIVE RUNTIME PERMISSION ENVELOPE for this turn: permission_mode=`{}`; tool_enablement=`read_only`; allowed_tool_classes={:?}; denied_tool_classes={:?}; state_authority=current turn capabilities override prior task orientation.\n\nYou are in a read-only/non-mutative run. Do not attempt workspace edits, file creation/deletion, commits, shell/process execution, browser actions with side effects, or other externally visible actions. If the user or focused task asks for execution that requires mutation, deliver analysis, diagnosis, a plan, a proposed patch, or an explicit permission-blocked status with evidence instead of repeatedly trying denied tools.",
+            self.mode_label(),
+            self.allowed_tool_classes(),
+            self.denied_tool_classes()
+        ))
+    }
 }
 
 impl ResolvedSessionPolicy {

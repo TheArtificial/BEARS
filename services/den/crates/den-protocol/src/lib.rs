@@ -281,7 +281,12 @@ pub enum RuntimeSemanticEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeStreamEvent {
     Semantic(RuntimeSemanticEvent),
-    UntranslatedProviderEvent { value: serde_json::Value },
+    /// Process-local liveness observation emitted when the provider stream yields bytes.
+    /// Projection layers must not persist or expose this as transcript/BearWire content.
+    ProviderActivity,
+    UntranslatedProviderEvent {
+        value: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,6 +300,22 @@ pub enum RuntimeErrorCategory {
     Timeout,
     BackendProtocol,
     Internal,
+}
+
+impl RuntimeErrorCategory {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::Misconfigured => "misconfigured",
+            Self::InvalidIdentity => "invalid_identity",
+            Self::PermissionDenied => "permission_denied",
+            Self::ConflictPendingApproval => "conflict_pending_approval",
+            Self::Cancelled => "cancelled",
+            Self::Timeout => "timeout",
+            Self::BackendProtocol => "backend_protocol",
+            Self::Internal => "internal",
+        }
+    }
 }
 
 #[allow(async_fn_in_trait)]
@@ -375,6 +396,10 @@ pub trait InteractionRunStore {
     async fn check_health(&self) -> Result<String, DenError>;
 }
 
+/// Marker for registries that expose tool actuators to a runtime boundary.
+///
+/// Concrete registries live in runtime/service crates; this protocol trait keeps the
+/// dependency direction from shared contracts toward implementations one-way.
 pub trait ToolActuatorRegistry {}
 
 #[allow(async_fn_in_trait)]
@@ -416,4 +441,31 @@ pub fn runtime_error_is_no_active_runs_cancel(err: &DenError) -> bool {
     err.to_string()
         .to_ascii_lowercase()
         .contains("no active runs to cancel")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RuntimeErrorCategory;
+
+    #[test]
+    fn runtime_error_category_preserves_wire_strings() {
+        let cases = [
+            (RuntimeErrorCategory::Unavailable, "unavailable"),
+            (RuntimeErrorCategory::Misconfigured, "misconfigured"),
+            (RuntimeErrorCategory::InvalidIdentity, "invalid_identity"),
+            (RuntimeErrorCategory::PermissionDenied, "permission_denied"),
+            (
+                RuntimeErrorCategory::ConflictPendingApproval,
+                "conflict_pending_approval",
+            ),
+            (RuntimeErrorCategory::Cancelled, "cancelled"),
+            (RuntimeErrorCategory::Timeout, "timeout"),
+            (RuntimeErrorCategory::BackendProtocol, "backend_protocol"),
+            (RuntimeErrorCategory::Internal, "internal"),
+        ];
+
+        for (category, expected) in cases {
+            assert_eq!(category.as_str(), expected);
+        }
+    }
 }

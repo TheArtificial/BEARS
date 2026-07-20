@@ -43,7 +43,6 @@ use crate::errors::CustomError;
 use crate::{auth_backend::Backend, config::Config};
 
 use axum::{
-    body::Body,
     extract::{MatchedPath, State},
     http::{header, Request, StatusCode},
     response::{Html, IntoResponse, Response},
@@ -314,14 +313,13 @@ pub async fn server(
                     "/metrics",
                     get(|| async {
                         let text = crate::observability::metrics::render_prometheus_text();
-                        Response::builder()
-                            .status(StatusCode::OK)
-                            .header(
+                        (
+                            [(
                                 header::CONTENT_TYPE,
                                 "text/plain; version=0.0.4; charset=utf-8",
-                            )
-                            .body(Body::from(text))
-                            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+                            )],
+                            text,
+                        )
                     }),
                 )
                 .route("/status", get(status::page))
@@ -370,6 +368,33 @@ pub async fn server(
     Ok(router)
 }
 
+enum TemplateRenderTarget<'a> {
+    Template(&'a str),
+    Block {
+        template_name: &'a str,
+        block_name: &'a str,
+    },
+}
+
+impl<'a> TemplateRenderTarget<'a> {
+    fn from_template_id(template_id: &'a str) -> Self {
+        match template_id.split_once('#') {
+            Some((template_name, block_name)) => Self::Block {
+                template_name,
+                block_name,
+            },
+            None => Self::Template(template_id),
+        }
+    }
+}
+
+fn template_tag_for_template_id(template_id: &str) -> Option<String> {
+    template_id
+        .replace('/', "-")
+        .split_once('.')
+        .map(|(template_tag, _)| template_tag.to_string())
+}
+
 #[allow(deprecated)] // minijinja: eval_to_state; migrate to render_captured when upgrading templates
 pub async fn render_template(
     state: &AppState,
@@ -386,68 +411,64 @@ pub async fn render_template(
         ..ctx
     };
     let template_env = state.template_env.clone();
-    if let Some((template_tag, _)) = template_id.replace('/', "-").split_once('.') {
-        let merged_ctx = match auth_session.user {
-            Some(user) => minijinja::context! {
-                template_tag => template_tag,
-                session => { minijinja::context! {
-                    user_id => user.id,
-                    username => user.username,
-                    is_admin => user.is_admin,
-                    theme => user.theme,
-                }},
-                ..ctx
-            },
-            None => ctx,
-        };
+    let Some(template_tag) = template_tag_for_template_id(template_id) else {
+        return Err(CustomError::Render(format!(
+            "Template id '{template_id}' is not a valid template name"
+        )));
+    };
+    let merged_ctx = match auth_session.user {
+        Some(user) => minijinja::context! {
+            template_tag => template_tag,
+            session => { minijinja::context! {
+                user_id => user.id,
+                username => user.username,
+                is_admin => user.is_admin,
+                theme => user.theme,
+            }},
+            ..ctx
+        },
+        None => ctx,
+    };
 
-        if template_id.contains('#') {
-            let segments = template_id.split_once('#');
-            let template_name = segments.map(|seg| seg.0);
-            let block_name = segments.map(|seg| seg.1);
-
-            if let (Some(template_name), Some(block_name)) = (template_name, block_name) {
-                let template = template_env.get_template(template_name).map_err(|e| {
-                    CustomError::Render(format!("Unable to find template '{template_name}': {e:?}"))
+    match TemplateRenderTarget::from_template_id(template_id) {
+        TemplateRenderTarget::Block {
+            template_name,
+            block_name,
+        } => {
+            let template = template_env.get_template(template_name).map_err(|e| {
+                CustomError::Render(format!("Unable to find template '{template_name}': {e:?}"))
+            })?;
+            let rendered = template
+                .eval_to_state(merged_ctx)
+                .map_err(|e| {
+                    CustomError::Render(format!(
+                        "Unable to parse template '{template_name}': {e:?}"
+                    ))
+                })?
+                .render_block(block_name)
+                .map_err(|e| {
+                    CustomError::Render(format!("Unable to render block '{template_id}': {e:?}"))
                 })?;
-                let rendered = template
-                    .eval_to_state(merged_ctx)
-                    .map_err(|e| {
-                        CustomError::Render(format!(
-                            "Unable to parse template '{template_name}': {e:?}"
-                        ))
-                    })?
-                    .render_block(block_name)
-                    .map_err(|e| {
-                        CustomError::Render(format!(
-                            "Unable to render block '{template_id}': {e:?}"
-                        ))
-                    })?;
-                Ok(Html(rendered).into_response())
-            } else {
-                Err(CustomError::Render(
-                    "Template id must be 'template_name#block_name'".to_string(),
-                ))
-            }
-        } else if let Ok(template) = template_env.get_template(template_id) {
-            match template.render(merged_ctx) {
-                Ok(rendered) => Ok(Html(rendered).into_response()),
-                Err(e) => {
-                    tracing::error!("Error rendering template: {:#}", e);
+            Ok(Html(rendered).into_response())
+        }
+        TemplateRenderTarget::Template(template_name) => {
+            match template_env.get_template(template_name) {
+                Ok(template) => match template.render(merged_ctx) {
+                    Ok(rendered) => Ok(Html(rendered).into_response()),
+                    Err(e) => {
+                        tracing::error!("Error rendering template: {:#}", e);
+                        Err(CustomError::Render(format!(
+                            "Error rendering template '{template_id}'"
+                        )))
+                    }
+                },
+                Err(_) => {
+                    tracing::error!("Template `{}` not found", template_id);
                     Err(CustomError::Render(format!(
-                        "Error rendering template '{template_id}'"
+                        "Template `{template_id}` not found"
                     )))
                 }
             }
-        } else {
-            tracing::error!("Template `{}` not found", template_id);
-            Err(CustomError::Render(format!(
-                "Template `{template_id}` not found"
-            )))
         }
-    } else {
-        Err(CustomError::Render(format!(
-            "Template id '{template_id}' is not a valid template name"
-        )))
     }
 }

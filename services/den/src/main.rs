@@ -29,13 +29,14 @@ async fn run_main() -> anyhow::Result<()> {
             Ok(())
         }
         Some("seed") => run_seed(&args).await,
-        Some("reindex") => den::reindex::run_reindex(den::reindex::parse_args(&args)?).await,
-        Some("import-legacy-memory") => {
-            den::import_legacy_memory::run_import_legacy_memory(
-                den::import_legacy_memory::parse_args(&args)?,
-            )
-            .await
-        }
+        Some("reindex") => match den::reindex::parse_args(&args)? {
+            Some(target) => den::reindex::run_reindex(target).await,
+            None => Ok(()),
+        },
+        Some("import-legacy-memory") => match den::import_legacy_memory::parse_args(&args)? {
+            Some(parsed) => den::import_legacy_memory::run_import_legacy_memory(parsed).await,
+            None => Ok(()),
+        },
         _ => {
             den::run().await?;
             Ok(())

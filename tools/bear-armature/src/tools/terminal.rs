@@ -4,6 +4,7 @@ use crate::{
     send_terminal_tool_call_update,
     tools::{
         command_policy::{rtk_wrap_allowed, terminal_command_allowed},
+        common::{command_line, output_excerpt, rtk_available},
         rtk::{reduce_with_rtk_summary, ReducerMode, RtkReduction},
     },
     AdapterState, CreateTerminalRequest, CreateTerminalResponse, EnvVariable,
@@ -18,26 +19,6 @@ use std::{fmt, time::Duration};
 pub(crate) enum TerminalCommandValidation {
     Allowlisted,
     Generic,
-}
-
-pub(crate) fn command_line(command: &str, args: &[String]) -> String {
-    if args.is_empty() {
-        command.to_string()
-    } else {
-        format!("{} {}", command, args.join(" "))
-    }
-}
-
-fn output_excerpt(raw: &str, max_chars: usize) -> String {
-    if raw.chars().count() <= max_chars {
-        raw.to_string()
-    } else {
-        let omitted = raw.chars().count().saturating_sub(max_chars);
-        format!(
-            "{}\n... truncated, omitted {omitted} characters",
-            raw.chars().take(max_chars).collect::<String>()
-        )
-    }
 }
 
 struct TerminalResult<'a> {
@@ -111,18 +92,6 @@ async fn reduce_terminal_output_with_rtk(
         signal.unwrap_or("null"),
     );
     reduce_with_rtk_summary("BEARS_TERMINAL_RUN_RTK", raw).await
-}
-
-async fn rtk_available() -> bool {
-    tokio::process::Command::new("rtk")
-        .arg("--version")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .status()
-        .await
-        .is_ok_and(|status| status.success())
 }
 
 pub(crate) async fn handle_terminal_run_command(

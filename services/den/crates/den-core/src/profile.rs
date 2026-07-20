@@ -53,13 +53,17 @@ impl BearStance {
         }
     }
 
+    const COMMON_TAGS: &'static [&'static str] = &["git-memory-enabled"];
+
     pub fn tags_for_bear(self, bear_id: BearId) -> Vec<String> {
-        vec![
+        let stance = self.as_str();
+        let mut tags = vec![
             format!("bear:{bear_id}"),
-            format!("stance:{}", self.as_str()),
-            format!("bear:{bear_id}:stance:{}", self.as_str()),
-            "git-memory-enabled".to_string(),
-        ]
+            format!("stance:{stance}"),
+            format!("bear:{bear_id}:stance:{stance}"),
+        ];
+        tags.extend(Self::COMMON_TAGS.iter().map(|tag| (*tag).to_string()));
+        tags
     }
 }
 

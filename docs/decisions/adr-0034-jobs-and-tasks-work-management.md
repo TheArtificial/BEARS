@@ -6,6 +6,8 @@
 
 > **Amended by [ADR-0045](adr-0045-session-task-lists-and-docket-checkout.md).** Docket remains canonical for durable jobs/tasks, but session task lists are the Bear/human working projection. A task-list item may be local-only or backed by a Docket task, and authorized task-list changes may sync back to Docket. Read this ADR's "session-bound tasks" language through that checkout/projection model rather than as a claim that every session task-list item is itself a Docket task.
 
+> **Amended by [ADR-0056](adr-0056-docket-driven-turn-routing.md).** Tasks gain routing/placement metadata (`routing_strategy`, plus advisory `expected_context_size` and `result_rollup_policy`); result rollups are recorded as append-only, run-scoped `bear_task_events` entries read latest-per-child by the parent. This ADR's invariants stand unchanged: task rows still hold no status, result, or model name; execution profiles are resolved by the ADR-0033 model-tasks layer at dispatch and recorded on routing decisions and runs.
+
 ## Context
 
 BEARS already has several overlapping work-management surfaces:
@@ -31,7 +33,7 @@ This ADR also resolves how the new model relates to and supersedes parts of the 
 - [ADR-0027 (Workflow state ontology)](adr-0027-workflow-state-ontology.md): jobs span the **workplan** domain (goal, acceptance criteria, task definitions) and the **activity** domain (run status, report). Task execution state is the **execution** domain. These remain distinct; this ADR labels each table accordingly.
 - [ADR-0031 (SQLite-first canonical store)](adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md): adopts that ADR's append-only `task_events` shape. This ADR implements it in **Den Postgres**, not SQLite. The event taxonomy here is the authoritative one for jobs/tasks.
 - [ADR-0033 (Model tasks layer)](adr-0033-model-tasks-layer.md): task `difficulty`/`effort_hint` are advisory inputs to model/effort selection. Model names are **not** stored on tasks; the model-tasks policy layer maps difficulty → model + effort.
-- [ADR-0023 (Task focus supervisor)](adr-0023-task-focus-supervisor.md): superseded/re-homed by [ADR-0035](adr-0035-den-native-in-process-agent-runtime.md) + [ADR-0039](adr-0039-trust-profiles-and-governance-modes.md). The supervisor is **not** orthogonal to this model: a job's acceptance criteria (`bear_job_criteria`) are the on-task **definition of done** it enforces, and continuation bias is the run's **governance mode** (ADR-0039), not the trust profile. The ephemeral focus record stays ephemeral, but is a projection over Docket run/task/criteria state plus governance mode.
+- [ADR-0023 (Task focus supervisor)](adr-0023-task-focus-supervisor.md): superseded/re-homed by [ADR-0035](adr-0035-den-native-in-process-agent-runtime.md) + [ADR-0039](adr-0039-trust-profiles-and-governance.md). The supervisor is **not** orthogonal to this model: a job's acceptance criteria (`bear_job_criteria`) are the on-task **definition of done** it enforces, and continuation bias is the run's **governance** (ADR-0039), not the trust profile. The ephemeral focus record stays ephemeral, but is a projection over Docket run/task/criteria state plus governance.
 
 ## Decision
 

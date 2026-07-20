@@ -1,7 +1,6 @@
 use den_core::config::Config;
 use den_core::tools::{
     arguments::DenToolChannelContext,
-    constants::DEN_WEB_FETCH,
     context::DenToolInvocationContext,
     descriptor::builtin_den_tool_descriptor_for_provider_name,
     result_compaction::{compact_client_tool_result, ClientToolResultInput, ToolResultStatus},
@@ -16,7 +15,10 @@ use den_protocol::{
     RuntimeToolResultStatus, StartTurnRequest,
 };
 use den_service::{
-    bears::BearProfile,
+    bears::{
+        prompt_fragments::{render_turn_fragment, repository_prompt_fragment_registry},
+        BearProfile,
+    },
     conversation::{
         events::{
             canonical_persistence_context, canonical_persistence_enabled_for_conversation,
@@ -34,27 +36,41 @@ use super::web_chat_loop::{NativeWebChatLoopRuntime, NativeWebChatLoopStream};
 
 use crate::{
     agent_loop::{
-        agent_loop_session_key, assemble_native_turn_for_bear, classify_tool_budget_class,
-        evaluate_checkpoint_trigger, evaluate_turn_budget, projected_memory_session_diagnostic,
-        recalled_memory_session_diagnostic, record_approval_decision, record_checkpoint_request,
-        resolve_agent_loop_control, run_agent_step_stream, tool_result_content_indicates_error,
-        tool_signature_from_call, AgentLoopControlResolutionInput, AgentLoopSession,
-        AgentLoopSessionStore, AgentStepOverflowContext, AssembleTurnContext,
-        CheckpointArtifactInput, CheckpointField, CheckpointReplayPolicy, CheckpointTaskContext,
-        CheckpointTrigger, CheckpointVisibility, NativeToolDispatchMode, RuntimeCheckpointRequest,
-        SessionTrackingStream, ToolContinuationObservation, TurnBudgetStopReason,
+        agent_loop_control_profile_fingerprint, agent_loop_session_key,
+        assemble_native_turn_for_bear, classify_tool_budget_class, evaluate_checkpoint_trigger,
+        evaluate_turn_budget, latest_grounding_probe_signal_for_tool_call,
+        objective_orientation_allowed_for_stance, projected_memory_session_diagnostic,
+        provider_tool_is_den_web_fetch, recalled_memory_session_diagnostic,
+        record_approval_decision, record_checkpoint_request,
+        record_grounding_probe_result_decision, resolve_agent_loop_control, run_agent_step_stream,
+        tool_result_content_indicates_error, tool_signature_from_call,
+        AgentLoopControlResolutionInput, AgentLoopSession, AgentLoopSessionStore,
+        AgentStepOverflowContext, AssembleTurnContext, CheckpointArtifactInput, CheckpointField,
+        CheckpointReplayPolicy, CheckpointTaskContext, CheckpointTrigger, CheckpointVisibility,
+        GroundingProbeFinding, GroundingProbeResultInput, GroundingProbeSignalKind,
+        NativeToolDispatchMode, ObjectiveOrientation, RuntimeCheckpointRequest,
+        SessionTrackingStream, ToolBudgetClass, ToolContinuationObservation, TurnBudgetStopReason,
         TurnBudgetWarning,
     },
     llm::{ChatMessage, ChatToolCall, LlmClient},
-    native_runtime::{profile::NativeCapabilityProfile, tools::merge_den_and_client_tools},
+    native_runtime::{
+        profile::NativeCapabilityProfile,
+        tools::{is_work_tool_provider_name, merge_den_and_client_tools},
+    },
     turn_runner::{
-        materialize_runtime_conversation_if_needed, TurnContinueRequest, TurnStartRequest,
+        materialize_runtime_conversation_if_needed, RunRecoveryDisposition, TurnContinueRequest,
+        TurnStartRequest,
     },
 };
 use den_core::DenError;
+use den_docket::{
+    DocketExecutionLookup, DocketService, PgDocketService, TaskListCheckoutRequest,
+    TaskListCheckoutSource, TaskListProjection,
+};
 use den_service::conversation::persistence::PersistedTranscriptRecord;
 
-static SESSION_STORE: LazyLock<AgentLoopSessionStore> = LazyLock::new(AgentLoopSessionStore::new);
+static SESSION_STORE: LazyLock<AgentLoopSessionStore> =
+    LazyLock::new(AgentLoopSessionStore::default);
 
 fn render_host_context_for_model(prompt_context: Option<&serde_json::Value>) -> Option<String> {
     let host_context = prompt_context?.get("host_context")?;
@@ -171,6 +187,87 @@ pub fn native_client_session_exists(conversation_id: &str, client_session_id: &s
     SESSION_STORE.get(&key).is_some()
 }
 
+pub fn native_client_session_cached_activity_plan_projection(
+    conversation_id: &str,
+    client_session_id: &str,
+) -> Option<TaskListProjection> {
+    let key = agent_loop_session_key(conversation_id, client_session_id);
+    SESSION_STORE
+        .get(&key)
+        .and_then(|session| session.cached_activity_plan_projection)
+}
+
+pub fn update_native_client_session_cached_activity_plan_projection(
+    conversation_id: &str,
+    client_session_id: &str,
+    cached_activity_plan_projection: Option<TaskListProjection>,
+) {
+    let key = agent_loop_session_key(conversation_id, client_session_id);
+    SESSION_STORE.update(&key, |session| {
+        session.cached_activity_plan_projection = cached_activity_plan_projection;
+    })
+}
+
+fn active_docket_execution_lookup_for_session(
+    conversation_id: &str,
+    client_session_id: &str,
+) -> DocketExecutionLookup {
+    DocketExecutionLookup {
+        session_id: Some(client_session_id.to_string()),
+        // ponytail: conversation-scoped focus is the durable restore path for now; upgrade to an
+        // explicit conversation focus record if focus needs history, labels, or multi-job stacks.
+        source_conversation_id: Some(conversation_id.to_string()),
+        source_client_session_id: Some(client_session_id.to_string()),
+    }
+}
+
+async fn refresh_cached_activity_plan_projection_from_docket(
+    pool: &PgPool,
+    conversation_id: &str,
+    client_session_id: &str,
+    bear_id: Uuid,
+    user_id: Option<i32>,
+    profile: BearProfile,
+) -> Result<Option<TaskListProjection>, DenError> {
+    let Some(user_id) = user_id else {
+        return Ok(None);
+    };
+    let service = PgDocketService::from_pool(pool);
+    let Some(execution) = service
+        .get_active_execution_session(
+            bear_id,
+            profile,
+            active_docket_execution_lookup_for_session(conversation_id, client_session_id),
+        )
+        .await?
+    else {
+        return Ok(None);
+    };
+    service
+        .checkout_task_list(
+            bear_id,
+            profile,
+            user_id,
+            TaskListCheckoutRequest {
+                source: TaskListCheckoutSource::DocketJob {
+                    job_id: execution.job_id,
+                    parent_task_id: None,
+                },
+            },
+        )
+        .await
+}
+
+pub fn native_client_session_runtime_state(
+    conversation_id: &str,
+    client_session_id: &str,
+) -> Option<serde_json::Value> {
+    let key = agent_loop_session_key(conversation_id, client_session_id);
+    SESSION_STORE
+        .get(&key)
+        .map(|session| session.session_info_runtime_snapshot())
+}
+
 async fn persisted_tool_call_exists(
     pool: &PgPool,
     bear_id: Uuid,
@@ -227,34 +324,27 @@ pub async fn record_native_client_tool_result(
         .await?;
     }
 
+    let tool_message = ChatMessage {
+        role: "tool".to_string(),
+        content: Some(content),
+        tool_call_id: Some(tool_call_id.to_string()),
+        name: None,
+        tool_calls: None,
+    };
     let session_key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE.update(&session_key, |session| {
         session.request_id = Some(request_id.to_string());
         session.run_id = run_id
             .map(str::to_string)
             .or_else(|| session.run_id.clone());
-        session.messages.push(ChatMessage {
-            role: "tool".to_string(),
-            content: Some(content.clone()),
-            tool_call_id: Some(tool_call_id.to_string()),
-            name: None,
-            tool_calls: None,
-        });
+        session.messages.push(tool_message.clone());
     });
     let Some(session) = SESSION_STORE.get(&session_key) else {
         return Err(DenError::System(
             "native agent loop session not found".to_string(),
         ));
     };
-    let matching_call = session
-        .messages
-        .iter()
-        .rev()
-        .filter(|message| message.role == "assistant")
-        .filter_map(|message| message.tool_calls.as_ref())
-        .flat_map(|calls| calls.iter())
-        .find(|call| call.id == tool_call_id)
-        .cloned();
+    let matching_call = session.find_pending_tool_call(tool_call_id);
     let tool_name = matching_call
         .as_ref()
         .map(|call| call.function.name.clone());
@@ -309,7 +399,7 @@ pub async fn record_native_client_tool_result(
             tool_call_id.to_string(),
             tool_name.clone(),
             status_label,
-            Some(content),
+            tool_message.content.clone(),
             serde_json::Value::Null,
             serde_json::Value::Null,
         ));
@@ -459,8 +549,14 @@ impl RuntimeConversationBackend for NativeRuntimeConversationBackend {
                 raw_payload: None,
             });
         };
-        let rows =
-            conversation_persistence::list_messages_page(pool, canonical.id, None, 100).await?;
+        let rows = conversation_persistence::list_projected_messages_page(
+            pool,
+            canonical.id,
+            None,
+            100,
+            conversation_persistence::ConversationHistoryProjection::ModelTranscript,
+        )
+        .await?;
         let mut records = Vec::new();
         for row in rows.into_iter().rev() {
             match row.to_model_transcript_record() {
@@ -547,27 +643,51 @@ fn wrap_session_stream(
     ))
 }
 
-async fn build_session(
-    deps: &NativeRuntimeDeps<'_>,
+struct BuildSessionInput<'a> {
     profile: NativeCapabilityProfile,
     bear_id: Uuid,
-    conversation_id: &str,
-    client_session_id: &str,
-    human_message: Option<&str>,
-    runtime_context: Option<&str>,
-    session_id: Option<&str>,
-    workspace_roots: Option<&[String]>,
-    runtime_target: Option<&str>,
-    conversation_selection: Option<&str>,
+    conversation_id: &'a str,
+    client_session_id: &'a str,
+    human_message: Option<&'a str>,
+    runtime_context: Option<&'a str>,
+    session_id: Option<&'a str>,
+    workspace_roots: Option<&'a [String]>,
+    runtime_target: Option<&'a str>,
+    conversation_selection: Option<&'a str>,
     user_id: Option<i32>,
-    client_context: Option<&serde_json::Value>,
-    client_tools: Option<&serde_json::Value>,
+    client_context: Option<&'a serde_json::Value>,
+    client_tools: Option<&'a serde_json::Value>,
     request_id: Option<Uuid>,
-    run_id: Option<&str>,
+    run_id: Option<&'a str>,
     stream_tokens: bool,
     api_style: Option<crate::llm::LlmApiStyle>,
     tool_messages: Vec<ChatMessage>,
+}
+
+async fn build_session(
+    deps: &NativeRuntimeDeps<'_>,
+    input: BuildSessionInput<'_>,
 ) -> Result<AgentLoopSession, DenError> {
+    let BuildSessionInput {
+        profile,
+        bear_id,
+        conversation_id,
+        client_session_id,
+        human_message,
+        runtime_context,
+        session_id,
+        workspace_roots,
+        runtime_target,
+        conversation_selection,
+        user_id,
+        client_context,
+        client_tools,
+        request_id,
+        run_id,
+        stream_tokens,
+        api_style,
+        tool_messages,
+    } = input;
     let llm = LlmClient::new(deps.config);
     let bear = den_service::bears::db::get_bear(deps.pool, bear_id)
         .await?
@@ -610,14 +730,33 @@ async fn build_session(
     ));
     let messages = assembled.messages;
     let budget_components = assembled.budget_components;
-    let active_activity_plan = assembled.active_activity_plan;
-    if profile.profile == BearProfile::Work && active_activity_plan.is_none() {
-        return Err(DenError::ValidationError(
-            "Work stance requires an active task list before execution can continue".to_string(),
-        ));
+    let cached_activity_plan_projection = assembled.cached_activity_plan_projection;
+    let objective_orientation = assembled.objective_orientation;
+    if profile.profile == BearProfile::Work {
+        if !bear.work_enabled {
+            return Err(DenError::ValidationError(
+                "Work stance is not enabled for this Bear".to_string(),
+            ));
+        }
+        if !objective_orientation_allowed_for_stance(profile.profile, &objective_orientation) {
+            return Err(DenError::ValidationError(
+                "Work stance requires a focused Docket Job before execution can continue"
+                    .to_string(),
+            ));
+        }
     }
-    let tools =
-        merge_den_and_client_tools(deps.config, profile.profile, client_tools, human_message)?;
+    let may_define_task = match &objective_orientation {
+        ObjectiveOrientation::Freeform { policy } => policy.may_define_task,
+        ObjectiveOrientation::Oriented { .. } | ObjectiveOrientation::Focused { .. } => true,
+    };
+    let tools = merge_den_and_client_tools(
+        deps.config,
+        profile.profile,
+        bear.work_enabled,
+        may_define_task,
+        client_tools,
+        human_message,
+    )?;
     let session_key = agent_loop_session_key(conversation_id, client_session_id);
     let conversation_model = match conversation_persistence::get_conversation_for_external_id(
         deps.pool,
@@ -673,6 +812,9 @@ async fn build_session(
         bear_override: bear_loop_control_override,
         stance_override: stance_loop_control_override,
         task_escalation: None,
+        stance: Some(profile.profile),
+        objective_orientation: Some(&objective_orientation),
+        pre_risk: false,
     });
     let agent_loop_control = crate::agent_loop::ResolvedAgentLoopControl {
         profile: agent_loop_control.profile.with_budget(profile.turn_budget),
@@ -716,16 +858,19 @@ async fn build_session(
         turn_budget: agent_loop_control.profile.budget,
         turn_budget_state: Default::default(),
         agent_loop_control,
+        governance: den_core::governance::Governance::Interactive,
+        objective_orientation,
         checkpoint_state: Default::default(),
         pending_checkpoint_request: None,
         pending_checkpoint_task_action: None,
+        pending_checkpoint_recovery_attempts: 0,
         strategy: profile.strategy,
         stream_tokens,
         key_memory_projection_cache_key,
         latest_context_budget: None,
         latest_projected_memory,
         latest_recalled_memory,
-        active_activity_plan,
+        cached_activity_plan_projection,
         profile: profile.profile,
         overflow_retry_attempted: false,
         overflow_compaction_recovered: false,
@@ -745,24 +890,26 @@ pub async fn run_native_profile_turn_collect_assistant_text(
     let profile = NativeCapabilityProfile::for_profile(role);
     let session = build_session(
         deps,
-        profile,
-        bear_id,
-        conversation_id,
-        session_id,
-        Some(prompt),
-        None,
-        Some(session_id),
-        None,
-        Some(conversation_id),
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        Vec::new(),
+        BuildSessionInput {
+            profile,
+            bear_id,
+            conversation_id,
+            client_session_id: session_id,
+            human_message: Some(prompt),
+            runtime_context: None,
+            session_id: Some(session_id),
+            workspace_roots: None,
+            runtime_target: Some(conversation_id),
+            conversation_selection: None,
+            user_id: None,
+            client_context: None,
+            client_tools: None,
+            request_id: None,
+            run_id: None,
+            stream_tokens: false,
+            api_style: None,
+            tool_messages: Vec::new(),
+        },
     )
     .await?;
     let llm = LlmClient::new(deps.config);
@@ -805,24 +952,26 @@ pub async fn start_native_web_chat_turn_event_stream(
     let profile = NativeCapabilityProfile::for_profile(BearProfile::Chat);
     let session = build_session(
         params.deps,
-        profile,
-        params.bear_id,
-        params.conversation_id,
-        params.session_id,
-        Some(params.prompt),
-        None,
-        Some(params.session_id),
-        None,
-        Some(params.conversation_id),
-        Some(params.conversation_id),
-        Some(params.user_id),
-        None,
-        None,
-        Some(params.request_id),
-        None,
-        true,
-        None,
-        Vec::new(),
+        BuildSessionInput {
+            profile,
+            bear_id: params.bear_id,
+            conversation_id: params.conversation_id,
+            client_session_id: params.session_id,
+            human_message: Some(params.prompt),
+            runtime_context: None,
+            session_id: Some(params.session_id),
+            workspace_roots: None,
+            runtime_target: Some(params.conversation_id),
+            conversation_selection: Some(params.conversation_id),
+            user_id: Some(params.user_id),
+            client_context: None,
+            client_tools: None,
+            request_id: Some(params.request_id),
+            run_id: None,
+            stream_tokens: true,
+            api_style: None,
+            tool_messages: Vec::new(),
+        },
     )
     .await?;
     tracing::info!(
@@ -835,15 +984,12 @@ pub async fn start_native_web_chat_turn_event_stream(
         "native web chat turn assembled"
     );
     let llm = LlmClient::new(params.deps.config);
-    let overflow = overflow_context(
-        params.deps.pool.clone(),
-        Arc::new(params.deps.config.clone()),
-        BearProfile::Chat,
-    );
+    let config = Arc::new(params.deps.config.clone());
+    let overflow = overflow_context(params.deps.pool.clone(), config.clone(), BearProfile::Chat);
     let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let runtime = NativeWebChatLoopRuntime {
         pool: params.deps.pool.clone(),
-        config: Arc::new(params.deps.config.clone()),
+        config,
         stores: params.deps.stores.clone(),
         llm,
         session_key: session.session_key.clone(),
@@ -897,67 +1043,64 @@ pub async fn start_native_profile_turn_event_stream(
             config: request.config,
             stores: request.memory_stores,
         },
-        profile,
-        request.bear_id,
-        &conversation_id,
-        client_session_id,
-        Some(prompt_for_model.as_str()),
-        request.runtime_context,
-        Some(client_session_id),
-        workspace_roots.as_deref(),
-        Some(request.upstream_target),
-        Some(request.conversation_selection),
-        Some(request.user_id),
-        None,
-        request.client_tools.as_ref(),
-        Some(request.request_id),
-        request.run_id,
-        request.stream_tokens,
-        request.api_style,
-        Vec::new(),
+        BuildSessionInput {
+            profile,
+            bear_id: request.bear_id,
+            conversation_id: &conversation_id,
+            client_session_id,
+            human_message: Some(prompt_for_model.as_str()),
+            runtime_context: request.runtime_context,
+            session_id: Some(client_session_id),
+            workspace_roots: workspace_roots.as_deref(),
+            runtime_target: Some(request.upstream_target),
+            conversation_selection: Some(request.conversation_selection),
+            user_id: Some(request.user_id),
+            client_context: None,
+            client_tools: request.client_tools.as_ref(),
+            request_id: Some(request.request_id),
+            run_id: request.run_id,
+            stream_tokens: request.stream_tokens,
+            api_style: request.api_style,
+            tool_messages: Vec::new(),
+        },
     )
     .await?;
-    if request.runtime_context.is_none() {
-        let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
-        let mut content_json = provenance.as_content_json("user_prompt");
-        content_json["role"] = serde_json::json!("user");
-        content_json["client_session_id"] = serde_json::json!(client_session_id);
-        content_json["client"] = serde_json::json!(request.client);
-        content_json["request_id"] = serde_json::json!(request.request_id.to_string());
-        if let Some(prompt_context) = request.prompt_context.clone() {
-            content_json["prompt_context"] = prompt_context.clone();
-            if let Some(host_context) = prompt_context.get("host_context") {
-                content_json["host_context"] = host_context.clone();
-            }
+    let provenance = ConversationEventProvenance::client_session(client_session_id.to_string());
+    let mut content_json = provenance.as_content_json("user_prompt");
+    content_json["role"] = serde_json::json!("user");
+    content_json["client_session_id"] = serde_json::json!(client_session_id);
+    content_json["client"] = serde_json::json!(request.client);
+    content_json["request_id"] = serde_json::json!(request.request_id.to_string());
+    if let Some(prompt_context) = request.prompt_context.clone() {
+        content_json["prompt_context"] = prompt_context.clone();
+        if let Some(host_context) = prompt_context.get("host_context") {
+            content_json["host_context"] = host_context.clone();
         }
-        let record =
-            CanonicalConversationRecord::visible_user_message(request.prompt, content_json, None);
-        persist_canonical_conversation_record(
-            &canonical_persistence_context(
-                request.sqlx_pool.clone(),
-                request.bear_id,
-                Some(request.user_id),
-                conversation_id.clone(),
-                Some(client_session_id.to_string()),
-                Some(request.request_id.to_string()),
-                client_session_id.to_string(),
-                false,
-            ),
-            &record,
-        )
-        .await?;
     }
+    let record =
+        CanonicalConversationRecord::visible_user_message(request.prompt, content_json, None);
+    persist_canonical_conversation_record(
+        &canonical_persistence_context(
+            request.sqlx_pool.clone(),
+            request.bear_id,
+            Some(request.user_id),
+            conversation_id.clone(),
+            Some(client_session_id.to_string()),
+            Some(request.request_id.to_string()),
+            client_session_id.to_string(),
+            false,
+        ),
+        &record,
+    )
+    .await?;
     let llm = LlmClient::new(request.config);
-    let overflow = overflow_context(
-        request.sqlx_pool.clone(),
-        Arc::new(request.config.clone()),
-        role,
-    );
+    let config = Arc::new(request.config.clone());
+    let overflow = overflow_context(request.sqlx_pool.clone(), config.clone(), role);
     let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let stream = wrap_session_stream(
         stream,
         &session,
-        Arc::new(request.config.clone()),
+        config,
         role,
         request.sqlx_pool.clone(),
         request.bear_id,
@@ -988,27 +1131,100 @@ pub async fn continue_native_profile_turn_event_stream(
     continue_native_client_turn_event_stream(request, role).await
 }
 
-fn find_pending_tool_call(session: &AgentLoopSession, tool_call_id: &str) -> Option<ChatToolCall> {
-    session
-        .messages
-        .iter()
-        .rev()
-        .filter_map(|message| message.tool_calls.as_ref())
-        .flatten()
-        .find(|call| call.id == tool_call_id)
-        .cloned()
-}
-
 fn tool_observation_from_call(
     call: &ChatToolCall,
     content: Option<&str>,
+    grounding_probe_signal: Option<crate::agent_loop::GroundingProbeSignalKind>,
 ) -> ToolContinuationObservation {
     ToolContinuationObservation {
         tool_name: call.function.name.clone(),
         signature: tool_signature_from_call(call),
         class: classify_tool_budget_class(&call.function.name),
         failed: tool_result_content_indicates_error(content),
+        grounding_probe_signal,
     }
+}
+
+async fn grounding_probe_signal_for_tool_observation(
+    pool: &PgPool,
+    run_id: Option<&str>,
+    tool_call_id: &str,
+) -> Result<Option<GroundingProbeSignalKind>, DenError> {
+    let Some(run_id) = run_id else {
+        return Ok(None);
+    };
+    latest_grounding_probe_signal_for_tool_call(pool, run_id, tool_call_id).await
+}
+
+fn tool_class_is_mutation(class: ToolBudgetClass) -> bool {
+    matches!(class, ToolBudgetClass::Write | ToolBudgetClass::Destructive)
+}
+
+fn mvp_grounding_probe_signal_from_tool_result(
+    status: RuntimeToolResultStatus,
+    content: &str,
+) -> (GroundingProbeSignalKind, GroundingProbeFinding) {
+    // ponytail: MVP producer trusts tool status plus error-shaped content; upgrade to
+    // read-after-write/diff probes when a mutation surface needs stronger evidence.
+    if matches!(status, RuntimeToolResultStatus::Ok)
+        && !tool_result_content_indicates_error(Some(content))
+    {
+        (
+            GroundingProbeSignalKind::Pass,
+            GroundingProbeFinding {
+                code: "tool_result_ok".to_string(),
+                message: "Mutation-like tool returned an OK result without an error marker."
+                    .to_string(),
+            },
+        )
+    } else {
+        (
+            GroundingProbeSignalKind::Fail,
+            GroundingProbeFinding {
+                code: "tool_result_failed".to_string(),
+                message: "Mutation-like tool returned a failing or error-shaped result."
+                    .to_string(),
+            },
+        )
+    }
+}
+
+async fn produce_mvp_grounding_probe_signal_for_tool_result(
+    pool: &PgPool,
+    session: &AgentLoopSession,
+    run_id: Option<&str>,
+    call: &ChatToolCall,
+    status: RuntimeToolResultStatus,
+    content: &str,
+) -> Result<Option<GroundingProbeSignalKind>, DenError> {
+    let class = classify_tool_budget_class(&call.function.name);
+    if !tool_class_is_mutation(class) {
+        return Ok(None);
+    }
+    let (signal, finding) = mvp_grounding_probe_signal_from_tool_result(status, content);
+    let Some(run_id) = run_id else {
+        return Ok(Some(signal));
+    };
+    record_grounding_probe_result_decision(
+        pool,
+        GroundingProbeResultInput {
+            run_id: run_id.to_string(),
+            turn_step_id: None,
+            orientation_kind: Some(session.objective_orientation.kind().to_string()),
+            tool_call_id: Some(call.id.clone()),
+            probe_id: format!("mvp.tool_result.{}", call.id),
+            surface_kind: "tool_result".to_string(),
+            signal,
+            duration_ms: 0,
+            findings: vec![finding],
+        },
+    )
+    .await?;
+    Ok(Some(signal))
+}
+
+fn parse_args_or_empty_object(raw: &str) -> serde_json::Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::Object(Default::default()))
 }
 
 fn continuation_budget_stop(
@@ -1022,6 +1238,10 @@ fn continuation_budget_stop(
         }),
     )]));
     (RuntimeStreamContinuation::Deferred, stream)
+}
+
+fn reset_turn_budget_state_after_forced_stop(session: &mut AgentLoopSession) {
+    session.turn_budget_state = Default::default();
 }
 
 const BUDGET_WARNING_PREFIX: &str = "Budget advisory:";
@@ -1064,6 +1284,10 @@ fn runtime_checkpoint_request_for_trigger(
         run_id,
         reason: trigger.reason,
         control_level: session.agent_loop_control.level,
+        profile_fingerprint: agent_loop_control_profile_fingerprint(
+            &session.agent_loop_control.profile,
+        )
+        .ok(),
         active_objective: active_checkpoint_objective(session),
         task_context: checkpoint_task_context(session),
         evidence_refs: Vec::new(),
@@ -1077,7 +1301,7 @@ fn runtime_checkpoint_request_for_trigger(
 
 fn active_checkpoint_objective(session: &AgentLoopSession) -> Option<String> {
     session
-        .active_activity_plan
+        .cached_activity_plan_projection
         .as_ref()
         .and_then(|plan| {
             plan.current_item.as_ref().or_else(|| {
@@ -1094,7 +1318,7 @@ fn active_checkpoint_objective(session: &AgentLoopSession) -> Option<String> {
 }
 
 fn checkpoint_task_context(session: &AgentLoopSession) -> Option<CheckpointTaskContext> {
-    let plan = session.active_activity_plan.as_ref()?;
+    let plan = session.cached_activity_plan_projection.as_ref()?;
     let active_item = plan.current_item.as_ref().or_else(|| {
         plan.items.iter().find(|item| {
             matches!(
@@ -1193,6 +1417,7 @@ async fn record_checkpoint_request_if_audited(
         CheckpointArtifactInput {
             run_id: request.run_id.clone(),
             turn_step_id: None,
+            orientation_kind: Some(session.objective_orientation.kind().to_string()),
             request,
             visibility: CheckpointVisibility::AuditOnly,
             replay_policy: CheckpointReplayPolicy::None,
@@ -1210,7 +1435,66 @@ async fn record_checkpoint_request_if_audited(
     }
 }
 
+fn render_run_recovery_context(
+    disposition: RunRecoveryDisposition,
+) -> Result<Option<String>, DenError> {
+    let RunRecoveryDisposition::ResumeEligible { attempts } = disposition else {
+        return Ok(None);
+    };
+    let fragments = repository_prompt_fragment_registry()?;
+    let fragment = fragments.require("runtime_run_recovery")?;
+    render_turn_fragment(
+        fragment,
+        &serde_json::json!({
+            "recovery": {
+                "attempts": attempts,
+            }
+        }),
+    )
+    .map(|text| Some(text.trim().to_string()))
+}
+
+fn apply_run_recovery_context(
+    session: &mut AgentLoopSession,
+    disposition: RunRecoveryDisposition,
+) -> Result<bool, DenError> {
+    let Some(message) = render_run_recovery_context(disposition)? else {
+        return Ok(false);
+    };
+    if session.messages.last().is_some_and(|existing| {
+        existing.role == "system" && existing.content.as_deref() == Some(message.as_str())
+    }) {
+        return Ok(false);
+    }
+    session.messages.push(ChatMessage {
+        role: "system".to_string(),
+        content: Some(message),
+        tool_call_id: None,
+        name: None,
+        tool_calls: None,
+    });
+    Ok(true)
+}
+
+fn budget_warning_requires_checkpoint(warning: &TurnBudgetWarning) -> bool {
+    matches!(
+        warning.code,
+        "context_budget_warning"
+            | "wall_clock_warning"
+            | "total_tool_budget_warning"
+            | "tool_class_budget_warning"
+            | "emergency_hard_step_warning"
+    )
+}
+
+fn budget_warning_is_model_visible(warning: &TurnBudgetWarning) -> bool {
+    !matches!(warning.code, "tool_class_budget_warning")
+}
+
 fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarning) -> bool {
+    if !budget_warning_is_model_visible(warning) {
+        return false;
+    }
     if session.messages.last().is_some_and(|message| {
         message.role == "system" && message.content.as_deref() == Some(warning.model_message())
     }) {
@@ -1236,8 +1520,7 @@ fn apply_budget_warning(session: &mut AgentLoopSession, warning: &TurnBudgetWarn
 }
 
 fn call_is_den_web_fetch(call: &ChatToolCall) -> bool {
-    builtin_den_tool_descriptor_for_provider_name(&call.function.name)
-        .is_some_and(|descriptor| descriptor.name == DEN_WEB_FETCH)
+    provider_tool_is_den_web_fetch(&call.function.name)
 }
 
 fn normalize_approved_web_url(raw: &str) -> Result<String, DenError> {
@@ -1261,8 +1544,7 @@ async fn record_web_fetch_url_approval(
     user_id: Option<i32>,
     call: &ChatToolCall,
 ) -> Result<(), DenError> {
-    let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
-        .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+    let args = parse_args_or_empty_object(&call.function.arguments);
     let raw_url = args
         .get("url")
         .and_then(|value| value.as_str())
@@ -1305,8 +1587,17 @@ async fn execute_approved_den_tool_for_session(
     let canonical = builtin_den_tool_descriptor_for_provider_name(&call.function.name)
         .map(|descriptor| descriptor.name.to_string())
         .unwrap_or_else(|| call.function.name.clone());
-    let args = serde_json::from_str(&call.function.arguments)
-        .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+    if is_work_tool_provider_name(&call.function.name) || is_work_tool_provider_name(&canonical) {
+        let bear = den_service::bears::db::get_bear(request.sqlx_pool, session.bear_id)
+            .await?
+            .ok_or_else(|| DenError::NotFound("bear not found".to_string()))?;
+        if !bear.work_enabled {
+            return Err(DenError::ValidationError(
+                "work is not enabled for this Bear".to_string(),
+            ));
+        }
+    }
+    let args = parse_args_or_empty_object(&call.function.arguments);
     let context = DenToolInvocationContext {
         bear_id: session.bear_id,
         bear_slug: session.bear_slug.clone(),
@@ -1323,7 +1614,7 @@ async fn execute_approved_den_tool_for_session(
         workspace_roots: session.workspace_roots.clone(),
         session_policy: None,
         activity: session
-            .active_activity_plan
+            .cached_activity_plan_projection
             .as_ref()
             .and_then(|plan| serde_json::to_value(plan).ok()),
         runtime: Some(session.session_info_runtime_snapshot()),
@@ -1376,6 +1667,7 @@ pub async fn continue_native_client_turn_event_stream(
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
     let mut tool_messages = Vec::new();
     let mut observations = Vec::new();
+    let observation_run_id = request.run_id.or(prior_session.run_id.as_deref());
     match &request.continuation {
         RuntimeContinuation::ToolResult {
             tool_call_id,
@@ -1397,9 +1689,34 @@ pub async fn continue_native_client_turn_event_stream(
                 )
                 .await?;
             }
-            let pending_call = find_pending_tool_call(&prior_session, tool_call_id);
+            let pending_call = prior_session.find_pending_tool_call(tool_call_id);
             if let Some(call) = pending_call.as_ref() {
-                observations.push(tool_observation_from_call(call, Some(content)));
+                let produced_grounding_probe_signal =
+                    produce_mvp_grounding_probe_signal_for_tool_result(
+                        request.sqlx_pool,
+                        &prior_session,
+                        observation_run_id,
+                        call,
+                        status.clone(),
+                        content,
+                    )
+                    .await?;
+                let grounding_probe_signal = match produced_grounding_probe_signal {
+                    Some(signal) => Some(signal),
+                    None => {
+                        grounding_probe_signal_for_tool_observation(
+                            request.sqlx_pool,
+                            observation_run_id,
+                            &call.id,
+                        )
+                        .await?
+                    }
+                };
+                observations.push(tool_observation_from_call(
+                    call,
+                    Some(content),
+                    grounding_probe_signal,
+                ));
             }
             tool_messages.push(ChatMessage {
                 role: "tool".to_string(),
@@ -1429,15 +1746,23 @@ pub async fn continue_native_client_turn_event_stream(
             if approve {
                 if let Some(session) = existing_session.as_ref() {
                     if let Some(tool_call_id) = tool_call_id.as_deref() {
-                        if let Some(call) = find_pending_tool_call(session, tool_call_id) {
+                        if let Some(call) = session.find_pending_tool_call(tool_call_id) {
                             if call_is_den_web_fetch(&call) {
                                 let tool_message = execute_approved_den_tool_for_session(
                                     &request, session, &call, profile,
                                 )
                                 .await?;
+                                let grounding_probe_signal =
+                                    grounding_probe_signal_for_tool_observation(
+                                        request.sqlx_pool,
+                                        observation_run_id,
+                                        &call.id,
+                                    )
+                                    .await?;
                                 observations.push(tool_observation_from_call(
                                     &call,
                                     tool_message.content.as_deref(),
+                                    grounding_probe_signal,
                                 ));
                                 tool_messages.push(tool_message);
                             }
@@ -1448,9 +1773,19 @@ pub async fn continue_native_client_turn_event_stream(
                 let content = reason.clone().unwrap_or_else(|| "denied".to_string());
                 let pending_call = tool_call_id
                     .as_deref()
-                    .and_then(|id| find_pending_tool_call(&prior_session, id));
+                    .and_then(|id| prior_session.find_pending_tool_call(id));
                 if let Some(call) = pending_call.as_ref() {
-                    observations.push(tool_observation_from_call(call, Some(&content)));
+                    let grounding_probe_signal = grounding_probe_signal_for_tool_observation(
+                        request.sqlx_pool,
+                        observation_run_id,
+                        &call.id,
+                    )
+                    .await?;
+                    observations.push(tool_observation_from_call(
+                        call,
+                        Some(&content),
+                        grounding_probe_signal,
+                    ));
                 }
                 tool_messages.push(ChatMessage {
                     role: "tool".to_string(),
@@ -1477,9 +1812,13 @@ pub async fn continue_native_client_turn_event_stream(
         &prior_session.agent_loop_control.profile,
         &prior_session.checkpoint_state,
         &observations,
-        evaluation.warning.is_some(),
+        evaluation
+            .warning
+            .as_ref()
+            .is_some_and(budget_warning_requires_checkpoint),
     );
-    let mut warning_applied = false;
+    let mut warning_model_context_applied = false;
+    let mut recovery_context_result = Ok(false);
     SESSION_STORE.update(&session_key, |session| {
         session.request_id = Some(request.request_id.to_string());
         session.run_id = request
@@ -1487,12 +1826,15 @@ pub async fn continue_native_client_turn_event_stream(
             .map(str::to_string)
             .or_else(|| session.run_id.clone());
         session.messages.extend(tool_messages.clone());
+        recovery_context_result =
+            apply_run_recovery_context(session, request.stream_context.run_recovery);
         session.turn_budget_state = evaluation.next_state.clone();
         session.checkpoint_state = checkpoint_evaluation.next_state.clone();
         if let Some(warning) = evaluation.warning.as_ref() {
-            warning_applied = apply_budget_warning(session, warning);
+            warning_model_context_applied = apply_budget_warning(session, warning);
         }
     });
+    recovery_context_result?;
     let mut session = SESSION_STORE
         .get(&session_key)
         .ok_or_else(|| DenError::System("native agent loop session not found".to_string()))?;
@@ -1514,24 +1856,40 @@ pub async fn continue_native_client_turn_event_stream(
             }
         }
     }
+    if let Some(refreshed_plan) = refresh_cached_activity_plan_projection_from_docket(
+        request.sqlx_pool,
+        &conversation_id,
+        client_session_id,
+        session.bear_id,
+        session.user_id,
+        profile,
+    )
+    .await?
+    {
+        SESSION_STORE.update(&session_key, |session| {
+            session.cached_activity_plan_projection = Some(refreshed_plan.clone());
+        });
+        session.cached_activity_plan_projection = Some(refreshed_plan);
+    }
     if let Some(reason) = evaluation.stop_reason {
+        SESSION_STORE.update(&session_key, reset_turn_budget_state_after_forced_stop);
         return Ok(continuation_budget_stop(reason));
     }
     let llm = LlmClient::new(request.config);
-    let overflow = overflow_context(
-        request.sqlx_pool.clone(),
-        Arc::new(request.config.clone()),
-        profile,
-    );
+    let config = Arc::new(request.config.clone());
+    let overflow = overflow_context(request.sqlx_pool.clone(), config.clone(), profile);
     let stream = run_agent_step_stream(&llm, &session, Some(overflow)).await?;
     let mut prefix_events = Vec::new();
-    if warning_applied {
-        let warning_event = evaluation
-            .warning
-            .as_ref()
-            .map(budget_warning_runtime_event)
-            .expect("warning_applied requires warning payload");
-        prefix_events.push(Ok(warning_event));
+    if let Some(warning) = evaluation.warning.as_ref() {
+        let model_context_already_has_warning = session.messages.last().is_some_and(|message| {
+            message.role == "system" && message.content.as_deref() == Some(warning.model_message())
+        });
+        if warning_model_context_applied
+            || model_context_already_has_warning
+            || !budget_warning_is_model_visible(warning)
+        {
+            prefix_events.push(Ok(budget_warning_runtime_event(warning)));
+        }
     }
     if agent_loop_control_observe_enabled(request.config) {
         if let Some(trigger) = checkpoint_evaluation.trigger.as_ref() {
@@ -1546,7 +1904,7 @@ pub async fn continue_native_client_turn_event_stream(
     let stream = wrap_session_stream(
         stream,
         &session,
-        Arc::new(request.config.clone()),
+        config,
         profile,
         request.sqlx_pool.clone(),
         session.bear_id,
@@ -1569,13 +1927,17 @@ pub async fn continue_native_client_turn_event_stream(
 mod tests {
     use super::*;
     use crate::agent_loop::{
-        resolve_agent_loop_control, AgentLoopControlResolutionInput,
+        resolve_agent_loop_control, AgentLoopControlResolutionInput, FreeformPolicy,
         PostMutationVerificationWindow, StrategyProfile, ToolCallBudgetLimits, TurnBudgetPolicy,
     };
 
     fn sample_budget_warning(message: &str) -> TurnBudgetWarning {
+        sample_budget_warning_with_code("total_tool_budget_warning", message)
+    }
+
+    fn sample_budget_warning_with_code(code: &'static str, message: &str) -> TurnBudgetWarning {
         TurnBudgetWarning {
-            code: "tool_class_budget_warning",
+            code,
             message: message.to_string(),
         }
     }
@@ -1610,7 +1972,63 @@ mod tests {
             bear_override: None,
             stance_override: None,
             task_escalation: None,
+            stance: Some(BearProfile::Pair),
+            objective_orientation: None,
+            pre_risk: false,
         })
+    }
+
+    fn freeform_orientation() -> crate::agent_loop::ObjectiveOrientation {
+        crate::agent_loop::ObjectiveOrientation::Freeform {
+            policy: FreeformPolicy::closed(),
+        }
+    }
+
+    #[test]
+    fn active_docket_execution_lookup_uses_conversation_focus_restore_path() {
+        let lookup = active_docket_execution_lookup_for_session("conv-1", "session-1");
+        assert_eq!(lookup.session_id.as_deref(), Some("session-1"));
+        assert_eq!(lookup.source_conversation_id.as_deref(), Some("conv-1"));
+        assert_eq!(
+            lookup.source_client_session_id.as_deref(),
+            Some("session-1")
+        );
+    }
+
+    #[test]
+    fn mvp_grounding_probe_only_targets_mutation_classes() {
+        assert!(tool_class_is_mutation(classify_tool_budget_class(
+            "fs_edit_file"
+        )));
+        assert!(tool_class_is_mutation(classify_tool_budget_class(
+            "fs_delete_path"
+        )));
+        assert!(!tool_class_is_mutation(classify_tool_budget_class(
+            "fs_read_text_file"
+        )));
+    }
+
+    #[test]
+    fn mvp_grounding_probe_signal_follows_tool_result_status_and_content() {
+        let (ok_signal, ok_finding) = mvp_grounding_probe_signal_from_tool_result(
+            RuntimeToolResultStatus::Ok,
+            "{\"ok\":true}",
+        );
+        assert_eq!(ok_signal, GroundingProbeSignalKind::Pass);
+        assert_eq!(ok_finding.code, "tool_result_ok");
+
+        let (error_signal, error_finding) = mvp_grounding_probe_signal_from_tool_result(
+            RuntimeToolResultStatus::Ok,
+            "error: write failed",
+        );
+        assert_eq!(error_signal, GroundingProbeSignalKind::Fail);
+        assert_eq!(error_finding.code, "tool_result_failed");
+
+        let (status_signal, _) = mvp_grounding_probe_signal_from_tool_result(
+            RuntimeToolResultStatus::Error,
+            "{\"ok\":false}",
+        );
+        assert_eq!(status_signal, GroundingProbeSignalKind::Fail);
     }
 
     #[test]
@@ -1630,6 +2048,162 @@ mod tests {
             compatibility_backend: Some("runtime:legacy".to_string()),
         };
         assert_eq!(bear_id_from_native_binding(&binding), None);
+    }
+
+    #[test]
+    fn run_recovery_context_renders_neutral_fragment_once() {
+        let message =
+            render_run_recovery_context(RunRecoveryDisposition::ResumeEligible { attempts: 0 })
+                .expect("recovery fragment renders")
+                .expect("resume-eligible recovery emits context");
+
+        assert!(message.contains("ended before final delivery"));
+        assert!(!message.to_lowercase().contains("continue"));
+        assert!(!message.to_lowercase().contains("try again"));
+        assert!(
+            render_run_recovery_context(RunRecoveryDisposition::Exhausted { attempts: 1 })
+                .expect("exhausted recovery renders")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn apply_run_recovery_context_is_idempotent_for_same_session_tail() {
+        let mut session = AgentLoopSession {
+            session_key: "session".to_string(),
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(1),
+            conversation_id: "conv".to_string(),
+            client_session_id: "session".to_string(),
+            workspace_roots: vec![],
+            request_id: None,
+            run_id: None,
+            messages: vec![],
+            tools: vec![],
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 0,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
+            checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
+            pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
+            cached_activity_plan_projection: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        };
+        let disposition = RunRecoveryDisposition::ResumeEligible { attempts: 0 };
+
+        assert!(apply_run_recovery_context(&mut session, disposition).expect("first apply"));
+        assert!(!apply_run_recovery_context(&mut session, disposition).expect("second apply"));
+        assert_eq!(
+            session
+                .messages
+                .iter()
+                .filter(|message| message.role == "system")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn forced_budget_stop_resets_reusable_turn_budget_state() {
+        let mut session = AgentLoopSession {
+            session_key: "session".to_string(),
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(1),
+            conversation_id: "conv".to_string(),
+            client_session_id: "session".to_string(),
+            workspace_roots: vec![],
+            request_id: None,
+            run_id: None,
+            messages: vec![],
+            tools: vec![],
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 0,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
+            checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
+            pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
+            cached_activity_plan_projection: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        };
+        session.turn_budget_state.same_batch_signature_repeats = 3;
+        session.turn_budget_state.last_batch_signature = Some("git_status:{}".to_string());
+        session.turn_budget_state.consecutive_tool_failures = 2;
+        session.turn_budget_state.budget_finalization_grace_used = true;
+
+        reset_turn_budget_state_after_forced_stop(&mut session);
+
+        assert_eq!(session.turn_budget_state.same_batch_signature_repeats, 0);
+        assert_eq!(session.turn_budget_state.last_batch_signature, None);
+        assert_eq!(session.turn_budget_state.consecutive_tool_failures, 0);
+        assert!(!session.turn_budget_state.budget_finalization_grace_used);
+        assert_eq!(session.turn_budget_state.tool_usage.total, 0);
+    }
+
+    #[test]
+    fn budget_warning_checkpoint_gate_only_treats_budget_pressure_as_low_budget() {
+        for code in [
+            "context_budget_warning",
+            "wall_clock_warning",
+            "total_tool_budget_warning",
+            "tool_class_budget_warning",
+            "emergency_hard_step_warning",
+        ] {
+            assert!(
+                budget_warning_requires_checkpoint(&sample_budget_warning_with_code(
+                    code,
+                    "Budget advisory"
+                )),
+                "{code} should request a low-budget checkpoint"
+            );
+        }
+
+        for code in ["rule_of_ko_warning", "failure_budget_warning"] {
+            assert!(
+                !budget_warning_requires_checkpoint(&sample_budget_warning_with_code(
+                    code,
+                    "Budget advisory"
+                )),
+                "{code} has a dedicated checkpoint reason"
+            );
+        }
     }
 
     #[test]
@@ -1656,16 +2230,19 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -1685,12 +2262,63 @@ mod tests {
     }
 
     #[test]
+    fn apply_budget_warning_keeps_tool_class_warning_out_of_model_context() {
+        let mut session = AgentLoopSession {
+            session_key: "session".to_string(),
+            bear_id: Uuid::new_v4(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(1),
+            conversation_id: "conv".to_string(),
+            client_session_id: "session".to_string(),
+            workspace_roots: vec![],
+            request_id: None,
+            run_id: None,
+            messages: vec![],
+            tools: vec![],
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 0,
+            turn_budget: pair_turn_budget(),
+            turn_budget_state: Default::default(),
+            agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
+            checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
+            pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: false,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
+            cached_activity_plan_projection: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        };
+        let warning = sample_budget_warning_with_code(
+            "tool_class_budget_warning",
+            "Budget advisory: this turn is close to its read tool budget (5/6 used). Prefer a final answer over more tool calls unless one more read call is strictly necessary.",
+        );
+
+        assert!(!apply_budget_warning(&mut session, &warning));
+        assert!(session.messages.is_empty());
+    }
+
+    #[test]
     fn checkpoint_nudge_renders_structured_request_without_task_state_mutation() {
         let request = RuntimeCheckpointRequest {
             checkpoint_id: "ckpt-1".to_string(),
             run_id: "run-1".to_string(),
             reason: crate::agent_loop::CheckpointReason::OverExploration,
             control_level: den_core::AgentLoopControlLevel::Careful,
+            profile_fingerprint: Some("profile-test".to_string()),
             active_objective: Some("Inspect routing".to_string()),
             task_context: None,
             evidence_refs: Vec::new(),
@@ -1790,16 +2418,19 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -1902,16 +2533,19 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -2063,16 +2697,19 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,
@@ -2216,16 +2853,19 @@ mod tests {
             turn_budget: pair_turn_budget(),
             turn_budget_state: Default::default(),
             agent_loop_control: test_agent_loop_control(),
+            governance: den_core::governance::Governance::Interactive,
+            objective_orientation: freeform_orientation(),
             checkpoint_state: Default::default(),
             pending_checkpoint_request: None,
             pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
             strategy: StrategyProfile::plain_react(),
             stream_tokens: false,
             key_memory_projection_cache_key: None,
             latest_context_budget: None,
             latest_projected_memory: None,
             latest_recalled_memory: None,
-            active_activity_plan: None,
+            cached_activity_plan_projection: None,
             profile: BearProfile::Pair,
             overflow_retry_attempted: false,
             overflow_compaction_recovered: false,

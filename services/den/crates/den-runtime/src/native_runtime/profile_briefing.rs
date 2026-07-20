@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use crate::memory_curate_executor::CurateBriefingItem;
 
 pub fn compose_curate_briefing_prompt(briefing: &[CurateBriefingItem]) -> String {
@@ -7,13 +9,14 @@ Summarize the briefing below for the operator: what needs attention, why, and re
 Keep the response concise and actionable.\n\n",
     );
     for (index, item) in briefing.iter().enumerate() {
-        prompt.push_str(&format!(
+        let _ = writeln!(
+            prompt,
             "## Proposal {} — {}\n\
 - proposal_id: {}\n\
 - status: {} (triage: {})\n\
 - source_profile: {}\n\
 - suggested_action: {}\n\
-- summary: {}\n\n",
+- summary: {}\n",
             index + 1,
             item.title,
             item.proposal_id,
@@ -22,7 +25,7 @@ Keep the response concise and actionable.\n\n",
             item.source_profile,
             item.suggested_action,
             item.summary,
-        ));
+        );
     }
     prompt
 }

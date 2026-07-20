@@ -166,6 +166,7 @@ async fn update_run_state(
         &service.pool,
         DocketTaskUpdate {
             bear_id,
+            job_id: None,
             task_id,
             actor_role: BearProfile::Work,
             actor_user_id: None,

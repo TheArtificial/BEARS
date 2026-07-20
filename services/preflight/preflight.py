@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -153,6 +154,16 @@ def validate_http_url(name: str, value: str) -> None:
         fail(f"{name} must be an http(s) URL (got scheme {u.scheme!r})")
     if not u.netloc:
         fail(f"{name} must include a host (netloc)")
+
+
+def validate_instance_suffix() -> None:
+    suffix = os.environ.get("BEARS_INSTANCE_SUFFIX", "").strip()
+    if suffix and not re.fullmatch(r"-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", suffix):
+        fail(
+            "BEARS_INSTANCE_SUFFIX must be empty for production or a lowercase DNS suffix "
+            + "starting with '-', for example '-test'"
+        )
+    info(f"BEARS_INSTANCE_SUFFIX OK ({suffix or '<production>'})")
 
 
 def validate_bifrost_model_metadata_config() -> None:
@@ -318,6 +329,8 @@ def validate_database_url(reachable: bool = True) -> None:
 def validate_config_shape() -> None:
     info("checking required secrets and URI-shaped environment variables")
 
+    validate_instance_suffix()
+
     require_non_empty("JWT_SECRET")
     info("JWT_SECRET is set")
 
@@ -350,6 +363,28 @@ def validate_config_shape() -> None:
     web = require_non_empty("WEB_SERVER_URL")
     validate_http_url("WEB_SERVER_URL", web)
     info(f"WEB_SERVER_URL OK ({web})")
+
+    sandbox_server = require_non_empty("SANDBOX_SERVER_URL")
+    if sandbox_server.lower() == "auto":
+        suffix = os.environ.get("BEARS_INSTANCE_SUFFIX", "").strip()
+        sandbox_port = os.environ.get("SANDBOX_PORT", "3002").strip()
+        sandbox_server = f"http://bears-sandbox-provider{suffix}:{sandbox_port}"
+    validate_http_url("SANDBOX_SERVER_URL", sandbox_server)
+    info(f"SANDBOX_SERVER_URL OK ({sandbox_server})")
+
+    callback = require_non_empty("SANDBOX_CALLBACK_API_URL")
+    if callback.lower() == "auto":
+        suffix = os.environ.get("BEARS_INSTANCE_SUFFIX", "").strip()
+        api_port = os.environ.get("DEN_API_PORT", "3001").strip()
+        callback = f"http://bears-den{suffix}:{api_port}"
+    validate_http_url("SANDBOX_CALLBACK_API_URL", callback)
+    callback_url = urlparse(callback)
+    network_mode = os.environ.get("WORK_SANDBOX_NETWORK", "restricted").strip().lower()
+    if network_mode == "restricted" and callback_url.scheme != "http":
+        fail(
+            "SANDBOX_CALLBACK_API_URL must use http when WORK_SANDBOX_NETWORK=restricted"
+        )
+    info(f"SANDBOX_CALLBACK_API_URL OK ({callback})")
 
     require_non_empty("OPENAI_API_KEY")
     info("OPENAI_API_KEY is set")

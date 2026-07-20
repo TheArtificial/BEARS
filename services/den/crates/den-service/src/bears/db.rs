@@ -41,8 +41,10 @@ pub async fn list_bears(pool: &PgPool) -> Result<Vec<Bear>, DenError> {
     sqlx::query_as::<_, Bear>(
         r"
         SELECT id, slug, name, description, default_model, default_tool_budget_multiplier, tools_enabled,
-               runtime_plan, context_profile,
-               provisioning_version, system_prompt, birthday, created_at, updated_at
+               work_enabled, runtime_plan, context_profile,
+               provisioning_version, system_prompt, birthday, created_at, updated_at,
+               live_reflection_enabled, live_reflection_stale_after_minutes,
+               live_reflection_activity_threshold, live_reflection_sweep_limit
         FROM bears
         ORDER BY slug
         ",
@@ -56,8 +58,10 @@ pub async fn get_bear(pool: &PgPool, id: Uuid) -> Result<Option<Bear>, DenError>
     sqlx::query_as::<_, Bear>(
         r"
         SELECT id, slug, name, description, default_model, default_tool_budget_multiplier, tools_enabled,
-               runtime_plan, context_profile,
-               provisioning_version, system_prompt, birthday, created_at, updated_at
+               work_enabled, runtime_plan, context_profile,
+               provisioning_version, system_prompt, birthday, created_at, updated_at,
+               live_reflection_enabled, live_reflection_stale_after_minutes,
+               live_reflection_activity_threshold, live_reflection_sweep_limit
         FROM bears
         WHERE id = $1
         ",
@@ -323,8 +327,10 @@ pub async fn list_bears_for_user(
     sqlx::query_as::<_, BearWithMembership>(
         r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier, b.tools_enabled,
-               b.runtime_plan, b.context_profile,
+               b.work_enabled, b.runtime_plan, b.context_profile,
                b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
+               b.live_reflection_enabled, b.live_reflection_stale_after_minutes,
+               b.live_reflection_activity_threshold, b.live_reflection_sweep_limit,
                ub.role AS membership_role
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
@@ -347,8 +353,10 @@ pub async fn bear_for_user_by_slug(
     sqlx::query_as::<_, Bear>(
         r"
         SELECT b.id, b.slug, b.name, b.description, b.default_model, b.default_tool_budget_multiplier, b.tools_enabled,
-               b.runtime_plan, b.context_profile,
-               b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at
+               b.work_enabled, b.runtime_plan, b.context_profile,
+               b.provisioning_version, b.system_prompt, b.birthday, b.created_at, b.updated_at,
+               b.live_reflection_enabled, b.live_reflection_stale_after_minutes,
+               b.live_reflection_activity_threshold, b.live_reflection_sweep_limit
         FROM bears b
         INNER JOIN user_bear ub ON ub.bear_id = b.id
         WHERE ub.user_id = $1 AND b.slug = $2
@@ -1163,4 +1171,47 @@ mod model_setting_tests {
             Some("strict")
         );
     }
+}
+
+pub async fn update_live_reflection_enabled(
+    pool: &PgPool,
+    bear_id: Uuid,
+    enabled: bool,
+) -> Result<(), DenError> {
+    update_live_reflection_settings(pool, bear_id, enabled, 30, 20, 25).await
+}
+
+pub async fn update_live_reflection_settings(
+    pool: &PgPool,
+    bear_id: Uuid,
+    enabled: bool,
+    stale_after_minutes: i32,
+    activity_threshold: i32,
+    sweep_limit: i32,
+) -> Result<(), DenError> {
+    let stale_after_minutes = stale_after_minutes.clamp(1, 1440);
+    let activity_threshold = activity_threshold.clamp(1, 1000);
+    let sweep_limit = sweep_limit.clamp(1, 100);
+    let result = sqlx::query(
+        r#"
+        UPDATE bears
+        SET live_reflection_enabled = $2,
+            live_reflection_stale_after_minutes = $3,
+            live_reflection_activity_threshold = $4,
+            live_reflection_sweep_limit = $5,
+            updated_at = NOW()
+        WHERE id = $1
+        "#,
+    )
+    .bind(bear_id)
+    .bind(enabled)
+    .bind(stale_after_minutes)
+    .bind(activity_threshold)
+    .bind(sweep_limit)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(DenError::NotFound("bear not found".to_string()));
+    }
+    Ok(())
 }

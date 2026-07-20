@@ -1,4 +1,6 @@
-use super::{bear_environment_payload, session_info_payload};
+use super::{
+    bear_environment_payload, session_info_payload, trusted_workspace_roots_from_adapter_runtime,
+};
 use crate::tools::arguments::DenToolChannelContext;
 use crate::tools::context::DenToolInvocationContext;
 use crate::tools::descriptor::builtin_den_tool_descriptors_for_profile;
@@ -336,6 +338,46 @@ fn bear_environment_prefers_trusted_workspace_snapshot_when_present() {
     assert_eq!(payload["workspace"]["roots"][0], "/workspace/project");
     assert_eq!(payload["workspace"]["roots"][1], "/workspace/shared");
     assert_eq!(payload["workspace"]["source"], "trusted_session");
+}
+
+#[test]
+fn bear_environment_rejects_unknown_trusted_workspace_fields() {
+    let context = pair_context();
+    let payload = bear_environment_payload(
+        &context,
+        BearProfile::Pair,
+        None,
+        2,
+        &json!({ "configured": false, "available": false }),
+        &json!({ "status": "ok" }),
+        &json!({
+            "status": "ok",
+            "trusted_workspace": {
+                "cwd": "/untrusted/typo",
+                "roots": ["/untrusted/typo"],
+                "source": "trusted_session",
+                "roooots": ["/typo"]
+            }
+        }),
+    );
+
+    assert_eq!(payload["workspace"]["cwd"], "/workspace");
+    assert_eq!(payload["workspace"]["roots"], json!(["/workspace"]));
+    assert_eq!(payload["workspace"]["source"], "trusted_session");
+}
+
+#[test]
+fn trusted_workspace_roots_reject_unknown_adapter_fields() {
+    let roots = trusted_workspace_roots_from_adapter_runtime(&json!({
+        "trusted_workspace": {
+            "cwd": "/workspace/project",
+            "roots": ["/workspace/project"],
+            "source": "trusted_session",
+            "roooots": ["/typo"]
+        }
+    }));
+
+    assert!(roots.is_empty());
 }
 
 #[test]

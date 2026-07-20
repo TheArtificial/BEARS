@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use den_core::profile::BearProfile;
+use den_core::{governance::Governance, profile::BearProfile};
 use den_docket::TaskListProjection;
 use den_protocol::ContextBudgetReport;
 use serde_json::{json, Value};
@@ -11,12 +11,12 @@ use uuid::Uuid;
 
 use crate::{
     agent_loop::{
-        CheckpointNextAction, CheckpointState, KeyMemoryProjectionCacheKey,
+        CheckpointNextAction, CheckpointState, KeyMemoryProjectionCacheKey, ObjectiveOrientation,
         ResolvedAgentLoopControl, RuntimeCheckpointRequest, StrategyProfile, ToolCallBudgetLimits,
         TurnBudgetPolicy, TurnBudgetState,
     },
     context_budget::AssembledTurnBudgetComponents,
-    llm::{ChatMessage, LlmApiStyle, LlmRequestTelemetry, LlmToolDefinition},
+    llm::{ChatMessage, ChatToolCall, LlmApiStyle, LlmRequestTelemetry, LlmToolDefinition},
 };
 
 #[derive(Debug, Clone)]
@@ -42,22 +42,38 @@ pub struct AgentLoopSession {
     pub turn_budget: TurnBudgetPolicy,
     pub turn_budget_state: TurnBudgetState,
     pub agent_loop_control: ResolvedAgentLoopControl,
+    pub governance: Governance,
+    pub objective_orientation: ObjectiveOrientation,
     pub checkpoint_state: CheckpointState,
     pub pending_checkpoint_request: Option<RuntimeCheckpointRequest>,
     pub pending_checkpoint_task_action: Option<CheckpointNextAction>,
+    pub pending_checkpoint_recovery_attempts: u8,
     pub strategy: StrategyProfile,
     pub stream_tokens: bool,
     pub key_memory_projection_cache_key: Option<KeyMemoryProjectionCacheKey>,
     pub latest_context_budget: Option<ContextBudgetReport>,
     pub latest_projected_memory: Option<Value>,
     pub latest_recalled_memory: Option<Value>,
-    pub active_activity_plan: Option<TaskListProjection>,
+    /// Volatile task-list projection cache. Durable Docket execution is the
+    /// source of truth for focused work; behavior decisions should resolve
+    /// `RuntimeFocusContext` instead of treating this cache as authoritative.
+    pub cached_activity_plan_projection: Option<TaskListProjection>,
     pub profile: BearProfile,
     pub overflow_retry_attempted: bool,
     pub overflow_compaction_recovered: bool,
 }
 
 impl AgentLoopSession {
+    pub fn find_pending_tool_call(&self, tool_call_id: &str) -> Option<ChatToolCall> {
+        self.messages
+            .iter()
+            .rev()
+            .filter_map(|message| message.tool_calls.as_ref())
+            .flatten()
+            .find(|call| call.id == tool_call_id)
+            .cloned()
+    }
+
     pub fn llm_telemetry(&self) -> LlmRequestTelemetry {
         LlmRequestTelemetry {
             request_id: self.request_id.clone(),
@@ -77,7 +93,7 @@ impl AgentLoopSession {
             .max_wall_clock_ms
             .saturating_sub(elapsed_ms);
         let next_incomplete_task = self
-            .active_activity_plan
+            .cached_activity_plan_projection
             .as_ref()
             .and_then(|plan| {
                 plan.items.iter().find(|item| {
@@ -88,11 +104,24 @@ impl AgentLoopSession {
                     )
                 })
             })
-            .map(|item| item.title.clone());
+            .map(|item| item.title.clone())
+            .or_else(|| orientation_active_task_title(&self.objective_orientation));
+        let task_focus_active = self.cached_activity_plan_projection.is_some()
+            || !matches!(
+                self.objective_orientation,
+                ObjectiveOrientation::Freeform { .. }
+            );
         json!({
             "schema": "den.runtime_state.v1",
             "state": "active",
             "source": "native_agent_loop_session",
+            "run": {
+                "run_id": self.run_id.as_deref(),
+                "stance": self.profile.as_str(),
+                "governance": self.governance.as_str(),
+                "objective_orientation_kind": self.objective_orientation.kind(),
+                "focused_job_id": focused_job_id(&self.objective_orientation),
+            },
             "active_turn": {
                 "present": true,
                 "step": self.step,
@@ -109,6 +138,9 @@ impl AgentLoopSession {
             },
             "agent_loop_control": serde_json::to_value(&self.agent_loop_control).unwrap_or_else(|_| json!({
                 "level": self.agent_loop_control.level.as_str(),
+            })),
+            "objective_orientation": serde_json::to_value(&self.objective_orientation).unwrap_or_else(|_| json!({
+                "kind": self.objective_orientation.kind(),
             })),
             "checkpoint_state": serde_json::to_value(&self.checkpoint_state).unwrap_or(Value::Null),
             "pending_checkpoint_request": serde_json::to_value(&self.pending_checkpoint_request).unwrap_or(Value::Null),
@@ -139,21 +171,40 @@ impl AgentLoopSession {
                 "last_batch_signature_present": self.turn_budget_state.last_batch_signature.is_some(),
             },
             "task_focus": {
-                "active": self.active_activity_plan.is_some(),
-                "plan_id": self.active_activity_plan.as_ref().map(|plan| plan.id.to_string()),
-                "plan_title": self.active_activity_plan.as_ref().map(|plan| plan.title.clone()),
-                "plan_status": self.active_activity_plan.as_ref().map(|plan| plan.status.clone()),
+                "active": task_focus_active,
+                "plan_id": self.cached_activity_plan_projection.as_ref().map(|plan| plan.id.to_string()),
+                "plan_title": self.cached_activity_plan_projection.as_ref().map(|plan| plan.title.clone()),
+                "plan_status": self.cached_activity_plan_projection.as_ref().map(|plan| plan.status.clone()),
                 "next_incomplete_task_title": next_incomplete_task,
-                "continuation_policy": if self.active_activity_plan.is_some() {
+                "continuation_policy": if task_focus_active {
                     "continue_until_complete_or_blocked"
                 } else {
                     "inactive"
                 },
             },
-            "docket": docket_context_json(self.active_activity_plan.as_ref()),
+            "docket": docket_context_json(self.cached_activity_plan_projection.as_ref(), &self.objective_orientation),
             "last_budget_advisory": last_system_advisory(&self.messages, "Budget advisory:"),
             "last_task_focus_advisory": last_system_advisory(&self.messages, "You are in autonomous implementation mode."),
         })
+    }
+}
+
+fn focused_job_id(orientation: &ObjectiveOrientation) -> Option<&str> {
+    match orientation {
+        ObjectiveOrientation::Focused { job } => Some(job.job_id.as_str()),
+        ObjectiveOrientation::Freeform { .. } | ObjectiveOrientation::Oriented { .. } => None,
+    }
+}
+
+fn orientation_active_task_title(orientation: &ObjectiveOrientation) -> Option<String> {
+    let task_ref = match orientation {
+        ObjectiveOrientation::Focused { job } => job.active_task_ref.as_ref()?,
+        ObjectiveOrientation::Oriented { task } => Some(&task.task_ref)?,
+        ObjectiveOrientation::Freeform { .. } => return None,
+    };
+    match task_ref {
+        crate::agent_loop::OrientationTaskRef::TaskListItem { title, .. }
+        | crate::agent_loop::OrientationTaskRef::DocketTask { title, .. } => title.clone(),
     }
 }
 
@@ -165,7 +216,10 @@ fn pending_tool_call_count(messages: &[ChatMessage]) -> usize {
         .unwrap_or(0)
 }
 
-fn docket_context_json(plan: Option<&TaskListProjection>) -> Value {
+fn docket_context_json(
+    plan: Option<&TaskListProjection>,
+    orientation: &ObjectiveOrientation,
+) -> Value {
     let active_task = plan
         .and_then(|plan| plan.current_item.as_ref())
         .or_else(|| {
@@ -179,15 +233,40 @@ fn docket_context_json(plan: Option<&TaskListProjection>) -> Value {
                 })
             })
         });
+    let orientation_task_ref = match orientation {
+        ObjectiveOrientation::Focused { job } => job.active_task_ref.as_ref(),
+        ObjectiveOrientation::Oriented { task } => Some(&task.task_ref),
+        ObjectiveOrientation::Freeform { .. } => None,
+    };
     json!({
         "active_job_id": plan
             .and_then(|plan| plan.source_ref.docket_job_id.clone())
+            .or_else(|| focused_job_id(orientation).map(str::to_string))
             .or_else(|| plan.map(|plan| plan.id.to_string())),
         "active_run_id": Value::Null,
-        "active_task_id": active_task.and_then(|item| item.source_ref.docket_task_id.clone()),
-        "active_task_title": active_task.map(|item| item.title.clone()),
-        "source": if plan.is_some() { "task_focus_projection" } else { "none" },
+        "active_task_id": active_task
+            .and_then(|item| item.source_ref.docket_task_id.clone())
+            .or_else(|| orientation_docket_task_id(orientation_task_ref)),
+        "active_task_title": active_task
+            .map(|item| item.title.clone())
+            .or_else(|| orientation_active_task_title(orientation)),
+        "source": if plan.is_some() {
+            "task_focus_projection"
+        } else if !matches!(orientation, ObjectiveOrientation::Freeform { .. }) {
+            "objective_orientation"
+        } else {
+            "none"
+        },
     })
+}
+
+fn orientation_docket_task_id(
+    task_ref: Option<&crate::agent_loop::OrientationTaskRef>,
+) -> Option<String> {
+    match task_ref? {
+        crate::agent_loop::OrientationTaskRef::DocketTask { task_id, .. } => Some(task_id.clone()),
+        crate::agent_loop::OrientationTaskRef::TaskListItem { .. } => None,
+    }
 }
 
 fn last_system_advisory(messages: &[ChatMessage], prefix: &str) -> Option<Value> {
@@ -236,10 +315,6 @@ pub struct AgentLoopSessionStore {
 }
 
 impl AgentLoopSessionStore {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn insert(&self, session: AgentLoopSession) {
         let key = session.session_key.clone();
         self.inner
@@ -287,4 +362,163 @@ impl AgentLoopSessionStore {
 
 pub fn agent_loop_session_key(conversation_id: &str, client_session_id: &str) -> String {
     format!("{conversation_id}:{client_session_id}")
+}
+
+#[cfg(test)]
+mod tests {
+    use den_core::profile::BearProfile;
+
+    use crate::agent_loop::{
+        resolve_agent_loop_control, AgentLoopControlResolutionInput, FreeformPolicy,
+        JobOrientation, ObjectiveOrientation, PostMutationVerificationWindow, StrategyProfile,
+        ToolCallBudgetLimits,
+    };
+
+    use super::*;
+
+    fn test_session(objective_orientation: ObjectiveOrientation) -> AgentLoopSession {
+        AgentLoopSession {
+            session_key: "den-conv-test:client-test".to_string(),
+            bear_id: Uuid::nil(),
+            bear_slug: "test-bear".to_string(),
+            user_id: Some(7),
+            conversation_id: "den-conv-test".to_string(),
+            client_session_id: "client-test".to_string(),
+            workspace_roots: vec!["/workspace".to_string()],
+            request_id: Some("request-test".to_string()),
+            run_id: Some("run-test".to_string()),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            budget_components: Default::default(),
+            model: "openai/test".to_string(),
+            model_context_window: None,
+            model_max_output_tokens: None,
+            bifrost_virtual_key: None,
+            api_style: None,
+            step: 0,
+            turn_budget: TurnBudgetPolicy {
+                max_wall_clock_ms: 60_000,
+                emergency_hard_steps: 16,
+                tool_call_limits: ToolCallBudgetLimits {
+                    total: 8,
+                    read: 6,
+                    search: 4,
+                    fetch: 2,
+                    execute: 2,
+                    write: 2,
+                    destructive: 1,
+                    other: 2,
+                },
+                max_consecutive_tool_failures: 2,
+                max_same_tool_signature_repeats: 1,
+                post_mutation_verification_window: Some(PostMutationVerificationWindow {
+                    replenish_read: 2,
+                    replenish_search: 1,
+                }),
+            },
+            turn_budget_state: Default::default(),
+            agent_loop_control: resolve_agent_loop_control(AgentLoopControlResolutionInput {
+                model_handle: Some("openai/test"),
+                model_default: None,
+                bear_override: None,
+                stance_override: None,
+                task_escalation: None,
+                stance: Some(BearProfile::Pair),
+                objective_orientation: Some(&objective_orientation),
+                pre_risk: false,
+            }),
+            governance: Governance::Interactive,
+            objective_orientation,
+            checkpoint_state: Default::default(),
+            pending_checkpoint_request: None,
+            pending_checkpoint_task_action: None,
+            pending_checkpoint_recovery_attempts: 0,
+            strategy: StrategyProfile::plain_react(),
+            stream_tokens: true,
+            key_memory_projection_cache_key: None,
+            latest_context_budget: None,
+            latest_projected_memory: None,
+            latest_recalled_memory: None,
+            cached_activity_plan_projection: None,
+            profile: BearProfile::Pair,
+            overflow_retry_attempted: false,
+            overflow_compaction_recovered: false,
+        }
+    }
+
+    #[test]
+    fn runtime_snapshot_includes_run_orientation_without_focus() {
+        let session = test_session(ObjectiveOrientation::Freeform {
+            policy: FreeformPolicy::closed(),
+        });
+
+        let snapshot = session.session_info_runtime_snapshot();
+        let run = &snapshot["run"];
+
+        assert_eq!(run["run_id"], "run-test");
+        assert_eq!(run["stance"], "pair");
+        assert_eq!(run["governance"], "interactive");
+        assert_eq!(run["objective_orientation_kind"], "freeform");
+        assert!(run["focused_job_id"].is_null());
+    }
+
+    #[test]
+    fn runtime_snapshot_uses_session_governance() {
+        let mut session = test_session(ObjectiveOrientation::Freeform {
+            policy: FreeformPolicy::closed(),
+        });
+        session.governance = Governance::AutonomousContinuation;
+
+        let snapshot = session.session_info_runtime_snapshot();
+
+        assert_eq!(snapshot["run"]["governance"], "autonomous_continuation");
+    }
+
+    #[test]
+    fn runtime_snapshot_includes_focused_job_id() {
+        let session = test_session(ObjectiveOrientation::Focused {
+            job: JobOrientation {
+                job_id: "job-123".to_string(),
+                active_task_ref: None,
+                mutable: true,
+            },
+        });
+
+        let snapshot = session.session_info_runtime_snapshot();
+        let run = &snapshot["run"];
+
+        assert_eq!(run["objective_orientation_kind"], "focused");
+        assert_eq!(run["focused_job_id"], "job-123");
+        assert_eq!(snapshot["task_focus"]["active"], true);
+        assert_eq!(snapshot["docket"]["active_job_id"], "job-123");
+        assert_eq!(snapshot["docket"]["source"], "objective_orientation");
+    }
+
+    #[test]
+    fn runtime_snapshot_uses_orientation_task_without_plan() {
+        let session = test_session(ObjectiveOrientation::Oriented {
+            task: crate::agent_loop::TaskOrientation {
+                task_ref: crate::agent_loop::OrientationTaskRef::DocketTask {
+                    job_id: Some("job-123".to_string()),
+                    task_id: "task-456".to_string(),
+                    title: Some("Ship the smallest slice".to_string()),
+                },
+                child_policy: Default::default(),
+            },
+        });
+
+        let snapshot = session.session_info_runtime_snapshot();
+
+        assert_eq!(snapshot["task_focus"]["active"], true);
+        assert_eq!(
+            snapshot["task_focus"]["next_incomplete_task_title"],
+            "Ship the smallest slice"
+        );
+        assert_eq!(snapshot["docket"]["active_task_id"], "task-456");
+        assert_eq!(
+            snapshot["docket"]["active_task_title"],
+            "Ship the smallest slice"
+        );
+        assert_eq!(snapshot["docket"]["source"], "objective_orientation");
+    }
 }

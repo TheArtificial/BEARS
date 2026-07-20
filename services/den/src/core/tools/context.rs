@@ -24,8 +24,9 @@ use den_core::tools::{
         PromptMemoryBlock, PromptMemoryBlockPatch, PromptMemoryBlockWrite, PromptMemoryStore,
     },
     review::{
-        ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ObservationRecord,
-        ObservationWriteRequest, RequestReviewRequest, ResolveProposalRequest,
+        ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryProposalStatus,
+        MemoryReviewStore, ObservationRecord, ObservationWriteRequest, RequestReviewRequest,
+        ResolveProposalRequest,
     },
     web::{WebApproval, WebFetchAudit, WebFetcher, WebHttpResponse, WebUrl},
     work_surface::{ScaffoldRequest, WorkSurfaceOps, WorkSurfaceScaffoldOutcome},
@@ -252,7 +253,7 @@ impl MemoryReviewStore for DenToolContext<'_> {
     async fn list_proposals(
         &self,
         bear_id: Uuid,
-        status: Option<String>,
+        status: Option<MemoryProposalStatus>,
         limit: i64,
     ) -> Result<Value, DenError> {
         self.review().list_proposals(bear_id, status, limit).await

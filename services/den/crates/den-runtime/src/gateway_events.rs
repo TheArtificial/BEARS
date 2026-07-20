@@ -94,6 +94,45 @@ pub enum GatewayEvent {
     },
 }
 
+impl GatewayEvent {
+    pub fn adapter_type(&self) -> &'static str {
+        match self {
+            Self::AssistantTextDelta { .. } => "assistant_text_delta",
+            Self::ReasoningTextDelta { .. } => "reasoning_text_delta",
+            Self::StatusText { .. } => "status_text",
+            Self::TurnComplete { .. } => "turn_complete",
+            Self::TurnResult { .. } => "turn_result",
+            Self::Error { .. } => "error",
+            Self::ToolRequest { .. } => "tool_request",
+            Self::PermissionRequest { .. } => "permission_request",
+            Self::PlanUpdate { .. }
+            | Self::PlanUpdateJson { .. }
+            | Self::PlanApprovalFallback { .. } => "plan_update",
+            Self::ModeUpdate { .. } => "mode_update",
+            Self::SessionInfoUpdate { .. } => "session_info_update",
+            Self::ConversationResolved { .. } => "conversation_resolved",
+        }
+    }
+
+    pub fn has_visible_output(&self) -> bool {
+        match self {
+            Self::AssistantTextDelta { text } | Self::StatusText { text } => !text.is_empty(),
+            Self::ReasoningTextDelta { .. } => false,
+            Self::Error { .. } => true,
+            Self::TurnComplete { .. }
+            | Self::TurnResult { .. }
+            | Self::ToolRequest { .. }
+            | Self::PermissionRequest { .. }
+            | Self::PlanApprovalFallback { .. } => true,
+            Self::PlanUpdate { .. }
+            | Self::PlanUpdateJson { .. }
+            | Self::ModeUpdate { .. }
+            | Self::ConversationResolved { .. }
+            | Self::SessionInfoUpdate { .. } => false,
+        }
+    }
+}
+
 pub fn provider_inner(msg: &serde_json::Value) -> &serde_json::Value {
     match msg.get("contents") {
         Some(c) if c.get("message_type").is_some() => c,
@@ -711,25 +750,35 @@ fn tool_call_value<'a>(
         })
 }
 
+fn lookup_field<'a>(
+    sources: &[Option<&'a serde_json::Value>],
+    paths: &[&[&str]],
+) -> Option<&'a serde_json::Value> {
+    sources
+        .iter()
+        .filter_map(|source| *source)
+        .find_map(|source| {
+            paths.iter().find_map(|path| {
+                let mut value = source;
+                for segment in *path {
+                    value = value.get(*segment)?;
+                }
+                Some(value)
+            })
+        })
+}
+
 fn tool_call_id(
     tool_call: Option<&serde_json::Value>,
     inner: &serde_json::Value,
     event: &serde_json::Value,
 ) -> Option<String> {
-    tool_call
-        .and_then(|v| v.get("tool_call_id"))
-        .or_else(|| tool_call.and_then(|v| v.get("id")))
-        .or_else(|| {
-            tool_call
-                .and_then(|v| v.get("function"))
-                .and_then(|f| f.get("tool_call_id"))
-        })
-        .or_else(|| inner.get("tool_call_id"))
-        .or_else(|| inner.get("id"))
-        .or_else(|| event.get("tool_call_id"))
-        .or_else(|| event.get("id"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
+    lookup_field(
+        &[tool_call, Some(inner), Some(event)],
+        &[&["tool_call_id"], &["id"], &["function", "tool_call_id"]],
+    )
+    .and_then(|v| v.as_str())
+    .map(str::to_string)
 }
 
 fn tool_call_name<'a>(
@@ -737,19 +786,12 @@ fn tool_call_name<'a>(
     inner: &'a serde_json::Value,
     event: &'a serde_json::Value,
 ) -> Option<&'a str> {
-    tool_call
-        .and_then(|v| v.get("name"))
-        .or_else(|| {
-            tool_call
-                .and_then(|v| v.get("function"))
-                .and_then(|f| f.get("name"))
-        })
-        .or_else(|| inner.get("tool_name"))
-        .or_else(|| inner.get("name"))
-        .or_else(|| event.get("tool_name"))
-        .or_else(|| event.get("name"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
+    lookup_field(
+        &[tool_call, Some(inner), Some(event)],
+        &[["name"].as_slice(), &["function", "name"], &["tool_name"]],
+    )
+    .and_then(|v| v.as_str())
+    .filter(|s| !s.is_empty())
 }
 
 fn tool_call_args_raw<'a>(
@@ -757,21 +799,15 @@ fn tool_call_args_raw<'a>(
     inner: &'a serde_json::Value,
     event: &'a serde_json::Value,
 ) -> Option<&'a serde_json::Value> {
-    tool_call
-        .and_then(|v| v.get("input"))
-        .or_else(|| tool_call.and_then(|v| v.get("arguments")))
-        .or_else(|| tool_call.and_then(|v| v.get("args")))
-        .or_else(|| {
-            tool_call
-                .and_then(|v| v.get("function"))
-                .and_then(|f| f.get("arguments"))
-        })
-        .or_else(|| inner.get("input"))
-        .or_else(|| inner.get("args"))
-        .or_else(|| inner.get("arguments"))
-        .or_else(|| event.get("input"))
-        .or_else(|| event.get("args"))
-        .or_else(|| event.get("arguments"))
+    lookup_field(
+        &[tool_call, Some(inner), Some(event)],
+        &[
+            &["input"],
+            &["arguments"],
+            &["args"],
+            &["function", "arguments"],
+        ],
+    )
 }
 
 pub fn map_provider_stream_event_to_gateway_event_with_accumulator(
@@ -806,42 +842,11 @@ pub fn conversation_resolved_gateway_event(event: &serde_json::Value) -> Option<
 }
 
 pub fn gateway_event_adapter_type(event: &GatewayEvent) -> &'static str {
-    match event {
-        GatewayEvent::AssistantTextDelta { .. } => "assistant_text_delta",
-        GatewayEvent::ReasoningTextDelta { .. } => "reasoning_text_delta",
-        GatewayEvent::StatusText { .. } => "status_text",
-        GatewayEvent::TurnComplete { .. } => "turn_complete",
-        GatewayEvent::TurnResult { .. } => "turn_result",
-        GatewayEvent::Error { .. } => "error",
-        GatewayEvent::ToolRequest { .. } => "tool_request",
-        GatewayEvent::PermissionRequest { .. } => "permission_request",
-        GatewayEvent::PlanUpdate { .. }
-        | GatewayEvent::PlanUpdateJson { .. }
-        | GatewayEvent::PlanApprovalFallback { .. } => "plan_update",
-        GatewayEvent::ModeUpdate { .. } => "mode_update",
-        GatewayEvent::SessionInfoUpdate { .. } => "session_info_update",
-        GatewayEvent::ConversationResolved { .. } => "conversation_resolved",
-    }
+    event.adapter_type()
 }
 
 pub fn gateway_event_has_visible_output(event: &GatewayEvent) -> bool {
-    match event {
-        GatewayEvent::AssistantTextDelta { text } | GatewayEvent::StatusText { text } => {
-            !text.is_empty()
-        }
-        GatewayEvent::ReasoningTextDelta { .. } => false,
-        GatewayEvent::Error { .. } => true,
-        GatewayEvent::TurnComplete { .. }
-        | GatewayEvent::TurnResult { .. }
-        | GatewayEvent::ToolRequest { .. }
-        | GatewayEvent::PermissionRequest { .. }
-        | GatewayEvent::PlanApprovalFallback { .. } => true,
-        GatewayEvent::PlanUpdate { .. }
-        | GatewayEvent::PlanUpdateJson { .. }
-        | GatewayEvent::ModeUpdate { .. }
-        | GatewayEvent::ConversationResolved { .. }
-        | GatewayEvent::SessionInfoUpdate { .. } => false,
-    }
+    event.has_visible_output()
 }
 
 pub fn gateway_event_to_adapter_sse(event: GatewayEvent) -> Bytes {

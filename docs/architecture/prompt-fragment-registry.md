@@ -226,7 +226,7 @@ Dynamic turn layers may continue to use specialized caches such as key-memory pr
 - Keep runtime-authored templates compile-time-only.
 - Keep generated structural text in Rust when it is primarily derived data, not prose.
 - Do not hardcode prompt text in Rust source. Add prompt prose as repository context fragments, or store runtime-configured prompt prose in the database with explicit defaults alongside the fragment/configuration model.
-- Do not ask the model to choose among branches when Den already has the state needed to choose. Render only the applicable instruction whenever runtime state such as permission mode, governance mode, budget, or active execution state is known before the model call.
+- Do not ask the model to choose among branches when Den already has the state needed to choose. Render only the applicable instruction whenever runtime state such as permission mode, governance, budget, or active execution state is known before the model call.
 
 ### Deterministic instruction selection
 

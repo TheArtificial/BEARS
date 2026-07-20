@@ -3,6 +3,8 @@ use std::cmp::Ordering;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::text::truncate_chars;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeConversationRow {
     pub id: String,
@@ -102,20 +104,20 @@ pub fn cmp_runtime_conversation_row_newest_first(
     }
 }
 
-pub fn runtime_messages_top_array(value: &Value) -> &[Value] {
-    if let Some(a) = value.as_array() {
-        return a.as_slice();
+fn top_array_from_keys<'a>(value: &'a Value, keys: &[&str]) -> &'a [Value] {
+    if let Some(array) = value.as_array() {
+        return array.as_slice();
     }
-    if let Some(a) = value.get("messages").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = value.get("data").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = value.get("items").and_then(|x| x.as_array()) {
-        return a.as_slice();
+    for key in keys {
+        if let Some(array) = value.get(*key).and_then(Value::as_array) {
+            return array.as_slice();
+        }
     }
     &[]
+}
+
+pub fn runtime_messages_top_array(value: &Value) -> &[Value] {
+    top_array_from_keys(value, &["messages", "data", "items"])
 }
 
 pub fn summarize_runtime_messages(value: Option<&Value>) -> Vec<String> {
@@ -144,10 +146,7 @@ pub fn summarize_runtime_messages(value: Option<&Value>) -> Vec<String> {
             if content.is_empty() {
                 None
             } else {
-                Some(format!(
-                    "{role}: {}",
-                    truncate_runtime_message(content, 300)
-                ))
+                Some(format!("{role}: {}", truncate_chars(content, 300)))
             }
         })
         .take(20)
@@ -155,34 +154,10 @@ pub fn summarize_runtime_messages(value: Option<&Value>) -> Vec<String> {
 }
 
 pub fn runtime_conversations_top_array(value: &Value) -> &[Value] {
-    if let Some(a) = value.as_array() {
-        return a.as_slice();
-    }
-    if let Some(a) = value.get("conversations").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = value.get("data").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    if let Some(a) = value.get("items").and_then(|x| x.as_array()) {
-        return a.as_slice();
-    }
-    &[]
+    top_array_from_keys(value, &["conversations", "data", "items"])
 }
 
-pub fn truncate_runtime_message(value: &str, max_chars: usize) -> String {
-    let mut out = String::new();
-    for (idx, ch) in value.chars().enumerate() {
-        if idx >= max_chars {
-            out.push('…');
-            break;
-        }
-        out.push(ch);
-    }
-    out
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeSemanticGroupKind {
     UserTurn,
     AssistantReply,
@@ -192,6 +167,21 @@ pub enum RuntimeSemanticGroupKind {
     ArtifactUpdate,
     PriorCompactionArtifact,
     SystemEvent,
+}
+
+impl RuntimeSemanticGroupKind {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::UserTurn => "UserTurn",
+            Self::AssistantReply => "AssistantReply",
+            Self::ToolInteraction => "ToolInteraction",
+            Self::ApprovalInteraction => "ApprovalInteraction",
+            Self::WorkflowUpdate => "WorkflowUpdate",
+            Self::ArtifactUpdate => "ArtifactUpdate",
+            Self::PriorCompactionArtifact => "PriorCompactionArtifact",
+            Self::SystemEvent => "SystemEvent",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -233,8 +223,21 @@ pub struct RuntimeCompactionArtifactRef {
 pub enum RuntimeCompactionTriggerKind {
     TokenPressure,
     SemanticGroupCount,
+    ConversationReview,
     Manual,
     ModelSafetyMargin,
+}
+
+impl RuntimeCompactionTriggerKind {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::TokenPressure => "TokenPressure",
+            Self::SemanticGroupCount => "SemanticGroupCount",
+            Self::ConversationReview => "ConversationReview",
+            Self::Manual => "Manual",
+            Self::ModelSafetyMargin => "ModelSafetyMargin",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

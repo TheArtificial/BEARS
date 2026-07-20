@@ -1,18 +1,21 @@
 use den_core::config::Config;
 use den_core::DenError;
 use den_docket::{
-    DocketExecutionLookup, DocketService, PgDocketService, TaskListCheckoutRequest,
-    TaskListCheckoutSource, TaskListProjection,
+    task_list_projection_from_session_tasks, DocketExecutionSessionRow, DocketService,
+    DocketTaskListFilter, PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource,
+    TaskListProjection,
 };
 use den_memory::MemoryStoreManager;
-use den_service::bears::{
-    db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear,
+use den_service::{
+    bears::{db as bears_db, model::BearProfile, provision::profile_prompt_text, Bear},
+    client_sessions,
 };
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::llm::ChatMessage;
+use bearwire_protocol::wire::BearWireEvent;
 use den_core::tools::work_surface::WorkSurfaceSessionHints;
 
 use super::{
@@ -27,11 +30,13 @@ use super::{
     runtime_context::{
         assemble_den_owned_runtime_supplement, runtime_context_already_includes_den_owned_blocks,
     },
+    FreeformPolicy, ObjectiveOrientation, ObjectiveOrientationResolutionInput, OrientationTaskRef,
 };
 use crate::context_budget::AssembledTurnBudgetComponents;
 use crate::runtime::compaction::{
     on_turn_assemble_compaction, render_compaction_prompt_context, CompactionMode,
 };
+use crate::runtime::focus_context::active_docket_execution_lookup;
 
 #[derive(Debug, Clone)]
 pub struct AssembleTurnContext<'a> {
@@ -91,43 +96,72 @@ pub struct AssembledNativeTurn {
     /// disabled, skipped (e.g. empty query), or failed best-effort.
     pub recall_diagnostic: Option<Value>,
     pub budget_components: AssembledTurnBudgetComponents,
-    pub active_activity_plan: Option<TaskListProjection>,
+    pub cached_activity_plan_projection: Option<TaskListProjection>,
+    pub objective_orientation: ObjectiveOrientation,
 }
 
-async fn load_active_activity_plan(
+async fn load_cached_activity_plan_projection(
     ctx: &AssembleTurnContext<'_>,
+    service: &PgDocketService,
+    active_execution: Option<&DocketExecutionSessionRow>,
 ) -> Result<Option<TaskListProjection>, DenError> {
     let Some(user_id) = ctx.user_id else {
         return Ok(None);
     };
-    let service = PgDocketService::from_pool(ctx.pool);
-    let Some(execution) = service
-        .get_active_execution_session(
-            ctx.bear_id,
-            ctx.profile,
-            DocketExecutionLookup {
-                session_id: ctx.session_id.map(str::to_string),
-                source_conversation_id: Some(ctx.conversation_id.to_string()),
-                source_client_session_id: ctx.session_id.map(str::to_string),
-            },
-        )
-        .await?
+    if let Some(execution) = active_execution {
+        return service
+            .checkout_task_list(
+                ctx.bear_id,
+                ctx.profile,
+                user_id,
+                TaskListCheckoutRequest {
+                    source: TaskListCheckoutSource::DocketJob {
+                        job_id: execution.job_id,
+                        parent_task_id: None,
+                    },
+                },
+            )
+            .await;
+    }
+    load_session_anchored_activity_plan(ctx, service).await
+}
+
+async fn load_session_anchored_activity_plan(
+    ctx: &AssembleTurnContext<'_>,
+    service: &PgDocketService,
+) -> Result<Option<TaskListProjection>, DenError> {
+    let (Some(user_id), Some(client_session_id)) = (ctx.user_id, ctx.session_id) else {
+        return Ok(None);
+    };
+    let Some(session) = client_sessions::find_for_user_bear_session_id(
+        ctx.pool,
+        user_id,
+        ctx.bear_id,
+        client_session_id,
+    )
+    .await?
     else {
         return Ok(None);
     };
-    service
-        .checkout_task_list(
+    let session_anchor_id = session.id;
+    let tasks = service
+        .list_tasks(
             ctx.bear_id,
-            ctx.profile,
-            user_id,
-            TaskListCheckoutRequest {
-                source: TaskListCheckoutSource::DocketJob {
-                    job_id: execution.job_id,
-                    parent_task_id: None,
-                },
+            DocketTaskListFilter {
+                session_anchor_id: Some(session_anchor_id),
+                include_descendants: false,
+                limit: 100,
+                ..DocketTaskListFilter::default()
             },
         )
-        .await
+        .await?;
+    Ok(task_list_projection_from_session_tasks(
+        ctx.bear_id,
+        ctx.profile,
+        ctx.conversation_id,
+        session_anchor_id,
+        &tasks,
+    ))
 }
 
 pub fn projected_memory_session_diagnostic(projection: &KeyMemoryProjectionResult) -> Value {
@@ -195,6 +229,127 @@ pub fn recalled_memory_session_diagnostic(recall: Option<&Value>) -> Value {
             "next_surface": "memory_search / future recall diagnostic",
         }),
     }
+}
+
+fn objective_orientation_event_payload(
+    profile: BearProfile,
+    conversation_id: &str,
+    orientation: &ObjectiveOrientation,
+) -> Result<Value, DenError> {
+    Ok(json!({
+        "source": "turn_assembly",
+        "profile": profile.as_str(),
+        "conversation_id": conversation_id,
+        "kind": orientation.kind(),
+        "orientation": serde_json::to_value(orientation).map_err(|err| {
+            DenError::System(format!("serialize objective orientation failed: {err}"))
+        })?,
+    }))
+}
+
+async fn record_objective_orientation_event(
+    ctx: &AssembleTurnContext<'_>,
+    orientation: &ObjectiveOrientation,
+) -> Result<(), DenError> {
+    let Some(session_id) = ctx.session_id else {
+        return Ok(());
+    };
+    let payload =
+        objective_orientation_event_payload(ctx.profile, ctx.conversation_id, orientation)?;
+    let latest = crate::bearwire_events::latest_bearwire_event_of_type(
+        ctx.pool,
+        session_id,
+        "runtime.objective_orientation",
+    )
+    .await?;
+    // ponytail: de-dupe only against the latest same-session orientation event. If we need
+    // cross-session coalescing or strict transition semantics, add a conversation-scoped key.
+    if latest
+        .as_ref()
+        .map(|row| row.event.data == payload)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    let mut event = BearWireEvent::ephemeral("runtime.objective_orientation", payload);
+    event.bear_id = Some(ctx.bear_id.to_string());
+    event.role = Some(ctx.profile.as_str().to_string());
+    event.human_id = ctx.user_id.map(|id| id.to_string());
+    crate::bearwire_events::append_bearwire_event(
+        ctx.pool,
+        session_id,
+        Some(ctx.bear_id),
+        ctx.user_id,
+        event,
+    )
+    .await?;
+    Ok(())
+}
+
+fn objective_orientation_input(
+    cached_activity_plan_projection: Option<&TaskListProjection>,
+    active_execution: Option<&DocketExecutionSessionRow>,
+    work_enabled: bool,
+) -> ObjectiveOrientationResolutionInput {
+    ObjectiveOrientationResolutionInput {
+        focused_job_id: cached_activity_plan_projection
+            .and_then(|plan| plan.source_ref.docket_job_id.clone())
+            .or_else(|| active_execution.map(|execution| execution.job_id.to_string())),
+        focused_job_mutable: true,
+        active_task_ref: cached_activity_plan_projection
+            .and_then(active_orientation_task_ref)
+            .or_else(|| {
+                active_execution.and_then(|execution| {
+                    execution
+                        .task_id
+                        .map(|task_id| OrientationTaskRef::DocketTask {
+                            job_id: Some(execution.job_id.to_string()),
+                            task_id: task_id.to_string(),
+                            title: None,
+                        })
+                })
+            }),
+        freeform_policy: if work_enabled {
+            FreeformPolicy::task_definition_permitted()
+        } else {
+            FreeformPolicy::closed()
+        },
+    }
+}
+
+fn active_orientation_task_ref(plan: &TaskListProjection) -> Option<OrientationTaskRef> {
+    if plan.status == "planned" {
+        return None;
+    }
+
+    let item = plan.current_item.as_ref().or_else(|| {
+        plan.items.iter().find(|item| {
+            matches!(
+                item.status,
+                den_docket::TaskListItemStatus::InProgress
+                    | den_docket::TaskListItemStatus::Pending
+            )
+        })
+    })?;
+
+    if let Some(task_id) = item.source_ref.docket_task_id.clone() {
+        return Some(OrientationTaskRef::DocketTask {
+            job_id: item
+                .source_ref
+                .docket_job_id
+                .clone()
+                .or_else(|| plan.source_ref.docket_job_id.clone()),
+            task_id,
+            title: Some(item.title.clone()),
+        });
+    }
+
+    Some(OrientationTaskRef::TaskListItem {
+        task_list_id: plan.id.to_string(),
+        item_id: item.id.clone(),
+        title: Some(item.title.clone()),
+    })
 }
 
 /// Best-effort `## Recalled memory` section (ADR-0038 Phase 2). Returns the rendered block and
@@ -336,7 +491,22 @@ pub async fn assemble_native_turn_for_bear(
         ctx.profile,
     )
     .await?;
-    let active_activity_plan = load_active_activity_plan(&ctx).await?;
+    let docket = PgDocketService::from_pool(ctx.pool);
+    let active_execution = docket
+        .get_active_execution_session(
+            ctx.bear_id,
+            ctx.profile,
+            active_docket_execution_lookup(ctx.session_id, ctx.conversation_id),
+        )
+        .await?;
+    let cached_activity_plan_projection =
+        load_cached_activity_plan_projection(&ctx, &docket, active_execution.as_ref()).await?;
+    let objective_orientation = super::resolve_objective_orientation(objective_orientation_input(
+        cached_activity_plan_projection.as_ref(),
+        active_execution.as_ref(),
+        bear.work_enabled,
+    ));
+    record_objective_orientation_event(&ctx, &objective_orientation).await?;
 
     let mut system_text = compiled_prompt;
     if let Some(block) = render_key_memory_projection_block(&projection) {
@@ -367,15 +537,13 @@ pub async fn assemble_native_turn_for_bear(
             .workspace_roots
             .map(|items| items.to_vec())
             .unwrap_or_default();
-        let client_context = ctx.client_context.cloned().unwrap_or_default();
         let supplement = assemble_den_owned_runtime_supplement(
             ctx.pool,
             ctx.bear_id,
             ctx.profile.as_str(),
             session_id,
             &roots,
-            &client_context,
-            compaction_state.as_ref(),
+            &objective_orientation,
         )
         .await?;
         if !supplement.trim().is_empty() {
@@ -478,6 +646,119 @@ pub async fn assemble_native_turn_for_bear(
         key_memory_projection: Some(projection),
         recall_diagnostic,
         budget_components,
-        active_activity_plan,
+        cached_activity_plan_projection,
+        objective_orientation,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_docket_execution_lookup_keeps_conversation_restore_path() {
+        let lookup = active_docket_execution_lookup(Some("session-1"), "conversation-1");
+
+        assert_eq!(lookup.session_id.as_deref(), Some("session-1"));
+        assert_eq!(
+            lookup.source_client_session_id.as_deref(),
+            Some("session-1")
+        );
+        assert_eq!(
+            lookup.source_conversation_id.as_deref(),
+            Some("conversation-1")
+        );
+    }
+
+    #[test]
+    fn active_docket_execution_lookup_restores_without_live_session() {
+        let lookup = active_docket_execution_lookup(None, "conversation-1");
+
+        assert!(lookup.session_id.is_none());
+        assert!(lookup.source_client_session_id.is_none());
+        assert_eq!(
+            lookup.source_conversation_id.as_deref(),
+            Some("conversation-1")
+        );
+    }
+
+    #[test]
+    fn headless_execution_without_user_projection_focuses_its_job() {
+        let job_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let execution = DocketExecutionSessionRow {
+            id: Uuid::nil(),
+            bear_id: Uuid::nil(),
+            owner_profile: "work".to_string(),
+            session_id: "headless-session".to_string(),
+            source_conversation_id: None,
+            source_client_session_id: Some("headless-session".to_string()),
+            job_id,
+            run_id: Uuid::nil(),
+            task_id: Some(task_id),
+            state: "active".to_string(),
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        };
+
+        let orientation = crate::agent_loop::resolve_objective_orientation(
+            objective_orientation_input(None, Some(&execution), true),
+        );
+        assert_eq!(
+            orientation,
+            ObjectiveOrientation::Focused {
+                job: crate::agent_loop::JobOrientation {
+                    job_id: job_id.to_string(),
+                    active_task_ref: Some(OrientationTaskRef::DocketTask {
+                        job_id: Some(job_id.to_string()),
+                        task_id: task_id.to_string(),
+                        title: None,
+                    }),
+                    mutable: true,
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn planned_activity_plan_does_not_orient_to_task() {
+        let task_list_id = Uuid::parse_str("00000000-0000-0000-0000-000000000123").unwrap();
+        let task_id = Uuid::parse_str("00000000-0000-0000-0000-000000000456").unwrap();
+        let item = den_docket::TaskListItem {
+            id: task_id.to_string(),
+            title: "Plan-only task".to_string(),
+            summary: None,
+            status: den_docket::TaskListItemStatus::Pending,
+            blocked_reason: None,
+            source_ref: den_docket::TaskListSourceRef::docket_task(
+                None,
+                task_id.to_string(),
+                vec![format!("docket_task:{task_id}")],
+            ),
+            sync_state: den_docket::TaskListSyncState::Clean,
+        };
+        let plan = TaskListProjection {
+            id: task_list_id,
+            bear_id: Uuid::parse_str("00000000-0000-0000-0000-000000000789").unwrap(),
+            title: "Session tasks".to_string(),
+            summary: "Planned session tasks".to_string(),
+            owner_profile: "pair".to_string(),
+            visibility: "private_to_profile".to_string(),
+            status: "planned".to_string(),
+            version: 1,
+            source_ref: den_docket::TaskListSourceRef::local(vec![format!(
+                "session_anchor:{task_list_id}"
+            )]),
+            items: vec![item.clone()],
+            current_item: Some(item),
+            source_conversation_id: Some("conversation-1".to_string()),
+            source_client_session_id: Some(task_list_id.to_string()),
+            handoff_intent_path: None,
+            handoff_task_id: None,
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        };
+
+        assert!(active_orientation_task_ref(&plan).is_none());
+    }
 }

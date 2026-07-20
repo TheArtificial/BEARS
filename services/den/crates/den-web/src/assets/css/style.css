@@ -31,8 +31,13 @@
 
     --thin-line-unit: 1px;
     --spacing-unit: 0.5em;
-    --chunky-line-unit: calc(var(--spacing-unit) * 0.75);
+    --chunky-line-unit: calc(var(--thin-line-unit) * 2);
+    --box-border-width: var(--chunky-line-unit);
+    --box-border-radius: calc(var(--spacing-unit) * 0.75);
     --shadow-offset: calc(var(--spacing-unit) * 1.25);
+    --shadow-border-radius: var(--box-border-radius);
+    --shadow-pattern-size: 6px;
+    --shadow-pattern-line-width: var(--thin-line-unit);
 
     --logo-font-family: "Geist", sans-serif;
     --logo-font-weight: 700;
@@ -59,6 +64,7 @@
     --selected-text-color: #ffffff;
     --paper-pattern-color: rgba(18, 18, 18, 0.14);
     --hatch-color: #121212;
+    --shadow-pattern-color: rgba(255, 255, 255, 0.18);
     /* Panels / alternate message surfaces (bear chat, etc.) */
     --surface-color: #ffffff;
     /* Text fields, textareas, selects, chat composer — high-contrast fill vs --page-color */
@@ -95,6 +101,7 @@ html.theme-dark {
     --selected-text-color: #121212;
     --paper-pattern-color: rgba(221, 221, 221, 0.16);
     --hatch-color: #DDDDDD;
+    --shadow-pattern-color: rgba(18, 18, 18, 0.2);
     --surface-color: #1a1a1a;
     --field-fill-color: #ffffff;
 }
@@ -108,6 +115,7 @@ html.theme-dark {
         --selected-text-color: #121212;
         --paper-pattern-color: rgba(221, 221, 221, 0.16);
         --hatch-color: #DDDDDD;
+        --shadow-pattern-color: rgba(18, 18, 18, 0.2);
         --surface-color: #1a1a1a;
         --field-fill-color: #ffffff;
     }
@@ -120,6 +128,7 @@ html.theme-dark {
         --selected-text-color: #ffffff;
         --paper-pattern-color: rgba(18, 18, 18, 0.14);
         --hatch-color: #121212;
+        --shadow-pattern-color: rgba(255, 255, 255, 0.18);
         --surface-color: #ffffff;
         --field-fill-color: #ffffff;
     }

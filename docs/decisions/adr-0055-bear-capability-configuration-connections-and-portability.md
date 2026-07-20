@@ -8,7 +8,7 @@
 
 - [ADR-0054: Capability Discovery and Code Mode](adr-0054-capability-discovery-and-code-mode.md)
 - [ADR-0052: Three-Layer Agent Steering](adr-0052-three-layer-agent-steering.md)
-- [ADR-0039: Trust Profiles and Governance Modes](adr-0039-trust-profiles-and-governance-modes.md)
+- [ADR-0039: Trust Profiles and Governance Modes](adr-0039-trust-profiles-and-governance.md)
 - [Capabilities and Skills](../architecture/capabilities-and-skills.md)
 - [Connections and Work Surface Presentation](adr-0040-connections-and-work-surface-presentation.md)
 

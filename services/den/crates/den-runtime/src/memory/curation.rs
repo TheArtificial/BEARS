@@ -1,15 +1,17 @@
 //! Routes Bear cognition writes to per-Bear SQLite when `AGENT_RUNTIME=native`.
 
 use den_core::{config::Config, DenError};
-use serde_json::json;
+use serde::Deserialize;
+use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_memory::{
     self as store, complete_reflection_run_outcome, create_memory_observation,
-    create_memory_proposal, create_reflection_run_outcome, list_memory_proposals,
-    mark_observation_review_queued, promote_to_shared_core, promote_to_shared_core_at_path,
-    resolve_memory_proposal, MemoryStoreManager, SqliteMemoryProposal,
+    create_memory_proposal, create_reflection_run_outcome, get_memory_proposal,
+    list_memory_proposals, mark_observation_review_queued, promote_to_shared_core,
+    promote_to_shared_core_at_path, resolve_memory_proposal, MemoryStoreManager,
+    SqliteMemoryProposal,
 };
 use den_service::bears::BearProfile;
 use den_service::memory_proposals::{
@@ -49,11 +51,7 @@ pub async fn create_proposal(
         &payload,
     )
     .await?;
-    Ok(sqlite_proposal_to_row(
-        params.bear_id,
-        &sqlite,
-        params.source_profile,
-    ))
+    sqlite_proposal_to_row(params.bear_id, &sqlite, params.source_profile)
 }
 
 pub async fn create_observation(
@@ -109,21 +107,23 @@ pub async fn list_proposals(
 ) -> Result<Vec<MemoryProposalRow>, DenError> {
     let store = stores.store_for_bear(bear_id).await?;
     let rows = list_memory_proposals(&store, status, limit).await?;
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(|row| sqlite_proposal_to_row(bear_id, &row, BearProfile::Curate))
-        .collect())
+        .collect()
 }
 
 pub async fn get_proposal(
-    pool: &PgPool,
-    config: &Config,
+    _pool: &PgPool,
+    _config: &Config,
     stores: &MemoryStoreManager,
     bear_id: Uuid,
     proposal_id: Uuid,
 ) -> Result<Option<MemoryProposalRow>, DenError> {
-    let proposals = list_proposals(pool, config, stores, bear_id, None, 500).await?;
-    Ok(proposals.into_iter().find(|row| row.id == proposal_id))
+    let store = stores.store_for_bear(bear_id).await?;
+    get_memory_proposal(&store, &proposal_id.to_string())
+        .await?
+        .map(|row| sqlite_proposal_to_row(bear_id, &row, BearProfile::Curate))
+        .transpose()
 }
 
 pub async fn resolve_proposal(
@@ -148,11 +148,7 @@ pub async fn resolve_proposal(
         &review_payload,
     )
     .await?;
-    Ok(sqlite_proposal_to_row(
-        params.bear_id,
-        &sqlite,
-        params.reviewer_profile,
-    ))
+    sqlite_proposal_to_row(params.bear_id, &sqlite, params.reviewer_profile)
 }
 
 pub async fn promote_core_content(
@@ -164,7 +160,10 @@ pub async fn promote_core_content(
     author_profile: &str,
 ) -> Result<(String, String), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
-    promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile).await
+    let outcome =
+        promote_to_shared_core(&store, source_memory_id, kind, content_text, author_profile)
+            .await?;
+    Ok((outcome.memory_id, outcome.promotion_id))
 }
 
 pub async fn promote_core_content_at_path(
@@ -177,7 +176,7 @@ pub async fn promote_core_content_at_path(
     author_profile: &str,
 ) -> Result<(String, String), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
-    promote_to_shared_core_at_path(
+    let outcome = promote_to_shared_core_at_path(
         &store,
         source_memory_id,
         target_path,
@@ -186,7 +185,8 @@ pub async fn promote_core_content_at_path(
         author_profile,
         None,
     )
-    .await
+    .await?;
+    Ok((outcome.memory_id, outcome.promotion_id))
 }
 
 pub async fn record_reflection_outcome_start(
@@ -198,7 +198,7 @@ pub async fn record_reflection_outcome_start(
     input_summary: Option<&str>,
 ) -> Result<(), DenError> {
     let store = stores.store_for_bear(bear_id).await?;
-    if store::reflection_outcomes::reflection_outcome_exists(&store, run_id).await {
+    if store::reflection_outcomes::reflection_outcome_exists(&store, run_id).await? {
         return Ok(());
     }
     create_reflection_run_outcome(&store, run_id, lane, trigger, input_summary).await
@@ -216,77 +216,67 @@ pub async fn record_reflection_outcome_complete(
     complete_reflection_run_outcome(&store, run_id, status, output_summary, proposal_ids).await
 }
 
+#[derive(Debug, Deserialize)]
+struct SqliteProposalPayload {
+    source_profile: Option<String>,
+    source_agent_id: Option<String>,
+    #[serde(default)]
+    source_paths: Vec<String>,
+    #[serde(default = "empty_json_object")]
+    source_refs: Value,
+    suggested_action: Option<String>,
+    target_ref: Option<String>,
+    title: Option<String>,
+    summary: Option<String>,
+    rationale: Option<String>,
+    proposed_content: Option<String>,
+    proposed_patch: Option<String>,
+    #[serde(default = "empty_json_object")]
+    refs: Value,
+    sensitivity: Option<String>,
+    #[serde(default)]
+    requires_human: bool,
+}
+
+fn empty_json_object() -> Value {
+    json!({})
+}
+
 fn sqlite_proposal_to_row(
     bear_id: Uuid,
     sqlite: &SqliteMemoryProposal,
     source_profile: BearProfile,
-) -> MemoryProposalRow {
-    let p = &sqlite.payload_json;
-    MemoryProposalRow {
-        id: Uuid::parse_str(&sqlite.proposal_id).unwrap_or_else(|_| Uuid::new_v4()),
+) -> Result<MemoryProposalRow, DenError> {
+    let payload: SqliteProposalPayload = serde_json::from_value(sqlite.payload_json.clone())
+        .map_err(|err| DenError::Parsing(format!("invalid memory proposal payload: {err}")))?;
+    let id = Uuid::parse_str(&sqlite.proposal_id).map_err(|err| {
+        DenError::Parsing(format!(
+            "invalid memory proposal id {}: {err}",
+            sqlite.proposal_id
+        ))
+    })?;
+    Ok(MemoryProposalRow {
+        id,
         bear_id,
-        source_profile: p
-            .get("source_profile")
-            .and_then(|v| v.as_str())
-            .unwrap_or(source_profile.as_str())
-            .to_string(),
-        source_agent_id: p
-            .get("source_agent_id")
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        source_paths: p
-            .get("source_paths")
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        source_refs: p.get("source_refs").cloned().unwrap_or_else(|| json!({})),
+        source_profile: payload
+            .source_profile
+            .unwrap_or_else(|| source_profile.as_str().to_string()),
+        source_agent_id: payload.source_agent_id,
+        source_paths: payload.source_paths,
+        source_refs: payload.source_refs,
         proposal_type: "memory_review".to_string(),
-        suggested_action: p
-            .get("suggested_action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("review")
-            .to_string(),
-        target_ref: p
-            .get("target_ref")
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        title: p
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("proposal")
-            .to_string(),
-        summary: p
-            .get("summary")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        rationale: p
-            .get("rationale")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        proposed_content: p
-            .get("proposed_content")
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        proposed_patch: p
-            .get("proposed_patch")
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        refs: p.get("refs").cloned().unwrap_or_else(|| json!({})),
-        sensitivity: p
-            .get("sensitivity")
-            .and_then(|v| v.as_str())
-            .unwrap_or("normal")
-            .to_string(),
-        requires_human: p
-            .get("requires_human")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
+        suggested_action: payload
+            .suggested_action
+            .unwrap_or_else(|| "review".to_string()),
+        target_ref: payload.target_ref,
+        title: payload.title.unwrap_or_else(|| "proposal".to_string()),
+        summary: payload.summary.unwrap_or_default(),
+        rationale: payload.rationale.unwrap_or_default(),
+        proposed_content: payload.proposed_content,
+        proposed_patch: payload.proposed_patch,
+        refs: payload.refs,
+        sensitivity: payload.sensitivity.unwrap_or_else(|| "normal".to_string()),
+        requires_human: payload.requires_human,
         status: sqlite.status.clone(),
         reviewer_profile: None,
         reviewer_agent_id: None,
@@ -296,13 +286,16 @@ fn sqlite_proposal_to_row(
         result_commit: None,
         created_at: time::OffsetDateTime::now_utc(),
         reviewed_at: None,
-    }
+    })
 }
 
 fn sqlite_observation_to_row(
     bear_id: Uuid,
     sqlite: &store::SqliteMemoryObservation,
 ) -> BearObservationRow {
+    // SQLite observations predate the Postgres `bear_observations` row id/salience columns.
+    // The native bridge preserves the stable `observation_id` and source payload, and supplies
+    // UI-only row metadata for callers that expect the Postgres-shaped DTO.
     BearObservationRow {
         id: Uuid::new_v4(),
         bear_id,
@@ -312,7 +305,7 @@ fn sqlite_observation_to_row(
         payload_ref: None,
         source: sqlite.source_json.clone(),
         logical_path: sqlite.logical_path.clone(),
-        status: sqlite.status.clone(),
+        status: sqlite.status.as_str().to_string(),
         proposal_id: sqlite
             .proposal_id
             .as_ref()

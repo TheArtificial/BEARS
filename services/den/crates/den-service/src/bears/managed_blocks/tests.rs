@@ -8,7 +8,9 @@ fn test_bear() -> Bear {
         name: "Builder Bear".to_string(),
         description: String::new(),
         default_model: Some("openai/gpt-4o".to_string()),
+        default_tool_budget_multiplier: None,
         tools_enabled: None,
+        work_enabled: false,
         runtime_plan: None,
         context_profile: None,
         provisioning_version: 1,
@@ -16,6 +18,10 @@ fn test_bear() -> Bear {
         birthday: None,
         created_at: OffsetDateTime::UNIX_EPOCH,
         updated_at: OffsetDateTime::UNIX_EPOCH,
+        live_reflection_enabled: true,
+        live_reflection_stale_after_minutes: 30,
+        live_reflection_activity_threshold: 20,
+        live_reflection_sweep_limit: 25,
     }
 }
 

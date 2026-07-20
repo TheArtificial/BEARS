@@ -17,8 +17,9 @@ use crate::tools::{
 };
 
 use super::store::{
-    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ProposalProjection,
-    RequestReviewRequest, ResolveProposalRequest,
+    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryLifecycleStatus,
+    MemoryProposalResolution, MemoryProposalStatus, MemoryReviewStore, MemorySensitivity,
+    MemorySuggestedAction, ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -92,47 +93,28 @@ pub struct MemoryRequestReviewArguments {
     pub proposed_patch: Option<String>,
 }
 
-fn normalize_suggested_action(value: Option<&str>) -> Result<String, DenError> {
+fn normalize_suggested_action(value: Option<&str>) -> Result<MemorySuggestedAction, DenError> {
     let value = value
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("unspecified");
-    if matches!(
-        value,
-        "unspecified"
-            | "summarize_into_core"
-            | "promote_to_core"
-            | "cabinet_update"
-            | "skill_review"
-            | "retain_profile_local"
-            | "delete_after_review"
-            | "human_review"
-            | "archive_index"
-            | "task_context"
-    ) {
-        Ok(value.to_string())
-    } else {
-        Err(DenError::ValidationError(format!(
+    MemorySuggestedAction::parse(value).ok_or_else(|| {
+        DenError::ValidationError(format!(
             "suggested_action must be one of the supported memory review actions; got {value}"
-        )))
-    }
+        ))
+    })
 }
 
-fn normalize_memory_sensitivity(value: Option<&str>) -> Result<String, DenError> {
+fn normalize_memory_sensitivity(value: Option<&str>) -> Result<MemorySensitivity, DenError> {
     let value = value
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("normal");
-    if matches!(
-        value,
-        "normal" | "person" | "secret_risk" | "external_untrusted" | "unknown"
-    ) {
-        Ok(value.to_string())
-    } else {
-        Err(DenError::ValidationError(format!(
+    MemorySensitivity::parse(value).ok_or_else(|| {
+        DenError::ValidationError(format!(
             "sensitivity must be normal, person, secret_risk, external_untrusted, or unknown; got {value}"
-        )))
-    }
+        ))
+    })
 }
 
 fn validate_optional_review_text(
@@ -145,25 +127,17 @@ fn validate_optional_review_text(
         .transpose()
 }
 
-fn normalize_proposal_status_filter(value: Option<&str>) -> Result<Option<String>, DenError> {
+fn normalize_proposal_status_filter(
+    value: Option<&str>,
+) -> Result<Option<MemoryProposalStatus>, DenError> {
     let Some(value) = value.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
-    if matches!(
-        value,
-        "pending"
-            | "rejected"
-            | "retained_local"
-            | "deferred"
-            | "superseded"
-            | "needs_human_review"
-    ) {
-        Ok(Some(value.to_string()))
-    } else {
-        Err(DenError::ValidationError(format!(
+    MemoryProposalStatus::parse(value).map(Some).ok_or_else(|| {
+        DenError::ValidationError(format!(
             "status must be pending, rejected, retained_local, deferred, superseded, or needs_human_review; got {value}"
-        )))
-    }
+        ))
+    })
 }
 
 fn bounded_proposal_limit(value: Option<i64>) -> i64 {
@@ -236,15 +210,11 @@ pub async fn mark_memory_lifecycle(
     }
     let args: MemoryMarkLifecycleArguments = serde_json::from_value(arguments)?;
     let memory_id = validate_bounded_text("memory_id", &args.memory_id, 1, 200)?;
-    let status = args.status.trim();
-    if !matches!(
-        status,
-        "active" | "stale" | "superseded" | "archived" | "archive-candidate"
-    ) {
-        return Err(DenError::ValidationError(
+    let status = MemoryLifecycleStatus::parse(args.status.trim()).ok_or_else(|| {
+        DenError::ValidationError(
             "status must be active, stale, superseded, archived, or archive-candidate".to_string(),
-        ));
-    }
+        )
+    })?;
     let reason = args
         .reason
         .as_deref()
@@ -256,7 +226,7 @@ pub async fn mark_memory_lifecycle(
             reviewer_profile: role,
             binding_id: context.binding_id.clone(),
             memory_id,
-            status: status.to_string(),
+            status,
             reason,
         })
         .await?;
@@ -313,23 +283,19 @@ pub async fn resolve_memory_proposal(
         ));
     }
     let args: MemoryResolveProposalArguments = serde_json::from_value(arguments)?;
-    let status = args.status.trim();
-    if !matches!(
-        status,
-        "rejected" | "retained_local" | "deferred" | "superseded" | "needs_human_review"
-    ) {
-        return Err(DenError::ValidationError(
+    let status = MemoryProposalResolution::parse(args.status.trim()).ok_or_else(|| {
+        DenError::ValidationError(
             "status must be rejected, retained_local, deferred, superseded, or needs_human_review"
                 .to_string(),
-        ));
-    }
+        )
+    })?;
     let proposal = store
         .resolve_proposal(ResolveProposalRequest {
             bear_id: context.bear_id,
             reviewer_profile: role,
             binding_id: context.binding_id.clone(),
             proposal_id: args.proposal_id,
-            status: status.to_string(),
+            status,
             review_notes: args.review_notes,
             decision_summary: args.decision_summary,
             projection: projection(context, context.bear_id, role),
@@ -434,13 +400,22 @@ mod tests {
 
     #[test]
     fn memory_review_defaults_to_safe_action_and_sensitivity() {
-        assert_eq!(normalize_suggested_action(None).unwrap(), "unspecified");
         assert_eq!(
-            normalize_suggested_action(Some("  ")).unwrap(),
+            normalize_suggested_action(None).unwrap().as_str(),
             "unspecified"
         );
-        assert_eq!(normalize_memory_sensitivity(None).unwrap(), "normal");
-        assert_eq!(normalize_memory_sensitivity(Some("  ")).unwrap(), "normal");
+        assert_eq!(
+            normalize_suggested_action(Some("  ")).unwrap().as_str(),
+            "unspecified"
+        );
+        assert_eq!(
+            normalize_memory_sensitivity(None).unwrap().as_str(),
+            "normal"
+        );
+        assert_eq!(
+            normalize_memory_sensitivity(Some("  ")).unwrap().as_str(),
+            "normal"
+        );
     }
 
     #[test]
@@ -459,11 +434,59 @@ mod tests {
     }
 
     #[test]
+    fn memory_review_actions_and_sensitivities_preserve_storage_strings() {
+        assert_eq!(
+            MemorySuggestedAction::ArchiveIndex.as_str(),
+            "archive_index"
+        );
+        assert_eq!(
+            MemorySuggestedAction::parse("task_context"),
+            Some(MemorySuggestedAction::TaskContext)
+        );
+        assert_eq!(MemorySuggestedAction::parse("archive-index"), None);
+        assert_eq!(
+            MemorySensitivity::ExternalUntrusted.as_str(),
+            "external_untrusted"
+        );
+        assert_eq!(
+            MemorySensitivity::parse("secret_risk"),
+            Some(MemorySensitivity::SecretRisk)
+        );
+        assert_eq!(MemorySensitivity::parse("private"), None);
+    }
+
+    #[test]
+    fn memory_review_statuses_preserve_storage_strings_and_reject_unknown_values() {
+        assert_eq!(
+            MemoryProposalResolution::NeedsHumanReview.as_str(),
+            "needs_human_review"
+        );
+        assert_eq!(
+            MemoryProposalResolution::parse("deferred"),
+            Some(MemoryProposalResolution::Deferred)
+        );
+        assert_eq!(MemoryProposalResolution::parse("pending"), None);
+        assert_eq!(
+            MemoryLifecycleStatus::ArchiveCandidate.as_str(),
+            "archive-candidate"
+        );
+        assert_eq!(
+            MemoryLifecycleStatus::parse("archived"),
+            Some(MemoryLifecycleStatus::Archived)
+        );
+        assert_eq!(MemoryLifecycleStatus::parse("deleted"), None);
+    }
+
+    #[test]
     fn list_proposals_validates_status_and_bounds_limit() {
         assert_eq!(normalize_proposal_status_filter(None).unwrap(), None);
         assert_eq!(
             normalize_proposal_status_filter(Some(" pending ")).unwrap(),
-            Some("pending".to_string())
+            Some(MemoryProposalStatus::Pending)
+        );
+        assert_eq!(
+            MemoryProposalStatus::NeedsHumanReview.as_str(),
+            "needs_human_review"
         );
         assert!(normalize_proposal_status_filter(Some("done")).is_err());
         assert_eq!(bounded_proposal_limit(None), 50);

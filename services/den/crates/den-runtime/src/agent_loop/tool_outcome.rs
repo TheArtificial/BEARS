@@ -18,34 +18,63 @@ pub fn is_incomplete_tool_result(content: Option<&str>) -> bool {
     content == Some(INCOMPLETE_TOOL_RESULT_MARK)
 }
 
-/// Whether a persisted or in-flight tool message body represents a failed execution.
-pub fn tool_result_content_indicates_error(content: Option<&str>) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolResultContentKind {
+    Empty,
+    LegacyInterrupted,
+    Incomplete,
+    Error,
+    Ok,
+}
+
+impl ToolResultContentKind {
+    pub const fn is_error(self) -> bool {
+        matches!(self, Self::Error)
+    }
+
+    pub const fn counts_toward_llm_resolution(self) -> bool {
+        !matches!(self, Self::Incomplete | Self::LegacyInterrupted)
+    }
+}
+
+pub fn classify_tool_result_content(content: Option<&str>) -> ToolResultContentKind {
     let Some(content) = content.map(str::trim).filter(|s| !s.is_empty()) else {
-        return false;
+        return ToolResultContentKind::Empty;
     };
-    if is_legacy_synthetic_interrupted_tool_result(Some(content))
-        || is_incomplete_tool_result(Some(content))
-    {
-        return false;
+    if is_legacy_synthetic_interrupted_tool_result(Some(content)) {
+        return ToolResultContentKind::LegacyInterrupted;
+    }
+    if is_incomplete_tool_result(Some(content)) {
+        return ToolResultContentKind::Incomplete;
     }
     let lower = content.to_ascii_lowercase();
-    lower.starts_with("error:")
+    if lower.starts_with("error:")
         || lower.starts_with("unsupported server tool:")
         || content.contains("\"ok\": false")
         || content.contains("\"ok\":false")
+    {
+        ToolResultContentKind::Error
+    } else {
+        ToolResultContentKind::Ok
+    }
+}
+
+/// Whether a persisted or in-flight tool message body represents a failed execution.
+pub fn tool_result_content_indicates_error(content: Option<&str>) -> bool {
+    classify_tool_result_content(content).is_error()
 }
 
 pub fn tool_message_counts_toward_llm_resolution(content: Option<&str>) -> bool {
-    !is_incomplete_tool_result(content) && !is_legacy_synthetic_interrupted_tool_result(content)
+    classify_tool_result_content(content).counts_toward_llm_resolution()
 }
 
 pub fn tool_result_persistence_status(content: Option<&str>) -> ToolResultStatus {
-    if is_incomplete_tool_result(content) {
-        ToolResultStatus::Incomplete
-    } else if tool_result_content_indicates_error(content) {
-        ToolResultStatus::Error
-    } else {
-        ToolResultStatus::Ok
+    match classify_tool_result_content(content) {
+        ToolResultContentKind::Incomplete => ToolResultStatus::Incomplete,
+        ToolResultContentKind::Error => ToolResultStatus::Error,
+        ToolResultContentKind::Empty
+        | ToolResultContentKind::LegacyInterrupted
+        | ToolResultContentKind::Ok => ToolResultStatus::Ok,
     }
 }
 
@@ -55,7 +84,8 @@ pub fn user_visible_tool_summary(
     content: Option<&str>,
 ) -> String {
     match status {
-        ToolCallFinishStatus::Ok => task_list_tool_summary(tool_name, content)
+        ToolCallFinishStatus::Ok => docket_tool_summary(tool_name, content)
+            .or_else(|| task_list_tool_summary(tool_name, content))
             .unwrap_or_else(|| format!("Finished {tool_name}")),
         ToolCallFinishStatus::Incomplete => {
             format!("{tool_name} did not finish (turn interrupted).")
@@ -65,10 +95,194 @@ pub fn user_visible_tool_summary(
     }
 }
 
+fn docket_tool_summary(tool_name: &str, content: Option<&str>) -> Option<String> {
+    if !matches!(
+        tool_name,
+        "list_jobs"
+            | "create_job"
+            | "get_job"
+            | "update_job"
+            | "execute_job"
+            | "list_tasks"
+            | "create_task"
+            | "update_task"
+            | "update_current_task_status"
+    ) {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(content?).ok()?;
+    match tool_name {
+        "list_jobs" => summarize_docket_job_collection(&value),
+        "create_job" => {
+            docket_job_summary(&value).map(|summary| format!("Created Docket job: {summary}"))
+        }
+        "get_job" => {
+            docket_job_summary(&value).map(|summary| format!("Read Docket job: {summary}"))
+        }
+        "update_job" => {
+            docket_job_summary(&value).map(|summary| format!("Updated Docket job: {summary}"))
+        }
+        "execute_job" => {
+            docket_job_summary(&value).map(|summary| format!("Executed Docket job: {summary}"))
+        }
+        "list_tasks" => summarize_docket_task_collection(&value),
+        "create_task" => {
+            docket_task_summary(&value).map(|summary| format!("Created Docket task: {summary}"))
+        }
+        "update_task" => {
+            docket_task_summary(&value).map(|summary| format!("Updated Docket task: {summary}"))
+        }
+        "update_current_task_status" => docket_task_summary(&value)
+            .map(|summary| format!("Updated Docket task status: {summary}")),
+        _ => None,
+    }
+}
+
+fn summarize_docket_job_collection(value: &serde_json::Value) -> Option<String> {
+    let jobs = value
+        .get("jobs")
+        .or_else(|| value.get("items"))
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| value.as_array())?;
+    if jobs.is_empty() {
+        return Some("Listed Docket jobs: none found.".to_string());
+    }
+    let mut goals = jobs
+        .iter()
+        .filter_map(docket_job_goal)
+        .take(3)
+        .collect::<Vec<_>>();
+    let more = jobs.len().saturating_sub(goals.len());
+    let goal_text = if goals.is_empty() {
+        String::new()
+    } else {
+        if more > 0 {
+            goals.push(format!("+{more} more"));
+        }
+        format!(": {}", goals.join(", "))
+    };
+    Some(format!(
+        "Listed {} Docket job{}{}.",
+        jobs.len(),
+        if jobs.len() == 1 { "" } else { "s" },
+        goal_text
+    ))
+}
+
+fn summarize_docket_task_collection(value: &serde_json::Value) -> Option<String> {
+    let tasks = value
+        .get("tasks")
+        .or_else(|| value.get("items"))
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| value.as_array())?;
+    if tasks.is_empty() {
+        return Some("Listed Docket tasks: none found.".to_string());
+    }
+    let mut titles = tasks
+        .iter()
+        .filter_map(docket_task_title)
+        .take(3)
+        .collect::<Vec<_>>();
+    let more = tasks.len().saturating_sub(titles.len());
+    let title_text = if titles.is_empty() {
+        String::new()
+    } else {
+        if more > 0 {
+            titles.push(format!("+{more} more"));
+        }
+        format!(": {}", titles.join(", "))
+    };
+    Some(format!(
+        "Listed {} Docket task{}{}.",
+        tasks.len(),
+        if tasks.len() == 1 { "" } else { "s" },
+        title_text
+    ))
+}
+
+fn docket_job_summary(value: &serde_json::Value) -> Option<String> {
+    let goal = docket_job_goal(value)?;
+    let job = value.get("job").unwrap_or(value);
+    let mut parts = vec![format!("`{goal}`")];
+    if let Some(status) = job.get("status").and_then(serde_json::Value::as_str) {
+        parts.push(format!("status: {status}"));
+    }
+    if let Some(tasks) = value.get("tasks").and_then(serde_json::Value::as_array) {
+        parts.push(format!(
+            "{} task{}",
+            tasks.len(),
+            if tasks.len() == 1 { "" } else { "s" }
+        ));
+    }
+    if let Some(criteria) = value.get("criteria").and_then(serde_json::Value::as_array) {
+        parts.push(if criteria.len() == 1 {
+            "1 criterion".to_string()
+        } else {
+            format!("{} criteria", criteria.len())
+        });
+    }
+    if let Some(run) = value.get("current_run").filter(|run| !run.is_null()) {
+        if let Some(state) = run.get("state").and_then(serde_json::Value::as_str) {
+            parts.push(format!("run: {state}"));
+        }
+    }
+    Some(parts.join(", "))
+}
+
+fn docket_job_goal(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("job")
+        .and_then(|job| job.get("goal"))
+        .or_else(|| value.get("goal"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|goal| !goal.is_empty())
+        .map(str::to_string)
+}
+
+fn docket_task_summary(value: &serde_json::Value) -> Option<String> {
+    let title = docket_task_title(value)?;
+    let task = value.get("task").unwrap_or(value);
+    let mut parts = vec![format!("`{title}`")];
+    if let Some(status) = value
+        .get("run_state")
+        .and_then(|state| state.get("status"))
+        .or_else(|| task.get("status"))
+        .and_then(serde_json::Value::as_str)
+    {
+        parts.push(format!("status: {status}"));
+    }
+    if let Some(role) = task
+        .get("assigned_to_role")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|role| !role.is_empty())
+    {
+        parts.push(format!("assigned: {role}"));
+    }
+    Some(parts.join(", "))
+}
+
+fn docket_task_title(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("task")
+        .and_then(|task| task.get("title"))
+        .or_else(|| value.get("title"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+}
+
 fn task_list_tool_summary(tool_name: &str, content: Option<&str>) -> Option<String> {
     if !matches!(
         tool_name,
-        "list_task_lists" | "get_task_list_status" | "update_task_list"
+        "list_task_lists"
+            | "get_task_list_status"
+            | "update_task_list"
+            | "checkout_task_list"
+            | "sync_task_list"
+            | "request_task_list_handoff"
     ) {
         return None;
     }
@@ -83,6 +297,23 @@ fn task_list_tool_summary(tool_name: &str, content: Option<&str>) -> Option<Stri
             .get("task_list")
             .filter(|task_list| !task_list.is_null())
             .map(|task_list| format!("Updated task list: {}", task_list_summary(task_list))),
+        "checkout_task_list" => value
+            .get("task_list")
+            .filter(|task_list| !task_list.is_null())
+            .map(|task_list| format!("Checked out task list: {}", task_list_summary(task_list))),
+        "sync_task_list" => value
+            .get("task_list")
+            .filter(|task_list| !task_list.is_null())
+            .map(|task_list| format!("Synced task list: {}", task_list_summary(task_list))),
+        "request_task_list_handoff" => value
+            .get("task_list")
+            .filter(|task_list| !task_list.is_null())
+            .map(|task_list| {
+                format!(
+                    "Requested task-list handoff: {}",
+                    task_list_summary(task_list)
+                )
+            }),
         _ => None,
     }
 }
@@ -291,5 +522,85 @@ mod tests {
         assert!(summary.contains("1 pending"), "{summary}");
         assert!(summary.contains("1 completed"), "{summary}");
         assert!(summary.contains("current: `Patch code`"), "{summary}");
+    }
+
+    #[test]
+    fn task_list_checkout_summary_uses_counts_and_current_item() {
+        let content = serde_json::json!({
+            "task_list": {
+                "title": "Runtime fixes",
+                "items": [
+                    { "title": "Trace bug", "status": "completed" },
+                    { "title": "Patch code", "status": "in_progress" }
+                ],
+                "current_item": { "title": "Patch code", "status": "in_progress" }
+            }
+        })
+        .to_string();
+
+        assert_eq!(
+            user_visible_tool_summary("checkout_task_list", ToolCallFinishStatus::Ok, Some(&content)),
+            "Checked out task list: `Runtime fixes`, 2 items, 1 in progress, 1 completed, current: `Patch code`"
+        );
+    }
+
+    #[test]
+    fn task_list_handoff_summary_uses_counts() {
+        let content = serde_json::json!({
+            "task_list": {
+                "title": "Runtime fixes",
+                "items": [
+                    { "title": "Patch code", "status": "pending" },
+                    { "title": "Blocked issue", "status": "blocked" }
+                ]
+            }
+        })
+        .to_string();
+
+        assert_eq!(
+            user_visible_tool_summary(
+                "request_task_list_handoff",
+                ToolCallFinishStatus::Ok,
+                Some(&content)
+            ),
+            "Requested task-list handoff: `Runtime fixes`, 2 items, 1 pending, 1 blocked"
+        );
+    }
+
+    #[test]
+    fn docket_job_summary_uses_goal_status_and_counts() {
+        let content = serde_json::json!({
+            "job": { "goal": "Improve Docket outputs", "status": "running" },
+            "current_run": { "state": "running" },
+            "tasks": [
+                { "title": "Find seam" },
+                { "title": "Patch summary" }
+            ],
+            "criteria": [{ "description": "Readable output" }]
+        })
+        .to_string();
+
+        assert_eq!(
+            user_visible_tool_summary("get_job", ToolCallFinishStatus::Ok, Some(&content)),
+            "Read Docket job: `Improve Docket outputs`, status: running, 2 tasks, 1 criterion, run: running"
+        );
+    }
+
+    #[test]
+    fn docket_task_status_summary_uses_title_status_and_assignment() {
+        let content = serde_json::json!({
+            "task": { "title": "Patch summary", "assigned_to_role": "pair" },
+            "run_state": { "status": "done" }
+        })
+        .to_string();
+
+        assert_eq!(
+            user_visible_tool_summary(
+                "update_current_task_status",
+                ToolCallFinishStatus::Ok,
+                Some(&content)
+            ),
+            "Updated Docket task status: `Patch summary`, status: done, assigned: pair"
+        );
     }
 }

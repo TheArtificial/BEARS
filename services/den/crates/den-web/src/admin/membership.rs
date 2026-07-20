@@ -93,15 +93,13 @@ pub async fn grant_action(
         validation_errors.add("user_id", ValidationError::new("User not found."));
     }
 
-    if validation_errors.is_empty() {
-        let bid = bear_id.expect("checked");
+    if let (true, Some(bid)) = (validation_errors.is_empty(), bear_id) {
         if bears_db::get_bear(state.sqlx_pool(), bid).await?.is_none() {
             validation_errors.add("bear_id", ValidationError::new("Bear not found."));
         }
     }
 
-    if validation_errors.is_empty() {
-        let bid = bear_id.expect("checked");
+    if let (true, Some(bid)) = (validation_errors.is_empty(), bear_id) {
         let role = form.role.trim();
         let role_opt = match role {
             "" | "member" => Some(bears_db::BEAR_ROLE_MEMBER),

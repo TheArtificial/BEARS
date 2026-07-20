@@ -1,7 +1,14 @@
 //! Map `GET /v1/agents/{id}` JSON into Den admin "new bear" form defaults.
 
+use std::sync::LazyLock;
+
+use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
+
+use super::json_fields::{model_field, pick_str};
+
+static REPEATED_DASHES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"-+").expect("dash regex"));
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct AgentBearPrefill {
@@ -10,31 +17,6 @@ pub struct AgentBearPrefill {
     pub description: String,
     pub system_prompt: String,
     pub default_model: String,
-}
-
-fn pick_str(v: &Value, keys: &[&str]) -> Option<String> {
-    for k in keys {
-        if let Some(s) = v.get(*k).and_then(|x| x.as_str()) {
-            if !s.is_empty() {
-                return Some(s.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn model_field(v: &Value) -> Option<String> {
-    let m = v.get("model")?;
-    if let Some(s) = m.as_str() {
-        return Some(s.to_string());
-    }
-    if let Some(obj) = m.as_object() {
-        if let Some(s) = obj.get("model").and_then(|x| x.as_str()) {
-            return Some(s.to_string());
-        }
-        return Some(m.to_string());
-    }
-    None
 }
 
 fn suggest_slug(name: &str, agent_id: &str) -> String {
@@ -51,11 +33,8 @@ fn suggest_slug(name: &str, agent_id: &str) -> String {
         })
         .filter(|&c| c != '\0')
         .collect();
-    let mut s = slugish;
-    while s.contains("--") {
-        s = s.replace("--", "-");
-    }
-    s = s.trim_matches('-').to_string();
+    let s = REPEATED_DASHES.replace_all(&slugish, "-");
+    let s = s.trim_matches('-').to_string();
     if s.is_empty() {
         let tail: String = agent_id
             .trim_start_matches("agent-")

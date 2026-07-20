@@ -63,6 +63,34 @@ pub fn default_tool_continue_stream_context() -> TurnStreamContext {
         client_tools: None,
         stream_tokens: false,
         max_steps: 4,
+        run_recovery: RunRecoveryDisposition::None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RunRecoveryDisposition {
+    #[default]
+    None,
+    RetryFinalDelivery,
+    ResumeEligible {
+        attempts: u8,
+    },
+    Exhausted {
+        attempts: u8,
+    },
+}
+
+impl RunRecoveryDisposition {
+    pub fn for_interrupted_run(attempts: u8) -> Self {
+        if attempts == 0 {
+            Self::ResumeEligible { attempts }
+        } else {
+            Self::Exhausted { attempts }
+        }
+    }
+
+    pub fn emits_recovery_context(self) -> bool {
+        matches!(self, Self::ResumeEligible { .. })
     }
 }
 
@@ -71,6 +99,34 @@ pub struct TurnStreamContext {
     pub client_tools: Option<serde_json::Value>,
     pub stream_tokens: bool,
     pub max_steps: u32,
+    pub run_recovery: RunRecoveryDisposition,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interrupted_run_recovery_is_one_shot() {
+        assert_eq!(
+            RunRecoveryDisposition::for_interrupted_run(0),
+            RunRecoveryDisposition::ResumeEligible { attempts: 0 }
+        );
+        assert_eq!(
+            RunRecoveryDisposition::for_interrupted_run(1),
+            RunRecoveryDisposition::Exhausted { attempts: 1 }
+        );
+        assert!(RunRecoveryDisposition::for_interrupted_run(0).emits_recovery_context());
+        assert!(!RunRecoveryDisposition::for_interrupted_run(1).emits_recovery_context());
+    }
+
+    #[test]
+    fn default_tool_continuation_has_no_run_recovery_prompt() {
+        assert_eq!(
+            default_tool_continue_stream_context().run_recovery,
+            RunRecoveryDisposition::None
+        );
+    }
 }
 
 pub fn looks_like_runtime_waiting_for_approval_error(err: &DenError) -> bool {

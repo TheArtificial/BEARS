@@ -1,24 +1,32 @@
+use std::collections::HashSet;
+
 use crate::llm::{ChatMessage, ChatToolCall};
 
 /// Returns tool calls from the latest assistant message that do not yet have tool results.
 pub fn pending_tool_calls(messages: &[ChatMessage]) -> Vec<ChatToolCall> {
-    let mut open = Vec::<ChatToolCall>::new();
+    let mut latest_calls: &[ChatToolCall] = &[];
+    let mut answered_after_latest_assistant = HashSet::<&str>::new();
+
     for msg in messages {
         if msg.role == "assistant" {
-            if let Some(calls) = &msg.tool_calls {
-                if !calls.is_empty() {
-                    open.clone_from(calls);
-                }
+            if let Some(calls) = msg.tool_calls.as_deref().filter(|calls| !calls.is_empty()) {
+                latest_calls = calls;
+                answered_after_latest_assistant.clear();
             }
             continue;
         }
         if msg.role == "tool" {
-            if let Some(id) = &msg.tool_call_id {
-                open.retain(|call| call.id != *id);
+            if let Some(id) = msg.tool_call_id.as_deref() {
+                answered_after_latest_assistant.insert(id);
             }
         }
     }
-    open
+
+    latest_calls
+        .iter()
+        .filter(|call| !answered_after_latest_assistant.contains(call.id.as_str()))
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -58,5 +66,37 @@ mod tests {
         let pending = pending_tool_calls(&messages);
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, "call_2");
+    }
+
+    #[test]
+    fn later_assistant_tool_calls_reset_prior_answers() {
+        let messages = vec![
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![call("call_old")]),
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Some("ok".to_string()),
+                tool_call_id: Some("call_old".to_string()),
+                name: None,
+                tool_calls: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_call_id: None,
+                name: None,
+                tool_calls: Some(vec![call("call_new")]),
+            },
+        ];
+
+        let pending = pending_tool_calls(&messages);
+
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, "call_new");
     }
 }

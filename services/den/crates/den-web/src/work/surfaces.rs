@@ -24,6 +24,7 @@ use crate::{
     errors::CustomError,
     web::{self, AppState},
 };
+use den_docket::{DocketJobUpdate, DocketService, PgDocketService};
 use den_sandbox::SandboxClient;
 use den_service::bears::db as bears_db;
 use den_service::work_surfaces::{
@@ -194,11 +195,26 @@ async fn index(
     .await
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct NewSurfaceQuery {
+    #[serde(default)]
+    bear_id: Option<Uuid>,
+    #[serde(default)]
+    return_job_id: Option<Uuid>,
+}
+
 async fn new_form(
     State(state): State<AppState>,
     auth_session: AuthSession,
+    Query(query): Query<NewSurfaceQuery>,
 ) -> Result<Response, CustomError> {
-    require_user(&auth_session)?;
+    let user_id = require_user(&auth_session)?;
+    if let Some(bear_id) = query.bear_id {
+        let bears = member_bears(&state, user_id).await?;
+        if !bears.contains_key(&bear_id) {
+            return Err(CustomError::NotFound("bear not found".to_string()));
+        }
+    }
     let images = work_surfaces::list_catalog_images(state.sqlx_pool()).await?;
     web::render_template(
         &state,
@@ -207,6 +223,8 @@ async fn new_form(
         context! {
             title => "New work surface",
             images => images,
+            bear_id => query.bear_id.map(|id| id.to_string()),
+            return_job_id => query.return_job_id.map(|id| id.to_string()),
         },
     )
     .await
@@ -226,6 +244,10 @@ struct NewSurfaceForm {
     credential_kind: String,
     #[serde(default)]
     credential_value: String,
+    #[serde(default)]
+    bear_id: Option<Uuid>,
+    #[serde(default)]
+    return_job_id: Option<Uuid>,
 }
 
 fn clean(value: &str) -> Option<String> {
@@ -253,6 +275,26 @@ async fn create(
     Form(form): Form<NewSurfaceForm>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    if let Some(bear_id) = form.bear_id {
+        if !bears.contains_key(&bear_id) {
+            return Err(CustomError::NotFound("bear not found".to_string()));
+        }
+    }
+    if let Some(job_id) = form.return_job_id {
+        let bear_id = form.bear_id.ok_or_else(|| {
+            CustomError::ValidationError("return job requires a selected bear".to_string())
+        })?;
+        let job_bear_id: Option<Uuid> =
+            sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+                .bind(job_id)
+                .fetch_optional(state.sqlx_pool())
+                .await
+                .map_err(den_core::DenError::from)?;
+        if job_bear_id != Some(bear_id) {
+            return Err(CustomError::NotFound("job not found".to_string()));
+        }
+    }
     let credential = credential_from_form(&form.credential_kind, &form.credential_value)?;
     let surface = work_surfaces::create_surface(
         state.sqlx_pool(),
@@ -268,7 +310,30 @@ async fn create(
         &state.config.den_secret_encryption_key,
     )
     .await?;
+    if let Some(bear_id) = form.bear_id {
+        work_surfaces::assign_bear(state.sqlx_pool(), surface.id, bear_id, user_id).await?;
+        if let Some(job_id) = form.return_job_id {
+            PgDocketService::from_pool(state.sqlx_pool())
+                .update_job(DocketJobUpdate {
+                    bear_id,
+                    job_id,
+                    actor_role: den_service::bears::BearProfile::Pair,
+                    actor_user_id: Some(user_id),
+                    actor_agent_id: None,
+                    goal: None,
+                    work_surface_ref: Some(Some(surface.name.clone())),
+                    work_surface_id: Some(Some(surface.id)),
+                    commit_policy: None,
+                    status: None,
+                    visibility: None,
+                })
+                .await?;
+        }
+    }
     let sync_note = push_surfaces_best_effort(&state).await;
+    if let Some(job_id) = form.return_job_id {
+        return Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response());
+    }
     Ok(surface_redirect(
         surface.id,
         "Work surface created.",

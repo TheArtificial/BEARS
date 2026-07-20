@@ -78,6 +78,9 @@ pub async fn list_selectable_model_options(pool: &PgPool) -> Result<Vec<ModelOpt
 }
 
 fn simplify_model_option_label_for_acp(label: &str) -> String {
+    // ACP option labels have little horizontal space. Registry labels commonly append
+    // operator metadata as either ` — metadata unknown` or parenthesized token limits
+    // like `GPT-5 (1M ctx / 128k out)`; strip those suffixes for display only.
     label
         .trim()
         .strip_suffix(" — metadata unknown")
@@ -235,7 +238,7 @@ pub async fn resolve_model_option(
     if trimmed.is_empty() {
         return Ok(None);
     }
-    if let Ok(Some(row)) = sqlx::query_as::<_, ModelSelectionOptionRow>(
+    if let Some(row) = sqlx::query_as::<_, ModelSelectionOptionRow>(
         r"
         SELECT handle, display_name, metadata_json
         FROM model_selection_options
@@ -245,7 +248,7 @@ pub async fn resolve_model_option(
     )
     .bind(trimmed)
     .fetch_optional(pool)
-    .await
+    .await?
     {
         return Ok(Some(option_from_row(row)));
     }

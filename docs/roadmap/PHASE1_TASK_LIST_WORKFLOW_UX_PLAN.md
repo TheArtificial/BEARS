@@ -17,8 +17,9 @@ Make tactical session task lists, durable Docket work, workplan artifacts, run s
 
 ## Concepts to preserve
 
-- **Task list:** session working checklist/projection visible to the user/model.
-- **Docket job/task:** durable work objective/state in Den Postgres.
+- **Task list:** conversation working projection visible to the user/model; normally the active top-level task/subtree of the conversation-linked Docket objective.
+- **Conversation-linked objective:** one mutable Docket-owned structured work tree per conversation, created only once task orientation is invoked.
+- **Docket job/task:** durable work objective/state in Den Postgres; durable Jobs may later be promoted from conversation objective subtrees.
 - **Workplan artifact:** workflow-state artifact for formal planning/review, not semantic memory.
 - **Run/work run:** execution attempt with tool calls, sandbox state, evidence/results, and failures.
 - **Approval:** explicit human/operator decision before high-risk or external-effect execution.
@@ -69,7 +70,7 @@ Expose one canonical status payload for UI clients that includes:
 
 ## Acceptance criteria
 
-- Pair can resume an ACP/BearWire session and recover active task-list/workplan state.
-- Operators can see active task lists, pending handoffs, Docket-backed work, run failures, and approvals without confusing their ownership.
+- Pair can resume an ACP/BearWire session and recover the conversation-linked objective/task-list projection/workplan state.
+- Operators can see active conversation objectives/task-list projections, pending handoffs, durable Docket-backed work, run failures, and approvals without confusing their ownership.
 - High-risk work runs surface in an approval queue before execution.
 - UI copy consistently distinguishes task list, Docket, workplan artifact, run, and approval.

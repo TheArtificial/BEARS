@@ -26,6 +26,7 @@ const TIER1_SHARED_PATHS: &[&str] = &[
 ];
 
 const TIER4_SITUATION_PATH: &str = "core/situation/briefing.md";
+const PROJECTED_MEMORY_TRUNCATION_ELLIPSIS: &str = "...";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyMemoryProjectionCacheKey {
@@ -69,6 +70,25 @@ struct TierBudget {
 struct ProjectionBudget {
     global_cap: usize,
     tiers: [TierBudget; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BudgetTier {
+    SharedCore,
+    WorkSurface,
+    ProfileLocal,
+    Situation,
+}
+
+impl BudgetTier {
+    const fn index(self) -> usize {
+        match self {
+            Self::SharedCore => 0,
+            Self::WorkSurface => 1,
+            Self::ProfileLocal => 2,
+            Self::Situation => 3,
+        }
+    }
 }
 
 fn projection_budget_for_profile_and_model(
@@ -120,12 +140,13 @@ struct BudgetTracker {
 }
 
 impl BudgetTracker {
-    fn new(budget: &ProjectionBudget, tier_index: usize) -> Self {
+    fn new(budget: &ProjectionBudget, tier: BudgetTier) -> Self {
+        let tier_budget = &budget.tiers[tier.index()];
         Self {
             global_remaining: budget.global_cap,
-            tier_remaining_records: budget.tiers[tier_index].max_records,
-            tier_char_remaining: budget.tiers[tier_index].tier_soft_cap,
-            per_record_cap: budget.tiers[tier_index].per_record_cap,
+            tier_remaining_records: tier_budget.max_records,
+            tier_char_remaining: tier_budget.tier_soft_cap,
+            per_record_cap: tier_budget.per_record_cap,
         }
     }
 
@@ -144,9 +165,14 @@ impl BudgetTracker {
         if text.trim().is_empty() {
             return None;
         }
-        let used = text.chars().count() + if truncated { 3 } else { 0 };
+        let used = text.chars().count()
+            + if truncated {
+                PROJECTED_MEMORY_TRUNCATION_ELLIPSIS.len()
+            } else {
+                0
+            };
         let rendered = if truncated {
-            format!("{text}...")
+            format!("{text}{PROJECTED_MEMORY_TRUNCATION_ELLIPSIS}")
         } else {
             text
         };
@@ -268,7 +294,7 @@ pub async fn project_key_memory(
 
     // Tier 1 — shared identity anchors
     {
-        let mut tracker = BudgetTracker::new(&budget, 0);
+        let mut tracker = BudgetTracker::new(&budget, BudgetTier::SharedCore);
         let mut blocks = Vec::new();
         for path in TIER1_SHARED_PATHS {
             // Pre-check the budget so an exhausted tier records the omission without
@@ -332,7 +358,7 @@ pub async fn project_key_memory(
                 .push(format!("tier2:slug={slug}:anchor_required"));
         } else if tier2_active {
             let (canonical_paths, _) = work_surface_anchor_paths(input.profile, slug);
-            let mut tracker = BudgetTracker::new(&budget, 1);
+            let mut tracker = BudgetTracker::new(&budget, BudgetTier::WorkSurface);
             let mut blocks = Vec::new();
             for path in canonical_paths {
                 // Pre-check the budget so an exhausted tier records the omission
@@ -375,7 +401,7 @@ pub async fn project_key_memory(
 
     // Tier 2b — explicit entity anchors (resolved + salient entities only; no relation fallback).
     {
-        let mut tracker = BudgetTracker::new(&budget, 1);
+        let mut tracker = BudgetTracker::new(&budget, BudgetTier::WorkSurface);
         let mut blocks = Vec::new();
         let records = list_entity_anchor_head_records(&store, 6).await?;
         for record in records {
@@ -409,7 +435,7 @@ pub async fn project_key_memory(
 
     // Tier 3 — role-local highlights
     {
-        let mut tracker = BudgetTracker::new(&budget, 2);
+        let mut tracker = BudgetTracker::new(&budget, BudgetTier::ProfileLocal);
         let mut blocks = Vec::new();
         let surface_ref = if tier2_active {
             primary_slug.as_deref()
@@ -473,7 +499,7 @@ pub async fn project_key_memory(
 
     // Tier 4 — situation briefing
     {
-        let mut tracker = BudgetTracker::new(&budget, 3);
+        let mut tracker = BudgetTracker::new(&budget, BudgetTier::Situation);
         if let Some(record) = head_record_for_logical_path(&store, TIER4_SITUATION_PATH).await? {
             let entry = json!({
                 "tier": 4,

@@ -12,7 +12,7 @@
         <dl class="fields-grid">
             <dt>Status</dt><dd><code>{{ proposal.status | e }}</code></dd>
             <dt>Store</dt><dd><code>{{ proposal.store | e }}</code></dd>
-            <dt>Suggested action</dt></dt><dd><code>{{ proposal.suggested_action | e }}</code></dd>
+            <dt>Suggested action</dt><dd><code>{{ proposal.suggested_action | e }}</code></dd>
             <dt>Source role</dt><dd><code>{{ proposal.source_profile | e }}</code>{% if proposal.source_agent_id %} <span class="form-hint">({{ proposal.source_agent_id | e }})</span>{% endif %}</dd>
             <dt>Sensitivity</dt><dd><code>{{ proposal.sensitivity | e }}</code>{% if proposal.requires_human %} · requires human review{% endif %}</dd>
             <dt>Created</dt><dd>{{ proposal.created_at }}</dd>
@@ -34,6 +34,39 @@
         <h4>Review notes</h4>
         <p>{{ proposal.review_notes | e }}</p>
         {% endif %}
+
+        <h4>Proposed memory content</h4>
+        {% if proposal.proposed_content %}
+        <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ proposal.proposed_content | e }}</pre>
+        {% else %}
+        <p class="form-hint">No proposed content recorded.</p>
+        {% endif %}
+
+        {% if proposal.proposed_patch %}
+        <h4>Proposed patch</h4>
+        <pre style="white-space: pre-wrap; max-height: 24rem; overflow: auto;">{{ proposal.proposed_patch | e }}</pre>
+        {% endif %}
+
+        {% if proposal.extraction.is_memory_extraction %}
+        <h4>Extraction evidence</h4>
+        <dl class="fields-grid">
+            {% if proposal.extraction.source_kind %}<dt>Source kind</dt><dd><code>{{ proposal.extraction.source_kind | e }}</code></dd>{% endif %}
+            {% if proposal.extraction.source_ref %}<dt>Source ref</dt><dd><code>{{ proposal.extraction.source_ref | e }}</code></dd>{% endif %}
+            {% if proposal.extraction.candidate_kind %}<dt>Candidate kind</dt><dd><code>{{ proposal.extraction.candidate_kind | e }}</code></dd>{% endif %}
+            <dt>Evidence</dt><dd>{{ proposal.extraction.source_message_count }} message{{ proposal.extraction.source_message_count == 1 and "" or "s" }} · {{ proposal.extraction.source_artifact_count }} artifact{{ proposal.extraction.source_artifact_count == 1 and "" or "s" }}</dd>
+            {% if proposal.extraction.confidence_label %}<dt>Confidence</dt><dd>{{ proposal.extraction.confidence_label | e }}</dd>{% endif %}
+            {% if proposal.extraction.detector %}<dt>Detector</dt><dd><code>{{ proposal.extraction.detector | e }}</code></dd>{% endif %}
+            <dt>Discarded alongside</dt><dd>{{ proposal.extraction.discarded_count }}</dd>
+        </dl>
+        {% if proposal.extraction.discarded_preview %}
+        <p class="form-hint">Discard preview:</p>
+        <ul>
+            {% for reason in proposal.extraction.discarded_preview %}
+            <li><code>{{ reason | e }}</code></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
     </section>
 
     <section class="box full-width">
@@ -50,6 +83,10 @@
         {% if proposal.source_refs and proposal.source_refs.conversation_id %}
         <p class="form-hint">Formed in conversation <code>{{ proposal.source_refs.conversation_id | e }}</code>.</p>
         {% endif %}
+        <h4>Source references</h4>
+        <pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ proposal.source_refs | tojson(indent=2) }}</pre>
+        <h4>Memory references</h4>
+        <pre style="white-space: pre-wrap; max-height: 12rem; overflow: auto;">{{ proposal.refs | tojson(indent=2) }}</pre>
     </section>
 
     {% if can_manage_bear %}
@@ -70,7 +107,10 @@
             <label for="review-notes">Review notes</label>
             <textarea id="review-notes" name="review_notes" rows="4"></textarea>
             <div></div>
-            <button type="submit">Resolve proposal</button>
+            <div>
+                <button type="submit" name="after_save" value="list">Save and return to list</button>
+                <button type="submit" name="after_save" value="next">Save and review next</button>
+            </div>
         </form>
     </section>
     {% endif %}

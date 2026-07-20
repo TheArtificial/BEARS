@@ -49,6 +49,9 @@ async fn invoke_workflow_tool(
     arguments: Value,
     context: &DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
+    reject_closed_freeform_task_definition(tool_name, context)?;
+    reject_immutable_focused_task_definition(tool_name, context)?;
+
     let role = context.profile.unwrap_or(BearProfile::Pair);
     let value = match tool_name {
         DEN_TASK_LISTS_LIST => {
@@ -93,7 +96,7 @@ async fn invoke_workflow_tool(
             workflow::evaluate_criterion(pool, context, role, arguments).await?
         }
         DEN_TASK_CREATE => workflow::create_task(pool, context, role, arguments).await?,
-        DEN_TASK_LIST => workflow::list_tasks(pool, context, arguments).await?,
+        DEN_TASK_LIST => workflow::list_tasks(pool, context, role, arguments).await?,
         DEN_TASK_UPDATE => workflow::update_task(pool, context, role, arguments).await?,
         DEN_TASK_UPDATE_CURRENT_STATUS => {
             workflow::update_current_task_status(pool, context, role, arguments).await?
@@ -115,6 +118,75 @@ async fn invoke_workflow_tool(
     };
 
     Ok(value)
+}
+
+fn reject_closed_freeform_task_definition(
+    tool_name: &str,
+    context: &DenToolInvocationContext,
+) -> Result<(), CustomError> {
+    if closed_freeform_disallows_task_definition(tool_name, context.runtime.as_ref()) {
+        return Err(CustomError::ValidationError(
+            "task definition tools are unavailable in closed freeform orientation; focus or orient to a task before defining durable work"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn reject_immutable_focused_task_definition(
+    tool_name: &str,
+    context: &DenToolInvocationContext,
+) -> Result<(), CustomError> {
+    if immutable_focused_disallows_task_definition(tool_name, context.runtime.as_ref()) {
+        return Err(CustomError::ValidationError(
+            "task definition tools are unavailable in immutable focused orientation; use status/result tools or switch to mutable focused work before changing task definitions"
+                .to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn task_definition_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        DEN_JOB_CREATE | DEN_TASK_CREATE | DEN_TASK_UPDATE | DEN_TASK_LIST_SYNC
+    )
+}
+
+fn closed_freeform_disallows_task_definition(tool_name: &str, runtime: Option<&Value>) -> bool {
+    if !task_definition_tool(tool_name) {
+        return false;
+    }
+
+    let Some(orientation) = runtime.and_then(|runtime| runtime.get("objective_orientation")) else {
+        return false;
+    };
+
+    orientation.get("kind").and_then(Value::as_str) == Some("freeform")
+        && orientation
+            .get("policy")
+            .and_then(|policy| policy.get("may_define_task"))
+            .and_then(Value::as_bool)
+            == Some(false)
+}
+
+fn immutable_focused_disallows_task_definition(tool_name: &str, runtime: Option<&Value>) -> bool {
+    if !task_definition_tool(tool_name) {
+        return false;
+    }
+
+    let Some(orientation) = runtime.and_then(|runtime| runtime.get("objective_orientation")) else {
+        return false;
+    };
+
+    orientation.get("kind").and_then(Value::as_str) == Some("focused")
+        && orientation
+            .get("job")
+            .and_then(|job| job.get("mutable"))
+            .and_then(Value::as_bool)
+            == Some(false)
 }
 
 pub(crate) struct DenConversationTitleOps<'a> {
@@ -140,3 +212,63 @@ impl den_core::tools::conversation::ConversationTitleOps for DenConversationTitl
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod orientation_policy_tests {
+    use super::*;
+
+    fn closed_freeform_runtime() -> Value {
+        serde_json::json!({
+            "objective_orientation": {
+                "kind": "freeform",
+                "policy": { "may_define_task": false }
+            }
+        })
+    }
+
+    fn focused_runtime(mutable: bool) -> Value {
+        serde_json::json!({
+            "objective_orientation": {
+                "kind": "focused",
+                "job": {
+                    "job_id": "job-1",
+                    "active_task_ref": null,
+                    "mutable": mutable
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn closed_freeform_rejects_task_definition_but_allows_status_updates() {
+        let runtime = closed_freeform_runtime();
+
+        assert!(closed_freeform_disallows_task_definition(
+            DEN_TASK_CREATE,
+            Some(&runtime)
+        ));
+        assert!(!closed_freeform_disallows_task_definition(
+            DEN_TASK_UPDATE_CURRENT_STATUS,
+            Some(&runtime)
+        ));
+    }
+
+    #[test]
+    fn immutable_focused_rejects_task_definition_but_allows_mutable_and_status_updates() {
+        let immutable_runtime = focused_runtime(false);
+        let mutable_runtime = focused_runtime(true);
+
+        assert!(immutable_focused_disallows_task_definition(
+            DEN_TASK_CREATE,
+            Some(&immutable_runtime)
+        ));
+        assert!(!immutable_focused_disallows_task_definition(
+            DEN_TASK_CREATE,
+            Some(&mutable_runtime)
+        ));
+        assert!(!immutable_focused_disallows_task_definition(
+            DEN_TASK_UPDATE_CURRENT_STATUS,
+            Some(&immutable_runtime)
+        ));
+    }
+}

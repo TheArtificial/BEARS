@@ -1,6 +1,6 @@
 # Bear Den Stack — Coolify Deployment Guide
 
-Deploy Bear Den on Coolify from the repository root [`docker-compose.yaml`](../../../docker-compose.yaml). This is the supported path for operators: one Compose resource, one shared network, and service names that resolve internally as `bears-*`.
+Deploy Bear Den on Coolify from the repository root [`docker-compose.yaml`](../../../docker-compose.yaml). This is the supported path for operators: Coolify owns each resource's project/network identity and may also attach it to the predefined shared network for platform routing and managed resources.
 
 The default stack runs the **in-process Den agent loop** (`AGENT_RUNTIME=native`): inference via Bifrost, Bear memory in per-Bear SQLite on a mounted volume. See [den-runtime.md](../../architecture/den-runtime.md) for the architecture and [den-deploy.md](../den-deploy.md) for single-image env details.
 
@@ -69,7 +69,7 @@ In the Compose resource advanced settings:
 2. Enable **Connect To Predefined Network**.
 3. Save.
 
-This keeps the `bears-*` service names stable for internal URLs such as `http://bears-bifrost:8080` and `http://bears-den:3001`.
+This attaches the stack to Coolify's shared network while Coolify retains ownership of the resource network used by its proxy. Production keeps stable internal URLs such as `http://bears-bifrost:8080` and `http://bears-den:3001`. When multiple deployments share the predefined network, configure `BEARS_INSTANCE_SUFFIX` as described below so secondary deployments do not advertise or call production identities.
 
 ## 5. Set Environment Variables
 
@@ -78,6 +78,7 @@ Set these on the Compose resource:
 | Variable | Value |
 | -------- | ----- |
 | `AGENT_RUNTIME` | `native` (default in compose) |
+| `BEARS_INSTANCE_SUFFIX` | Empty/unset for production; `-test` for the test deployment |
 | `JWT_SECRET` | Random secret string |
 | `OPENAI_API_KEY` | Your OpenAI API key |
 | `DATABASE_URL` | Den Postgres **Postgres URL (internal)** from Coolify |
@@ -91,19 +92,34 @@ Optional:
 | -------- | ----- |
 | `DEN_IMAGE` | Optional local tag assigned to the compose-built Den image |
 | `CARGO_BUILD_JOBS` | Den Docker build parallelism; keep low on small deploy hosts |
-| `BIFROST_APP_PORT` | Bifrost listen port. Use distinct values per environment on shared networks, for example prod `8080`, test `8081` |
-| `BIFROST_ORIGIN` | Canonical internal Bifrost origin; compose derives `BIFROST_BASE_URL`, `BIFROST_MANAGEMENT_URL`, and `LLM_API_URL` from this. Defaults to `http://bears-bifrost:${BIFROST_APP_PORT}` |
+| `BIFROST_APP_PORT` | Bifrost listen port. It may remain `8080` when instance DNS names are suffixed; use distinct values if your platform also requires unique published/listener ports |
+| `BIFROST_ORIGIN` | Canonical internal Bifrost origin; compose derives `BIFROST_BASE_URL`, `BIFROST_MANAGEMENT_URL`, and `LLM_API_URL` from this. Defaults to `http://bears-bifrost${BEARS_INSTANCE_SUFFIX}:${BIFROST_APP_PORT}` |
 | `RUN_WEB` / `RUN_API` / `RUN_WORKERS` | Service toggles inside the Den container (compose defaults all three on) |
+
+### Shared-network production and test deployments
+
+Production retains the historic unsuffixed identities by leaving `BEARS_INSTANCE_SUFFIX` empty. Set this only on the secondary deployment:
+
+```dotenv
+BEARS_INSTANCE_SUFFIX=-test
+```
+
+The test deployment then uses `bears-den-test`, `bears-bifrost-test`, `bears-qdrant-test`, `bears-sandbox-provider-test`, and `bears-sandbox-engine-test`. Named volumes are explicitly pinned to `bears-stack-test_*`, preserving test data without overriding Coolify's project/network lifecycle. Docker-in-Docker includes the suffixed engine hostname in its TLS certificate.
+
+The value must be empty or a lowercase DNS suffix beginning with `-`. Do not set production to `-prod`: keeping production empty preserves its existing DNS names and volume names.
 
 You usually do not need to set internal service URLs. The compose file already defaults to:
 
 | Variable | Default |
 | -------- | ------- |
-| `BIFROST_ORIGIN` | `http://bears-bifrost:${BIFROST_APP_PORT}` |
+| `BIFROST_ORIGIN` | `http://bears-bifrost${BEARS_INSTANCE_SUFFIX}:${BIFROST_APP_PORT}` |
 | `LLM_API_URL` | `${BIFROST_ORIGIN}/v1` |
 | `BIFROST_BASE_URL` | `${BIFROST_ORIGIN}` |
 | `BIFROST_MANAGEMENT_URL` | `${BIFROST_ORIGIN}/api` |
 | `BEAR_SQLITE_DATA_DIR` | `/var/lib/den/bear-sqlite` |
+| `SANDBOX_SERVER_URL` | `auto`, resolved by Den to `http://bears-sandbox-provider${BEARS_INSTANCE_SUFFIX}:${SANDBOX_PORT}` |
+| `SANDBOX_CALLBACK_API_URL` | `auto`, resolved by Den to `http://bears-den${BEARS_INSTANCE_SUFFIX}:${DEN_API_PORT}` |
+| `DOCKER_HOST` (provider/builder) | `tcp://bears-sandbox-engine${BEARS_INSTANCE_SUFFIX}:2376` |
 
 ## 6. Deploy
 

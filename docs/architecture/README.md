@@ -25,8 +25,9 @@ If you need one linear path that yields a complete mental model without reading 
 7. [bear channel and ACP](bear-channel-and-acp.md) — channels, armatures, and trusted work surfaces
 8. [context compilation scenarios](context-compilation-scenarios.md) — how prompt/context assembly behaves in practice
 9. [non-blocking structured updates](non-blocking-structured-updates.md) — model-facing actions vs blocking tools, obligations, progress, and metadata updates
-10. [runtime error UX policy](runtime-error-ux-policy.md) — how failures split across user copy, model continuity, and diagnostics
-11. [memory model](memory-model.md) — canonical memory model and promotion boundaries
+10. [Den state machine inventory](den-state-machine-inventory.md) — living inventory of conversation/session/turn/run state axes, owners, invariants, and test obligations
+11. [runtime error UX policy](runtime-error-ux-policy.md) — how failures split across user copy, model continuity, and diagnostics
+12. [memory model](memory-model.md) — canonical memory model and promotion boundaries
 12. [reflection system](reflection-system.md) — how reflection, review, and curation operate
 13. [tasks and autonomy](tasks-and-autonomy.md) — Docket work, approvals, and autonomous execution boundaries
 14. [planning](planning.md) — workboard plans, plan mode, and plan artifacts
@@ -65,14 +66,19 @@ Bear Den consists of these architectural layers:
 
 - [den runtime](den-runtime.md)
 - [overview](overview.md)
+- [den state machine inventory](den-state-machine-inventory.md)
 - [den crate architecture](den-crate-architecture.md)
 - [bear channel and ACP](bear-channel-and-acp.md)
 - [context compilation scenarios](context-compilation-scenarios.md)
 - [runtime error UX policy](runtime-error-ux-policy.md)
 
+### Runtime state discipline
+
+- [Den state machine inventory](den-state-machine-inventory.md) is the living reference for conversation/session/turn/run state axes, owners, transitions, and invariants.
+- [workflow state overview](workflow-state-overview.md) remains the focused explanation of the canonical current-turn workflow state and derived `operational_focus`.
+
 ### Bear model and stances
 
-- [den bear spec](den-bear-spec.md)
 - [bears and den](bears-and-den.md)
 - [bear stances](bear-stances.md)
 - [pair stance](pair-stance.md)
@@ -112,6 +118,7 @@ Bear Den consists of these architectural layers:
 ### Runtime and systems
 
 - [den runtime](den-runtime.md)
+- [den state machine inventory](den-state-machine-inventory.md)
 - [overview](overview.md)
 - [den crate architecture](den-crate-architecture.md)
 - [den bear spec](den-bear-spec.md)

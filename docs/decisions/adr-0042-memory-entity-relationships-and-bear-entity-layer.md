@@ -8,7 +8,7 @@
 - [ADR-0038 — Platform embedding standard and derived recall index](adr-0038-platform-embedding-standard-and-derived-recall-index.md)
 - [ADR-0006 — Bear work surfaces](adr-0006-bear-work-surfaces.md)
 - [ADR-0040 — Connections and work-surface presentation](adr-0040-connections-and-work-surface-presentation.md)
-- [ADR-0039 — Trust profiles and governance modes](adr-0039-trust-profiles-and-governance-modes.md)
+- [ADR-0039 — Trust profiles and governance](adr-0039-trust-profiles-and-governance.md)
 - [ADR-0015 — Multi-user memory](adr-0015-multi-user-memory.md) (Letta-era; to be reframed for native by this ADR)
 - [ADR-0008 — Cabinet reading pipeline](adr-0008-cabinet-reading-pipeline.md)
 - [Memory model](../architecture/memory-model.md)
@@ -22,7 +22,7 @@ Two observations frame the decision:
 - **"Person" is the wrong unit to hard-code.** We will also want contacts, events, missions, domains, organizations, artifacts, places. Hard-coding `person` repeats the Letta mistake at a different layer.
 - **Relating memory to an entity is not one relationship, and "entity" is not one storage tier.** A note can be *about* an entity, *for* an entity's eyes only, *from* an entity, *involving* several entities, or *applicable when* an entity is in play. And the same real-world person ("Ryan") shows up as a doc mention, a Slack user, and a Cabinet author — identities that must be **resolved into one entity and stay correctable** (the Slack Ryan may turn out to be someone else).
 
-This sits cleanly in the [four-axis model](../architecture/interactive-stances-and-role-axes.md): memory scope partitions by **trust stance** (Trust axis) and **work surface** (Resource axis). Entity-relatedness is **none of those axes** — it is a cross-cutting *relation on a record*, not a profile scope ([ADR-0039](adr-0039-trust-profiles-and-governance-modes.md)). It must therefore be modeled as typed relations, not as another `scope_*` partition.
+This sits cleanly in the [four-axis model](../architecture/interactive-stances-and-role-axes.md): memory scope partitions by **trust stance** (Trust axis) and **work surface** (Resource axis). Entity-relatedness is **none of those axes** — it is a cross-cutting *relation on a record*, not a profile scope ([ADR-0039](adr-0039-trust-profiles-and-governance.md)). It must therefore be modeled as typed relations, not as another `scope_*` partition.
 
 The design must be **flexible for new relationship and entity types without becoming RDF**: no arbitrary predicates, no triple store, no inference.
 

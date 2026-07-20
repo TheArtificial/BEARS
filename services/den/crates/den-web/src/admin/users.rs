@@ -24,6 +24,18 @@ use crate::{
     web::{self, AppState},
 };
 
+const INVITE_CODE_LEN: usize = 24;
+const INVITE_CODE_ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+
+fn generate_invite_code() -> String {
+    use rand::Rng;
+
+    let mut rng = rand::rng();
+    (0..INVITE_CODE_LEN)
+        .map(|_| INVITE_CODE_ALPHABET[rng.random_range(0..INVITE_CODE_ALPHABET.len())] as char)
+        .collect()
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route_with_tsr("/users/", get(users_list))
@@ -251,6 +263,10 @@ pub async fn edit_user_action(
     }
 }
 
+fn user_not_found() -> CustomError {
+    CustomError::NotFound("User not found".to_string())
+}
+
 #[derive(Validate, Serialize, Deserialize)]
 pub struct ChangePasswordForm {
     #[validate(length(min = 8))]
@@ -266,7 +282,7 @@ pub async fn change_user_password_view(
 ) -> Result<Response, CustomError> {
     let username = user_db::get_username_by_id(&state.sqlx_pool, id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
+        .ok_or_else(user_not_found)?;
 
     web::render_template(
         &state,
@@ -290,7 +306,7 @@ pub async fn change_user_password_action(
     if let Err(form_validation_errors) = form.validate() {
         let username = user_db::get_username_by_id(&state.sqlx_pool, id)
             .await?
-            .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
+            .ok_or_else(user_not_found)?;
 
         Ok(web::render_template(
             &state,
@@ -322,7 +338,7 @@ pub async fn send_test_email_action(
     let sqlx_pool = state.sqlx_pool;
     let user = user_db::get_user_by_id(&sqlx_pool, id)
         .await?
-        .ok_or_else(|| CustomError::NotFound("User not found".to_string()))?;
+        .ok_or_else(user_not_found)?;
 
     // if ! user.email_verified.unwrap_or(false) {
     //     return Err(CustomError::Email("User email is not verified".to_string()));
@@ -377,14 +393,7 @@ pub async fn create_invite_action(
     Path(id): Path<i32>,
     State(state): State<AppState>,
 ) -> Result<Redirect, CustomError> {
-    let code: String = {
-        use rand::Rng;
-        let mut rng = rand::rng();
-        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
-        (0..24)
-            .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
-            .collect()
-    };
+    let code = generate_invite_code();
     user::invites::db::create(&state.sqlx_pool, id, &code).await?;
 
     // 303 redirect to user detail page

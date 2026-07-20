@@ -5,11 +5,11 @@
 
 use serde::Serialize;
 use serde_json::Value;
-use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::DenError;
 
+use super::clock::now_rfc3339;
 use super::descriptors::{self, EntityTrust, ResolutionState};
 use super::records::BearMemoryStore;
 
@@ -37,12 +37,6 @@ pub struct EntityHandleRow {
     pub trust: EntityTrust,
     pub state: String,
     pub created_at: String,
-}
-
-fn now_rfc3339() -> Result<String, DenError> {
-    OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|e| DenError::System(format!("timestamp format failed: {e}")))
 }
 
 /// Create a new entity. The `entity_type` must be a registered descriptor; resolution and

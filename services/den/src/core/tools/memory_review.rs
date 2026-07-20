@@ -12,8 +12,9 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use den_core::tools::review::{
-    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryReviewStore, ObservationRecord,
-    ObservationWriteRequest, ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
+    ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore,
+    MemorySensitivity, ObservationRecord, ObservationWriteRequest, ProposalProjection,
+    RequestReviewRequest, ResolveProposalRequest,
 };
 
 use crate::{config::Config, errors::DenError};
@@ -53,11 +54,8 @@ fn observation_requires_human(salience: &str) -> bool {
     matches!(salience, "high" | "critical")
 }
 
-fn sensitivity_requires_human(sensitivity: &str) -> bool {
-    matches!(
-        sensitivity,
-        "person" | "secret_risk" | "external_untrusted" | "unknown"
-    )
+fn sensitivity_requires_human(sensitivity: MemorySensitivity) -> bool {
+    sensitivity != MemorySensitivity::Normal
 }
 
 /// Concrete [`MemoryReviewStore`] over the runtime pool/config/stores.
@@ -96,10 +94,10 @@ impl<'a> DenMemoryReviewStore<'a> {
             memory_proposal_resolved_projection(
                 self.provenance(projection),
                 resolved.id,
-                resolved.source_profile.clone(),
-                resolved.suggested_action.clone(),
-                resolved.title.clone(),
-                resolved.status.clone(),
+                &resolved.source_profile,
+                &resolved.suggested_action,
+                &resolved.title,
+                &resolved.status,
                 resolved.reviewer_profile.clone(),
                 resolved.result_path.clone(),
                 resolved.result_commit.clone(),
@@ -227,7 +225,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
     async fn list_proposals(
         &self,
         bear_id: Uuid,
-        status: Option<String>,
+        status: Option<MemoryProposalStatus>,
         limit: i64,
     ) -> Result<Value, DenError> {
         let proposals = db_list_proposals(
@@ -235,7 +233,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             self.config,
             self.stores,
             bear_id,
-            status.as_deref(),
+            status.map(MemoryProposalStatus::as_str),
             limit,
         )
         .await?;
@@ -262,7 +260,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 proposal_id: request.proposal_id,
                 reviewer_profile: request.reviewer_profile,
                 reviewer_agent_id: Some(request.binding_id.as_str()),
-                status: &request.status,
+                status: request.status.as_str(),
                 review_notes: request.review_notes.as_deref(),
                 decision_summary: request.decision_summary.as_deref(),
                 result_path: None,
@@ -286,7 +284,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 source_agent_id: request.binding_id.clone(),
                 source_paths: request.source_paths.clone(),
                 source_refs: request.source_refs.clone(),
-                suggested_action: &request.suggested_action,
+                suggested_action: request.suggested_action.as_str(),
                 target_ref: request.target_ref.as_deref(),
                 title: &request.title,
                 summary: &request.summary,
@@ -294,7 +292,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 proposed_content: request.proposed_content.as_deref(),
                 proposed_patch: request.proposed_patch.as_deref(),
                 refs: request.refs.clone(),
-                sensitivity: &request.sensitivity,
+                sensitivity: request.sensitivity.as_str(),
                 requires_human: request.requires_human,
                 project_to_conversation: false,
             },
@@ -308,10 +306,10 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
             memory_review_requested_projection(
                 self.provenance(&request.projection),
                 proposal.id,
-                proposal.source_profile.clone(),
-                proposal.suggested_action.clone(),
-                proposal.title.clone(),
-                proposal.status.clone(),
+                &proposal.source_profile,
+                &proposal.suggested_action,
+                &proposal.title,
+                &proposal.status,
                 proposal.source_paths.clone(),
             ),
         );
@@ -326,7 +324,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         let record = mark_memory_record_lifecycle(
             &store,
             &request.memory_id,
-            &request.status,
+            request.status.as_str(),
             request.reason.as_deref(),
         )
         .await?;
@@ -362,7 +360,11 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         .await?
         .ok_or_else(|| DenError::NotFound("memory proposal not found".to_string()))?;
 
-        if proposal.requires_human || sensitivity_requires_human(&proposal.sensitivity) {
+        if proposal.requires_human
+            || MemorySensitivity::parse(&proposal.sensitivity)
+                .map(sensitivity_requires_human)
+                .unwrap_or(true)
+        {
             return Err(DenError::ValidationError(
                 "proposal requires human review; resolve as needs_human_review instead of applying a core update autonomously".to_string(),
             ));

@@ -4,6 +4,7 @@
 //! the per-call context plus runtime-supplied snapshots (memory status, adapter
 //! runtime). Identity comes in as the runtime-neutral [`CurrentUser`] DTO.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::BearProfile;
@@ -19,21 +20,78 @@ use crate::tools::{
     work_surface::infer_work_surface_hint,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrustedWorkspaceSnapshot {
+    cwd: Option<String>,
+    #[serde(default)]
+    roots: Vec<String>,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+impl TrustedWorkspaceSnapshot {
+    fn from_context(context: &DenToolInvocationContext) -> Self {
+        Self {
+            cwd: context.workspace_roots.first().cloned(),
+            roots: context.workspace_roots.clone(),
+            source: Some(if context.workspace_roots.is_empty() {
+                "none".to_string()
+            } else {
+                "trusted_session".to_string()
+            }),
+        }
+    }
+
+    fn from_adapter_runtime(adapter_runtime: Option<&Value>) -> Option<Self> {
+        adapter_runtime
+            .and_then(|value| value.get("trusted_workspace"))
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .ok()
+            .flatten()
+    }
+
+    fn into_value(self) -> Value {
+        json!({
+            "cwd": self.cwd,
+            "roots": self.roots,
+            "source": self.source,
+        })
+    }
+
+    fn roots_or_cwd(self) -> Vec<String> {
+        let roots: Vec<String> = self
+            .roots
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect();
+        if !roots.is_empty() {
+            return roots;
+        }
+        self.cwd
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect()
+    }
+}
+
+pub(super) fn trusted_workspace_roots_from_adapter_runtime(adapter_runtime: &Value) -> Vec<String> {
+    TrustedWorkspaceSnapshot::from_adapter_runtime(Some(adapter_runtime))
+        .map(TrustedWorkspaceSnapshot::roots_or_cwd)
+        .unwrap_or_default()
+}
+
 fn trusted_workspace_from_context(
     context: &DenToolInvocationContext,
     adapter_runtime: Option<&Value>,
 ) -> Value {
-    if let Some(trusted) = adapter_runtime
-        .and_then(|value| value.get("trusted_workspace"))
-        .cloned()
-    {
-        return trusted;
-    }
-    json!({
-        "cwd": context.workspace_roots.first().cloned(),
-        "roots": context.workspace_roots,
-        "source": if context.workspace_roots.is_empty() { "none" } else { "trusted_session" },
-    })
+    TrustedWorkspaceSnapshot::from_adapter_runtime(adapter_runtime)
+        .unwrap_or_else(|| TrustedWorkspaceSnapshot::from_context(context))
+        .into_value()
 }
 
 fn memory_context_layers(
@@ -42,22 +100,26 @@ fn memory_context_layers(
     memory_status: &Value,
     entities: &Value,
 ) -> Value {
-    let projected_memory = context.projected_memory.clone().unwrap_or_else(|| {
-        json!({
-            "status": "unknown",
-            "count": "unknown",
-            "reason": "Projection metadata is not wired into session_info yet.",
-            "next_surface": "prompt memory blocks in model prompt / future projection diagnostic"
-        })
+    let default_projected_memory = json!({
+        "status": "unknown",
+        "count": "unknown",
+        "reason": "Projection metadata is not wired into session_info yet.",
+        "next_surface": "prompt memory blocks in model prompt / future projection diagnostic"
     });
-    let recalled_memory = context.recalled_memory.clone().unwrap_or_else(|| {
-        json!({
-            "status": "unknown",
-            "count": "unknown",
-            "reason": "Recall passage metadata is not wired into session_info yet.",
-            "next_surface": "memory_search / future recall diagnostic"
-        })
+    let projected_memory = context
+        .projected_memory
+        .as_ref()
+        .unwrap_or(&default_projected_memory);
+    let default_recalled_memory = json!({
+        "status": "unknown",
+        "count": "unknown",
+        "reason": "Recall passage metadata is not wired into session_info yet.",
+        "next_surface": "memory_search / future recall diagnostic"
     });
+    let recalled_memory = context
+        .recalled_memory
+        .as_ref()
+        .unwrap_or(&default_recalled_memory);
     let durable_memory_status = if memory_status
         .get("available")
         .and_then(Value::as_bool)

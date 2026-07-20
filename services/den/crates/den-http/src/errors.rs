@@ -285,7 +285,7 @@ impl From<mailgun_rs::SendError> for CustomError {
 
 impl From<validator::ValidationErrors> for CustomError {
     fn from(err: validator::ValidationErrors) -> CustomError {
-        CustomError::ValidationError(format!("{:?}", err))
+        CustomError::ValidationError(err.to_string())
     }
 }
 

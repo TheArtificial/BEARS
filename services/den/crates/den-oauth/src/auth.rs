@@ -68,6 +68,13 @@ pub fn extract_bearer_token(headers: &HeaderMap) -> Result<String, ApiError> {
     Ok(token.to_string())
 }
 
+pub fn extract_bearer_token_oauth(headers: &HeaderMap) -> Result<String, OAuthError> {
+    extract_bearer_token(headers).map_err(|err| match err.error_code {
+        "empty_bearer_token" => OAuthError::InvalidToken,
+        _ => OAuthError::InvalidRequest(err.message),
+    })
+}
+
 pub fn authenticate_bearer(headers: &HeaderMap) -> Result<BearerPrincipal, ApiError> {
     let access_token = extract_bearer_token(headers)?;
     let jwt_manager = create_jwt_manager();

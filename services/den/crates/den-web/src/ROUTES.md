@@ -118,8 +118,11 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 - `GET /work` — jobs + active/past work runs overview (auto-refreshes while runs are active)
 - `GET /work/new` — job creation form (goal, sandbox root, commit policy, work branch, work tasks)
 - `POST /work/new` — create the Docket job (tasks assigned to the work stance; created_by_role `ui`)
-- `GET /work/jobs/{job_id}` — job detail: task tree with statuses, per-task dispatch (root/image selects from the provider catalog), run history with publish outcomes
-- `GET /work/runs/{run_id}` — run detail: state, sandbox type/strength, image, work surface, published branch/commit, changed files + diff, log tail, usage, cleanup status
+- `GET /work/jobs/{job_id}` — job detail: task tree with statuses, per-task dispatch (root/image selects from the provider catalog), duplication, run history with publish outcomes
+- `POST /work/jobs/{job_id}/duplicate` — copy job intent/settings/criteria/task hierarchy into a fresh ready job; run state and publish branch are reset
+- `POST /work/jobs/{job_id}/complete` — after all tasks finish, accept remaining criteria as a human decision and close the job/current run
+- `POST /work/jobs/{job_id}/extend` — add a fresh work-assigned task with concrete criteria to the current run and return the job to ready
+- `GET /work/runs/{run_id}` — run detail: state, sandbox type/strength, image, work surface, published branch/commit, changed files + diff, headless conversation link, sandbox/armature output, usage, cleanup status
 - `POST /work/tasks/{task_id}/dispatch` — enqueue a work-assigned task for sandbox execution (optional form fields: root, image, git_ref)
 - `POST /work/runs/{run_id}/cancel` — request cancellation (dispatch worker performs teardown)
 - `POST /work/runs/{run_id}/retry` — re-enqueue a terminal run as a new attempt
@@ -127,7 +130,7 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 ### Work surfaces (`src/work/surfaces.rs`)
 
 - `GET /work/surfaces` — surfaces the user manages (admins: all) + surfaces available to their bears
-- `GET /work/surfaces/new` / `POST /work/surfaces/new` — create a managed surface (creator becomes owner; optional encrypted credential)
+- `GET /work/surfaces/new` / `POST /work/surfaces/new` — create a managed Git surface (creator becomes owner; optional encrypted credential); job-scoped query/form fields can assign the Bear, attach the surface, and return to the originating job
 - `GET /work/surfaces/{surface_id}` — manage page (managers/owners/site admins only; deny-as-404): settings, write-only credential, managers, assigned bears, sync, delete
 - `POST /work/surfaces/{surface_id}/update` · `/credential` · `/credential/clear` · `/managers/grant` · `/managers/revoke` · `/bears/assign` · `/bears/unassign` · `/delete` · `/sync`
 

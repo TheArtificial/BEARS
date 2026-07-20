@@ -6,6 +6,15 @@
 <div class="box">
 <h2>Conversation</h2>
 <p class="form-hint"><a href="/bear/{{ bear.slug | e }}/activity">Back to activity</a></p>
+{% if can_manage_bear %}
+<form method="post" action="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}/reflect">
+  <p><button type="submit">Reflect this conversation now</button></p>
+</form>
+<form method="post" action="/bear/{{ bear.slug | e }}/conversations/{{ conv.id }}/reconsider">
+  <p><button type="submit">Reconsider for memory</button></p>
+</form>
+<p class="form-hint"><strong>Manual reflection checkpoint:</strong> this forces a fresh checkpoint first, then mines that checkpoint for memory proposals. <strong>Reconsider for memory</strong> runs the same synchronous curation path and then shows the detailed output instead of returning here.</p>
+{% endif %}
 
 <dl>
   <dt>Id</dt>
@@ -19,6 +28,25 @@
   <dt>Updated</dt>
   <dd>{{ conv.updated_at }}</dd>
 </dl>
+
+<h3>Processing timeline</h3>
+{% if processing_timeline and processing_timeline | length > 0 %}
+<table>
+  <thead><tr><th>When</th><th>Kind</th><th>Result</th><th>Details</th></tr></thead>
+  <tbody>
+  {% for item in processing_timeline %}
+    <tr>
+      <td>{{ item.created_at }}</td>
+      <td>{{ item.kind | e }}</td>
+      <td>{{ item.label | e }}</td>
+      <td>{{ item.details | e }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No compaction or reflection processing recorded yet.</em></p>
+{% endif %}
 
 <h3>Latest Context Budget</h3>
 {% if conv.latest_context_budget %}
@@ -74,6 +102,55 @@
 </table>
 {% else %}
 <p><em>No compaction events recorded for this conversation.</em></p>
+{% endif %}
+
+<h3>Reflection watermark</h3>
+<p class="form-hint">This shows how far pair reflection has processed the transcript, so repeated reflection runs are easier to reason about and duplicate proposal concerns are visible.</p>
+<dl>
+  <dt>Latest message</dt>
+  <dd>{% if reflection_watermark.latest_message_sequence_no is not none %}#{{ reflection_watermark.latest_message_sequence_no }}{% else %}<em>none</em>{% endif %}</dd>
+  <dt>Last reflected</dt>
+  <dd>{% if reflection_watermark.last_reflected_at %}{{ reflection_watermark.last_reflected_at }}{% else %}<em>never</em>{% endif %}</dd>
+  <dt>Reflected through</dt>
+  <dd>{% if reflection_watermark.reflected_through_sequence_no is not none %}#{{ reflection_watermark.reflected_through_sequence_no }}{% else %}<em>unknown</em>{% endif %}</dd>
+  <dt>New messages since reflection</dt>
+  <dd>{% if reflection_watermark.new_message_count is not none %}{{ reflection_watermark.new_message_count }}{% else %}<em>unknown</em>{% endif %}</dd>
+</dl>
+<p class="form-hint">{{ reflection_watermark.explanation | e }}</p>
+
+<h3>Reflections</h3>
+{% if reflections and reflections | length > 0 %}
+<table>
+  <thead><tr><th>When</th><th>Event</th><th>Status</th><th>Counts</th></tr></thead>
+  <tbody>
+  {% for reflection in reflections %}
+    <tr>
+      <td>{{ reflection.created_at }}</td>
+      <td>{{ reflection.event_type | e }}{% if reflection.trigger %}<br><small>{{ reflection.trigger | e }}</small>{% endif %}</td>
+      <td>
+        <strong>{{ reflection.status_label | e }}</strong>
+        <br><small>{{ reflection.status_explanation | e }}</small>
+        {% if reflection.skipped_reason %}<br><small><code>{{ reflection.skipped_reason | e }}</code></small>{% endif %}
+      </td>
+      <td>
+        {{ reflection.counts_label | e }}
+        {% if reflection.proposal_links and reflection.proposal_links | length > 0 %}
+          <br><small>Proposals:
+          {% for proposal_id in reflection.proposal_links %}
+            <a href="/bear/{{ bear.slug | e }}/memory/proposals/{{ proposal_id | e }}">review {{ loop.index }}</a>{% if not loop.last %}, {% endif %}
+          {% endfor %}
+          </small>
+        {% elif reflection.proposal_count > 0 %}
+          <br><small><a href="/bear/{{ bear.slug | e }}/memory">Open Memory review queue</a></small>
+        {% endif %}
+      </td>
+    </tr>
+    <tr><td colspan="4"><details><summary>Reflection payload</summary><pre style="white-space: pre-wrap; max-height:18rem; overflow:auto;">{{ reflection.payload_json | e }}</pre></details></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No pair reflection events recorded for this conversation.</em></p>
 {% endif %}
 
 <h3>Agent Loop Checkpoints</h3>

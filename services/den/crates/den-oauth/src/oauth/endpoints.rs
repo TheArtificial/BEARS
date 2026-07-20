@@ -6,7 +6,7 @@
 
 use axum::{
     extract::{Query, State},
-    http::{header::AUTHORIZATION, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
     Form, Json,
 };
@@ -16,6 +16,7 @@ use time::OffsetDateTime;
 use url::Url;
 
 use crate::{
+    auth::extract_bearer_token_oauth,
     oauth::{
         db,
         error::OAuthError,
@@ -752,93 +753,80 @@ async fn validate_pkce(
         token_request.code_verifier.is_some()
     );
 
-    // Check if PKCE was used in the authorization request
-    match (&auth_code.code_challenge, &auth_code.code_challenge_method) {
-        (Some(code_challenge), Some(code_challenge_method)) => {
-            tracing::debug!(
-                "PKCE was used in authorization: method={}, challenge_length={}",
-                code_challenge_method,
-                code_challenge.len()
+    let code_challenge = auth_code.code_challenge.as_deref();
+    let code_challenge_method = auth_code.code_challenge_method.as_deref();
+
+    if code_challenge.is_none() && code_challenge_method.is_none() {
+        tracing::debug!("PKCE was not used in authorization request");
+        if let Some(verifier) = token_request.code_verifier.as_ref() {
+            tracing::warn!(
+                "code_verifier provided but PKCE was not used in authorization: verifier_length={}",
+                verifier.len()
             );
-            // PKCE was used - code_verifier is required
-            match &token_request.code_verifier {
-                Some(code_verifier) => {
-                    tracing::debug!(
-                        "Validating PKCE: verifier_length={}, challenge_length={}, method={}",
-                        code_verifier.len(),
-                        code_challenge.len(),
-                        code_challenge_method
-                    );
-                    // Validate the code_verifier against the stored code_challenge
-                    match utils::validate_pkce(code_verifier, code_challenge, code_challenge_method)
-                    {
-                        Ok(()) => {
-                            tracing::info!("PKCE validation successful");
-                            Ok(())
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "PKCE validation failed: method={}, error={}",
-                                code_challenge_method,
-                                e
-                            );
-                            // The error from validate_pkce already contains detailed context
-                            // Just pass it through, but ensure it's an InvalidRequest
-                            match e {
-                                OAuthError::InvalidRequest(msg) => {
-                                    Err(OAuthError::InvalidRequest(msg))
-                                }
-                                _ => Err(OAuthError::InvalidRequest(format!(
-                                    "PKCE validation failed (method: {}): {}",
-                                    code_challenge_method,
-                                    e.error_description()
-                                ))),
-                            }
-                        }
-                    }
-                }
-                None => {
-                    // PKCE was used in auth request but no verifier provided
-                    tracing::error!(
-                        "PKCE code_challenge present but no code_verifier provided: method={}, challenge_length={}",
-                        code_challenge_method,
-                        code_challenge.len()
-                    );
-                    Err(OAuthError::InvalidRequest(format!(
-                        "PKCE was used in the authorization request (method: {}), but no code_verifier was provided in the token request. Include the code_verifier parameter with the same value used to generate the code_challenge.",
-                        code_challenge_method
-                    )))
-                }
-            }
+            return Err(OAuthError::InvalidRequest(
+                "code_verifier was provided, but PKCE was not used in the authorization request. Either remove the code_verifier parameter, or ensure code_challenge and code_challenge_method were included in the original authorization request.".to_string(),
+            ));
         }
-        (None, None) => {
-            tracing::debug!("PKCE was not used in authorization request");
-            // PKCE was not used - code_verifier should not be provided
-            if let Some(verifier) = token_request.code_verifier.as_ref() {
-                tracing::warn!(
-                    "code_verifier provided but PKCE was not used in authorization: verifier_length={}",
-                    verifier.len()
-                );
-                return Err(OAuthError::InvalidRequest(
-                    "code_verifier was provided, but PKCE was not used in the authorization request. Either remove the code_verifier parameter, or ensure code_challenge and code_challenge_method were included in the original authorization request.".to_string(),
-                ));
-            }
-            // No PKCE validation needed
-            tracing::debug!("No PKCE validation required");
-            Ok(())
-        }
-        _ => {
-            // Invalid state - either challenge or method is missing
-            tracing::error!(
-                "Invalid PKCE state: has_challenge={}, has_method={}",
-                auth_code.code_challenge.is_some(),
-                auth_code.code_challenge_method.is_some()
-            );
-            Err(OAuthError::ServerError(
-                "Invalid PKCE state in authorization code".to_string(),
-            ))
-        }
+        tracing::debug!("No PKCE validation required");
+        return Ok(());
     }
+
+    let (Some(code_challenge), Some(code_challenge_method)) =
+        (code_challenge, code_challenge_method)
+    else {
+        tracing::error!(
+            "Invalid PKCE state: has_challenge={}, has_method={}",
+            auth_code.code_challenge.is_some(),
+            auth_code.code_challenge_method.is_some()
+        );
+        return Err(OAuthError::ServerError(
+            "Invalid PKCE state in authorization code".to_string(),
+        ));
+    };
+
+    tracing::debug!(
+        "PKCE was used in authorization: method={}, challenge_length={}",
+        code_challenge_method,
+        code_challenge.len()
+    );
+
+    let Some(code_verifier) = token_request.code_verifier.as_deref() else {
+        tracing::error!(
+            "PKCE code_challenge present but no code_verifier provided: method={}, challenge_length={}",
+            code_challenge_method,
+            code_challenge.len()
+        );
+        return Err(OAuthError::InvalidRequest(format!(
+            "PKCE was used in the authorization request (method: {}), but no code_verifier was provided in the token request. Include the code_verifier parameter with the same value used to generate the code_challenge.",
+            code_challenge_method
+        )));
+    };
+
+    tracing::debug!(
+        "Validating PKCE: verifier_length={}, challenge_length={}, method={}",
+        code_verifier.len(),
+        code_challenge.len(),
+        code_challenge_method
+    );
+
+    if let Err(err) = utils::validate_pkce(code_verifier, code_challenge, code_challenge_method) {
+        tracing::error!(
+            "PKCE validation failed: method={}, error={}",
+            code_challenge_method,
+            err
+        );
+        return Err(match err {
+            OAuthError::InvalidRequest(msg) => OAuthError::InvalidRequest(msg),
+            other => OAuthError::InvalidRequest(format!(
+                "PKCE validation failed (method: {}): {}",
+                code_challenge_method,
+                other.error_description()
+            )),
+        });
+    }
+
+    tracing::info!("PKCE validation successful");
+    Ok(())
 }
 
 /// Generate standardized OAuth token response
@@ -889,15 +877,7 @@ fn oauth_error_response(error: OAuthError) -> Response {
         error.status_code()
     );
 
-    let status_code = match error {
-        OAuthError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-        OAuthError::InvalidClient => StatusCode::UNAUTHORIZED,
-        OAuthError::InvalidGrant => StatusCode::BAD_REQUEST,
-        OAuthError::UnsupportedGrantType => StatusCode::BAD_REQUEST,
-        OAuthError::InvalidScope => StatusCode::BAD_REQUEST,
-        OAuthError::ServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        _ => StatusCode::BAD_REQUEST,
-    };
+    let status_code = error.status_code();
 
     // Build error response with helpful context
     let mut error_response = serde_json::json!({
@@ -1132,7 +1112,7 @@ pub async fn userinfo_get(
     headers: HeaderMap,
 ) -> Result<Response, CustomError> {
     // Extract Bearer token from Authorization header
-    let access_token = match extract_bearer_token(&headers) {
+    let access_token = match extract_bearer_token_oauth(&headers) {
         Ok(token) => token,
         Err(oauth_error) => return Ok(bearer_error_response(oauth_error)),
     };
@@ -1187,47 +1167,6 @@ pub async fn userinfo_get(
     Ok(Json(user_info).into_response())
 }
 
-/// Extract Bearer token from Authorization header
-///
-/// Parses the Authorization header and extracts the Bearer token following RFC 6750.
-///
-/// # Arguments
-/// * `headers` - HTTP headers from the request
-///
-/// # Returns
-/// The extracted access token or an OAuth error
-///
-/// # Errors
-/// - `InvalidRequest` if Authorization header is missing or malformed
-/// - `InvalidToken` if the header doesn't contain a valid Bearer token
-fn extract_bearer_token(headers: &HeaderMap) -> Result<String, OAuthError> {
-    // Get Authorization header
-    let auth_header = headers
-        .get(AUTHORIZATION)
-        .ok_or_else(|| OAuthError::InvalidRequest("Missing Authorization header".to_string()))?;
-
-    // Convert to string
-    let auth_str = auth_header.to_str().map_err(|_| {
-        OAuthError::InvalidRequest("Invalid Authorization header encoding".to_string())
-    })?;
-
-    // Check for Bearer prefix
-    if !auth_str.starts_with("Bearer ") {
-        return Err(OAuthError::InvalidRequest(
-            "Authorization header must use Bearer scheme".to_string(),
-        ));
-    }
-
-    // Extract token (everything after "Bearer ")
-    let token = auth_str[7..].trim(); // "Bearer " is 7 characters
-
-    if token.is_empty() {
-        return Err(OAuthError::InvalidToken);
-    }
-
-    Ok(token.to_string())
-}
-
 /// Build user info response based on granted scopes
 ///
 /// Creates a UserInfoResponse containing only the user information that the
@@ -1279,25 +1218,9 @@ fn build_user_info_response(
 /// # Returns
 /// HTTP response with Bearer token error format
 fn bearer_error_response(error: OAuthError) -> Response {
-    let (status_code, error_code, error_description) = match error {
-        OAuthError::InvalidRequest(desc) => (StatusCode::BAD_REQUEST, "invalid_request", desc),
-        OAuthError::InvalidToken => (
-            StatusCode::UNAUTHORIZED,
-            "invalid_token",
-            "The access token provided is expired, revoked, malformed, or invalid".to_string(),
-        ),
-        OAuthError::InsufficientScope => (
-            StatusCode::FORBIDDEN,
-            "insufficient_scope",
-            "The request requires higher privileges than provided by the access token".to_string(),
-        ),
-        OAuthError::ServerError(desc) => (StatusCode::INTERNAL_SERVER_ERROR, "server_error", desc),
-        _ => (
-            StatusCode::BAD_REQUEST,
-            "invalid_request",
-            "Invalid request".to_string(),
-        ),
-    };
+    let status_code = error.status_code();
+    let error_code = error.error_code();
+    let error_description = error.error_description();
 
     // Build WWW-Authenticate header value
     let www_authenticate = if status_code == StatusCode::UNAUTHORIZED {

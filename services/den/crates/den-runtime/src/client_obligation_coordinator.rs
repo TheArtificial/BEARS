@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -6,6 +7,24 @@ use den_core::DenError;
 use den_core::tools::constants::DEN_WEB_FETCH;
 
 use crate::{turn_obligations, turn_runs, turn_steps};
+
+#[derive(Debug, Deserialize)]
+struct LocalToolRequestPayload {
+    #[serde(default = "default_local_tool_name")]
+    tool_name: String,
+    #[serde(default)]
+    arguments: Value,
+}
+
+fn default_local_tool_name() -> String {
+    "local_tool".to_string()
+}
+
+fn local_tool_request_payload(value: &Value) -> Result<LocalToolRequestPayload, DenError> {
+    serde_json::from_value(value.clone()).map_err(|err| {
+        DenError::ValidationError(format!("invalid local tool request payload: {err}"))
+    })
+}
 
 fn obligation_is_den_web_fetch(obligation_payload: &Value) -> bool {
     let tool_name = obligation_payload
@@ -85,14 +104,28 @@ fn run_is_terminal(run: &turn_runs::TurnRunRow) -> bool {
     matches!(run.state.as_str(), "completed" | "failed" | "cancelled")
 }
 
-async fn existing_tool_result_or_late(
+enum ExistingClientResultOutcome {
+    DuplicateIdentical {
+        result: turn_runs::TurnObligationResultRow,
+        run_state: String,
+    },
+    DuplicateConflict {
+        existing_hash: String,
+    },
+    IgnoredLateResult {
+        run_state: String,
+        obligation_state: String,
+    },
+}
+
+async fn existing_client_result_or_late(
     pool: &PgPool,
     run: &turn_runs::TurnRunRow,
     obligation: &turn_obligations::TurnObligationRow,
     obligation_kind: &str,
     obligation_id: &str,
     result_payload: &Value,
-) -> Result<Option<ToolResultCoordinatorOutcome>, DenError> {
+) -> Result<Option<ExistingClientResultOutcome>, DenError> {
     if !run_is_terminal(run) && turn_obligations::obligation_is_open(obligation) {
         return Ok(None);
     }
@@ -107,20 +140,54 @@ async fn existing_tool_result_or_late(
         .await?
         {
             Some(turn_runs::TurnObligationResultRecord::DuplicateIdentical { row }) => {
-                ToolResultCoordinatorOutcome::DuplicateIdentical {
+                ExistingClientResultOutcome::DuplicateIdentical {
                     result: row,
                     run_state: run.state.clone(),
                 }
             }
             Some(turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash }) => {
-                ToolResultCoordinatorOutcome::DuplicateConflict { existing_hash }
+                ExistingClientResultOutcome::DuplicateConflict { existing_hash }
             }
-            _ => ToolResultCoordinatorOutcome::IgnoredLateResult {
+            _ => ExistingClientResultOutcome::IgnoredLateResult {
                 run_state: run.state.clone(),
                 obligation_state: obligation.state.clone(),
             },
         },
     ))
+}
+
+async fn existing_tool_result_or_late(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+    obligation_kind: &str,
+    obligation_id: &str,
+    result_payload: &Value,
+) -> Result<Option<ToolResultCoordinatorOutcome>, DenError> {
+    Ok(existing_client_result_or_late(
+        pool,
+        run,
+        obligation,
+        obligation_kind,
+        obligation_id,
+        result_payload,
+    )
+    .await?
+    .map(|outcome| match outcome {
+        ExistingClientResultOutcome::DuplicateIdentical { result, run_state } => {
+            ToolResultCoordinatorOutcome::DuplicateIdentical { result, run_state }
+        }
+        ExistingClientResultOutcome::DuplicateConflict { existing_hash } => {
+            ToolResultCoordinatorOutcome::DuplicateConflict { existing_hash }
+        }
+        ExistingClientResultOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state,
+        } => ToolResultCoordinatorOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state,
+        },
+    }))
 }
 
 async fn existing_permission_result_or_late(
@@ -131,34 +198,30 @@ async fn existing_permission_result_or_late(
     obligation_id: &str,
     result_payload: &Value,
 ) -> Result<Option<PermissionResultCoordinatorOutcome>, DenError> {
-    if !run_is_terminal(run) && turn_obligations::obligation_is_open(obligation) {
-        return Ok(None);
-    }
-    Ok(Some(
-        match turn_runs::existing_client_result_for_payload(
-            pool,
-            &run.run_id,
-            obligation_kind,
-            obligation_id,
-            result_payload,
-        )
-        .await?
-        {
-            Some(turn_runs::TurnObligationResultRecord::DuplicateIdentical { row }) => {
-                PermissionResultCoordinatorOutcome::DuplicateIdentical {
-                    result: row,
-                    run_state: run.state.clone(),
-                }
-            }
-            Some(turn_runs::TurnObligationResultRecord::DuplicateConflict { existing_hash }) => {
-                PermissionResultCoordinatorOutcome::DuplicateConflict { existing_hash }
-            }
-            _ => PermissionResultCoordinatorOutcome::IgnoredLateResult {
-                run_state: run.state.clone(),
-                obligation_state: obligation.state.clone(),
-            },
+    Ok(existing_client_result_or_late(
+        pool,
+        run,
+        obligation,
+        obligation_kind,
+        obligation_id,
+        result_payload,
+    )
+    .await?
+    .map(|outcome| match outcome {
+        ExistingClientResultOutcome::DuplicateIdentical { result, run_state } => {
+            PermissionResultCoordinatorOutcome::DuplicateIdentical { result, run_state }
+        }
+        ExistingClientResultOutcome::DuplicateConflict { existing_hash } => {
+            PermissionResultCoordinatorOutcome::DuplicateConflict { existing_hash }
+        }
+        ExistingClientResultOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state,
+        } => PermissionResultCoordinatorOutcome::IgnoredLateResult {
+            run_state,
+            obligation_state,
         },
-    ))
+    }))
 }
 
 fn attach_tool_result(
@@ -385,7 +448,7 @@ pub async fn settle_tool_result(
         let transitioned = turn_runs::transition_run(
             pool,
             &run.run_id,
-            turn_runs::TurnRunState::WaitingForToolResult,
+            turn_runs::TurnRunState::WaitingForClient,
             None,
         )
         .await?;
@@ -396,13 +459,7 @@ pub async fn settle_tool_result(
         });
     }
 
-    let transitioned =
-        turn_runs::transition_run(pool, &run.run_id, turn_runs::TurnRunState::Continuing, None)
-            .await?;
-    let _ = turn_obligations::mark_continued(pool, obligation.id).await?;
-    if let Some(step_id) = obligation.turn_step_id {
-        let _ = turn_steps::transition_step(pool, step_id, "continued").await?;
-    }
+    let transitioned = continue_after_client_result(pool, run, obligation).await?;
     Ok(ToolResultCoordinatorOutcome::ContinueModel {
         run: transitioned,
         result: None,
@@ -427,56 +484,64 @@ pub async fn settle_permission_result(
 
     if normalized_decision == "granted" && !obligation_is_den_web_fetch(&obligation.request_payload)
     {
-        let Some(tool_call_id) = obligation.tool_call_id.clone() else {
-            return Err(DenError::ValidationError(
-                "granted armature-local permission obligation missing tool_call_id".to_string(),
-            ));
-        };
-        let Some(tool_obligation) =
-            turn_obligations::mark_waiting_for_tool_result(pool, obligation.id).await?
-        else {
-            return Ok(PermissionResultCoordinatorOutcome::IgnoredLateResult {
-                run_state: run.state.clone(),
-                obligation_state: obligation.state.clone(),
-            });
-        };
-        let transitioned = turn_runs::transition_run(
-            pool,
-            &run.run_id,
-            turn_runs::TurnRunState::WaitingForToolResult,
-            None,
-        )
-        .await?;
-        let tool_name = obligation
-            .request_payload
-            .get("tool_name")
-            .and_then(Value::as_str)
-            .unwrap_or("local_tool")
-            .to_string();
-        let args = obligation
-            .request_payload
-            .get("arguments")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({}));
-        return Ok(PermissionResultCoordinatorOutcome::DispatchLocalTool {
-            run: transitioned,
-            tool_obligation: Box::new(tool_obligation),
-            tool_call_id,
-            tool_name,
-            args,
-            result: None,
-        });
+        return dispatch_local_tool_after_grant(pool, run, obligation).await;
     }
 
+    let transitioned = continue_after_client_result(pool, run, obligation).await?;
+    Ok(PermissionResultCoordinatorOutcome::ContinueModel {
+        run: transitioned,
+        result: None,
+    })
+}
+
+async fn continue_after_client_result(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+) -> Result<Option<turn_runs::TurnRunRow>, DenError> {
     let transitioned =
         turn_runs::transition_run(pool, &run.run_id, turn_runs::TurnRunState::Continuing, None)
             .await?;
     let _ = turn_obligations::mark_continued(pool, obligation.id).await?;
     if let Some(step_id) = obligation.turn_step_id {
-        let _ = turn_steps::transition_step(pool, step_id, "continued").await?;
+        let _ = turn_steps::transition_step(pool, step_id, turn_steps::TurnStepState::Continued)
+            .await?;
     }
-    Ok(PermissionResultCoordinatorOutcome::ContinueModel {
+    Ok(transitioned)
+}
+
+async fn dispatch_local_tool_after_grant(
+    pool: &PgPool,
+    run: &turn_runs::TurnRunRow,
+    obligation: &turn_obligations::TurnObligationRow,
+) -> Result<PermissionResultCoordinatorOutcome, DenError> {
+    let Some(tool_call_id) = obligation.tool_call_id.clone() else {
+        return Err(DenError::ValidationError(
+            "granted armature-local permission obligation missing tool_call_id".to_string(),
+        ));
+    };
+    let Some(tool_obligation) =
+        turn_obligations::mark_waiting_for_tool_result(pool, obligation.id).await?
+    else {
+        return Ok(PermissionResultCoordinatorOutcome::IgnoredLateResult {
+            run_state: run.state.clone(),
+            obligation_state: obligation.state.clone(),
+        });
+    };
+    let transitioned = turn_runs::transition_run(
+        pool,
+        &run.run_id,
+        turn_runs::TurnRunState::WaitingForClient,
+        None,
+    )
+    .await?;
+    let payload = local_tool_request_payload(&obligation.request_payload)?;
+    Ok(PermissionResultCoordinatorOutcome::DispatchLocalTool {
         run: transitioned,
+        tool_obligation: Box::new(tool_obligation),
+        tool_call_id,
+        tool_name: payload.tool_name,
+        args: payload.arguments,
         result: None,
     })
 }

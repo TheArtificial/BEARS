@@ -139,3 +139,20 @@ Operators and future UIs should be able to see:
 - [tasks and autonomy](tasks-and-autonomy.md)
 - [den runtime](den-runtime.md)
 - [reflection run taxonomy](reflection-run-taxonomy.md)
+
+## When reflection happens
+
+Reflection is not limited to interactive turns or explicit session close events. Session close is one useful lifecycle signal, but it is not the only opportunity to reflect.
+
+The conductor may schedule reflection runs when bounded source material becomes eligible for review. Common triggers include:
+
+- explicit lifecycle events, such as session close
+- stale-open sessions that have had no recent activity
+- open sessions that have accumulated enough new activity since the last reflected watermark
+- periodic maintenance sweeps
+- human or admin review requests
+- worker recovery or retry after failed reflection work
+
+Open-session reflection does not close the session. It is a checkpoint over a bounded activity window. A later close event may schedule another final checkpoint for any remaining unreflected activity.
+
+Reflection scheduling should be idempotent. Each run should record the source window or watermark it reviewed so future runs can avoid duplicating work. Automatic reflection may produce no durable memory changes; recording that a window was reviewed is still a valid outcome.

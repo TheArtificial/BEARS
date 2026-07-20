@@ -53,6 +53,58 @@ pub enum ExpectedResponderAction {
     HandoffDecision,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockingReason {
+    ToolResult,
+    PermissionDecision,
+    HumanInput,
+    ResourceBinding,
+    HandoffDecision,
+    Multiple,
+}
+
+impl BlockingReason {
+    pub fn from_open_obligations(obligations: &[TurnObligationRow]) -> Option<Self> {
+        Self::from_expected_actions(
+            obligations
+                .iter()
+                .filter_map(|obligation| obligation.expected_action().ok()),
+        )
+    }
+
+    pub fn from_expected_actions(
+        actions: impl IntoIterator<Item = ExpectedResponderAction>,
+    ) -> Option<Self> {
+        let mut reason = None;
+        for action in actions {
+            let next = match action {
+                ExpectedResponderAction::ToolResult => Self::ToolResult,
+                ExpectedResponderAction::PermissionDecision => Self::PermissionDecision,
+                ExpectedResponderAction::HumanInput => Self::HumanInput,
+                ExpectedResponderAction::ResourceBinding => Self::ResourceBinding,
+                ExpectedResponderAction::HandoffDecision => Self::HandoffDecision,
+            };
+            if reason.is_some_and(|current| current != next) {
+                return Some(Self::Multiple);
+            }
+            reason = Some(next);
+        }
+        reason
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ToolResult => "tool_result",
+            Self::PermissionDecision => "permission_decision",
+            Self::HumanInput => "human_input",
+            Self::ResourceBinding => "resource_binding",
+            Self::HandoffDecision => "handoff_decision",
+            Self::Multiple => "multiple",
+        }
+    }
+}
+
 impl ExpectedResponderAction {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -605,7 +657,7 @@ async fn open_client_obligations(
 ) -> Result<Vec<TurnObligationRow>, DenError> {
     let limit = limit.clamp(1, 10_000);
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
                request_payload, result_payload, created_at, updated_at, completed_at
@@ -613,7 +665,7 @@ async fn open_client_obligations(
         WHERE state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC
         LIMIT $1
-        "#,
+        ",
     )
     .bind(limit)
     .fetch_all(pool)
@@ -668,27 +720,28 @@ async fn expire_open_client_obligations_from_rows(
     Ok(expired)
 }
 
-pub async fn settle_outstanding_for_run(
-    pool: &PgPool,
-    run_id: &str,
-    state: TurnObligationState,
-) -> Result<u64, DenError> {
-    let state = state.as_str();
-    let result = sqlx::query(
-        r"
-        UPDATE turn_obligations
-        SET state = $2,
-            completed_at = COALESCE(completed_at, NOW()),
-            updated_at = NOW()
-        WHERE run_id = $1
-          AND state IN ('requested','waiting_for_client','result_received')
-        ",
-    )
-    .bind(run_id)
-    .bind(state)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
+#[cfg(test)]
+mod blocking_reason_tests {
+    use super::{BlockingReason, ExpectedResponderAction};
+
+    #[test]
+    fn blocking_reason_is_derived_from_expected_actions() {
+        assert_eq!(
+            BlockingReason::from_expected_actions([ExpectedResponderAction::ToolResult]),
+            Some(BlockingReason::ToolResult)
+        );
+        assert_eq!(
+            BlockingReason::from_expected_actions([
+                ExpectedResponderAction::ToolResult,
+                ExpectedResponderAction::PermissionDecision,
+            ]),
+            Some(BlockingReason::Multiple)
+        );
+        assert_eq!(
+            BlockingReason::from_expected_actions(std::iter::empty()),
+            None
+        );
+    }
 }
 
 pub fn obligation_accepts_responder_action(

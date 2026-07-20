@@ -10,11 +10,15 @@
 - [ADR-0010: Dynamic skills, reflection subagents, and bear configuration](adr-0010-dynamic-skills-subagents.md)
 - [ADR-0014: Multi-role runtime architecture](adr-0014-multi-role-runtime-architecture.md)
 - [ADR-0034: Jobs and Tasks Work-Management Model](adr-0034-jobs-and-tasks-work-management.md)
-- [ADR-0039: Trust profiles and governance modes](adr-0039-trust-profiles-and-governance-modes.md)
+- [ADR-0039: Trust profiles and governance](adr-0039-trust-profiles-and-governance.md)
 - [ADR-0041: Archival recall and async curation](adr-0041-archival-recall-and-async-curation.md)
 - [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md)
 - [ADR-0050: Agent loop control, adaptive budgets, and runtime checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md)
 - [ADR-0052: Three-Layer Agent Steering](adr-0052-three-layer-agent-steering.md)
+
+> **Amended by [ADR-0056](adr-0056-docket-driven-turn-routing.md).** A Docket task with `routing_strategy: delegated` resolves to a delegated run through this ADR's broker: the router decides where the transcript lives; the broker decides what the run may do. Router placement is never a bypass around delegation authorization. Until the broker exists, `delegated` resolves to the `work` work-run lane; the broker generalizes that lane without changing task metadata. Execution profiles for delegated runs are resolved by the ADR-0033 model-tasks layer, not by this ADR's capability bundles.
+>
+> ADR-0056 also narrows this ADR for Docket-driven runs: the `ParentCommand` vocabulary reduces to run control (`start | pause | resume | stop`); `AddContext`, `NarrowScope`, `ReviseObjective`, and `AnswerDecision` are realized as ordinary audited Docket task-tree mutations (e.g. updating a blocked `decision` task) picked up at turn/task boundaries, not as a parallel message channel. Steering and observation rights follow bear rights — jobs introduce no new ACL. And **execution surface** (Den-provisioned sandbox armature vs. a user's live armature) is a third explicit authorization axis alongside stance and mode: `work` on a user's armature is still `work`, never a new stance and never `pair`.
 
 ## Context
 

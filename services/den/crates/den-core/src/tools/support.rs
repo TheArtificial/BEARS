@@ -496,22 +496,86 @@ fn memory_semantic_warning(
         code: "semantic_confirmation_required",
         category,
         message: message.to_string(),
-        confirmation_token: issue_memory_confirmation_token(args, context, category),
+        confirmation_token: ConfirmationToken::issue(args, context, category),
     }
 }
 
-fn issue_memory_confirmation_token(
-    args: &MemoryWriteEntryArguments,
-    context: &DenToolInvocationContext,
-    category: &str,
-) -> String {
-    let exp = SystemTime::now()
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConfirmationToken {
+    category: String,
+    expires_at_secs: u64,
+    payload_hash: String,
+}
+
+impl ConfirmationToken {
+    const INVALID_MESSAGE: &'static str =
+        "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token";
+    const TTL_SECS: u64 = 15 * 60;
+
+    fn issue(
+        args: &MemoryWriteEntryArguments,
+        context: &DenToolInvocationContext,
+        category: &str,
+    ) -> String {
+        let expires_at_secs = current_unix_secs().saturating_add(Self::TTL_SECS);
+        let payload_hash =
+            memory_confirmation_payload_hash(args, context, category, expires_at_secs);
+        Self {
+            category: category.to_string(),
+            expires_at_secs,
+            payload_hash,
+        }
+        .encode()
+    }
+
+    fn decode(raw: &str) -> Result<Self, DenError> {
+        let decoded = URL_SAFE_NO_PAD
+            .decode(raw.trim())
+            .map_err(|_| invalid_confirmation_token())?;
+        let decoded = String::from_utf8(decoded).map_err(|_| invalid_confirmation_token())?;
+        let mut parts = decoded.splitn(3, ':');
+        let category = parts.next().unwrap_or_default();
+        let exp_raw = parts.next().unwrap_or_default();
+        let payload_hash = parts.next().unwrap_or_default();
+        let expires_at_secs = exp_raw
+            .parse::<u64>()
+            .map_err(|_| invalid_confirmation_token())?;
+        Ok(Self {
+            category: category.to_string(),
+            expires_at_secs,
+            payload_hash: payload_hash.to_string(),
+        })
+    }
+
+    fn encode(&self) -> String {
+        URL_SAFE_NO_PAD.encode(format!(
+            "{}:{}:{}",
+            self.category, self.expires_at_secs, self.payload_hash
+        ))
+    }
+
+    fn verifies(
+        &self,
+        args: &MemoryWriteEntryArguments,
+        context: &DenToolInvocationContext,
+        category: &str,
+    ) -> bool {
+        self.category == category
+            && self.expires_at_secs >= current_unix_secs()
+            && self.payload_hash
+                == memory_confirmation_payload_hash(args, context, category, self.expires_at_secs)
+    }
+}
+
+fn invalid_confirmation_token() -> DenError {
+    DenError::ValidationError(ConfirmationToken::INVALID_MESSAGE.to_string())
+}
+
+fn current_unix_secs() -> u64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs() + 15 * 60)
-        .unwrap_or(15 * 60);
-    let payload_hash = memory_confirmation_payload_hash(args, context, category, exp);
-    let token_payload = format!("{category}:{exp}:{payload_hash}");
-    URL_SAFE_NO_PAD.encode(token_payload)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 fn confirm_suspicious_memory_write(
@@ -522,39 +586,7 @@ fn confirm_suspicious_memory_write(
     let Some(token) = args.semantic_confirmation_token.as_deref() else {
         return Ok(false);
     };
-    let decoded = URL_SAFE_NO_PAD.decode(token.trim()).map_err(|_| {
-        DenError::ValidationError(
-            "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"
-                .to_string(),
-        )
-    })?;
-    let decoded = String::from_utf8(decoded).map_err(|_| {
-        DenError::ValidationError(
-            "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"
-                .to_string(),
-        )
-    })?;
-    let mut parts = decoded.splitn(3, ':');
-    let token_category = parts.next().unwrap_or_default();
-    let exp_raw = parts.next().unwrap_or_default();
-    let token_hash = parts.next().unwrap_or_default();
-    if token_category != category {
-        return Ok(false);
-    }
-    let exp = exp_raw.parse::<u64>().map_err(|_| {
-        DenError::ValidationError(
-            "semantic_confirmation_token is invalid; retry the warning flow to get a fresh token"
-                .to_string(),
-        )
-    })?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0);
-    if exp < now {
-        return Ok(false);
-    }
-    Ok(token_hash == memory_confirmation_payload_hash(args, context, category, exp))
+    Ok(ConfirmationToken::decode(token)?.verifies(args, context, category))
 }
 
 fn memory_confirmation_payload_hash(

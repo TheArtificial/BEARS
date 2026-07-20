@@ -18,7 +18,7 @@ This repo is a **light monorepo**: `docs/`, `services/den/` for Den, `services/b
 |-------|----------|
 | **Overall architecture** — components, the turn loop, storage boundary, edges | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | **Model experience** — what the model sees, tools, memory visibility, budgets | [MODEL_EXPERIENCE.md](MODEL_EXPERIENCE.md) |
-| **Safety via stances** — trust boundaries, governance modes, approvals, sandboxing | [SAFETY.md](SAFETY.md) |
+| **Safety via stances** — trust boundaries, governance, approvals, sandboxing | [SAFETY.md](SAFETY.md) |
 | **Bear portability** — moving a Bear between Den servers | [PORTABILITY.md](PORTABILITY.md) |
 
 These are summaries with pointers; the canonical docs live under [docs/](docs/README.md).

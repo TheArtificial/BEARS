@@ -12,6 +12,20 @@ use den_protocol::{
 };
 
 #[test]
+fn provider_activity_is_not_projected_to_bearwire_or_sse() {
+    assert!(
+        runtime_stream_event_to_bearwire_events(RuntimeStreamEvent::ProviderActivity).is_empty()
+    );
+    assert!(runtime_stream_event_to_bearwire_sse(RuntimeStreamEvent::ProviderActivity).is_empty());
+    assert!(matches!(
+        project_runtime_event_lossy(RuntimeStreamEvent::ProviderActivity),
+        RuntimeEventProjectionOutcome::Ignored {
+            reason: "provider_activity"
+        }
+    ));
+}
+
+#[test]
 fn semantic_assistant_text_projects_to_bearwire_gateway_event() {
     let mapped = runtime_semantic_event_to_bearwire_gateway_events(
         RuntimeSemanticEvent::AssistantTextDelta {

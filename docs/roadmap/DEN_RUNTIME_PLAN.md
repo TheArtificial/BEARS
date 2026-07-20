@@ -4,6 +4,8 @@
 
 **Architecture source of truth:** [`../architecture/den-runtime.md`](../architecture/den-runtime.md).
 
+**Runtime state inventory:** [`../architecture/den-state-machine-inventory.md`](../architecture/den-state-machine-inventory.md). Runtime work that changes conversation/session/turn/run/focus/obligation state must keep the inventory current and add or update a small executable invariant/replay/projection check for behavior-affecting changes.
+
 **Prompt source extraction plan:** [`PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md`](PROMPT_FRAGMENT_REGISTRY_IMPLEMENTATION_PLAN.md) (ADR-0046).
 
 This plan supersedes the Letta-backed runtime direction in older roadmap docs (Phase 1 Letta/Codepool stack, ACP-as-Letta-conversation, MemFS-canonical memory, harness-backed vs API-direct split). See [the architecture doc](../architecture/den-runtime.md#what-this-supersedes) for the full supersession list.

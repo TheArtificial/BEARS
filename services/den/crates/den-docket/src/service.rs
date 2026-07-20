@@ -12,7 +12,8 @@ use den_core::{BearProfile, DenError};
 
 use super::db;
 use super::model::{
-    task_list_projection_from_docket_job, DocketCriterionStateUpdate, DocketExecutionLookup,
+    active_task_parent_id, task_list_projection_from_docket_job,
+    DocketConversationObjectiveRequest, DocketCriterionStateUpdate, DocketExecutionLookup,
     DocketExecutionSessionRow, DocketJobCreate, DocketJobExecuteOutcome, DocketJobExecuteRequest,
     DocketJobListFilter, DocketJobProjection, DocketJobRow, DocketJobUpdate, DocketTaskCreate,
     DocketTaskListFilter, DocketTaskProjection, DocketTaskRow, DocketTaskUpdate,
@@ -42,6 +43,11 @@ pub trait DocketService: Send + Sync {
         job_id: Uuid,
     ) -> Result<Option<DocketJobProjection>, DenError>;
 
+    async fn get_or_create_conversation_objective(
+        &self,
+        request: DocketConversationObjectiveRequest,
+    ) -> Result<DocketJobProjection, DenError>;
+
     async fn update_job(&self, update: DocketJobUpdate) -> Result<DocketJobProjection, DenError>;
 
     async fn evaluate_criterion(
@@ -60,6 +66,12 @@ pub trait DocketService: Send + Sync {
         owner_profile: BearProfile,
         lookup: DocketExecutionLookup,
     ) -> Result<Option<DocketExecutionSessionRow>, DenError>;
+
+    async fn clear_active_execution_sessions(
+        &self,
+        bear_id: Uuid,
+        lookup: DocketExecutionLookup,
+    ) -> Result<u64, DenError>;
 
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError>;
 
@@ -130,6 +142,13 @@ impl DocketService for PgDocketService {
         db::get_job(&self.pool, bear_id, job_id).await
     }
 
+    async fn get_or_create_conversation_objective(
+        &self,
+        request: DocketConversationObjectiveRequest,
+    ) -> Result<DocketJobProjection, DenError> {
+        db::get_or_create_conversation_objective(&self.pool, request).await
+    }
+
     async fn update_job(&self, update: DocketJobUpdate) -> Result<DocketJobProjection, DenError> {
         db::update_job(&self.pool, update).await
     }
@@ -155,6 +174,14 @@ impl DocketService for PgDocketService {
         lookup: DocketExecutionLookup,
     ) -> Result<Option<DocketExecutionSessionRow>, DenError> {
         db::get_active_execution_session(&self.pool, bear_id, owner_profile, lookup).await
+    }
+
+    async fn clear_active_execution_sessions(
+        &self,
+        bear_id: Uuid,
+        lookup: DocketExecutionLookup,
+    ) -> Result<u64, DenError> {
+        db::clear_active_execution_sessions(&self.pool, bear_id, lookup).await
     }
 
     async fn create_task(&self, create: DocketTaskCreate) -> Result<DocketTaskRow, DenError> {
@@ -191,6 +218,25 @@ impl DocketService for PgDocketService {
                 .get_job(bear_id, job_id)
                 .await?
                 .map(|job| task_list_projection_from_docket_job(&job, parent_task_id))),
+            TaskListCheckoutSource::ConversationObjective {
+                request,
+                active_subtree,
+            } => {
+                if request.bear_id != bear_id {
+                    return Err(DenError::ValidationError(
+                        "Conversation objective checkout bear_id does not match request"
+                            .to_string(),
+                    ));
+                }
+                let job = self.get_or_create_conversation_objective(request).await?;
+                let parent_task_id = active_subtree
+                    .then(|| active_task_parent_id(&job))
+                    .flatten();
+                Ok(Some(task_list_projection_from_docket_job(
+                    &job,
+                    parent_task_id,
+                )))
+            }
             TaskListCheckoutSource::LocalProjection(task_list) => Ok(Some(*task_list)),
         }
     }

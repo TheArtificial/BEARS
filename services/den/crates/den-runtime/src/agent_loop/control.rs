@@ -1,18 +1,21 @@
-use den_core::{AgentLoopControlLevel, ThinkingEffort};
+use den_core::{AgentLoopControlLevel, BearStance, DenError, ThinkingEffort};
 use serde::{Deserialize, Deserializer, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{
-    PostMutationVerificationWindow, ToolBudgetClass, ToolCallBudgetLimits,
-    ToolContinuationObservation, TurnBudgetPolicy,
+    GroundingProbeSignalKind, PostMutationVerificationWindow, ToolBudgetClass,
+    ToolCallBudgetLimits, ToolContinuationObservation, TurnBudgetPolicy,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentLoopControlSource {
+    ContextDefault,
     ModelDefault,
     BearOverride,
     StanceOverride,
     TaskEscalation,
+    PreRiskEscalation,
     SystemDefault,
 }
 
@@ -22,7 +25,6 @@ pub enum CheckpointReason {
     OverExploration,
     ConsecutiveFailure,
     SameSignatureNearKo,
-    TaskGateRejection,
     LowBudget,
     PreRiskMutation,
 }
@@ -33,7 +35,6 @@ impl CheckpointReason {
             Self::OverExploration => "over_exploration",
             Self::ConsecutiveFailure => "consecutive_failure",
             Self::SameSignatureNearKo => "same_signature_near_ko",
-            Self::TaskGateRejection => "task_gate_rejection",
             Self::LowBudget => "low_budget",
             Self::PreRiskMutation => "pre_risk_mutation",
         }
@@ -52,15 +53,8 @@ pub struct CheckpointPolicy {
     pub exploration_without_mutation_threshold: Option<u32>,
     pub consecutive_failure_threshold: Option<u32>,
     pub same_signature_warning_threshold: Option<u32>,
-    pub require_on_task_gate_rejection: bool,
     pub require_on_low_budget: bool,
     pub require_before_broad_mutation: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskGatePolicy {
-    pub checkpoint_on_first_rejection: bool,
-    pub max_same_gate_rejections: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,8 +69,16 @@ pub struct AgentLoopControlProfile {
     pub budget: TurnBudgetPolicy,
     pub ko: KoPolicy,
     pub checkpoints: CheckpointPolicy,
-    pub task_gate: TaskGatePolicy,
     pub thinking: CheckpointThinkingPolicy,
+}
+
+pub fn agent_loop_control_profile_fingerprint(
+    profile: &AgentLoopControlProfile,
+) -> Result<String, DenError> {
+    let bytes = serde_json::to_vec(profile)
+        .map_err(|err| DenError::System(format!("serialize agent-loop profile: {err}")))?;
+    let digest = Sha256::digest(bytes);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -104,6 +106,11 @@ impl CheckpointState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointTrigger {
+    // Steering pattern reminder: keep reusable checkpoint prompt prose in prompt
+    // fragments or named renderers. Loop-control source should choose *when* a
+    // fragment applies and pass structured state; avoid scattering human-facing
+    // steering literals here because compiled context needs one auditable place
+    // to suppress stale or contradictory instructions.
     pub reason: CheckpointReason,
     pub message: String,
 }
@@ -132,6 +139,8 @@ pub struct RuntimeCheckpointRequest {
     pub run_id: String,
     pub reason: CheckpointReason,
     pub control_level: AgentLoopControlLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_fingerprint: Option<String>,
     pub active_objective: Option<String>,
     pub task_context: Option<CheckpointTaskContext>,
     pub evidence_refs: Vec<CheckpointEvidenceRef>,
@@ -315,6 +324,138 @@ pub enum CheckpointResponseValidationError {
     MissingRequiredField(CheckpointField),
 }
 
+pub const DEFAULT_ORIENTED_MAX_CHILDREN: u8 = 6;
+pub const DEFAULT_ORIENTED_MAX_DEPTH: u8 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FreeformPolicy {
+    pub may_define_task: bool,
+}
+
+impl FreeformPolicy {
+    pub const fn closed() -> Self {
+        Self {
+            may_define_task: false,
+        }
+    }
+
+    pub const fn task_definition_permitted() -> Self {
+        Self {
+            may_define_task: true,
+        }
+    }
+}
+
+impl Default for FreeformPolicy {
+    fn default() -> Self {
+        Self::closed()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrientedChildTaskPolicy {
+    pub max_children: u8,
+    pub max_depth_below_oriented_task: u8,
+}
+
+impl Default for OrientedChildTaskPolicy {
+    fn default() -> Self {
+        Self {
+            max_children: DEFAULT_ORIENTED_MAX_CHILDREN,
+            max_depth_below_oriented_task: DEFAULT_ORIENTED_MAX_DEPTH,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OrientationTaskRef {
+    TaskListItem {
+        task_list_id: String,
+        item_id: String,
+        title: Option<String>,
+    },
+    DocketTask {
+        job_id: Option<String>,
+        task_id: String,
+        title: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskOrientation {
+    pub task_ref: OrientationTaskRef,
+    pub child_policy: OrientedChildTaskPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobOrientation {
+    pub job_id: String,
+    pub active_task_ref: Option<OrientationTaskRef>,
+    pub mutable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ObjectiveOrientation {
+    Freeform { policy: FreeformPolicy },
+    Oriented { task: TaskOrientation },
+    Focused { job: JobOrientation },
+}
+
+impl ObjectiveOrientation {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Freeform { .. } => "freeform",
+            Self::Oriented { .. } => "oriented",
+            Self::Focused { .. } => "focused",
+        }
+    }
+}
+
+pub fn objective_orientation_allowed_for_stance(
+    stance: BearStance,
+    objective_orientation: &ObjectiveOrientation,
+) -> bool {
+    !matches!(stance, BearStance::Work)
+        || matches!(objective_orientation, ObjectiveOrientation::Focused { .. })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectiveOrientationResolutionInput {
+    pub focused_job_id: Option<String>,
+    pub focused_job_mutable: bool,
+    pub active_task_ref: Option<OrientationTaskRef>,
+    pub freeform_policy: FreeformPolicy,
+}
+
+pub fn resolve_objective_orientation(
+    input: ObjectiveOrientationResolutionInput,
+) -> ObjectiveOrientation {
+    if let Some(job_id) = input.focused_job_id {
+        return ObjectiveOrientation::Focused {
+            job: JobOrientation {
+                job_id,
+                active_task_ref: input.active_task_ref,
+                mutable: input.focused_job_mutable,
+            },
+        };
+    }
+
+    if let Some(task_ref) = input.active_task_ref {
+        return ObjectiveOrientation::Oriented {
+            task: TaskOrientation {
+                task_ref,
+                child_policy: OrientedChildTaskPolicy::default(),
+            },
+        };
+    }
+
+    ObjectiveOrientation::Freeform {
+        policy: input.freeform_policy,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedAgentLoopControl {
     pub level: AgentLoopControlLevel,
@@ -330,18 +471,30 @@ pub struct AgentLoopControlResolutionInput<'a> {
     pub bear_override: Option<AgentLoopControlLevel>,
     pub stance_override: Option<AgentLoopControlLevel>,
     pub task_escalation: Option<AgentLoopControlLevel>,
+    pub stance: Option<BearStance>,
+    pub objective_orientation: Option<&'a ObjectiveOrientation>,
+    pub pre_risk: bool,
 }
 
 pub fn resolve_agent_loop_control(
     input: AgentLoopControlResolutionInput<'_>,
 ) -> ResolvedAgentLoopControl {
+    let context_default =
+        context_agent_loop_control_default(input.stance, input.objective_orientation);
     let (mut level, mut source) = if let Some(level) = input.model_default {
-        (level, AgentLoopControlSource::ModelDefault)
-    } else if let Some(model_handle) = input.model_handle {
         (
-            den_llm::model_registry::default_agent_loop_control_for_model(model_handle),
+            context_default.map_or(level, |default| level.max(default)),
             AgentLoopControlSource::ModelDefault,
         )
+    } else if let Some(model_handle) = input.model_handle {
+        let model_default =
+            den_llm::model_registry::default_agent_loop_control_for_model(model_handle);
+        (
+            context_default.map_or(model_default, |default| model_default.max(default)),
+            AgentLoopControlSource::ModelDefault,
+        )
+    } else if let Some(context_default) = context_default {
+        (context_default, AgentLoopControlSource::ContextDefault)
     } else {
         (
             AgentLoopControlLevel::default(),
@@ -364,12 +517,34 @@ pub fn resolve_agent_loop_control(
             source = AgentLoopControlSource::TaskEscalation;
         }
     }
+    if input.pre_risk {
+        let escalated = level.max(AgentLoopControlLevel::Strict);
+        if escalated != level {
+            level = escalated;
+            source = AgentLoopControlSource::PreRiskEscalation;
+        }
+    }
 
     ResolvedAgentLoopControl {
         level,
         source,
         model_handle: input.model_handle.map(str::to_string),
         profile: AgentLoopControlProfile::for_level(level),
+    }
+}
+
+fn context_agent_loop_control_default(
+    stance: Option<BearStance>,
+    objective_orientation: Option<&ObjectiveOrientation>,
+) -> Option<AgentLoopControlLevel> {
+    let focused_job = matches!(
+        objective_orientation,
+        Some(ObjectiveOrientation::Focused { .. })
+    );
+    match (stance, focused_job) {
+        (Some(BearStance::Pair | BearStance::Work), true) => Some(AgentLoopControlLevel::Careful),
+        (Some(BearStance::Chat | BearStance::Pair), false) => Some(AgentLoopControlLevel::Standard),
+        _ => None,
     }
 }
 
@@ -469,18 +644,6 @@ fn checkpoint_field_missing(field: CheckpointField, response: &RuntimeCheckpoint
     }
 }
 
-pub fn task_gate_checkpoint_trigger(
-    profile: &AgentLoopControlProfile,
-) -> Option<CheckpointTrigger> {
-    profile
-        .checkpoints
-        .require_on_task_gate_rejection
-        .then(|| checkpoint_trigger(
-            CheckpointReason::TaskGateRejection,
-            "Loop checkpoint: the final answer did not satisfy the active task gate; continue or update task state with evidence.",
-        ))
-}
-
 pub fn pre_risk_checkpoint_trigger(profile: &AgentLoopControlProfile) -> Option<CheckpointTrigger> {
     profile
         .checkpoints
@@ -520,6 +683,7 @@ fn observe_checkpoint_tool_result(
 
 fn observation_is_meaningful_mutation(observation: &ToolContinuationObservation) -> bool {
     !observation.failed
+        && observation.grounding_probe_signal != Some(GroundingProbeSignalKind::Fail)
         && matches!(
             observation.class,
             ToolBudgetClass::Write | ToolBudgetClass::Destructive
@@ -552,10 +716,9 @@ impl AgentLoopControlProfile {
                 ),
                 CheckpointPolicy {
                     enabled: true,
-                    exploration_without_mutation_threshold: Some(8),
+                    exploration_without_mutation_threshold: Some(12),
                     consecutive_failure_threshold: Some(2),
                     same_signature_warning_threshold: Some(2),
-                    require_on_task_gate_rejection: false,
                     require_on_low_budget: true,
                     require_before_broad_mutation: false,
                 },
@@ -577,10 +740,9 @@ impl AgentLoopControlProfile {
                 ),
                 CheckpointPolicy {
                     enabled: true,
-                    exploration_without_mutation_threshold: Some(5),
+                    exploration_without_mutation_threshold: Some(10),
                     consecutive_failure_threshold: Some(2),
                     same_signature_warning_threshold: Some(2),
-                    require_on_task_gate_rejection: true,
                     require_on_low_budget: true,
                     require_before_broad_mutation: false,
                 },
@@ -605,7 +767,6 @@ impl AgentLoopControlProfile {
                     exploration_without_mutation_threshold: Some(3),
                     consecutive_failure_threshold: Some(1),
                     same_signature_warning_threshold: Some(1),
-                    require_on_task_gate_rejection: true,
                     require_on_low_budget: true,
                     require_before_broad_mutation: true,
                 },
@@ -630,7 +791,6 @@ impl AgentLoopControlProfile {
                     exploration_without_mutation_threshold: Some(2),
                     consecutive_failure_threshold: Some(1),
                     same_signature_warning_threshold: Some(1),
-                    require_on_task_gate_rejection: true,
                     require_on_low_budget: true,
                     require_before_broad_mutation: true,
                 },
@@ -650,7 +810,7 @@ impl AgentLoopControlProfile {
     }
 
     fn new(
-        level: AgentLoopControlLevel,
+        _level: AgentLoopControlLevel,
         budget: TurnBudgetPolicy,
         checkpoints: CheckpointPolicy,
         thinking: CheckpointThinkingPolicy,
@@ -662,14 +822,6 @@ impl AgentLoopControlProfile {
                 max_same_tool_signature_repeats: budget.max_same_tool_signature_repeats,
             },
             checkpoints,
-            task_gate: TaskGatePolicy {
-                checkpoint_on_first_rejection: !matches!(level, AgentLoopControlLevel::Light),
-                max_same_gate_rejections: match level {
-                    AgentLoopControlLevel::Light | AgentLoopControlLevel::Standard => 3,
-                    AgentLoopControlLevel::Careful => 2,
-                    AgentLoopControlLevel::Strict => 1,
-                },
-            },
             thinking,
         }
     }
@@ -734,7 +886,83 @@ mod tests {
             signature: signature.to_string(),
             class,
             failed,
+            grounding_probe_signal: None,
         }
+    }
+
+    #[test]
+    fn objective_orientation_resolver_prefers_focused_job_over_task() {
+        let task_ref = OrientationTaskRef::DocketTask {
+            job_id: Some("job-from-task".to_string()),
+            task_id: "task-1".to_string(),
+            title: Some("Implement the thing".to_string()),
+        };
+
+        let resolved = resolve_objective_orientation(ObjectiveOrientationResolutionInput {
+            focused_job_id: Some("job-1".to_string()),
+            focused_job_mutable: true,
+            active_task_ref: Some(task_ref.clone()),
+            freeform_policy: FreeformPolicy::task_definition_permitted(),
+        });
+
+        assert_eq!(
+            resolved,
+            ObjectiveOrientation::Focused {
+                job: JobOrientation {
+                    job_id: "job-1".to_string(),
+                    active_task_ref: Some(task_ref),
+                    mutable: true,
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn objective_orientation_resolver_orients_to_task_before_freeform() {
+        let task_ref = OrientationTaskRef::TaskListItem {
+            task_list_id: "list-1".to_string(),
+            item_id: "item-1".to_string(),
+            title: Some("Document task orientation".to_string()),
+        };
+
+        let resolved = resolve_objective_orientation(ObjectiveOrientationResolutionInput {
+            focused_job_id: None,
+            focused_job_mutable: true,
+            active_task_ref: Some(task_ref.clone()),
+            freeform_policy: FreeformPolicy::task_definition_permitted(),
+        });
+
+        assert_eq!(
+            resolved,
+            ObjectiveOrientation::Oriented {
+                task: TaskOrientation {
+                    task_ref,
+                    child_policy: OrientedChildTaskPolicy {
+                        max_children: DEFAULT_ORIENTED_MAX_CHILDREN,
+                        max_depth_below_oriented_task: DEFAULT_ORIENTED_MAX_DEPTH,
+                    },
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn objective_orientation_resolver_preserves_closed_freeform_policy() {
+        let resolved = resolve_objective_orientation(ObjectiveOrientationResolutionInput {
+            focused_job_id: None,
+            focused_job_mutable: true,
+            active_task_ref: None,
+            freeform_policy: FreeformPolicy::closed(),
+        });
+
+        assert_eq!(
+            resolved,
+            ObjectiveOrientation::Freeform {
+                policy: FreeformPolicy {
+                    may_define_task: false,
+                }
+            }
+        );
     }
 
     #[test]
@@ -744,9 +972,13 @@ mod tests {
         let careful = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
         let strict = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Strict);
 
-        assert!(
-            light.checkpoints.exploration_without_mutation_threshold
-                > standard.checkpoints.exploration_without_mutation_threshold
+        assert_eq!(
+            light.checkpoints.exploration_without_mutation_threshold,
+            Some(12)
+        );
+        assert_eq!(
+            standard.checkpoints.exploration_without_mutation_threshold,
+            Some(10)
         );
         assert!(
             standard.checkpoints.exploration_without_mutation_threshold
@@ -786,6 +1018,9 @@ mod tests {
             bear_override: None,
             stance_override: None,
             task_escalation: None,
+            stance: None,
+            objective_orientation: None,
+            pre_risk: false,
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Light);
         assert_eq!(resolved.source, AgentLoopControlSource::ModelDefault);
@@ -796,6 +1031,9 @@ mod tests {
             bear_override: Some(AgentLoopControlLevel::Standard),
             stance_override: Some(AgentLoopControlLevel::Careful),
             task_escalation: Some(AgentLoopControlLevel::Strict),
+            stance: None,
+            objective_orientation: None,
+            pre_risk: false,
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Strict);
         assert_eq!(resolved.source, AgentLoopControlSource::TaskEscalation);
@@ -901,6 +1139,22 @@ mod tests {
     }
 
     #[test]
+    fn failed_grounding_probe_does_not_reset_exploration() {
+        let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
+        let state = CheckpointState {
+            read_search_since_mutation: 2,
+            ..CheckpointState::default()
+        };
+        let mut mutation = observation(ToolBudgetClass::Write, "write:a", false);
+        mutation.grounding_probe_signal = Some(GroundingProbeSignalKind::Fail);
+
+        let evaluation = evaluate_checkpoint_trigger(&profile, &state, &[mutation], false);
+
+        assert!(evaluation.trigger.is_none());
+        assert_eq!(evaluation.next_state.read_search_since_mutation, 2);
+    }
+
+    #[test]
     fn checkpoint_evaluator_triggers_on_failures_and_low_budget() {
         let profile = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Standard);
         let low_budget =
@@ -926,19 +1180,33 @@ mod tests {
     }
 
     #[test]
-    fn task_gate_and_pre_risk_triggers_follow_profile_policy() {
+    fn pre_risk_checkpoint_follows_profile_policy() {
         let light = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Light);
         let careful = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
 
-        assert!(task_gate_checkpoint_trigger(&light).is_none());
-        assert_eq!(
-            task_gate_checkpoint_trigger(&careful).map(|trigger| trigger.reason),
-            Some(CheckpointReason::TaskGateRejection)
-        );
         assert!(pre_risk_checkpoint_trigger(&light).is_none());
         assert_eq!(
             pre_risk_checkpoint_trigger(&careful).map(|trigger| trigger.reason),
             Some(CheckpointReason::PreRiskMutation)
+        );
+    }
+
+    #[test]
+    fn profile_fingerprint_is_deterministic_and_profile_sensitive() {
+        let standard = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Standard);
+        let standard_again = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Standard);
+        let careful = AgentLoopControlProfile::for_level(AgentLoopControlLevel::Careful);
+
+        let standard_fingerprint = agent_loop_control_profile_fingerprint(&standard).unwrap();
+
+        assert_eq!(standard_fingerprint.len(), 64);
+        assert_eq!(
+            standard_fingerprint,
+            agent_loop_control_profile_fingerprint(&standard_again).unwrap()
+        );
+        assert_ne!(
+            standard_fingerprint,
+            agent_loop_control_profile_fingerprint(&careful).unwrap()
         );
     }
 
@@ -948,6 +1216,7 @@ mod tests {
             run_id: "run-1".to_string(),
             reason: CheckpointReason::OverExploration,
             control_level: AgentLoopControlLevel::Careful,
+            profile_fingerprint: Some("profile-test".to_string()),
             active_objective: Some("Patch the failing path".to_string()),
             task_context: Some(CheckpointTaskContext {
                 task_list_id: Some("list-1".to_string()),
@@ -1069,6 +1338,119 @@ mod tests {
         );
     }
 
+    fn focused_orientation() -> ObjectiveOrientation {
+        ObjectiveOrientation::Focused {
+            job: JobOrientation {
+                job_id: "job-1".to_string(),
+                active_task_ref: None,
+                mutable: true,
+            },
+        }
+    }
+
+    #[test]
+    fn objective_orientation_gate_requires_focused_work() {
+        let freeform = ObjectiveOrientation::Freeform {
+            policy: FreeformPolicy::task_definition_permitted(),
+        };
+
+        assert!(!objective_orientation_allowed_for_stance(
+            BearStance::Work,
+            &freeform
+        ));
+        assert!(objective_orientation_allowed_for_stance(
+            BearStance::Work,
+            &focused_orientation()
+        ));
+        assert!(objective_orientation_allowed_for_stance(
+            BearStance::Pair,
+            &freeform
+        ));
+    }
+
+    #[test]
+    fn work_autonomous_without_focused_job_is_invalid() {
+        let freeform = ObjectiveOrientation::Freeform {
+            policy: FreeformPolicy::task_definition_permitted(),
+        };
+        let oriented = ObjectiveOrientation::Oriented {
+            task: TaskOrientation {
+                task_ref: OrientationTaskRef::DocketTask {
+                    job_id: Some("job-1".to_string()),
+                    task_id: "task-1".to_string(),
+                    title: Some("Task without focused job".to_string()),
+                },
+                child_policy: OrientedChildTaskPolicy::default(),
+            },
+        };
+
+        assert!(!objective_orientation_allowed_for_stance(
+            BearStance::Work,
+            &freeform
+        ));
+        assert!(!objective_orientation_allowed_for_stance(
+            BearStance::Work,
+            &oriented
+        ));
+        assert!(objective_orientation_allowed_for_stance(
+            BearStance::Work,
+            &focused_orientation()
+        ));
+    }
+
+    #[test]
+    fn context_defaults_are_aggressive_for_pre_release() {
+        let pair_freeform = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/gpt-5.5"),
+            model_default: None,
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearStance::Pair),
+            objective_orientation: None,
+            pre_risk: false,
+        });
+        assert_eq!(pair_freeform.level, AgentLoopControlLevel::Standard);
+        assert_eq!(pair_freeform.source, AgentLoopControlSource::ModelDefault);
+
+        let focused_pair = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/gpt-5.5"),
+            model_default: None,
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearStance::Pair),
+            objective_orientation: Some(&focused_orientation()),
+            pre_risk: false,
+        });
+        assert_eq!(focused_pair.level, AgentLoopControlLevel::Careful);
+
+        let focused_work = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/gpt-5.5"),
+            model_default: None,
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearStance::Work),
+            objective_orientation: Some(&focused_orientation()),
+            pre_risk: false,
+        });
+        assert_eq!(focused_work.level, AgentLoopControlLevel::Careful);
+
+        let pre_risk = resolve_agent_loop_control(AgentLoopControlResolutionInput {
+            model_handle: Some("openai/gpt-5.5"),
+            model_default: None,
+            bear_override: None,
+            stance_override: None,
+            task_escalation: None,
+            stance: Some(BearStance::Pair),
+            objective_orientation: Some(&focused_orientation()),
+            pre_risk: true,
+        });
+        assert_eq!(pre_risk.level, AgentLoopControlLevel::Strict);
+        assert_eq!(pre_risk.source, AgentLoopControlSource::PreRiskEscalation);
+    }
+
     #[test]
     fn escalation_never_downgrades_operator_override() {
         let resolved = resolve_agent_loop_control(AgentLoopControlResolutionInput {
@@ -1077,6 +1459,9 @@ mod tests {
             bear_override: Some(AgentLoopControlLevel::Careful),
             stance_override: None,
             task_escalation: Some(AgentLoopControlLevel::Light),
+            stance: None,
+            objective_orientation: None,
+            pre_risk: false,
         });
         assert_eq!(resolved.level, AgentLoopControlLevel::Careful);
         assert_eq!(resolved.source, AgentLoopControlSource::BearOverride);

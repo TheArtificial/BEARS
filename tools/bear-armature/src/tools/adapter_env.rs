@@ -204,16 +204,6 @@ fn fallback_session_context(session_id: &str, err: &anyhow::Error) -> SessionCon
     }
 }
 
-pub(crate) async fn handle_bear_environment(
-    adapter_state: &AdapterState,
-    session_id: &str,
-    config: Option<&Config>,
-    http: Option<&reqwest::Client>,
-    args: &Value,
-) -> Result<Value> {
-    collect_bear_environment(adapter_state, session_id, config, http, args).await
-}
-
 pub(crate) async fn fetch_den_runtime_state(
     http: &reqwest::Client,
     config: &Config,

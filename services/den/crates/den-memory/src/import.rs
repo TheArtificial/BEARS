@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
-use crate::{BearMemoryStore, LogicalMemoryPath};
+use crate::{clock::now_rfc3339, BearMemoryStore, LogicalMemoryPath};
 
 const IMPORTED_AT_FIELD: &str = "imported_at";
 
@@ -126,9 +126,7 @@ async fn import_legacy_memory_source_inner(
 
     let branches = ordered_branches(temp_repo)?;
     let import_run_id = Uuid::new_v4().to_string();
-    let imported_at = OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .map_err(|err| DenError::System(format!("format import timestamp failed: {err}")))?;
+    let imported_at = now_rfc3339()?;
 
     let mut branch_reports = Vec::new();
     let mut imported_count = 0usize;
@@ -210,7 +208,14 @@ async fn import_legacy_memory_source_inner(
                 }
                 let raw_content_text = match String::from_utf8(content_bytes) {
                     Ok(value) => value,
-                    Err(_) => {
+                    Err(err) => {
+                        tracing::warn!(
+                            branch = %branch,
+                            path = %normalized_path,
+                            commit = %commit,
+                            error = %err,
+                            "skipping legacy memory file with non-UTF-8 content"
+                        );
                         branch_skipped += 1;
                         continue;
                     }
@@ -430,7 +435,7 @@ fn maybe_push_sample(
         return;
     }
     if import_history {
-        let short = &commit[..commit.len().min(12)];
+        let short = commit.chars().take(12).collect::<String>();
         samples.push(format!("{logical_path}@{short}"));
     } else {
         samples.push(logical_path.to_string());

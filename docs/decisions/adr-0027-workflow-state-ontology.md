@@ -5,6 +5,8 @@
 ## Date: 2026-05-12
 ## Updated: 2026-05-13
 
+**State inventory:** [`../architecture/den-state-machine-inventory.md`](../architecture/den-state-machine-inventory.md). This ADR owns the canonical current-turn workflow-state slice of the larger state inventory. Changes to workflow domains, plan-mode semantics, execution unlock rules, activity/task-orientation semantics, or derived `operational_focus` must update the inventory and add/update an executable invariant when behavior changes.
+
 ---
 
 ## Context

@@ -3,8 +3,8 @@
 //!
 //! `work.checkout` binds the armature's BearWire session to the
 //! `bear_work_runs` row it was launched for, opens the Docket execution
-//! session (owner_profile = work, which satisfies the Work-stance gate), and
-//! returns the prompt built Den-side from the durable task definition.
+//! session whose job/task focus satisfies the Work-stance gate, and returns
+//! the prompt built Den-side from the durable task definition.
 //! `work.report` stores the armature's advisory summary; the authoritative
 //! outcome is the run-completion hook plus Docket task state.
 

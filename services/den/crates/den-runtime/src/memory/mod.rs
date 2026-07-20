@@ -3,6 +3,7 @@
 pub mod bear_observations;
 pub mod curate_executor;
 pub mod curation;
+pub mod extraction;
 
 #[cfg(test)]
 mod store_round_trip_tests;

@@ -984,19 +984,19 @@ pub struct Projection {
 pub fn memory_proposal_created_projection(
     provenance: ProjectionProvenance,
     proposal_id: Uuid,
-    source_profile: String,
-    suggested_action: String,
-    title: String,
-    status: String,
+    source_profile: &str,
+    suggested_action: &str,
+    title: &str,
+    status: &str,
 ) -> Projection {
     Projection {
         provenance,
         event: ProjectionEvent::MemoryProposalCreated(MemoryProposalCreatedPayload {
             proposal_id,
-            source_profile: source_profile.clone(),
-            suggested_action,
-            title: title.clone(),
-            status,
+            source_profile: source_profile.to_string(),
+            suggested_action: suggested_action.to_string(),
+            title: title.to_string(),
+            status: status.to_string(),
         }),
         workflow_text: format!("Memory proposal created: {title}"),
         visible_summary: Some(format!(
@@ -1009,15 +1009,15 @@ pub fn memory_proposal_created_projection(
 pub fn memory_proposal_resolved_projection(
     provenance: ProjectionProvenance,
     proposal_id: Uuid,
-    source_profile: String,
-    suggested_action: String,
-    title: String,
-    status: String,
+    source_profile: &str,
+    suggested_action: &str,
+    title: &str,
+    status: &str,
     reviewer_profile: Option<String>,
     result_path: Option<String>,
     result_commit: Option<String>,
 ) -> Projection {
-    let visible_summary = match status.as_str() {
+    let visible_summary = match status {
         "approved" => Some(match result_path.as_deref() {
             Some(path) => format!(
                 "Memory proposal '{}' was approved and applied at {path}.",
@@ -1032,10 +1032,10 @@ pub fn memory_proposal_resolved_projection(
         provenance,
         event: ProjectionEvent::MemoryProposalResolved(MemoryProposalResolvedPayload {
             proposal_id,
-            source_profile,
-            suggested_action,
-            title: title.clone(),
-            status: status.clone(),
+            source_profile: source_profile.to_string(),
+            suggested_action: suggested_action.to_string(),
+            title: title.to_string(),
+            status: status.to_string(),
             reviewer_profile,
             result_path,
             result_commit,
@@ -1048,20 +1048,20 @@ pub fn memory_proposal_resolved_projection(
 pub fn memory_review_requested_projection(
     provenance: ProjectionProvenance,
     proposal_id: Uuid,
-    source_profile: String,
-    suggested_action: String,
-    title: String,
-    status: String,
+    source_profile: &str,
+    suggested_action: &str,
+    title: &str,
+    status: &str,
     source_paths: Vec<String>,
 ) -> Projection {
     Projection {
         provenance,
         event: ProjectionEvent::MemoryReviewRequested(MemoryReviewRequestedPayload {
             proposal_id,
-            source_profile: source_profile.clone(),
-            title: title.clone(),
-            suggested_action,
-            status,
+            source_profile: source_profile.to_string(),
+            title: title.to_string(),
+            suggested_action: suggested_action.to_string(),
+            status: status.to_string(),
             source_paths,
         }),
         workflow_text: format!("Memory review requested: {title}"),
@@ -1204,19 +1204,41 @@ pub fn memory_curate_failed_projection(
 
 impl Projection {
     pub fn workflow_content_json(&self) -> serde_json::Value {
-        let mut value =
-            serde_json::to_value(&self.event).expect("projection event should serialize");
-        let object = value
-            .as_object_mut()
-            .expect("projection event should serialize to object");
-        object.insert(
-            "source".to_string(),
-            serde_json::json!(self.provenance.source.as_str()),
-        );
-        object.insert(
-            "scope_id".to_string(),
-            serde_json::json!(self.provenance.scope_id),
-        );
+        let mut value = match serde_json::to_value(&self.event) {
+            Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
+            Ok(other) => {
+                tracing::warn!(
+                    kind = self.event.kind().as_str(),
+                    value = %other,
+                    "projection event serialized to non-object JSON"
+                );
+                serde_json::json!({
+                    "type": self.event.kind().as_str(),
+                    "projection_serialization_shape": "non_object"
+                })
+            }
+            Err(err) => {
+                tracing::warn!(
+                    kind = self.event.kind().as_str(),
+                    error = %err,
+                    "projection event serialization failed"
+                );
+                serde_json::json!({
+                    "type": self.event.kind().as_str(),
+                    "projection_serialization_error": err.to_string()
+                })
+            }
+        };
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "source".to_string(),
+                serde_json::json!(self.provenance.source.as_str()),
+            );
+            object.insert(
+                "scope_id".to_string(),
+                serde_json::json!(self.provenance.scope_id),
+            );
+        }
         value
     }
 

@@ -9,15 +9,14 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
             .fetch_all(pool)
             .await
             .map_err(|e| DenError::System(format!("bear sqlite pragma failed: {e}")))?;
-    let names = columns;
-
-    if names.iter().any(|c| c == "scope_role") && !names.iter().any(|c| c == "scope_profile") {
+    if columns.iter().any(|c| c == "scope_role") && !columns.iter().any(|c| c == "scope_profile") {
         sqlx::query("ALTER TABLE memory_records RENAME COLUMN scope_role TO scope_profile")
             .execute(pool)
             .await
             .map_err(|e| DenError::System(format!("rename scope_role failed: {e}")))?;
     }
-    if names.iter().any(|c| c == "author_role") && !names.iter().any(|c| c == "author_profile") {
+    if columns.iter().any(|c| c == "author_role") && !columns.iter().any(|c| c == "author_profile")
+    {
         sqlx::query("ALTER TABLE memory_records RENAME COLUMN author_role TO author_profile")
             .execute(pool)
             .await
@@ -25,7 +24,7 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     }
 
     // Additive bi-temporal event-time columns (ADR-0041 / DERIVED_RECALL Phase 3.5).
-    add_adr0041_record_columns_if_missing(pool, &names).await?;
+    add_adr0041_record_columns_if_missing(pool, &columns).await?;
     ensure_memory_harvest_marks(pool).await?;
 
     // Retire the legacy record→record `memory_links` base table; relations now live in
@@ -59,7 +58,7 @@ pub async fn migrate_bear_sqlite_schema(pool: &SqlitePool) -> Result<(), DenErro
     .map_err(|e| DenError::System(format!("migrate scope_type values failed: {e}")))?;
 
     // Retire the vestigial `entity_ref` column (never populated); relations carry aboutness now.
-    drop_entity_ref_column_if_present(pool, &names).await?;
+    drop_entity_ref_column_if_present(pool, &columns).await?;
 
     // Early legacy imports used the hashed filename stem (`mem_...`) as `kind` for
     // generic role-local entries. Normalize those to `note`; directory-specific

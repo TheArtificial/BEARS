@@ -221,7 +221,11 @@ impl ClientTurnLifecycleRuntime {
         let (cancel_handle, cancel_rx) = self
             .role_runtime
             .turn_cancellations()
-            .expect("client turn lifecycle runtime requires cancellation registry")
+            .ok_or_else(|| {
+                DenError::System(
+                    "client turn lifecycle runtime requires cancellation registry".to_string(),
+                )
+            })?
             .register(
                 turn_scope.channel_id.clone(),
                 request_id,
@@ -329,7 +333,7 @@ impl RoleRuntime {
 
 #[derive(Debug)]
 pub struct RoleTurnGuard {
-    pub guard: den_service::tool_turns::ActiveTurnGuard,
+    guard: den_service::tool_turns::ActiveTurnGuard,
 }
 
 impl RoleTurnGuard {

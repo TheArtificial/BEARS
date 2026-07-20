@@ -3,7 +3,7 @@
 > **Direction changed (2026-06).** Canonical memory is per-Bear SQLite ([ADR-0031](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md)); Letta Archives and `pair/` MemFS branches are removed. Long-term recall is a **derived Qdrant index** over canonical SQLite ([ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md)); the engine that *fills* it (extraction-first **harvest** + **consolidation** by supersession) and recall scoring are defined in [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md). Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
 For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
-Status: implementation roadmap; P0 pair-reflection proposal enqueue and P2 compaction-summary-assisted pair reflection proposals are implemented for ACP close. Remaining automation enhancements are optional and evidence-driven.
+Status: implementation roadmap; P0 pair-reflection proposal enqueue and P2 compaction-summary-assisted pair reflection proposals are implemented for ACP close. Remaining automation must now prioritize proving positive memory quality over adding more queue plumbing: compaction may schedule and scope harvest, but reflection must perform memory-specific extraction over evidence (ADR-0041 2026-07 amendment).
 
 This roadmap sequences the work needed for `pair` learning to become useful to `work` through reflection, curation, `core/`, Cabinet, task context, and the **derived recall index**. The safety-critical flywheel is now in place; further automation should wait for concrete operational evidence.
 
@@ -160,7 +160,7 @@ Signals:
 
 ## P2 — Model-assisted pair reflection
 
-Status: 🟡 v1 implemented for ACP close by extracting durable candidates from the latest structured compaction summary and creating memory proposals. A separate direct model pass over raw turn/tool context is deferred until there is evidence that summary-based extraction misses important facts.
+Status: 🟡 v1 implemented for ACP close by extracting durable-looking candidates from the latest structured compaction summary. This is now treated as a stopgap guardrail, not the target architecture: compaction can schedule/scope reflection, but meaningful memory requires a memory-specific extraction pass over source evidence.
 
 ### Goal
 
@@ -201,16 +201,134 @@ May create memory proposals.
 ### Current v1
 
 - ACP `session.close` runs pair compaction, then reads the latest structured compaction summary.
-- Decisions and constraints become `retain_profile_local` memory proposals.
-- Artifact refs become human-review memory proposals.
-- Goals, workflow refs, and unresolved follow-ups are treated as continuation state and are not proposed as durable memory.
+- Decisions and constraints become `retain_profile_local` memory proposals only when the deterministic guardrail can state a durable-looking claim.
+- Goals, workflow refs, artifact-only refs, and unresolved follow-ups are treated as continuation state and are not proposed as durable memory unless a later extraction pass can tie them to a durable preference, decision, constraint, fact, or lesson.
 - Secret/person/external-risk signals use proposal sensitivity and force human review.
+- This path is intentionally conservative: avoiding bad memory is useful, but it does not prove that meaningful memory works.
+
+### Replacement target
+
+Pair reflection should move from bucket promotion/filtering to the same extraction-first contract as `archive_harvest`:
+
+1. Use compaction/session-close as the trigger and bounded source window.
+2. Read source evidence for that window: user/assistant messages, relevant tool summaries, and any pair memory entries written during the session.
+3. Run a memory-specific extractor that emits structured candidates and discards:
+
+   ```json
+   {
+     "candidates": [
+       {
+         "kind": "preference|decision|fact|constraint|lesson",
+         "content": "durable semantic statement",
+         "rationale": "why this helps future sessions",
+         "source_message_ids": ["..."],
+         "confidence": 0.0,
+         "sensitivity": "normal|person|secret_risk|external_untrusted",
+         "suggested_action": "retain_profile_local|human_review|discard"
+       }
+     ],
+     "discarded": [
+       {
+         "source": "message/span/ref",
+         "reason": "transient follow-up|assistant prose|task state|artifact ref without semantic claim|duplicate"
+       }
+     ]
+   }
+   ```
+
+4. Create proposals only for future-useful semantic candidates with evidence.
+5. Store discard reasons in run/proposal metadata so quality failures are debuggable.
 
 ### Deferred until evidence
 
-- Direct model pass over raw ACP messages/tool activity.
-- Source-turn-level scoring and richer confidence explanations.
+- Richer confidence explanations beyond the initial schema.
 - Promotion from goals/workflow buckets when they encode durable preferences or conventions.
+- Semantic dedup/consolidation beyond exact-claim metadata.
+
+### Shared extraction contract v0
+
+The replacement path uses one backend-agnostic contract for pair reflection and archive harvest. Compaction may create the job and provide hints, but the extractor input must keep source evidence separate from those hints.
+
+Input bundle:
+
+```json
+{
+  "source_kind": "pair_session|compaction_span|conversation_archive",
+  "source_ref": "stable session/span/archive identifier",
+  "bear_id": "...",
+  "conversation_id": "...",
+  "session_id": "...",
+  "compaction": {
+    "artifact_id": "optional scheduler/provenance id",
+    "policy_version": "optional compaction policy",
+    "source_message_start_seq": 1,
+    "source_message_end_seq": 99,
+    "hints": ["possible_preference", "possible_decision"]
+  },
+  "messages": [
+    {
+      "id": "message id or seq",
+      "seq": 1,
+      "role": "user|assistant|tool|system",
+      "content": "bounded source text",
+      "created_at": "optional timestamp"
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "optional artifact id/path",
+      "kind": "tool_summary|memory_entry|file_ref|other",
+      "content": "bounded source text"
+    }
+  ]
+}
+```
+
+Output:
+
+```json
+{
+  "candidates": [
+    {
+      "kind": "preference|decision|fact|constraint|lesson",
+      "content": "durable semantic statement, not transcript prose",
+      "rationale": "why this helps future sessions",
+      "source_message_ids": ["..."],
+      "source_artifact_ids": ["..."],
+      "confidence": 0.0,
+      "sensitivity": "normal|person|secret_risk|external_untrusted",
+      "suggested_action": "retain_profile_local|human_review|discard"
+    }
+  ],
+  "discarded": [
+    {
+      "source_message_ids": ["..."],
+      "source_artifact_ids": ["..."],
+      "reason": "transient_followup|assistant_only|task_state|artifact_ref_without_semantic_claim|duplicate|not_durable|unsafe|invalid_candidate"
+    }
+  ]
+}
+```
+
+Validation before proposal creation:
+
+- `content` must be non-empty, future-useful, and distinct from raw transcript/bucket labels.
+- every candidate must have at least one source message or artifact ref;
+- user-authored preferences, decisions, and constraints must include user-message evidence, not only assistant summaries;
+- `kind`, `sensitivity`, and `suggested_action` are allowlisted;
+- invalid candidates become discarded entries with `invalid_candidate` rather than crashing or silently disappearing;
+- discard-only output is a valid harvest result.
+
+The deterministic test fixture uses the same contract with a fake extractor backend. Its source bundle contains one user preference, one assistant acknowledgement, and one transient reminder/task follow-up. The fake output contains one semantic candidate grounded in the user message plus discard reasons for assistant-only and transient material. This tests the pipeline contract without pretending to evaluate model quality.
+
+### Positive smoke test
+
+Before more automation, add one runnable end-to-end memory smoke test:
+
+- Input: one synthetic closed pair session/span where the user states one durable preference or decision, plus assistant suggestions and transient task follow-up residue.
+- Expected: exactly one meaningful memory proposal whose content is a future-useful semantic statement grounded in user/source evidence.
+- Expected discards: assistant-only claims, unresolved follow-ups, workflow refs, and artifact refs without semantic claims are discarded with reasons.
+- Failure mode: if the extractor emits zero candidates or only bucket-shaped summaries, the reflection path is not product-ready.
 
 ### Constraints
 
@@ -230,9 +348,10 @@ Turn closed session archives into durable memory candidates, not just the active
 
 ### Behavior
 
-- 🟡 Compaction-artifact harvest is implemented: scan **un-mined** compaction artifacts, distill structured summary sections, and create human-review memory proposals. Broader closed-conversation mining and model-assisted extraction are deferred until compaction-artifact coverage proves insufficient.
+- 🟡 Compaction-artifact harvest is implemented as a conservative stopgap: scan **un-mined** compaction artifacts, keep only durable-looking decisions/constraints/goals, and discard transient follow-up/workflow/artifact-only residue. This reduces junk but is not the target architecture.
+- Next target: use compaction artifacts only to schedule/scope candidate spans, then run a memory-specific extractor over episodic evidence from the underlying session/messages/artifacts.
 - ✅ Emit memory proposals (candidate durable entries) with harvest provenance (`source_hash`, `run_id`, source refs); do not write `core/` (that is `memory_curate`).
-- 🟡 Apply a deterministic quality/risk filter before a candidate becomes a proposal: transient follow-up-only artifacts and goal/workflow-only summaries are marked harvested without a proposal; durable decisions/constraints/artifacts receive confidence metadata; artifact-only candidates are retained at medium confidence; person/secret/external-risk signals set proposal sensitivity for human review. Fixture coverage exists for each deterministic branch. Richer model-assisted confidence scoring is deferred until proposal quality metrics show a problem.
+- 🟡 Apply a deterministic quality/risk filter before a candidate becomes a proposal: transient follow-up-only artifacts and goal/workflow-only summaries are marked harvested without a proposal; durable decisions/constraints receive confidence metadata; artifact-only candidates are discarded unless a semantic claim can be stated; person/secret/external-risk signals set proposal sensitivity for human review. Fixture coverage exists for each deterministic branch. Richer model-assisted extraction is no longer deferred on "proposal quality metrics" alone; it is required to prove positive meaningful memory.
 
 ### Triggers
 
@@ -392,9 +511,11 @@ Humans should see what the system is doing and override when necessary, without 
 1. ✅ Pair reflection creates a memory proposal and enqueues a `memory_curate` run.
 2. ✅ Add lane-neutral `bear_reflection_runs`, `bear_reflection_run_items`, and `reflection_conversations` storage.
 3. ✅ **Tool exposure (read side)** — `chat`, `pair`, `curate`, `work`, and `watch` have read/status/search descriptors; write/review policy for `work`/`watch` remains open.
-4. Next: add manual/queued conductor runner for the `memory_curate` lane.
-5. Next: surface generated proposals and queued reflection runs in UI.
-6. ✅ Apply core [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) store deltas (`salience` on `memory_records`, `valid_from`/`invalid_at`, store-level supersession invalidation, `memory_harvest_marks`) and deterministic proposal safety metadata (freshness conflicts, archive/risk gates, exact-claim different-path consolidation review). Next: model-assisted curate/consolidation policy.
-7. Then: add model-assisted pair reflection (P2) and the `archive_harvest` lane (P2.5).
-8. ✅ Derived Qdrant recall index (P3) and hybrid scored `memory_search` (P4) are landed; remaining recall work is live ops exercise and deeper salience/freshness scoring.
-9. Then: work task context bridge (P5).
+4. ✅ Apply core [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) store deltas (`salience` on `memory_records`, `valid_from`/`invalid_at`, store-level supersession invalidation, `memory_harvest_marks`) and deterministic proposal safety metadata.
+5. ✅ Derived Qdrant recall index (P3) and hybrid scored `memory_search` (P4) are landed; remaining recall work is live ops exercise and deeper salience/freshness scoring.
+6. **Next: prove positive memory extraction.** Add the golden smoke fixture from P2: one durable user preference/decision plus residue must yield one semantic proposal and discard reasons.
+7. Replace pair-reflection bucket promotion with a shared memory-extraction module that consumes bounded source evidence and emits the structured `candidates`/`discarded` schema.
+8. Wire `archive_harvest` to the same extractor: compaction artifacts schedule/scope source spans; they no longer provide proposal bodies.
+9. Surface extractor quality in UI: proposal evidence, discard reasons, and counts for no-op harvests.
+10. Then: add manual/queued conductor runner for `memory_curate` and model-assisted consolidation/supersession policy.
+11. Then: work task context bridge (P5).

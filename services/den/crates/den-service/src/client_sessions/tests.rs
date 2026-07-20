@@ -1,4 +1,25 @@
-use super::UPSERT_SESSION_SQL;
+use super::{ClientSessionMode, UPSERT_SESSION_SQL};
+
+#[test]
+fn client_session_mode_preserves_storage_strings_and_rejects_unknown_values() {
+    assert_eq!(ClientSessionMode::Ask.as_str(), "ask");
+    assert_eq!(ClientSessionMode::Plan.as_str(), "plan");
+    assert_eq!(ClientSessionMode::Write.as_str(), "write");
+
+    assert_eq!(
+        ClientSessionMode::try_from_storage("ask").unwrap(),
+        ClientSessionMode::Ask
+    );
+    assert_eq!(
+        ClientSessionMode::try_from_storage("plan").unwrap(),
+        ClientSessionMode::Plan
+    );
+    assert_eq!(
+        ClientSessionMode::try_from_storage("write").unwrap(),
+        ClientSessionMode::Write
+    );
+    assert!(ClientSessionMode::try_from_storage("admin").is_err());
+}
 
 #[test]
 fn upsert_session_reopens_poisoned_closed_or_archived_rows() {

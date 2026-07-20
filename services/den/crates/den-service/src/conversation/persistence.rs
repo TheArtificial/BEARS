@@ -2,7 +2,7 @@ use den_core::tools::result_compaction::ToolResultStatus;
 use den_core::DenError;
 use den_protocol::ContextBudgetReport;
 use serde::{Deserialize, Serialize};
-use sqlx::{types::Json, PgPool, Row};
+use sqlx::{postgres::PgRow, types::Json, PgPool, Row};
 use uuid::Uuid;
 
 use crate::archived_conversations;
@@ -34,6 +34,34 @@ pub struct ConversationModelState {
     pub actual_last_provider: Option<String>,
     pub fallback_count: i32,
     pub metadata_json: serde_json::Value,
+}
+
+fn db_err(context: &'static str) -> impl FnOnce(sqlx::Error) -> DenError {
+    move |err| match DenError::from(err) {
+        DenError::Database(message) => DenError::Database(format!("{context}: {message}")),
+        DenError::DatabaseUnavailable(message) => {
+            DenError::DatabaseUnavailable(format!("{context}: {message}"))
+        }
+        other => other,
+    }
+}
+
+fn db_decode(field: &'static str) -> impl FnOnce(sqlx::Error) -> DenError {
+    move |err| DenError::Database(format!("decode conversation {field}: {err}"))
+}
+
+async fn rollback_append_message_tx(
+    tx: sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), DenError> {
+    tx.rollback()
+        .await
+        .map_err(db_err("rollback append conversation message tx"))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversationHistoryProjection {
+    UserHistory,
+    ModelTranscript,
 }
 
 #[derive(Debug, Clone)]
@@ -871,37 +899,71 @@ pub async fn list_messages_page(
     .bind(limit.clamp(1, 100))
     .fetch_all(pool)
     .await
-    .map_err(|err| DenError::Database(format!("list conversation messages: {err}")))?;
+    .map_err(db_err("list conversation messages"))?;
 
+    decode_message_rows(rows)
+}
+
+pub async fn list_projected_messages_page(
+    pool: &PgPool,
+    conversation_id: Uuid,
+    before_sequence_no: Option<i64>,
+    limit: i64,
+    projection: ConversationHistoryProjection,
+) -> Result<Vec<PersistedConversationMessage>, DenError> {
+    const RAW_PAGE_SIZE: i64 = 100;
+    let projected_limit = limit.clamp(1, 100) as usize;
+    let mut cursor = before_sequence_no;
+    let mut projected = Vec::with_capacity(projected_limit);
+
+    loop {
+        let rows = list_messages_page(pool, conversation_id, cursor, RAW_PAGE_SIZE).await?;
+        let raw_count = rows.len();
+        cursor = rows.last().map(|row| row.sequence_no);
+        for row in rows {
+            let included = match projection {
+                ConversationHistoryProjection::UserHistory => row.is_user_history_visible(),
+                ConversationHistoryProjection::ModelTranscript => row.is_model_transcript_visible(),
+            };
+            if included {
+                projected.push(row);
+                if projected.len() == projected_limit {
+                    return Ok(projected);
+                }
+            }
+        }
+        if raw_count < RAW_PAGE_SIZE as usize || cursor.is_none() {
+            return Ok(projected);
+        }
+    }
+}
+
+fn decode_message_rows(rows: Vec<PgRow>) -> Result<Vec<PersistedConversationMessage>, DenError> {
     rows.into_iter()
         .map(|row| {
             Ok(PersistedConversationMessage {
-                sequence_no: row.try_get("sequence_no").map_err(|err| {
-                    DenError::Database(format!("decode conversation message sequence_no: {err}"))
-                })?,
-                message_type: row.try_get("message_type").map_err(|err| {
-                    DenError::Database(format!("decode conversation message message_type: {err}"))
-                })?,
-                role: row.try_get("role").map_err(|err| {
-                    DenError::Database(format!("decode conversation message role: {err}"))
-                })?,
-                visibility: row.try_get("visibility").map_err(|err| {
-                    DenError::Database(format!("decode conversation message visibility: {err}"))
-                })?,
-                content_text: row.try_get("content_text").map_err(|err| {
-                    DenError::Database(format!("decode conversation message content_text: {err}"))
-                })?,
-                content_json: row.try_get("content_json").map_err(|err| {
-                    DenError::Database(format!("decode conversation message content_json: {err}"))
-                })?,
-                provider_message_id: row.try_get("provider_message_id").map_err(|err| {
-                    DenError::Database(format!(
-                        "decode conversation message provider_message_id: {err}"
-                    ))
-                })?,
-                created_at: row.try_get("created_at").map_err(|err| {
-                    DenError::Database(format!("decode conversation message created_at: {err}"))
-                })?,
+                sequence_no: row
+                    .try_get("sequence_no")
+                    .map_err(db_decode("message sequence_no"))?,
+                message_type: row
+                    .try_get("message_type")
+                    .map_err(db_decode("message message_type"))?,
+                role: row.try_get("role").map_err(db_decode("message role"))?,
+                visibility: row
+                    .try_get("visibility")
+                    .map_err(db_decode("message visibility"))?,
+                content_text: row
+                    .try_get("content_text")
+                    .map_err(db_decode("message content_text"))?,
+                content_json: row
+                    .try_get("content_json")
+                    .map_err(db_decode("message content_json"))?,
+                provider_message_id: row
+                    .try_get("provider_message_id")
+                    .map_err(db_decode("message provider_message_id"))?,
+                created_at: row
+                    .try_get("created_at")
+                    .map_err(db_decode("message created_at"))?,
             })
         })
         .collect()
@@ -920,9 +982,10 @@ pub async fn append_message(
     let provider_message_id = message.provider_message_id.as_deref();
     let source_event_id = message.source_event_id.as_deref();
     let created_at = message.created_at.as_deref();
-    let mut tx = pool.begin().await.map_err(|err| {
-        DenError::Database(format!("begin append conversation message tx: {err}"))
-    })?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(db_err("begin append conversation message tx"))?;
 
     if let Some(source_event_id) = source_event_id {
         if let Some(existing_sequence_no) = sqlx::query_scalar::<_, i64>(
@@ -938,14 +1001,9 @@ pub async fn append_message(
         .bind(source_event_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|err| {
-            DenError::Database(format!(
-                "lookup conversation message source_event_id: {err}"
-            ))
-        })? {
-            tx.rollback().await.map_err(|err| {
-                DenError::Database(format!("rollback append conversation message tx: {err}"))
-            })?;
+        .map_err(db_err("lookup conversation message source_event_id"))?
+        {
+            rollback_append_message_tx(tx).await?;
             return Ok(existing_sequence_no);
         }
     }
@@ -962,11 +1020,11 @@ pub async fn append_message(
     .bind(conversation_id)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|err| DenError::Database(format!("allocate conversation message sequence: {err}")))?;
+    .map_err(db_err("allocate conversation message sequence"))?;
 
     let sequence_no: i64 = allocator_row
         .try_get("sequence_no")
-        .map_err(|err| DenError::Database(format!("decode allocated sequence_no: {err}")))?;
+        .map_err(db_decode("allocated sequence_no"))?;
 
     if let Err(err) = sqlx::query(
         r"
@@ -1009,11 +1067,7 @@ pub async fn append_message(
     .execute(&mut *tx)
     .await
     {
-        tx.rollback().await.map_err(|rollback_err| {
-            DenError::Database(format!(
-                "rollback append conversation message tx: {rollback_err}"
-            ))
-        })?;
+        rollback_append_message_tx(tx).await?;
 
         let duplicate_sequence_no = if source_event_id.is_some() {
             sqlx::query_scalar::<_, i64>(
@@ -1029,11 +1083,9 @@ pub async fn append_message(
             .bind(source_event_id)
             .fetch_optional(pool)
             .await
-            .map_err(|reload_err| {
-                DenError::Database(format!(
-                    "reload duplicate conversation message sequence after insert error: {reload_err}"
-                ))
-            })?
+            .map_err(db_err(
+                "reload duplicate conversation message sequence after insert error",
+            ))?
         } else {
             None
         };
@@ -1045,9 +1097,9 @@ pub async fn append_message(
         )));
     }
 
-    tx.commit().await.map_err(|err| {
-        DenError::Database(format!("commit append conversation message tx: {err}"))
-    })?;
+    tx.commit()
+        .await
+        .map_err(db_err("commit append conversation message tx"))?;
 
     Ok(sequence_no)
 }

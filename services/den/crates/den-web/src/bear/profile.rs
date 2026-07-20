@@ -46,7 +46,7 @@ struct BearRoleViewRow {
 }
 
 impl BearRoleViewRow {
-    fn from_agent(agent: BearProfileBinding, _role: BearProfile) -> Self {
+    fn from_agent(agent: BearProfileBinding) -> Self {
         Self {
             provisioning_status: agent.provisioning_status,
             last_provisioning_error: agent.last_provisioning_error,
@@ -180,7 +180,7 @@ pub(crate) async fn build_role_detail_view(
         .await?
         .ok_or_else(|| CustomError::NotFound("profile runtime binding not found".to_string()))?;
 
-    let role_row = BearRoleViewRow::from_agent(agent.clone(), role);
+    let role_row = BearRoleViewRow::from_agent(agent);
 
     let (memory_status_label, memory_file_count) = {
         let manager = den_memory::MemoryStoreManager::new(state.config.as_ref());

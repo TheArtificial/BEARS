@@ -238,13 +238,13 @@ async fn armature_owned_tool_call_creates_client_obligation(pool: sqlx::PgPool) 
             request_id: Uuid::new_v4(),
             tool_call_id: "call-list",
             tool_name: "fs_list_directory",
-            title: &Some("List directory".to_string()),
-            kind: &Some("read".to_string()),
+            title: Some("List directory"),
+            kind: Some("read"),
             arguments: &serde_json::json!({ "path": "." }),
-            approval_request_id: &None,
+            approval_request_id: None,
             approval_required: false,
-            approval_reason: &None,
-            event_run_id: &Some(run_id.clone()),
+            approval_reason: None,
+            event_run_id: Some(&run_id),
         },
     )
     .await
@@ -274,7 +274,7 @@ async fn armature_owned_tool_call_creates_client_obligation(pool: sqlx::PgPool) 
         .await
         .expect("load run")
         .expect("run exists");
-    assert_eq!(run.state, "waiting_for_tool_result");
+    assert_eq!(run.state, "waiting_for_client");
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -297,13 +297,13 @@ async fn unknown_tool_execution_owner_fails_closed(pool: sqlx::PgPool) {
             request_id: Uuid::new_v4(),
             tool_call_id: "call-unknown",
             tool_name: "mystery_unowned_tool",
-            title: &Some("Mystery".to_string()),
-            kind: &Some("function".to_string()),
+            title: Some("Mystery"),
+            kind: Some("function"),
             arguments: &serde_json::json!({}),
-            approval_request_id: &None,
+            approval_request_id: None,
             approval_required: false,
-            approval_reason: &None,
-            event_run_id: &Some(run_id.clone()),
+            approval_reason: None,
+            event_run_id: Some(&run_id),
         },
     )
     .await
@@ -336,13 +336,13 @@ async fn den_owned_tool_call_does_not_create_client_obligation(pool: sqlx::PgPoo
             request_id: Uuid::new_v4(),
             tool_call_id: "call-title",
             tool_name: "set_conversation_title",
-            title: &Some("Set conversation title".to_string()),
-            kind: &Some("function".to_string()),
+            title: Some("Set conversation title"),
+            kind: Some("function"),
             arguments: &serde_json::json!({ "title": "Debug run" }),
-            approval_request_id: &None,
+            approval_request_id: None,
             approval_required: false,
-            approval_reason: &None,
-            event_run_id: &Some(run_id.clone()),
+            approval_reason: None,
+            event_run_id: Some(&run_id),
         },
     )
     .await
@@ -384,13 +384,13 @@ async fn den_owned_approval_required_tool_creates_permission_obligation(pool: sq
             request_id: Uuid::new_v4(),
             tool_call_id: "call-web-fetch",
             tool_name: "web_fetch",
-            title: &Some("Fetch web page".to_string()),
-            kind: &Some("function".to_string()),
+            title: Some("Fetch web page"),
+            kind: Some("function"),
             arguments: &serde_json::json!({ "url": "https://example.com" }),
-            approval_request_id: &Some("perm-web-fetch".to_string()),
+            approval_request_id: Some("perm-web-fetch"),
             approval_required: true,
-            approval_reason: &Some("web_fetch requires approval for this URL".to_string()),
-            event_run_id: &Some(run_id.clone()),
+            approval_reason: Some("web_fetch requires approval for this URL"),
+            event_run_id: Some(&run_id),
         },
     )
     .await
@@ -410,7 +410,7 @@ async fn den_owned_approval_required_tool_creates_permission_obligation(pool: sq
         .await
         .expect("load run")
         .expect("run exists");
-    assert_eq!(run.state, "waiting_for_permission");
+    assert_eq!(run.state, "waiting_for_client");
 
     let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
         .await
@@ -449,17 +449,17 @@ async fn armature_approval_required_tool_persists_policy_for_permission_reconstr
             request_id: Uuid::new_v4(),
             tool_call_id: "call-edit",
             tool_name: "fs_edit_file",
-            title: &Some("Edit file".to_string()),
-            kind: &Some("function".to_string()),
+            title: Some("Edit file"),
+            kind: Some("function"),
             arguments: &serde_json::json!({
                 "path": "README.md",
                 "old_text": "old",
                 "new_text": "new"
             }),
-            approval_request_id: &Some("perm-edit".to_string()),
+            approval_request_id: Some("perm-edit"),
             approval_required: true,
-            approval_reason: &Some("Edit README.md".to_string()),
-            event_run_id: &Some(run_id.clone()),
+            approval_reason: Some("Edit README.md"),
+            event_run_id: Some(&run_id),
         },
     )
     .await
@@ -511,11 +511,20 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
     turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
         .await
         .expect("create run");
-    let cancelled = turn_runs::transition_run(
+    let mut event = BearWireEvent::ephemeral(
+        "run.cancelled",
+        serde_json::json!({"run_id": run_id, "reason": "superseded_by_new_run"}),
+    );
+    event.run_id = Some(run_id.clone());
+    let cancelled = turn_runs::finish_run_with_bearwire_event(
         &pool,
+        &session_id,
         &run_id,
+        bear_id,
+        user_id,
         turn_runs::TurnRunState::Cancelled,
         Some("superseded_by_new_run"),
+        event,
     )
     .await
     .expect("cancel run");
@@ -526,11 +535,15 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
             .await
             .expect("attempt reopen terminal run");
     assert!(reopened.is_none());
-    let completed = turn_runs::transition_run(
+    let completed = turn_runs::finish_run_with_bearwire_event(
         &pool,
+        &session_id,
         &run_id,
+        bear_id,
+        user_id,
         turn_runs::TurnRunState::Completed,
         Some("stale_completed"),
+        BearWireEvent::ephemeral("run.completed", serde_json::json!({"run_id": run_id})),
     )
     .await
     .expect("attempt overwrite terminal run");
@@ -619,7 +632,7 @@ async fn step_barrier_counts_only_obligations_for_same_step(pool: sqlx::PgPool) 
     .expect("create first step obligation");
     assert_eq!(first.turn_step_id, Some(first_step.id));
 
-    turn_steps::transition_step(&pool, first_step.id, "continued")
+    turn_steps::transition_step(&pool, first_step.id, turn_steps::TurnStepState::Continued)
         .await
         .expect("close first step");
     let second_step = turn_steps::ensure_active_step(&pool, &run_id)
@@ -734,13 +747,13 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
             request_id: Uuid::new_v4(),
             tool_call_id: "call-transactional-wait",
             tool_name: "fs_read_text_file",
-            title: &title,
-            kind: &kind,
+            title: title.as_deref(),
+            kind: kind.as_deref(),
             arguments: &arguments,
-            approval_request_id: &permission_id,
+            approval_request_id: permission_id.as_deref(),
             approval_required: true,
-            approval_reason: &approval_reason,
-            event_run_id: &event_run_id,
+            approval_reason: approval_reason.as_deref(),
+            event_run_id: event_run_id.as_deref(),
         },
     )
     .await
@@ -767,7 +780,7 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
         .await
         .expect("load run")
         .expect("run exists");
-    assert_eq!(run.state, "waiting_for_permission");
+    assert_eq!(run.state, "waiting_for_client");
 
     let step_state: String = sqlx::query(
         r"

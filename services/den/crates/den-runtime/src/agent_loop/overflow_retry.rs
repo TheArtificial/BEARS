@@ -54,7 +54,6 @@ pub async fn compact_session_messages_for_overflow(
     let recovered = state.compacted_seq_cutoff.is_some();
     let messages = rebuild_messages_after_overflow_compaction(
         pool,
-        config,
         session.bear_id,
         &session.conversation_id,
         profile,
@@ -67,7 +66,6 @@ pub async fn compact_session_messages_for_overflow(
 
 async fn rebuild_messages_after_overflow_compaction(
     pool: &PgPool,
-    _config: &Config,
     bear_id: Uuid,
     conversation_id: &str,
     profile: BearProfile,

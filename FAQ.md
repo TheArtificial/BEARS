@@ -16,4 +16,4 @@ Yes — that's a design goal. A Bear's cognition (per-Bear `memory.sqlite`) plus
 
 ## What happens to a pair session when the user disconnects?
 
-The run keeps going as a **governance-mode transition** (`interactive` → `grace` → `autonomous_continuation`), not a switch to a different stance — so memory scope and approval semantics never silently change. See [ADR-0039](docs/decisions/adr-0039-trust-profiles-and-governance-modes.md).
+The run keeps going as a **governance transition** (`interactive` → `grace` → `autonomous_continuation`), not a switch to a different stance — so memory scope and approval semantics never silently change. See [ADR-0039](docs/decisions/adr-0039-trust-profiles-and-governance.md).

@@ -69,6 +69,16 @@ pub(crate) async fn rpc(
             .await,
             "BearWire conversation.surface_history failed",
         ),
+        "docket.jobs.list" => method_response(
+            request.id,
+            methods::docket::docket_jobs_list_result(&state, &headers, &request.params).await,
+            "BearWire docket.jobs.list failed",
+        ),
+        "docket.jobs.execute" => method_response(
+            request.id,
+            methods::docket::docket_jobs_execute_result(&state, &headers, &request.params).await,
+            "BearWire docket.jobs.execute failed",
+        ),
         "run.state" | "run.timeline" => method_response(
             request.id,
             methods::run::run_state_result(&state, &headers, &request.params).await,

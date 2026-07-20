@@ -16,6 +16,20 @@ use crate::{
 };
 use den_core::DenError;
 
+fn is_terminal_or_pause(event: &RuntimeStreamEvent) -> bool {
+    matches!(
+        event,
+        RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::RunPaused { .. }
+                | RuntimeSemanticEvent::ToolCallRequested { .. }
+                | RuntimeSemanticEvent::TurnCompleted { .. }
+                | RuntimeSemanticEvent::TurnFailed { .. }
+                | RuntimeSemanticEvent::TurnCancelled { .. }
+                | RuntimeSemanticEvent::Error { .. }
+        )
+    )
+}
+
 pub fn responses_byte_stream_to_event_stream(
     parsed: impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin + 'static,
 ) -> RuntimeEventStream {
@@ -42,6 +56,7 @@ pub fn responses_byte_stream_to_event_stream_with_telemetry(
         }
         match Pin::new(&mut pinned).poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
+                queued_events.push_back(Ok(RuntimeStreamEvent::ProviderActivity));
                 buffer.extend_from_slice(&bytes);
                 while let Some(end) = find_sse_frame_end(&buffer) {
                     let raw: Vec<u8> = buffer.drain(..end).collect();
@@ -53,17 +68,7 @@ pub fn responses_byte_stream_to_event_stream_with_telemetry(
                     ) {
                         Ok(events) => {
                             for event in events {
-                                if matches!(
-                                    &event,
-                                    RuntimeStreamEvent::Semantic(
-                                        RuntimeSemanticEvent::RunPaused { .. }
-                                            | RuntimeSemanticEvent::ToolCallRequested { .. }
-                                            | RuntimeSemanticEvent::TurnCompleted { .. }
-                                            | RuntimeSemanticEvent::TurnFailed { .. }
-                                            | RuntimeSemanticEvent::TurnCancelled { .. }
-                                            | RuntimeSemanticEvent::Error { .. }
-                                    )
-                                ) {
+                                if is_terminal_or_pause(&event) {
                                     saw_terminal_or_pause = true;
                                 }
                                 queued_events.push_back(Ok(event));
@@ -81,7 +86,7 @@ pub fn responses_byte_stream_to_event_stream_with_telemetry(
                 finished = true;
                 if buffer.is_empty() && !saw_terminal_or_pause {
                     for event in accumulator.flush_end_of_stream() {
-                        diagnostics.observe_emitted_events(&[event.clone()]);
+                        diagnostics.observe_emitted_events(std::slice::from_ref(&event));
                         queued_events.push_back(Ok(event));
                     }
                 } else if !buffer.is_empty() {
@@ -125,6 +130,7 @@ pub fn openai_byte_stream_to_event_stream_with_telemetry(
             }
             match Pin::new(&mut pinned).poll_next(cx) {
                 Poll::Ready(Some(Ok(bytes))) => {
+                    queued_events.push_back(Ok(RuntimeStreamEvent::ProviderActivity));
                     buffer.extend_from_slice(&bytes);
                     while let Some(end) = find_sse_frame_end(&buffer) {
                         let raw: Vec<u8> = buffer.drain(..end).collect();
@@ -140,17 +146,7 @@ pub fn openai_byte_stream_to_event_stream_with_telemetry(
                                     // park for tool results and continue. A synthetic TurnCompleted
                                     // here preempts that continuation (same class of provider bug
                                     // requires_approval pauses in client_turn_runner_stream_tests).
-                                    if matches!(
-                                        &event,
-                                        RuntimeStreamEvent::Semantic(
-                                            RuntimeSemanticEvent::RunPaused { .. }
-                                                | RuntimeSemanticEvent::ToolCallRequested { .. }
-                                                | RuntimeSemanticEvent::TurnCompleted { .. }
-                                                | RuntimeSemanticEvent::TurnFailed { .. }
-                                                | RuntimeSemanticEvent::TurnCancelled { .. }
-                                                | RuntimeSemanticEvent::Error { .. }
-                                        )
-                                    ) {
+                                    if is_terminal_or_pause(&event) {
                                         saw_terminal_or_pause = true;
                                     }
                                     queued_events.push_back(Ok(event));
@@ -168,17 +164,7 @@ pub fn openai_byte_stream_to_event_stream_with_telemetry(
                     finished = true;
                     if buffer.is_empty() && !saw_terminal_or_pause {
                         for event in accumulator.flush_end_of_stream() {
-                            if matches!(
-                                &event,
-                                RuntimeStreamEvent::Semantic(
-                                    RuntimeSemanticEvent::RunPaused { .. }
-                                        | RuntimeSemanticEvent::ToolCallRequested { .. }
-                                        | RuntimeSemanticEvent::TurnCompleted { .. }
-                                        | RuntimeSemanticEvent::TurnFailed { .. }
-                                        | RuntimeSemanticEvent::TurnCancelled { .. }
-                                        | RuntimeSemanticEvent::Error { .. }
-                                )
-                            ) {
+                            if is_terminal_or_pause(&event) {
                                 saw_terminal_or_pause = true;
                             }
                             queued_events.push_back(Ok(event));

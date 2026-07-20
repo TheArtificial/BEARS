@@ -203,17 +203,12 @@ async fn provision_run(
         }
     };
 
-    let Some(root) = run
-        .root_name
-        .clone()
-        .or_else(|| context.work_surface_ref.clone())
-        .filter(|root| !root.trim().is_empty())
-    else {
+    let Some(root) = run.root_name.clone().filter(|root| !root.trim().is_empty()) else {
         fail_run(
             pool,
             run,
             "no_root",
-            "no sandbox root configured: set `root` on dispatch or work_surface_ref on the job",
+            "no sandbox root configured on work run: dispatch must freeze root_name before provisioning",
             None,
         )
         .await;
@@ -474,6 +469,30 @@ async fn reconcile_running(
     }
 }
 
+fn work_run_outcome_summary(
+    succeeded: bool,
+    armature_summary: Option<String>,
+    changed_files: usize,
+    task_status: Option<&str>,
+) -> String {
+    if succeeded {
+        return armature_summary.unwrap_or_else(|| {
+            format!("task marked done in-turn; {changed_files} file(s) changed")
+        });
+    }
+
+    let status = task_status.unwrap_or("pending");
+    let blocked = format!(
+        "turn completed, but the model did not mark the Docket task done (task run status: {status})"
+    );
+    match armature_summary {
+        Some(summary) if !summary.trim().is_empty() => {
+            format!("{blocked}; armature: {summary}")
+        }
+        _ => blocked,
+    }
+}
+
 /// Harvest a run whose turn reached a terminal event: collect diff/logs/usage,
 /// decide the Docket outcome (done ⟺ the model marked the task done
 /// in-turn), finalize, and tear down.
@@ -563,24 +582,17 @@ async fn harvest_run(
         }
     }
 
-    let (final_state, summary) = if succeeded {
-        (
-            WorkRunState::Succeeded,
-            turn_summary.unwrap_or_else(|| {
-                format!("task marked done in-turn; {changed_files} file(s) changed")
-            }),
-        )
+    let final_state = if succeeded {
+        WorkRunState::Succeeded
     } else {
-        (
-            WorkRunState::Blocked,
-            turn_summary.unwrap_or_else(|| {
-                format!(
-                    "turn ended without the model marking the task done (task run status: {})",
-                    task_status.as_deref().unwrap_or("pending")
-                )
-            }),
-        )
+        WorkRunState::Blocked
     };
+    let summary = work_run_outcome_summary(
+        succeeded,
+        turn_summary,
+        changed_files,
+        task_status.as_deref(),
+    );
 
     let summary = match &publish_failed {
         Some(reason) => format!("{summary}; PUBLISH FAILED: {reason}"),
@@ -811,6 +823,25 @@ async fn revoke_token_for_run(pool: &PgPool, run_id: Uuid) {
     };
     if let Err(err) = den_http::armature_tokens::revoke_for_user(pool, user_id, token_id).await {
         tracing::warn!(error = %err, work_run_id = %run_id, "work_dispatch: token revoke failed");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::work_run_outcome_summary;
+
+    #[test]
+    fn blocked_summary_is_not_hidden_by_generic_armature_completion() {
+        let summary = work_run_outcome_summary(
+            false,
+            Some("headless turn reached a terminal run event".to_string()),
+            0,
+            Some("in_progress"),
+        );
+
+        assert!(summary.contains("did not mark the Docket task done"));
+        assert!(summary.contains("task run status: in_progress"));
+        assert!(summary.contains("armature: headless turn reached"));
     }
 }
 

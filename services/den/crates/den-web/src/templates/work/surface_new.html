@@ -6,6 +6,9 @@
 <p>You become the surface's owner and can grant other managers afterwards.</p>
 
 <form method="post" action="/work/surfaces/new">
+    {% if bear_id %}<input type="hidden" name="bear_id" value="{{ bear_id }}">{% endif %}
+    {% if return_job_id %}<input type="hidden" name="return_job_id" value="{{ return_job_id }}">{% endif %}
+    {% if return_job_id %}<p><strong>This surface will be assigned to the job's Bear and attached to the originating job.</strong></p>{% endif %}
     <p>
         <label>Name <small>(immutable; lowercase letters, digits, <code>.</code> <code>_</code> <code>-</code>)</small><br>
             <input type="text" name="name" required pattern="[a-z0-9][a-z0-9._-]{0,63}"

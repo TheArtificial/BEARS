@@ -1,3 +1,5 @@
+use std::fmt;
+
 use sqlx::{PgConnection, PgPool, Row};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
@@ -5,6 +7,21 @@ use uuid::Uuid;
 use den_core::DenError;
 
 use bearwire_protocol::wire::BearWireEvent;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BearWireEventId(Uuid);
+
+impl BearWireEventId {
+    fn new(id: Uuid) -> Self {
+        Self(id)
+    }
+}
+
+impl fmt::Display for BearWireEventId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "evt_{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BearWireEventRow {
@@ -48,7 +65,7 @@ pub async fn append_bearwire_event_on(
     let id: Uuid = row.get("id");
     let sequence_no: i64 = row.get("sequence_no");
     let created_at: OffsetDateTime = row.get("created_at");
-    event.event_id = Some(format!("evt_{id}"));
+    event.event_id = Some(BearWireEventId::new(id).to_string());
     event.sequence = Some(sequence_no as u64);
     event.time =
         Some(created_at.format(&Rfc3339).map_err(|err| {
@@ -94,16 +111,52 @@ pub async fn latest_event_sequence(
     session_id: &str,
 ) -> Result<Option<i64>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT MAX(sequence_no) AS sequence_no
         FROM bearwire_events
         WHERE session_id = $1
-        "#,
+        ",
     )
     .bind(session_id)
     .fetch_one(pool)
     .await?;
     Ok(row.get("sequence_no"))
+}
+
+pub async fn latest_bearwire_event_of_type(
+    pool: &PgPool,
+    session_id: &str,
+    event_type: &str,
+) -> Result<Option<BearWireEventRow>, DenError> {
+    let row = sqlx::query(
+        r#"
+        SELECT id, sequence_no, session_id, event_type, event_json, created_at
+        FROM bearwire_events
+        WHERE session_id = $1
+          AND event_type = $2
+        ORDER BY sequence_no DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(event_type)
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(|row| {
+        let event_json: serde_json::Value = row.get("event_json");
+        let event: BearWireEvent = serde_json::from_value(event_json)
+            .map_err(|err| DenError::System(format!("decode BearWire event failed: {err}")))?;
+        Ok(BearWireEventRow {
+            id: row.get("id"),
+            sequence_no: row.get("sequence_no"),
+            session_id: row.get("session_id"),
+            event_type: row.get("event_type"),
+            event,
+            created_at: row.get("created_at"),
+        })
+    })
+    .transpose()
 }
 
 pub async fn list_bearwire_events_after(
@@ -144,4 +197,19 @@ pub async fn list_bearwire_events_after(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bearwire_event_id_preserves_wire_string() {
+        let id = Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe0c8").unwrap();
+
+        assert_eq!(
+            BearWireEventId::new(id).to_string(),
+            "evt_67e55044-10b1-426f-9247-bb680e5fe0c8"
+        );
+    }
 }

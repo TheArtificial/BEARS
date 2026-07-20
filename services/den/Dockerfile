@@ -86,6 +86,15 @@ CMD ["/bin/server"]
 FROM final AS sandbox-provider
 RUN apk add --no-cache docker-cli
 
+# The provider offers one-click sandbox image builds. Bake the immutable build
+# context into this image: PaaS deployments may replace or hide repository
+# checkouts, making runtime bind mounts unreliable. `sandbox_packaging` and
+# `bear_armature` are BuildKit named contexts supplied by Compose.
+COPY --from=sandbox_packaging / /opt/bears/sandbox-build/packaging/sandbox-image
+COPY --from=bear_armature / /opt/bears/sandbox-build/tools/bear-armature
+COPY --from=build /app/Cargo.toml /opt/bears/sandbox-build/services/den/Cargo.toml
+COPY --from=build /app/crates/bearwire-protocol /opt/bears/sandbox-build/services/den/crates/bearwire-protocol
+
 # Keep the plain server image as the default build target (the stage above
 # would otherwise become it, being last).
 FROM final

@@ -111,7 +111,7 @@ The turn controller, tool coordinator, session machinery, and semantic event str
 - **Docket** ([ADR-0034](docs/decisions/adr-0034-jobs-and-tasks-work-management.md)) is the durable work system: jobs as orchestration containers, tasks with completion criteria and run-scoped state, acceptance criteria as the definition of done. A job's task tree *is* the plan for background work.
 - **Background execution:** a Bear or human creates/approves Docket work; the scheduler dispatches it to `work`, which executes under a constrained capability profile in a sandbox with an egress gateway ([ADR-0037](docs/decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md)).
 - **Reflection** ([docs/architecture/reflection-system.md](docs/architecture/reflection-system.md)): scheduled runs read canonical memory, propose and review promotions. The scheduler/queue lives in Postgres; the canonical run record and outcomes live in per-Bear SQLite.
-- **Supervision** is a run-scoped **governance mode** (interactive, grace, autonomous continuation, observational, frozen) orthogonal to the stance ([ADR-0039](docs/decisions/adr-0039-trust-profiles-and-governance-modes.md)) — see [SAFETY.md](SAFETY.md).
+- **Supervision** is run-scoped **governance** (interactive, grace, autonomous continuation, observational, frozen) orthogonal to the stance ([ADR-0039](docs/decisions/adr-0039-trust-profiles-and-governance.md)) — see [SAFETY.md](SAFETY.md).
 
 ## Implementation map
 

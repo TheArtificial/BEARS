@@ -16,6 +16,14 @@ use super::{
     tool_policy::provider_tool_requires_approval,
 };
 
+fn parse_tool_arguments(arguments: &str) -> Value {
+    serde_json::from_str(arguments).unwrap_or_else(|_| Value::String(arguments.to_string()))
+}
+
+fn native_policy_reason(approval_required: bool) -> Option<String> {
+    approval_required.then(|| "native runtime policy".to_string())
+}
+
 pub fn spawn_persist_native_agent_step(
     pool: PgPool,
     bear_id: Uuid,
@@ -50,8 +58,7 @@ pub fn spawn_persist_native_agent_step(
         );
     }
     for call in tool_calls {
-        let args: Value = serde_json::from_str(&call.function.arguments)
-            .unwrap_or_else(|_| Value::String(call.function.arguments.clone()));
+        let args = parse_tool_arguments(&call.function.arguments);
         let approval_required = provider_tool_requires_approval(&call.function.name);
         spawn_persist_tool_request(
             context.clone(),
@@ -64,11 +71,7 @@ pub fn spawn_persist_native_agent_step(
                 None,
                 args,
                 approval_required,
-                if approval_required {
-                    Some("native runtime policy".to_string())
-                } else {
-                    None
-                },
+                native_policy_reason(approval_required),
                 "native_runtime".to_string(),
             ),
             &provenance,
@@ -109,8 +112,7 @@ pub fn spawn_persist_web_chat_turn(
                 // tool-call metadata for the agent loop.
                 if let Some(calls) = &message.tool_calls {
                     for call in calls {
-                        let args: Value = serde_json::from_str(&call.function.arguments)
-                            .unwrap_or_else(|_| Value::String(call.function.arguments.clone()));
+                        let args = parse_tool_arguments(&call.function.arguments);
                         let approval_required =
                             provider_tool_requires_approval(&call.function.name);
                         spawn_persist_tool_request(
@@ -122,11 +124,7 @@ pub fn spawn_persist_web_chat_turn(
                                 None,
                                 args,
                                 approval_required,
-                                if approval_required {
-                                    Some("native runtime policy".to_string())
-                                } else {
-                                    None
-                                },
+                                native_policy_reason(approval_required),
                                 "native_web_chat".to_string(),
                             ),
                             &provenance,

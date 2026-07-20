@@ -16,6 +16,20 @@ pub struct CompactionArtifactRecord {
     pub policy_version: String,
 }
 
+fn db_err(context: &'static str) -> impl FnOnce(sqlx::Error) -> DenError {
+    move |err| match DenError::from(err) {
+        DenError::Database(message) => DenError::Database(format!("{context}: {message}")),
+        DenError::DatabaseUnavailable(message) => {
+            DenError::DatabaseUnavailable(format!("{context}: {message}"))
+        }
+        other => other,
+    }
+}
+
+fn json_parse_err(context: &'static str) -> impl FnOnce(serde_json::Error) -> DenError {
+    move |err| DenError::Parsing(format!("{context}: {err}"))
+}
+
 pub async fn load_latest_iterative_summary(
     pool: &PgPool,
     bear_id: Uuid,
@@ -41,14 +55,14 @@ pub async fn load_latest_iterative_summary(
     .bind(conversation_uuid)
     .fetch_optional(pool)
     .await
-    .map_err(|err| DenError::Database(format!("load compaction artifact: {err}")))?;
+    .map_err(db_err("load compaction artifact"))?;
 
     let Some((artifact_id, artifact_json, start_seq, end_seq, policy_version)) = row else {
         return Ok(None);
     };
 
     let summary: RuntimeIterativeSummary = serde_json::from_value(artifact_json)
-        .map_err(|err| DenError::Database(format!("decode compaction artifact_json: {err}")))?;
+        .map_err(json_parse_err("decode compaction artifact_json"))?;
 
     Ok(Some(CompactionArtifactRecord {
         artifact_id,
@@ -84,7 +98,7 @@ pub async fn insert_iterative_summary_artifact(
     let mut tx = pool
         .begin()
         .await
-        .map_err(|err| DenError::Database(format!("begin compaction artifact tx: {err}")))?;
+        .map_err(db_err("begin compaction artifact tx"))?;
 
     let prior_id = sqlx::query_scalar::<_, Option<Uuid>>(
         r"
@@ -100,7 +114,7 @@ pub async fn insert_iterative_summary_artifact(
     .bind(conversation_uuid)
     .fetch_optional(&mut *tx)
     .await
-    .map_err(|err| DenError::Database(format!("select prior compaction artifact: {err}")))?
+    .map_err(db_err("select prior compaction artifact"))?
     .flatten();
 
     let inserted_id = sqlx::query_scalar::<_, Uuid>(
@@ -122,7 +136,7 @@ pub async fn insert_iterative_summary_artifact(
     )
     .bind(conversation_uuid)
     .bind(&policy.policy_version)
-    .bind(format!("{trigger:?}"))
+    .bind(trigger.as_str())
     .bind(source_message_start_seq)
     .bind(source_message_end_seq)
     .bind(decision.selected_group_start as i32)
@@ -130,7 +144,7 @@ pub async fn insert_iterative_summary_artifact(
     .bind(artifact_json)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|err| DenError::Database(format!("insert compaction artifact: {err}")))?;
+    .map_err(db_err("insert compaction artifact"))?;
 
     if let Some(prior_id) = prior_id {
         sqlx::query(
@@ -144,12 +158,12 @@ pub async fn insert_iterative_summary_artifact(
         .bind(prior_id)
         .execute(&mut *tx)
         .await
-        .map_err(|err| DenError::Database(format!("supersede prior compaction artifact: {err}")))?;
+        .map_err(db_err("supersede prior compaction artifact"))?;
     }
 
     tx.commit()
         .await
-        .map_err(|err| DenError::Database(format!("commit compaction artifact tx: {err}")))?;
+        .map_err(db_err("commit compaction artifact tx"))?;
 
     Ok(inserted_id)
 }
@@ -171,6 +185,6 @@ async fn resolve_conversation_uuid(
     .bind(external_conversation_id)
     .fetch_optional(pool)
     .await
-    .map_err(|err| DenError::Database(format!("resolve conversation uuid: {err}")))?;
+    .map_err(db_err("resolve conversation uuid"))?;
     Ok(row)
 }

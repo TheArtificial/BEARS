@@ -17,7 +17,7 @@ use crate::runtime::bearwire_projection::wire::tool_call_wire;
 use crate::{bearwire_events, turn_obligations, turn_runs};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ToolExecutionOwner {
+pub enum ToolExecutionOwner {
     Den,
     Armature,
 }
@@ -39,7 +39,7 @@ pub fn descriptor_resolution_failed(error: &DenError) -> bool {
     )
 }
 
-fn resolve_tool_execution_owner(tool_name: &str) -> Result<ToolExecutionOwner, DenError> {
+pub fn resolve_tool_execution_owner(tool_name: &str) -> Result<ToolExecutionOwner, DenError> {
     if tool_name == RUNTIME_CHECKPOINT_TOOL_NAME {
         return Ok(ToolExecutionOwner::Den);
     }
@@ -77,13 +77,13 @@ pub struct PersistToolCallWaitInput<'a> {
     pub request_id: Uuid,
     pub tool_call_id: &'a str,
     pub tool_name: &'a str,
-    pub title: &'a Option<String>,
-    pub kind: &'a Option<String>,
+    pub title: Option<&'a str>,
+    pub kind: Option<&'a str>,
     pub arguments: &'a Value,
-    pub approval_request_id: &'a Option<String>,
+    pub approval_request_id: Option<&'a str>,
     pub approval_required: bool,
-    pub approval_reason: &'a Option<String>,
-    pub event_run_id: &'a Option<String>,
+    pub approval_reason: Option<&'a str>,
+    pub event_run_id: Option<&'a str>,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +110,12 @@ pub struct PersistedSurfaceObligation {
     pub obligation: turn_obligations::TurnObligationRow,
 }
 
+const STEP_RETURNING_COLUMNS: &str =
+    "id, run_id, step_index, state, provider_response_id, opened_at, closed_at";
+const ACTIVE_STEP_STATES_SQL: &str = "'streaming_model', 'waiting_for_client', 'ready_to_continue'";
+const OBLIGATION_RETURNING_COLUMNS: &str = "id, run_id, session_id, kind, expected_responder_action, tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload, created_at, updated_at, completed_at";
+const OBLIGATION_RETURNING_COLUMNS_WITH_RESPONDER: &str = "id, run_id, session_id, kind, expected_responder_action, tool_call_id, permission_id, responder_ref_id, state, turn_step_id, request_payload, result_payload, created_at, updated_at, completed_at";
+
 fn obligation_from_row(row: sqlx::postgres::PgRow) -> turn_obligations::TurnObligationRow {
     turn_obligations::TurnObligationRow {
         id: row.get("id"),
@@ -130,6 +136,61 @@ fn obligation_from_row(row: sqlx::postgres::PgRow) -> turn_obligations::TurnObli
     }
 }
 
+async fn ensure_waiting_turn_step(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    run_id: &str,
+    mark_waiting: bool,
+) -> Result<Uuid, DenError> {
+    let step_row = if let Some(row) = sqlx::query(&format!(
+        r"
+        SELECT {STEP_RETURNING_COLUMNS}
+        FROM turn_steps
+        WHERE run_id = $1
+          AND state IN ({ACTIVE_STEP_STATES_SQL})
+        ORDER BY step_index DESC
+        LIMIT 1
+        "
+    ))
+    .bind(run_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    {
+        row
+    } else {
+        sqlx::query(&format!(
+            r"
+            WITH next_step AS (
+                SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
+                FROM turn_steps
+                WHERE run_id = $1
+            )
+            INSERT INTO turn_steps (run_id, step_index, state)
+            SELECT $1, step_index, 'streaming_model'
+            FROM next_step
+            RETURNING {STEP_RETURNING_COLUMNS}
+            "
+        ))
+        .bind(run_id)
+        .fetch_one(&mut **tx)
+        .await?
+    };
+    let turn_step_id: Uuid = step_row.get("id");
+    if mark_waiting {
+        sqlx::query(&format!(
+            r"
+            UPDATE turn_steps
+            SET state = 'waiting_for_client'
+            WHERE id = $1
+              AND state IN ({ACTIVE_STEP_STATES_SQL})
+            "
+        ))
+        .bind(turn_step_id)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(turn_step_id)
+}
+
 pub async fn persist_surface_obligation_transactionally(
     pool: &sqlx::PgPool,
     input: PersistSurfaceObligationInput<'_>,
@@ -147,63 +208,17 @@ pub async fn persist_surface_obligation_transactionally(
     .execute(&mut *tx)
     .await?;
 
-    let step_row = if let Some(row) = sqlx::query(
-        r"
-        SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-        FROM turn_steps
-        WHERE run_id = $1
-          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
-        ORDER BY step_index DESC
-        LIMIT 1
-        ",
-    )
-    .bind(input.run_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    {
-        row
-    } else {
-        sqlx::query(
-            r"
-            WITH next_step AS (
-                SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
-                FROM turn_steps
-                WHERE run_id = $1
-            )
-            INSERT INTO turn_steps (run_id, step_index, state)
-            SELECT $1, step_index, 'streaming_model'
-            FROM next_step
-            RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-            ",
-        )
-        .bind(input.run_id)
-        .fetch_one(&mut *tx)
-        .await?
-    };
-    let turn_step_id: Uuid = step_row.get("id");
-    sqlx::query(
-        r"
-        UPDATE turn_steps
-        SET state = 'waiting_for_client'
-        WHERE id = $1
-          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
-        ",
-    )
-    .bind(turn_step_id)
-    .execute(&mut *tx)
-    .await?;
+    let turn_step_id = ensure_waiting_turn_step(&mut tx, input.run_id, true).await?;
 
-    let row = sqlx::query(
+    let row = sqlx::query(&format!(
         r"
         INSERT INTO turn_obligations (
             run_id, session_id, turn_step_id, kind, expected_responder_action,
             responder_ref_id, state, request_payload
         ) VALUES ($1, $2, $3, $4, $5, $6, 'waiting_for_client', $7)
-        RETURNING id, run_id, session_id, kind, expected_responder_action,
-                  tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
-                  request_payload, result_payload, created_at, updated_at, completed_at
-        ",
-    )
+        RETURNING {OBLIGATION_RETURNING_COLUMNS_WITH_RESPONDER}
+        "
+    ))
     .bind(input.run_id)
     .bind(input.session_id)
     .bind(turn_step_id)
@@ -228,7 +243,6 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
 ) -> Result<PersistedToolCallWait, DenError> {
     let has_permission_id = input
         .approval_request_id
-        .as_deref()
         .map(str::trim)
         .is_some_and(|id| !id.is_empty());
     if input.approval_required && !has_permission_id {
@@ -243,11 +257,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     let effective_approval_required = input.approval_required && has_permission_id;
     let execution_owner = resolve_tool_execution_owner(input.tool_name)?;
     let den_owned = execution_owner == ToolExecutionOwner::Den;
-    let run_state = if effective_approval_required {
-        turn_runs::TurnRunState::WaitingForPermission
-    } else {
-        turn_runs::TurnRunState::WaitingForToolResult
-    };
+    let run_state = turn_runs::TurnRunState::WaitingForClient;
     let execution_target = match execution_owner {
         ToolExecutionOwner::Den => "den",
         ToolExecutionOwner::Armature => "armature_local",
@@ -279,57 +289,16 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         .await?;
     }
 
-    let step_row = if let Some(row) = sqlx::query(
-        r"
-        SELECT id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-        FROM turn_steps
-        WHERE run_id = $1
-          AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
-        ORDER BY step_index DESC
-        LIMIT 1
-        ",
+    let turn_step_id = ensure_waiting_turn_step(
+        &mut tx,
+        input.run_id,
+        !den_owned || effective_approval_required,
     )
-    .bind(input.run_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    {
-        row
-    } else {
-        sqlx::query(
-            r"
-            WITH next_step AS (
-                SELECT COALESCE(MAX(step_index), -1) + 1 AS step_index
-                FROM turn_steps
-                WHERE run_id = $1
-            )
-            INSERT INTO turn_steps (run_id, step_index, state)
-            SELECT $1, step_index, 'streaming_model'
-            FROM next_step
-            RETURNING id, run_id, step_index, state, provider_response_id, opened_at, closed_at
-            ",
-        )
-        .bind(input.run_id)
-        .fetch_one(&mut *tx)
-        .await?
-    };
-    let turn_step_id: Uuid = step_row.get("id");
-    if !den_owned || effective_approval_required {
-        sqlx::query(
-            r"
-            UPDATE turn_steps
-            SET state = 'waiting_for_client'
-            WHERE id = $1
-              AND state IN ('streaming_model', 'waiting_for_client', 'ready_to_continue')
-            ",
-        )
-        .bind(turn_step_id)
-        .execute(&mut *tx)
-        .await?;
-    }
+    .await?;
 
     let obligation_row = if effective_approval_required {
-        let permission_id = input.approval_request_id.as_deref().unwrap_or_default();
-        if let Some(row) = sqlx::query(
+        let permission_id = input.approval_request_id.unwrap_or_default();
+        if let Some(row) = sqlx::query(&format!(
             r"
             UPDATE turn_obligations
             SET session_id = $2,
@@ -346,11 +315,9 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             WHERE run_id = $1
               AND tool_call_id = $3
               AND (permission_id IS NULL OR permission_id = $4)
-            RETURNING id, run_id, session_id, kind, expected_responder_action,
-                      tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                      created_at, updated_at, completed_at
-            ",
-        )
+            RETURNING {OBLIGATION_RETURNING_COLUMNS}
+            "
+        ))
         .bind(input.run_id)
         .bind(input.session_id)
         .bind(input.tool_call_id)
@@ -362,7 +329,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         {
             Some(row)
         } else {
-            Some(sqlx::query(
+            Some(sqlx::query(&format!(
                 r"
                 INSERT INTO turn_obligations (
                     run_id, session_id, turn_step_id, kind, expected_responder_action,
@@ -379,11 +346,9 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
                               END,
                               request_payload = EXCLUDED.request_payload,
                               updated_at = NOW()
-                RETURNING id, run_id, session_id, kind, expected_responder_action,
-                          tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                          created_at, updated_at, completed_at
-                ",
-            )
+                RETURNING {OBLIGATION_RETURNING_COLUMNS}
+                "
+            ))
             .bind(input.run_id)
             .bind(input.session_id)
             .bind(turn_step_id)
@@ -396,7 +361,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     } else if den_owned {
         None
     } else {
-        Some(sqlx::query(
+        Some(sqlx::query(&format!(
             r"
             INSERT INTO turn_obligations (
                 run_id, session_id, turn_step_id, kind, expected_responder_action,
@@ -414,28 +379,26 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
                           END,
                           request_payload = EXCLUDED.request_payload,
                           updated_at = NOW()
-            RETURNING id, run_id, session_id, kind, expected_responder_action,
-                      tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                      created_at, updated_at, completed_at
-            ",
-        )
+            RETURNING {OBLIGATION_RETURNING_COLUMNS}
+            "
+        ))
         .bind(input.run_id)
         .bind(input.session_id)
         .bind(turn_step_id)
         .bind(input.tool_call_id)
-        .bind(input.approval_request_id.as_deref())
+        .bind(input.approval_request_id)
         .bind(request_payload.clone())
         .fetch_one(&mut *tx)
         .await?)
     };
     let obligation = obligation_row.map(obligation_from_row);
 
-    let effective_kind = input.kind.clone().unwrap_or_else(|| "function".to_string());
+    let effective_kind = input.kind.unwrap_or("function");
     let tool_call = tool_call_wire(
         input.tool_call_id,
         input.tool_name,
-        input.title.as_deref(),
-        &effective_kind,
+        input.title,
+        effective_kind,
         input.arguments,
     );
     let mut event = if effective_approval_required {
@@ -445,7 +408,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
                 input.tool_name
             ))
         })?;
-        let permission_id = input.approval_request_id.clone().unwrap_or_default();
+        let permission_id = input.approval_request_id.unwrap_or_default().to_string();
         BearWireEvent::tool_call_waiting(ToolCallWaitingWire {
             expected_responder_action: Some("permission_decision".to_string()),
             expected_client_method: "client.permission.result".to_string(),
@@ -453,7 +416,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             tool_call,
             permission: ToolPermissionWire {
                 id: permission_id,
-                reason: input.approval_reason.clone(),
+                reason: input.approval_reason.map(str::to_string),
                 title: None,
                 target: None,
             },
@@ -468,8 +431,8 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
             tool_call,
             approval_required: false,
             execution_target: execution_owner.to_wire(),
-            approval_request_id: input.approval_request_id.clone(),
-            reason: input.approval_reason.clone(),
+            approval_request_id: input.approval_request_id.map(str::to_string),
+            reason: input.approval_reason.map(str::to_string),
         })
     };
     event.bear_id = Some(input.bear_id.to_string());
@@ -477,7 +440,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     event.session_id = Some(input.session_id.to_string());
     event.run_id = input
         .event_run_id
-        .clone()
+        .map(str::to_string)
         .or_else(|| Some(input.run_id.to_string()));
     event.subject = Some(format!("resource/tool_call/{}", input.tool_call_id));
     event
