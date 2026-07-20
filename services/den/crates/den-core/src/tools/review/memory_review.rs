@@ -18,8 +18,8 @@ use crate::tools::{
 
 use super::store::{
     ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryLifecycleStatus,
-    MemoryProposalResolution, MemoryProposalStatus, MemoryReviewStore, ProposalProjection,
-    RequestReviewRequest, ResolveProposalRequest,
+    MemoryProposalResolution, MemoryProposalStatus, MemoryReviewStore, MemorySensitivity,
+    MemorySuggestedAction, ProposalProjection, RequestReviewRequest, ResolveProposalRequest,
 };
 
 #[derive(Debug, Deserialize)]
@@ -93,47 +93,28 @@ pub struct MemoryRequestReviewArguments {
     pub proposed_patch: Option<String>,
 }
 
-fn normalize_suggested_action(value: Option<&str>) -> Result<String, DenError> {
+fn normalize_suggested_action(value: Option<&str>) -> Result<MemorySuggestedAction, DenError> {
     let value = value
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("unspecified");
-    if matches!(
-        value,
-        "unspecified"
-            | "summarize_into_core"
-            | "promote_to_core"
-            | "cabinet_update"
-            | "skill_review"
-            | "retain_profile_local"
-            | "delete_after_review"
-            | "human_review"
-            | "archive_index"
-            | "task_context"
-    ) {
-        Ok(value.to_string())
-    } else {
-        Err(DenError::ValidationError(format!(
+    MemorySuggestedAction::parse(value).ok_or_else(|| {
+        DenError::ValidationError(format!(
             "suggested_action must be one of the supported memory review actions; got {value}"
-        )))
-    }
+        ))
+    })
 }
 
-fn normalize_memory_sensitivity(value: Option<&str>) -> Result<String, DenError> {
+fn normalize_memory_sensitivity(value: Option<&str>) -> Result<MemorySensitivity, DenError> {
     let value = value
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("normal");
-    if matches!(
-        value,
-        "normal" | "person" | "secret_risk" | "external_untrusted" | "unknown"
-    ) {
-        Ok(value.to_string())
-    } else {
-        Err(DenError::ValidationError(format!(
+    MemorySensitivity::parse(value).ok_or_else(|| {
+        DenError::ValidationError(format!(
             "sensitivity must be normal, person, secret_risk, external_untrusted, or unknown; got {value}"
-        )))
-    }
+        ))
+    })
 }
 
 fn validate_optional_review_text(
@@ -419,13 +400,22 @@ mod tests {
 
     #[test]
     fn memory_review_defaults_to_safe_action_and_sensitivity() {
-        assert_eq!(normalize_suggested_action(None).unwrap(), "unspecified");
         assert_eq!(
-            normalize_suggested_action(Some("  ")).unwrap(),
+            normalize_suggested_action(None).unwrap().as_str(),
             "unspecified"
         );
-        assert_eq!(normalize_memory_sensitivity(None).unwrap(), "normal");
-        assert_eq!(normalize_memory_sensitivity(Some("  ")).unwrap(), "normal");
+        assert_eq!(
+            normalize_suggested_action(Some("  ")).unwrap().as_str(),
+            "unspecified"
+        );
+        assert_eq!(
+            normalize_memory_sensitivity(None).unwrap().as_str(),
+            "normal"
+        );
+        assert_eq!(
+            normalize_memory_sensitivity(Some("  ")).unwrap().as_str(),
+            "normal"
+        );
     }
 
     #[test]
@@ -441,6 +431,28 @@ mod tests {
             Some("ok".to_string())
         );
         assert!(validate_optional_review_text("proposed_content", Some("too long"), 3).is_err());
+    }
+
+    #[test]
+    fn memory_review_actions_and_sensitivities_preserve_storage_strings() {
+        assert_eq!(
+            MemorySuggestedAction::ArchiveIndex.as_str(),
+            "archive_index"
+        );
+        assert_eq!(
+            MemorySuggestedAction::parse("task_context"),
+            Some(MemorySuggestedAction::TaskContext)
+        );
+        assert_eq!(MemorySuggestedAction::parse("archive-index"), None);
+        assert_eq!(
+            MemorySensitivity::ExternalUntrusted.as_str(),
+            "external_untrusted"
+        );
+        assert_eq!(
+            MemorySensitivity::parse("secret_risk"),
+            Some(MemorySensitivity::SecretRisk)
+        );
+        assert_eq!(MemorySensitivity::parse("private"), None);
     }
 
     #[test]

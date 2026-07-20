@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use den_core::tools::review::{
     ApplyCoreUpdateRequest, MarkMemoryLifecycleRequest, MemoryProposalStatus, MemoryReviewStore,
-    ObservationRecord, ObservationWriteRequest, ProposalProjection, RequestReviewRequest,
-    ResolveProposalRequest,
+    MemorySensitivity, ObservationRecord, ObservationWriteRequest, ProposalProjection,
+    RequestReviewRequest, ResolveProposalRequest,
 };
 
 use crate::{config::Config, errors::DenError};
@@ -54,11 +54,8 @@ fn observation_requires_human(salience: &str) -> bool {
     matches!(salience, "high" | "critical")
 }
 
-fn sensitivity_requires_human(sensitivity: &str) -> bool {
-    matches!(
-        sensitivity,
-        "person" | "secret_risk" | "external_untrusted" | "unknown"
-    )
+fn sensitivity_requires_human(sensitivity: MemorySensitivity) -> bool {
+    sensitivity != MemorySensitivity::Normal
 }
 
 /// Concrete [`MemoryReviewStore`] over the runtime pool/config/stores.
@@ -287,7 +284,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 source_agent_id: request.binding_id.clone(),
                 source_paths: request.source_paths.clone(),
                 source_refs: request.source_refs.clone(),
-                suggested_action: &request.suggested_action,
+                suggested_action: request.suggested_action.as_str(),
                 target_ref: request.target_ref.as_deref(),
                 title: &request.title,
                 summary: &request.summary,
@@ -295,7 +292,7 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
                 proposed_content: request.proposed_content.as_deref(),
                 proposed_patch: request.proposed_patch.as_deref(),
                 refs: request.refs.clone(),
-                sensitivity: &request.sensitivity,
+                sensitivity: request.sensitivity.as_str(),
                 requires_human: request.requires_human,
                 project_to_conversation: false,
             },
@@ -363,7 +360,11 @@ impl MemoryReviewStore for DenMemoryReviewStore<'_> {
         .await?
         .ok_or_else(|| DenError::NotFound("memory proposal not found".to_string()))?;
 
-        if proposal.requires_human || sensitivity_requires_human(&proposal.sensitivity) {
+        if proposal.requires_human
+            || MemorySensitivity::parse(&proposal.sensitivity)
+                .map(sensitivity_requires_human)
+                .unwrap_or(true)
+        {
             return Err(DenError::ValidationError(
                 "proposal requires human review; resolve as needs_human_review instead of applying a core update autonomously".to_string(),
             ));
