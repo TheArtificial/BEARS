@@ -23,8 +23,9 @@ use crate::{
 };
 use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow, SCRATCH_ROOT_NAME};
 use den_docket::{
-    DocketCommitPolicy, DocketEffortHint, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobListFilter, DocketJobStatus, DocketService, DocketTaskDifficulty, DocketTaskInput,
+    DocketCommitPolicy, DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint,
+    DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter, DocketJobStatus,
+    DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskInput,
     DocketTaskKind, DocketTaskScope, PgDocketService, TaskListVisibility,
 };
 use den_sandbox::protocol::CatalogResponse;
@@ -43,6 +44,8 @@ pub fn router() -> Router<AppState> {
         .route("/work/new", get(new_job_form).post(create_job))
         .route("/work/jobs/{job_id}", get(job_detail))
         .route("/work/jobs/{job_id}/duplicate", post(duplicate_job))
+        .route("/work/jobs/{job_id}/complete", post(complete_job))
+        .route("/work/jobs/{job_id}/extend", post(extend_job))
         .route("/work/runs/{run_id}", get(run_detail))
         .route("/work/tasks/{task_id}/dispatch", post(dispatch_task))
         .route("/work/runs/{run_id}/cancel", post(cancel_run))
@@ -629,6 +632,184 @@ async fn duplicate_job(
     Ok(Redirect::to(&format!("/work/jobs/{}", duplicate.job.id)).into_response())
 }
 
+async fn complete_job(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(job_id): Path<Uuid>,
+) -> Result<Response, CustomError> {
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let projection = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    let report = den_docket::docket_job_status_report(&projection);
+    if !report.tasks_complete {
+        return Err(CustomError::ValidationError(
+            "complete every task before marking the job completed".to_string(),
+        ));
+    }
+    let run_id = projection
+        .job
+        .current_run_id
+        .ok_or_else(|| CustomError::ValidationError("job has no current Docket run".to_string()))?;
+    let criterion_states: std::collections::HashMap<Uuid, &str> = projection
+        .criteria_states
+        .iter()
+        .map(|state| (state.criterion_id, state.status.as_str()))
+        .collect();
+    for criterion in &projection.criteria {
+        if !matches!(
+            criterion_states.get(&criterion.id).copied(),
+            Some("met" | "waived")
+        ) {
+            service
+                .evaluate_criterion(DocketCriterionStateUpdate {
+                    bear_id,
+                    job_id,
+                    run_id,
+                    criterion_id: criterion.id,
+                    status: DocketCriterionStatus::Met,
+                    evidence: Some(serde_json::json!({
+                        "source": "work_ui_human_completion",
+                        "accepted_by_user_id": user_id,
+                    })),
+                    actor_role: BearProfile::Pair,
+                    actor_user_id: Some(user_id),
+                    actor_agent_id: None,
+                })
+                .await?;
+        }
+    }
+    service
+        .update_job(DocketJobUpdate {
+            bear_id,
+            job_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            goal: None,
+            work_surface_ref: None,
+            work_surface_id: None,
+            commit_policy: None,
+            status: Some(DocketJobStatus::Completed),
+            visibility: None,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct ExtendJobForm {
+    title: String,
+    #[serde(default)]
+    body: String,
+    criteria: String,
+}
+
+async fn extend_job(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(job_id): Path<Uuid>,
+    Form(form): Form<ExtendJobForm>,
+) -> Result<Response, CustomError> {
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let projection = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    if matches!(projection.job.status.as_str(), "completed" | "cancelled") {
+        return Err(CustomError::ValidationError(
+            "completed or cancelled jobs cannot be extended; duplicate the job instead".to_string(),
+        ));
+    }
+    let title = form.title.trim();
+    if title.is_empty() {
+        return Err(CustomError::ValidationError(
+            "extension task title is required".to_string(),
+        ));
+    }
+    let criteria: Vec<String> = form
+        .criteria
+        .split(';')
+        .map(str::trim)
+        .filter(|criterion| !criterion.is_empty())
+        .map(str::to_string)
+        .collect();
+    if criteria.is_empty() {
+        return Err(CustomError::ValidationError(
+            "extension task needs at least one semicolon-separated criterion".to_string(),
+        ));
+    }
+    let run_id = projection
+        .job
+        .current_run_id
+        .ok_or_else(|| CustomError::ValidationError("job has no current Docket run".to_string()))?;
+    let sibling_order = projection
+        .tasks
+        .iter()
+        .map(|task| task.sibling_order)
+        .max()
+        .unwrap_or(-1)
+        .saturating_add(1);
+    service
+        .create_task(DocketTaskCreate {
+            bear_id,
+            job_id: Some(job_id),
+            session_anchor_id: None,
+            parent_task_id: None,
+            sibling_order,
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Template,
+            title: title.to_string(),
+            body: clean_form_field(&form.body).unwrap_or_else(|| title.to_string()),
+            completion_criteria: criteria,
+            difficulty: None,
+            effort_hint: None,
+            assigned_to_role: Some(BearProfile::Work),
+            created_by_role: "ui".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: Some(run_id),
+        })
+        .await?;
+    service
+        .update_job(DocketJobUpdate {
+            bear_id,
+            job_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            goal: None,
+            work_surface_ref: None,
+            work_surface_id: None,
+            commit_policy: None,
+            status: Some(DocketJobStatus::Ready),
+            visibility: None,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
+}
+
 async fn job_detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -698,6 +879,7 @@ async fn job_detail(
         auth_session,
         context! {
             title => "Work job",
+            bear_id => bear_id.to_string(),
             bear_slug => bear_slug,
             job_id => job_id.to_string(),
             goal => projection.job.goal,

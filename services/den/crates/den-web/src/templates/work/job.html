@@ -13,6 +13,28 @@
     <button type="submit">Duplicate job</button>
     <small>Copies job intent, criteria, work-surface settings, and task definitions into a fresh job.</small>
 </form>
+
+{% if status not in ["completed", "cancelled"] %}
+<section>
+    <h2>Job lifecycle</h2>
+    {% if tasks_complete %}
+    <form method="post" action="/work/jobs/{{ job_id }}/complete">
+        <button type="submit">Mark job completed</button>
+        <small>Accepts any remaining job-level criteria as met and closes the current Docket run.</</section></h2>small>
+    </form>
+    {% endif %}
+    <details>
+        <summary>Extend with</summary></small> another work task</summary></details>
+        <form method="post" action="/work/jobs/{{ job_id }}/extend">
+            <p><label>Task title<br><input name="title" required</label> size="60"></label></p>
+            <p><label>Task body<br><textarea</label> name="body" rows="3" cols="70" placeholder="Defaults to the title"></textarea></label></p>
+            <p><label>Completion criteria <small>(semicolon-separated)</small><br><</label>input name="criteria" required size="70"></label></p>
+            <button type="submit">Extend job</button>
+        </form>
+    </details>
+</section>
+{% endif %}
+
 {% if tasks_complete and status not in ["completed", "cancelled"] %}
 <p>
     ✅ <strong>All tasks are done.</strong>
@@ -50,7 +72,7 @@
                         {% if work_surface_ref %}
                         <p><small>Using job work surface <code>{{ work_surface_ref }}</code> unless a root is selected.</small></p>
                         {% else %}
-                        <p><small><strong>Workspace selection:</strong> This job has no default work surface. Choose an existing root, or explicitly use an empty scratch workspace. Scratch returns reports/artifacts only; it does not imply publishable repo changes. This guidance is not the job's blocked reason; see the latest run result below.</small></p>
+                        <p><small><strong>Workspace selection:</strong> This job has no default work surface. <a href="/work/surfaces/new?bear_id={{ bear_id | urlencode }}&amp;return_job_id={{ job_id | urlencode }}">Create and attach a Git work surface</a>, choose an existing root, or explicitly use an empty scratch workspace. Scratch returns reports/artifacts only; it does not imply publishable repo changes. This guidance is not the job's blocked reason; see the latest run result below.</small></p>
                         {% endif %}
                         {% if catalog and catalog.roots %}
                         <select name="root" title="sandbox root">

@@ -89,7 +89,7 @@ async fn list_my_bears(
 #[derive(Debug, Deserialize)]
 pub struct ChatHistoryQuery {
     pub bear_id: Uuid,
-    /// runtime conversation: `default` (agent main conversation) or `conv-…`.
+    /// Runtime conversation: `default`, interactive `conv-…`, or BearWire/headless `den-conv-…`.
     #[serde(default)]
     pub conversation_id: Option<String>,
     /// Canonical cursor: messages older than this sequence number.
@@ -185,9 +185,9 @@ pub struct ChatModelResponse {
     pub model_options: Vec<ModelOption>,
 }
 
-/// `None` / empty / `default` → agent main conversation. Existing runtime conversations are `conv-...`.
-/// The web UI may also send a temporary `new-...` placeholder before Den resolves the durable
-/// conversation id; Den resolves that into a durable native conversation.
+/// `None` / empty / `default` → agent main conversation. Existing runtime conversations use
+/// interactive `conv-...` or BearWire/headless `den-conv-...` ids. The web UI may also send a
+/// temporary `new-...` placeholder before Den resolves the durable conversation id.
 fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomError> {
     let s = raw
         .map(str::trim)
@@ -196,7 +196,7 @@ fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomE
     if s == "default" {
         return Ok("default".to_string());
     }
-    let ok = (s.starts_with("conv-") || s.starts_with("new-"))
+    let ok = (s.starts_with("conv-") || s.starts_with("den-conv-") || s.starts_with("new-"))
         && s.len() > 8
         && s.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
@@ -204,7 +204,7 @@ fn normalize_client_conversation_id(raw: Option<&str>) -> Result<String, CustomE
         Ok(s.to_string())
     } else {
         Err(CustomError::ValidationError(format!(
-            "invalid conversation_id (expected 'default', a runtime conv- id, or a pending new- id): {s}"
+            "invalid conversation_id (expected 'default', a runtime conv-/den-conv- id, or a pending new- id): {s}"
         )))
     }
 }
@@ -1145,6 +1145,15 @@ mod conversation_id_tests {
         assert_eq!(
             normalize_client_conversation_id(Some("conv-abc12345")).unwrap(),
             "conv-abc12345"
+        );
+    }
+
+    #[test]
+    fn accepts_headless_den_conv_prefix_ids() {
+        assert_eq!(
+            normalize_client_conversation_id(Some("den-conv-5c60dc2ee7934b20821ea51b04397ccf"))
+                .unwrap(),
+            "den-conv-5c60dc2ee7934b20821ea51b04397ccf"
         );
     }
 
