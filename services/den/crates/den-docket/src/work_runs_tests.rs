@@ -88,7 +88,6 @@ fn work_task(title: &str, order: i32, stance: BearProfile) -> DocketTaskInput {
         completion_criteria: vec![format!("{title} is verifiably complete")],
         difficulty: Some(DocketTaskDifficulty::Trivial),
         effort_hint: None,
-        assigned_to_role: Some(stance),
     }
 }
 

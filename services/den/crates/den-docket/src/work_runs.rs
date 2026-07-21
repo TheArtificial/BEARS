@@ -218,7 +218,7 @@ pub async fn enqueue_work_job(
         "SELECT EXISTS (
              SELECT 1 FROM bear_tasks t
              LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
-             WHERE t.job_id = $1 AND t.assigned_to_role = 'work'
+             WHERE t.job_id = $1
                AND COALESCE(s.status, 'pending') IN ('pending', 'blocked')
          )",
     )
@@ -707,7 +707,7 @@ pub async fn finalize_work_run(
         _ => "blocked",
     };
     let task_ids: Vec<(Uuid,)> =
-        sqlx::query_as("SELECT id FROM bear_tasks WHERE job_id = $1 AND assigned_to_role = 'work'")
+        sqlx::query_as("SELECT id FROM bear_tasks WHERE job_id = $1")
             .bind(row.job_id)
             .fetch_all(&mut *tx)
             .await?;
@@ -794,7 +794,7 @@ pub async fn checkout_work_run_for_session(
         "SELECT t.id, t.title, t.body, t.completion_criteria
          FROM bear_tasks t
          LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
-         WHERE t.job_id = $1 AND t.assigned_to_role = 'work'
+         WHERE t.job_id = $1
            AND COALESCE(s.status, 'pending') IN ('pending', 'blocked')
          ORDER BY t.sibling_order, t.created_at",
     )
@@ -992,7 +992,7 @@ pub async fn get_task_run_status(
     Ok(row.map(|(status,)| status))
 }
 
-/// Run-scoped states for every work task in a job. A job-scoped work run
+/// Run-scoped states for every unfinished task in a job. A job-scoped work run
 /// owns the sandbox lifecycle; these remain the individual completion
 /// checkpoints reported by the agent.
 pub async fn get_job_work_task_run_statuses(
@@ -1004,7 +1004,7 @@ pub async fn get_job_work_task_run_statuses(
         "SELECT t.id, COALESCE(s.status, 'pending')
          FROM bear_tasks t
          LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
-         WHERE t.job_id = $1 AND t.assigned_to_role = 'work'
+         WHERE t.job_id = $1
          ORDER BY t.sibling_order, t.created_at",
     )
     .bind(job_id)
@@ -1033,11 +1033,12 @@ pub async fn close_work_execution_session(
     Ok(())
 }
 
-/// Bears that have any work-assigned tasks, for the optional auto-enqueue
+/// Bears that have jobs with unfinished tasks, for the optional auto-enqueue
 /// sweep (`WORK_DISPATCH_AUTO`).
 pub async fn list_bears_with_work_tasks(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
-    let rows: Vec<(Uuid,)> =
-        sqlx::query_as("SELECT DISTINCT bear_id FROM bear_tasks WHERE assigned_to_role = 'work'")
+    let rows: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT DISTINCT bear_id FROM bear_jobs WHERE status IN ('ready', 'running', 'blocked')",
+    )
             .fetch_all(pool)
             .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())

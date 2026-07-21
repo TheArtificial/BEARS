@@ -866,7 +866,6 @@ pub struct DocketTaskRow {
     pub completion_criteria: Json<Vec<String>>,
     pub difficulty: Option<String>,
     pub effort_hint: Option<String>,
-    pub assigned_to_role: Option<String>,
     pub created_by_role: String,
     pub created_by_user_id: Option<i32>,
     pub created_by_agent_id: Option<String>,
@@ -975,8 +974,6 @@ pub struct DocketTaskInput {
     pub difficulty: Option<DocketTaskDifficulty>,
     #[serde(default)]
     pub effort_hint: Option<DocketEffortHint>,
-    #[serde(default)]
-    pub assigned_to_role: Option<BearProfile>,
 }
 
 fn default_task_kind() -> DocketTaskKind {
@@ -1129,7 +1126,6 @@ pub struct DocketTaskCreate {
     pub completion_criteria: Vec<String>,
     pub difficulty: Option<DocketTaskDifficulty>,
     pub effort_hint: Option<DocketEffortHint>,
-    pub assigned_to_role: Option<BearProfile>,
     pub created_by_role: String,
     pub created_by_user_id: Option<i32>,
     pub created_by_agent_id: Option<String>,
@@ -1164,7 +1160,6 @@ pub struct DocketTaskDefinitionPatch {
     pub scope: Option<DocketTaskScope>,
     pub difficulty: Option<Option<DocketTaskDifficulty>>,
     pub effort_hint: Option<Option<DocketEffortHint>>,
-    pub assigned_to_role: Option<Option<BearProfile>>,
 }
 
 #[derive(Debug, Clone)]
@@ -2037,7 +2032,6 @@ mod tests {
             completion_criteria: Json(vec!["Plan is visible".to_string()]),
             difficulty: None,
             effort_hint: None,
-            assigned_to_role: Some("pair".to_string()),
             created_by_role: "pair".to_string(),
             created_by_user_id: None,
             created_by_agent_id: None,
@@ -2165,7 +2159,6 @@ mod tests {
                 completion_criteria: vec!["Child task is actually done".to_string()],
                 difficulty: Some(DocketTaskDifficulty::Moderate),
                 effort_hint: Some(DocketEffortHint::Medium),
-                assigned_to_role: Some(BearProfile::Work),
             }],
         };
 
@@ -2192,7 +2185,6 @@ mod tests {
             completion_criteria: Vec::new(),
             difficulty: Some(DocketTaskDifficulty::Unknown),
             effort_hint: None,
-            assigned_to_role: Some(BearProfile::Pair),
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(42),
             created_by_agent_id: None,
@@ -2220,7 +2212,6 @@ mod tests {
             completion_criteria: vec!["Relevant facts are identified".to_string()],
             difficulty: Some(DocketTaskDifficulty::Unknown),
             effort_hint: None,
-            assigned_to_role: Some(BearProfile::Pair),
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(42),
             created_by_agent_id: None,
@@ -2293,7 +2284,6 @@ mod tests {
                 completion_criteria: Json(vec!["Root work done".to_string()]),
                 difficulty: None,
                 effort_hint: None,
-                assigned_to_role: Some("work".to_string()),
                 created_by_role: "pair".to_string(),
                 created_by_user_id: Some(42),
                 created_by_agent_id: None,
@@ -2373,7 +2363,6 @@ mod tests {
                     completion_criteria: sqlx::types::Json(vec!["Root work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
-                    assigned_to_role: Some("work".to_string()),
                     created_by_role: "pair".to_string(),
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,
@@ -2395,7 +2384,6 @@ mod tests {
                     completion_criteria: sqlx::types::Json(vec!["Peer work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
-                    assigned_to_role: Some("work".to_string()),
                     created_by_role: "pair".to_string(),
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,
@@ -2417,7 +2405,6 @@ mod tests {
                     completion_criteria: sqlx::types::Json(vec!["Child work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
-                    assigned_to_role: Some("work".to_string()),
                     created_by_role: "pair".to_string(),
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,

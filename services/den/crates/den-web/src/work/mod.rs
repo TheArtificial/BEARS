@@ -445,7 +445,6 @@ async fn create_job(
             completion_criteria: criteria,
             difficulty: None,
             effort_hint: None,
-            assigned_to_role: Some(BearProfile::Work),
         });
     }
     if tasks.is_empty() {
@@ -724,11 +723,6 @@ async fn duplicate_job(
                     .as_deref()
                     .map(|value| parse_docket_enum::<DocketEffortHint>("task effort", value))
                     .transpose()?,
-                assigned_to_role: task
-                    .assigned_to_role
-                    .as_deref()
-                    .map(|value| parse_docket_enum::<BearProfile>("assigned role", value))
-                    .transpose()?,
             })
         })
         .collect::<Result<Vec<_>, CustomError>>()?;
@@ -927,7 +921,6 @@ async fn extend_job(
             completion_criteria: criteria,
             difficulty: None,
             effort_hint: None,
-            assigned_to_role: Some(BearProfile::Work),
             created_by_role: "ui".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -1006,20 +999,17 @@ async fn job_detail(
                 "id": task.id.to_string(),
                 "title": task.title,
                 "kind": task.kind,
-                "assigned_to_role": task.assigned_to_role,
                 "status": status,
-                "is_work": task.assigned_to_role.as_deref() == Some("work"),
                 "completion_criteria": task.completion_criteria.0,
             })
         })
         .collect();
 
     let has_runnable_work = tasks.iter().any(|task| {
-        task.get("is_work").and_then(serde_json::Value::as_bool) == Some(true)
-            && matches!(
-                task.get("status").and_then(serde_json::Value::as_str),
-                Some("pending" | "blocked")
-            )
+        matches!(
+            task.get("status").and_then(serde_json::Value::as_str),
+            Some("pending" | "blocked")
+        )
     });
     let status_report = den_docket::docket_job_status_report(&projection);
     let available_surfaces =

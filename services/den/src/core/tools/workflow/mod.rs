@@ -168,8 +168,6 @@ pub(crate) struct DocketTaskCreateArguments {
     #[serde(default)]
     pub(crate) effort_hint: Option<DocketEffortHint>,
     #[serde(default)]
-    pub(crate) assigned_to_role: Option<BearProfile>,
-    #[serde(default)]
     pub(crate) created_in_run_id: Option<Uuid>,
 }
 
@@ -210,8 +208,6 @@ pub(crate) struct DocketTaskUpdateArguments {
     pub(crate) difficulty: Option<DocketTaskDifficulty>,
     #[serde(default)]
     pub(crate) effort_hint: Option<DocketEffortHint>,
-    #[serde(default)]
-    pub(crate) assigned_to_role: Option<BearProfile>,
     #[serde(default)]
     pub(crate) run_id: Option<Uuid>,
     #[serde(default)]
@@ -1384,7 +1380,6 @@ pub(crate) async fn create_task(
             completion_criteria: args.completion_criteria,
             difficulty: args.difficulty,
             effort_hint: args.effort_hint,
-            assigned_to_role: args.assigned_to_role,
             created_by_role: role.as_str().to_string(),
             created_by_user_id: Some(context.user_id),
             created_by_agent_id: clean_optional(&context.binding_id),
@@ -1524,7 +1519,6 @@ pub(crate) async fn update_task(
                 scope: args.scope,
                 difficulty: args.difficulty.map(Some),
                 effort_hint: args.effort_hint.map(Some),
-                assigned_to_role: args.assigned_to_role.map(Some),
             },
             run_state: None,
         })
@@ -1863,7 +1857,6 @@ mod test {
                 completion_criteria: sqlx::types::Json(vec!["Done".to_string()]),
                 difficulty: None,
                 effort_hint: None,
-                assigned_to_role: None,
                 created_by_role: "pair".to_string(),
                 created_by_user_id: None,
                 created_by_agent_id: None,

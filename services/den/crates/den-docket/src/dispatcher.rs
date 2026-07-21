@@ -1,4 +1,4 @@
-//! Minimal dispatch seam for future `work` stance execution.
+//! Minimal dispatch seam for job-level work execution.
 //!
 //! Docket owns job/task state, but it must not execute task bodies itself
 //! (ADR-0034 execution invariant). Runtime code can use this trait to poll for
@@ -75,7 +75,6 @@ impl TaskDispatcher for PgDocketService {
 
         Ok(tasks
             .into_iter()
-            .filter(|projection| projection.task.assigned_to_role.as_deref() == Some("work"))
             .filter(|projection| {
                 projection
                     .run_state

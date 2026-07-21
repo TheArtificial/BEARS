@@ -95,7 +95,6 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
                 completion_criteria: vec!["First task is actually done".to_string()],
                 difficulty: Some(DocketTaskDifficulty::Trivial),
                 effort_hint: Some(DocketEffortHint::Low),
-                assigned_to_role: Some(BearProfile::Pair),
             },
             DocketTaskInput {
                 client_key: Some("second".to_string()),
@@ -109,7 +108,6 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
                 completion_criteria: vec!["Second task is actually done".to_string()],
                 difficulty: Some(DocketTaskDifficulty::Trivial),
                 effort_hint: Some(DocketEffortHint::Low),
-                assigned_to_role: Some(BearProfile::Pair),
             },
         ],
     }
@@ -183,7 +181,6 @@ async fn conversation_objective_checkout_projects_active_subtree_after_reconnect
             completion_criteria: vec!["Subtree is projected".to_string()],
             difficulty: Some(DocketTaskDifficulty::Trivial),
             effort_hint: Some(DocketEffortHint::Low),
-            assigned_to_role: Some(BearProfile::Pair),
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -205,7 +202,6 @@ async fn conversation_objective_checkout_projects_active_subtree_after_reconnect
             completion_criteria: vec!["Child is current".to_string()],
             difficulty: Some(DocketTaskDifficulty::Trivial),
             effort_hint: Some(DocketEffortHint::Low),
-            assigned_to_role: Some(BearProfile::Pair),
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -306,7 +302,6 @@ async fn creates_session_anchored_task_without_job() {
             completion_criteria: vec!["Task row is inserted".to_string()],
             difficulty: Some(DocketTaskDifficulty::Trivial),
             effort_hint: Some(DocketEffortHint::Low),
-            assigned_to_role: Some(BearProfile::Pair),
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -370,7 +365,6 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             completion_criteria: vec!["Task status is projected".to_string()],
             difficulty: Some(DocketTaskDifficulty::Trivial),
             effort_hint: Some(DocketEffortHint::Low),
-            assigned_to_role: Some(BearProfile::Pair),
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -781,9 +775,7 @@ async fn docket_dispatcher_finds_starts_and_records_work_task_outcomes() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "dispatcher").await;
     let service = PgDocketService::from_pool(&pool);
     let mut create = two_task_job(user_id, bear_id);
-    create.tasks[0].assigned_to_role = Some(BearProfile::Work);
     create.tasks[1].parent_client_key = Some("first".to_string());
-    create.tasks[1].assigned_to_role = Some(BearProfile::Work);
 
     let created = service.create_job(create).await.expect("create job");
     let run_id = created.job.current_run_id.expect("current run");

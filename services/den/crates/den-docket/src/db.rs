@@ -183,7 +183,6 @@ fn docket_task_definition_payload(task: &DocketTaskRow) -> Value {
         "completion_criteria": task.completion_criteria.0,
         "difficulty": task.difficulty,
         "effort_hint": task.effort_hint,
-        "assigned_to_role": task.assigned_to_role,
     })
 }
 
@@ -225,11 +224,11 @@ async fn insert_task_for_job(
         r"
         INSERT INTO bear_tasks (
             bear_id, job_id, parent_task_id, sibling_order, kind, scope, title, body,
-            completion_criteria, difficulty, effort_hint, assigned_to_role, created_by_role, created_by_user_id
+            completion_criteria, difficulty, effort_hint, created_by_role, created_by_user_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+                  kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   created_at, updated_at
         ",
@@ -245,7 +244,6 @@ async fn insert_task_for_job(
     .bind(serde_json::to_value(normalize_completion_criteria(&task.completion_criteria))?)
     .bind(task.difficulty.map(|difficulty| difficulty.as_str()))
     .bind(task.effort_hint.map(|effort| effort.as_str()))
-    .bind(task.assigned_to_role.map(|role| role.as_str()))
     .bind(create.created_by_role.trim())
     .bind(create.created_by_user_id)
     .fetch_one(&mut **tx)
@@ -331,12 +329,12 @@ async fn insert_task(
         r"
         INSERT INTO bear_tasks (
             bear_id, job_id, session_anchor_id, parent_task_id, sibling_order, kind, scope,
-            title, body, completion_criteria, difficulty, effort_hint, assigned_to_role, created_by_role,
+            title, body, completion_criteria, difficulty, effort_hint, created_by_role,
             created_by_user_id, created_by_agent_id, created_in_run_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16)
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+                  kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   created_at, updated_at
         ",
@@ -353,7 +351,6 @@ async fn insert_task(
     .bind(serde_json::to_value(normalize_completion_criteria(&create.completion_criteria))?)
     .bind(create.difficulty.map(|difficulty| difficulty.as_str()))
     .bind(create.effort_hint.map(|effort| effort.as_str()))
-    .bind(create.assigned_to_role.map(|role| role.as_str()))
     .bind(create.created_by_role.trim())
     .bind(create.created_by_user_id)
     .bind(create.created_by_agent_id.as_deref())
@@ -456,7 +453,7 @@ pub(super) async fn get_job(
     let tasks = sqlx::query_as::<_, DocketTaskRow>(
         r"
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+               kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                created_at, updated_at
         FROM bear_tasks
@@ -1347,7 +1344,7 @@ pub(super) async fn list_tasks(
         sqlx::query_as::<_, DocketTaskRow>(
             r"
             SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+                   kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                    created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                    created_at, updated_at
             FROM bear_tasks
@@ -1390,7 +1387,7 @@ async fn list_tasks_with_descendants(
         r"
         WITH RECURSIVE task_tree AS (
             SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+                   kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                    created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                    created_at, updated_at
             FROM bear_tasks
@@ -1405,14 +1402,14 @@ async fn list_tasks_with_descendants(
             SELECT child.id, child.bear_id, child.job_id, child.session_anchor_id,
                    child.parent_task_id, child.sibling_order, child.kind, child.scope,
                    child.title, child.body, child.completion_criteria, child.difficulty, child.effort_hint,
-                   child.assigned_to_role, child.created_by_role, child.created_by_user_id,
+                   child.created_by_role, child.created_by_user_id,
                    child.created_by_agent_id, child.created_in_run_id, child.created_at,
                    child.updated_at
             FROM bear_tasks child
             JOIN task_tree parent ON child.parent_task_id = parent.id
         )
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+               kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                created_at, updated_at
         FROM task_tree
@@ -1560,7 +1557,7 @@ async fn select_task(
     sqlx::query_as::<_, DocketTaskRow>(
         r"
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+               kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                created_at, updated_at
         FROM bear_tasks
@@ -1635,11 +1632,10 @@ async fn update_task_definition(
             scope = $9,
             difficulty = $10,
             effort_hint = $11,
-            assigned_to_role = $12,
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+                  kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   created_at, updated_at
         ",
@@ -1692,12 +1688,6 @@ async fn update_task_definition(
             .effort_hint
             .map(|value| value.map(|effort| effort.as_str().to_string()))
             .unwrap_or_else(|| current.effort_hint.clone()),
-    )
-    .bind(
-        patch
-            .assigned_to_role
-            .map(|value| value.map(|role| role.as_str().to_string()))
-            .unwrap_or_else(|| current.assigned_to_role.clone()),
     )
     .fetch_one(&mut **tx)
     .await
@@ -1951,7 +1941,6 @@ pub(super) async fn sync_task_list(
                         .unwrap_or_else(|| format!("Complete: {}", item.title))],
                     difficulty: None,
                     effort_hint: None,
-                    assigned_to_role: Some(BearProfile::Work),
                     created_by_role: request.task_list.owner_profile.clone(),
                     created_by_user_id: None,
                     created_by_agent_id: None,
