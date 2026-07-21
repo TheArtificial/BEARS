@@ -60,7 +60,9 @@
     <p>
         <label>Work branch <small>(optional; default <code>den/job-&lt;id&gt;</code>)</small><br>
             <input type="text" name="work_branch" size="40" placeholder="den/job-…">
-        </label>
+        </label><br>
+        <label><input type="checkbox" name="allow_default_ref" value="true"> Work directly on the surface's default branch</label><br>
+        <small>Warning: this bypasses the normal work-branch safety boundary and pushes successful work directly to the configured default branch. It is never enabled by default.</small>
     </p>
 
     <h2>Tasks (assigned to work)</h2>

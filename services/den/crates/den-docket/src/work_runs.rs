@@ -1087,6 +1087,7 @@ pub struct WorkRunDispatchContext {
     pub work_surface_ref: Option<String>,
     pub commit_policy: Option<String>,
     pub work_branch: Option<String>,
+    pub allow_default_ref: bool,
 }
 
 impl WorkRunDispatchContext {
@@ -1104,10 +1105,12 @@ pub async fn get_work_run_dispatch_context(
 ) -> Result<WorkRunDispatchContext, DenError> {
     sqlx::query_as::<_, WorkRunDispatchContext>(
         "SELECT b.slug AS bear_slug, j.created_by_user_id, j.goal AS job_goal, j.work_surface_ref,
-                j.commit_policy, j.work_branch
+                j.commit_policy, j.work_branch,
+                COALESCE(j.work_branch = s.default_ref, FALSE) AS allow_default_ref
          FROM bear_work_runs r
          JOIN bears b ON b.id = r.bear_id
          JOIN bear_jobs j ON j.id = r.job_id
+         LEFT JOIN work_surfaces s ON s.id = j.work_surface_id
          WHERE r.id = $1",
     )
     .bind(run_id)

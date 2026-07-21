@@ -381,6 +381,8 @@ struct NewJobForm {
     #[serde(default)]
     work_branch: String,
     #[serde(default)]
+    allow_default_ref: bool,
+    #[serde(default)]
     task_title: Vec<String>,
     #[serde(default)]
     task_criteria: Vec<String>,
@@ -499,6 +501,31 @@ async fn create_job(
         (None, None)
     };
 
+    let surface_default_ref = match work_surface_id {
+        Some(surface_id) => {
+            den_service::work_surfaces::surface_by_id(state.sqlx_pool(), surface_id)
+                .await?
+                .map(|surface| surface.default_ref)
+        }
+        None => None,
+    };
+    let entered_branch = clean_form_field(&form.work_branch);
+    let work_branch = if form.allow_default_ref {
+        Some(surface_default_ref.clone().ok_or_else(|| {
+            CustomError::ValidationError(
+                "working on the default branch requires a managed work surface".to_string(),
+            )
+        })?)
+    } else {
+        if entered_branch.is_some() && entered_branch.as_deref() == surface_default_ref.as_deref() {
+            return Err(CustomError::ValidationError(
+                "work branch matches the surface default; use the explicit default-branch override instead"
+                    .to_string(),
+            ));
+        }
+        entered_branch
+    };
+
     let job = PgDocketService::from_pool(state.sqlx_pool())
         .create_job(DocketJobCreate {
             bear_id: form.bear_id,
@@ -508,8 +535,7 @@ async fn create_job(
             work_surface_ref,
             work_surface_id,
             commit_policy,
-            work_branch: Some(form.work_branch.trim().to_string())
-                .filter(|branch| !branch.is_empty()),
+            work_branch,
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::SameUser,
             source_conversation_id: None,
@@ -534,6 +560,8 @@ struct EditJobForm {
     commit_policy: String,
     #[serde(default)]
     work_branch: String,
+    #[serde(default)]
+    allow_default_ref: bool,
 }
 
 async fn edit_job(
@@ -560,8 +588,8 @@ async fn edit_job(
     }
     let commit_policy =
         parse_docket_enum::<DocketCommitPolicy>("commit policy", form.commit_policy.trim())?;
-    let work_branch = clean_form_field(&form.work_branch);
-    if work_branch
+    let entered_branch = clean_form_field(&form.work_branch);
+    if entered_branch
         .as_deref()
         .is_some_and(|branch| branch.starts_with('-') || branch.chars().any(char::is_whitespace))
     {
@@ -569,7 +597,7 @@ async fn edit_job(
             "work branch must be a branch name, not a Git option or command".to_string(),
         ));
     }
-    let (work_surface_ref, work_surface_id) = match form.surface_id {
+    let (work_surface_ref, work_surface_id, surface_default_ref) = match form.surface_id {
         Some(surface_id) => {
             let surface = den_service::work_surfaces::surface_by_id(state.sqlx_pool(), surface_id)
                 .await?
@@ -585,9 +613,28 @@ async fn edit_job(
                     "the job's Bear is not assigned to that work surface".to_string(),
                 ));
             }
-            (Some(surface.name), Some(surface.id))
+            (
+                Some(surface.name),
+                Some(surface.id),
+                Some(surface.default_ref),
+            )
         }
-        None => (None, None),
+        None => (None, None, None),
+    };
+    let work_branch = if form.allow_default_ref {
+        Some(surface_default_ref.clone().ok_or_else(|| {
+            CustomError::ValidationError(
+                "working on the default branch requires a managed work surface".to_string(),
+            )
+        })?)
+    } else {
+        if entered_branch.is_some() && entered_branch.as_deref() == surface_default_ref.as_deref() {
+            return Err(CustomError::ValidationError(
+                "work branch matches the surface default; use the explicit default-branch override instead"
+                    .to_string(),
+            ));
+        }
+        entered_branch
     };
     PgDocketService::from_pool(state.sqlx_pool())
         .update_job(DocketJobUpdate {
@@ -973,6 +1020,17 @@ async fn job_detail(
     let status_report = den_docket::docket_job_status_report(&projection);
     let available_surfaces =
         den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[bear_id]).await?;
+    let allow_default_ref = projection
+        .job
+        .work_surface_id
+        .and_then(|surface_id| {
+            available_surfaces
+                .iter()
+                .find(|surface| surface.id == surface_id)
+        })
+        .is_some_and(|surface| {
+            projection.job.work_branch.as_deref() == Some(surface.default_ref.as_str())
+        });
     let catalog = provider_catalog(&state).await;
     web::render_template(
         &state,
@@ -991,6 +1049,7 @@ async fn job_detail(
             commit_policy_label => commit_policy_label(projection.job.commit_policy.as_deref()),
             commit_policy => projection.job.commit_policy,
             work_branch => projection.job.work_branch,
+            allow_default_ref => allow_default_ref,
             tasks => tasks,
             runs => run_views,
             catalog => catalog,

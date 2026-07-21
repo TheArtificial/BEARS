@@ -29,7 +29,8 @@
                 <option value="none" {% if commit_policy == "none" %}selected{% endif %}>No source changes expected</option>
             </select>
         </label></p>
-        <p><label>Work branch <small>(blank regenerates <code>den/job-&lt;id&gt;</code> on the next publishable dispatch)</small><br><input name="work_branch" value="{{ work_branch or '' }}" size="50"></label></p>
+        <p><label>Work branch <small>(blank regenerates <code>den/job-&lt;id&gt;</code> on the next publishable dispatch)</small><br><input name="work_branch" value="{% if not allow_default_ref %}{{ work_branch or '' }}{% endif %}" size="50"></label></p>
+        <p><label><input type="checkbox" name="allow_default_ref" value="true" {% if allow_default_ref %}checked{% endif %}> Work directly on the surface's default branch</label><br><small>Warning: this bypasses the normal work-branch safety boundary and pushes successful work directly to the configured default branch. It is never enabled by default.</small></p>
         <button type="submit">Save job settings</button>
     </form>
 </details>

@@ -557,7 +557,7 @@ async fn harvest_run(
                     let request = PublishRequest {
                         branch: branch.to_string(),
                         auto_commit_leftovers: true,
-                        allow_default_ref: false,
+                        allow_default_ref: context.allow_default_ref,
                         run_label: Some(run.id.to_string()),
                     };
                     match client.publish(id, &request).await {

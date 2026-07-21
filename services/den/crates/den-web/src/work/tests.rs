@@ -491,6 +491,33 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     .await
     .expect("surface assignment");
     assert_eq!(assignment_count, 1);
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/edit"),
+        format!("goal=Surface+job&surface_id={surface_id}&commit_policy=per_task&work_branch=main"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/edit"),
+        format!(
+            "goal=Surface+job&surface_id={surface_id}&commit_policy=per_task&work_branch=&allow_default_ref=true"
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let branch: Option<String> =
+        sqlx::query_scalar("SELECT work_branch FROM bear_jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("default work branch");
+    assert_eq!(branch.as_deref(), Some("main"));
 }
 
 #[tokio::test]
