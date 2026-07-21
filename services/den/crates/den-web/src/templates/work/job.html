@@ -68,13 +68,14 @@
 </p>
 {% endif %}
 
-{% if has_runnable_work %}
+{% if status not in ["completed", "cancelled"] %}
 <section>
     <h2>Dispatch job</h2>
     <p>Queues every pending or blocked task assigned to Work. Runs execute one at a time in task order.</p>
+    {% if has_runnable_work %}
     <form method="post" action="/work/jobs/{{ job_id }}/dispatch">
         {% if work_surface_ref %}
-        <p>Using job work surface <code>{{ work_surface_ref }}</code> unless a root is selected.</p>
+        <p>Using job work surface <code>{{ work_surface_ref }}</code>.</p>
         {% elif catalog and catalog.roots %}
         <select name="root" required>
             <option value="">choose root…</option>
@@ -89,11 +90,14 @@
         {% endif %}
         <button type="submit">Dispatch job</button>
     </form>
+    {% else %}
+    <p><button type="button" disabled>Dispatch job</button> No pending or blocked Work tasks are currently runnable. Extend the job with another Work task, or inspect active/completed runs below.</p>
+    {% endif %}
 </section>
 {% endif %}
 
 <section>
-    <h2>Tasks</h2></h2>
+    <h2>Tasks</h2>h2>
     <table>
         <thead>
             <tr><th>Task</th><th>Kind</th><th>Stance</th><th>Status</th><th></th></tr>
