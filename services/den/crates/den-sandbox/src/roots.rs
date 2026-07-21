@@ -527,14 +527,26 @@ impl RootsManager {
         reference: &str,
     ) -> Result<String, RootsError> {
         let expression = format!("{reference}^{{commit}}");
-        let resolved = self
+        let resolved = match self
             .git(
                 root,
                 Some(repository),
                 env,
                 &["rev-parse", "--verify", "--end-of-options", &expression],
             )
-            .await?;
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(RootsError::Git { name, detail }) => {
+                return Err(RootsError::Git {
+                    name,
+                    detail: format!(
+                        "ref {reference:?} does not resolve to a commit; verify the surface default ref and that the upstream repository is not empty ({detail})"
+                    ),
+                });
+            }
+            Err(err) => return Err(err),
+        };
         let oid = resolved.trim();
         if !matches!(oid.len(), 40 | 64) || !oid.chars().all(|ch| ch.is_ascii_hexdigit()) {
             return Err(RootsError::Git {
@@ -921,6 +933,26 @@ mod tests {
             allow_default_ref: false,
             run_label: Some("test-run".to_string()),
         }
+    }
+
+    #[tokio::test]
+    async fn unresolved_ref_error_names_the_ref_and_remediation() {
+        let fx = publish_fixture();
+        fx.manager.sync_root(&fx.root).await.unwrap();
+        let err = fx
+            .manager
+            .resolve_commit(
+                &fx.root,
+                &fx.manager.pristine_dir(&fx.root),
+                &[],
+                "missing-branch",
+            )
+            .await
+            .expect_err("missing ref should fail");
+        let message = err.to_string();
+        assert!(message.contains("missing-branch"), "{message}");
+        assert!(message.contains("surface default ref"), "{message}");
+        assert!(message.contains("not empty"), "{message}");
     }
 
     #[tokio::test]

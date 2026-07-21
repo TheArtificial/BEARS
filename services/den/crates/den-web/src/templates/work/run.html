@@ -25,7 +25,7 @@
                 {% endif %}
             </td></tr>
             <tr><th>Attempt</th><td>{{ run.attempt }}</td></tr>
-            <tr><th>Root / ref</th><td>{{ run.root or "—" }} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
+            <tr><th>Root / ref</th><td>{% if work_surface_link and run.root == work_surface_link.name %}<a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ run.root }}</code></a>{% else %}{{ run.root or "—" }}{% endif %} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
             <tr><th>Image</th><td>{{ run.image or "root default" }}</td></tr>
             <tr><th>Sandbox</th><td>{{ run.sandbox_type or "—" }}</td></tr>
             <tr><th>Sandbox strength</th><td>{{ run.sandbox_strength or "—" }}</td></tr>
@@ -66,7 +66,7 @@
 
 {% if work_surface %}
 <section>
-    <h2>Work surface</h2>
+    <h2>Work surface{% if work_surface_link %}: <a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ work_surface_link.name }}</code></a>{% endif %}</h2>
     <pre><code>{{ work_surface }}</code></pre>
 </section>
 {% endif %}

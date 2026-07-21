@@ -945,6 +945,17 @@ async fn run_detail(
         None => None,
     };
     let work_surface = run.work_surface.clone();
+    let work_surface_link = match dispatch_context.work_surface_ref.as_deref() {
+        Some(name) => den_service::work_surfaces::surface_by_name(state.sqlx_pool(), name)
+            .await?
+            .map(|surface| {
+                serde_json::json!({
+                    "id": surface.id.to_string(),
+                    "name": surface.name,
+                })
+            }),
+        None => None,
+    };
     let usage = run.usage.clone();
     let mut views = vec![run_view(&run, &bear_slug)];
     attach_queue_info(&state, std::slice::from_ref(&run), &mut views).await?;
@@ -966,6 +977,7 @@ async fn run_detail(
             turn_outcome => turn_outcome,
             conversation_id => conversation_id,
             work_surface => work_surface,
+            work_surface_link => work_surface_link,
             usage => usage,
             can_retry => can_retry,
         },
