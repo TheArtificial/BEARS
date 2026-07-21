@@ -172,6 +172,24 @@ work_surface.resource_limits    // optional CPU/mem/disk
 
 **Sandbox briefing:** Den injects a short **environment appendix** into the `work` turn context (cf. [ADR-0028](adr-0028-environment-affordance-and-resource-boundaries.md)): workspace root, branch policy, how push/PR actors differ, run id for observability, and explicit guidance to **detect tooling from the repo — do not assume mise or any single package manager**.
 
+### 5.1 Surface-owned outbound-host allowlist
+
+`work` sandboxes are **default-deny for outbound network access**. A managed work surface owns one small, inspectable list of permitted outbound hostnames. The gateway receives that list when Den dispatches a sandbox for the surface; it is the only authority for sandbox DNS resolution and outbound connections.
+
+The initial rule is intentionally narrow: an entry permits DNS resolution and **HTTPS on port 443** to one exact hostname. It does not permit arbitrary URLs, wildcard domains, IP ranges, other ports, private-network destinations, or credential access. The gateway must enforce both controlled name resolution and the subsequent connection so a hostname rule cannot be bypassed through a resolver, redirect, or DNS rebinding. Credentials remain separately governed by Connections and gateway injection rules (§7); permitting a host does not supply authentication for it.
+
+At work-surface setup, the selected base image and configured upstream origin may suggest hostnames appropriate to the surface. The setup UI presents those suggestions for acceptance, removal, or addition before the surface is saved. For example, the Rust image suggests `index.crates.io` and `static.crates.io` so Cargo can resolve and download crates; an upstream of `https://github.com/acme/project.git` can suggest `github.com` for the surface's checkout. Once saved, these are ordinary surface entries: an image or origin has no ongoing authority to alter an existing surface's network access when its catalog record or URL changes. A surface can add an unrelated integration endpoint, such as `api.staging.example.com`, to the same list.
+
+This deliberately avoids separate egress profiles, profile versions, grant types, and per-run egress exceptions in v1. If repeated, organization-wide host bundles become a demonstrated need, they may be added later as setup-time conveniences that materialize into the same surface-owned allowlist rather than as a second runtime authorization model.
+
+The effective v1 policy is therefore simply:
+
+```text
+allowed outbound destinations = the dispatched work surface's saved hostnames
+```
+
+Den audits the surface and its allowlist revision used for each dispatch. Edits apply to future dispatches; an already-running sandbox keeps its dispatch-time policy until it ends. This makes active runs reproducible and prevents a surface edit from silently broadening an existing run.
+
 ### 6. Bear-level origins
 
 Den exposes operator UI and APIs to configure **bear-level upstream origins**:
@@ -202,7 +220,7 @@ Connection.grants   → bear, work_surface, or run-scoped attachment
 
 | Kind | Purpose |
 |------|---------|
-| `egress-host` | Allowlisted upstream host + path patterns |
+| `egress-host` | Legacy/general Connection contribution shape. V1 sandbox routing instead uses the work surface's exact HTTPS hostname allowlist (§5.1); use credential-injection match rules for narrower authenticated API paths where needed. |
 | `credential-injection` | Map placeholder → secret ref + match rules (host, method, path) |
 | `git-identity` | Committer name/email; optional signing key ref (gateway-only) |
 | `operation-policy` | Which actor applies to `read`, `push`, `pr_create`, … |
@@ -316,7 +334,7 @@ When `chat` requires execution:
 
 | Phase | Deliverables |
 |-------|----------------|
-| **7** | `bears-sandbox-runner` with **`docker_workspace`** backend only; paired gateway; git/gh bridge (defense-in-depth); Den origins + Connections; **multi** bear service identities; `RunAuthContext` with interactive/autonomous `pr_create`; opportunistic tooling detection; sandbox briefing; `work` + Docket; chat delegation + phase SSE; **telemetry** |
+| **7** | `bears-sandbox-runner` with **`docker_workspace`** backend only; paired gateway; surface-owned exact-host HTTPS egress allowlist with image-suggested setup defaults; git/gh bridge (defense-in-depth); Den origins + Connections; **multi** bear service identities; `RunAuthContext` with interactive/autonomous `pr_create`; opportunistic tooling detection; sandbox briefing; `work` + Docket; chat delegation + phase SSE; **telemetry** |
 | **7.1** | Hosted **`pair`** (conversation-scoped sessions, channel approvals) on same runner |
 | **Post-7 (data-driven)** | Second `SandboxBackend` if telemetry warrants; bare mirror / warm pool; per-surface policy knobs; fork-style “run entirely as requester” |
 
