@@ -47,8 +47,8 @@ pub fn router() -> Router<AppState> {
         .route("/work/jobs/{job_id}/duplicate", post(duplicate_job))
         .route("/work/jobs/{job_id}/complete", post(complete_job))
         .route("/work/jobs/{job_id}/extend", post(extend_job))
+        .route("/work/jobs/{job_id}/dispatch", post(dispatch_job))
         .route("/work/runs/{run_id}", get(run_detail))
-        .route("/work/tasks/{task_id}/dispatch", post(dispatch_task))
         .route("/work/runs/{run_id}/cancel", post(cancel_run))
         .route("/work/runs/{run_id}/retry", post(retry_run))
         .merge(surfaces::router())
@@ -1017,6 +1017,13 @@ async fn job_detail(
         })
         .collect();
 
+    let has_runnable_work = tasks.iter().any(|task| {
+        task.get("is_work").and_then(serde_json::Value::as_bool) == Some(true)
+            && matches!(
+                task.get("status").and_then(serde_json::Value::as_str),
+                Some("pending" | "blocked")
+            )
+    });
     let status_report = den_docket::docket_job_status_report(&projection);
     let available_surfaces =
         den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[bear_id]).await?;
@@ -1056,6 +1063,7 @@ async fn job_detail(
             tasks_complete => status_report.tasks_complete,
             criteria_complete => status_report.criteria_complete,
             next_action => status_report.next_action,
+            has_runnable_work => has_runnable_work,
         },
     )
     .await
@@ -1164,33 +1172,32 @@ fn clean_form_field(raw: &str) -> Option<String> {
     Some(raw.trim().to_string()).filter(|value| !value.is_empty())
 }
 
-async fn dispatch_task(
+async fn dispatch_job(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(task_id): Path<Uuid>,
+    Path(job_id): Path<Uuid>,
     Form(form): Form<DispatchForm>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let row: Option<(Uuid, Option<Uuid>)> =
-        sqlx::query_as("SELECT bear_id, job_id FROM bear_tasks WHERE id = $1")
-            .bind(task_id)
-            .fetch_optional(state.sqlx_pool())
-            .await
-            .map_err(den_core::DenError::from)?;
-    let Some((bear_id, job_id)) = row.filter(|(bear_id, _)| bears.contains_key(bear_id)) else {
-        return Err(CustomError::NotFound("task not found".to_string()));
+    let bear_id: Option<Uuid> = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some(bear_id) = bear_id.filter(|bear_id| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
     };
     let root_name = if form.scratch {
         Some(SCRATCH_ROOT_NAME.to_string())
     } else {
         clean_form_field(&form.root)
     };
-    work_runs::enqueue_work_run(
+    work_runs::enqueue_work_job(
         state.sqlx_pool(),
-        work_runs::WorkRunEnqueue {
+        work_runs::WorkJobEnqueue {
             bear_id,
-            task_id,
+            job_id,
             root_name,
             git_ref: clean_form_field(&form.git_ref),
             image_name: clean_form_field(&form.image),
@@ -1198,11 +1205,7 @@ async fn dispatch_task(
         },
     )
     .await?;
-    let destination = job_id.map_or_else(
-        || "/work".to_string(),
-        |job_id| format!("/work/jobs/{job_id}"),
-    );
-    Ok(Redirect::to(&destination).into_response())
+    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
 }
 
 async fn cancel_run(

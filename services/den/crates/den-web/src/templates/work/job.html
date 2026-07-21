@@ -68,8 +68,32 @@
 </p>
 {% endif %}
 
+{% if has_runnable_work %}
 <section>
-    <h2>Tasks</h2>
+    <h2>Dispatch job</h2>
+    <p>Queues every pending or blocked task assigned to Work. Runs execute one at a time in task order.</p>
+    <form method="post" action="/work/jobs/{{ job_id }}/dispatch">
+        {% if work_surface_ref %}
+        <p>Using job work surface <code>{{ work_surface_ref }}</code> unless a root is selected.</p>
+        {% elif catalog and catalog.roots %}
+        <select name="root" required>
+            <option value="">choose root…</option>
+            {% for root in catalog.roots %}<option value="{{ root.name }}">{{ root.name }}</option>{% endfor %}
+        </select>
+        {% else %}
+        <input name="root" placeholder="sandbox root name" required>
+        {% endif %}
+        {% if not work_surface_ref %}<label><input type="checkbox" name="scratch" value="true"> empty Scratch workspace</label>{% endif %}
+        {% if catalog and catalog.images %}
+        <select name="image"><option value="">image: surface default</option>{% for image in catalog.images %}<option value="{{ image.name }}">{{ image.name }}</option>{% endfor %}</select>
+        {% endif %}
+        <button type="submit">Dispatch job</button>
+    </form>
+</section>
+{% endif %}
+
+<section>
+    <h2>Tasks</h2></h2>
     <table>
         <thead>
             <tr><th>Task</th><th>Kind</th><th>Stance</th><th>Status</th><th></th></tr>
@@ -91,39 +115,7 @@
                 <td>{{ task.kind }}</td>
                 <td>{{ task.assigned_to_role or "—" }}</td>
                 <td>{{ task.status }}</td>
-                <td>
-                    {% if task.is_work and task.status in ["pending", "blocked"] %}
-                    <form method="post" action="/work/tasks/{{ task.id }}/dispatch">
-                        {% if work_surface_ref %}
-                        <p><small>Using job work surface <code>{{ work_surface_ref }}</code> unless a root is selected.</small></p>
-                        {% else %}
-                        <p><small><strong>Workspace selection:</strong> This job has no default work surface. <a href="/work/surfaces/new?bear_id={{ bear_id | urlencode }}&amp;return_job_id={{ job_id | urlencode }}">Create and attach a Git work surface</a>, choose an existing root, or explicitly use an empty scratch workspace. Scratch returns reports/artifacts only; it does not imply publishable repo changes. This guidance is not the job's blocked reason; see the latest run result below.</small></p>
-                        {% endif %}
-                        {% if catalog and catalog.roots %}
-                        <select name="root" title="sandbox root">
-                            <option value="">{% if work_surface_ref %}root: job default{% else %}choose root…{% endif %}</option>
-                            {% for root in catalog.roots %}
-                            <option value="{{ root.name }}" {% if root.name == work_surface_ref %}selected{% endif %}>{{ root.name }}</option>
-                            {% endfor %}
-                        </select>
-                        {% elif not work_surface_ref %}
-                        <input name="root" placeholder="sandbox root name" />
-                        {% endif %}
-                        {% if not work_surface_ref %}
-                        <label><input type="checkbox" name="scratch" value="true" /> empty scratch workspace</label>
-                        {% endif %}
-                        {% if catalog and catalog.images %}
-                        <select name="image" title="toolchain image">
-                            <option value="">image: root default</option>
-                            {% for image in catalog.images %}
-                            <option value="{{ image.name }}">{{ image.name }}{% if image.description %} — {{ image.description }}{% endif %}</option>
-                            {% endfor %}
-                        </select>
-                        {% endif %}
-                        <button type="submit">Dispatch</button>
-                    </form>
-                    {% endif %}
-                </td>
+                <td>{% if task.is_work %}Included in job dispatch{% else %}—{% endif %}</td>
             </tr>
             {% endfor %}
         </tbody>

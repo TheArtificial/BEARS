@@ -2000,7 +2000,7 @@ mod test {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct WorkDispatchArguments {
-    task_id: Uuid,
+    job_id: Uuid,
     #[serde(default)]
     root: Option<String>,
     #[serde(default)]
@@ -2023,11 +2023,11 @@ pub(crate) async fn dispatch_work(
         )));
     }
     let args: WorkDispatchArguments = serde_json::from_value(arguments)?;
-    let run = den_docket::work_runs::enqueue_work_run(
+    let runs = den_docket::work_runs::enqueue_work_job(
         pool,
-        den_docket::work_runs::WorkRunEnqueue {
+        den_docket::work_runs::WorkJobEnqueue {
             bear_id: context.bear_id,
-            task_id: args.task_id,
+            job_id: args.job_id,
             root_name: args.root.as_deref().and_then(clean_optional),
             git_ref: args.git_ref.as_deref().and_then(clean_optional),
             image_name: args.image.as_deref().and_then(clean_optional),
@@ -2035,38 +2035,19 @@ pub(crate) async fn dispatch_work(
         },
     )
     .await?;
-    // Runs serialize per job: tell the model where this run sits in the
-    // job's queue and what it is waiting behind.
-    let queue = den_docket::work_runs::queued_run_positions(pool, &[run.id])
-        .await?
-        .into_iter()
-        .next();
-    let note = match &queue {
-        Some(info) if info.waiting_on_run_id.is_some() => format!(
-            "queued at position {} in the job's queue, behind active run {}; \
-             runs within a job execute one at a time in dispatch order",
-            info.position,
-            info.waiting_on_run_id.unwrap_or_default()
-        ),
-        Some(info) if info.position > 1 => format!(
-            "queued at position {} in the job's queue; runs within a job execute \
-             one at a time in dispatch order",
-            info.position
-        ),
-        _ => "queued for the dispatch worker; inspect progress with get_work_run".to_string(),
-    };
+    let run_ids: Vec<Uuid> = runs.iter().map(|run| run.id).collect();
+    let queue = den_docket::work_runs::queued_run_positions(pool, &run_ids).await?;
     Ok(json!({
         "ok": true,
-        "work_run_id": run.id,
-        "state": run.state,
-        "attempt": run.attempt,
-        "task_id": run.task_id,
-        "job_id": run.job_id,
-        "queue": queue.map(|info| json!({
+        "job_id": args.job_id,
+        "work_run_ids": run_ids,
+        "queued_tasks": runs.len(),
+        "queue": queue.iter().map(|info| json!({
+            "run_id": info.run_id,
             "position": info.position,
             "waiting_on_run_id": info.waiting_on_run_id,
-        })),
-        "note": note,
+        })).collect::<Vec<_>>(),
+        "note": "Job queued; its work tasks execute one at a time in task order.",
     }))
 }
 

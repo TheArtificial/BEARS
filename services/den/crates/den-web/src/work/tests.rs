@@ -533,7 +533,8 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     // Create the job through the same form, then dispatch its task.
     let body = format!(
         "bear_id={bear_id}&goal=Dispatch+me&root=&commit_policy=propose_only\
-         &task_title=Do+the+thing&task_criteria=thing+is+done"
+         &task_title=Do+the+thing&task_criteria=thing+is+done\
+         &task_title=Do+the+next+thing&task_criteria=next+thing+is+done"
     );
     let response = app
         .clone()
@@ -550,18 +551,19 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .expect("create job response");
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
-    let (task_id,): (Uuid,) =
-        sqlx::query_as("SELECT id FROM bear_tasks WHERE bear_id = $1 AND title = 'Do the thing'")
-            .bind(bear_id)
-            .fetch_one(&pool)
-            .await
-            .expect("task id");
+    let (_task_id, job_id): (Uuid, Uuid) = sqlx::query_as(
+        "SELECT id, job_id FROM bear_tasks WHERE bear_id = $1 AND title = 'Do the thing'",
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("task id");
 
     let response = app
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/work/tasks/{task_id}/dispatch"))
+                .uri(format!("/work/jobs/{job_id}/dispatch"))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from("root=site&image=rust&git_ref="))
@@ -571,17 +573,20 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .expect("dispatch response");
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
-    let (root, image, git_ref): (Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+    let runs: Vec<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT root_name, image_name, git_ref FROM bear_work_runs
-         WHERE task_id = $1 AND state = 'queued'",
+         WHERE job_id = $1 AND state = 'queued' ORDER BY queued_at",
     )
-    .bind(task_id)
-    .fetch_one(&pool)
+    .bind(job_id)
+    .fetch_all(&pool)
     .await
-    .expect("queued run");
-    assert_eq!(root.as_deref(), Some("site"));
-    assert_eq!(image.as_deref(), Some("rust"));
-    assert!(git_ref.is_none(), "blank git_ref stays unset");
+    .expect("queued job runs");
+    assert_eq!(runs.len(), 2);
+    for (root, image, git_ref) in runs {
+        assert_eq!(root.as_deref(), Some("site"));
+        assert_eq!(image.as_deref(), Some("rust"));
+        assert!(git_ref.is_none(), "blank git_ref stays unset");
+    }
 }
 
 /// Helper: POST a form to the app with the session cookie; returns the

@@ -99,8 +99,8 @@ pub async fn run_work_dispatch_worker_loop(
     Ok(())
 }
 
-/// Optional sweep: queue every runnable work task. Off by default — the
-/// primary v1 path is explicit dispatch via the den.work.dispatch tool or UI.
+/// Optional sweep: queue every job with runnable work tasks. Off by default —
+/// explicit and automatic dispatch share the same job-level operation.
 async fn auto_enqueue(pool: &PgPool) {
     let bears = match work_runs::list_bears_with_work_tasks(pool).await {
         Ok(bears) => bears,
@@ -118,29 +118,35 @@ async fn auto_enqueue(pool: &PgPool) {
                 continue;
             }
         };
-        for projection in tasks {
-            let task = projection.task;
-            let enqueued = work_runs::enqueue_work_run(
+        let jobs: std::collections::BTreeMap<Uuid, Option<i32>> = tasks
+            .into_iter()
+            .filter_map(|projection| {
+                projection
+                    .task
+                    .job_id
+                    .map(|job_id| (job_id, projection.task.created_by_user_id))
+            })
+            .collect();
+        for (job_id, requested_by_user_id) in jobs {
+            match work_runs::enqueue_work_job(
                 pool,
-                work_runs::WorkRunEnqueue {
+                work_runs::WorkJobEnqueue {
                     bear_id,
-                    task_id: task.id,
+                    job_id,
                     root_name: None,
                     git_ref: None,
                     image_name: None,
-                    requested_by_user_id: task.created_by_user_id,
+                    requested_by_user_id,
                 },
             )
-            .await;
-            match enqueued {
-                Ok(run) => {
-                    tracing::info!(work_run_id = %run.id, task_id = %task.id, "work_dispatch: auto-enqueued task");
+            .await
+            {
+                Ok(runs) => {
+                    tracing::info!(job_id = %job_id, queued_tasks = runs.len(), "work_dispatch: auto-enqueued job");
                 }
-                // Duplicate-active and validation rejections are expected here
-                // (already dispatched, no job, ...).
                 Err(DenError::ValidationError(_)) => {}
                 Err(err) => {
-                    tracing::warn!(error = %err, task_id = %task.id, "work_dispatch: auto-enqueue failed");
+                    tracing::warn!(error = %err, %job_id, "work_dispatch: auto-enqueue job failed");
                 }
             }
         }

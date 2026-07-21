@@ -134,6 +134,16 @@ pub fn effective_work_run_root(
 }
 
 #[derive(Clone, Debug)]
+pub struct WorkJobEnqueue {
+    pub bear_id: Uuid,
+    pub job_id: Uuid,
+    pub root_name: Option<String>,
+    pub git_ref: Option<String>,
+    pub image_name: Option<String>,
+    pub requested_by_user_id: Option<i32>,
+}
+
+#[derive(Clone, Debug)]
 pub struct WorkRunEnqueue {
     pub bear_id: Uuid,
     pub task_id: Uuid,
@@ -168,7 +178,57 @@ async fn ensure_bear_assigned_to_surface(
     }
 }
 
-/// Queue a work run for a task assigned to the `work` stance. Ensures the
+/// Queue every runnable work-assigned task in a job. Tasks remain the
+/// execution/checkpoint units, but callers dispatch the job as one package.
+pub async fn enqueue_work_job(
+    pool: &PgPool,
+    enqueue: WorkJobEnqueue,
+) -> Result<Vec<WorkRunRow>, DenError> {
+    let task_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT t.id FROM bear_tasks t
+         JOIN bear_jobs j ON j.id = t.job_id
+         LEFT JOIN bear_task_run_state s
+           ON s.task_id = t.id AND s.run_id = j.current_run_id
+         WHERE j.id = $1 AND j.bear_id = $2
+           AND t.assigned_to_role = 'work'
+           AND COALESCE(s.status, 'pending') IN ('pending', 'blocked')
+           AND NOT EXISTS (
+               SELECT 1 FROM bear_work_runs wr
+               WHERE wr.task_id = t.id
+                 AND wr.state IN ('queued','claimed','provisioning','running','reporting')
+           )
+         ORDER BY t.sibling_order, t.created_at, t.id",
+    )
+    .bind(enqueue.job_id)
+    .bind(enqueue.bear_id)
+    .fetch_all(pool)
+    .await?;
+    if task_ids.is_empty() {
+        return Err(DenError::ValidationError(
+            "job has no runnable work tasks to dispatch".to_string(),
+        ));
+    }
+    let mut runs = Vec::with_capacity(task_ids.len());
+    for task_id in task_ids {
+        runs.push(
+            enqueue_work_run(
+                pool,
+                WorkRunEnqueue {
+                    bear_id: enqueue.bear_id,
+                    task_id,
+                    root_name: enqueue.root_name.clone(),
+                    git_ref: enqueue.git_ref.clone(),
+                    image_name: enqueue.image_name.clone(),
+                    requested_by_user_id: enqueue.requested_by_user_id,
+                },
+            )
+            .await?,
+        );
+    }
+    Ok(runs)
+}
+
+/// Internal primitive: queue one work run for a task assigned to the `work` stance. Ensures the
 /// job has an active `bear_job_runs` row (creating an `event`-triggered one
 /// when needed). The partial unique index rejects a second active run for the
 /// same task. Jobs bound to a managed work surface (or explicit root

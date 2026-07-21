@@ -675,12 +675,12 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         ),
         descriptor(
             DEN_WORK_DISPATCH,
-            "Dispatch work task",
-            "Queue a work-assigned Docket task for autonomous sandbox execution. A dispatch worker provisions an isolated sandbox on the configured sandbox server, a headless armature executes the task there, and results flow back into Docket. When the job's commit_policy is per_task or per_job, successful runs are published (pushed) to the job's upstream work branch. Runs within one job execute one at a time in dispatch order (each building on the previous task's published work); the response reports the run's queue position. Requires the task's assigned_to_role to be work, and a sandbox root: pass root or set work_surface_ref on the job. Returns the work_run_id to inspect with get_work_run.",
+            "Dispatch work job",
+            "Queue every runnable work-assigned task in a Docket job as one background-work package. Runs execute one at a time in task order and build on the shared job work branch. Requires a sandbox root or job work surface. Returns all work run ids.",
             "bear.docket",
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
-            json!({"type":"object","properties":{"task_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Managed work surface name or provider root name; defaults to the job's work_surface_ref. Managed surfaces require the bear's assignment."},"git_ref":{"type":"string","description":"Git ref to provision the workspace at; defaults to the job's work branch when it exists, else the root's default ref."},"image":{"type":"string","description":"Catalog image name on the sandbox provider (see get_work_catalog); defaults to the root's default image."}},"required":["task_id"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Managed work surface or provider root; defaults to the job work surface."},"git_ref":{"type":"string"},"image":{"type":"string","description":"Catalog image name."}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_WORK_RUN_LIST,
