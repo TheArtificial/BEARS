@@ -581,12 +581,11 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     .fetch_all(&pool)
     .await
     .expect("queued job runs");
-    assert_eq!(runs.len(), 2);
-    for (root, image, git_ref) in runs {
-        assert_eq!(root.as_deref(), Some("site"));
-        assert_eq!(image.as_deref(), Some("rust"));
-        assert!(git_ref.is_none(), "blank git_ref stays unset");
-    }
+    assert_eq!(runs.len(), 1);
+    let (root, image, git_ref) = &runs[0];
+    assert_eq!(root.as_deref(), Some("site"));
+    assert_eq!(image.as_deref(), Some("rust"));
+    assert!(git_ref.is_none(), "blank git_ref stays unset");
 }
 
 /// Helper: POST a form to the app with the session cookie; returns the

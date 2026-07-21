@@ -80,7 +80,6 @@ struct RunView {
     attempt: i32,
     bear_slug: String,
     job_id: String,
-    task_id: String,
     root: Option<String>,
     git_ref: Option<String>,
     image: Option<String>,
@@ -138,7 +137,6 @@ fn run_view(run: &WorkRunRow, bear_slug: &str) -> RunView {
         attempt: run.attempt,
         bear_slug: bear_slug.to_string(),
         job_id: run.job_id.to_string(),
-        task_id: run.task_id.to_string(),
         root: run.root_name.clone(),
         git_ref: run.git_ref.clone(),
         image: run.image_name.clone(),
@@ -226,7 +224,6 @@ async fn index(
                 "run_id": run.run_id.to_string(),
                 "job_id": run.job_id.to_string(),
                 "bear_slug": bear_slug,
-                "task_title": run.task_title,
                 "job_goal": run.job_goal,
                 "state": run.state,
                 "reason": run.result_summary.or(run.error),
@@ -1234,11 +1231,11 @@ async fn retry_run(
         .await?
         .filter(|run| bears.contains_key(&run.bear_id))
         .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
-    let retry = work_runs::enqueue_work_run(
+    let mut retries = work_runs::enqueue_work_job(
         state.sqlx_pool(),
-        work_runs::WorkRunEnqueue {
+        work_runs::WorkJobEnqueue {
             bear_id: run.bear_id,
-            task_id: run.task_id,
+            job_id: run.job_id,
             root_name: run.root_name.clone(),
             git_ref: run.git_ref.clone(),
             image_name: run.image_name.clone(),
@@ -1246,5 +1243,8 @@ async fn retry_run(
         },
     )
     .await?;
+    let retry = retries
+        .pop()
+        .expect("enqueue_work_job returns one job-scoped work run");
     Ok(Redirect::to(&format!("/work/runs/{}", retry.id)).into_response())
 }

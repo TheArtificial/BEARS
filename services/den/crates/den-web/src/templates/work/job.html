@@ -71,7 +71,7 @@
 {% if status not in ["completed", "cancelled"] %}
 <section>
     <h2>Dispatch job</h2>
-    <p>Queues every pending or blocked task assigned to Work. Runs execute one at a time in task order.</p>
+    <p>Queues one sandbox run for this job's pending or blocked Work tasks. The tasks run within that shared job session.</p>
     {% if has_runnable_work %}
     <form method="post" action="/work/jobs/{{ job_id }}/dispatch">
         {% if work_surface_ref %}

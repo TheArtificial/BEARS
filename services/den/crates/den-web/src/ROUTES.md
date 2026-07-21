@@ -118,13 +118,13 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 - `GET /work` — jobs + active/past work runs overview (auto-refreshes while runs are active)
 - `GET /work/new` — job creation form (goal, sandbox root, commit policy, work branch, work tasks)
 - `POST /work/new` — create the Docket job (tasks assigned to the work stance; created_by_role `ui`)
-- `GET /work/jobs/{job_id}` — job detail: editable goal/surface/commit policy/branch, task tree with statuses, per-task dispatch, duplication, run history with publish outcomes
+- `GET /work/jobs/{job_id}` — job detail: editable goal/surface/commit policy/branch, task tree with statuses, job dispatch, duplication, run history with publish outcomes
 - `POST /work/jobs/{job_id}/edit` — update job-level settings; task-tree editing remains separate/deferred
 - `POST /work/jobs/{job_id}/duplicate` — copy job intent/settings/criteria/task hierarchy into a fresh ready job; run state and publish branch are reset
 - `POST /work/jobs/{job_id}/complete` — after all tasks finish, accept remaining criteria as a human decision and close the job/current run
 - `POST /work/jobs/{job_id}/extend` — add a fresh work-assigned task with concrete criteria to the current run and return the job to ready
 - `GET /work/runs/{run_id}` — run detail: state, sandbox type/strength, image, work surface, published branch/commit, changed files + diff, headless conversation link, sandbox/armature output, usage, cleanup status
-- `POST /work/jobs/{job_id}/dispatch` — enqueue every runnable work-assigned task in the job as one background-work package (optional form fields: root, image, git_ref); runs serialize in task order
+- `POST /work/jobs/{job_id}/dispatch` — enqueue one background work run for all runnable work-assigned tasks in the job (optional form fields: root, image, git_ref); the tasks execute within the shared job session
 - `POST /work/runs/{run_id}/cancel` — request cancellation (dispatch worker performs teardown)
 - `POST /work/runs/{run_id}/retry` — re-enqueue a terminal run as a new attempt
 
