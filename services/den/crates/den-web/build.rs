@@ -61,6 +61,104 @@ fn collect_template_names(root: &Path) -> Vec<String> {
     names
 }
 
+fn strip_minijinja_blocks(source: &str) -> String {
+    let mut output = source.as_bytes().to_vec();
+    let pairs = [
+        (b"{{".as_slice(), b"}}".as_slice()),
+        (b"{%".as_slice(), b"%}".as_slice()),
+        (b"{#".as_slice(), b"#}".as_slice()),
+    ];
+    let mut cursor = 0;
+    while cursor + 1 < output.len() {
+        let Some((open, close)) = pairs
+            .iter()
+            .find(|(open, _)| output[cursor..].starts_with(open))
+        else {
+            cursor += 1;
+            continue;
+        };
+        let content_start = cursor + open.len();
+        let relative_end = output[content_start..]
+            .windows(close.len())
+            .position(|window| window == *close)
+            .unwrap_or_else(|| panic!("unterminated MiniJinja block while validating HTML"));
+        let end = content_start + relative_end + close.len();
+        output[cursor..end].fill(b' ');
+        cursor = end;
+    }
+    String::from_utf8(output).expect("template source remained UTF-8 after stripping blocks")
+}
+
+fn validate_html_structure(template_name: &str, source: &str) {
+    const VOID: &[&str] = &[
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+        "source", "track", "wbr",
+    ];
+    const TRACKED: &[&str] = &[
+        "button", "code", "details", "form", "label", "section", "select", "small", "strong",
+        "summary", "table", "tbody", "td", "textarea", "th", "thead", "tr", "ul",
+    ];
+    let source = strip_minijinja_blocks(source);
+    let source = source.as_str();
+    let mut stack: Vec<String> = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = source[cursor..].find('<') {
+        let start = cursor + relative_start;
+        let Some(relative_end) = source[start..].find('>') else {
+            panic!("template {template_name:?} contains an unterminated HTML tag");
+        };
+        let end = start + relative_end;
+        let raw = source[start + 1..end].trim();
+        cursor = end + 1;
+        if raw.is_empty() || raw.starts_with('!') || raw.starts_with('?') {
+            continue;
+        }
+        if raw.contains('<') {
+            panic!("template {template_name:?} contains malformed HTML tag <{raw}>");
+        }
+        let closing = raw.starts_with('/');
+        let body = raw.trim_start_matches('/').trim_start();
+        let name = body
+            .split(|ch: char| ch.is_ascii_whitespace() || ch == '/')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        {
+            panic!("template {template_name:?} contains malformed HTML tag <{raw}>");
+        }
+        if !closing && matches!(name.as_str(), "script" | "style") {
+            let closing_tag = format!("</{name}>");
+            let relative_close = source[cursor..].find(&closing_tag).unwrap_or_else(|| {
+                panic!("template {template_name:?} has an unclosed <{name}> block")
+            });
+            cursor += relative_close + closing_tag.len();
+            continue;
+        }
+        if !TRACKED.contains(&name.as_str()) {
+            continue;
+        }
+        if closing {
+            let open = stack.pop().unwrap_or_else(|| {
+                panic!("template {template_name:?} closes </{name}> without an opening tag")
+            });
+            assert_eq!(
+                open, name,
+                "template {template_name:?} closes </{name}> while <{open}> is still open"
+            );
+        } else if !VOID.contains(&name.as_str()) && !raw.ends_with('/') {
+            stack.push(name);
+        }
+    }
+    assert!(
+        stack.is_empty(),
+        "template {template_name:?} has unclosed HTML tags: {stack:?}"
+    );
+}
+
 fn validate_templates(templates_dir: &Path) {
     let canonical = templates_dir
         .canonicalize()
@@ -80,6 +178,10 @@ fn validate_templates(templates_dir: &Path) {
         env.add_filter(name, |value: minijinja::Value| value);
     }
     for template_name in collect_template_names(&canonical) {
+        let source = fs::read_to_string(canonical.join(&template_name)).unwrap_or_else(|err| {
+            panic!("failed to read template {template_name:?} for validation: {err}")
+        });
+        validate_html_structure(&template_name, &source);
         env.get_template(&template_name).unwrap_or_else(|err| {
             panic!("template {template_name:?} failed build-time validation: {err:#}")
         });

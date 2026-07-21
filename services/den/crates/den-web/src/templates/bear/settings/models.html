@@ -318,11 +318,10 @@
             </tbody>
         </table>
         {% endif %} {% elif bifrost_usage.status == "missing" %}
-        {% elif bifrost_usage.status == "missing" %}
         <p class="form-hint">{{ bifrost_usage.error | e }}</p>
         {% elif bifrost_usage.status == "unavailable" %}
         <p class="form-hint">
-            <strong>Usag</strong>e temporarily unavailable.</strong>
+            <strong>Usage temporarily unavailable.</strong>
             {{ bifrost_usage.error | e }}
         </p>
         {% else %}
@@ -341,7 +340,7 @@
                     <th>Resolved</th>
                     <th>Loop control</th>
                     <th>Status</th>
-                    <th>S</th>ource</th>
+                    <th>Source</th>
                     <th></th>
                 </tr>
             </thead>
@@ -442,13 +441,13 @@
                             <option value="strict" {% if row.configured_loop_control == "strict" %}selected{% endif %}>Strict</option>
                         </select>
                         <br />
-                        <small></small>
+                        <small>
                             Resolved: <code>{{ row.resolved_loop_control | e }}</code>
                             · {{ row.loop_control_source | e }}
                         </small>
                     </td>
                     <td>
-</td>                        <span title="Bifrost availability"
+                        <span title="Bifrost availability"
                             >{{ row.availability_status | e }}</span
                         >
                         ·
