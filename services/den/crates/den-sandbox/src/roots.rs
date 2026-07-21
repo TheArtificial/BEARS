@@ -354,9 +354,12 @@ impl RootsManager {
             )
             .await?;
             let reference = git_ref.unwrap_or(&upstream.default_ref);
-            let checkout = self.checkout_detached(root, &workspace, reference).await;
-            match checkout {
-                Ok(_) => {}
+            // Resolve in the pristine bare mirror, where every fetched branch
+            // is a local refs/heads/* ref. In a normal clone, a non-HEAD branch
+            // may exist only as origin/<name>, so resolving the same short name
+            // there can fail even after a successful root readiness check.
+            let commit = match self.resolve_commit(root, &pristine, &[], reference).await {
+                Ok(commit) => commit,
                 // A requested ref that does not exist yet (e.g. a job work
                 // branch before its first publish) falls back to the default
                 // ref instead of failing the provision.
@@ -367,17 +370,27 @@ impl RootsManager {
                         fallback = %upstream.default_ref,
                         "requested ref missing; provisioning at the default ref"
                     );
-                    self.checkout_detached(root, &workspace, &upstream.default_ref)
+                    self.resolve_commit(root, &pristine, &[], &upstream.default_ref)
                         .await
                         .inspect_err(|_| {
                             let _ = std::fs::remove_dir_all(&workspace);
-                        })?;
+                        })?
                 }
                 Err(err) => {
                     let _ = std::fs::remove_dir_all(&workspace);
                     return Err(err);
                 }
-            }
+            };
+            self.git(
+                root,
+                Some(&workspace),
+                &[],
+                &["checkout", "--detach", &commit],
+            )
+            .await
+            .inspect_err(|_| {
+                let _ = std::fs::remove_dir_all(&workspace);
+            })?;
         } else {
             let source = root.path.as_deref().ok_or_else(|| RootsError::Workspace {
                 name: root.name.clone(),
@@ -555,23 +568,6 @@ impl RootsManager {
             });
         }
         Ok(oid.to_string())
-    }
-
-    async fn checkout_detached(
-        &self,
-        root: &SyncableRoot,
-        workspace: &Path,
-        reference: &str,
-    ) -> Result<String, RootsError> {
-        let commit = self.resolve_commit(root, workspace, &[], reference).await?;
-        self.git(
-            root,
-            Some(workspace),
-            &[],
-            &["checkout", "--detach", &commit],
-        )
-        .await?;
-        Ok(commit)
     }
 
     async fn git(
@@ -933,6 +929,34 @@ mod tests {
             allow_default_ref: false,
             run_label: Some("test-run".to_string()),
         }
+    }
+
+    #[tokio::test]
+    async fn provision_uses_non_head_default_branch_resolved_from_pristine_mirror() {
+        let mut fx = publish_fixture();
+        let seed = fx.tmp.join("seed");
+        let upstream = fx.tmp.join("upstream.git");
+        sh_git(&seed, &["checkout", "-b", "test"]);
+        std::fs::write(seed.join("TEST.md"), "test branch\n").unwrap();
+        sh_git(&seed, &["add", "-A"]);
+        sh_git(&seed, &["commit", "-m", "test branch"]);
+        sh_git(&seed, &["push", &upstream.to_string_lossy(), "test"]);
+        let test_commit = sh_git(&seed, &["rev-parse", "HEAD"]).trim().to_string();
+        fx.root.upstream.as_mut().unwrap().default_ref = "test".to_string();
+
+        assert_eq!(
+            fx.manager.sync_root(&fx.root).await.unwrap().as_deref(),
+            Some(test_commit.as_str())
+        );
+        let workspace = fx
+            .manager
+            .provision_workspace(&fx.root, None, "sbx-non-head-default")
+            .await
+            .expect("prepared non-HEAD default branch should provision");
+        assert_eq!(
+            sh_git(&workspace, &["rev-parse", "HEAD"]).trim(),
+            test_commit
+        );
     }
 
     #[tokio::test]
