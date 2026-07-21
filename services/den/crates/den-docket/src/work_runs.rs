@@ -1082,6 +1082,7 @@ pub async fn list_bears_with_work_tasks(pool: &PgPool) -> Result<Vec<Uuid>, DenE
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct WorkRunDispatchContext {
     pub bear_slug: String,
+    pub bear_name: String,
     pub created_by_user_id: i32,
     pub job_goal: String,
     pub work_surface_ref: Option<String>,
@@ -1104,7 +1105,7 @@ pub async fn get_work_run_dispatch_context(
     run_id: Uuid,
 ) -> Result<WorkRunDispatchContext, DenError> {
     sqlx::query_as::<_, WorkRunDispatchContext>(
-        "SELECT b.slug AS bear_slug, j.created_by_user_id, j.goal AS job_goal, j.work_surface_ref,
+        "SELECT b.slug AS bear_slug, b.name AS bear_name, j.created_by_user_id, j.goal AS job_goal, j.work_surface_ref,
                 j.commit_policy, j.work_branch,
                 COALESCE(j.work_branch = s.default_ref, FALSE) AS allow_default_ref
          FROM bear_work_runs r

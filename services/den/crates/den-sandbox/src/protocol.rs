@@ -228,6 +228,9 @@ pub struct PublishRequest {
     /// pushing to `main` must always be an explicit choice.
     #[serde(default)]
     pub allow_default_ref: bool,
+    /// Git author/committer name for provider-created leftover commits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_name: Option<String>,
     /// Caller label used in the auto-commit message (e.g. the work run id).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_label: Option<String>,

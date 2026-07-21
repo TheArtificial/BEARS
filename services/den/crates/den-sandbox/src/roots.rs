@@ -551,13 +551,19 @@ impl RootsManager {
             if !status.trim().is_empty() {
                 self.git(root, Some(workspace), &[], &["add", "-A"]).await?;
                 let label = request.run_label.as_deref().unwrap_or("unknown");
+                let author_name = request
+                    .author_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("Den Work");
                 self.git(
                     root,
                     Some(workspace),
                     &[],
                     &[
                         "-c",
-                        "user.name=Den Work",
+                        &format!("user.name={author_name}"),
                         "-c",
                         "user.email=work@den.invalid",
                         "commit",
@@ -1030,6 +1036,7 @@ mod tests {
             branch: branch.to_string(),
             auto_commit_leftovers: true,
             allow_default_ref: false,
+            author_name: Some("Test Bear".to_string()),
             run_label: Some("test-run".to_string()),
         }
     }
@@ -1134,6 +1141,10 @@ mod tests {
         assert!(outcome.pushed);
         assert!(outcome.auto_committed);
         assert_eq!(outcome.commits_pushed, 2);
+        assert_eq!(
+            sh_git(&workspace, &["show", "-s", "--format=%an", "HEAD"]).trim(),
+            "Test Bear"
+        );
 
         // The upstream branch exists and matches the workspace head.
         let upstream = fx.tmp.join("upstream.git");

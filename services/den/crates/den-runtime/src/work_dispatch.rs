@@ -274,7 +274,7 @@ async fn provision_run(
     );
     // In-run commits carry the bear's identity (the provider's auto-commit of
     // leftovers uses its own).
-    let git_identity = format!("{} (Den work)", context.bear_slug);
+    let git_identity = context.bear_name.clone();
     let git_email = format!("{}@work.den.invalid", context.bear_slug);
     env.insert("GIT_AUTHOR_NAME".to_string(), git_identity.clone());
     env.insert("GIT_AUTHOR_EMAIL".to_string(), git_email.clone());
@@ -558,6 +558,7 @@ async fn harvest_run(
                         branch: branch.to_string(),
                         auto_commit_leftovers: true,
                         allow_default_ref: context.allow_default_ref,
+                        author_name: Some(context.bear_name.clone()),
                         run_label: Some(run.id.to_string()),
                     };
                     match client.publish(id, &request).await {
