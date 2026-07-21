@@ -1,11 +1,11 @@
 //! Durable dispatch/claim/lease state for autonomous `work`-stance execution.
 //!
-//! One `bear_work_runs` row per dispatch attempt of one task. The dispatch
+//! One `bear_work_runs` row per dispatch attempt of one job run. The dispatch
 //! worker (den-runtime) claims rows with a lease; the BearWire `work.*`
 //! methods bind the in-sandbox armature's session and record the turn
-//! outcome; the worker harvests and finalizes. Lifecycle audit reuses
-//! `bear_task_events` (Docket schedules, gates, and records — it never
-//! executes task bodies; ADR-0034).
+//! outcome; the worker harvests and finalizes. Tasks remain the execution
+//! checkpoints inside that job run (Docket schedules, gates, and records — it
+//! never executes task bodies; ADR-0034).
 
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -74,7 +74,7 @@ impl WorkRunState {
     }
 }
 
-const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, task_id, job_run_id, attempt, state, \
+const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, job_run_id, attempt, state, \
      runner_id, lease_expires_at, cancel_requested, root_name, git_ref, image_name, \
      sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, \
      bearwire_session_id, result_summary, result_refs, usage, error, \
@@ -85,7 +85,6 @@ pub struct WorkRunRow {
     pub id: Uuid,
     pub bear_id: Uuid,
     pub job_id: Uuid,
-    pub task_id: Uuid,
     pub job_run_id: Uuid,
     pub attempt: i32,
     pub state: String,
@@ -144,16 +143,45 @@ pub struct WorkJobEnqueue {
 }
 
 #[derive(Clone, Debug)]
+/// Legacy test fixture input. Production dispatch is job-scoped; tests use a
+/// task only to locate its owning job.
+#[cfg(test)]
+#[derive(Clone, Debug)]
 pub struct WorkRunEnqueue {
     pub bear_id: Uuid,
     pub task_id: Uuid,
     pub root_name: Option<String>,
     pub git_ref: Option<String>,
-    /// Catalog image name on the sandbox provider (None = root/provider default).
     pub image_name: Option<String>,
-    /// Recorded on the audit event; also the identity work-run tokens are
-    /// minted under (v1: only user-created jobs dispatch to work).
     pub requested_by_user_id: Option<i32>,
+}
+
+#[cfg(test)]
+pub async fn enqueue_work_run(
+    pool: &PgPool,
+    enqueue: WorkRunEnqueue,
+) -> Result<WorkRunRow, DenError> {
+    let job_id: Option<(Uuid,)> = sqlx::query_as(
+        "SELECT job_id FROM bear_tasks WHERE id = $1 AND bear_id = $2",
+    )
+    .bind(enqueue.task_id)
+    .bind(enqueue.bear_id)
+    .fetch_optional(pool)
+    .await?;
+    let (job_id,) = job_id.ok_or_else(|| DenError::NotFound(format!("Docket task not found: {}", enqueue.task_id)))?;
+    enqueue_work_job(
+        pool,
+        WorkJobEnqueue {
+            bear_id: enqueue.bear_id,
+            job_id,
+            root_name: enqueue.root_name,
+            git_ref: enqueue.git_ref,
+            image_name: enqueue.image_name,
+            requested_by_user_id: enqueue.requested_by_user_id,
+        },
+    )
+    .await
+    .map(|mut runs| runs.remove(0))
 }
 
 async fn ensure_bear_assigned_to_surface(
@@ -178,222 +206,82 @@ async fn ensure_bear_assigned_to_surface(
     }
 }
 
-/// Queue every runnable work-assigned task in a job. Tasks remain the
-/// execution/checkpoint units, but callers dispatch the job as one package.
+/// Queue one job-scoped work run. The job must have at least one runnable
+/// work task; task state is deliberately not encoded on the work-run row.
 pub async fn enqueue_work_job(
     pool: &PgPool,
     enqueue: WorkJobEnqueue,
 ) -> Result<Vec<WorkRunRow>, DenError> {
-    let task_ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT t.id FROM bear_tasks t
-         JOIN bear_jobs j ON j.id = t.job_id
-         LEFT JOIN bear_task_run_state s
-           ON s.task_id = t.id AND s.run_id = j.current_run_id
-         WHERE j.id = $1 AND j.bear_id = $2
-           AND t.assigned_to_role = 'work'
-           AND COALESCE(s.status, 'pending') IN ('pending', 'blocked')
-           AND NOT EXISTS (
-               SELECT 1 FROM bear_work_runs wr
-               WHERE wr.task_id = t.id
-                 AND wr.state IN ('queued','claimed','provisioning','running','reporting')
-           )
-         ORDER BY t.sibling_order, t.created_at, t.id",
+    let mut tx = pool.begin().await?;
+    let job: Option<(Option<String>, Option<Uuid>, Option<Uuid>, Option<String>)> = sqlx::query_as(
+        "SELECT work_surface_ref, work_surface_id, current_run_id, status
+         FROM bear_jobs WHERE id = $1 AND bear_id = $2 FOR UPDATE",
     )
     .bind(enqueue.job_id)
     .bind(enqueue.bear_id)
-    .fetch_all(pool)
-    .await?;
-    if task_ids.is_empty() {
-        return Err(DenError::ValidationError(
-            "job has no runnable work tasks to dispatch".to_string(),
-        ));
-    }
-    let mut runs = Vec::with_capacity(task_ids.len());
-    for task_id in task_ids {
-        runs.push(
-            enqueue_work_run(
-                pool,
-                WorkRunEnqueue {
-                    bear_id: enqueue.bear_id,
-                    task_id,
-                    root_name: enqueue.root_name.clone(),
-                    git_ref: enqueue.git_ref.clone(),
-                    image_name: enqueue.image_name.clone(),
-                    requested_by_user_id: enqueue.requested_by_user_id,
-                },
-            )
-            .await?,
-        );
-    }
-    Ok(runs)
-}
-
-/// Internal primitive: queue one work run for a task assigned to the `work` stance. Ensures the
-/// job has an active `bear_job_runs` row (creating an `event`-triggered one
-/// when needed). The partial unique index rejects a second active run for the
-/// same task. Jobs bound to a managed work surface (or explicit root
-/// overrides naming one) additionally require the bear's surface assignment.
-pub async fn enqueue_work_run(
-    pool: &PgPool,
-    enqueue: WorkRunEnqueue,
-) -> Result<WorkRunRow, DenError> {
-    let mut tx = pool.begin().await?;
-
-    let task: Option<(Uuid, Option<Uuid>, Option<String>)> = sqlx::query_as(
-        "SELECT bear_id, job_id, assigned_to_role FROM bear_tasks WHERE id = $1 AND bear_id = $2",
-    )
-    .bind(enqueue.task_id)
-    .bind(enqueue.bear_id)
     .fetch_optional(&mut *tx)
-    .await?
-    .map(|row: (Uuid, Option<Uuid>, Option<String>)| row);
-
-    let Some((_, job_id, assigned_to_role)) = task else {
-        return Err(DenError::NotFound(format!(
-            "Docket task not found: {}",
-            enqueue.task_id
-        )));
+    .await?;
+    let Some((job_work_surface_ref, _surface_id, current_run_id, _status)) = job else {
+        return Err(DenError::NotFound(format!("Docket job not found: {}", enqueue.job_id)));
     };
-    let Some(job_id) = job_id else {
-        return Err(DenError::ValidationError(
-            "task is not part of a Docket job; only job tasks can dispatch to work".into(),
-        ));
-    };
-    if assigned_to_role.as_deref() != Some("work") {
-        return Err(DenError::ValidationError(format!(
-            "task {} is not assigned to the work stance (assigned_to_role={})",
-            enqueue.task_id,
-            assigned_to_role.as_deref().unwrap_or("<none>")
-        )));
-    }
 
-    let job_work_surface_ref: Option<String> =
-        sqlx::query_scalar("SELECT work_surface_ref FROM bear_jobs WHERE id = $1")
-            .bind(job_id)
-            .fetch_one(&mut *tx)
-            .await?;
-    let root_name = effective_work_run_root(
-        enqueue.root_name.as_deref(),
-        job_work_surface_ref.as_deref(),
-    );
+    let root_name = effective_work_run_root(enqueue.root_name.as_deref(), job_work_surface_ref.as_deref());
     if root_name.is_none() {
         return Err(DenError::ValidationError(
             "no sandbox root configured: choose a root, set work_surface_ref on the job, or explicitly dispatch to scratch".into(),
         ));
     }
-
-    // Managed-surface enforcement: a job bound to a work surface (and any
-    // explicit root override naming one) requires the bear to be assigned to
-    // that surface. Free-text roots matching no managed surface pass through;
-    // the provider stays the final validator for those.
-    let job_surface: Option<(Uuid, String)> = sqlx::query_as(
-        "SELECT s.id, s.name FROM bear_jobs j
-         JOIN work_surfaces s ON s.id = j.work_surface_id
-         WHERE j.id = $1",
+    let runnable: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM bear_tasks t
+             LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+             WHERE t.job_id = $1 AND t.assigned_to_role = 'work'
+               AND COALESCE(s.status, 'pending') IN ('pending', 'blocked')
+         )",
     )
-    .bind(job_id)
-    .fetch_optional(&mut *tx)
+    .bind(enqueue.job_id)
+    .bind(current_run_id)
+    .fetch_one(&mut *tx)
     .await?;
-    if let Some((surface_id, surface_name)) = &job_surface {
-        ensure_bear_assigned_to_surface(&mut tx, enqueue.bear_id, *surface_id, surface_name)
-            .await?;
-    }
-    if let Some(root_name) = root_name.as_deref() {
-        let named_surface: Option<(Uuid,)> =
-            sqlx::query_as("SELECT id FROM work_surfaces WHERE name = $1")
-                .bind(root_name)
-                .fetch_optional(&mut *tx)
-                .await?;
-        if let Some((surface_id,)) = named_surface {
-            ensure_bear_assigned_to_surface(&mut tx, enqueue.bear_id, surface_id, root_name)
-                .await?;
-        }
+    if !runnable {
+        return Err(DenError::ValidationError("job has no runnable work tasks to dispatch".into()));
     }
 
-    // Reuse the job's current run when it is still live; otherwise open a new
-    // event-triggered run so run-scoped task state has a home.
-    let current_run: Option<(Uuid, String)> = sqlx::query_as(
-        "SELECT r.id, r.state FROM bear_jobs j
-         JOIN bear_job_runs r ON r.id = j.current_run_id
-         WHERE j.id = $1",
-    )
-    .bind(job_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-    let job_run_id = match current_run {
-        Some((run_id, state))
-            if !matches!(state.as_str(), "completed" | "failed" | "cancelled") =>
-        {
-            run_id
-        }
-        _ => {
-            let (run_id,): (Uuid,) = sqlx::query_as(
-                "INSERT INTO bear_job_runs (job_id, trigger, state)
-                 VALUES ($1, 'event', 'running')
-                 RETURNING id",
+    let job_run_id = match current_run_id {
+        Some(run_id) => run_id,
+        None => {
+            let run_id: Uuid = sqlx::query_scalar(
+                "INSERT INTO bear_job_runs (job_id, trigger, state) VALUES ($1, 'event', 'running') RETURNING id",
             )
-            .bind(job_id)
+            .bind(enqueue.job_id)
             .fetch_one(&mut *tx)
             .await?;
-            sqlx::query(
-                "UPDATE bear_jobs SET current_run_id = $2, updated_at = now() WHERE id = $1",
-            )
-            .bind(job_id)
-            .bind(run_id)
-            .execute(&mut *tx)
-            .await?;
+            sqlx::query("UPDATE bear_jobs SET current_run_id = $2, updated_at = now() WHERE id = $1")
+                .bind(enqueue.job_id).bind(run_id).execute(&mut *tx).await?;
             run_id
         }
     };
-
-    let (attempt,): (i32,) = sqlx::query_as(
-        "SELECT COALESCE(MAX(attempt), 0) + 1 FROM bear_work_runs WHERE task_id = $1",
+    let attempt: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(attempt), 0) + 1 FROM bear_work_runs WHERE job_id = $1",
     )
-    .bind(enqueue.task_id)
+    .bind(enqueue.job_id)
     .fetch_one(&mut *tx)
     .await?;
-
-    let inserted = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "INSERT INTO bear_work_runs (bear_id, job_id, task_id, job_run_id, attempt, root_name, git_ref, image_name)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING {WORK_RUN_COLUMNS}"
+    let run = sqlx::query_as::<_, WorkRunRow>(&format!(
+        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id, attempt, root_name, git_ref, image_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {WORK_RUN_COLUMNS}"
     ))
-    .bind(enqueue.bear_id)
-    .bind(job_id)
-    .bind(enqueue.task_id)
-    .bind(job_run_id)
-    .bind(attempt)
-    .bind(root_name.as_deref())
-    .bind(enqueue.git_ref.as_deref())
-    .bind(enqueue.image_name.as_deref())
+    .bind(enqueue.bear_id).bind(enqueue.job_id).bind(job_run_id).bind(attempt)
+    .bind(root_name).bind(enqueue.git_ref).bind(enqueue.image_name)
     .fetch_one(&mut *tx)
-    .await;
-
-    let run = match inserted {
-        Ok(run) => run,
-        Err(sqlx::Error::Database(db))
-            if db.constraint() == Some("idx_bear_work_runs_one_active_per_task") =>
-        {
-            return Err(DenError::ValidationError(format!(
-                "task {} already has an active work run",
-                enqueue.task_id
-            )));
-        }
-        Err(e) => return Err(e.into()),
-    };
-
-    append_task_event(
-        &mut tx,
-        run.task_id,
-        run.job_run_id,
-        "claimed",
-        enqueue.requested_by_user_id,
-        json!({ "work_run_id": run.id, "attempt": run.attempt, "phase": "enqueued" }),
-    )
-    .await?;
-
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::Database(db) if db.constraint() == Some("idx_bear_work_runs_one_active_per_job") =>
+            DenError::ValidationError("job already has an active work run".into()),
+        other => other.into(),
+    })?;
     tx.commit().await?;
-    Ok(run)
+    Ok(vec![run])
 }
 
 /// Claim the next dispatchable run with a lease (`FOR UPDATE SKIP LOCKED`).
@@ -559,15 +447,12 @@ pub async fn queued_run_positions(
     Ok(rows)
 }
 
-/// A work run that needs someone's attention: the newest attempt for its
-/// task ended blocked/failed/timed_out and no newer attempt has been queued.
-/// Joined with task/job context so surfaces can render it standalone.
+/// A job-scoped work run that needs attention. Tasks remain visible in the
+/// task list; the run is deliberately not attributed to one task.
 #[derive(Clone, Debug, serde::Serialize, sqlx::FromRow)]
 pub struct AttentionWorkRun {
     pub run_id: Uuid,
     pub job_id: Uuid,
-    pub task_id: Uuid,
-    pub task_title: String,
     pub job_goal: String,
     pub state: String,
     pub result_summary: Option<String>,
@@ -575,9 +460,8 @@ pub struct AttentionWorkRun {
     pub finished_at: Option<OffsetDateTime>,
 }
 
-/// Latest-attempt runs in attention states for a bear (optionally one job).
-/// A newer queued/active attempt supersedes an older failure — the task is
-/// being retried, so it no longer needs attention.
+/// Latest-attempt job runs in attention states. A newer queued/active attempt
+/// supersedes an older failure for the same job.
 pub async fn attention_work_runs(
     pool: &PgPool,
     bear_id: Uuid,
@@ -585,17 +469,15 @@ pub async fn attention_work_runs(
     limit: i64,
 ) -> Result<Vec<AttentionWorkRun>, DenError> {
     let rows = sqlx::query_as::<_, AttentionWorkRun>(
-        "SELECT latest.id AS run_id, latest.job_id, latest.task_id,
-                t.title AS task_title, j.goal AS job_goal,
+        "SELECT latest.id AS run_id, latest.job_id, j.goal AS job_goal,
                 latest.state, latest.result_summary, latest.error, latest.finished_at
          FROM (
-             SELECT DISTINCT ON (task_id)
-                    id, job_id, task_id, state, result_summary, error, finished_at
+             SELECT DISTINCT ON (job_id)
+                    id, job_id, state, result_summary, error, finished_at
              FROM bear_work_runs
              WHERE bear_id = $1 AND ($2::uuid IS NULL OR job_id = $2)
-             ORDER BY task_id, queued_at DESC, id DESC
+             ORDER BY job_id, queued_at DESC, id DESC
          ) latest
-         JOIN bear_tasks t ON t.id = latest.task_id
          JOIN bear_jobs j ON j.id = latest.job_id
          WHERE latest.state IN ('blocked', 'failed', 'timed_out')
          ORDER BY latest.finished_at DESC NULLS LAST
@@ -834,20 +716,28 @@ pub async fn finalize_work_run(
         WorkRunState::Cancelled => "cancelled",
         _ => "blocked",
     };
-    append_task_event(
-        &mut tx,
-        row.task_id,
-        row.job_run_id,
-        event_type,
-        None,
-        json!({
-            "work_run_id": row.id,
-            "attempt": row.attempt,
-            "final_state": state.as_str(),
-            "error": finalize.error,
-        }),
+    let task_ids: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT id FROM bear_tasks WHERE job_id = $1 AND assigned_to_role = 'work'",
     )
+    .bind(row.job_id)
+    .fetch_all(&mut *tx)
     .await?;
+    for (task_id,) in task_ids {
+        append_task_event(
+            &mut tx,
+            task_id,
+            row.job_run_id,
+            event_type,
+            None,
+            json!({
+                "work_run_id": row.id,
+                "attempt": row.attempt,
+                "final_state": state.as_str(),
+                "error": finalize.error,
+            }),
+        )
+        .await?;
+    }
 
     tx.commit().await?;
     Ok(row)
@@ -911,11 +801,23 @@ pub async fn checkout_work_run_for_session(
 ) -> Result<WorkRunCheckout, DenError> {
     let run = bind_work_run_session(pool, run_id, bear_id, session_id).await?;
 
-    let task: (String, String, sqlx::types::Json<Vec<String>>) =
-        sqlx::query_as("SELECT title, body, completion_criteria FROM bear_tasks WHERE id = $1")
-            .bind(run.task_id)
-            .fetch_one(pool)
-            .await?;
+    let tasks: Vec<(Uuid, String, String, sqlx::types::Json<Vec<String>>)> = sqlx::query_as(
+        "SELECT t.id, t.title, t.body, t.completion_criteria
+         FROM bear_tasks t
+         LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+         WHERE t.job_id = $1 AND t.assigned_to_role = 'work'
+           AND COALESCE(s.status, 'pending') IN ('pending', 'blocked')
+         ORDER BY t.sibling_order, t.created_at",
+    )
+    .bind(run.job_id)
+    .bind(run.job_run_id)
+    .fetch_all(pool)
+    .await?;
+    if tasks.is_empty() {
+        return Err(DenError::ValidationError(
+            "job has no runnable work tasks for checkout".into(),
+        ));
+    }
     let (goal, commit_policy): (String, Option<String>) =
         sqlx::query_as("SELECT goal, commit_policy FROM bear_jobs WHERE id = $1")
             .bind(run.job_id)
@@ -933,23 +835,18 @@ pub async fn checkout_work_run_for_session(
             source_client_session_id: Some(session_id.to_string()),
             job_id: run.job_id,
             run_id: run.job_run_id,
-            task_id: Some(run.task_id),
+            task_id: None,
             state: "active".to_string(),
         },
     )
     .await?;
 
-    let (task_title, task_body, criteria) = (task.0, task.1, task.2 .0);
-    let prompt = build_work_prompt(
-        run.job_id,
-        run.job_run_id,
-        run.task_id,
-        &goal,
-        &task_title,
-        &task_body,
-        &criteria,
-        publishes,
+    let task_title = format!(
+        "{} work task{}",
+        tasks.len(),
+        if tasks.len() == 1 { "" } else { "s" }
     );
+    let prompt = build_work_prompt(run.job_id, run.job_run_id, &goal, &tasks, publishes);
     Ok(WorkRunCheckout {
         run,
         prompt,
@@ -960,11 +857,8 @@ pub async fn checkout_work_run_for_session(
 fn build_work_prompt(
     job_id: Uuid,
     run_id: Uuid,
-    task_id: Uuid,
     goal: &str,
-    title: &str,
-    body: &str,
-    criteria: &[String],
+    tasks: &[(Uuid, String, String, sqlx::types::Json<Vec<String>>) ],
     publishes: bool,
 ) -> String {
     let mut prompt = String::new();
@@ -977,22 +871,25 @@ fn build_work_prompt(
     prompt.push_str("Docket execution identifiers:\n");
     prompt.push_str(&format!("- job_id: {job_id}\n"));
     prompt.push_str(&format!("- run_id: {run_id}\n"));
-    prompt.push_str(&format!("- task_id: {task_id}\n\n"));
-    prompt.push_str(&format!("Task: {title}\n"));
-    if !body.trim().is_empty() {
-        prompt.push_str(&format!("{body}\n"));
-    }
-    prompt.push_str("\nCompletion criteria — the task is done only when all of these hold:\n");
-    for criterion in criteria {
-        prompt.push_str(&format!("- {criterion}\n"));
+    prompt.push('\n');
+    for (task_id, title, body, criteria) in tasks {
+        prompt.push_str(&format!("Task ({task_id}): {title}\n"));
+        if !body.trim().is_empty() {
+            prompt.push_str(&format!("{body}\n"));
+        }
+        prompt.push_str("Completion criteria — this task is done only when all of these hold:\n");
+        for criterion in &criteria.0 {
+            prompt.push_str(&format!("- {criterion}\n"));
+        }
+        prompt.push('\n');
     }
     prompt.push_str(
         "\nRules:\n\
          - Operate only inside the sandbox workspace; it contains the work surface.\n\
-         - When every criterion is satisfied, call update_current_task_status with the \
-           job_id, run_id, and task_id above, status `done`, and a non-empty result_summary \
-           explaining how the criteria were satisfied — this is how success is recorded.\n\
-         - If you cannot make progress, mark the task blocked with a specific reason \
+         - Work through the listed tasks in order. When each task's criteria are satisfied, \
+           call update_current_task_status with its task_id plus the job_id and run_id above, \
+           status `done`, and a non-empty result_summary explaining the result.\n\
+         - If you cannot make progress on a task, mark that task blocked with a specific reason \
            using update_current_task_status instead of guessing or stopping silently.\n",
     );
     if publishes {
@@ -1107,6 +1004,28 @@ pub async fn get_task_run_status(
             .fetch_optional(pool)
             .await?;
     Ok(row.map(|(status,)| status))
+}
+
+/// Run-scoped states for every work task in a job. A job-scoped work run
+/// owns the sandbox lifecycle; these remain the individual completion
+/// checkpoints reported by the agent.
+pub async fn get_job_work_task_run_statuses(
+    pool: &PgPool,
+    job_id: Uuid,
+    job_run_id: Uuid,
+) -> Result<Vec<(Uuid, String)>, DenError> {
+    sqlx::query_as(
+        "SELECT t.id, COALESCE(s.status, 'pending')
+         FROM bear_tasks t
+         LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+         WHERE t.job_id = $1 AND t.assigned_to_role = 'work'
+         ORDER BY t.sibling_order, t.created_at",
+    )
+    .bind(job_id)
+    .bind(job_run_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
 }
 
 /// Close the work-stance execution session opened by `work.checkout`.

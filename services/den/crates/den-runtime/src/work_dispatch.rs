@@ -333,21 +333,26 @@ async fn provision_run(
         return;
     }
     let service = PgDocketService::from_pool(pool);
-    if let Err(err) = service
-        .mark_task_started(
-            run.bear_id,
-            run.task_id,
-            run.job_run_id,
-            Some("work-dispatch".to_string()),
-        )
+    for (task_id, _) in work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
         .await
+        .unwrap_or_default()
     {
-        tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: mark_task_started failed");
+        if let Err(err) = service
+            .mark_task_started(
+                run.bear_id,
+                task_id,
+                run.job_run_id,
+                Some("work-dispatch".to_string()),
+            )
+            .await
+        {
+            tracing::warn!(error = %err, work_run_id = %run.id, %task_id, "work_dispatch: mark_task_started failed");
+        }
     }
     tracing::info!(
         work_run_id = %run.id,
         sandbox_id = %descriptor.id,
-        task_id = %run.task_id,
+        job_id = %run.job_id,
         "work_dispatch: sandbox provisioned, armature launching"
     );
 }
@@ -530,11 +535,13 @@ async fn harvest_run(
         None => None,
     };
 
-    let task_status = work_runs::get_task_run_status(pool, run.job_run_id, run.task_id)
+    let task_statuses = work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
         .await
-        .ok()
-        .flatten();
-    let succeeded = task_status.as_deref() == Some("done");
+        .unwrap_or_default();
+    let succeeded = !task_statuses.is_empty()
+        && task_statuses
+            .iter()
+            .all(|(_, status)| status == "done");
 
     let turn_summary = run
         .result_refs
@@ -598,7 +605,7 @@ async fn harvest_run(
         succeeded,
         turn_summary,
         changed_files,
-        task_status.as_deref(),
+        (!succeeded).then_some("one or more work tasks are incomplete"),
     );
 
     let summary = match &publish_failed {
@@ -616,31 +623,25 @@ async fn harvest_run(
     });
 
     let service = PgDocketService::from_pool(pool);
-    let docket_result = if succeeded {
-        service
-            .record_task_success(
-                run.bear_id,
-                run.task_id,
-                run.job_run_id,
-                summary.clone(),
-                Some(refs.clone()),
-                Some("work-dispatch".to_string()),
-            )
-            .await
-    } else {
-        service
-            .record_task_blocked(
-                run.bear_id,
-                run.task_id,
-                run.job_run_id,
-                summary.clone(),
-                Some(refs.clone()),
-                Some("work-dispatch".to_string()),
-            )
-            .await
-    };
-    if let Err(err) = docket_result {
-        tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: docket outcome record failed");
+    if !succeeded {
+        for (task_id, status) in &task_statuses {
+            if status == "done" {
+                continue;
+            }
+            if let Err(err) = service
+                .record_task_blocked(
+                    run.bear_id,
+                    *task_id,
+                    run.job_run_id,
+                    summary.clone(),
+                    Some(refs.clone()),
+                    Some("work-dispatch".to_string()),
+                )
+                .await
+            {
+                tracing::warn!(error = %err, work_run_id = %run.id, %task_id, "work_dispatch: docket outcome record failed");
+            }
+        }
     }
 
     if let Some(session_id) = run.bearwire_session_id.as_deref() {
@@ -683,16 +684,24 @@ async fn cancel_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient,
         let _ = work_runs::close_work_execution_session(pool, run.bear_id, session_id).await;
     }
     let service = PgDocketService::from_pool(pool);
-    let _ = service
-        .record_task_blocked(
-            run.bear_id,
-            run.task_id,
-            run.job_run_id,
-            "work run cancelled by operator".to_string(),
-            None,
-            Some("work-dispatch".to_string()),
-        )
-        .await;
+    for (task_id, status) in work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
+        .await
+        .unwrap_or_default()
+    {
+        if status == "done" {
+            continue;
+        }
+        let _ = service
+            .record_task_blocked(
+                run.bear_id,
+                task_id,
+                run.job_run_id,
+                "work run cancelled by operator".to_string(),
+                None,
+                Some("work-dispatch".to_string()),
+            )
+            .await;
+    }
     let _ = work_runs::finalize_work_run(
         pool,
         run.id,
@@ -748,16 +757,24 @@ async fn fail_run(
 ) {
     tracing::warn!(work_run_id = %run.id, reason, message, "work_dispatch: run failed");
     let service = PgDocketService::from_pool(pool);
-    let _ = service
-        .record_task_blocked(
-            run.bear_id,
-            run.task_id,
-            run.job_run_id,
-            format!("work run failed ({reason}): {message}"),
-            None,
-            Some("work-dispatch".to_string()),
-        )
-        .await;
+    for (task_id, status) in work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
+        .await
+        .unwrap_or_default()
+    {
+        if status == "done" {
+            continue;
+        }
+        let _ = service
+            .record_task_blocked(
+                run.bear_id,
+                task_id,
+                run.job_run_id,
+                format!("work run failed ({reason}): {message}"),
+                None,
+                Some("work-dispatch".to_string()),
+            )
+            .await;
+    }
     let _ = work_runs::finalize_work_run(
         pool,
         run.id,
@@ -782,11 +799,11 @@ async fn maybe_requeue(pool: &PgPool, config: &Arc<Config>, run: &WorkRunRow) {
         Ok(context) => context,
         Err(_) => return,
     };
-    match work_runs::enqueue_work_run(
+    match work_runs::enqueue_work_job(
         pool,
-        work_runs::WorkRunEnqueue {
+        work_runs::WorkJobEnqueue {
             bear_id: run.bear_id,
-            task_id: run.task_id,
+            job_id: run.job_id,
             root_name: run.root_name.clone(),
             git_ref: run.git_ref.clone(),
             image_name: run.image_name.clone(),
@@ -796,6 +813,7 @@ async fn maybe_requeue(pool: &PgPool, config: &Arc<Config>, run: &WorkRunRow) {
     .await
     {
         Ok(retry) => {
+            let retry = &retry[0];
             tracing::info!(
                 work_run_id = %retry.id,
                 previous = %run.id,
