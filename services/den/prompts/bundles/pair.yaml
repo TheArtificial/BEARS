@@ -2,3 +2,4 @@ id: pair
 fragments:
   - den_baseline
   - stance_pair
+  - stance_job_dispatch

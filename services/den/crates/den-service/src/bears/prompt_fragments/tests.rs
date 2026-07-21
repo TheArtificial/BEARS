@@ -123,6 +123,19 @@ fn focused_runtime_fragments_keep_execution_moving_across_tasks() {
 }
 
 #[test]
+fn pair_fragment_treats_jobs_as_the_dispatch_unit() {
+    let registry = repository_prompt_fragment_registry().unwrap();
+    let guidance = registry.require("stance_job_dispatch").unwrap();
+    assert!(guidance.body.contains("Docket Job is the complete unit"));
+    assert!(guidance
+        .body
+        .contains("call `dispatch_work` once with the `job_id`"));
+    assert!(guidance
+        .body
+        .contains("executes their runs sequentially in task order"));
+}
+
+#[test]
 fn repository_source_version_is_stable() {
     assert_eq!(
         repository_prompt_source_version(),
