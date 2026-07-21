@@ -142,7 +142,6 @@ pub struct WorkJobEnqueue {
     pub requested_by_user_id: Option<i32>,
 }
 
-#[derive(Clone, Debug)]
 /// Legacy test fixture input. Production dispatch is job-scoped; tests use a
 /// task only to locate its owning job.
 #[cfg(test)]
@@ -161,14 +160,14 @@ pub async fn enqueue_work_run(
     pool: &PgPool,
     enqueue: WorkRunEnqueue,
 ) -> Result<WorkRunRow, DenError> {
-    let job_id: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT job_id FROM bear_tasks WHERE id = $1 AND bear_id = $2",
-    )
-    .bind(enqueue.task_id)
-    .bind(enqueue.bear_id)
-    .fetch_optional(pool)
-    .await?;
-    let (job_id,) = job_id.ok_or_else(|| DenError::NotFound(format!("Docket task not found: {}", enqueue.task_id)))?;
+    let job_id: Option<(Uuid,)> =
+        sqlx::query_as("SELECT job_id FROM bear_tasks WHERE id = $1 AND bear_id = $2")
+            .bind(enqueue.task_id)
+            .bind(enqueue.bear_id)
+            .fetch_optional(pool)
+            .await?;
+    let (job_id,) = job_id
+        .ok_or_else(|| DenError::NotFound(format!("Docket task not found: {}", enqueue.task_id)))?;
     enqueue_work_job(
         pool,
         WorkJobEnqueue {
@@ -182,28 +181,6 @@ pub async fn enqueue_work_run(
     )
     .await
     .map(|mut runs| runs.remove(0))
-}
-
-async fn ensure_bear_assigned_to_surface(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    bear_id: Uuid,
-    surface_id: Uuid,
-    surface_name: &str,
-) -> Result<(), DenError> {
-    let assigned: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2)",
-    )
-    .bind(surface_id)
-    .bind(bear_id)
-    .fetch_one(&mut **tx)
-    .await?;
-    if assigned {
-        Ok(())
-    } else {
-        Err(DenError::ValidationError(format!(
-            "bear is not assigned to work surface '{surface_name}'"
-        )))
-    }
 }
 
 /// Queue one job-scoped work run. The job must have at least one runnable
@@ -222,10 +199,16 @@ pub async fn enqueue_work_job(
     .fetch_optional(&mut *tx)
     .await?;
     let Some((job_work_surface_ref, _surface_id, current_run_id, _status)) = job else {
-        return Err(DenError::NotFound(format!("Docket job not found: {}", enqueue.job_id)));
+        return Err(DenError::NotFound(format!(
+            "Docket job not found: {}",
+            enqueue.job_id
+        )));
     };
 
-    let root_name = effective_work_run_root(enqueue.root_name.as_deref(), job_work_surface_ref.as_deref());
+    let root_name = effective_work_run_root(
+        enqueue.root_name.as_deref(),
+        job_work_surface_ref.as_deref(),
+    );
     if root_name.is_none() {
         return Err(DenError::ValidationError(
             "no sandbox root configured: choose a root, set work_surface_ref on the job, or explicitly dispatch to scratch".into(),
@@ -244,7 +227,9 @@ pub async fn enqueue_work_job(
     .fetch_one(&mut *tx)
     .await?;
     if !runnable {
-        return Err(DenError::ValidationError("job has no runnable work tasks to dispatch".into()));
+        return Err(DenError::ValidationError(
+            "job has no runnable work tasks to dispatch".into(),
+        ));
     }
 
     let job_run_id = match current_run_id {
@@ -256,8 +241,13 @@ pub async fn enqueue_work_job(
             .bind(enqueue.job_id)
             .fetch_one(&mut *tx)
             .await?;
-            sqlx::query("UPDATE bear_jobs SET current_run_id = $2, updated_at = now() WHERE id = $1")
-                .bind(enqueue.job_id).bind(run_id).execute(&mut *tx).await?;
+            sqlx::query(
+                "UPDATE bear_jobs SET current_run_id = $2, updated_at = now() WHERE id = $1",
+            )
+            .bind(enqueue.job_id)
+            .bind(run_id)
+            .execute(&mut *tx)
+            .await?;
             run_id
         }
     };
@@ -716,12 +706,11 @@ pub async fn finalize_work_run(
         WorkRunState::Cancelled => "cancelled",
         _ => "blocked",
     };
-    let task_ids: Vec<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM bear_tasks WHERE job_id = $1 AND assigned_to_role = 'work'",
-    )
-    .bind(row.job_id)
-    .fetch_all(&mut *tx)
-    .await?;
+    let task_ids: Vec<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM bear_tasks WHERE job_id = $1 AND assigned_to_role = 'work'")
+            .bind(row.job_id)
+            .fetch_all(&mut *tx)
+            .await?;
     for (task_id,) in task_ids {
         append_task_event(
             &mut tx,
@@ -858,7 +847,7 @@ fn build_work_prompt(
     job_id: Uuid,
     run_id: Uuid,
     goal: &str,
-    tasks: &[(Uuid, String, String, sqlx::types::Json<Vec<String>>) ],
+    tasks: &[(Uuid, String, String, sqlx::types::Json<Vec<String>>)],
     publishes: bool,
 ) -> String {
     let mut prompt = String::new();

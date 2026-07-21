@@ -632,9 +632,7 @@ async fn publish_wiring_image_branch_and_prompt() {
     assert!(checkout
         .prompt
         .contains(&format!("run_id: {}", run.job_run_id)));
-    assert!(checkout
-        .prompt
-        .contains(&format!("task_id: {}", run.task_id)));
+    assert!(checkout.prompt.contains("Tasks to complete:"));
     assert!(checkout.prompt.contains("status `done`"));
     assert!(checkout.prompt.contains("non-empty result_summary"));
     assert!(
@@ -679,7 +677,7 @@ async fn attention_and_completion_visibility() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "attention").await;
     let (job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
 
-    // A latest-attempt blocked run needs attention, with task/job context.
+    // A latest-attempt blocked run needs attention, with job context.
     let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
         .unwrap();
@@ -703,7 +701,7 @@ async fn attention_and_completion_visibility() {
         .unwrap();
     assert_eq!(attention.len(), 1, "{attention:?}");
     assert_eq!(attention[0].run_id, run.id);
-    assert_eq!(attention[0].task_title, "Alpha work task");
+    assert_eq!(attention[0].job_id, job_id);
     assert_eq!(
         attention[0].result_summary.as_deref(),
         Some("missing credentials for the deploy step")

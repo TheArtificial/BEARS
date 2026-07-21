@@ -538,10 +538,8 @@ async fn harvest_run(
     let task_statuses = work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
         .await
         .unwrap_or_default();
-    let succeeded = !task_statuses.is_empty()
-        && task_statuses
-            .iter()
-            .all(|(_, status)| status == "done");
+    let succeeded =
+        !task_statuses.is_empty() && task_statuses.iter().all(|(_, status)| status == "done");
 
     let turn_summary = run
         .result_refs
@@ -684,9 +682,10 @@ async fn cancel_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient,
         let _ = work_runs::close_work_execution_session(pool, run.bear_id, session_id).await;
     }
     let service = PgDocketService::from_pool(pool);
-    for (task_id, status) in work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
-        .await
-        .unwrap_or_default()
+    for (task_id, status) in
+        work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
+            .await
+            .unwrap_or_default()
     {
         if status == "done" {
             continue;
@@ -757,9 +756,10 @@ async fn fail_run(
 ) {
     tracing::warn!(work_run_id = %run.id, reason, message, "work_dispatch: run failed");
     let service = PgDocketService::from_pool(pool);
-    for (task_id, status) in work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
-        .await
-        .unwrap_or_default()
+    for (task_id, status) in
+        work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
+            .await
+            .unwrap_or_default()
     {
         if status == "done" {
             continue;
