@@ -2253,7 +2253,6 @@ fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
         "state": run.state,
         "attempt": run.attempt,
         "job_id": run.job_id,
-        "task_id": run.task_id,
         "cancel_requested": run.cancel_requested,
         "root": run.root_name,
         "git_ref": run.git_ref,
