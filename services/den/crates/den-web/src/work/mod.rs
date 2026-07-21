@@ -608,6 +608,16 @@ async fn edit_job(
     Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
 }
 
+fn commit_policy_label(policy: Option<&str>) -> &'static str {
+    match policy {
+        Some("per_task") => "Publish after each task",
+        Some("per_job") => "Publish to the job branch",
+        Some("propose_only") => "No output",
+        Some("none") | None => "No source changes expected",
+        Some(_) => "Unknown policy",
+    }
+}
+
 fn parse_docket_enum<T: serde::de::DeserializeOwned>(
     field: &str,
     value: &str,
@@ -978,6 +988,7 @@ async fn job_detail(
             work_surface_ref => projection.job.work_surface_ref,
             work_surface_id => projection.job.work_surface_id.map(|id| id.to_string()),
             available_surfaces => available_surfaces,
+            commit_policy_label => commit_policy_label(projection.job.commit_policy.as_deref()),
             commit_policy => projection.job.commit_policy,
             work_branch => projection.job.work_branch,
             tasks => tasks,

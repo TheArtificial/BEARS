@@ -5,8 +5,8 @@
 <h1>New work job</h1>
 <p>
     Creates a Docket job whose tasks run autonomously in the <code>work</code> stance.
-    With commit policy <code>per_task</code> or <code>per_job</code>, successful runs are
-    pushed to the job's work branch on the root's upstream.
+    Choose an output policy explicitly. Publishing policies push successful runs to the
+    job's work branch on the root's upstream.
 </p>
 
 <form method="post" action="/work/new">
@@ -46,16 +46,16 @@
         </label>
     </p>
     <p>
-        <label>Commit policy<br>
+        <label>Output policy<br>
             <select name="commit_policy" required>
                 <option value="" selected disabled>— choose explicitly —</option>
-                <option value="per_task">per_task — push each successful run to the work branch</option>
-                <option value="per_job">per_job — push runs to the shared job work branch</option>
-                <option value="propose_only">propose_only — review-only; retain bounded diff/report, never push</option>
-                <option value="none">none — no source changes expected</option>
+                <option value="per_task">Publish after each task</option>
+                <option value="per_job">Publish to the job branch</option>
+                <option value="propose_only">No output</option>
+                <option value="none">No source changes expected</option>
             </select>
         </label>
-        <br><small><strong>Warning:</strong> <code>propose_only</code> does not preserve a pushable workspace or branch after teardown. It is intended for dry-runs, investigations, and small text proposals whose retained diff is sufficient.</small>
+        <br><small><strong>No output</strong> retains internal diagnostics only; it does not preserve a pushable workspace or branch after teardown.</small>
     </p>
     <p>
         <label>Work branch <small>(optional; default <code>den/job-&lt;id&gt;</code>)</small><br>
