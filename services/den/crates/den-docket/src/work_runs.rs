@@ -706,11 +706,10 @@ pub async fn finalize_work_run(
         WorkRunState::Cancelled => "cancelled",
         _ => "blocked",
     };
-    let task_ids: Vec<(Uuid,)> =
-        sqlx::query_as("SELECT id FROM bear_tasks WHERE job_id = $1")
-            .bind(row.job_id)
-            .fetch_all(&mut *tx)
-            .await?;
+    let task_ids: Vec<(Uuid,)> = sqlx::query_as("SELECT id FROM bear_tasks WHERE job_id = $1")
+        .bind(row.job_id)
+        .fetch_all(&mut *tx)
+        .await?;
     for (task_id,) in task_ids {
         append_task_event(
             &mut tx,
@@ -1039,8 +1038,8 @@ pub async fn list_bears_with_work_tasks(pool: &PgPool) -> Result<Vec<Uuid>, DenE
     let rows: Vec<(Uuid,)> = sqlx::query_as(
         "SELECT DISTINCT bear_id FROM bear_jobs WHERE status IN ('ready', 'running', 'blocked')",
     )
-            .fetch_all(pool)
-            .await?;
+    .fetch_all(pool)
+    .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 

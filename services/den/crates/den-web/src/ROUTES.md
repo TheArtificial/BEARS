@@ -116,7 +116,7 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 ## Work (`src/work/mod.rs`)
 
 - `GET /work` — jobs + active/past work runs overview (auto-refreshes while runs are active)
-- `GET /work/new` — job creation form (goal, sandbox root, commit policy, work branch, work tasks)
+- `GET /work/new` — job creation form (goal, sandbox root, commit policy, work branch, tasks)
 - `POST /work/new` — create the Docket job (tasks assigned to the work stance; created_by_role `ui`)
 - `GET /work/jobs/{job_id}` — job detail: editable goal/surface/commit policy/branch, task tree with statuses, job dispatch, duplication, run history with publish outcomes
 - `POST /work/jobs/{job_id}/edit` — update job-level settings; task-tree editing remains separate/deferred

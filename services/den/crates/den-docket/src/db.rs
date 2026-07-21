@@ -241,7 +241,9 @@ async fn insert_task_for_job(
     .bind(task.scope.as_str())
     .bind(task.title.trim())
     .bind(task.body.trim())
-    .bind(serde_json::to_value(normalize_completion_criteria(&task.completion_criteria))?)
+    .bind(serde_json::to_value(normalize_completion_criteria(
+        &task.completion_criteria,
+    ))?)
     .bind(task.difficulty.map(|difficulty| difficulty.as_str()))
     .bind(task.effort_hint.map(|effort| effort.as_str()))
     .bind(create.created_by_role.trim())
@@ -348,7 +350,9 @@ async fn insert_task(
     .bind(create.scope.as_str())
     .bind(create.title.trim())
     .bind(create.body.trim())
-    .bind(serde_json::to_value(normalize_completion_criteria(&create.completion_criteria))?)
+    .bind(serde_json::to_value(normalize_completion_criteria(
+        &create.completion_criteria,
+    ))?)
     .bind(create.difficulty.map(|difficulty| difficulty.as_str()))
     .bind(create.effort_hint.map(|effort| effort.as_str()))
     .bind(create.created_by_role.trim())

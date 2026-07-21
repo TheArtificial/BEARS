@@ -252,14 +252,6 @@ fn docket_task_summary(value: &serde_json::Value) -> Option<String> {
     {
         parts.push(format!("status: {status}"));
     }
-    if let Some(role) = task
-        .get("assigned_to_role")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|role| !role.is_empty())
-    {
-        parts.push(format!("assigned: {role}"));
-    }
     Some(parts.join(", "))
 }
 
@@ -589,7 +581,7 @@ mod tests {
     #[test]
     fn docket_task_status_summary_uses_title_status_and_assignment() {
         let content = serde_json::json!({
-            "task": { "title": "Patch summary", "assigned_to_role": "pair" },
+            "task": { "title": "Patch summary" },
             "run_state": { "status": "done" }
         })
         .to_string();

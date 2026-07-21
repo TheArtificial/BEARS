@@ -100,7 +100,7 @@
     <h2>Tasks</h2>
     <table>
         <thead>
-            <tr><th>Task</th><th>Kind</th><th>Stance</th><th>Status</th><th></th></tr>
+            <tr><th>Task</th><th>Kind</th><th>Status</th></tr>
         </thead>
         <tbody>
             {% for task in tasks %}
@@ -117,9 +117,7 @@
                     </details>
                 </td>
                 <td>{{ task.kind }}</td>
-                <td>{{ task.assigned_to_role or "—" }}</td>
                 <td>{{ task.status }}</td>
-                <td>{% if task.is_work %}Included in job dispatch{% else %}—{% endif %}</td>
             </tr>
             {% endfor %}
         </tbody>

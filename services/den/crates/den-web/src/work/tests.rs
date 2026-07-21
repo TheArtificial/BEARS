@@ -205,16 +205,13 @@ async fn create_job_form_creates_work_job_with_tasks() {
     assert_eq!(policy.as_deref(), Some("per_task"));
     assert!(branch.is_none(), "blank branch stays unset until dispatch");
 
-    // Exactly one non-blank task, assigned to work, with the criterion.
-    let tasks: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT title, assigned_to_role FROM bear_tasks WHERE job_id = $1")
-            .bind(job_id)
-            .fetch_all(&pool)
-            .await
-            .expect("tasks");
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].0, "Update headline");
-    assert_eq!(tasks[0].1.as_deref(), Some("work"));
+    // Exactly one non-blank task with the criterion.
+    let tasks: Vec<String> = sqlx::query_scalar("SELECT title FROM bear_tasks WHERE job_id = $1")
+        .bind(job_id)
+        .fetch_all(&pool)
+        .await
+        .expect("tasks");
+    assert_eq!(tasks, vec!["Update headline"]);
 
     let response = post_form(
         &app,
@@ -319,13 +316,8 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     let duplicate_run_id = current_run.expect("fresh duplicate run");
     assert_ne!(duplicate_run_id, source_run_id);
 
-    let tasks: Vec<(
-        String,
-        String,
-        sqlx::types::Json<Vec<String>>,
-        Option<String>,
-    )> = sqlx::query_as(
-        "SELECT title, body, completion_criteria, assigned_to_role \
+    let tasks: Vec<(String, String, sqlx::types::Json<Vec<String>>)> = sqlx::query_as(
+        "SELECT title, body, completion_criteria \
              FROM bear_tasks WHERE job_id = $1 ORDER BY sibling_order",
     )
     .bind(duplicate_id)
@@ -336,7 +328,6 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     assert_eq!(tasks[0].0, "Build artifact");
     assert_eq!(tasks[0].1, "Build artifact");
     assert_eq!(tasks[0].2 .0, vec!["artifact exists", "tests pass"]);
-    assert_eq!(tasks[0].3.as_deref(), Some("work"));
     let task_statuses: Vec<String> =
         sqlx::query_scalar("SELECT status FROM bear_task_run_state WHERE run_id = $1")
             .bind(duplicate_run_id)
