@@ -351,6 +351,7 @@ async fn create(
                     work_surface_ref: Some(Some(surface.name.clone())),
                     work_surface_id: Some(Some(surface.id)),
                     commit_policy: None,
+                    work_branch: None,
                     status: None,
                     visibility: None,
                 })

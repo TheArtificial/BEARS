@@ -586,8 +586,9 @@ pub(super) async fn update_job(
             work_surface_ref = $4,
             work_surface_id = $5,
             commit_policy = $6,
-            status = $7,
-            visibility = $8,
+            work_branch = $7,
+            status = $8,
+            visibility = $9,
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
@@ -619,6 +620,12 @@ pub(super) async fn update_job(
             .commit_policy
             .map(|policy| policy.map(|policy| policy.as_str().to_string()))
             .unwrap_or_else(|| current.commit_policy.clone()),
+    )
+    .bind(
+        update
+            .work_branch
+            .clone()
+            .unwrap_or_else(|| current.work_branch.clone()),
     )
     .bind(
         update
@@ -1116,6 +1123,7 @@ pub(super) async fn execute_job(
                 work_surface_ref: None,
                 work_surface_id: None,
                 commit_policy: None,
+                work_branch: None,
                 status: Some(DocketJobStatus::Blocked),
                 visibility: None,
             },
@@ -1199,6 +1207,7 @@ pub(super) async fn execute_job(
                 work_surface_ref: None,
                 work_surface_id: None,
                 commit_policy: None,
+                work_branch: None,
                 status: Some(DocketJobStatus::Completed),
                 visibility: None,
             },
@@ -1225,6 +1234,7 @@ pub(super) async fn execute_job(
                 work_surface_ref: None,
                 work_surface_id: None,
                 commit_policy: None,
+                work_branch: None,
                 status: Some(DocketJobStatus::Blocked),
                 visibility: None,
             },

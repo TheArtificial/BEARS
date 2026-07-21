@@ -147,14 +147,14 @@
     <h2>Readiness</h2>
     {% if provider_root_status %}
     <p>
-        </p>Provider root: {% if provider_root_status.ok %}<strong>read</strong>y</strong>{% else %}<strong>not ready</</strong>strong>{% endif %}
+        Provider root: {% if provider_root_status.ok %}<strong>ready</strong>{% else %}<strong>not ready</strong>{% endif %}
         {% if provider_root_status.detail %}— {{ provider_root_status.detail }}{% endif %}
     </p>
     {% else %}
     <p>Provider readiness has not been verified.</p>
     {% endif %}
     {% if provider_root_inspection %}
-    <h3>Default ref sna</h3>pshot</h3>
+    <h3>Default ref snapshot</h3>
     <p>
         <code>{{ provider_root_inspection.default_ref }}</code> @
         <code title="{{ provider_root_inspection.head }}">{{ provider_root_inspection.short_head }}</code>
@@ -163,18 +163,18 @@
     <p>
         Origin status:
         {% if provider_root_inspection.origin_status == "in_sync" %}<strong>in sync</strong>
-        {% elif provider_root_ins</strong>pection.origin_status == "remote_differs" %}<strong>remote differs;</strong> Test &amp; prepare to fetch</strong>
-        {% else %}<strong>remote unavailable</strong>{% endif</strong> %}
+        {% elif provider_root_inspection.origin_status == "remote_differs" %}<strong>remote differs; Test &amp; prepare to fetch</strong>
+        {% else %}<strong>remote unavailable</strong>{% endif %}
         · {{ provider_root_inspection.files | length }} file(s)
         · +{{ provider_root_inspection.additions }} / -{{ provider_root_inspection.deletions }} lines
     </p>
     {% if provider_root_inspection.files %}
     <details>
-        <summary</details>>Files in latest commit</summary>
+        <summary>Files in latest commit</summary>
         <table>
-            <thead</table>><tr><th>File</th><th>Added</th><th>Deleted</</th>th></tr></thead>
+            <thead><tr><th>File</th><th>Added</th><th>Deleted</th></tr></thead>
             <tbody>
-                {% for file in provider</tbody>_root_inspection.files %}
+                {% for file in provider_root_inspection.files %}
                 <tr><td><code>{{ file.path }}</code></td><td>{{ file.additions if file.additions is not none else "binary" }}</td><td>{{ file.deletions if file.deletions is not none else "binary" }}</td></tr>
                 {% endfor %}
             </tbody>
@@ -182,15 +182,15 @@
     </details>
     {% endif %}
     {% endif %}
-    <p></p>
-        <strong></strong>Test &amp; prepare</strong> pushes current configuration, verifies credentials and
+    <p>
+        <strong>Test &amp; prepare</strong> pushes current configuration, verifies credentials and
         upstream reachability, clones/fetches the pristine mirror, and resolves the default ref.
         This does not launch a work sandbox.
     </p>
     <form method="post" action="/work/surfaces/{{ surface_id }}/sync">
         <p><button type="submit">Test &amp; prepare surface</button></p>
     </form>
-    <p><small>Pushes are</small> generated from successful run workspaces, not from the pristine surface mirror. Set a job's commit policy to <code>per_task<</code>/code> or <code>per_job</code> to publi</code>sh automatically; <code>propose_only</</code>code> retains reports/diffs without pushing.</small></p>
+    <p><small>Pushes are generated from successful run workspaces, not from the pristine surface mirror. Set a job's commit policy to <code>per_task</code> or <code>per_job</code> to publish automatically; <code>propose_only</code> retains reports/diffs without pushing.</small></p>
 </section>
 
 <section>

@@ -43,6 +43,7 @@ pub fn router() -> Router<AppState> {
         .route("/work", get(index))
         .route("/work/new", get(new_job_form).post(create_job))
         .route("/work/jobs/{job_id}", get(job_detail))
+        .route("/work/jobs/{job_id}/edit", post(edit_job))
         .route("/work/jobs/{job_id}/duplicate", post(duplicate_job))
         .route("/work/jobs/{job_id}/complete", post(complete_job))
         .route("/work/jobs/{job_id}/extend", post(extend_job))
@@ -397,7 +398,11 @@ async fn create_job(
     }
 
     let commit_policy = match form.commit_policy.trim() {
-        "" => None,
+        "" => {
+            return Err(CustomError::ValidationError(
+                "choose a commit policy explicitly".to_string(),
+            ));
+        }
         raw => Some(
             serde_json::from_value::<DocketCommitPolicy>(serde_json::json!(raw)).map_err(|_| {
                 CustomError::ValidationError(format!("invalid commit policy '{raw}'"))
@@ -519,6 +524,88 @@ async fn create_job(
         })
         .await?;
     Ok(Redirect::to(&format!("/work/jobs/{}", job.job.id)).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct EditJobForm {
+    goal: String,
+    #[serde(default)]
+    surface_id: Option<Uuid>,
+    commit_policy: String,
+    #[serde(default)]
+    work_branch: String,
+}
+
+async fn edit_job(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(job_id): Path<Uuid>,
+    Form(form): Form<EditJobForm>,
+) -> Result<Response, CustomError> {
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let bear_id: Option<Uuid> = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some(bear_id) = bear_id.filter(|bear_id| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let goal = form.goal.trim();
+    if goal.is_empty() {
+        return Err(CustomError::ValidationError(
+            "job goal is required".to_string(),
+        ));
+    }
+    let commit_policy =
+        parse_docket_enum::<DocketCommitPolicy>("commit policy", form.commit_policy.trim())?;
+    let work_branch = clean_form_field(&form.work_branch);
+    if work_branch
+        .as_deref()
+        .is_some_and(|branch| branch.starts_with('-') || branch.chars().any(char::is_whitespace))
+    {
+        return Err(CustomError::ValidationError(
+            "work branch must be a branch name, not a Git option or command".to_string(),
+        ));
+    }
+    let (work_surface_ref, work_surface_id) = match form.surface_id {
+        Some(surface_id) => {
+            let surface = den_service::work_surfaces::surface_by_id(state.sqlx_pool(), surface_id)
+                .await?
+                .ok_or_else(|| CustomError::NotFound("work surface not found".to_string()))?;
+            if !den_service::work_surfaces::bear_may_use_surface(
+                state.sqlx_pool(),
+                bear_id,
+                surface_id,
+            )
+            .await?
+            {
+                return Err(CustomError::ValidationError(
+                    "the job's Bear is not assigned to that work surface".to_string(),
+                ));
+            }
+            (Some(surface.name), Some(surface.id))
+        }
+        None => (None, None),
+    };
+    PgDocketService::from_pool(state.sqlx_pool())
+        .update_job(DocketJobUpdate {
+            bear_id,
+            job_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            goal: Some(goal.to_string()),
+            work_surface_ref: Some(work_surface_ref),
+            work_surface_id: Some(work_surface_id),
+            commit_policy: Some(Some(commit_policy)),
+            work_branch: Some(work_branch),
+            status: None,
+            visibility: None,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
 }
 
 fn parse_docket_enum<T: serde::de::DeserializeOwned>(
@@ -701,6 +788,7 @@ async fn complete_job(
             work_surface_ref: None,
             work_surface_id: None,
             commit_policy: None,
+            work_branch: None,
             status: Some(DocketJobStatus::Completed),
             visibility: None,
         })
@@ -803,6 +891,7 @@ async fn extend_job(
             work_surface_ref: None,
             work_surface_id: None,
             commit_policy: None,
+            work_branch: None,
             status: Some(DocketJobStatus::Ready),
             visibility: None,
         })
@@ -872,6 +961,8 @@ async fn job_detail(
         .collect();
 
     let status_report = den_docket::docket_job_status_report(&projection);
+    let available_surfaces =
+        den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[bear_id]).await?;
     let catalog = provider_catalog(&state).await;
     web::render_template(
         &state,
@@ -885,6 +976,8 @@ async fn job_detail(
             goal => projection.job.goal,
             status => projection.job.status,
             work_surface_ref => projection.job.work_surface_ref,
+            work_surface_id => projection.job.work_surface_id.map(|id| id.to_string()),
+            available_surfaces => available_surfaces,
             commit_policy => projection.job.commit_policy,
             work_branch => projection.job.work_branch,
             tasks => tasks,

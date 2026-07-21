@@ -118,7 +118,8 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 - `GET /work` — jobs + active/past work runs overview (auto-refreshes while runs are active)
 - `GET /work/new` — job creation form (goal, sandbox root, commit policy, work branch, work tasks)
 - `POST /work/new` — create the Docket job (tasks assigned to the work stance; created_by_role `ui`)
-- `GET /work/jobs/{job_id}` — job detail: task tree with statuses, per-task dispatch (root/image selects from the provider catalog), duplication, run history with publish outcomes
+- `GET /work/jobs/{job_id}` — job detail: editable goal/surface/commit policy/branch, task tree with statuses, per-task dispatch, duplication, run history with publish outcomes
+- `POST /work/jobs/{job_id}/edit` — update job-level settings; task-tree editing remains separate/deferred
 - `POST /work/jobs/{job_id}/duplicate` — copy job intent/settings/criteria/task hierarchy into a fresh ready job; run state and publish branch are reset
 - `POST /work/jobs/{job_id}/complete` — after all tasks finish, accept remaining criteria as a human decision and close the job/current run
 - `POST /work/jobs/{job_id}/extend` — add a fresh work-assigned task with concrete criteria to the current run and return the job to ready

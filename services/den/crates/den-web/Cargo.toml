@@ -74,6 +74,7 @@ validator.workspace = true
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
+minijinja.workspace = true
 minijinja-embed.workspace = true
 
 [dev-dependencies]

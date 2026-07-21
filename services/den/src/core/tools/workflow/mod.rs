@@ -1187,6 +1187,7 @@ pub(crate) async fn update_job(
                 .clear_commit_policy
                 .then_some(None)
                 .or_else(|| args.commit_policy.map(Some)),
+            work_branch: None,
             status: args.status,
             visibility: args.visibility,
         })

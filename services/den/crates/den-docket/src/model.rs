@@ -1038,6 +1038,9 @@ pub struct DocketJobUpdate {
     /// surface; `Some(None)` clears it.
     pub work_surface_id: Option<Option<Uuid>>,
     pub commit_policy: Option<Option<DocketCommitPolicy>>,
+    /// Explicit publish branch; `Some(None)` clears it so the next pushable
+    /// dispatch can generate the canonical `den/job-<id>` branch.
+    pub work_branch: Option<Option<String>>,
     pub status: Option<DocketJobStatus>,
     pub visibility: Option<TaskListVisibility>,
 }

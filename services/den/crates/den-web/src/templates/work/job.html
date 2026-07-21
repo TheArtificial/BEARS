@@ -9,6 +9,30 @@
     {% if commit_policy %} · commit policy <code>{{ commit_policy }}</code>{% endif %}
     {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
 </p>
+<details>
+    <summary>Edit job settings</summary>
+    <</details>form method="post" action="/work/jobs/{{ job_id }}/edit">
+        <p><label></label>Goal<br><input name="goal" value="{{ goal }}" required size="80"></label></p>
+        <p><label>Work</label> surface<br>
+            <select name="surface_id">
+                <option value="">— none —</option>
+                {% for surface in available_surfaces %}
+                <option value="{{ surface.id }}" {% if surface.id == work_surface_id %}selected{% endif %}>{{ surface.name }} ({{ surface.default_ref }})</option>
+                {% endfor %}
+            </select>
+        </label></p>
+        <p><label>Commit policy<br</label>>
+            <select name="commit_policy" required>
+                <option</select> value="per_task" {% if commit_policy == "per_task" %}selected{% endif %}>per_task — publish each successful run</option>
+                <option value="per_job" {% if commit_policy == "per_job" %}selected{% endif %}>per_job — publish to the shared job branch</option>
+                <option value="propose_only" {% if commit_policy == "propose_only" %}selected{% endif %}>propose_only — bounded diff/report only</option>
+                <option value="none" {% if commit_policy == "none" %}selected{% endif %}>none — no source changes expected</option>
+            </select>
+        </label></p>
+        <p><label>Work branch <small>(blank regenerates <code>den/job-&lt;id&gt;</code</code></label>> on the next publishable dispatch)</small><br><input name="work_branch" value="{{ work_branch or '' }}" size="50"></label></p>
+        <button type="submit">Save job settings</button>
+    </form>
+</details>
 <form method="post" action="/work/jobs/{{ job_id }}/duplicate">
     <button type="submit">Duplicate job</button>
     <small>Copies job intent, criteria, work-surface settings, and task definitions into a fresh job.</small>
@@ -20,15 +44,15 @@
     {% if tasks_complete %}
     <form method="post" action="/work/jobs/{{ job_id }}/complete">
         <button type="submit">Mark job completed</button>
-        <small>Accepts any remaining job-level criteria as met and closes the current Docket run.</</section></h2>small>
+        <small>Accepts any remaining job-level criteria as met and closes the current Docket run.</small>
     </form>
     {% endif %}
     <details>
-        <summary>Extend with</summary></small> another work task</summary></details>
+        <summary>Extend with another work task</summary>
         <form method="post" action="/work/jobs/{{ job_id }}/extend">
-            <p><label>Task title<br><input name="title" required</label> size="60"></label></p>
-            <p><label>Task body<br><textarea</label> name="body" rows="3" cols="70" placeholder="Defaults to the title"></textarea></label></p>
-            <p><label>Completion criteria <small>(semicolon-separated)</small><br><</label>input name="criteria" required size="70"></label></p>
+            <p><label>Task title<br><input name="title" required size="60"></label></p>
+            <p><label>Task body<br><textarea name="body" rows="3" cols="70" placeholder="Defaults to the title"></textarea></label></p>
+            <p><label>Completion criteria <small>(semicolon-separated)</small><br><input name="criteria" required size="70"></label></p>
             <button type="submit">Extend job</button>
         </form>
     </details>

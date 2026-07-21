@@ -158,6 +158,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
          &task_title=&task_criteria="
     );
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -214,6 +215,28 @@ async fn create_job_form_creates_work_job_with_tasks() {
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0].0, "Update headline");
     assert_eq!(tasks[0].1.as_deref(), Some("work"));
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/edit"),
+        "goal=Ship+the+updated+site&surface_id=&commit_policy=per_job&work_branch=feature%2Fupdated"
+            .to_string(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let (goal, surface, policy, branch): (String, Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as(
+            "SELECT goal, work_surface_ref, commit_policy, work_branch FROM bear_jobs WHERE id = $1",
+        )
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .expect("edited job row");
+    assert_eq!(goal, "Ship the updated site");
+    assert!(surface.is_none());
+    assert_eq!(policy.as_deref(), Some("per_job"));
+    assert_eq!(branch.as_deref(), Some("feature/updated"));
 }
 
 #[tokio::test]
