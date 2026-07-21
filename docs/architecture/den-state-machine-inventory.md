@@ -619,7 +619,7 @@ Add or update tests whenever behavior crosses axes. Keep these seam checks perma
 | model choice is not an authority source | `den-core` `turn_authority_has_no_model_choice_authority_input`; loop-control tests may still cover model-default budget/checkpoint behavior |
 | stale cached task list cannot manufacture focus/continuation | `den-runtime` `no_focus_allows_final_even_with_cached_task_list`; `final_gate_ignores_and_clears_cache_without_durable_focus` |
 | terminal transitions atomically own run state, obligation/step closure, and terminal event | `den-bearwire` completion/cancellation/expiry/failure persistence tests; `den-runtime` `terminal_turn_run_cannot_be_reopened_or_overwritten`; `client_obligation_coordinator_contract` late-result tests |
-| WorkRun owns sandbox root materialization | `den-docket` `effective_work_run_root_prefers_trimmed_request_then_job_default` plus provisioning's `WorkRunRow.root_name` check |
+| Job-scoped Work Run owns one sandbox/workspace/session for its task tree | Job-dispatch contract tests plus provisioning root checks; task progress remains in `bear_task_run_state` |
 
 Baseline scenarios to preserve:
 

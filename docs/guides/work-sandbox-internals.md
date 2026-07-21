@@ -26,7 +26,7 @@ reaper re-adopts labeled containers).
 
 ## The durable state machine
 
-One `bear_work_runs` row per dispatch attempt of one task:
+One Work Run per dispatched Job execution. The current `bear_work_runs.task_id` implementation is transitional and is being migrated to a Job-scoped execution row keyed by `job_id` / `job_run_id`; task progress belongs in `bear_task_run_state`, not separate sandboxes.
 
 ```
 queued → claimed → provisioning → running → reporting → succeeded
@@ -45,10 +45,7 @@ queued → claimed → provisioning → running → reporting → succeeded
   fences stale owners. Consequence for tests: DB-backed claim tests must
   serialize and purge leftovers (`DB_LOCK` / `purge_claimable_runs` in
   `work_runs_tests.rs`).
-- **Runs serialize per job**: a queued run is claimable only when its job
-  has no other in-flight run, so a multi-task job drains one run at a time
-  in queue order — sequential tasks build on the job's work branch instead
-  of racing it into non-fast-forward publish failures. A post-claim recheck
+- **One active Work Run per Job**: a Job dispatch owns one sandbox/workspace/session. Inside it, the Work runtime advances runnable tasks sequentially using `bear_task_run_state`; task boundaries do not create new sandboxes. A post-claim recheck
   (older-run-wins) resolves the cross-worker race the committed-state gate
   cannot see; expired-lease takeovers are exempt because the taken-over run
   *is* the job's active run. Runs of different jobs still execute
@@ -94,9 +91,7 @@ queued → claimed → provisioning → running → reporting → succeeded
    (`record_work_run_turn_outcome`, keyed by the bound session).
    `work.report` from the armature is advisory only; the authoritative
    outcome is run-scoped Docket task status.
-5. **Harvest** (`harvest_run`) — the worker collects the diff, log tail, and
-   usage from the provider; **succeeded ⟺ the model marked the task done
-   in-turn** (`get_task_run_status == "done"`). On success with a pushable
+5. **Harvest** (`harvest_run`) — once per Job Run, the worker collects the cumulative diff, log tail, and usage from the provider; success requires the Job's runnable tasks and acceptance criteria to reach their terminal success conditions. On success with a pushable
    policy it calls the provider's `publish` endpoint (branch = job work
    branch) *before teardown*; the outcome lands in
    `result_refs.published` / `result_refs.publish_failed`. A publish failure
@@ -114,9 +109,7 @@ queued → claimed → provisioning → running → reporting → succeeded
 
 ## Publish semantics
 
-- Only `commit_policy per_task` / `per_job` publish (`context.publishes()`);
-  v1 treats them identically — every successful run pushes to the same job
-  branch. `propose_only` / `none` stay diff-only.
+- `per_task` checkpoints/publishes after completed task boundaries while retaining the same Job sandbox; `per_job` publishes once when the Job Run completes. `propose_only` / `none` do not publish. `propose_only` / `none` stay diff-only.
 - The push happens **host-side on the sandbox server** with the root's
   credentials (managed-surface credentials arrive via the Den config sync —
   encrypted at rest in Den, written to per-surface 0600 files on the

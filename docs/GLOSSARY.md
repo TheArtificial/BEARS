@@ -51,6 +51,13 @@ unblocked task for that Job until completion, block,
 cancellation, cleared focus, or loop-control stop. See
 ADR-0050.
 
+**Work Run**
+a Job-scoped background execution: one dispatched Docket
+Job, one sandbox/workspace, and one headless Work session.
+The run advances the Job's task tree sequentially; task
+status is a checkpoint inside the run, not a separate
+sandbox run. Different Jobs may run concurrently.
+
 **task focus**
 the ephemeral per-turn working state the in-process
 Den loop uses to judge whether a candidate yield is

@@ -3,10 +3,7 @@
 How to hand a piece of work to a bear so it runs autonomously in a sandbox —
 no chat session open, results reported back to you — and how to follow it.
 
-Background work runs in the **`work` stance**: the bear executes one Docket
-task at a time inside an isolated container, cannot ask you questions
-mid-run, and reports success or blockage against the task's completion
-criteria. If the job's commit policy allows it, the changes are pushed to a
+Background work runs in the **`work` stance**: one dispatched Docket Job gets one isolated sandbox/workspace/session. Inside that Job Run, the Bear advances the Job's task tree one task at a time, cannot ask you questions mid-run, and reports progress against task and Job completion criteria. If the job's commit policy allows it, the changes are pushed to a
 branch on your repository's upstream.
 
 ## What you need
@@ -55,26 +52,12 @@ semicolon-separated criteria).
 
 ## Dispatch it
 
-Nothing runs until a task is dispatched:
+Nothing runs until the Job is dispatched:
 
-- In conversation: "dispatch the footer task" (`dispatch_work`). Optionally
-  pick a toolchain **image** from the catalog (`get_work_catalog` lists
-  them — e.g. `rust`, `node`, `godot`) when the surface's default isn't
-  right.
-- In the UI: the job page has a **Dispatch** button per work task, with root
-  and image selects.
+- In conversation: "dispatch the footer Job" (`dispatch_work` with `job_id`). Optionally pick a toolchain **image** from the catalog (`get_work_catalog` lists `rust`, `node`, `godot`, etc.) when the surface default is not right.
+- In the UI: the Job page has one **Dispatch job** action.
 
-Dispatch queues a **work run**. A background worker claims it, provisions a
-fresh clone of the surface (at the job's work branch when it already exists, so
-sequential tasks build on each other), starts the sandbox, and the bear works
-until the task is done, blocked, or the run times out.
-
-You can dispatch several of a job's tasks up front: runs within one job
-execute **one at a time, in dispatch order**, each building on the previous
-task's published work. Runs of different jobs execute concurrently. Queued
-runs show their place in the job's queue — and which run they are waiting
-behind — on the `/work` pages, in the dispatch confirmation, and in
-`get_work_run` / `list_work_runs`.
+Dispatch queues one **Job Work Run**. A background worker claims it, prepares the work surface once, starts one sandbox and headless Work session, and the Bear advances the Job's runnable task tree in task order. Task status remains run-scoped Docket state inside that Job Run. Runs of different Jobs may execute concurrently; a Job cannot have two active Work Runs.
 
 ## Follow progress and read results
 
