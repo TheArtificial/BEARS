@@ -5,7 +5,7 @@ use crate::protocol::{
     BuildImageRequest, CatalogResponse, CreateSandboxRequest, DiffResponse, ErrorBody,
     HealthResponse, ImageStoreResponse, LogsResponse, ManagedConfig, ManagedConfigStatus,
     OperationAccepted, OperationDescriptor, PublishRequest, PublishResponse, PullImageRequest,
-    RemoveImageRequest, SandboxDescriptor, SyncRootResponse,
+    RemoveImageRequest, RootInspectionResponse, SandboxDescriptor, SyncRootResponse,
 };
 use std::time::Duration;
 
@@ -150,6 +150,13 @@ impl SandboxClient {
     /// Selectable roots and images on this provider.
     pub async fn catalog(&self) -> Result<CatalogResponse, SandboxClientError> {
         self.get_json("/sandbox/v1/catalog").await
+    }
+
+    pub async fn inspect_root(
+        &self,
+        name: &str,
+    ) -> Result<RootInspectionResponse, SandboxClientError> {
+        self.get_json(&format!("/sandbox/v1/roots/{name}")).await
     }
 
     pub async fn sync_root(&self, name: &str) -> Result<SyncRootResponse, SandboxClientError> {

@@ -287,6 +287,31 @@ pub struct RootStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RootCommitFileChange {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additions: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RootInspectionResponse {
+    pub name: String,
+    pub default_ref: String,
+    pub head: String,
+    pub short_head: String,
+    pub subject: String,
+    pub files: Vec<RootCommitFileChange>,
+    pub additions: u64,
+    pub deletions: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_head: Option<String>,
+    /// `in_sync`, `remote_differs`, or `remote_unavailable`.
+    pub origin_status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncRootResponse {
     pub synced: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

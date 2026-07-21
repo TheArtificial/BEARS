@@ -267,6 +267,109 @@ impl RootsManager {
         }
     }
 
+    pub async fn inspect_root(
+        &self,
+        root: &SyncableRoot,
+    ) -> Result<crate::protocol::RootInspectionResponse, RootsError> {
+        let upstream = root
+            .upstream
+            .as_ref()
+            .ok_or_else(|| RootsError::Workspace {
+                name: root.name.clone(),
+                detail: "root has no Git upstream".to_string(),
+            })?;
+        let pristine = self.pristine_dir(root);
+        if !pristine.is_dir() {
+            return Err(RootsError::Workspace {
+                name: root.name.clone(),
+                detail: "pristine clone is not prepared".to_string(),
+            });
+        }
+        let env = credential_env(root, upstream)?;
+        let head = self
+            .resolve_commit(root, &pristine, &env, &upstream.default_ref)
+            .await?;
+        let subject = self
+            .git(
+                root,
+                Some(&pristine),
+                &[],
+                &["show", "-s", "--format=%s", &head],
+            )
+            .await?
+            .trim()
+            .to_string();
+        let numstat = self
+            .git(
+                root,
+                Some(&pristine),
+                &[],
+                &[
+                    "diff-tree",
+                    "--root",
+                    "--no-commit-id",
+                    "--numstat",
+                    "-r",
+                    &head,
+                ],
+            )
+            .await?;
+        let mut additions = 0_u64;
+        let mut deletions = 0_u64;
+        let files = numstat
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.splitn(3, '\t');
+                let added = fields.next()?;
+                let deleted = fields.next()?;
+                let path = fields.next()?.to_string();
+                let added = added.parse::<u64>().ok();
+                let deleted = deleted.parse::<u64>().ok();
+                additions = additions.saturating_add(added.unwrap_or(0));
+                deletions = deletions.saturating_add(deleted.unwrap_or(0));
+                Some(crate::protocol::RootCommitFileChange {
+                    path,
+                    additions: added,
+                    deletions: deleted,
+                })
+            })
+            .collect();
+        let remote_ref = if upstream.default_ref.starts_with("refs/") {
+            upstream.default_ref.clone()
+        } else {
+            format!("refs/heads/{}", upstream.default_ref)
+        };
+        let remote_head = self
+            .git(
+                root,
+                None,
+                &env,
+                &["ls-remote", "--exit-code", &upstream.url, &remote_ref],
+            )
+            .await
+            .ok()
+            .and_then(|output| output.split_whitespace().next().map(str::to_string));
+        let origin_status = match remote_head.as_deref() {
+            Some(remote) if remote == head => "in_sync",
+            Some(_) => "remote_differs",
+            None => "remote_unavailable",
+        }
+        .to_string();
+        let short_head = head.chars().take(8).collect();
+        Ok(crate::protocol::RootInspectionResponse {
+            name: root.name.clone(),
+            default_ref: upstream.default_ref.clone(),
+            head,
+            short_head,
+            subject,
+            files,
+            additions,
+            deletions,
+            remote_head,
+            origin_status,
+        })
+    }
+
     /// Ensure the pristine bare clone exists and fast-forward it from
     /// upstream. Bare clones have no working tree, so there is nothing to
     /// dirty or reset; a non-fast-forward fetch fails and is reported as-is.
@@ -948,6 +1051,14 @@ mod tests {
             fx.manager.sync_root(&fx.root).await.unwrap().as_deref(),
             Some(test_commit.as_str())
         );
+        let inspection = fx.manager.inspect_root(&fx.root).await.unwrap();
+        assert_eq!(inspection.head, test_commit);
+        assert_eq!(inspection.default_ref, "test");
+        assert_eq!(inspection.subject, "test branch");
+        assert_eq!(inspection.origin_status, "in_sync");
+        assert_eq!(inspection.additions, 1);
+        assert_eq!(inspection.deletions, 0);
+        assert!(inspection.files.iter().any(|file| file.path == "TEST.md"));
         let workspace = fx
             .manager
             .provision_workspace(&fx.root, None, "sbx-non-head-default")

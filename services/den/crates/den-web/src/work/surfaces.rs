@@ -394,6 +394,15 @@ async fn detail(
         }
         _ => None,
     };
+    let provider_root_inspection = match state.config.sandbox_server_url.as_deref() {
+        Some(url) if !url.trim().is_empty() => {
+            SandboxClient::new(url.trim(), &state.config.sandbox_server_token)
+                .inspect_root(&surface.name)
+                .await
+                .ok()
+        }
+        _ => None,
+    };
 
     // Bears the viewer can assign: their member bears (admins: all bears),
     // minus ones already assigned.
@@ -448,6 +457,7 @@ async fn detail(
             assignable_bears => assignable,
             images => images,
             provider_root_status => provider_root_status,
+            provider_root_inspection => provider_root_inspection,
             message => query.message,
         },
     )
