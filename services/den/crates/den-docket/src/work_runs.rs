@@ -908,7 +908,6 @@ pub async fn get_work_run(pool: &PgPool, run_id: Uuid) -> Result<Option<WorkRunR
 pub struct WorkRunListFilter {
     pub bear_id: Option<Uuid>,
     pub job_id: Option<Uuid>,
-    pub task_id: Option<Uuid>,
     pub state: Option<String>,
     pub limit: i64,
 }
@@ -926,14 +925,12 @@ pub async fn list_work_runs(
         "SELECT {WORK_RUN_COLUMNS} FROM bear_work_runs
          WHERE ($1::uuid IS NULL OR bear_id = $1)
            AND ($2::uuid IS NULL OR job_id = $2)
-           AND ($3::uuid IS NULL OR task_id = $3)
-           AND ($4::text IS NULL OR state = $4)
+           AND ($3::text IS NULL OR state = $3)
          ORDER BY queued_at DESC
-         LIMIT $5"
+         LIMIT $4"
     ))
     .bind(filter.bear_id)
     .bind(filter.job_id)
-    .bind(filter.task_id)
     .bind(filter.state.as_deref())
     .bind(limit)
     .fetch_all(pool)
