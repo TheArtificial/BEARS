@@ -2047,7 +2047,7 @@ pub(crate) async fn dispatch_work(
             "position": info.position,
             "waiting_on_run_id": info.waiting_on_run_id,
         })).collect::<Vec<_>>(),
-        "note": "Job queued; its work tasks execute one at a time in task order.",
+        "note": "Job queued; one work run will execute its runnable work tasks in the shared sandbox.",
     }))
 }
 
@@ -2055,8 +2055,6 @@ pub(crate) async fn dispatch_work(
 pub(crate) struct WorkRunListArguments {
     #[serde(default)]
     job_id: Option<Uuid>,
-    #[serde(default)]
-    task_id: Option<Uuid>,
     #[serde(default)]
     state: Option<String>,
     #[serde(default)]
@@ -2074,7 +2072,6 @@ pub(crate) async fn list_work_runs(
         den_docket::work_runs::WorkRunListFilter {
             bear_id: Some(context.bear_id),
             job_id: args.job_id,
-            task_id: args.task_id,
             state: args.state.as_deref().and_then(clean_optional),
             limit: args.limit.unwrap_or(50),
         },
