@@ -842,6 +842,65 @@ async fn docket_dispatcher_finds_starts_and_records_work_task_outcomes() {
 }
 
 #[tokio::test]
+async fn docket_execute_rejects_stale_later_active_task() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed stale active-task test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "stale-active-task").await;
+    let service = PgDocketService::from_pool(&pool);
+    let created = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create job");
+    let run_id = created.job.current_run_id.expect("current run");
+    let phase_zero_id = created.tasks[0].id;
+    let stale_phase_nine_id = created.tasks[1].id;
+
+    // Simulate an active-task record written by the pre-ordering scheduler.
+    // The public dispatcher rejects this transition now; direct SQL preserves
+    // the historical stale-state case at the execute/resume boundary.
+    sqlx::query(
+        "UPDATE bear_task_run_state SET status = 'in_progress', started_at = NOW() \
+         WHERE run_id = $1 AND task_id = $2",
+    )
+    .bind(run_id)
+    .bind(stale_phase_nine_id)
+    .execute(&pool)
+    .await
+    .expect("seed stale later active task");
+
+    let error = service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id: created.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: None,
+            source_conversation_id: None,
+            source_client_session_id: None,
+        })
+        .await
+        .expect_err("resume rejects Phase 9 while Phase 0 is pending");
+    assert!(error.to_string().contains("refusing stale active task"));
+
+    let state: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2",
+    )
+    .bind(run_id)
+    .bind(phase_zero_id)
+    .fetch_optional(&pool)
+    .await
+    .expect("read Phase 0 state");
+    assert_eq!(
+        state.as_deref(),
+        Some("pending"),
+        "Phase 0 remains pending and was not silently skipped or started"
+    );
+}
+
+#[tokio::test]
 async fn docket_dispatcher_follows_depth_first_sibling_order() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed docket dispatcher test; database unavailable");
@@ -919,6 +978,13 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
         )
         .await
         .expect("start first child");
+    let error = service
+        .mark_task_started(bear_id, phase_two_id, run_id, None)
+        .await
+        .expect_err("cannot directly start a later phase");
+    assert!(error
+        .to_string()
+        .contains("not the first eligible pending leaf"));
     let runnable = service
         .runnable_work_tasks(bear_id, 10)
         .await

@@ -1085,27 +1085,6 @@ pub(super) async fn execute_job(
         ));
     };
 
-    if let Some(active) = projection
-        .task_states
-        .iter()
-        .find(|state| state.status == "in_progress")
-    {
-        mark_job_running(pool, &request, run.id).await?;
-        record_execution_session(pool, &request, run.id, Some(active.task_id), "active").await?;
-        let job = get_job(pool, request.bear_id, request.job_id)
-            .await?
-            .ok_or_else(|| {
-                DenError::NotFound(format!("Docket job not found: {}", request.job_id))
-            })?;
-        return Ok(DocketJobExecuteOutcome {
-            job,
-            selected_task_id: Some(active.task_id),
-            completed: false,
-            blocked: false,
-            message: "Job already has an in-progress task.".to_string(),
-        });
-    }
-
     if projection
         .task_states
         .iter()
@@ -1144,6 +1123,40 @@ pub(super) async fn execute_job(
         .iter()
         .map(|state| (state.task_id, state.status.as_str()))
         .collect::<HashMap<_, _>>();
+    if let Some(active) = projection
+        .task_states
+        .iter()
+        .find(|state| state.status == "in_progress")
+    {
+        // Re-evaluate the active task against the plan. Treating it as pending
+        // asks whether it is still the first unfinished leaf rather than
+        // trusting a stale focus/session record.
+        let mut eligibility = state_by_task.clone();
+        eligibility.insert(active.task_id, "pending");
+        let selected =
+            first_pending_leaf_in_plan_order(&projection, &eligibility).map(|task| task.id);
+        if selected != Some(active.task_id) {
+            return Err(DenError::ValidationError(format!(
+                "Docket in-progress task {} is not the first eligible leaf in sibling order; refusing stale active task",
+                active.task_id
+            )));
+        }
+        mark_job_running(pool, &request, run.id).await?;
+        record_execution_session(pool, &request, run.id, Some(active.task_id), "active").await?;
+        let job = get_job(pool, request.bear_id, request.job_id)
+            .await?
+            .ok_or_else(|| {
+                DenError::NotFound(format!("Docket job not found: {}", request.job_id))
+            })?;
+        return Ok(DocketJobExecuteOutcome {
+            job,
+            selected_task_id: Some(active.task_id),
+            completed: false,
+            blocked: false,
+            message: "Job has the first eligible in-progress task.".to_string(),
+        });
+    }
+
     if let Some(next) = first_pending_leaf_in_plan_order(&projection, &state_by_task) {
         mark_job_running(pool, &request, run.id).await?;
         record_execution_session(pool, &request, run.id, Some(next.id), "active").await?;

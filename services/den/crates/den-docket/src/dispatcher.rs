@@ -163,6 +163,12 @@ impl TaskDispatcher for PgDocketService {
         run_id: Uuid,
         actor_agent_id: Option<String>,
     ) -> Result<DocketTaskProjection, DenError> {
+        let runnable = self.runnable_work_tasks(bear_id, 500).await?;
+        if runnable.first().map(|task| task.task.id) != Some(task_id) {
+            return Err(DenError::ValidationError(format!(
+                "Docket task {task_id} is not the first eligible pending leaf in sibling order"
+            )));
+        }
         update_run_state(
             self,
             bear_id,
