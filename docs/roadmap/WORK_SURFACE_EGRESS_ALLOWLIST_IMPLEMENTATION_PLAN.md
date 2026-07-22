@@ -1,6 +1,6 @@
 # Work-surface egress allowlist implementation plan
 
-**Status:** In progress — surface persistence, typed provider configuration, and provider-side HTTPS relay enforcement are implemented; dispatch snapshots and setup UI remain.
+**Status:** In progress — surface persistence, the owner-managed configuration UI, typed provider configuration, and provider-side HTTPS relay enforcement are implemented. Dispatch snapshots, image suggestions, end-to-end runtime verification, and relay hardening remain.
 **Decision:** [ADR-0037 — Work sandbox, egress gateway, and multi-identity upstream auth](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md#51-surface-owned-outbound-host-allowlist)
 
 ## Goal
@@ -16,6 +16,7 @@ The first slice is present in Den:
 - `work_surfaces.allowed_outbound_hosts` persists the surface-owned list, defaulting to empty (deny egress);
 - `AllowedOutboundHosts` normalizes and validates exact hostname inputs at the service/protocol boundary;
 - the managed provider configuration carries the validated list and includes it in its configuration hash;
+- the work-surface create and settings forms expose the same single list, one exact hostname per line;
 - restricted Docker sandboxes receive one internal-network DNS alias per allowed hostname, backed by a paired TCP relay that can connect only to that hostname on HTTPS/443. Unlisted names have no internal DNS answer or route.
 
 This does **not** yet create a dedicated DNS service: Docker's internal network DNS supplies aliases for the explicitly allowed names. The relay resolves its target outside the internal sandbox network; a later gateway hardening slice must reject unsafe resolved addresses and bind TLS/SNI to the approved authority. Until then, the provided route is exact-host/443 but does not meet the full rebinding/private-address defense described below.
@@ -42,7 +43,9 @@ Use a single `Vec<Hostname>`-style value in application code. Do not introduce p
 
 ### 2. Surface create/read/update API and UI
 
-Extend managed work-surface request/response types and handlers to read and replace the saved hostname list. On creation or selected-image change, return the catalog image's suggested hostnames and the upstream hostname for the client to present; require the client to save the accepted/final list explicitly. Do not auto-merge later catalog or upstream edits into existing surfaces.
+Extend managed work-surface request/response types and handlers to read and replace the saved hostname list. **Implemented:** the create and settings forms submit one hostname per line, and the existing service validation normalizes/rejects invalid entries. A blank value deliberately replaces the list with no egress.
+
+On creation or selected-image change, return the catalog image's suggested hostnames and the upstream hostname for the client to present; require the client to save the accepted/final list explicitly. Do not auto-merge later catalog or upstream edits into existing surfaces.
 
 The UI should use one field labelled **Allowed outbound hosts**, with image and upstream suggestions visibly marked but otherwise identical to manually added hosts. The Rust image should initially suggest `index.crates.io` and `static.crates.io`; the configured upstream host should also be offered to preserve repository materialization. Keep the help text short: “Sandboxes can use HTTPS only to these hosts.”
 
