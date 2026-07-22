@@ -5,7 +5,7 @@
 {% endblock %}
 {% block content %}
 <p><a href="/work">← Work</a> · <a href="/work/jobs/{{ run.job_id }}">Job</a></p>
-<h1>Run {{ run.id[:8] }}… <small>({{ run.state }})</small></h1>
+<h1><a href="/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></h1>
 <p>{{ job_goal }}</p>
 {% if conversation_id %}
 <p><a href="/bear/{{ run.bear_slug | urlencode }}/?conversation_id={{ conversation_id | urlencode }}">Open headless conversation transcript →</a></p>

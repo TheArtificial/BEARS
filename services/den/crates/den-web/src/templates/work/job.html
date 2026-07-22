@@ -2,7 +2,7 @@
 {% block title %}Work job{% endblock %}
 {% block content %}
 <p><a href="/work">← Work</a></p>
-<h1>{{ goal }}</h1>
+<h1><a href="/work/jobs/{{ job_id }}" title="UUID prefix for {{ job_full_id }}">Job <code class="entity-reference-id">{{ job_display_id }}</code>: {{ job_title }}</a></h1>
 <p>
     Bear <strong>{{ bear_slug }}</strong> · status <strong>{{ status }}</strong>
     {% if work_surface_ref %} · work surface <code>{{ work_surface_ref }}</code>{% endif %}
@@ -72,7 +72,7 @@
 <section>
     <h2>Work needs attention</h2>
     <p><strong>{{ attention_run.state }}</strong>: {{ attention_run.result_summary or attention_run.error or "The work run ended before all tasks were complete." }}</p>
-    <p><a href="/work/runs/{{ attention_run.id }}">Inspect run {{ attention_run.id[:8] }}…</a>. Unfinished tasks remain pending unless the worker explicitly marked a task blocked.</p>
+    <p><a href="/work/runs/{{ attention_run.route_id }}">{{ attention_run.title }}</a>. Unfinished tasks remain pending unless the worker explicitly marked a task blocked.</p>
 </section>
 {% endif %}
 
@@ -81,7 +81,7 @@
     <h2>Dispatch job</h2>
     <p>Queues one sandbox run for this job's pending or blocked tasks. The tasks run within that shared job session.</p>
     {% if has_active_work_run %}
-    <p><button type="button" disabled>Dispatch job</button> A job work session is already active. <a href="/work/runs/{{ active_work_run_id }}">Inspect the active run</a>.</p>
+    <p><button type="button" disabled>Dispatch job</button> A job work session is already active. <a href="/work/runs/{{ active_work_run.route_id }}">{{ active_work_run.title }}</a>.</p>
     {% elif has_runnable_work %}
     <form method="post" action="/work/jobs/{{ job_id }}/dispatch">
         {% if work_surface_ref %}
@@ -116,7 +116,7 @@
             {% for task in tasks %}
             <tr>
                 <td>
-                    {{ task.title }}
+                    <a href="#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}">Task <code class="entity-reference-id">{{ task.display_id }}</code>: {{ task.title_display }}</a>
                     <details>
                         <summary>criteria</summary>
                         <ul>
@@ -144,10 +144,10 @@
         <tbody>
             {% for run in runs %}
             <tr>
-                <td><a href="/work/runs/{{ run.id }}">{{ run.id[:8] }}…</a></td>
+                <td><a href="/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></td>
                 <td>
                     {{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}
-                    {%- if run.queue_position %} (#{{ run.queue_position }} in queue{% if run.waiting_on_run_id %}, behind <a href="/work/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}){% endif %}
+                    {%- if run.queue_position %} (#{{ run.queue_position }} in queue{% if run.waiting_on_run_id %}, behind <a href="/work/runs/{{ run.waiting_on_run_id }}">Run <code class="entity-reference-id">{{ run.waiting_on_run_id[:8] }}</code></a>{% endif %}){% endif %}
                 </td>
                 <td>{{ run.attempt }}</td>
                 <td>{{ run.result_summary or run.error or "—" }}</td>

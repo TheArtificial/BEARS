@@ -32,7 +32,7 @@ use den_service::work_surfaces::{
     SURFACE_ROLE_OWNER,
 };
 
-use super::{member_bears, require_user};
+use super::{entity_ref, member_bears, require_user, resolve_uuid_prefix, route_id};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -154,7 +154,8 @@ async fn prepare_surface(state: &AppState, name: &str) -> Result<String, String>
 fn surface_redirect(surface_id: Uuid, message: &str, sync_note: Option<String>) -> Response {
     let full = format!("{message}{}", sync_note.unwrap_or_default());
     Redirect::to(&format!(
-        "/work/surfaces/{surface_id}?message={}",
+        "/work/surfaces/{}?message={}",
+        route_id(surface_id),
         urlencoding::encode(&full)
     ))
     .into_response()
@@ -186,7 +187,8 @@ async fn index(
             .into_iter()
             .map(|surface| {
                 serde_json::json!({
-                    "id": surface.id.to_string(),
+                    "id": route_id(surface.id),
+                    "reference": entity_ref(surface.id, "Work surface", &surface.name, None),
                     "name": surface.name,
                     "description": surface.description,
                     "bear_slug": bears.get(&surface.bear_id).cloned().unwrap_or_default(),
@@ -198,7 +200,8 @@ async fn index(
         .into_iter()
         .map(|surface| {
             serde_json::json!({
-                "id": surface.id.to_string(),
+                "id": route_id(surface.id),
+                "reference": entity_ref(surface.id, "Work surface", &surface.name, None),
                 "name": surface.name,
                 "description": surface.description,
                 "upstream_url": surface.upstream_url,
@@ -386,10 +389,11 @@ async fn create(
 async fn detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Query(query): Query<MessageQuery>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
     let managers = work_surfaces::list_managers(state.sqlx_pool(), surface_id).await?;
     let assigned = work_surfaces::list_assigned_bears(state.sqlx_pool(), surface_id).await?;
@@ -460,7 +464,8 @@ async fn detail(
         auth_session,
         context! {
             title => "Work surface",
-            surface_id => surface.id.to_string(),
+            surface_id => route_id(surface.id),
+            surface_reference => entity_ref(surface.id, "Work surface", &surface.name, None),
             name => surface.name,
             description => surface.description,
             upstream_url => surface.upstream_url,
@@ -495,9 +500,10 @@ struct UpdateSurfaceForm {
 async fn update(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<UpdateSurfaceForm>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::update_surface(
         state.sqlx_pool(),
@@ -524,9 +530,10 @@ struct CredentialForm {
 async fn set_credential(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<CredentialForm>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     let Some((kind, value)) = credential_from_form(&form.credential_kind, &form.credential_value)?
     else {
@@ -553,8 +560,9 @@ async fn set_credential(
 async fn clear_credential(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::clear_credential(state.sqlx_pool(), surface_id).await?;
     let sync_note = push_surfaces_best_effort(&state).await;
@@ -575,10 +583,11 @@ struct GrantManagerForm {
 async fn grant_manager(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<GrantManagerForm>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     let username = form.username.trim();
     let Some(target) = user_db::get_user_by_username(state.sqlx_pool(), username).await? else {
@@ -613,9 +622,10 @@ struct RevokeManagerForm {
 async fn revoke_manager(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<RevokeManagerForm>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::revoke_manager(state.sqlx_pool(), surface_id, form.user_id).await?;
     Ok(surface_redirect(surface_id, "Manager removed.", None))
@@ -629,10 +639,11 @@ struct BearForm {
 async fn assign_bear(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<BearForm>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     // Managers assign from their own member bears; site admins any bear.
     if !viewer_is_admin(&auth_session)
@@ -647,9 +658,10 @@ async fn assign_bear(
 async fn unassign_bear(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<BearForm>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::unassign_bear(state.sqlx_pool(), surface_id, form.bear_id).await?;
     Ok(surface_redirect(surface_id, "Bear unassigned.", None))
@@ -658,8 +670,9 @@ async fn unassign_bear(
 async fn delete(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::delete_surface(state.sqlx_pool(), surface_id).await?;
     let sync_note = push_surfaces_best_effort(&state).await;
@@ -677,8 +690,9 @@ async fn delete(
 async fn sync_now(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
     let message = match prepare_surface(&state, &surface.name).await {
         Ok(message) => message,

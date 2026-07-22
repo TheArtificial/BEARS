@@ -2,7 +2,7 @@
 {% block title %}Surface {{ name }}{% endblock %}
 {% block content %}
 <p><a href="/work/surfaces">← Work surfaces</a></p>
-<h1>Surface <code>{{ name }}</code></h1>
+<h1><a href="/work/surfaces/{{ surface_reference.route_id }}" title="UUID prefix for {{ surface_reference.full_id }}">{{ surface_reference.kind }} <code class="entity-reference-id">{{ surface_reference.id }}</code>: {{ surface_reference.title }}</a></h1>
 
 {% if message %}
 <p><strong>{{ message }}</strong></p>

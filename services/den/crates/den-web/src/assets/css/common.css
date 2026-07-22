@@ -72,9 +72,14 @@ button:active, .button-link:active, .button-action:active {
     color: var(--selected-text-color);
 }
 
-table {
-    width: auto; /* override sakura */
+
+/* Stable-width UUID display prefixes in Docket entity references. */
+.entity-reference-id {
+    display: inline-block;
+    width: 8ch;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
+
 
 .fields-grid {
     display: grid;

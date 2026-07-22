@@ -16,6 +16,68 @@ use minijinja::context;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+const DISPLAY_ID_HEX_LEN: usize = 8;
+const ROUTE_ID_HEX_LEN: usize = 16;
+
+fn uuid_hex_prefix(id: Uuid, len: usize) -> String {
+    id.simple().to_string()[..len].to_string()
+}
+
+pub(crate) fn entity_ref(
+    id: Uuid,
+    kind: &str,
+    title: impl Into<String>,
+    status: Option<&str>,
+) -> serde_json::Value {
+    let marker = match status {
+        Some("running" | "in_progress" | "queued" | "claimed" | "provisioning" | "reporting") => {
+            "▶️ "
+        }
+        Some("blocked" | "failed" | "timed_out") => "⚠️ ",
+        Some("completed" | "done" | "succeeded") => "✅ ",
+        _ => "",
+    };
+    serde_json::json!({
+        "kind": kind,
+        "id": uuid_hex_prefix(id, DISPLAY_ID_HEX_LEN),
+        "route_id": uuid_hex_prefix(id, ROUTE_ID_HEX_LEN),
+        "full_id": id.to_string(),
+        "title": format!("{marker}{}", title.into()),
+    })
+}
+
+pub(crate) fn route_id(id: Uuid) -> String {
+    uuid_hex_prefix(id, ROUTE_ID_HEX_LEN)
+}
+
+pub(crate) async fn resolve_uuid_prefix(
+    pool: &sqlx::PgPool,
+    table: &'static str,
+    prefix: &str,
+) -> Result<Uuid, CustomError> {
+    if !(prefix.len() == ROUTE_ID_HEX_LEN || prefix.len() == 32 || prefix.len() == 36)
+        || !prefix.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+    {
+        return Err(CustomError::NotFound("entity not found".to_string()));
+    }
+    if let Ok(id) = Uuid::parse_str(prefix) {
+        return Ok(id);
+    }
+    let sql =
+        format!("SELECT id FROM {table} WHERE replace(id::text, '-', '') LIKE $1 || '%' LIMIT 2");
+    let ids: Vec<Uuid> = sqlx::query_scalar(&sql)
+        .bind(prefix.to_ascii_lowercase())
+        .fetch_all(pool)
+        .await
+        .map_err(den_core::DenError::from)?;
+    match ids.as_slice() {
+        [id] => Ok(*id),
+        _ => Err(CustomError::NotFound(
+            "entity not found or reference is ambiguous".to_string(),
+        )),
+    }
+}
+
 use crate::{
     auth_backend::AuthSession,
     errors::CustomError,
@@ -75,6 +137,10 @@ async fn provider_catalog(state: &AppState) -> Option<CatalogResponse> {
 #[derive(Serialize)]
 struct RunView {
     id: String,
+    display_id: String,
+    route_id: String,
+    full_id: String,
+    title: String,
     state: String,
     is_active: bool,
     attempt: i32,
@@ -109,7 +175,7 @@ fn ts(value: time::OffsetDateTime) -> String {
         .unwrap_or_default()
 }
 
-fn run_view(run: &WorkRunRow, bear_slug: &str) -> RunView {
+fn run_view(run: &WorkRunRow, bear_slug: &str, job_title: &str) -> RunView {
     let is_active = run.state_enum().is_some_and(|state| !state.is_terminal());
     let duration_secs = run.started_at.map(|started| {
         let end = run
@@ -130,13 +196,24 @@ fn run_view(run: &WorkRunRow, bear_slug: &str) -> RunView {
             .and_then(serde_json::Value::as_str)
             .map(str::to_string)
     };
+    let reference = entity_ref(run.id, "Run", job_title, Some(&run.state));
     RunView {
         id: run.id.to_string(),
+        display_id: reference["id"].as_str().unwrap_or_default().to_string(),
+        route_id: reference["route_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        full_id: reference["full_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        title: reference["title"].as_str().unwrap_or_default().to_string(),
         state: run.state.clone(),
         is_active,
         attempt: run.attempt,
         bear_slug: bear_slug.to_string(),
-        job_id: run.job_id.to_string(),
+        job_id: route_id(run.job_id),
         root: run.root_name.clone(),
         git_ref: run.git_ref.clone(),
         image: run.image_name.clone(),
@@ -221,19 +298,26 @@ async fn index(
     for (bear_id, bear_slug) in &bears {
         for run in work_runs::attention_work_runs(state.sqlx_pool(), *bear_id, None, 20).await? {
             attention.push(serde_json::json!({
-                "run_id": run.run_id.to_string(),
-                "job_id": run.job_id.to_string(),
+                "run_id": route_id(run.run_id),
+                "run_display_id": uuid_hex_prefix(run.run_id, DISPLAY_ID_HEX_LEN),
+                "run_full_id": run.run_id.to_string(),
+                "job_id": route_id(run.job_id),
+                "job_display_id": uuid_hex_prefix(run.job_id, DISPLAY_ID_HEX_LEN),
+                "job_full_id": run.job_id.to_string(),
                 "bear_slug": bear_slug,
-                "job_goal": run.job_goal,
+                "job_goal": entity_ref(run.job_id, "Job", &run.job_goal, None)["title"],
+                "run_title": entity_ref(run.run_id, "Run", &run.job_goal, Some(&run.state))["title"],
                 "state": run.state,
                 "reason": run.result_summary.or(run.error),
             }));
         }
         for job in work_runs::jobs_awaiting_completion(state.sqlx_pool(), *bear_id).await? {
             awaiting_completion.push(serde_json::json!({
-                "id": job.id.to_string(),
+                "id": route_id(job.id),
+                "display_id": uuid_hex_prefix(job.id, DISPLAY_ID_HEX_LEN),
+                "full_id": job.id.to_string(),
+                "title": entity_ref(job.id, "Job", &job.goal, Some(&job.status))["title"],
                 "bear_slug": bear_slug,
-                "goal": job.goal,
                 "status": job.status,
             }));
         }
@@ -246,7 +330,15 @@ async fn index(
             },
         )
         .await?;
-        runs.extend(bear_runs.iter().map(|run| run_view(run, bear_slug)));
+        for run in &bear_runs {
+            let job_title: String = sqlx::query_scalar("SELECT goal FROM bear_jobs WHERE id = $1")
+                .bind(run.job_id)
+                .fetch_optional(state.sqlx_pool())
+                .await
+                .map_err(den_core::DenError::from)?
+                .unwrap_or_else(|| "Untitled job".to_string());
+            runs.push(run_view(run, bear_slug, &job_title));
+        }
         run_rows.extend(bear_runs);
 
         let service = PgDocketService::from_pool(state.sqlx_pool());
@@ -256,6 +348,10 @@ async fn index(
         for job in jobs {
             jobs_with_work.push(serde_json::json!({
                 "id": job.id.to_string(),
+                "display_id": uuid_hex_prefix(job.id, DISPLAY_ID_HEX_LEN),
+                "route_id": uuid_hex_prefix(job.id, ROUTE_ID_HEX_LEN),
+                "full_id": job.id.to_string(),
+                "title": entity_ref(job.id, "Job", &job.goal, Some(&job.status))["title"],
                 "bear_slug": bear_slug,
                 "goal": job.goal,
                 "status": job.status,
@@ -563,9 +659,10 @@ struct EditJobForm {
 async fn edit_job(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(job_id): Path<Uuid>,
+    Path(job_ref): Path<String>,
     Form(form): Form<EditJobForm>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let bear_id: Option<Uuid> = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
@@ -673,8 +770,9 @@ fn parse_docket_enum<T: serde::de::DeserializeOwned>(
 async fn duplicate_job(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(job_id): Path<Uuid>,
+    Path(job_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
@@ -770,8 +868,9 @@ async fn duplicate_job(
 async fn complete_job(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(job_id): Path<Uuid>,
+    Path(job_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
@@ -855,9 +954,10 @@ struct ExtendJobForm {
 async fn extend_job(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(job_id): Path<Uuid>,
+    Path(job_ref): Path<String>,
     Form(form): Form<ExtendJobForm>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
@@ -949,8 +1049,9 @@ async fn extend_job(
 async fn job_detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(job_id): Path<Uuid>,
+    Path(job_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
 
@@ -982,7 +1083,10 @@ async fn job_detail(
         },
     )
     .await?;
-    let mut run_views: Vec<RunView> = runs.iter().map(|run| run_view(run, &bear_slug)).collect();
+    let mut run_views: Vec<RunView> = runs
+        .iter()
+        .map(|run| run_view(run, &bear_slug, &projection.job.goal))
+        .collect();
     attach_queue_info(&state, &runs, &mut run_views).await?;
 
     let task_states: std::collections::HashMap<Uuid, &str> = projection
@@ -997,7 +1101,9 @@ async fn job_detail(
             let status = task_states.get(&task.id).copied().unwrap_or("pending");
             serde_json::json!({
                 "id": task.id.to_string(),
-                "title": task.title,
+                "display_id": uuid_hex_prefix(task.id, DISPLAY_ID_HEX_LEN),
+                "full_id": task.id.to_string(),
+                "title_display": entity_ref(task.id, "Task", &task.title, Some(status))["title"],
                 "kind": task.kind,
                 "status": status,
                 "completion_criteria": task.completion_criteria.0,
@@ -1038,8 +1144,11 @@ async fn job_detail(
             title => "Work job",
             bear_id => bear_id.to_string(),
             bear_slug => bear_slug,
-            job_id => job_id.to_string(),
+            job_id => route_id(job_id),
             goal => projection.job.goal,
+            job_display_id => uuid_hex_prefix(job_id, DISPLAY_ID_HEX_LEN),
+            job_full_id => job_id.to_string(),
+            job_title => entity_ref(job_id, "Job", &projection.job.goal, Some(&projection.job.status))["title"],
             status => projection.job.status,
             work_surface_ref => projection.job.work_surface_ref,
             work_surface_id => projection.job.work_surface_id.map(|id| id.to_string()),
@@ -1056,7 +1165,7 @@ async fn job_detail(
             next_action => status_report.next_action,
             has_runnable_work => has_runnable_work,
             has_active_work_run => active_work_run.is_some(),
-            active_work_run_id => active_work_run.map(|run| run.id.clone()),
+            active_work_run => active_work_run,
             attention_run => attention_run,
         },
     )
@@ -1066,8 +1175,9 @@ async fn job_detail(
 async fn run_detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(run_id): Path<Uuid>,
+    Path(run_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let run_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_work_runs", &run_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let run = work_runs::get_work_run(state.sqlx_pool(), run_id)
@@ -1122,7 +1232,7 @@ async fn run_detail(
         None => None,
     };
     let usage = run.usage.clone();
-    let mut views = vec![run_view(&run, &bear_slug)];
+    let mut views = vec![run_view(&run, &bear_slug, &dispatch_context.job_goal)];
     attach_queue_info(&state, std::slice::from_ref(&run), &mut views).await?;
     let view = views.remove(0);
     let can_retry = !view.is_active;
@@ -1169,9 +1279,10 @@ fn clean_form_field(raw: &str) -> Option<String> {
 async fn dispatch_job(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(job_id): Path<Uuid>,
+    Path(job_ref): Path<String>,
     Form(form): Form<DispatchForm>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let bear_id: Option<Uuid> = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
@@ -1205,8 +1316,9 @@ async fn dispatch_job(
 async fn cancel_run(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(run_id): Path<Uuid>,
+    Path(run_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let run_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_work_runs", &run_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let run = work_runs::get_work_run(state.sqlx_pool(), run_id)
@@ -1220,8 +1332,9 @@ async fn cancel_run(
 async fn retry_run(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(run_id): Path<Uuid>,
+    Path(run_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let run_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_work_runs", &run_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let run = work_runs::get_work_run(state.sqlx_pool(), run_id)

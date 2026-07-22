@@ -471,7 +471,10 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
             .expect("attached job surface");
     assert_eq!(surface_ref.as_deref(), Some(surface_name.as_str()));
     let surface_id = surface_id.expect("surface id");
-    assert!(redirect.starts_with(&format!("/work/surfaces/{surface_id}?message=")));
+    assert!(redirect.starts_with(&format!(
+        "/work/surfaces/{}?message=",
+        surface_id.simple().to_string()[..16].to_string()
+    )));
     assert!(redirect.contains("not%20ready"));
     let assignment_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2",

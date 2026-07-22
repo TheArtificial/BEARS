@@ -42,7 +42,7 @@
         <tbody>
             {% for run in active_runs %}
             <tr>
-                <td><a href="/work/runs/{{ run.id }}">{{ run.id[:8] }}…</a></td>
+                <td><a href="/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></td>
                 <td>{{ run.bear_slug }}</td>
                 <td>{{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}</td>
                 <td>{{ run.sandbox_type or "—" }}</td>
@@ -85,7 +85,7 @@
     <p>All tasks are done but the job has not been closed out — review criteria and complete or extend the job.</p>
     <ul>
         {% for job in awaiting_completion %}
-        <li><a href="/work/jobs/{{ job.id }}">{{ job.goal }}</a> ({{ job.bear_slug }}, {{ job.status }})</li>
+        <li><a href="/work/jobs/{{ job.route_id }}" title="UUID prefix for {{ job.full_id }}">Job <code class="entity-reference-id">{{ job.display_id }}</code>: {{ job.title }}</a> ({{ job.bear_slug }}, {{ job.status }})</li>
         {% endfor %}
     </ul>
 </section>
@@ -102,7 +102,7 @@
         <tbody>
             {% for job in jobs %}
             <tr>
-                <td><a href="/work/jobs/{{ job.id }}">{{ job.goal }}</a></td>
+                <td><a href="/work/jobs/{{ job.route_id }}" title="UUID prefix for {{ job.full_id }}">Job <code class="entity-reference-id">{{ job.display_id }}</code>: {{ job.title }}</a></td>
                 <td>{{ job.bear_slug }}</td>
                 <td>{{ job.status }}</td>
                 <td>{{ job.work_surface_ref or "—" }}</td>
@@ -125,7 +125,7 @@
         <tbody>
             {% for run in runs %}
             <tr>
-                <td><a href="/work/runs/{{ run.id }}">{{ run.id[:8] }}…</a></td>
+                <td><a href="/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></td>
                 <td>{{ run.bear_slug }}</td>
                 <td>
                     {{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}
