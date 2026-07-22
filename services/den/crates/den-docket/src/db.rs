@@ -1571,6 +1571,13 @@ pub(super) async fn update_task(
     } else {
         None
     };
+    if let Some(run_state) = update
+        .run_state
+        .as_ref()
+        .filter(|state| matches!(state.status.as_str(), "done" | "cancelled"))
+    {
+        roll_up_completed_parents(&mut tx, current.parent_task_id, run_state.run_id).await?;
+    }
     tx.commit().await?;
     Ok(DocketTaskProjection {
         task: patched,
@@ -1609,6 +1616,58 @@ async fn validate_parent_completion(
             "Docket phase cannot be completed while {unfinished_children} child task(s) remain unfinished: task_id={}",
             task.id
         )));
+    }
+    Ok(())
+}
+
+async fn roll_up_completed_parents(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    mut parent_id: Option<Uuid>,
+    run_id: Uuid,
+) -> Result<(), DenError> {
+    while let Some(task_id) = parent_id {
+        let unfinished_descendants = sqlx::query_scalar::<_, i64>(
+            r"
+            WITH RECURSIVE descendants AS (
+                SELECT id FROM bear_tasks WHERE parent_task_id = $1
+                UNION ALL
+                SELECT child.id
+                FROM bear_tasks child
+                JOIN descendants parent ON child.parent_task_id = parent.id
+            )
+            SELECT COUNT(*)
+            FROM descendants
+            LEFT JOIN bear_task_run_state state
+              ON state.task_id = descendants.id AND state.run_id = $2
+            WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled')
+            ",
+        )
+        .bind(task_id)
+        .bind(run_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if unfinished_descendants != 0 {
+            break;
+        }
+
+        sqlx::query(
+            r"
+            UPDATE bear_task_run_state
+            SET status = 'done',
+                result_summary = COALESCE(NULLIF(result_summary, ''), 'All child tasks are terminal.'),
+                finished_at = COALESCE(finished_at, NOW()),
+                updated_at = NOW()
+            WHERE run_id = $1 AND task_id = $2 AND status NOT IN ('done', 'cancelled')
+            ",
+        )
+        .bind(run_id)
+        .bind(task_id)
+        .execute(&mut **tx)
+        .await?;
+        parent_id = sqlx::query_scalar("SELECT parent_task_id FROM bear_tasks WHERE id = $1")
+            .bind(task_id)
+            .fetch_one(&mut **tx)
+            .await?;
     }
     Ok(())
 }

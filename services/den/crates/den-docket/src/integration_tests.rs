@@ -1076,19 +1076,19 @@ async fn docket_rejects_parent_completion_until_children_are_terminal() {
         )
         .await
         .expect("complete child");
-    let parent = service
-        .record_task_success(
-            bear_id,
-            parent_id,
-            run_id,
-            "phase complete".to_string(),
-            None,
-            None,
-        )
+    let projection = service
+        .get_job(bear_id, created.job.id)
         .await
-        .expect("complete parent after child");
+        .expect("load job")
+        .expect("job exists");
+    let parent_state = projection
+        .task_states
+        .iter()
+        .find(|state| state.task_id == parent_id)
+        .expect("parent run state");
+    assert_eq!(parent_state.status.as_str(), "done");
     assert_eq!(
-        parent.run_state.as_ref().map(|state| state.status.as_str()),
-        Some("done")
+        parent_state.result_summary.as_deref(),
+        Some("All child tasks are terminal.")
     );
 }
