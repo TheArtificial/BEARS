@@ -76,9 +76,10 @@ fn first_pending_leaves_in_plan_order(
     let mut selected = Vec::new();
     for job_id in jobs {
         let mut visited = HashSet::new();
-        if let Some(index) = first_pending_leaf_for_parent(job_id, None, &tasks, &children, &mut visited)
-            .ok()
-            .flatten()
+        if let Some(index) =
+            first_pending_leaf_for_parent(job_id, None, &tasks, &children, &mut visited)
+                .ok()
+                .flatten()
         {
             selected.push(tasks[index].clone());
         }
@@ -126,7 +127,7 @@ fn first_pending_leaf_for_parent(
             _ => return Err(()),
         }
     }
-    None
+    Ok(None)
 }
 
 impl TaskDispatcher for PgDocketService {
