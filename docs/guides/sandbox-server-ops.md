@@ -144,7 +144,7 @@ Production leaves `BEARS_INSTANCE_SUFFIX` empty and retains `bears-sandbox-provi
 | `DOCKER_BIN` | `docker` | Set `podman` for a podman host |
 | `SANDBOX_ROOTS_CONFIG` | *(deprecated)* | Ignored; a warning is logged if set |
 
-Den-side knobs: `WORK_DISPATCH_AUTO` (auto-enqueue runnable work tasks; off
+Den-side knobs: `WORK_DISPATCH_AUTO` (auto-enqueue runnable work jobs; off
 by default), `WORK_MAX_ATTEMPTS` (infrastructure-failure retries, default 2),
 `SANDBOX_PRESERVE_FAILED` (keep failed runs' workspaces for debugging),
 `WORK_SANDBOX_NETWORK` (`restricted` default / `open`),
