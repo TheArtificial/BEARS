@@ -298,6 +298,28 @@ async fn persisted_tool_call_exists(
     Ok(exists)
 }
 
+fn native_tool_result_diagnostics(
+    status: RuntimeToolResultStatus,
+    status_label: ToolResultStatus,
+    tool_call_id: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "component": "den.native_runtime",
+        "phase": if matches!(status, RuntimeToolResultStatus::Error) {
+            "client_tool_result_failed"
+        } else {
+            "client_tool_result_recorded"
+        },
+        "tool_call_id": tool_call_id,
+        "tool_status": status_label.as_str(),
+        "failure_class": if matches!(status, RuntimeToolResultStatus::Error) {
+            Some("adapter_tool_error")
+        } else {
+            None
+        },
+    })
+}
+
 pub async fn record_native_client_tool_result(
     pool: &PgPool,
     conversation_id: &str,
@@ -395,13 +417,25 @@ pub async fn record_native_client_tool_result(
             RuntimeToolResultStatus::Timeout => ToolResultStatus::Timeout,
             RuntimeToolResultStatus::Error => ToolResultStatus::Error,
         };
+        // Preserve an adapter-reported failure in the structured error field as
+        // well as the display content. Diagnostics can then report the actual
+        // failure without inferring it from an opaque lifecycle phase.
+        let error = if matches!(status, RuntimeToolResultStatus::Error) {
+            tool_message
+                .content
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null)
+        } else {
+            serde_json::Value::Null
+        };
         let compacted = compact_client_tool_result(&ClientToolResultInput::new(
             tool_call_id.to_string(),
             tool_name.clone(),
             status_label,
             tool_message.content.clone(),
             serde_json::Value::Null,
-            serde_json::Value::Null,
+            error,
         ));
         persist_canonical_conversation_record(
             &persistence_context,
@@ -417,10 +451,7 @@ pub async fn record_native_client_tool_result(
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_string),
                     compacted.payload.clone(),
-                    serde_json::json!({
-                        "component": "den.native_runtime",
-                        "phase": "client_tool_result_recorded",
-                    }),
+                    native_tool_result_diagnostics(status, status_label, tool_call_id),
                     Some(request_id.to_string()),
                 ),
                 &provenance,
@@ -2008,6 +2039,19 @@ mod tests {
         )));
     }
 
+    #[test]
+    fn native_tool_failure_diagnostics_are_actionable_without_tool_arguments() {
+        let diagnostics = native_tool_result_diagnostics(
+            RuntimeToolResultStatus::Error,
+            ToolResultStatus::Error,
+            "call-123",
+        );
+        assert_eq!(diagnostics["phase"], "client_tool_result_failed");
+        assert_eq!(diagnostics["failure_class"], "adapter_tool_error");
+        assert_eq!(diagnostics["tool_status"], "error");
+        assert_eq!(diagnostics["tool_call_id"], "call-123");
+        assert!(diagnostics.get("arguments").is_none());
+    }
     #[test]
     fn mvp_grounding_probe_signal_follows_tool_result_status_and_content() {
         let (ok_signal, ok_finding) = mvp_grounding_probe_signal_from_tool_result(
