@@ -4,7 +4,7 @@
 //! outside Docket go through the service, never here. Docket job/task data is
 //! stored in the ADR-0034 relational tables.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -1144,12 +1144,7 @@ pub(super) async fn execute_job(
         .iter()
         .map(|state| (state.task_id, state.status.as_str()))
         .collect::<HashMap<_, _>>();
-    if let Some(next) = projection.tasks.iter().find(|task| {
-        !matches!(
-            state_by_task.get(&task.id).copied().unwrap_or("pending"),
-            "done" | "cancelled" | "blocked"
-        )
-    }) {
+    if let Some(next) = first_pending_leaf_in_plan_order(&projection, &state_by_task) {
         mark_job_running(pool, &request, run.id).await?;
         record_execution_session(pool, &request, run.id, Some(next.id), "active").await?;
         update_task(
@@ -1249,6 +1244,54 @@ pub(super) async fn execute_job(
             message: "All tasks are terminal, but acceptance criteria are not met.".to_string(),
         })
     }
+}
+
+/// Returns the first unfinished leaf in depth-first sibling order.
+///
+/// A task with children is a phase/roll-up, not independently executable. A
+/// leaf becomes eligible only after all its preceding siblings are terminal.
+fn first_pending_leaf_in_plan_order<'a>(
+    projection: &'a DocketJobProjection,
+    state_by_task: &HashMap<Uuid, &str>,
+) -> Option<&'a DocketTaskRow> {
+    let children = projection.tasks.iter().fold(
+        HashMap::<Option<Uuid>, Vec<&DocketTaskRow>>::new(),
+        |mut children, task| {
+            children.entry(task.parent_task_id).or_default().push(task);
+            children
+        },
+    );
+    let mut visited = HashSet::new();
+    first_pending_leaf_in_children(None, &children, state_by_task, &mut visited)
+}
+
+fn first_pending_leaf_in_children<'a>(
+    parent_id: Option<Uuid>,
+    children: &HashMap<Option<Uuid>, Vec<&'a DocketTaskRow>>,
+    state_by_task: &HashMap<Uuid, &str>,
+    visited: &mut HashSet<Uuid>,
+) -> Option<&'a DocketTaskRow> {
+    let mut siblings = children.get(&parent_id)?.clone();
+    siblings.sort_by_key(|task| (task.sibling_order, task.created_at));
+
+    for task in siblings {
+        if !visited.insert(task.id) {
+            continue;
+        }
+        if children.contains_key(&Some(task.id)) {
+            if let Some(next) =
+                first_pending_leaf_in_children(Some(task.id), children, state_by_task, visited)
+            {
+                return Some(next);
+            }
+            continue;
+        }
+        let status = state_by_task.get(&task.id).copied().unwrap_or("pending");
+        if status == "pending" {
+            return Some(task);
+        }
+    }
+    None
 }
 
 async fn mark_job_running(
@@ -1492,6 +1535,13 @@ pub(super) async fn update_task(
     let mut tx = pool.begin().await?;
     let current = select_task(&mut tx, update.bear_id, update.task_id).await?;
     validate_task_update_scope(&mut tx, &current, &update).await?;
+    if let Some(run_state) = update
+        .run_state
+        .as_ref()
+        .filter(|state| state.status.as_str() == "done")
+    {
+        validate_parent_completion(&mut tx, &current, run_state.run_id).await?;
+    }
     let patched = update_task_definition(&mut tx, &current, &update.definition).await?;
     append_task_updated_events(&mut tx, &patched, &update).await?;
     let run_state = if let Some(run_state) = update.run_state.as_ref() {
@@ -1504,6 +1554,41 @@ pub(super) async fn update_task(
         task: patched,
         run_state,
     })
+}
+
+async fn validate_parent_completion(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: &DocketTaskRow,
+    run_id: Uuid,
+) -> Result<(), DenError> {
+    let unfinished_children = sqlx::query_scalar::<_, i64>(
+        r"
+        WITH RECURSIVE descendants AS (
+            SELECT id FROM bear_tasks WHERE parent_task_id = $1
+            UNION ALL
+            SELECT child.id
+            FROM bear_tasks child
+            JOIN descendants parent ON child.parent_task_id = parent.id
+        )
+        SELECT COUNT(*)
+        FROM descendants
+        LEFT JOIN bear_task_run_state state
+          ON state.task_id = descendants.id AND state.run_id = $2
+        WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled')
+        ",
+    )
+    .bind(task.id)
+    .bind(run_id)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    if unfinished_children > 0 {
+        return Err(DenError::ValidationError(format!(
+            "Docket phase cannot be completed while {unfinished_children} child task(s) remain unfinished: task_id={}",
+            task.id
+        )));
+    }
+    Ok(())
 }
 
 fn validate_docket_task_run_state_update(
