@@ -44,3 +44,12 @@ operational detail matters, and icons have accessible labels.
 
 Work surfaces do not use execution-status markers until they have a defined
 execution lifecycle.
+
+## Tool lookup references
+
+Docket lookup tools accept a full UUID or an unambiguous UUID prefix. Prefixes
+are lowercase hexadecimal after hyphens are ignored and must contain at least
+eight characters. Lookup is scoped to the entity type and current Bear before
+matching, so a reference cannot cross entity types or reveal another Bear's
+entities. `find_task` may additionally narrow the lookup to a job; `find_work_run`
+accepts either a run reference or a job reference to list that job's runs.

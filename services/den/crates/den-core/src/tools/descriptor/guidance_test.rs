@@ -1,8 +1,9 @@
 use crate::tools::{
     constants::{
-        DEN_JOB_CREATE_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
+        DEN_JOB_CREATE_PROVIDER, DEN_JOB_FIND_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
         DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER, DEN_TASK_CREATE_PROVIDER,
-        DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER,
+        DEN_TASK_FIND_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT_PROVIDER,
+        DEN_TASK_LIST_PROVIDER, DEN_WORK_RUN_FIND_PROVIDER,
     },
     descriptor::builtin_den_tool_descriptors,
 };
@@ -76,12 +77,14 @@ fn docket_descriptors_distinguish_conversation_objectives_from_explicit_jobs() {
         .iter()
         .find(|descriptor| descriptor.provider_name == DEN_JOB_CREATE_PROVIDER)
         .expect("create_job descriptor");
-    assert!(create_job.description.contains("Explicit Jobs"));
+    assert!(create_job.description.contains("durable Docket job"));
     assert!(create_job.description.contains("distinct objectives"));
     assert!(create_job
         .description
-        .contains("implied conversation objective"));
-    assert!(create_job.description.contains("Does not execute the job"));
+        .contains("small change that Pair can finish here"));
+    assert!(create_job
+        .description
+        .contains("does not execute or dispatch it"));
 
     let create_task = descriptors
         .iter()

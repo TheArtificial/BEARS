@@ -4,11 +4,11 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::tools::constants::{
-    DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
-    DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
-    DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
-    DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL,
-    DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+    DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET,
+    DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
+    DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT,
+    DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
+    DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy,
@@ -51,11 +51,13 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_JOB_CREATE
             | DEN_JOB_LIST
             | DEN_JOB_GET
+            | DEN_JOB_FIND
             | DEN_JOB_UPDATE
             | DEN_JOB_EXECUTE
             | DEN_JOB_EVALUATE_CRITERION
             | DEN_TASK_CREATE
             | DEN_TASK_LIST
+            | DEN_TASK_FIND
             | DEN_TASK_UPDATE
             | DEN_TASK_UPDATE_CURRENT_STATUS
             | DEN_TASK_LIST_SYNC
@@ -63,6 +65,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_WORK_DISPATCH
             | DEN_WORK_RUN_LIST
             | DEN_WORK_RUN_GET
+            | DEN_WORK_RUN_FIND
             | DEN_WORK_RUN_CANCEL
             | DEN_WORK_CATALOG
     )
@@ -110,6 +113,11 @@ pub(crate) struct DocketJobListArguments {
 #[derive(Debug, Deserialize)]
 pub(crate) struct DocketJobGetArguments {
     pub(crate) job_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketJobFindArguments {
+    pub(crate) job_ref: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,6 +177,13 @@ pub(crate) struct DocketTaskCreateArguments {
     pub(crate) effort_hint: Option<DocketEffortHint>,
     #[serde(default)]
     pub(crate) created_in_run_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketTaskFindArguments {
+    pub(crate) task_ref: String,
+    #[serde(default)]
+    pub(crate) job_ref: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -243,6 +258,35 @@ pub(crate) struct TaskListCheckoutArguments {
     pub(crate) job_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) parent_task_id: Option<Uuid>,
+}
+
+fn resolve_reference(
+    reference: &str,
+    kind: &str,
+    candidates: impl IntoIterator<Item = Uuid>,
+) -> Result<Uuid, CustomError> {
+    let normalized = reference.replace('-', "").to_ascii_lowercase();
+    if normalized.len() < 8
+        || normalized.len() > 32
+        || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(CustomError::ValidationError(format!(
+            "{kind} reference must be a UUID or at least 8 hexadecimal characters"
+        )));
+    }
+    let matches: Vec<Uuid> = candidates
+        .into_iter()
+        .filter(|id| id.simple().to_string().starts_with(&normalized))
+        .collect();
+    match matches.as_slice() {
+        [id] => Ok(*id),
+        [] => Err(CustomError::NotFound(format!(
+            "{kind} not found: {reference}"
+        ))),
+        _ => Err(CustomError::ValidationError(format!(
+            "{kind} reference is ambiguous: {reference}"
+        ))),
+    }
 }
 
 fn default_job_status() -> DocketJobStatus {
@@ -1064,6 +1108,31 @@ pub(crate) async fn list_jobs(
     }))
 }
 
+pub(crate) async fn find_job(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketJobFindArguments = serde_json::from_value(arguments)?;
+    let job_id = resolve_reference(
+        &args.job_ref,
+        "job",
+        PgDocketService::from_pool(pool)
+            .list_jobs(
+                context.bear_id,
+                DocketJobListFilter {
+                    include_cancelled: true,
+                    limit: 200,
+                    ..DocketJobListFilter::default()
+                },
+            )
+            .await?
+            .into_iter()
+            .map(|job| job.id),
+    )?;
+    get_job(pool, context, json!({ "job_id": job_id })).await
+}
+
 pub(crate) async fn get_job(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -1479,6 +1548,55 @@ pub(crate) async fn list_tasks(
         },
         "tasks": tasks,
     }))
+}
+
+pub(crate) async fn find_task(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketTaskFindArguments = serde_json::from_value(arguments)?;
+    let service = PgDocketService::from_pool(pool);
+    let job_id = if let Some(reference) = args.job_ref.as_deref() {
+        let jobs = service
+            .list_jobs(
+                context.bear_id,
+                DocketJobListFilter {
+                    include_cancelled: true,
+                    limit: 200,
+                    ..DocketJobListFilter::default()
+                },
+            )
+            .await?;
+        Some(resolve_reference(
+            reference,
+            "job",
+            jobs.into_iter().map(|job| job.id),
+        )?)
+    } else {
+        None
+    };
+    let tasks = service
+        .list_tasks(
+            context.bear_id,
+            DocketTaskListFilter {
+                job_id,
+                include_descendants: true,
+                limit: 500,
+                ..DocketTaskListFilter::default()
+            },
+        )
+        .await?;
+    let task_id = resolve_reference(
+        &args.task_ref,
+        "task",
+        tasks.iter().map(|task| task.task.id),
+    )?;
+    let task = tasks
+        .into_iter()
+        .find(|task| task.task.id == task_id)
+        .expect("resolved task is listed");
+    Ok(json!({ "ok": true, "task": task }))
 }
 
 pub(crate) async fn update_task(
@@ -2111,6 +2229,16 @@ async fn work_run_queue_map(
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct WorkRunFindArguments {
+    #[serde(default)]
+    run_ref: Option<String>,
+    #[serde(default)]
+    job_ref: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct WorkRunGetArguments {
     work_run_id: Uuid,
 }
@@ -2140,6 +2268,51 @@ pub(crate) async fn get_work_run(
     }
     value["usage"] = run.usage.unwrap_or(Value::Null);
     Ok(json!({ "ok": true, "work_run": value }))
+}
+
+pub(crate) async fn find_work_run(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: WorkRunFindArguments = serde_json::from_value(arguments)?;
+    match (args.run_ref.as_deref(), args.job_ref.as_deref()) {
+        (Some(_), Some(_)) | (None, None) => Err(CustomError::ValidationError(
+            "provide exactly one of run_ref or job_ref".to_string(),
+        )),
+        (Some(reference), None) => {
+            let runs = den_docket::work_runs::list_work_runs(
+                pool,
+                den_docket::work_runs::WorkRunListFilter {
+                    bear_id: Some(context.bear_id),
+                    limit: 200,
+                    ..den_docket::work_runs::WorkRunListFilter::default()
+                },
+            )
+            .await?;
+            let run_id = resolve_reference(reference, "work run", runs.iter().map(|run| run.id))?;
+            get_work_run(pool, context, json!({ "work_run_id": run_id })).await
+        }
+        (None, Some(reference)) => {
+            let jobs = PgDocketService::from_pool(pool)
+                .list_jobs(
+                    context.bear_id,
+                    DocketJobListFilter {
+                        include_cancelled: true,
+                        limit: 200,
+                        ..DocketJobListFilter::default()
+                    },
+                )
+                .await?;
+            let job_id = resolve_reference(reference, "job", jobs.into_iter().map(|job| job.id))?;
+            list_work_runs(
+                pool,
+                context,
+                json!({ "job_id": job_id, "limit": args.limit.unwrap_or(50) }),
+            )
+            .await
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
