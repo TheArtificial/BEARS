@@ -32,4 +32,42 @@ Do not infer assistant content from a user-visible event. Diagnostics for incomp
 
 ## Release gate
 
-Use existing telemetry and deployment controls. Stage this change and halt/roll back if incomplete-stream frequency, failed reconciliation frequency, forced session termination, or user-visible internal-error exposure regresses. Verify during rollout that pending tool calls remain answerable and resumed runs do not duplicate output or tool execution.
+Use the existing BearWire event store and deployment controls; do not add a second
+telemetry pipeline for this change. For each rollout window, query the persisted
+`initial_stream_interrupted` progress/visible-marker events and terminal run events,
+scoped to the deployment window and traffic cohort. The release owner records these
+four rates against the pre-rollout baseline for the same traffic class:
+
+1. **Incomplete streams:** interrupted runs / started runs.
+2. **Recovery success:** interrupted runs that subsequently reach a terminal state
+   without a second tool request / interrupted runs.
+3. **Forced session termination:** sessions with an interruption followed by a
+   terminal session closure without a user cancellation / interrupted sessions.
+4. **Internal-error exposure:** user-visible messages matching internal diagnostic
+   vocabulary (`BearWire`, frame/event counts, server version, or git SHA) / visible
+   interruption markers. This must be zero.
+
+### Staged rollout and rollback
+
+1. Deploy to the existing smallest production cohort. Run one controlled
+   tool-bearing interruption and verify that its pending obligation remains answerable
+   and that a retry resumes the same run without a duplicate tool request or assistant
+   message.
+2. After at least 30 minutes and 20 BearWire runs (whichever is later), expand only
+   if internal-error exposure and forced session termination are both zero, and neither
+   incomplete-stream rate nor failed-recovery rate exceeds its baseline by more than
+   1 percentage point. If the baseline has fewer than 20 samples, keep the cohort in
+   place until it does.
+3. Repeat that check at the existing broader cohort and again after full rollout.
+   Keep the event query and the controlled-run IDs with the release record.
+
+Halt expansion and use the existing deployment rollback control to restore the prior
+image if either zero-tolerance signal is non-zero, a rate crosses the 1-point limit,
+or the controlled verification duplicates output/tool execution or leaves a pending
+tool call unanswerable. Do not delete the affected run or conversation during
+rollback: preserve it for reconciliation and incident review.
+
+Post-release, sample every interrupted run from the first hour (or the first 20, if
+more) and confirm its pending tool-call state, subsequent terminal state, and absence
+of duplicate persisted assistant content. The event records intentionally contain tool
+IDs/states but not tool arguments, so this verification remains safe for operator use.
