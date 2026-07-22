@@ -6,6 +6,58 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Exact DNS names a work-surface owner has approved for outbound HTTPS.
+///
+/// This is deliberately neither a URL nor a pattern: ports, IP literals,
+/// wildcards, and trailing-dot aliases are rejected at the protocol boundary.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct AllowedOutboundHosts(Vec<String>);
+
+impl AllowedOutboundHosts {
+    pub fn new(hosts: Vec<String>) -> Result<Self, String> {
+        let mut normalized = Vec::with_capacity(hosts.len());
+        for host in hosts {
+            let host = host.trim().to_ascii_lowercase();
+            if !is_exact_hostname(&host) {
+                return Err(format!("allowed outbound host must be an exact DNS hostname: {host:?}"));
+            }
+            if !normalized.contains(&host) {
+                normalized.push(host);
+            }
+        }
+        Ok(Self(normalized))
+    }
+
+    pub fn as_slice(&self) -> &[String] {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<'de> Deserialize<'de> for AllowedOutboundHosts {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::new(Vec::<String>::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+fn is_exact_hostname(host: &str) -> bool {
+    !host.is_empty()
+        && host.len() <= 253
+        && !host.ends_with('.')
+        && host.parse::<std::net::IpAddr>().is_err()
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+}
+
 /// Execution boundary type. Only [`SandboxType::Container`] is implemented;
 /// the rest exist so requests name their intent explicitly and get an explicit
 /// "unimplemented" error instead of a silently different boundary.
@@ -365,6 +417,9 @@ pub struct ManagedSurface {
     /// Catalog image name this surface's sandboxes default to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_image: Option<String>,
+    /// Owner-approved destinations. Empty deliberately means no egress.
+    #[serde(default, skip_serializing_if = "AllowedOutboundHosts::is_empty")]
+    pub allowed_outbound_hosts: AllowedOutboundHosts,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<ManagedCredential>,
 }
@@ -430,6 +485,29 @@ mod managed_config_tests {
             err.to_string().contains("unknown field"),
             "unexpected serde error: {err}"
         );
+    }
+
+    #[test]
+    fn allowed_outbound_hosts_normalizes_and_rejects_non_hostnames() {
+        let hosts = AllowedOutboundHosts::new(vec![
+            " INDEX.CRATES.IO ".to_string(),
+            "index.crates.io".to_string(),
+            "static.crates.io".to_string(),
+        ])
+        .expect("valid hosts");
+        assert_eq!(hosts.as_slice(), ["index.crates.io", "static.crates.io"]);
+
+        for invalid in [
+            "https://example.com",
+            "*.example.com",
+            "127.0.0.1",
+            "example.com:443",
+        ] {
+            assert!(
+                AllowedOutboundHosts::new(vec![invalid.to_string()]).is_err(),
+                "{invalid}"
+            );
+        }
     }
 }
 

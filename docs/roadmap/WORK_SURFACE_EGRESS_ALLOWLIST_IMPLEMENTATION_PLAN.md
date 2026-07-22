@@ -1,6 +1,6 @@
 # Work-surface egress allowlist implementation plan
 
-**Status:** Planned  
+**Status:** In progress — surface persistence and typed provider configuration are implemented; sandbox DNS/HTTPS enforcement and setup UI remain.
 **Decision:** [ADR-0037 — Work sandbox, egress gateway, and multi-identity upstream auth](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md#51-surface-owned-outbound-host-allowlist)
 
 ## Goal
@@ -9,7 +9,16 @@ Let a managed work surface explicitly permit outbound HTTPS to a small set of ho
 
 The immediate user-visible outcome is that a Rust surface can accept `index.crates.io` and `static.crates.io`, allowing Cargo dependency resolution without granting general Internet access. A surface can also add a specific integration host such as `api.staging.example.com`.
 
-## Non-goals
+## Current implementation boundary
+
+The first slice is present in Den:
+
+- `work_surfaces.allowed_outbound_hosts` persists the surface-owned list, defaulting to empty (deny egress);
+- `AllowedOutboundHosts` normalizes and validates exact hostname inputs at the service/protocol boundary;
+- the managed provider configuration carries the validated list and includes it in its configuration hash.
+
+This does **not** itself grant DNS or network access. The sandbox runner must consume the field and provide a controlled resolver plus HTTPS gateway enforcement before an allowed hostname is reachable. Until then, sandbox network isolation remains the actual enforcement and Cargo will still fail to resolve `index.crates.io`.
+
 
 - General Internet access, URL allowlists, wildcard domains, CIDRs/IP ranges, arbitrary ports, or access to private/control-plane networks.
 - Egress profiles, profile versioning, reusable grant objects, or per-run exception workflows.
@@ -26,10 +35,10 @@ Validate every stored hostname at the trust boundary:
 
 - lowercase canonical DNS hostname only;
 - no scheme, path, query, fragment, userinfo, port, wildcard, or IP literal;
-- reject loopback, link-local, private, and provider/control-plane names;
+- reject loopback, link-local, private, and provider/control-plane names **at resolution/enforcement time**, because a hostname alone does not reveal its resolved address;
 - de-duplicate while preserving a predictable display order.
 
-Use a single `Vec<Hostname>`-style value in application code. Do not introduce profile or grant tables. Add a migration self-check or focused repository test covering empty defaults, accepted Cargo hosts, and rejected URL/IP/wildcard inputs.
+Use a single `Vec<Hostname>`-style value in application code. Do not introduce profile or grant tables. Add a migration self-check or focused repository test covering empty defaults, normalized accepted Cargo hosts, and rejected URL/IP/wildcard inputs. **Implemented for protocol validation; add the database migration case when migration tests are available.**
 
 ### 2. Surface create/read/update API and UI
 
@@ -41,19 +50,20 @@ Authorize edits using the existing surface owner/manager rules and emit the norm
 
 ### 3. Freeze and dispatch the policy
 
-At work-run dispatch, load the surface's saved list and place it in the typed sandbox/gateway session request. Persist either the exact resolved list or a surface-policy revision on the workspace/run record so the dispatch can be audited and reproduced. Existing running sessions keep their resolved policy; surface changes affect only later sessions.
+At work-run dispatch, load the surface's saved list and place it in the typed sandbox/gateway session request. The managed provider configuration already carries the field; add the dispatch/run-level snapshot so a later surface edit cannot affect a queued or active run. Persist either the exact resolved list or a surface-policy revision on the workspace/run record so the dispatch can be audited and reproduced. Existing running sessions keep their resolved policy; surface changes affect only later sessions.
 
 Fail closed if the surface cannot be loaded or its policy is malformed. An empty list remains valid and means no network egress. Include the resolved host count (not credentials or full request URLs) in run telemetry and recap diagnostics.
 
 ### 4. Enforce at the paired gateway
 
-Make the workspace peer use only the paired gateway for DNS and outbound HTTPS. The gateway must:
+Make the workspace peer use only the paired gateway for DNS and outbound HTTPS; **DNS must be explicitly provided to the sandbox through that controlled resolver, not merely unblocked.** The gateway must:
 
-1. resolve only exact allowed names through its controlled resolver;
-2. allow TCP/TLS only for resolution results associated with the requested allowed hostname on port 443;
-3. reject direct IP connections, hostname aliases not on the list, and all other outbound protocols/ports;
-4. re-check the hostname/SNI/HTTP authority as applicable before forwarding;
-5. preserve the existing credential-injection rules as an independent, narrower authorization layer.
+1. expose a sandbox DNS resolver (for example, via the sandbox's `resolv.conf`) that answers only exact allowed names, forwards those queries through the gateway's controlled resolver, and returns denial/NXDOMAIN for all others;
+2. resolve each allowed name through that controlled resolver and reject loopback, link-local, private, multicast, link-local IPv6, and provider/control-plane destination addresses;
+3. allow TCP/TLS only for resolution results associated with the requested allowed hostname on port 443;
+4. reject direct IP connections, hostname aliases not on the list, and all other outbound protocols/ports;
+5. re-check the hostname/SNI/HTTP authority as applicable before forwarding, binding the connection to the checked DNS answer to prevent DNS rebinding;
+6. preserve the existing credential-injection rules as an independent, narrower authorization layer.
 
 Test both the intended Cargo path and denial cases: an empty list, an unlisted hostname, direct IP egress, a non-443 port, and a hostname resolving to a prohibited address. Add the smallest runner/gateway integration check that proves an allowed host resolves/connects while an unlisted host does not.
 
@@ -76,7 +86,7 @@ Test both the intended Cargo path and denial cases: an empty list, an unlisted h
 
 ## Acceptance criteria
 
-- A new surface with no accepted hosts has no DNS or outbound network access.
+- A new surface with no accepted hosts has no DNS answers and no outbound network access.
 - The Rust image offers, but does not silently grant, `index.crates.io` and `static.crates.io`.
 - A manager can add `api.staging.example.com` on the same surface list; it is enforced as HTTPS/443 only.
 - An image catalog change cannot change an existing surface's egress policy.
