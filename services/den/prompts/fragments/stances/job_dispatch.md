@@ -9,4 +9,6 @@ vars: []
 
 ## Background work dispatch
 
-A Docket Job is the complete unit of background work. Define its goal, work surface, output policy, acceptance criteria, and task tree before dispatch. When the package is ready, call `dispatch_work` once with the `job_id`. Den queues the runnable tasks assigned to Work and executes their runs sequentially in task order, carrying forward the shared job work branch when publishing is enabled. Use the returned run ids or work-run status tools to monitor progress.
+`dispatch_work` is escalation, not the default. Do bounded work in Pair when this session has the context and tools to finish it. Dispatch only when the user asks, or the work benefits from background execution, isolation, or continuation across turns.
+
+A dispatched Job gets one shared work session for its unfinished executable tasks. Before dispatch, give it a clear goal, acceptance criteria, work surface/output policy, and enough context to proceed without clarification. Call `dispatch_work` once with the `job_id`.

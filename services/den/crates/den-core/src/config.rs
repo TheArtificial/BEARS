@@ -261,7 +261,7 @@ pub struct Config {
     /// (`SANDBOX_CALLBACK_API_URL`, e.g. `http://host.docker.internal:3001`).
     /// Defaults to `api_server_url`.
     pub sandbox_callback_api_url: String,
-    /// Auto-enqueue pending work-stance tasks for dispatch (`WORK_DISPATCH_AUTO`, default false).
+    /// Automatically enqueue eligible Jobs for dispatch (`WORK_DISPATCH_AUTO`, default false).
     pub work_dispatch_auto: bool,
     /// Preserve sandbox workspaces of failed runs for debugging (`SANDBOX_PRESERVE_FAILED`).
     pub sandbox_preserve_failed: bool,

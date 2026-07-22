@@ -577,7 +577,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_CREATE,
             "Create job",
-            "Create a durable Docket job with acceptance criteria and an optional initial task tree. Explicit Jobs are user-visible work containers for distinct objectives with their own lifecycle, focus, delegation, work surface, commit policy, or execution tracking; for pair conversation-scoped plans or checklists, prefer the implied conversation objective instead. Every initial task requires concrete completion_criteria so execution has a stopping condition. Does not execute the job; execution flows through Bear runtime dispatch.",
+            "Create a durable Docket job with acceptance criteria and an optional initial task tree. Use Jobs for distinct objectives needing their own lifecycle, work surface, commit policy, execution tracking, or background work; do not create one for a small change that Pair can finish here. For pair conversation-scoped plans or checklists, prefer the implied conversation objective. Every initial task requires concrete completion_criteria. Creating a Job does not execute or dispatch it.",
             "bear.docket",
             &["docket.job.write"],
             CHAT_AND_PAIR_PROFILES,
@@ -613,7 +613,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_EXECUTE,
             "Execute Docket job",
-            "First-pass pair execution: start or advance a Docket job by selecting the next pending task to work in this session. This records job/run/task state only. Use dispatch_work to queue autonomous sandbox execution for the job.",
+            "Start or advance a Docket job in this Pair session. This records job/run/task state; continue bounded work here when context and tools suffice. Use dispatch_work only for a ready job that should run in a background sandbox.",
             "bear.docket",
             &["docket.job.execute"],
             PAIR_PROFILES,
