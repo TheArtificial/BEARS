@@ -68,11 +68,21 @@
 </p>
 {% endif %}
 
+{% if attention_run %}
+<section>
+    <h2>Work needs attention</h2>
+    <p><strong>{{ attention_run.state }}</strong>: {{ attention_run.result_summary or attention_run.error or "The work run ended before all tasks were complete." }}</p>
+    <p><a href="/work/runs/{{ attention_run.id }}">Inspect run {{ attention_run.id[:8] }}…</a>. Unfinished tasks remain pending unless the worker explicitly marked a task blocked.</p>
+</section>
+{% endif %}
+
 {% if status not in ["completed", "cancelled"] %}
 <section>
     <h2>Dispatch job</h2>
-    <p>Queues one sandbox run for this job's pending or blocked Work tasks. The tasks run within that shared job session.</p>
-    {% if has_runnable_work %}
+    <p>Queues one sandbox run for this job's pending or blocked tasks. The tasks run within that shared job session.</p>
+    {% if has_active_work_run %}
+    <p><button type="button" disabled>Dispatch job</button> A job work session is already active. <a href="/work/runs/{{ active_work_run_id }}">Inspect the active run</a>.</p>
+    {% elif has_runnable_work %}
     <form method="post" action="/work/jobs/{{ job_id }}/dispatch">
         {% if work_surface_ref %}
         <p>Using job work surface <code>{{ work_surface_ref }}</code>.</p>
@@ -91,7 +101,7 @@
         <button type="submit">Dispatch job</button>
     </form>
     {% else %}
-    <p><button type="button" disabled>Dispatch job</button> No pending or blocked Work tasks are currently runnable. Extend the job with another Work task, or inspect active/completed runs below.</p>
+    <p><button type="button" disabled>Dispatch job</button> No pending or blocked tasks are currently runnable. Extend the job with another task, or inspect active/completed runs below.</p>
     {% endif %}
 </section>
 {% endif %}

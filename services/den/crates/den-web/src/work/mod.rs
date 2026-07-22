@@ -1011,6 +1011,10 @@ async fn job_detail(
             Some("pending" | "blocked")
         )
     });
+    let active_work_run = run_views.iter().find(|run| run.is_active);
+    let attention_run = run_views
+        .iter()
+        .find(|run| matches!(run.state.as_str(), "blocked" | "failed" | "timed_out"));
     let status_report = den_docket::docket_job_status_report(&projection);
     let available_surfaces =
         den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[bear_id]).await?;
@@ -1051,6 +1055,9 @@ async fn job_detail(
             criteria_complete => status_report.criteria_complete,
             next_action => status_report.next_action,
             has_runnable_work => has_runnable_work,
+            has_active_work_run => active_work_run.is_some(),
+            active_work_run_id => active_work_run.map(|run| run.id.clone()),
+            attention_run => attention_run,
         },
     )
     .await

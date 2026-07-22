@@ -494,7 +494,7 @@ fn work_run_outcome_summary(
 
     let status = task_status.unwrap_or("pending");
     let blocked = format!(
-        "turn completed, but the model did not mark the Docket task done (task run status: {status})"
+        "turn completed with unfinished job tasks (task run status: {status}); unfinished tasks remain pending"
     );
     match armature_summary {
         Some(summary) if !summary.trim().is_empty() => {
@@ -620,28 +620,6 @@ async fn harvest_run(
         "publish_failed": publish_failed,
     });
 
-    let service = PgDocketService::from_pool(pool);
-    if !succeeded {
-        for (task_id, status) in &task_statuses {
-            if status == "done" {
-                continue;
-            }
-            if let Err(err) = service
-                .record_task_blocked(
-                    run.bear_id,
-                    *task_id,
-                    run.job_run_id,
-                    summary.clone(),
-                    Some(refs.clone()),
-                    Some("work-dispatch".to_string()),
-                )
-                .await
-            {
-                tracing::warn!(error = %err, work_run_id = %run.id, %task_id, "work_dispatch: docket outcome record failed");
-            }
-        }
-    }
-
     if let Some(session_id) = run.bearwire_session_id.as_deref() {
         let _ = work_runs::close_work_execution_session(pool, run.bear_id, session_id).await;
     }
@@ -680,26 +658,6 @@ async fn cancel_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient,
     teardown_sandbox(pool, config, client, run, false).await;
     if let Some(session_id) = run.bearwire_session_id.as_deref() {
         let _ = work_runs::close_work_execution_session(pool, run.bear_id, session_id).await;
-    }
-    let service = PgDocketService::from_pool(pool);
-    for (task_id, status) in
-        work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
-            .await
-            .unwrap_or_default()
-    {
-        if status == "done" {
-            continue;
-        }
-        let _ = service
-            .record_task_blocked(
-                run.bear_id,
-                task_id,
-                run.job_run_id,
-                "work run cancelled by operator".to_string(),
-                None,
-                Some("work-dispatch".to_string()),
-            )
-            .await;
     }
     let _ = work_runs::finalize_work_run(
         pool,
@@ -864,7 +822,8 @@ mod tests {
             Some("in_progress"),
         );
 
-        assert!(summary.contains("did not mark the Docket task done"));
+        assert!(summary.contains("unfinished job tasks"));
+        assert!(summary.contains("unfinished tasks remain pending"));
         assert!(summary.contains("task run status: in_progress"));
         assert!(summary.contains("armature: headless turn reached"));
     }
