@@ -267,6 +267,10 @@ struct NewSurfaceForm {
     default_ref: String,
     #[serde(default)]
     default_image: String,
+    /// One exact hostname per line. The service owns validation and
+    /// normalization so this form deliberately does not duplicate it.
+    #[serde(default)]
+    allowed_outbound_hosts: String,
     #[serde(default)]
     credential_kind: String,
     #[serde(default)]
@@ -284,6 +288,15 @@ fn clean(value: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+fn outbound_hosts_from_form(value: &str) -> Vec<String> {
+    value
+        .lines()
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn credential_from_form(kind: &str, value: &str) -> Result<Option<(String, String)>, CustomError> {
@@ -332,6 +345,7 @@ async fn create(
             upstream_url: form.upstream_url.trim().to_string(),
             default_ref: clean(&form.default_ref).unwrap_or_else(|| "main".to_string()),
             default_image: clean(&form.default_image),
+            allowed_outbound_hosts: outbound_hosts_from_form(&form.allowed_outbound_hosts),
             credential,
         },
         &state.config.den_secret_encryption_key,
@@ -452,6 +466,7 @@ async fn detail(
             upstream_url => surface.upstream_url,
             default_ref => surface.default_ref,
             default_image => surface.default_image,
+            allowed_outbound_hosts => surface.allowed_outbound_hosts.join("\n"),
             credential_kind => surface.credential_kind,
             managers => managers,
             assigned_bears => assigned,
@@ -473,6 +488,8 @@ struct UpdateSurfaceForm {
     default_ref: String,
     #[serde(default)]
     default_image: String,
+    #[serde(default)]
+    allowed_outbound_hosts: String,
 }
 
 async fn update(
@@ -490,6 +507,7 @@ async fn update(
             upstream_url: clean(&form.upstream_url),
             default_ref: clean(&form.default_ref),
             default_image: Some(clean(&form.default_image)),
+            allowed_outbound_hosts: Some(outbound_hosts_from_form(&form.allowed_outbound_hosts)),
         },
     )
     .await?;
