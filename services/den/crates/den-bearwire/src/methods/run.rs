@@ -129,6 +129,10 @@ async fn bear_display_name(pool: &sqlx::PgPool, bear_id: uuid::Uuid) -> String {
         .unwrap_or_else(|| "The bear".to_string())
 }
 
+fn initial_stream_interruption_message() -> &'static str {
+    "Den lost the model connection before the response finished. Your conversation and completed tool results were preserved. Send another message to retry."
+}
+
 async fn persist_visible_runtime_marker(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -2141,10 +2145,7 @@ pub(crate) async fn run_start_result(
                         bear_id,
                         user_id,
                         "initial_stream_interrupted",
-                        format!(
-                            "{} was interrupted before finishing. Your conversation and completed tool results were preserved. Send another message to retry.",
-                            bear_display_name(&pool, bear_id).await
-                        ),
+                        initial_stream_interruption_message().to_string(),
                         detail,
                     )
                     .await;
@@ -2450,6 +2451,16 @@ mod tests {
             RunFailureReason::ContinuationStartFailed.as_str(),
             "continuation_start_failed"
         );
+    }
+
+    #[test]
+    fn initial_stream_interruption_message_is_den_branded_and_safe() {
+        let message = initial_stream_interruption_message();
+        assert!(message.starts_with("Den "));
+        assert!(message.contains("preserved"));
+        assert!(!message.contains("BearWire"));
+        assert!(!message.contains("frames="));
+        assert!(!message.contains("version="));
     }
 
     #[test]
