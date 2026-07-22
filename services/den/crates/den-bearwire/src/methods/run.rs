@@ -603,10 +603,44 @@ pub(crate) async fn persist_run_progress(
     }
 }
 
-fn initial_stream_eof_is_recoverable(
-    terminal_or_wait_seen: bool,
-    cancellation_seen: bool,
-) -> bool {
+async fn incomplete_stream_pending_tools(pool: &sqlx::PgPool, run_id: &str) -> Vec<Value> {
+    // Diagnostics deliberately retain only IDs and lifecycle state, never tool arguments.
+    sqlx::query(
+        r#"
+        SELECT tool_call_id, state
+        FROM turn_obligations
+        WHERE run_id = $1
+          AND tool_call_id IS NOT NULL
+          AND state IN ('requested', 'waiting_for_client')
+        ORDER BY created_at ASC, id ASC
+        "#,
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .map(|rows| {
+        rows.into_iter()
+            .map(|row| {
+                json!({
+                    "id": row.get::<String, _>("tool_call_id"),
+                    "state": row.get::<String, _>("state"),
+                })
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn runtime_event_has_assistant_content(event: &den_protocol::RuntimeStreamEvent) -> bool {
+    matches!(
+        event,
+        den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::AssistantTextDelta { .. }
+        )
+    )
+}
+
+fn initial_stream_eof_is_recoverable(terminal_or_wait_seen: bool, cancellation_seen: bool) -> bool {
     // EOF is transport loss, not a run outcome. A terminal event or an answerable
     // client wait already supplies the durable boundary the client needs instead.
     !terminal_or_wait_seen && !cancellation_seen
@@ -1918,6 +1952,7 @@ pub(crate) async fn run_start_result(
                 let mut terminal_or_wait_seen = false;
                 let mut cancellation_seen = false;
                 let mut runtime_event_count = 0usize;
+                let mut assistant_content_seen = false;
                 let mut terminal_event_seen = false;
                 let mut wait_event_seen = false;
                 let mut last_event_kind: Option<&'static str> = None;
@@ -1990,6 +2025,7 @@ pub(crate) async fn run_start_result(
                                 }
                                 Ok(runtime_event) => {
                                     runtime_event_count += 1;
+                                    assistant_content_seen |= runtime_event_has_assistant_content(&runtime_event);
                                     last_event_kind = Some(runtime_event_kind(&runtime_event));
                                     match runtime_stream_boundary(&runtime_event) {
                                         RuntimeStreamBoundary::Terminal => terminal_event_seen = true,
@@ -2070,14 +2106,19 @@ pub(crate) async fn run_start_result(
                         Some("initial_stream_interrupted"),
                     )
                     .await;
+                    let pending_tool_calls =
+                        incomplete_stream_pending_tools(&pool, &run_id_for_task).await;
                     let detail = json!({
                         "request_id": request_id,
+                        "final_run_state": "running",
                         "first_event_seen": first_event_seen,
                         "provider_activity_seen": provider_activity_seen,
+                        "assistant_content_seen": assistant_content_seen,
                         "runtime_event_count": runtime_event_count,
                         "terminal_event_seen": terminal_event_seen,
                         "wait_event_seen": wait_event_seen,
                         "last_event_kind": last_event_kind,
+                        "pending_tool_calls": pending_tool_calls,
                         "recovery_attempted": false,
                         "recovery_outcome": "retryable_from_persisted_state",
                     });
@@ -2409,6 +2450,22 @@ mod tests {
             RunFailureReason::ContinuationStartFailed.as_str(),
             "continuation_start_failed"
         );
+    }
+
+    #[test]
+    fn assistant_content_tracking_excludes_status_and_tool_events() {
+        use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+
+        assert!(runtime_event_has_assistant_content(
+            &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
+                text: "hello".to_string(),
+            })
+        ));
+        assert!(!runtime_event_has_assistant_content(
+            &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
+                text: "working".to_string(),
+            })
+        ));
     }
 
     #[test]
