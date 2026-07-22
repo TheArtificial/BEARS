@@ -162,6 +162,7 @@ pub fn apply(
                 credential,
             }),
             default_image: surface.default_image.clone(),
+            allowed_outbound_hosts: surface.allowed_outbound_hosts.as_slice().to_vec(),
         });
     }
 

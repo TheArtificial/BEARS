@@ -1,6 +1,6 @@
 # Work-surface egress allowlist implementation plan
 
-**Status:** In progress — surface persistence and typed provider configuration are implemented; sandbox DNS/HTTPS enforcement and setup UI remain.
+**Status:** In progress — surface persistence, typed provider configuration, and provider-side HTTPS relay enforcement are implemented; dispatch snapshots and setup UI remain.
 **Decision:** [ADR-0037 — Work sandbox, egress gateway, and multi-identity upstream auth](../decisions/adr-0037-work-sandbox-egress-gateway-and-upstream-auth.md#51-surface-owned-outbound-host-allowlist)
 
 ## Goal
@@ -15,10 +15,10 @@ The first slice is present in Den:
 
 - `work_surfaces.allowed_outbound_hosts` persists the surface-owned list, defaulting to empty (deny egress);
 - `AllowedOutboundHosts` normalizes and validates exact hostname inputs at the service/protocol boundary;
-- the managed provider configuration carries the validated list and includes it in its configuration hash.
+- the managed provider configuration carries the validated list and includes it in its configuration hash;
+- restricted Docker sandboxes receive one internal-network DNS alias per allowed hostname, backed by a paired TCP relay that can connect only to that hostname on HTTPS/443. Unlisted names have no internal DNS answer or route.
 
-This does **not** itself grant DNS or network access. The sandbox runner must consume the field and provide a controlled resolver plus HTTPS gateway enforcement before an allowed hostname is reachable. Until then, sandbox network isolation remains the actual enforcement and Cargo will still fail to resolve `index.crates.io`.
-
+This does **not** yet create a dedicated DNS service: Docker's internal network DNS supplies aliases for the explicitly allowed names. The relay resolves its target outside the internal sandbox network; a later gateway hardening slice must reject unsafe resolved addresses and bind TLS/SNI to the approved authority. Until then, the provided route is exact-host/443 but does not meet the full rebinding/private-address defense described below.
 
 - General Internet access, URL allowlists, wildcard domains, CIDRs/IP ranges, arbitrary ports, or access to private/control-plane networks.
 - Egress profiles, profile versioning, reusable grant objects, or per-run exception workflows.

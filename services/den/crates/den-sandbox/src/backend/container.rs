@@ -142,41 +142,100 @@ impl DockerCliBackend {
             detail,
         })?;
         if let Some(target) = target {
-            let relay = relay_container_name(&spec.id);
-            let out = self
-                .docker_owned(
-                    &relay_run_args(&relay, &spec.id, &spec.image, &target, add_host),
-                    None,
-                )
+            self.start_relay(
+                &network,
+                spec,
+                &target,
+                &relay_container_name(&spec.id),
+                None,
+                add_host,
+            )
+            .await?;
+            env.insert(
+                "DEN_API_URL".to_string(),
+                target.rewritten_url(&relay_container_name(&spec.id)),
+            );
+        }
+        for (index, host) in spec.allowed_outbound_hosts.iter().enumerate() {
+            let relay = egress_relay_container_name(&spec.id, index);
+            let target = RelayTarget {
+                host: host.clone(),
+                port: 443,
+                path: String::new(),
+            };
+            self.start_relay(&network, spec, &target, &relay, Some(host), None)
                 .await?;
-            if !out.success() {
-                return Err(BackendError::Operation {
-                    id: spec.id.clone(),
-                    detail: format!("relay start failed: {}", out.stderr_lossy().trim()),
-                });
-            }
-            let out = self
-                .docker(&["network", "connect", &network, &relay], None)
-                .await?;
-            if !out.success() {
-                return Err(BackendError::Operation {
-                    id: spec.id.clone(),
-                    detail: format!(
-                        "relay network connect failed: {}",
-                        out.stderr_lossy().trim()
-                    ),
-                });
-            }
-            env.insert("DEN_API_URL".to_string(), target.rewritten_url(&relay));
         }
         Ok(network)
+    }
+
+    /// A relay is the only container with an external network attachment.
+    /// The sandbox sees it only under the approved hostname, so its normal DNS
+    /// resolver remains usable without exposing arbitrary name resolution.
+    async fn start_relay(
+        &self,
+        network: &str,
+        spec: &ProvisionSpec,
+        target: &RelayTarget,
+        relay: &str,
+        alias: Option<&str>,
+        add_host: Option<&str>,
+    ) -> Result<(), BackendError> {
+        let out = self
+            .docker_owned(
+                &relay_run_args(relay, &spec.id, &spec.image, target, add_host),
+                None,
+            )
+            .await?;
+        if !out.success() {
+            return Err(BackendError::Operation {
+                id: spec.id.clone(),
+                detail: format!("relay start failed: {}", out.stderr_lossy().trim()),
+            });
+        }
+        let mut args = vec!["network".to_string(), "connect".to_string()];
+        if let Some(alias) = alias {
+            args.extend(["--alias".to_string(), alias.to_string()]);
+        }
+        args.extend([network.to_string(), relay.to_string()]);
+        let out = self.docker_owned(&args, None).await?;
+        if !out.success() {
+            return Err(BackendError::Operation {
+                id: spec.id.clone(),
+                detail: format!(
+                    "relay network connect failed: {}",
+                    out.stderr_lossy().trim()
+                ),
+            });
+        }
+        Ok(())
     }
 
     /// Best-effort removal of the per-sandbox relay container and network.
     /// Safe to call for open-mode sandboxes (both removals no-op on missing).
     async fn cleanup_network_resources(&self, id: &str) {
-        let relay = relay_container_name(id);
-        let _ = self.docker(&["rm", "-f", &relay], None).await;
+        let relays = self
+            .docker(
+                &[
+                    "ps",
+                    "-aq",
+                    "--filter",
+                    &format!("label={RELAY_LABEL}={id}"),
+                ],
+                None,
+            )
+            .await
+            .ok()
+            .map(|out| {
+                out.stdout_lossy()
+                    .lines()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for relay in relays {
+            let _ = self.docker(&["rm", "-f", &relay], None).await;
+        }
         let network = network_name(id);
         let _ = self.docker(&["network", "rm", &network], None).await;
     }
@@ -422,6 +481,10 @@ pub fn relay_container_name(id: &str) -> String {
     format!("den-sbx-gw-{id}")
 }
 
+fn egress_relay_container_name(id: &str, index: usize) -> String {
+    format!("den-sbx-egress-{id}-{index}")
+}
+
 /// Where the egress relay forwards to, parsed from the sandbox's Den
 /// callback URL.
 #[derive(Debug, PartialEq, Eq)]
@@ -625,6 +688,7 @@ mod tests {
             image: "bears/sandbox:latest".into(),
             env: BTreeMap::new(),
             network,
+            allowed_outbound_hosts: Vec::new(),
             memory_mb: None,
             cpus: None,
             pids: None,
@@ -695,6 +759,29 @@ mod tests {
             "https://den.example.com".to_string(),
         );
         assert!(relay_target_from_env(&env).is_err());
+    }
+
+    #[test]
+    fn allowed_egress_uses_an_internal_dns_alias_and_https_only_relay() {
+        let target = RelayTarget {
+            host: "index.crates.io".into(),
+            port: 443,
+            path: String::new(),
+        };
+        let args = relay_run_args(
+            "den-sbx-egress-abc123-0",
+            "abc123",
+            "bears/sandbox:latest",
+            &target,
+            None,
+        );
+        let joined = args.join(" ");
+        assert!(joined.contains("TCP-LISTEN:443,fork,reuseaddr"), "{joined}");
+        assert!(joined.contains("TCP:index.crates.io:443"), "{joined}");
+        assert_eq!(
+            egress_relay_container_name("abc123", 0),
+            "den-sbx-egress-abc123-0"
+        );
     }
 
     #[test]

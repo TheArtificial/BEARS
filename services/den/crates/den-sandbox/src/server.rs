@@ -852,6 +852,7 @@ async fn provision(
         image,
         env: request.env.clone(),
         network: request.network,
+        allowed_outbound_hosts: root.allowed_outbound_hosts.clone(),
         memory_mb: request.limits.memory_mb,
         cpus: request.limits.cpus,
         pids: request.limits.pids,
@@ -1589,7 +1590,7 @@ mod tests {
                     {"name": "rust", "image": "bears/sandbox-rust:latest"}
                 ],
                 "roots": [
-                    {"name": "scratch", "path": source.to_string_lossy(), "default_image": "rust"}
+                    {"name": "scratch", "path": source.to_string_lossy(), "default_image": "rust", "allowed_outbound_hosts": []}
                 ]
             })
             .to_string(),
@@ -1699,6 +1700,7 @@ mod tests {
     async fn managed_config_push_updates_catalog_and_status() {
         let config = test_config("");
         let workspaces_dir = config.workspaces_dir.clone();
+        std::fs::create_dir_all(&workspaces_dir).unwrap();
         let app = create_sandbox_app(config).unwrap();
 
         // Nothing pushed yet.

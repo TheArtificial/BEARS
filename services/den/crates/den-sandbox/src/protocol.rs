@@ -20,7 +20,9 @@ impl AllowedOutboundHosts {
         for host in hosts {
             let host = host.trim().to_ascii_lowercase();
             if !is_exact_hostname(&host) {
-                return Err(format!("allowed outbound host must be an exact DNS hostname: {host:?}"));
+                return Err(format!(
+                    "allowed outbound host must be an exact DNS hostname: {host:?}"
+                ));
             }
             if !normalized.contains(&host) {
                 normalized.push(host);
@@ -54,7 +56,9 @@ fn is_exact_hostname(host: &str) -> bool {
                 && label.len() <= 63
                 && !label.starts_with('-')
                 && !label.ends_with('-')
-                && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         })
 }
 

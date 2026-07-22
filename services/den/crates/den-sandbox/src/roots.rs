@@ -84,6 +84,9 @@ pub struct SyncableRoot {
     /// Catalog image name this root's sandboxes default to.
     #[serde(default)]
     pub default_image: Option<String>,
+    /// Exact HTTPS hosts this root's restricted sandboxes may reach.
+    #[serde(default)]
+    pub allowed_outbound_hosts: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -144,6 +147,7 @@ impl RootsManager {
                 path: Some(scratch_path.to_string_lossy().into_owned()),
                 upstream: None,
                 default_image: None,
+                allowed_outbound_hosts: Vec::new(),
             },
         );
     }
@@ -828,6 +832,7 @@ mod tests {
                 }),
             }),
             default_image: None,
+            allowed_outbound_hosts: Vec::new(),
         };
         let upstream = root.upstream.as_ref().unwrap();
         let env = credential_env(&root, upstream).unwrap();
@@ -901,6 +906,7 @@ mod tests {
             path: Some("/srv/x".to_string()),
             upstream: None,
             default_image: None,
+            allowed_outbound_hosts: Vec::new(),
         }
     }
 
@@ -1016,6 +1022,7 @@ mod tests {
                 credential: None,
             }),
             default_image: None,
+            allowed_outbound_hosts: Vec::new(),
         };
         let manager = RootsManager {
             roots: std::iter::once(("fixture".to_string(), root.clone())).collect(),
