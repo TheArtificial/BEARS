@@ -1910,6 +1910,10 @@ pub(crate) async fn run_start_result(
                 let mut provider_activity_seen = false;
                 let mut terminal_or_wait_seen = false;
                 let mut cancellation_seen = false;
+                let mut runtime_event_count = 0usize;
+                let mut terminal_event_seen = false;
+                let mut wait_event_seen = false;
+                let mut last_event_kind: Option<&'static str> = None;
                 let idle_watchdog_timeout = crate::methods::client::continuation_watchdog_timeout();
                 let handshake_timeout = den_runtime::agent_loop::native_llm_handshake_timeout();
                 let first_event_watchdog_timeout =
@@ -1978,6 +1982,13 @@ pub(crate) async fn run_start_result(
                                     continue;
                                 }
                                 Ok(runtime_event) => {
+                                    runtime_event_count += 1;
+                                    last_event_kind = Some(runtime_event_kind(&runtime_event));
+                                    match runtime_stream_boundary(&runtime_event) {
+                                        RuntimeStreamBoundary::Terminal => terminal_event_seen = true,
+                                        RuntimeStreamBoundary::ClientWait => wait_event_seen = true,
+                                        RuntimeStreamBoundary::Continue => {}
+                                    }
                                     if runtime_event_is_terminal_or_wait(&runtime_event) {
                                         terminal_or_wait_seen = true;
                                     }
@@ -2058,6 +2069,13 @@ pub(crate) async fn run_start_result(
                         Some(json!({
                             "request_id": request_id,
                             "first_event_seen": first_event_seen,
+                            "provider_activity_seen": provider_activity_seen,
+                            "runtime_event_count": runtime_event_count,
+                            "terminal_event_seen": terminal_event_seen,
+                            "wait_event_seen": wait_event_seen,
+                            "last_event_kind": last_event_kind,
+                            "recovery_attempted": false,
+                            "recovery_outcome": "unavailable_for_initial_stream",
                         })),
                     )
                     .await;

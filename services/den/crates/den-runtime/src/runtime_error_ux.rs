@@ -194,6 +194,12 @@ pub fn is_budget_or_loop_failure(reason: &str, message: &str) -> bool {
 }
 
 pub fn run_failed_user_message(reason: &str, message: &str, bear_name: &str) -> Option<String> {
+    if is_incomplete_stream(reason) {
+        return Some(format!(
+            "{} was interrupted before finishing. Your conversation and any completed tool results were preserved. Send another message to retry.",
+            display_bear_name(bear_name)
+        ));
+    }
     if is_budget_or_loop_failure(reason, message) {
         return Some(format!(
             "{} stopped this turn after it ran too long. Recent tool results were preserved, but no final answer was delivered. Start a fresh turn to continue safely.",
@@ -213,6 +219,14 @@ pub fn run_failed_user_message(reason: &str, message: &str, bear_name: &str) -> 
         ));
     }
     None
+}
+
+fn is_incomplete_stream(reason: &str) -> bool {
+    matches!(
+        reason,
+        "stream_ended_without_runtime_terminal"
+            | "continuation_stream_ended_without_runtime_terminal"
+    )
 }
 
 fn is_llm_provider_retry_exhausted(message: &str) -> bool {
@@ -525,6 +539,26 @@ mod tests {
             "wait_for_user_retry_after_reporting_stream_timeout"
         );
         assert_eq!(context["diagnostic"]["idle_timeout_seconds"], 30);
+    }
+
+    #[test]
+    fn incomplete_stream_has_safe_retry_message() {
+        let projection = run_failure_projection(
+            "stream_ended_without_runtime_terminal",
+            "The model stream ended after non-terminal runtime events.",
+            "run-1",
+            "Builder Bear",
+            Some(json!({
+                "runtime_event_count": 31,
+                "pending_tool_call_ids": ["tool-5"],
+            })),
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("interrupted before finishing"));
+        assert!(user_message.contains("Send another message to retry"));
+        assert!(!user_message.contains("runtime_event_count"));
+        assert!(projection.history_marker.is_some());
     }
 
     #[test]
