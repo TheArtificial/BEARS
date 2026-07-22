@@ -1263,15 +1263,22 @@ fn first_pending_leaf_in_plan_order<'a>(
     );
     let mut visited = HashSet::new();
     first_pending_leaf_in_children(None, &children, state_by_task, &mut visited)
+        .ok()
+        .flatten()
 }
 
+/// Returns the next pending leaf, or `Err` when earlier non-terminal work
+/// blocks advancement to later siblings.
 fn first_pending_leaf_in_children<'a>(
     parent_id: Option<Uuid>,
     children: &HashMap<Option<Uuid>, Vec<&'a DocketTaskRow>>,
     state_by_task: &HashMap<Uuid, &str>,
     visited: &mut HashSet<Uuid>,
-) -> Option<&'a DocketTaskRow> {
-    let mut siblings = children.get(&parent_id)?.clone();
+) -> Result<Option<&'a DocketTaskRow>, ()> {
+    let Some(siblings) = children.get(&parent_id) else {
+        return Ok(None);
+    };
+    let mut siblings = siblings.clone();
     siblings.sort_by_key(|task| (task.sibling_order, task.created_at));
 
     for task in siblings {
@@ -1279,19 +1286,21 @@ fn first_pending_leaf_in_children<'a>(
             continue;
         }
         if children.contains_key(&Some(task.id)) {
-            if let Some(next) =
-                first_pending_leaf_in_children(Some(task.id), children, state_by_task, visited)
-            {
-                return Some(next);
+            match first_pending_leaf_in_children(Some(task.id), children, state_by_task, visited) {
+                Ok(Some(next)) => return Ok(Some(next)),
+                Err(()) => return Err(()),
+                Ok(None) => continue,
             }
-            continue;
         }
-        let status = state_by_task.get(&task.id).copied().unwrap_or("pending");
-        if status == "pending" {
-            return Some(task);
+        match state_by_task.get(&task.id).copied().unwrap_or("pending") {
+            "done" | "cancelled" => continue,
+            "pending" => return Ok(Some(task)),
+            // An earlier in-progress or blocked leaf owns its place in the
+            // plan. Do not skip it to offer a later sibling.
+            _ => return Err(()),
         }
     }
-    None
+    Ok(None)
 }
 
 async fn mark_job_running(

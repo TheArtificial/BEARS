@@ -76,8 +76,9 @@ fn first_pending_leaves_in_plan_order(
     let mut selected = Vec::new();
     for job_id in jobs {
         let mut visited = HashSet::new();
-        if let Some(index) =
-            first_pending_leaf_for_parent(job_id, None, &tasks, &children, &mut visited)
+        if let Some(index) = first_pending_leaf_for_parent(job_id, None, &tasks, &children, &mut visited)
+            .ok()
+            .flatten()
         {
             selected.push(tasks[index].clone());
         }
@@ -91,8 +92,11 @@ fn first_pending_leaf_for_parent(
     tasks: &[DocketTaskProjection],
     children: &HashMap<(Option<Uuid>, Option<Uuid>), Vec<usize>>,
     visited: &mut HashSet<Uuid>,
-) -> Option<usize> {
-    let mut siblings = children.get(&(Some(job_id), parent_id))?.clone();
+) -> Result<Option<usize>, ()> {
+    let Some(siblings) = children.get(&(Some(job_id), parent_id)) else {
+        return Ok(None);
+    };
+    let mut siblings = siblings.clone();
     siblings.sort_by_key(|index| {
         let task = &tasks[*index].task;
         (task.sibling_order, task.created_at)
@@ -103,20 +107,23 @@ fn first_pending_leaf_for_parent(
             continue;
         }
         if children.contains_key(&(Some(job_id), Some(task.id))) {
-            if let Some(next) =
-                first_pending_leaf_for_parent(job_id, Some(task.id), tasks, children, visited)
-            {
-                return Some(next);
+            match first_pending_leaf_for_parent(job_id, Some(task.id), tasks, children, visited) {
+                Ok(Some(next)) => return Ok(Some(next)),
+                Err(()) => return Err(()),
+                Ok(None) => continue,
             }
-            continue;
         }
-        let status = tasks[index]
+        match tasks[index]
             .run_state
             .as_ref()
             .map(|state| state.status.as_str())
-            .unwrap_or("pending");
-        if status == "pending" {
-            return Some(index);
+            .unwrap_or("pending")
+        {
+            "done" | "cancelled" => continue,
+            "pending" => return Ok(Some(index)),
+            // Do not skip earlier claimed or blocked work to offer a later
+            // sibling in the same sequential plan.
+            _ => return Err(()),
         }
     }
     None
