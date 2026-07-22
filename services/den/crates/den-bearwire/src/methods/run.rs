@@ -2454,6 +2454,20 @@ mod tests {
     }
 
     #[test]
+    fn initial_stream_eof_policy_preserves_waiting_runs_and_retries_unbounded_runs() {
+        // run.started → tool activity → client.waiting/run.paused → EOF is already a
+        // durable client boundary, so the session remains available without failing it.
+        assert!(!initial_stream_eof_is_recoverable(true, false));
+        // Terminal completion remains a durable boundary too.
+        assert!(!initial_stream_eof_is_recoverable(true, false));
+        // EOF without either boundary is the recoverable path: persisted state is used
+        // for later reconciliation rather than rerunning tools.
+        assert!(initial_stream_eof_is_recoverable(false, false));
+        // Explicit cancellation is never resumed.
+        assert!(!initial_stream_eof_is_recoverable(false, true));
+    }
+
+    #[test]
     fn initial_stream_interruption_message_is_den_branded_and_safe() {
         let message = initial_stream_interruption_message();
         assert!(message.starts_with("Den "));

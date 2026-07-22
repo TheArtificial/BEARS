@@ -1507,6 +1507,25 @@ mod tests {
     }
 
     #[test]
+    fn continuation_eof_retries_only_before_terminal_wait_or_cancellation() {
+        assert!(should_retry_non_terminal_continuation_eof(
+            false, false, false, 0
+        ));
+        assert!(!should_retry_non_terminal_continuation_eof(
+            true, false, false, 0
+        ));
+        assert!(!should_retry_non_terminal_continuation_eof(
+            false, true, false, 0
+        ));
+        assert!(!should_retry_non_terminal_continuation_eof(
+            false, false, true, 0
+        ));
+        assert!(!should_retry_non_terminal_continuation_eof(
+            false, false, false, 3
+        ));
+    }
+
+    #[test]
     fn continuation_stream_boundary_stops_on_terminal_or_client_wait() {
         let completed = den_protocol::RuntimeStreamEvent::Semantic(
             den_protocol::RuntimeSemanticEvent::TurnCompleted { turn: None },
