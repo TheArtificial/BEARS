@@ -911,6 +911,24 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
     );
 
     service
+        .mark_task_started(
+            bear_id,
+            first_child.id,
+            run_id,
+            Some("dispatcher-order".to_string()),
+        )
+        .await
+        .expect("start first child");
+    let runnable = service
+        .runnable_work_tasks(bear_id, 10)
+        .await
+        .expect("active earlier work blocks later tasks");
+    assert!(
+        runnable.is_empty(),
+        "the next phase must not be offered while the first child is in progress"
+    );
+
+    service
         .record_task_success(
             bear_id,
             first_child.id,
