@@ -845,27 +845,6 @@ async fn provision(
             detail,
         )
     })?;
-    let cargo_home_bind_source = if request.prepare_cargo_dependencies {
-        Some(
-            prepare_locked_cargo_dependencies(
-                state,
-                sandbox_id,
-                &workspace,
-                &workspace_bind_source,
-                &image,
-            )
-            .await
-            .map_err(|detail| {
-                error_response(
-                    StatusCode::BAD_GATEWAY,
-                    SandboxErrorKind::BackendError,
-                    detail,
-                )
-            })?,
-        )
-    } else {
-        None
-    };
     let spec = ProvisionSpec {
         id: sandbox_id.to_string(),
         workspace,
@@ -873,7 +852,6 @@ async fn provision(
         image,
         env: request.env.clone(),
         network: request.network,
-        cargo_home_bind_source,
         allowed_outbound_hosts: root.allowed_outbound_hosts.clone(),
         memory_mb: request.limits.memory_mb,
         cpus: request.limits.cpus,
@@ -898,69 +876,6 @@ async fn provision(
         "sandbox provisioned"
     );
     Ok(())
-}
-
-/// The workspace path as the **host** docker daemon must see it. When the
-/// Fetch exactly the existing lockfile in a provider-controlled helper before
-/// the restricted sandbox starts. The sandbox receives only the resulting
-/// read-only cache, never network access or arbitrary Cargo arguments.
-async fn prepare_locked_cargo_dependencies(
-    state: &Arc<ProviderState>,
-    sandbox_id: &str,
-    workspace: &std::path::Path,
-    workspace_bind_source: &std::path::Path,
-    image: &str,
-) -> Result<PathBuf, String> {
-    if !workspace.join("Cargo.lock").is_file() {
-        return Err("Cargo dependency preparation requires a root Cargo.lock".to_string());
-    }
-    if workspace.join(".cargo/config").exists() || workspace.join(".cargo/config.toml").exists() {
-        return Err(
-            "Cargo dependency preparation does not support workspace Cargo source configuration"
-                .to_string(),
-        );
-    }
-    let cargo_home = workspace.join(".den-cargo-home");
-    tokio::fs::create_dir_all(&cargo_home)
-        .await
-        .map_err(|err| format!("could not create Cargo cache: {err}"))?;
-    let cargo_home_bind_source = workspace_bind_source.join(".den-cargo-home");
-    let args = vec![
-        "run".into(),
-        "--rm".into(),
-        "-v".into(),
-        format!("{}:/workspace:ro", workspace_bind_source.display()),
-        "-v".into(),
-        format!("{}:/cargo-home", cargo_home_bind_source.display()),
-        "-w".into(),
-        "/workspace".into(),
-        "-e".into(),
-        "CARGO_HOME=/cargo-home".into(),
-        image.to_string(),
-        "cargo".into(),
-        "fetch".into(),
-        "--locked".into(),
-    ];
-    let mut command = CommandSpec::new(state.backend.docker_bin(), &args);
-    command.timeout = Duration::from_secs(600);
-    command.max_output_bytes = 16 * 1024;
-    command.window = crate::proc::CaptureWindow::Tail;
-    let output = run_command(command)
-        .await
-        .map_err(|err| format!("Cargo dependency preparation could not start: {err}"))?;
-    if !output.success() {
-        let detail = if output.timed_out {
-            "timed out".to_string()
-        } else {
-            output.stderr_lossy()
-        };
-        return Err(format!(
-            "Cargo dependency preparation failed: {}",
-            detail.trim()
-        ));
-    }
-    tracing::info!(sandbox_id, "prepared locked Cargo dependencies");
-    Ok(cargo_home_bind_source)
 }
 
 /// The workspace path as the **host** docker daemon must see it. When the
