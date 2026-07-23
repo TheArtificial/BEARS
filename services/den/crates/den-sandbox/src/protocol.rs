@@ -184,10 +184,45 @@ pub struct CreateSandboxRequest {
     /// so orphans can be reconciled after a provider restart.
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
+    /// Provider-owned volume with prepared Cargo registry artifacts. The
+    /// sandbox receives it read-only at `/den/cargo-home`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cargo_home_volume: Option<String>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PrepareRustDependenciesRequest {
+    /// Checkout-relative path to the selected Cargo manifest.
+    pub manifest_path: String,
+    /// Cargo package name, validated by Den before it reaches the provider.
+    pub package: String,
+    pub resolution: RustDependencyResolution,
+    pub preparation: RustDependencyPreparation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RustDependencyResolution {
+    Locked,
+    UpdateLockfile,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RustDependencyPreparation {
+    Check,
+    TestNoRun,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PrepareRustDependenciesResponse {
+    pub status: String,
+    pub content: String,
+    pub lockfile_changed: bool,
 }
 
 /// Facts recognized about the workspace at provision time.

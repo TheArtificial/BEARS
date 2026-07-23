@@ -6,12 +6,17 @@ use crate::{
     core::tools::{context::DenToolContext, workflow},
     errors::CustomError,
 };
-use den_core::tools::constants::{
-    DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET,
-    DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
-    DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT,
-    DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
-    DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+use den_core::tools::{
+    arguments::PrepareRustDependenciesArguments,
+    constants::{
+        DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET,
+        DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
+        DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE,
+        DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
+        DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH,
+        DEN_WORK_PREPARE_RUST_DEPENDENCIES, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND,
+        DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+    },
 };
 use den_memory::MemoryStoreManager;
 use den_service::bears::BearProfile;
@@ -31,6 +36,22 @@ pub async fn invoke_den_tool(
     arguments: Value,
     context: DenToolInvocationContext,
 ) -> Result<Value, CustomError> {
+    if tool_name == DEN_WORK_PREPARE_RUST_DEPENDENCIES {
+        let arguments: PrepareRustDependenciesArguments = serde_json::from_value(arguments)
+            .map_err(|error| CustomError::ValidationError(error.to_string()))?;
+        let runner = SandboxRustDependencyPreparationRunner {
+            pool,
+            config,
+            bear_id: context.bear_id,
+        };
+        return den_service::rust_dependencies::execute_prepare_rust_dependencies(
+            &runner, &context, arguments,
+        )
+        .await
+        .map(|result| serde_json::to_value(result).expect("Rust dependency result is serializable"))
+        .map_err(CustomError::from);
+    }
+
     if workflow::is_workflow_tool(tool_name) {
         return invoke_workflow_tool(pool, config, stores, tool_name, arguments, &context).await;
     }
@@ -39,6 +60,79 @@ pub async fn invoke_den_tool(
     den_core::tools::dispatch::invoke_den_tool(&ctx, tool_name, arguments, context)
         .await
         .map_err(CustomError::from)
+}
+
+/// Den-owned bridge from an authorized work run to its active sandbox provider.
+struct SandboxRustDependencyPreparationRunner<'a> {
+    pool: &'a PgPool,
+    config: &'a Config,
+    bear_id: uuid::Uuid,
+}
+
+impl den_service::rust_dependencies::RustDependencyPreparationRunner
+    for SandboxRustDependencyPreparationRunner<'_>
+{
+    async fn prepare_rust_dependencies(
+        &self,
+        request: den_service::rust_dependencies::PrepareRustDependenciesRequest,
+    ) -> Result<den_service::rust_dependencies::PrepareRustDependenciesResult, den_core::DenError>
+    {
+        let run = den_docket::work_runs::get_work_run(self.pool, request.work_run_id)
+            .await
+            .map_err(|error| den_core::DenError::System(error.to_string()))?
+            .filter(|run| run.bear_id == self.bear_id)
+            .ok_or_else(|| {
+                den_core::DenError::Authorization(
+                    "work run is not authorized for this invocation".to_string(),
+                )
+            })?;
+        let sandbox_id = run.sandbox_id.ok_or_else(|| {
+            den_core::DenError::ValidationError("work run has no active sandbox".to_string())
+        })?;
+        let url = self
+            .config
+            .sandbox_server_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .ok_or_else(|| {
+                den_core::DenError::System("sandbox provider is not configured".to_string())
+            })?;
+        let client = den_sandbox::SandboxClient::new(url, &self.config.sandbox_server_token);
+        let response = client
+            .prepare_rust_dependencies(
+                &sandbox_id,
+                &den_sandbox::protocol::PrepareRustDependenciesRequest {
+                    manifest_path: request.manifest_path,
+                    package: request.package,
+                    resolution: match request.resolution {
+                        den_core::tools::arguments::RustDependencyResolution::Locked => {
+                            den_sandbox::protocol::RustDependencyResolution::Locked
+                        }
+                        den_core::tools::arguments::RustDependencyResolution::UpdateLockfile => {
+                            den_sandbox::protocol::RustDependencyResolution::UpdateLockfile
+                        }
+                    },
+                    preparation: match request.preparation {
+                        den_core::tools::arguments::RustDependencyPreparation::Check => {
+                            den_sandbox::protocol::RustDependencyPreparation::Check
+                        }
+                        den_core::tools::arguments::RustDependencyPreparation::TestNoRun => {
+                            den_sandbox::protocol::RustDependencyPreparation::TestNoRun
+                        }
+                    },
+                },
+            )
+            .await
+            .map_err(|error| den_core::DenError::System(error.to_string()))?;
+        Ok(
+            den_service::rust_dependencies::PrepareRustDependenciesResult {
+                status: response.status,
+                content: response.content,
+                lockfile_changed: response.lockfile_changed,
+            },
+        )
+    }
 }
 
 async fn invoke_workflow_tool(

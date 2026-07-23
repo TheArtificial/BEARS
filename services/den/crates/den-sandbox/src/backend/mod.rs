@@ -39,6 +39,9 @@ pub struct ProvisionSpec {
     pub cpus: Option<f64>,
     pub pids: Option<u64>,
     pub labels: BTreeMap<String, String>,
+    /// Provider-owned Docker volume containing a prepared Cargo home. It is
+    /// mounted read-only so task code can consume, but never poison, it.
+    pub cargo_home_volume: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +83,22 @@ impl Backend {
     pub async fn provision(&self, spec: &ProvisionSpec) -> Result<(), BackendError> {
         match self {
             Self::DockerCli(b) => b.provision(spec).await,
+        }
+    }
+
+    pub async fn prepare_rust_dependencies(
+        &self,
+        id: &str,
+        workspace: &std::path::Path,
+        cargo_home_volume: &str,
+        image: &str,
+        request: &crate::protocol::PrepareRustDependenciesRequest,
+    ) -> Result<crate::protocol::PrepareRustDependenciesResponse, BackendError> {
+        match self {
+            Self::DockerCli(b) => {
+                b.prepare_rust_dependencies(id, workspace, cargo_home_volume, image, request)
+                    .await
+            }
         }
     }
 

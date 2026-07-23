@@ -33,7 +33,7 @@ use crate::tools::{
         DEN_SKILL_APPROVE_PROPOSAL, DEN_SKILL_PROPOSE, DEN_SKILL_REJECT_PROPOSAL,
         DEN_TASK_APPROVE_INTENT, DEN_TASK_LISTS_REQUEST_HANDOFF, DEN_TASK_REJECT_INTENT,
         DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
-        DEN_WEB_SEARCH, DEN_WORK_PREPARE_RUST_DEPENDENCIES,
+        DEN_WEB_SEARCH,
     },
     context::DenToolInvocationContext,
     conversation::ConversationTitleOps,
@@ -43,8 +43,8 @@ use crate::tools::{
     web::WebFetcher,
     work_surface::WorkSurfaceOps,
     {
-        conversation, entity, environment, memory, plan_mode, prompt_memory, review,
-        rust_dependencies, web, work_surface,
+        conversation, entity, environment, memory, plan_mode, prompt_memory, review, web,
+        work_surface,
     },
 };
 
@@ -61,7 +61,6 @@ pub trait ToolContext:
     + prompt_memory::PromptMemoryStore
     + review::MemoryReviewStore
     + plan_mode::PlanModeOps
-    + rust_dependencies::RustDependencyPreparationOps
     + Send
     + Sync
 {
@@ -98,9 +97,6 @@ pub async fn invoke_den_tool(
         }
         DEN_WEB_FETCH => web::web_fetch(ctx, context.bear_id, &context.session_id, arguments).await,
         DEN_WEB_SEARCH => web::web_search(ctx, Some(context.bear_id), arguments).await,
-        DEN_WORK_PREPARE_RUST_DEPENDENCIES => {
-            rust_dependencies::prepare_rust_dependencies(ctx, &context, arguments).await
-        }
         DEN_TOOL_OUTPUT_READ => Err(DenError::System(
             "tool_output_read is handled by the native runtime artifact store".to_string(),
         )),

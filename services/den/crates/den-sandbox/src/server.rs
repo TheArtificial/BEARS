@@ -13,9 +13,10 @@ use crate::policy::{validate_selection, PolicyContext, PolicyError};
 use crate::proc::{run_command, CommandSpec};
 use crate::protocol::{
     CatalogImage, CatalogResponse, CatalogRoot, CleanupState, CreateSandboxRequest, DiffResponse,
-    ErrorBody, HealthResponse, ManagedConfig, ManagedConfigStatus, NetworkMode, PublishRequest,
-    RootInspectionResponse, RootStatus, SandboxDescriptor, SandboxLifecycleState, SandboxLimits,
-    SandboxType, SandboxUsage, SyncRootResponse, WorkSurface,
+    ErrorBody, HealthResponse, ManagedConfig, ManagedConfigStatus, NetworkMode,
+    PrepareRustDependenciesRequest, PublishRequest, RootInspectionResponse, RootStatus,
+    SandboxDescriptor, SandboxLifecycleState, SandboxLimits, SandboxType, SandboxUsage,
+    SyncRootResponse, WorkSurface,
 };
 use crate::recognize::recognize_work_surface;
 use crate::roots::{RootsError, RootsManager};
@@ -153,6 +154,8 @@ struct SandboxRecord {
     network: NetworkMode,
     labels: BTreeMap<String, String>,
     workspace: Option<PathBuf>,
+    image: String,
+    cargo_home_volume: Option<String>,
     created_at: OffsetDateTime,
     started: Instant,
     deadline: Option<Instant>,
@@ -256,6 +259,10 @@ pub fn create_sandbox_app(config: SandboxServerConfig) -> Result<Router, RootsEr
         .route("/sandbox/v1/sandboxes/{id}/logs", get(sandbox_logs))
         .route("/sandbox/v1/sandboxes/{id}/diff", get(sandbox_diff))
         .route("/sandbox/v1/sandboxes/{id}/publish", post(publish_sandbox))
+        .route(
+            "/sandbox/v1/sandboxes/{id}/rust-dependencies",
+            post(prepare_rust_dependencies),
+        )
         .route("/sandbox/v1/catalog", get(catalog))
         .route("/sandbox/v1/roots/{name}", get(inspect_root))
         .route("/sandbox/v1/roots/{name}/sync", post(sync_root))
@@ -414,6 +421,53 @@ async fn put_managed_config(
         "managed config applied"
     );
     Json(status).into_response()
+}
+
+async fn prepare_rust_dependencies(
+    State(state): State<Arc<ProviderState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<PrepareRustDependenciesRequest>,
+) -> Response {
+    let (workspace, volume, image) = {
+        let registry = state.registry.lock().await;
+        let Some(record) = registry.get(&id) else {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                SandboxErrorKind::UnknownSandbox,
+                "sandbox not found",
+            );
+        };
+        if !record.is_active() {
+            return error_response(
+                StatusCode::CONFLICT,
+                SandboxErrorKind::BackendError,
+                "sandbox is not active",
+            );
+        }
+        let Some(workspace) = record.workspace.clone() else {
+            return error_response(
+                StatusCode::CONFLICT,
+                SandboxErrorKind::NoWorkspace,
+                "sandbox workspace is unavailable",
+            );
+        };
+        let Some(volume) = record.cargo_home_volume.clone() else {
+            return error_response(
+                StatusCode::CONFLICT,
+                SandboxErrorKind::BackendError,
+                "sandbox has no Den-managed Cargo cache",
+            );
+        };
+        (workspace, volume, record.image.clone())
+    };
+    match state
+        .backend
+        .prepare_rust_dependencies(&id, &workspace, &volume, &image, &request)
+        .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(err) => backend_error_response(&err),
+    }
 }
 
 async fn managed_config_status(
@@ -741,6 +795,8 @@ async fn create_sandbox(
                 network: request.network,
                 labels: request.labels.clone(),
                 workspace: None,
+                image: image.clone(),
+                cargo_home_volume: request.cargo_home_volume.clone(),
                 created_at: OffsetDateTime::now_utc(),
                 started: Instant::now(),
                 deadline: Some(Instant::now() + Duration::from_secs(timeout_secs)),
@@ -857,6 +913,7 @@ async fn provision(
         cpus: request.limits.cpus,
         pids: request.limits.pids,
         labels: request.labels.clone(),
+        cargo_home_volume: request.cargo_home_volume.clone(),
     };
     state
         .backend
@@ -1334,6 +1391,11 @@ async fn adopt_orphans(state: &Arc<ProviderState>) {
                 network,
                 labels: orphan.labels,
                 workspace: workspace.exists().then_some(workspace),
+                // The provider can recover sandbox identity after restart, but
+                // not its original catalog image/cache binding. Hosted Cargo
+                // preparation is intentionally unavailable for adopted runs.
+                image: String::new(),
+                cargo_home_volume: None,
                 created_at: OffsetDateTime::now_utc(),
                 started: Instant::now(),
                 // Adopted sandboxes get the default deadline from adoption

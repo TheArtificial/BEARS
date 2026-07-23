@@ -274,6 +274,10 @@ async fn provision_run(
     env.insert("DEN_TOKEN".to_string(), token.raw_token.clone());
     env.insert("DEN_WORK_ORDER_ID".to_string(), run.id.to_string());
     env.insert("DEN_WORKSPACE".to_string(), "/workspace".to_string());
+    // The provider mounts a Den-managed cache read-only. Cargo must never
+    // fall back to network access from the restricted task sandbox.
+    env.insert("CARGO_HOME".to_string(), "/den/cargo-home".to_string());
+    env.insert("CARGO_NET_OFFLINE".to_string(), "true".to_string());
     env.insert(
         "DEN_HEADLESS_DEADLINE_SECS".to_string(),
         deadline_secs.to_string(),
@@ -307,6 +311,10 @@ async fn provision_run(
             ..SandboxLimits::default()
         },
         labels: std::collections::BTreeMap::from([("work_run_id".to_string(), run.id.to_string())]),
+        // ponytail: this run-scoped cache volume survives container replacement
+        // but is not yet content-addressed by Cargo.lock. Upgrade path: publish
+        // immutable cache volumes keyed by lockfile/toolchain digest.
+        cargo_home_volume: Some(format!("den-cargo-work-run-{}", run.id)),
     };
 
     let descriptor = match client.create_sandbox(&request).await {

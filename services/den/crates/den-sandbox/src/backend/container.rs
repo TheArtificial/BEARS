@@ -14,7 +14,10 @@
 
 use super::{AdoptedSandbox, BackendError, BackendStatus, ProvisionSpec};
 use crate::proc::{run_command, CaptureWindow, CommandSpec};
-use crate::protocol::{LogsResponse, NetworkMode};
+use crate::protocol::{
+    LogsResponse, NetworkMode, PrepareRustDependenciesRequest, PrepareRustDependenciesResponse,
+    RustDependencyPreparation, RustDependencyResolution,
+};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -238,6 +241,82 @@ impl DockerCliBackend {
         }
         let network = network_name(id);
         let _ = self.docker(&["network", "rm", &network], None).await;
+    }
+
+    pub async fn prepare_rust_dependencies(
+        &self,
+        id: &str,
+        workspace: &std::path::Path,
+        cargo_home_volume: &str,
+        image: &str,
+        request: &PrepareRustDependenciesRequest,
+    ) -> Result<PrepareRustDependenciesResponse, BackendError> {
+        let manifest = workspace.join(&request.manifest_path);
+        if !manifest.is_file() {
+            return Err(BackendError::Operation {
+                id: id.to_string(),
+                detail: "manifest is not present in sandbox workspace".to_string(),
+            });
+        }
+        let command = match request.preparation {
+            RustDependencyPreparation::Check => "check",
+            RustDependencyPreparation::TestNoRun => "test",
+        };
+        let mut cargo_args = vec![
+            command.to_string(),
+            "--manifest-path".to_string(),
+            request.manifest_path.clone(),
+            "-p".to_string(),
+            request.package.clone(),
+        ];
+        if request.preparation == RustDependencyPreparation::TestNoRun {
+            cargo_args.push("--no-run".to_string());
+        }
+        if request.resolution == RustDependencyResolution::Locked {
+            cargo_args.push("--locked".to_string());
+        }
+        let helper = format!("den-cargo-helper-{id}");
+        let mut args = vec![
+            "run".to_string(),
+            "--rm".to_string(),
+            "--name".to_string(),
+            helper,
+            "-v".to_string(),
+            format!("{}:/workspace:rw", workspace.display()),
+            "-v".to_string(),
+            format!("{cargo_home_volume}:/den/cargo-home:rw"),
+            "-w".to_string(),
+            "/workspace".to_string(),
+            "-e".to_string(),
+            "CARGO_HOME=/den/cargo-home".to_string(),
+            "--network".to_string(),
+            "bridge".to_string(),
+            image.to_string(),
+        ];
+        args.extend(cargo_args);
+        let out = self.docker_owned(&args, None).await?;
+        let lockfile_changed =
+            request.resolution == RustDependencyResolution::UpdateLockfile && out.success();
+        let content = if out.timed_out {
+            "Cargo preparation timed out".to_string()
+        } else if out.success() {
+            "Rust dependencies prepared for offline use".to_string()
+        } else {
+            let detail = out.stderr_lossy();
+            format!(
+                "Cargo preparation failed: {}",
+                detail.chars().take(4096).collect::<String>()
+            )
+        };
+        Ok(PrepareRustDependenciesResponse {
+            status: if out.success() {
+                "prepared".to_string()
+            } else {
+                "failed".to_string()
+            },
+            content,
+            lockfile_changed,
+        })
     }
 
     pub async fn status(&self, id: &str) -> Result<BackendStatus, BackendError> {
@@ -632,6 +711,10 @@ fn sandbox_run_args(
         "-w".into(),
         "/workspace".into(),
     ];
+    if let Some(volume) = &spec.cargo_home_volume {
+        args.push("-v".into());
+        args.push(format!("{volume}:/den/cargo-home:ro"));
+    }
     if let Some(network) = network {
         args.push("--network".into());
         args.push(network.into());
@@ -693,6 +776,7 @@ mod tests {
             cpus: None,
             pids: None,
             labels: BTreeMap::new(),
+            cargo_home_volume: None,
         }
     }
 
@@ -715,6 +799,19 @@ mod tests {
         // The bind source is the HOST path, never the provider-local one.
         assert!(joined.contains("-v /host/ws/abc123:/workspace"), "{joined}");
         assert!(!joined.contains("/srv/ws/abc123"), "{joined}");
+
+        let mut with_cache = restricted;
+        with_cache.cargo_home_volume = Some("den-cargo-cache-lock123".into());
+        let cache_args = sandbox_run_args(
+            &with_cache,
+            "den-sbx-abc123",
+            "/tmp/e.env",
+            Some("den-sbx-net-abc123"),
+            None,
+        );
+        assert!(cache_args
+            .join(" ")
+            .contains("den-cargo-cache-lock123:/den/cargo-home:ro"));
 
         // Open mode dials the callback directly, so it carries the resolved
         // extra-host mapping.

@@ -4,7 +4,8 @@
 use crate::protocol::{
     BuildImageRequest, CatalogResponse, CreateSandboxRequest, DiffResponse, ErrorBody,
     HealthResponse, ImageStoreResponse, LogsResponse, ManagedConfig, ManagedConfigStatus,
-    OperationAccepted, OperationDescriptor, PublishRequest, PublishResponse, PullImageRequest,
+    OperationAccepted, OperationDescriptor, PrepareRustDependenciesRequest,
+    PrepareRustDependenciesResponse, PublishRequest, PublishResponse, PullImageRequest,
     RemoveImageRequest, RootInspectionResponse, SandboxDescriptor, SyncRootResponse,
 };
 use std::time::Duration;
@@ -140,6 +141,24 @@ impl SandboxClient {
             .authorized(
                 self.http
                     .post(self.url(&format!("/sandbox/v1/sandboxes/{id}/publish"))),
+            )
+            .json(request)
+            .send()
+            .await?;
+        Self::json_or_error(response).await
+    }
+
+    /// Run the provider-owned fixed Cargo helper for an existing sandbox.
+    /// This is intentionally not a generic command-execution endpoint.
+    pub async fn prepare_rust_dependencies(
+        &self,
+        id: &str,
+        request: &PrepareRustDependenciesRequest,
+    ) -> Result<PrepareRustDependenciesResponse, SandboxClientError> {
+        let response = self
+            .authorized(
+                self.http
+                    .post(self.url(&format!("/sandbox/v1/sandboxes/{id}/rust-dependencies"))),
             )
             .json(request)
             .send()
