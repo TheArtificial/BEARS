@@ -20,14 +20,14 @@ pub struct PrepareRustDependenciesArguments {
     pub preparation: RustDependencyPreparation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RustDependencyResolution {
     Locked,
     UpdateLockfile,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RustDependencyPreparation {
     Check,
