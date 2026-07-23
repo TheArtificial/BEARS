@@ -410,6 +410,7 @@ impl SessionTrackingStream {
             membership_role: None,
             conversation_id: self.conversation_id.clone(),
             session_id: self.client_session_id.clone(),
+            work_run_id: None,
             client_session_id: Some(self.client_session_id.clone()),
             conversation_selection: Some(self.conversation_id.clone()),
             runtime_target: Some(self.conversation_id.clone()),
