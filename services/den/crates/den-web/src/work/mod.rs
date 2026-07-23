@@ -111,8 +111,16 @@ pub fn router() -> Router<AppState> {
         .route("/work/jobs/{job_id}/extend", post(extend_job))
         .route("/work/jobs/{job_id}/dispatch", post(dispatch_job))
         .route(
-            "/work/jobs/{job_id}/tasks/{task_id}/requeue",
-            post(requeue_task),
+            "/work/jobs/{job_id}/tasks/{task_id}/retry",
+            post(retry_task),
+        )
+        .route(
+            "/work/jobs/{job_id}/tasks/{task_id}/children",
+            post(add_child_task),
+        )
+        .route(
+            "/work/jobs/{job_id}/tasks/{task_id}/move/{direction}",
+            post(move_task),
         )
         .route("/work/runs/{run_id}", get(run_detail))
         .route("/work/runs/{run_id}/cancel", post(cancel_run))
@@ -150,6 +158,10 @@ struct RunView {
     attempt: i32,
     bear_slug: String,
     job_id: String,
+    job_display_id: String,
+    job_route_id: String,
+    job_full_id: String,
+    job_title: String,
     root: Option<String>,
     git_ref: Option<String>,
     image: Option<String>,
@@ -207,8 +219,32 @@ fn run_diagnostic(
         title: "Cargo dependency access failed",
         operation: "Cargo attempted to update the crates.io index.",
         evidence: "The run recorded a TLS, transfer, or timeout failure while accessing the registry.",
-        recovery: "Restore sandbox access to the required registry host, or provide a local Cargo index and dependency cache; then requeue the blocked task and dispatch the job again.",
+        recovery: "Restore sandbox access to the required registry host, or provide a local Cargo index and dependency cache; then retry the blocked task and dispatch the job again.",
     })
+}
+
+fn work_run_outcome(run: &WorkRunRow) -> String {
+    if let Some(summary) = run
+        .result_summary
+        .as_deref()
+        .filter(|summary| !summary.trim().is_empty())
+    {
+        return summary.to_string();
+    }
+    if let Some(error) = run
+        .error
+        .as_deref()
+        .filter(|error| !error.trim().is_empty())
+    {
+        return format!("Execution failed: {error}");
+    }
+    match run.state.as_str() {
+        "succeeded" => "The worker completed without a detailed summary.".to_string(),
+        "blocked" => "Execution is blocked; inspect the diagnostic and run output for the cause.".to_string(),
+        "failed" | "timed_out" => "Execution stopped before producing a detailed outcome; inspect the diagnostic and run output.".to_string(),
+        "cancelled" => "Execution was cancelled before completion.".to_string(),
+        _ => "Execution is still in progress.".to_string(),
+    }
 }
 
 fn ts(value: time::OffsetDateTime) -> String {
@@ -256,6 +292,13 @@ fn run_view(run: &WorkRunRow, bear_slug: &str, job_title: &str) -> RunView {
         attempt: run.attempt,
         bear_slug: bear_slug.to_string(),
         job_id: route_id(run.job_id),
+        job_display_id: uuid_hex_prefix(run.job_id, DISPLAY_ID_HEX_LEN),
+        job_route_id: route_id(run.job_id),
+        job_full_id: run.job_id.to_string(),
+        job_title: entity_ref(run.job_id, "Job", job_title, None)["title"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         root: run.root_name.clone(),
         git_ref: run.git_ref.clone(),
         image: run.image_name.clone(),
@@ -993,6 +1036,14 @@ struct ExtendJobForm {
     criteria: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct AddChildTaskForm {
+    title: String,
+    #[serde(default)]
+    body: String,
+    criteria: String,
+}
+
 async fn extend_job(
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -1131,16 +1182,18 @@ async fn job_detail(
         .collect();
     attach_queue_info(&state, &runs, &mut run_views).await?;
 
-    let task_states: std::collections::HashMap<Uuid, &str> = projection
-        .task_states
-        .iter()
-        .map(|state| (state.task_id, state.status.as_str()))
-        .collect();
+    let task_states: std::collections::HashMap<Uuid, &den_docket::DocketTaskRunStateRow> =
+        projection
+            .task_states
+            .iter()
+            .map(|state| (state.task_id, state))
+            .collect();
     let tasks: Vec<serde_json::Value> = projection
         .tasks
         .iter()
         .map(|task| {
-            let status = task_states.get(&task.id).copied().unwrap_or("pending");
+            let state = task_states.get(&task.id).copied();
+            let status = state.map(|state| state.status.as_str()).unwrap_or("pending");
             serde_json::json!({
                 "id": task.id.to_string(),
                 "display_id": uuid_hex_prefix(task.id, DISPLAY_ID_HEX_LEN),
@@ -1150,6 +1203,21 @@ async fn job_detail(
                 "status": status,
                 "completion_criteria": task.completion_criteria.0,
                 "can_requeue": status == "blocked",
+                "parent_task_id": task.parent_task_id.map(|id| id.to_string()),
+                "sibling_order": task.sibling_order,
+                "blocker_reason": (status == "blocked").then(|| state.and_then(|state| state.result_summary.clone())).flatten(),
+                "retry_reason": state
+                    .and_then(|state| state.result_refs.as_ref())
+                    .and_then(|refs| refs.get("retry"))
+                    .and_then(|retry| retry.get("reason"))
+                    .and_then(serde_json::Value::as_str),
+                "previous_blocked_reason": state
+                    .and_then(|state| state.result_refs.as_ref())
+                    .and_then(|refs| refs.get("retry"))
+                    .and_then(|retry| retry.get("previous_blocked_reason"))
+                    .and_then(serde_json::Value::as_str),
+                "run_display_id": state.map(|state| uuid_hex_prefix(state.run_id, DISPLAY_ID_HEX_LEN)),
+                "run_route_id": state.map(|state| route_id(state.run_id)),
             })
         })
         .collect();
@@ -1215,11 +1283,164 @@ async fn job_detail(
     .await
 }
 
-async fn requeue_task(
+async fn add_child_task(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path((job_ref, parent_ref)): Path<(String, String)>,
+    Form(form): Form<AddChildTaskForm>,
+) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    let parent_task_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_tasks", &parent_ref).await?;
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let Some(bear_id) = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?
+        .filter(|bear_id| bears.contains_key(bear_id))
+    else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let title = form.title.trim();
+    let criteria: Vec<String> = form
+        .criteria
+        .split(';')
+        .map(str::trim)
+        .filter(|criterion| !criterion.is_empty())
+        .map(str::to_string)
+        .collect();
+    if title.is_empty() || criteria.is_empty() {
+        return Err(CustomError::ValidationError(
+            "child task title and at least one completion criterion are required".to_string(),
+        ));
+    }
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let projection = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    if !projection
+        .tasks
+        .iter()
+        .any(|task| task.id == parent_task_id)
+    {
+        return Err(CustomError::NotFound(
+            "parent task not found in this job".to_string(),
+        ));
+    }
+    let sibling_order = projection
+        .tasks
+        .iter()
+        .filter(|task| task.parent_task_id == Some(parent_task_id))
+        .map(|task| task.sibling_order)
+        .max()
+        .unwrap_or(-1)
+        .saturating_add(1);
+    service
+        .create_task(DocketTaskCreate {
+            bear_id,
+            job_id: Some(job_id),
+            session_anchor_id: None,
+            parent_task_id: Some(parent_task_id),
+            sibling_order,
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Template,
+            title: title.to_string(),
+            body: clean_form_field(&form.body).unwrap_or_else(|| title.to_string()),
+            completion_criteria: criteria,
+            difficulty: None,
+            effort_hint: None,
+            created_by_role: "ui".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: projection.job.current_run_id,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{}", route_id(job_id))).into_response())
+}
+
+async fn move_task(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path((job_ref, task_ref, direction)): Path<(String, String, String)>,
+) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    let task_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_tasks", &task_ref).await?;
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let Some(bear_id) = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?
+        .filter(|bear_id| bears.contains_key(bear_id))
+    else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let projection = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    let task = projection
+        .tasks
+        .iter()
+        .find(|task| task.id == task_id)
+        .ok_or_else(|| CustomError::NotFound("task not found in this job".to_string()))?;
+    let mut siblings: Vec<_> = projection
+        .tasks
+        .iter()
+        .filter(|other| other.parent_task_id == task.parent_task_id)
+        .collect();
+    siblings.sort_by_key(|task| (task.sibling_order, task.created_at));
+    let position = siblings
+        .iter()
+        .position(|other| other.id == task_id)
+        .ok_or_else(|| CustomError::NotFound("task not found in this job".to_string()))?;
+    let other_position = match direction.as_str() {
+        "up" if position > 0 => position - 1,
+        "down" if position + 1 < siblings.len() => position + 1,
+        "up" | "down" => {
+            return Ok(Redirect::to(&format!("/work/jobs/{}", route_id(job_id))).into_response())
+        }
+        _ => {
+            return Err(CustomError::ValidationError(
+                "move direction must be up or down".to_string(),
+            ))
+        }
+    };
+    let other = siblings[other_position];
+    let temporary_order = -2_147_483_648_i32;
+    sqlx::query("UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3")
+        .bind(temporary_order)
+        .bind(bear_id)
+        .bind(task.id)
+        .execute(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    sqlx::query("UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3")
+        .bind(task.sibling_order)
+        .bind(bear_id)
+        .bind(other.id)
+        .execute(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    sqlx::query("UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3")
+        .bind(other.sibling_order)
+        .bind(bear_id)
+        .bind(task.id)
+        .execute(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    Ok(Redirect::to(&format!("/work/jobs/{}", route_id(job_id))).into_response())
+}
+
+async fn retry_task(
     State(state): State<AppState>,
     auth_session: AuthSession,
     Path((job_ref, task_ref)): Path<(String, String)>,
-    Form(form): Form<RequeueTaskForm>,
+    Form(form): Form<RetryTaskForm>,
 ) -> Result<Response, CustomError> {
     let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let task_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_tasks", &task_ref).await?;
@@ -1237,7 +1458,7 @@ async fn requeue_task(
     let reason = form.reason.trim();
     if reason.is_empty() {
         return Err(CustomError::ValidationError(
-            "a requeue reason is required".to_string(),
+            "a retry reason is required".to_string(),
         ));
     }
     let service = PgDocketService::from_pool(state.sqlx_pool());
@@ -1258,7 +1479,7 @@ async fn requeue_task(
         })?;
     if state_row.status != "blocked" {
         return Err(CustomError::ValidationError(
-            "only blocked tasks can be requeued".to_string(),
+            "only blocked tasks can be retried".to_string(),
         ));
     }
     service
@@ -1274,12 +1495,12 @@ async fn requeue_task(
                 run_id,
                 status: DocketTaskStatus::Pending,
                 result_refs: Some(serde_json::json!({
-                    "requeue": {
+                    "retry": {
                         "reason": reason,
                         "previous_blocked_reason": state_row.result_summary,
                     }
                 })),
-                result_summary: Some(format!("Requeued: {reason}")),
+                result_summary: Some(format!("Retried: {reason}")),
             }),
         })
         .await?;
@@ -1287,7 +1508,7 @@ async fn requeue_task(
 }
 
 #[derive(Debug, Deserialize)]
-struct RequeueTaskForm {
+struct RetryTaskForm {
     reason: String,
 }
 
@@ -1368,7 +1589,7 @@ async fn run_detail(
         context! {
             title => "Work run",
             run => view,
-            job_goal => dispatch_context.job_goal,
+            outcome => work_run_outcome(&run),
             log_tail => log_tail,
             diff_patch => diff_patch,
             changed_files => changed_files,

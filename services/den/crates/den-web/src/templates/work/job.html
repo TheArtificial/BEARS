@@ -116,7 +116,19 @@
             {% for task in tasks %}
             <tr>
                 <td>
+                    {% if task.parent_task_id %}<small>child task</small> {% endif %}
                     <a href="#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}">Task <code class="entity-reference-id">{{ task.display_id }}</code>: {{ task.title_display }}</a>
+                    <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/up" class="inline-form"><button type="submit" aria-label="Move task up">↑</button></form>
+                    <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/down" class="inline-form"><button type="submit" aria-label="Move task down">↓</button></form>
+                    <details>
+                        <summary>Add child task</summary>
+                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/children">
+                            <label>Title<br><input name="title" required size="50"></label>
+                            <label>Completion criteria <small>(semicolon-separated)</small><br><input name="criteria" required size="50"></label>
+                            <label>Details<br><textarea name="body" rows="2" cols="50"></textarea></label>
+                            <button type="submit">Add child</button>
+                        </form>
+                    </details>
                     <details>
                         <summary>criteria</summary>
                         <ul>
@@ -128,12 +140,15 @@
                 </td>
                 <td>{{ task.kind }}</td>
                 <td>{{ task.status }}
+                    {% if task.blocker_reason %}<p><strong>Blocked because:</strong> {{ task.blocker_reason }}</p>{% endif %}
+                    {% if task.retry_reason %}<p><small>Retry requested: {{ task.retry_reason }}{% if task.previous_blocked_reason %} (previous blocker: {{ task.previous_blocked_reason }}){% endif %}</small></p>{% endif %}
+                    {% if task.run_route_id %} · <a href="/work/runs/{{ task.run_route_id }}">Run <code class="entity-reference-id">{{ task.run_display_id }}</code></a>{% endif %}
                     {% if task.can_requeue %}
                     <details>
-                        <summary>Requeue</summary>
-                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/requeue">
+                        <summary>Retry</summary>
+                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/retry">
                             <label>Reason<br><input name="reason" required size="50" placeholder="What changed externally?"></label>
-                            <button type="submit">Requeue task</button>
+                            <button type="submit">Retry task</button>
                         </form>
                     </details>
                     {% endif %}

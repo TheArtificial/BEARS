@@ -4,7 +4,7 @@
 {% if run.is_active %}<meta http-equiv="refresh" content="10" />{% endif %}
 {% endblock %}
 {% block content %}
-<p><a href="/work">← Work</a> · <a href="/work/jobs/{{ run.job_id }}">Job</a></p>
+<p><a href="/work">← Work</a> · <a href="/work/jobs/{{ run.job_route_id }}" title="UUID prefix for {{ run.job_full_id }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code>: {{ run.job_title }}</a></p>
 <h1><a href="/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></h1>
 <p>{{ job_goal }}</p>
 {% if conversation_id %}
@@ -60,10 +60,10 @@
 </section>
 {% endif %}
 
-{% if run.result_summary or run.error or run.published_branch or run.publish_failed %}
+{% if run.result_summary or run.error or run.published_branch or run.publish_failed or not run.is_active %}
 <section>
     <h2>Outcome</h2>
-    {% if run.result_summary %}<p>{{ run.result_summary }}</p>{% endif %}
+    <p>{{ outcome }}</p>
     {% if run.error %}<p><strong>Error:</strong> {{ run.error }}</p>{% endif %}
     {% if run.published_branch %}
     <p><strong>Published:</strong> <code>{{ run.published_branch }}</code> @ <code>{{ run.published_commit }}</code></p>
@@ -72,7 +72,7 @@
     <p><strong>⚠ Publish failed:</strong> {{ run.publish_failed }} — the task's commits remain in the run diff below.</p>
     {% endif %}
     {% if armature_report %}<p><small>Armature report: <code>{{ armature_report }}</code></small></p>{% endif %}
-    {% if turn_outcome %}<p><small>Turn outcome: <code>{{ turn_outcome }}</code></small></p>{% endif %}
+    {% if turn_outcome and turn_outcome != "headless turn reached a terminal run event" %}<p><small>Turn outcome: <code>{{ turn_outcome }}</code></small></p>{% endif %}
 </section>
 {% endif %}
 
