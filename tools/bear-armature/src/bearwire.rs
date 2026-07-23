@@ -24,6 +24,17 @@ const BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS: usize = 24 * 1024;
 const BEARWIRE_OBLIGATION_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 const BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(5);
 
+fn is_optional_runtime_metadata_event(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "session.opened"
+            | "session.state"
+            | "run.accepted"
+            | "run.started"
+            | "runtime.objective_orientation"
+    )
+}
+
 fn legacy_approval_free_read_only_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
@@ -1974,7 +1985,16 @@ async fn handle_bearwire_event(
                 );
             }
         }
-        "session.opened" | "session.state" | "run.accepted" | "run.started" => {}
+        ty if is_optional_runtime_metadata_event(ty) => {
+            // Optional Den runtime metadata. It does not create a client obligation,
+            // affect run liveness, or require an Armature projection.
+            if crate::bear_debug_verbose() {
+                eprintln!(
+                    "bear-armature: ignoring optional BearWire runtime.objective_orientation session_id={}",
+                    session_id
+                );
+            }
+        }
         _ => {
             diagnostics.observe_unknown(event);
             eprintln!(
@@ -1996,6 +2016,14 @@ async fn handle_bearwire_event(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn objective_orientation_is_optional_runtime_metadata() {
+        assert!(is_optional_runtime_metadata_event(
+            "runtime.objective_orientation"
+        ));
+        assert!(!is_optional_runtime_metadata_event("runtime.unknown"));
+    }
 
     #[test]
     fn parse_event_page_uses_server_owned_cursor() {
