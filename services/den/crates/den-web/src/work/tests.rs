@@ -613,7 +613,7 @@ fn cargo_registry_network_diagnostic_is_actionable() {
     )
     .expect("Cargo registry failure is recognized");
     assert_eq!(diagnostic.title, "Cargo dependency access failed");
-    assert!(diagnostic.recovery.contains("requeue the blocked task"));
+    assert!(diagnostic.recovery.contains("retry the blocked task"));
 }
 
 #[test]
