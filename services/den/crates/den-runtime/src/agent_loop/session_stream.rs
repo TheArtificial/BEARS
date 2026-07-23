@@ -399,7 +399,9 @@ impl SessionTrackingStream {
         let projected_memory = session
             .as_ref()
             .and_then(|session| session.latest_projected_memory.clone());
-        let recalled_memory = session.and_then(|session| session.latest_recalled_memory);
+        let recalled_memory = session
+            .as_ref()
+            .and_then(|session| session.latest_recalled_memory.clone());
         DenToolInvocationContext {
             bear_id: self.bear_id,
             bear_slug: self.bear_slug.clone(),
@@ -410,7 +412,7 @@ impl SessionTrackingStream {
             membership_role: None,
             conversation_id: self.conversation_id.clone(),
             session_id: self.client_session_id.clone(),
-            work_run_id: None,
+            work_run_id: session.and_then(|session| session.work_run_id),
             client_session_id: Some(self.client_session_id.clone()),
             conversation_selection: Some(self.conversation_id.clone()),
             runtime_target: Some(self.conversation_id.clone()),
@@ -1843,6 +1845,7 @@ mod tests {
             user_id: Some(7),
             conversation_id: "den-conv-test".to_string(),
             client_session_id: "client-test".to_string(),
+            work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
             request_id: Some("request-test".to_string()),
             run_id: Some("run-test".to_string()),

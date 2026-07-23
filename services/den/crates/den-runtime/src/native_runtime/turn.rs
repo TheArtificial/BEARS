@@ -851,6 +851,16 @@ async fn build_session(
         profile: agent_loop_control.profile.with_budget(profile.turn_budget),
         ..agent_loop_control
     };
+    // `work.checkout` binds the Armature session before the native loop starts.
+    // Carry that authoritative binding into hosted-tool invocations instead of
+    // deriving authority from a model-provided path or identifier.
+    let work_run_id = if profile.profile == BearProfile::Work {
+        den_docket::work_runs::get_live_work_run_by_session(deps.pool, client_session_id)
+            .await?
+            .map(|run| run.id)
+    } else {
+        None
+    };
     tracing::info!(
         bear_id = %bear_id,
         profile = %profile.profile.as_str(),
@@ -868,6 +878,7 @@ async fn build_session(
         user_id,
         conversation_id: conversation_id.to_string(),
         client_session_id: client_session_id.to_string(),
+        work_run_id,
         workspace_roots: workspace_roots
             .map(|items| items.to_vec())
             .unwrap_or_default(),
