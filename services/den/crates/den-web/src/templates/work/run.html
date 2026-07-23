@@ -60,6 +60,22 @@
 </section>
 {% endif %}
 
+{% if dependency_preparation %}
+<section>
+    <h2>Rust dependency cache</h2>
+    <p><strong>{{ dependency_preparation.status }}</strong> — {{ dependency_preparation.content }}</p>
+    <dl>
+        <dt>Stage</dt><dd><code>{{ dependency_preparation.stage }}</code></dd>
+        <dt>Code</dt><dd><code>{{ dependency_preparation.code }}</code></dd>
+        <dt>Package</dt><dd><code>{{ dependency_preparation.package }}</code></dd>
+        <dt>Manifest</dt><dd><code>{{ dependency_preparation.manifest_path }}</code></dd>
+        <dt>Offline cache</dt><dd>{% if dependency_preparation.status == "prepared" %}prepared and mounted read-only for this run{% else %}not ready{% endif %}</dd>
+        <dt>Lockfile</dt><dd>{% if dependency_preparation.lockfile_changed %}updated{% else %}unchanged{% endif %}</dd>
+        <dt>Retry</dt><dd>{% if dependency_preparation.retryable %}retry may succeed{% else %}input or environment must change first{% endif %}</dd>
+    </dl>
+</section>
+{% endif %}
+
 {% if run.result_summary or run.error or run.published_branch or run.publish_failed or not run.is_active %}
 <section>
     <h2>Outcome</h2>

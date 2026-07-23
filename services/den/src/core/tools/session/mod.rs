@@ -53,6 +53,12 @@ pub async fn invoke_den_tool(
             preparation = ?arguments.preparation,
             "Rust dependency preparation broker invocation"
         );
+        let report_request = serde_json::json!({
+            "manifest_path": arguments.manifest_path.clone(),
+            "package": arguments.package.clone(),
+            "resolution": arguments.resolution.clone(),
+            "preparation": arguments.preparation.clone(),
+        });
         let runner = SandboxRustDependencyPreparationRunner {
             pool,
             config,
@@ -87,6 +93,27 @@ pub async fn invoke_den_tool(
                 work_run_id = ?context.work_run_id,
                 "Rust dependency preparation broker failed"
             ),
+        }
+        if let (Some(work_run_id), Ok(result)) = (context.work_run_id, result.as_ref()) {
+            den_docket::work_runs::record_work_run_dependency_preparation(
+                pool,
+                work_run_id,
+                context.bear_id,
+                &serde_json::json!({
+                    "status": result.status,
+                    "code": result.code,
+                    "stage": result.stage,
+                    "retryable": result.retryable,
+                    "content": result.content,
+                    "lockfile_changed": result.lockfile_changed,
+                    "manifest_path": report_request["manifest_path"],
+                    "package": report_request["package"],
+                    "resolution": report_request["resolution"],
+                    "preparation": report_request["preparation"],
+                }),
+            )
+            .await
+            .map_err(CustomError::from)?;
         }
         return result
             .map(|result| {

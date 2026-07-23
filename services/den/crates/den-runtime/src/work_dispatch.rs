@@ -341,20 +341,26 @@ async fn provision_run(
         return;
     }
     let service = PgDocketService::from_pool(pool);
-    for (task_id, _) in work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
-        .await
-        .unwrap_or_default()
-    {
+    let task = match service.runnable_work_tasks(run.bear_id, 500).await {
+        Ok(tasks) => tasks
+            .into_iter()
+            .find(|task| task.task.job_id == Some(run.job_id)),
+        Err(err) => {
+            tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: runnable task lookup failed");
+            None
+        }
+    };
+    if let Some(task) = task {
         if let Err(err) = service
             .mark_task_started(
                 run.bear_id,
-                task_id,
+                task.task.id,
                 run.job_run_id,
                 Some("work-dispatch".to_string()),
             )
             .await
         {
-            tracing::warn!(error = %err, work_run_id = %run.id, %task_id, "work_dispatch: mark_task_started failed");
+            tracing::warn!(error = %err, work_run_id = %run.id, task_id = %task.task.id, "work_dispatch: mark_task_started failed");
         }
     }
     tracing::info!(

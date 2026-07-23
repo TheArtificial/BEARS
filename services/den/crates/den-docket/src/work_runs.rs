@@ -14,7 +14,9 @@ use uuid::Uuid;
 
 use den_core::{BearProfile, DenError};
 
+use crate::dispatcher::TaskDispatcher;
 use crate::model::DocketExecutionSessionUpsert;
+use crate::service::PgDocketService;
 
 /// Explicit root name for a provider-managed empty workspace. Absence is not
 /// scratch: callers must opt in so rootless dispatch stays invalid.
@@ -651,6 +653,30 @@ pub async fn record_work_run_report(
     Ok(())
 }
 
+/// Store the latest hosted Cargo dependency-preparation result for a work run.
+/// This is durable run evidence for the web UI; it deliberately excludes any
+/// provider credentials or unbounded helper output.
+pub async fn record_work_run_dependency_preparation(
+    pool: &PgPool,
+    run_id: Uuid,
+    bear_id: Uuid,
+    result: &Value,
+) -> Result<(), DenError> {
+    sqlx::query(
+        "UPDATE bear_work_runs
+         SET result_refs = COALESCE(result_refs, '{}'::jsonb)
+                 || jsonb_build_object('rust_dependency_preparation', $3::jsonb),
+             updated_at = now()
+         WHERE id = $1 AND bear_id = $2",
+    )
+    .bind(run_id)
+    .bind(bear_id)
+    .bind(result)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WorkRunFinalize {
     pub result_summary: Option<String>,
@@ -789,23 +815,35 @@ pub async fn checkout_work_run_for_session(
 ) -> Result<WorkRunCheckout, DenError> {
     let run = bind_work_run_session(pool, run_id, bear_id, session_id).await?;
 
-    let tasks: Vec<(Uuid, String, String, sqlx::types::Json<Vec<String>>)> = sqlx::query_as(
+    let active_task: Option<(Uuid, String, String, sqlx::types::Json<Vec<String>>)> = sqlx::query_as(
         "SELECT t.id, t.title, t.body, t.completion_criteria
          FROM bear_tasks t
-         LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
-         WHERE t.job_id = $1
-           AND COALESCE(s.status, 'pending') IN ('pending', 'blocked')
-         ORDER BY t.sibling_order, t.created_at",
+         JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+         WHERE t.job_id = $1 AND s.status = 'in_progress'
+         ORDER BY t.sibling_order, t.created_at
+         LIMIT 1",
     )
     .bind(run.job_id)
     .bind(run.job_run_id)
-    .fetch_all(pool)
+    .fetch_optional(pool)
     .await?;
-    if tasks.is_empty() {
-        return Err(DenError::ValidationError(
-            "job has no runnable work tasks for checkout".into(),
-        ));
-    }
+    let task = match active_task {
+        Some(task) => task,
+        None => {
+            let service = PgDocketService::from_pool(pool);
+            let task = service
+                .runnable_work_tasks(run.bear_id, 500)
+                .await?
+                .into_iter()
+                .find(|task| task.task.job_id == Some(run.job_id))
+                .ok_or_else(|| {
+                    DenError::ValidationError("job has no runnable work task for checkout".into())
+                })?
+                .task;
+            (task.id, task.title, task.body, task.completion_criteria)
+        }
+    };
+    let tasks = vec![task];
     let (goal, commit_policy): (String, Option<String>) =
         sqlx::query_as("SELECT goal, commit_policy FROM bear_jobs WHERE id = $1")
             .bind(run.job_id)

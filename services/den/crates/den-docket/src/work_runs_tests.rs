@@ -472,6 +472,7 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
         .await
         .unwrap();
     assert!(checkout.prompt.contains("Alpha work task"));
+    assert!(!checkout.prompt.contains("Beta work task"));
     assert!(checkout
         .prompt
         .contains("Alpha work task is verifiably complete"));

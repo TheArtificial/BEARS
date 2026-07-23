@@ -1546,6 +1546,7 @@ async fn run_detail(
         .unwrap_or_default();
     let armature_report = refs.get("armature_report").cloned();
     let turn_outcome = refs.get("turn_outcome").cloned();
+    let dependency_preparation = refs.get("rust_dependency_preparation").cloned();
     let diagnostic = run_diagnostic(
         run.result_summary.as_deref(),
         run.error.as_deref(),
@@ -1595,6 +1596,7 @@ async fn run_detail(
             changed_files => changed_files,
             armature_report => armature_report,
             turn_outcome => turn_outcome,
+            dependency_preparation => dependency_preparation,
             diagnostic => diagnostic,
             conversation_id => conversation_id,
             work_surface => work_surface,
