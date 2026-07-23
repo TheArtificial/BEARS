@@ -61,9 +61,10 @@ use crate::tools::{
         DEN_TOOL_OUTPUT_READ_PROVIDER, DEN_USER_GET_CURRENT, DEN_WEB_FETCH,
         DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_FETCH_PROVIDER, DEN_WEB_SEARCH,
         DEN_WEB_SEARCH_PROVIDER, DEN_WORK_CATALOG, DEN_WORK_CATALOG_PROVIDER, DEN_WORK_DISPATCH,
-        DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_CANCEL_PROVIDER,
-        DEN_WORK_RUN_FIND, DEN_WORK_RUN_FIND_PROVIDER, DEN_WORK_RUN_GET, DEN_WORK_RUN_GET_PROVIDER,
-        DEN_WORK_RUN_LIST, DEN_WORK_RUN_LIST_PROVIDER,
+        DEN_WORK_DISPATCH_PROVIDER, DEN_WORK_PREPARE_RUST_DEPENDENCIES,
+        DEN_WORK_PREPARE_RUST_DEPENDENCIES_PROVIDER, DEN_WORK_RUN_CANCEL,
+        DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_FIND, DEN_WORK_RUN_FIND_PROVIDER,
+        DEN_WORK_RUN_GET, DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST, DEN_WORK_RUN_LIST_PROVIDER,
     },
     display::ToolDisplayDescriptor,
     tool_descriptor_guidance::{
@@ -158,6 +159,9 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_WORK_RUN_FIND => return DEN_WORK_RUN_FIND_PROVIDER.to_string(),
         DEN_WORK_RUN_CANCEL => return DEN_WORK_RUN_CANCEL_PROVIDER.to_string(),
         DEN_WORK_CATALOG => return DEN_WORK_CATALOG_PROVIDER.to_string(),
+        DEN_WORK_PREPARE_RUST_DEPENDENCIES => {
+            return DEN_WORK_PREPARE_RUST_DEPENDENCIES_PROVIDER.to_string()
+        }
         DEN_PLAN_MODE_ENTER => return DEN_PLAN_MODE_ENTER_PROVIDER.to_string(),
         DEN_PLAN_MODE_STATUS => return DEN_PLAN_MODE_STATUS_PROVIDER.to_string(),
         DEN_PLAN_MODE_RECORD_APPROVAL => return DEN_PLAN_MODE_RECORD_APPROVAL_PROVIDER.to_string(),
@@ -849,6 +853,20 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["observation.write"],
             WATCH_PROFILES,
             json!({"type":"object","properties":{"observation_id":{"type":"string"},"summary":{"type":"string"},"salience":{"type":"string"},"payload_ref":{"type":"string"},"source":{"type":"object"}},"required":["summary"],"additionalProperties":false}),
+        ),
+        descriptor(
+            DEN_WORK_PREPARE_RUST_DEPENDENCIES,
+            "Prepare Rust dependencies",
+            "Prepare dependencies for one Rust package outside the restricted work sandbox. Use after changing Cargo.toml; update_lockfile may modify the applicable Cargo.lock. The sandbox remains offline.",
+            "work.run",
+            &["work.rust_dependencies.prepare"],
+            WORK_PROFILES,
+            json!({"type":"object","properties":{
+                "manifest_path":{"type":"string","minLength":1},
+                "package":{"type":"string","minLength":1},
+                "resolution":{"enum":["locked","update_lockfile"]},
+                "preparation":{"enum":["check","test_no_run"]}
+            },"required":["manifest_path","package","resolution","preparation"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_RUN_WRITE_RESULT,
@@ -1727,6 +1745,27 @@ fn set_conversation_title_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rust_dependency_preparation_is_work_only_and_narrowly_typed() {
+        let descriptor = builtin_den_tool_descriptors()
+            .into_iter()
+            .find(|descriptor| descriptor.name == DEN_WORK_PREPARE_RUST_DEPENDENCIES)
+            .expect("descriptor");
+
+        assert_eq!(descriptor.provider_name, "prepare_rust_dependencies");
+        assert_eq!(descriptor.execution_target, "den");
+        assert_eq!(descriptor.allowed_roles, WORK_PROFILES);
+        assert_eq!(descriptor.input_schema["additionalProperties"], false);
+        assert_eq!(
+            descriptor.input_schema["properties"]["resolution"]["enum"],
+            json!(["locked", "update_lockfile"])
+        );
+        assert_eq!(
+            descriptor.input_schema["properties"]["preparation"]["enum"],
+            json!(["check", "test_no_run"])
+        );
+    }
 
     #[test]
     fn den_tool_display_includes_conversation_title_target() {

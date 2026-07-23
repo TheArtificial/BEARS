@@ -13,6 +13,28 @@ pub struct SetConversationTitleArguments {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PrepareRustDependenciesArguments {
+    pub manifest_path: String,
+    pub package: String,
+    pub resolution: RustDependencyResolution,
+    pub preparation: RustDependencyPreparation,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RustDependencyResolution {
+    Locked,
+    UpdateLockfile,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RustDependencyPreparation {
+    Check,
+    TestNoRun,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct MemoryCreateWorkSurfaceScaffoldArguments {
     pub work_surface_slug: String,
     pub work_surface_name: String,

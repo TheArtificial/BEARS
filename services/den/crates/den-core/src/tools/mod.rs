@@ -33,6 +33,7 @@ pub mod preflight;
 pub mod prompt_memory;
 pub mod result_compaction;
 pub mod review;
+pub mod rust_dependencies;
 pub mod support;
 pub mod tool_descriptor_guidance;
 pub mod validation;
