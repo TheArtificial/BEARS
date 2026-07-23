@@ -143,7 +143,7 @@
                     {% if task.blocker_reason %}<p><strong>Blocked because:</strong> {{ task.blocker_reason }}</p>{% endif %}
                     {% if task.retry_reason %}<p><small>Retry requested: {{ task.retry_reason }}{% if task.previous_blocked_reason %} (previous blocker: {{ task.previous_blocked_reason }}){% endif %}</small></p>{% endif %}
                     {% if task.run_route_id %} · <a href="/work/runs/{{ task.run_route_id }}">Run <code class="entity-reference-id">{{ task.run_display_id }}</code></a>{% endif %}
-                    {% if task.can_requeue %}
+                    {% if task.can_retry %}
                     <details>
                         <summary>Retry</summary>
                         <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/retry">

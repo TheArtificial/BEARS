@@ -1202,7 +1202,7 @@ async fn job_detail(
                 "kind": task.kind,
                 "status": status,
                 "completion_criteria": task.completion_criteria.0,
-                "can_requeue": status == "blocked",
+                "can_retry": status == "blocked",
                 "parent_task_id": task.parent_task_id.map(|id| id.to_string()),
                 "sibling_order": task.sibling_order,
                 "blocker_reason": (status == "blocked").then(|| state.and_then(|state| state.result_summary.clone())).flatten(),
