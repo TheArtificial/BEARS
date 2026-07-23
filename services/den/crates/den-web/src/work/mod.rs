@@ -223,7 +223,24 @@ fn run_diagnostic(
     })
 }
 
-fn work_run_outcome(run: &WorkRunRow) -> String {
+fn work_run_outcome(run: &WorkRunRow, task_statuses: &[(Uuid, String)]) -> String {
+    let unfinished = task_statuses
+        .iter()
+        .filter(|(_, status)| status != "done" && status != "cancelled")
+        .collect::<Vec<_>>();
+    if !unfinished.is_empty() && run.state == "succeeded" {
+        let blocked = unfinished
+            .iter()
+            .filter(|(_, status)| status.as_str() == "blocked")
+            .count();
+        let status = if blocked > 0 { "blocked" } else { "incomplete" };
+        return format!(
+            "Work {status}: {} task{} remain {}. The Armature terminal event only confirms that the agent turn ended.",
+            unfinished.len(),
+            if unfinished.len() == 1 { "" } else { "s" },
+            if blocked > 0 { "blocked" } else { "unfinished" },
+        );
+    }
     if let Some(summary) = run
         .result_summary
         .as_deref()
@@ -1547,6 +1564,9 @@ async fn run_detail(
     let armature_report = refs.get("armature_report").cloned();
     let turn_outcome = refs.get("turn_outcome").cloned();
     let dependency_preparation = refs.get("rust_dependency_preparation").cloned();
+    let task_statuses =
+        work_runs::get_job_work_task_run_statuses(state.sqlx_pool(), run.job_id, run.job_run_id)
+            .await?;
     let diagnostic = run_diagnostic(
         run.result_summary.as_deref(),
         run.error.as_deref(),
@@ -1590,7 +1610,7 @@ async fn run_detail(
         context! {
             title => "Work run",
             run => view,
-            outcome => work_run_outcome(&run),
+            outcome => work_run_outcome(&run, &task_statuses),
             log_tail => log_tail,
             diff_patch => diff_patch,
             changed_files => changed_files,

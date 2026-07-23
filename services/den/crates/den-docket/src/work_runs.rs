@@ -815,18 +815,19 @@ pub async fn checkout_work_run_for_session(
 ) -> Result<WorkRunCheckout, DenError> {
     let run = bind_work_run_session(pool, run_id, bear_id, session_id).await?;
 
-    let active_task: Option<(Uuid, String, String, sqlx::types::Json<Vec<String>>)> = sqlx::query_as(
-        "SELECT t.id, t.title, t.body, t.completion_criteria
+    let active_task: Option<(Uuid, String, String, sqlx::types::Json<Vec<String>>)> =
+        sqlx::query_as(
+            "SELECT t.id, t.title, t.body, t.completion_criteria
          FROM bear_tasks t
          JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
          WHERE t.job_id = $1 AND s.status = 'in_progress'
          ORDER BY t.sibling_order, t.created_at
          LIMIT 1",
-    )
-    .bind(run.job_id)
-    .bind(run.job_run_id)
-    .fetch_optional(pool)
-    .await?;
+        )
+        .bind(run.job_id)
+        .bind(run.job_run_id)
+        .fetch_optional(pool)
+        .await?;
     let task = match active_task {
         Some(task) => task,
         None => {
