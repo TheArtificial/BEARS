@@ -48,6 +48,18 @@
     {% endif %}
 </section>
 
+{% if diagnostic %}
+<section>
+    <h2>Diagnostic</h2>
+    <p><strong>{{ diagnostic.title }}</strong></p>
+    <dl>
+        <dt>Attempted operation</dt><dd>{{ diagnostic.operation }}</dd>
+        <dt>Observed evidence</dt><dd>{{ diagnostic.evidence }}</dd>
+        <dt>Recovery</dt><dd>{{ diagnostic.recovery }}</dd>
+    </dl>
+</section>
+{% endif %}
+
 {% if run.result_summary or run.error or run.published_branch or run.publish_failed %}
 <section>
     <h2>Outcome</h2>

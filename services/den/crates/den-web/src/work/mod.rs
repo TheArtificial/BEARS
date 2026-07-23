@@ -173,6 +173,44 @@ struct RunView {
     waiting_on_run_id: Option<String>,
 }
 
+#[derive(Serialize)]
+struct RunDiagnostic {
+    title: &'static str,
+    operation: &'static str,
+    evidence: &'static str,
+    recovery: &'static str,
+}
+
+/// Recognize only failures for which this UI can give a concrete, safe next
+/// step. Everything else remains visible in the stored outcome and raw log.
+fn run_diagnostic(
+    result_summary: Option<&str>,
+    error: Option<&str>,
+    log_tail: &str,
+) -> Option<RunDiagnostic> {
+    let evidence = [
+        result_summary.unwrap_or_default(),
+        error.unwrap_or_default(),
+        log_tail,
+    ]
+    .join("\n")
+    .to_ascii_lowercase();
+    let cargo = evidence.contains("cargo")
+        && (evidence.contains("crates.io")
+            || evidence.contains("crates.io index")
+            || evidence.contains("updating the crates.io index"));
+    let network_failure = evidence.contains("tls")
+        || evidence.contains("transfer")
+        || evidence.contains("timeout")
+        || evidence.contains("network failure");
+    (cargo && network_failure).then_some(RunDiagnostic {
+        title: "Cargo dependency access failed",
+        operation: "Cargo attempted to update the crates.io index.",
+        evidence: "The run recorded a TLS, transfer, or timeout failure while accessing the registry.",
+        recovery: "Restore sandbox access to the required registry host, or provide a local Cargo index and dependency cache; then requeue the blocked task and dispatch the job again.",
+    })
+}
+
 fn ts(value: time::OffsetDateTime) -> String {
     value
         .format(&time::format_description::well_known::Rfc3339)
@@ -1287,6 +1325,11 @@ async fn run_detail(
         .unwrap_or_default();
     let armature_report = refs.get("armature_report").cloned();
     let turn_outcome = refs.get("turn_outcome").cloned();
+    let diagnostic = run_diagnostic(
+        run.result_summary.as_deref(),
+        run.error.as_deref(),
+        &log_tail,
+    );
     let conversation_id: Option<String> = match run.bearwire_session_id.as_deref() {
         Some(session_id) => sqlx::query_scalar(
             "SELECT COALESCE(NULLIF(resolved_conversation_id, ''), conversation_id) \
@@ -1331,6 +1374,7 @@ async fn run_detail(
             changed_files => changed_files,
             armature_report => armature_report,
             turn_outcome => turn_outcome,
+            diagnostic => diagnostic,
             conversation_id => conversation_id,
             work_surface => work_surface,
             work_surface_link => work_surface_link,

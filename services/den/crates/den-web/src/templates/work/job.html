@@ -72,7 +72,7 @@
 <section>
     <h2>Work needs attention</h2>
     <p><strong>{{ attention_run.state }}</strong>: {{ attention_run.result_summary or attention_run.error or "The work run ended before all tasks were complete." }}</p>
-    <p><a href="/work/runs/{{ attention_run.route_id }}">{{ attention_run.title }}</a>. Unfinished tasks remain pending unless the worker explicitly marked a task blocked.</p>
+    <p><a href="/work/runs/{{ attention_run.route_id }}">{{ attention_run.title }}</a>. Inspect the task list to see whether the worker marked a task blocked and, if so, its rerun condition.</p>
 </section>
 {% endif %}
 

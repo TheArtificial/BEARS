@@ -604,6 +604,23 @@ async fn post_form(
         .expect("form response")
 }
 
+#[test]
+fn cargo_registry_network_diagnostic_is_actionable() {
+    let diagnostic = run_diagnostic(
+        Some("cargo test timed out while Cargo attempted to update the crates.io index"),
+        None,
+        "spurious network error: TLS transfer failed",
+    )
+    .expect("Cargo registry failure is recognized");
+    assert_eq!(diagnostic.title, "Cargo dependency access failed");
+    assert!(diagnostic.recovery.contains("requeue the blocked task"));
+}
+
+#[test]
+fn unrelated_timeout_does_not_claim_network_diagnosis() {
+    assert!(run_diagnostic(Some("worker timed out"), None, "").is_none());
+}
+
 #[tokio::test]
 async fn surface_management_is_owner_scoped_and_grantable() {
     let _guard = TEST_DB_LOCK.lock().await;
