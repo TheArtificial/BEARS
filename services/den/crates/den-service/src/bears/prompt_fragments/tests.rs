@@ -116,6 +116,12 @@ fn focused_runtime_fragments_keep_execution_moving_across_tasks() {
         .contains("refresh the focused Job/task state"));
     assert!(execution
         .body
+        .contains("This task was explicitly retried after a blocked attempt"));
+    assert!(execution
+        .body
+        .contains("check whether the prior blocker still applies"));
+    assert!(execution
+        .body
         .contains("continue the next incomplete unblocked task"));
     assert!(execution
         .body
