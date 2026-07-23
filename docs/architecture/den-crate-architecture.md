@@ -65,6 +65,18 @@ The concrete Den tool **executors** live in the `den` binary under `src/core/too
 
 `den-runtime` exposes `RuntimeToolInvoker`; the binary injects the concrete invoker at startup. `/internal/den-tools/invoke` also lives in the binary (`src/internal_tools.rs`) because it needs concrete builtin tool execution and should not pull those dependencies into `den-api`, `den-http`, `den-service`, or `den-runtime`.
 
+### Den-Side Privileged Tools
+
+A tool that needs authority unavailable to an Armature sandbox must execute on the Den side. The sandbox may request the operation through the normal tool protocol, but it must not receive the underlying capability or an arbitrary-command escape hatch.
+
+- Put its typed request/response contract and descriptor in `den-core::tools`; those shared types are data, not privileged services.
+- Pass the per-invocation context from `den-core::tools` so the executor can bind authorization, scope, and audit records to the Bear, conversation/session, and work surface.
+- Implement and wire the executor in `den/src/core/tools`, using explicit dependencies or narrow capability traits. Do not add a shared capability-bearing `ToolContext` service bag.
+- Treat all arguments, including sandbox-supplied paths and identifiers, as untrusted. Validate them against the invocation's authorized workspace/sandbox scope before acting.
+- Expose only explicit, typed operations; prefer allowlists and bounded output, and never turn this tool into arbitrary Den-side command execution.
+- Return structured outcomes and errors, and retain only the non-secret audit metadata needed to correlate the action with its invocation.
+- Include a focused check that out-of-scope or unauthorized input is rejected.
+
 ## Durable Lessons From The Split
 
 - **Triage before splitting.** Co-locating modules inside the original crate made later `git mv` extraction mechanical and reviewable.
