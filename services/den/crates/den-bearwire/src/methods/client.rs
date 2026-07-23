@@ -109,6 +109,69 @@ fn permission_reason_text(reason: &Option<Value>) -> Option<String> {
     reason.as_ref().and_then(Value::as_str).map(str::to_string)
 }
 
+/// Recognize the one Cargo failure that a work sandbox cannot fix itself: its
+/// deliberately offline, read-only dependency cache lacks a required crate.
+/// This consumes the client tool's structured result, never Armature stderr.
+fn cargo_offline_cache_miss_evidence(tool_name: Option<&str>, value: &Value) -> Option<Value> {
+    if !matches!(tool_name, Some("process_run") | Some("run_command")) {
+        return None;
+    }
+    let result = value.get("result").unwrap_or(value);
+    let command = result.get("command").and_then(Value::as_str)?;
+    if command != "cargo" || result.get("exit_code").and_then(Value::as_i64) == Some(0) {
+        return None;
+    }
+    let stderr = result
+        .get("stderr")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !stderr.contains("offline mode") || !stderr.contains("no matching package named") {
+        return None;
+    }
+    let package = stderr
+        .split("no matching package named `")
+        .nth(1)
+        .and_then(|rest| rest.split('`').next())
+        .filter(|name| !name.is_empty());
+    Some(json!({
+        "code": "cargo_offline_cache_miss",
+        "stage": "validation",
+        "retryable": false,
+        "preparation_state": "not_attempted",
+        "command": "cargo",
+        "cwd": result.get("cwd").and_then(Value::as_str),
+        "exit_code": result.get("exit_code"),
+        "required_package": package,
+        "action": "Prepare Rust dependencies with the hosted dependency tool, then retry Cargo.",
+        "diagnostic": "Cargo could not resolve a required package from the sandbox's offline dependency cache.",
+    }))
+}
+
+async fn persist_work_cargo_evidence(
+    state: &DenState,
+    session_id: &str,
+    tool_name: Option<&str>,
+    structured_content: &Value,
+) {
+    let Some(evidence) = cargo_offline_cache_miss_evidence(tool_name, structured_content) else {
+        return;
+    };
+    let Ok(Some(work_run)) =
+        den_docket::work_runs::get_live_work_run_by_session(&state.sqlx_pool, session_id).await
+    else {
+        return;
+    };
+    if let Err(error) = den_docket::work_runs::merge_work_run_result_refs(
+        &state.sqlx_pool,
+        work_run.id,
+        &json!({ "cargo_failure": evidence }),
+    )
+    .await
+    {
+        tracing::warn!(work_run_id = %work_run.id, %error, "could not persist Cargo diagnostic evidence");
+    }
+}
+
 fn require_settlement_result(
     result: Option<turn_runs::TurnObligationResultRow>,
     context: &'static str,
@@ -982,6 +1045,13 @@ pub(crate) async fn client_tool_result_result(
     }
     let payload = compacted.payload.clone();
     let event_payload = bearwire_finish_payload(&input, payload.clone());
+    persist_work_cargo_evidence(
+        state,
+        &session_id,
+        input.tool_name.as_deref(),
+        &input.structured_content,
+    )
+    .await;
 
     let session = client_sessions::find_for_user_bear_session(
         &state.sqlx_pool,
@@ -1402,6 +1472,32 @@ pub(crate) async fn client_permission_result_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cargo_offline_cache_miss_is_classified_from_structured_process_result() {
+        let evidence = cargo_offline_cache_miss_evidence(
+            Some("process_run"),
+            &json!({
+                "command": "cargo",
+                "cwd": "/workspace/services/den",
+                "exit_code": 101,
+                "stderr": "error: no matching package named `serde` found\nnote: offline mode (via `--offline`) can sometimes cause surprising resolution failures"
+            }),
+        )
+        .expect("offline Cargo cache miss should be recognized");
+        assert_eq!(evidence["code"], "cargo_offline_cache_miss");
+        assert_eq!(evidence["required_package"], "serde");
+        assert_eq!(evidence["preparation_state"], "not_attempted");
+    }
+
+    #[test]
+    fn cargo_failures_without_offline_cache_miss_are_not_misclassified() {
+        assert!(cargo_offline_cache_miss_evidence(
+            Some("process_run"),
+            &json!({"command": "cargo", "exit_code": 101, "stderr": "error: could not compile"}),
+        )
+        .is_none());
+    }
 
     #[test]
     fn permission_reason_text_accepts_only_string_reasons() {
