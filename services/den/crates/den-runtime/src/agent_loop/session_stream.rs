@@ -2596,6 +2596,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn server_tool_context_inherits_work_run_binding_from_work_session() {
+        let bear_id = uuid::Uuid::new_v4();
+        let work_run_id = uuid::Uuid::new_v4();
+        let session_key = "den-conv-test:client-test";
+        let mut session = test_session(session_key, bear_id);
+        session.work_run_id = Some(work_run_id);
+        let store = AgentLoopSessionStore::default();
+        store.insert(session.clone());
+        let stream = SessionTrackingStream::new(
+            Box::pin(futures::stream::empty()),
+            &session,
+            store,
+            sqlx::PgPool::connect_lazy("postgres://postgres:postgres@127.0.0.1/unused")
+                .expect("lazy pool"),
+            bear_id,
+            session.bear_slug.clone(),
+            session.user_id,
+            session.conversation_id.clone(),
+            session.client_session_id.clone(),
+            session.request_id.clone(),
+            Arc::new(Config::test_stub()),
+            MemoryStoreManager::new(&Config::test_stub()),
+            BearProfile::Work,
+            NativeToolDispatchMode::DeferToClient,
+        );
+
+        assert_eq!(stream.server_tool_context().work_run_id, Some(work_run_id));
+    }
+
+    #[tokio::test]
     async fn server_tool_continuation_cleanup_removes_recent_tool_chain() {
         let bear_id = uuid::Uuid::new_v4();
         let mut session = test_session("den-conv-test:client-test", bear_id);

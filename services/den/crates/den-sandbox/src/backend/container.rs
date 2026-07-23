@@ -19,16 +19,84 @@ use crate::protocol::{
     RustDependencyPreparation, RustDependencyResolution,
 };
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const DOCKER_TIMEOUT: Duration = Duration::from_secs(120);
 const DOCKER_OUTPUT_CAP: usize = 256 * 1024;
+const CARGO_DIAGNOSTIC_CAP: usize = 4096;
 const CONTAINER_PREFIX: &str = "den-sbx-";
 pub const SANDBOX_LABEL: &str = "den.sandbox";
 /// Label carried by per-sandbox egress relay containers (value = sandbox id).
 /// Deliberately not `den.sandbox=1` so relays are never adopted as sandboxes.
 pub const RELAY_LABEL: &str = "den.sandbox.relay";
+
+fn bounded_cargo_diagnostic(stderr: &str) -> String {
+    stderr
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .chars()
+        .take(CARGO_DIAGNOSTIC_CAP)
+        .collect()
+}
+
+fn classify_cargo_failure(diagnostic: &str) -> &'static str {
+    if diagnostic.contains("failed to download")
+        || diagnostic.contains("failed to get")
+        || diagnostic.contains("Could not resolve host")
+        || diagnostic.contains("network failure")
+    {
+        "registry_download_failed"
+    } else if diagnostic.contains("no matching package named")
+        || diagnostic.contains("failed to select a version")
+        || diagnostic.contains("failed to resolve")
+    {
+        "cargo_resolution_failed"
+    } else if diagnostic.contains("failed to parse manifest")
+        || diagnostic.contains("failed to load manifest")
+    {
+        "cargo_manifest_invalid"
+    } else {
+        "cargo_preparation_failed"
+    }
+}
+
+/// Reject Cargo configuration which can redirect the privileged helper to an
+/// arbitrary registry. This is deliberately a small preflight rather than a
+/// TOML parser: we only need to recognize section headers, and fail closed for
+/// the two configuration namespaces that change dependency sources.
+fn cargo_source_configuration_error(workspace: &Path) -> Option<String> {
+    for relative in [".cargo/config.toml", ".cargo/config"] {
+        let path = workspace.join(relative);
+        let Ok(config) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in config.lines() {
+            let section = line.trim();
+            if section.starts_with("[source") || section.starts_with("[registries") {
+                return Some(format!(
+                    "{relative} configures an alternate Cargo source or registry; hosted dependency preparation supports crates.io only"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// The helper has egress solely to populate the Den-managed cache. Git
+/// dependencies would turn that into arbitrary-host egress, so reject them
+/// before starting a helper container.
+fn git_dependency_error(manifest: &Path) -> Option<String> {
+    let Ok(contents) = std::fs::read_to_string(manifest) else {
+        return None;
+    };
+    contents
+        .lines()
+        .any(|line| line.contains("git ="))
+        .then(|| "hosted dependency preparation does not support git dependencies".to_string())
+}
 
 pub struct DockerCliBackend {
     docker_bin: String,
@@ -258,6 +326,18 @@ impl DockerCliBackend {
                 detail: "manifest is not present in sandbox workspace".to_string(),
             });
         }
+        if let Some(detail) =
+            cargo_source_configuration_error(workspace).or_else(|| git_dependency_error(&manifest))
+        {
+            return Ok(PrepareRustDependenciesResponse {
+                status: "rejected".to_string(),
+                code: "unsupported_cargo_source_configuration".to_string(),
+                stage: "preflight".to_string(),
+                retryable: false,
+                content: detail,
+                lockfile_changed: false,
+            });
+        }
         let command = match request.preparation {
             RustDependencyPreparation::Check => "check",
             RustDependencyPreparation::TestNoRun => "test",
@@ -297,36 +377,52 @@ impl DockerCliBackend {
         let out = self.docker_owned(&args, None).await?;
         let lockfile_changed =
             request.resolution == RustDependencyResolution::UpdateLockfile && out.success();
-        let content = if out.timed_out {
-            "Cargo preparation timed out".to_string()
-        } else if out.success() {
-            "Rust dependencies prepared for offline use".to_string()
+        let (status, code, stage, retryable, content) = if out.success() {
+            let mode = match request.preparation {
+                RustDependencyPreparation::Check => "check",
+                RustDependencyPreparation::TestNoRun => "test --no-run",
+            };
+            let resolution = match request.resolution {
+                RustDependencyResolution::Locked => "existing lockfile verified",
+                RustDependencyResolution::UpdateLockfile if lockfile_changed => {
+                    "lockfile update requested; Cargo completed successfully"
+                }
+                RustDependencyResolution::UpdateLockfile => {
+                    "lockfile update requested; Cargo reported no lockfile change"
+                }
+            };
+            (
+                "prepared",
+                "prepared",
+                "publish",
+                false,
+                format!(
+                    "Rust dependencies prepared for offline use (mode: {mode}; {resolution}; cache mounted read-only at /den/cargo-home)."
+                ),
+            )
+        } else if out.timed_out {
+            (
+                "failed",
+                "helper_timed_out",
+                "helper",
+                true,
+                "Cargo preparation timed out".to_string(),
+            )
         } else {
-            let detail = out.stderr_lossy();
-            format!(
-                "Cargo preparation failed: {}",
-                detail.chars().take(4096).collect::<String>()
+            let detail = bounded_cargo_diagnostic(&out.stderr_lossy());
+            (
+                "failed",
+                classify_cargo_failure(&detail),
+                "helper",
+                false,
+                format!("Cargo preparation failed: {detail}"),
             )
         };
         Ok(PrepareRustDependenciesResponse {
-            status: if out.success() {
-                "prepared".to_string()
-            } else {
-                "failed".to_string()
-            },
-            code: if out.success() {
-                "prepared".to_string()
-            } else if out.timed_out {
-                "helper_timed_out".to_string()
-            } else {
-                "cargo_preparation_failed".to_string()
-            },
-            stage: if out.success() {
-                "publish".to_string()
-            } else {
-                "helper".to_string()
-            },
-            retryable: !out.success(),
+            status: status.to_string(),
+            code: code.to_string(),
+            stage: stage.to_string(),
+            retryable,
             content,
             lockfile_changed,
         })
@@ -759,6 +855,30 @@ fn sandbox_run_args(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classifies_bounded_cargo_failures() {
+        assert_eq!(
+            classify_cargo_failure("error: failed to get `serde` as a dependency"),
+            "registry_download_failed"
+        );
+        assert_eq!(
+            classify_cargo_failure("error: no matching package named `serde` found"),
+            "cargo_resolution_failed"
+        );
+        assert_eq!(
+            classify_cargo_failure("error: failed to parse manifest"),
+            "cargo_manifest_invalid"
+        );
+        assert_eq!(bounded_cargo_diagnostic("\nerror: bad\n\n"), "error: bad");
+        assert!(
+            format!(
+                "Rust dependencies prepared for offline use (mode: {}; {}; cache mounted read-only at /den/cargo-home).",
+                "check", "existing lockfile verified"
+            )
+            .contains("cache mounted read-only")
+        );
+    }
 
     #[test]
     fn container_names_round_trip() {

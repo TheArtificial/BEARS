@@ -39,17 +39,60 @@ pub async fn invoke_den_tool(
     if tool_name == DEN_WORK_PREPARE_RUST_DEPENDENCIES {
         let arguments: PrepareRustDependenciesArguments = serde_json::from_value(arguments)
             .map_err(|error| CustomError::ValidationError(error.to_string()))?;
+        tracing::info!(
+            audit_event = "rust_dependency_preparation",
+            stage = "authorize",
+            outcome = "started",
+            bear_id = %context.bear_id,
+            conversation_id = %context.conversation_id,
+            session_id = %context.session_id,
+            work_run_id = ?context.work_run_id,
+            manifest_path = %arguments.manifest_path,
+            package = %arguments.package,
+            resolution = ?arguments.resolution,
+            preparation = ?arguments.preparation,
+            "Rust dependency preparation broker invocation"
+        );
         let runner = SandboxRustDependencyPreparationRunner {
             pool,
             config,
             bear_id: context.bear_id,
         };
-        return den_service::rust_dependencies::execute_prepare_rust_dependencies(
+        let result = den_service::rust_dependencies::execute_prepare_rust_dependencies(
             &runner, &context, arguments,
         )
-        .await
-        .map(|result| serde_json::to_value(result).expect("Rust dependency result is serializable"))
-        .map_err(CustomError::from);
+        .await;
+        match &result {
+            Ok(result) => tracing::info!(
+                audit_event = "rust_dependency_preparation",
+                stage = %result.stage,
+                outcome = %result.status,
+                code = %result.code,
+                retryable = result.retryable,
+                lockfile_changed = result.lockfile_changed,
+                bear_id = %context.bear_id,
+                conversation_id = %context.conversation_id,
+                session_id = %context.session_id,
+                work_run_id = ?context.work_run_id,
+                "Rust dependency preparation broker completed"
+            ),
+            Err(error) => tracing::warn!(
+                audit_event = "rust_dependency_preparation",
+                stage = "dispatch",
+                outcome = "error",
+                error = %error,
+                bear_id = %context.bear_id,
+                conversation_id = %context.conversation_id,
+                session_id = %context.session_id,
+                work_run_id = ?context.work_run_id,
+                "Rust dependency preparation broker failed"
+            ),
+        }
+        return result
+            .map(|result| {
+                serde_json::to_value(result).expect("Rust dependency result is serializable")
+            })
+            .map_err(CustomError::from);
     }
 
     if workflow::is_workflow_tool(tool_name) {
