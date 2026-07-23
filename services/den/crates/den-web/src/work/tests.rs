@@ -338,6 +338,91 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
 }
 
 #[tokio::test]
+async fn task_tree_can_add_children_and_reorder_siblings() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let (user_id, bear_id) = seed_member(&pool).await;
+    let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, user_id).await;
+
+    let response = post_form(
+        &app,
+        &cookie,
+        "/work/new",
+        format!(
+            "bear_id={bear_id}&goal=Edit+the+tree&root=&commit_policy=propose_only\\
+             &task_title=First+root&task_criteria=first+done"
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let job_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("job id");
+    let first_root_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM bear_tasks WHERE job_id = $1 AND title = 'First root'")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("first root task");
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/tasks/{first_root_id}/children"),
+        "title=First+child&criteria=child+done&body=".to_string(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let child: (Option<Uuid>, i32) = sqlx::query_as(
+        "SELECT parent_task_id, sibling_order FROM bear_tasks WHERE job_id = $1 AND title = 'First child'",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("child task");
+    assert_eq!(child, (Some(first_root_id), 0));
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/extend"),
+        "title=Second+root&body=&criteria=second+done".to_string(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let second_root_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM bear_tasks WHERE job_id = $1 AND title = 'Second root'")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("second root task");
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/tasks/{second_root_id}/move/up"),
+        String::new(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let roots: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM bear_tasks WHERE job_id = $1 AND parent_task_id IS NULL ORDER BY sibling_order",
+    )
+    .bind(job_id)
+    .fetch_all(&pool)
+    .await
+    .expect("root ordering");
+    assert_eq!(roots, vec![second_root_id, first_root_id]);
+}
+
+#[tokio::test]
 async fn job_lifecycle_can_extend_then_complete() {
     let _guard = TEST_DB_LOCK.lock().await;
     let Some(pool) = test_pool().await else {
