@@ -1,9 +1,8 @@
 // ROUTES: When modifying routes in this file, update /src/ROUTES.md.
 //! Operator UI for autonomous work: Docket jobs with work tasks, work runs,
-//! and their sandbox execution results. Read-mostly; the only controls are
-//! the safe trio (dispatch, cancel, retry), all of which flow through the
-//! same durable state the dispatch worker uses — this UI never touches the
-//! sandbox host directly.
+//! and their sandbox execution results. Controls flow through the same durable
+//! state the dispatch worker uses — this UI never touches the sandbox host
+//! directly.
 
 use axum::{
     extract::{Path, State},
@@ -87,8 +86,9 @@ use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow, SCRATCH_ROOT_NA
 use den_docket::{
     DocketCommitPolicy, DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint,
     DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter, DocketJobStatus,
-    DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskInput,
-    DocketTaskKind, DocketTaskScope, PgDocketService, TaskListVisibility,
+    DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate,
+    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, TaskListVisibility,
 };
 use den_sandbox::protocol::CatalogResponse;
 use den_sandbox::SandboxClient;
@@ -110,6 +110,10 @@ pub fn router() -> Router<AppState> {
         .route("/work/jobs/{job_id}/complete", post(complete_job))
         .route("/work/jobs/{job_id}/extend", post(extend_job))
         .route("/work/jobs/{job_id}/dispatch", post(dispatch_job))
+        .route(
+            "/work/jobs/{job_id}/tasks/{task_id}/requeue",
+            post(requeue_task),
+        )
         .route("/work/runs/{run_id}", get(run_detail))
         .route("/work/runs/{run_id}/cancel", post(cancel_run))
         .route("/work/runs/{run_id}/retry", post(retry_run))
@@ -1107,6 +1111,7 @@ async fn job_detail(
                 "kind": task.kind,
                 "status": status,
                 "completion_criteria": task.completion_criteria.0,
+                "can_requeue": status == "blocked",
             })
         })
         .collect();
@@ -1170,6 +1175,82 @@ async fn job_detail(
         },
     )
     .await
+}
+
+async fn requeue_task(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path((job_ref, task_ref)): Path<(String, String)>,
+    Form(form): Form<RequeueTaskForm>,
+) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    let task_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_tasks", &task_ref).await?;
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let Some(bear_id) = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?
+        .filter(|bear_id| bears.contains_key(bear_id))
+    else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let reason = form.reason.trim();
+    if reason.is_empty() {
+        return Err(CustomError::ValidationError(
+            "a requeue reason is required".to_string(),
+        ));
+    }
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let projection = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    let run_id = projection
+        .job
+        .current_run_id
+        .ok_or_else(|| CustomError::ValidationError("job has no current run".to_string()))?;
+    let state_row = projection
+        .task_states
+        .iter()
+        .find(|state| state.task_id == task_id && state.run_id == run_id)
+        .ok_or_else(|| {
+            CustomError::NotFound("task not found in the job's current run".to_string())
+        })?;
+    if state_row.status != "blocked" {
+        return Err(CustomError::ValidationError(
+            "only blocked tasks can be requeued".to_string(),
+        ));
+    }
+    service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: Some(job_id),
+            task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Pending,
+                result_refs: Some(serde_json::json!({
+                    "requeue": {
+                        "reason": reason,
+                        "previous_blocked_reason": state_row.result_summary,
+                    }
+                })),
+                result_summary: Some(format!("Requeued: {reason}")),
+            }),
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct RequeueTaskForm {
+    reason: String,
 }
 
 async fn run_detail(

@@ -127,7 +127,17 @@
                     </details>
                 </td>
                 <td>{{ task.kind }}</td>
-                <td>{{ task.status }}</td>
+                <td>{{ task.status }}
+                    {% if task.can_requeue %}
+                    <details>
+                        <summary>Requeue</summary>
+                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/requeue">
+                            <label>Reason<br><input name="reason" required size="50" placeholder="What changed externally?"></label>
+                            <button type="submit">Requeue task</button>
+                        </form>
+                    </details>
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>
