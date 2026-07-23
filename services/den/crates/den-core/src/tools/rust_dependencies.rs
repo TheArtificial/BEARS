@@ -24,6 +24,9 @@ pub async fn prepare_rust_dependencies(
     context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, DenError> {
+    if context.work_run_id.is_none() {
+        return Ok(unavailable_result());
+    }
     let arguments = serde_json::from_value(arguments)?;
     ops.prepare_rust_dependencies(context, arguments).await
 }

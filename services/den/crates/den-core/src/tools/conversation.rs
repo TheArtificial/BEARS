@@ -101,6 +101,7 @@ mod tests {
             membership_role: None,
             conversation_id: conversation_id.to_string(),
             session_id: "session-1".to_string(),
+            work_run_id: None,
             client_session_id: Some("client-session-1".to_string()),
             conversation_selection: None,
             runtime_target: None,
