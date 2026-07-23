@@ -60,7 +60,19 @@
 </section>
 {% endif %}
 
-{% if dependency_preparation %}
+{% if cargo_failure %}
+<section>
+    <h2>Rust dependency cache</h2>
+    <p><strong>Not ready for offline Cargo.</strong> {{ cargo_failure.diagnostic }}</p>
+    <dl>
+        <dt>Failure</dt><dd><code>{{ cargo_failure.code }}</code></dd>
+        <dt>Stage</dt><dd><code>{{ cargo_failure.stage }}</code></dd>
+        {% if cargo_failure.required_package %}<dt>Missing package</dt><dd><code>{{ cargo_failure.required_package }}</code></dd>{% endif %}
+        <dt>Dependency preparation</dt><dd>not attempted</dd>
+        <dt>Next action</dt><dd>{{ cargo_failure.action }}</dd>
+    </dl>
+</section>
+{% elif dependency_preparation %}
 <section>
     <h2>Rust dependency cache</h2>
     <p><strong>{{ dependency_preparation.status }}</strong> — {{ dependency_preparation.content }}</p>

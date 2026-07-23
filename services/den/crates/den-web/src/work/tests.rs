@@ -13,6 +13,46 @@ use minijinja::Environment;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
+
+#[test]
+fn cargo_offline_cache_miss_is_the_primary_outcome() {
+    let failure = serde_json::json!({
+        "code": "cargo_offline_cache_miss",
+        "required_package": "serde",
+    });
+    let run = WorkRunRow {
+        id: Uuid::nil(),
+        bear_id: Uuid::nil(),
+        job_id: Uuid::nil(),
+        job_run_id: Uuid::nil(),
+        attempt: 1,
+        state: "succeeded".into(),
+        runner_id: None,
+        lease_expires_at: None,
+        cancel_requested: false,
+        root_name: None,
+        git_ref: None,
+        image_name: None,
+        sandbox_server_url: None,
+        sandbox_id: None,
+        sandbox_type: None,
+        sandbox_strength: None,
+        work_surface: None,
+        bearwire_session_id: None,
+        result_summary: Some("headless turn reached a terminal run event".into()),
+        result_refs: None,
+        usage: None,
+        error: None,
+        queued_at: time::OffsetDateTime::UNIX_EPOCH,
+        started_at: None,
+        finished_at: None,
+        updated_at: time::OffsetDateTime::UNIX_EPOCH,
+    };
+    assert_eq!(
+        work_run_outcome(&run, &[(Uuid::nil(), "pending".into())], Some(&failure)),
+        "Blocked: Rust dependencies are unavailable in the offline cache. `serde` could not be resolved. Dependency preparation was not attempted; prepare Rust dependencies, then retry Cargo.",
+    );
+}
 use tower_sessions_sqlx_store::PostgresStore;
 
 use crate::{auth_backend::Backend, config::Config};

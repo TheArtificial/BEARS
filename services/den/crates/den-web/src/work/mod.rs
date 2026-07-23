@@ -223,7 +223,28 @@ fn run_diagnostic(
     })
 }
 
-fn work_run_outcome(run: &WorkRunRow, task_statuses: &[(Uuid, String)]) -> String {
+/// The work-run result is the canonical evidence for the primary outcome.
+/// In particular, a terminal Armature turn is only transport evidence: it
+/// must never outrank a structured validation blocker recorded by Den.
+fn work_run_outcome(
+    run: &WorkRunRow,
+    task_statuses: &[(Uuid, String)],
+    cargo_failure: Option<&serde_json::Value>,
+) -> String {
+    if cargo_failure
+        .and_then(|failure| failure.get("code"))
+        .and_then(serde_json::Value::as_str)
+        == Some("cargo_offline_cache_miss")
+    {
+        let package = cargo_failure
+            .and_then(|failure| failure.get("required_package"))
+            .and_then(serde_json::Value::as_str)
+            .map(|package| format!(" `{package}`"))
+            .unwrap_or_default();
+        return format!(
+            "Blocked: Rust dependencies are unavailable in the offline cache.{package} could not be resolved. Dependency preparation was not attempted; prepare Rust dependencies, then retry Cargo."
+        );
+    }
     let unfinished = task_statuses
         .iter()
         .filter(|(_, status)| status != "done" && status != "cancelled")
@@ -1564,6 +1585,7 @@ async fn run_detail(
     let armature_report = refs.get("armature_report").cloned();
     let turn_outcome = refs.get("turn_outcome").cloned();
     let dependency_preparation = refs.get("rust_dependency_preparation").cloned();
+    let cargo_failure = refs.get("cargo_failure").cloned();
     let task_statuses =
         work_runs::get_job_work_task_run_statuses(state.sqlx_pool(), run.job_id, run.job_run_id)
             .await?;
@@ -1610,13 +1632,14 @@ async fn run_detail(
         context! {
             title => "Work run",
             run => view,
-            outcome => work_run_outcome(&run, &task_statuses),
+            outcome => work_run_outcome(&run, &task_statuses, cargo_failure.as_ref()),
             log_tail => log_tail,
             diff_patch => diff_patch,
             changed_files => changed_files,
             armature_report => armature_report,
             turn_outcome => turn_outcome,
             dependency_preparation => dependency_preparation,
+            cargo_failure => cargo_failure,
             diagnostic => diagnostic,
             conversation_id => conversation_id,
             work_surface => work_surface,
