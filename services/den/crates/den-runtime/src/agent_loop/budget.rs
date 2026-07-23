@@ -259,10 +259,7 @@ impl TurnBudgetStopReason {
 
     pub fn user_message(&self) -> String {
         match self {
-            Self::WallClockLimit { elapsed_ms, limit_ms } => format!(
-                "I stopped because this turn exhausted its wall-clock budget (elapsed={}ms/limit={}ms). The recent tool results were recorded, but this run needs a fresh turn to continue safely.",
-                elapsed_ms, limit_ms
-            ),
+            Self::WallClockLimit { .. } => "I ran out of execution time after recording the work completed so far. Send “continue” and I’ll pick up from the recorded state.".to_string(),
             Self::TotalToolCallLimit { count, limit } => format!(
                 "I stopped because this turn exhausted its emergency total tool-call fuse (tool_calls={count}/limit={limit}). The recent tool results were recorded, but this run needs a fresh turn to continue safely."
             ),

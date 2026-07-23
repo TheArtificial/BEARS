@@ -10,9 +10,9 @@ use std::sync::{Arc, LazyLock};
 use den_memory::MemoryStoreManager;
 use den_protocol::{
     ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
-    RuntimeConversationRef, RuntimeErrorCategory, RuntimeEventStream, RuntimeHistoryPage,
-    RuntimeHistoryRecord, RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent,
-    RuntimeToolResultStatus, StartTurnRequest,
+    RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
+    RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, RuntimeToolResultStatus,
+    StartTurnRequest,
 };
 use den_service::{
     bears::{
@@ -1272,13 +1272,16 @@ fn parse_args_or_empty_object(raw: &str) -> serde_json::Value {
 fn continuation_budget_stop(
     reason: TurnBudgetStopReason,
 ) -> (RuntimeStreamContinuation, RuntimeEventStream) {
-    let stream: RuntimeEventStream = Box::pin(stream::iter(vec![Ok(
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
-            turn: None,
-            category: RuntimeErrorCategory::Internal,
-            message: reason.user_message(),
-        }),
-    )]));
+    let stream: RuntimeEventStream = Box::pin(stream::iter(vec![
+        Ok(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::AssistantTextDelta {
+                text: reason.user_message(),
+            },
+        )),
+        Ok(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::TurnCompleted { turn: None },
+        )),
+    ]));
     (RuntimeStreamContinuation::Deferred, stream)
 }
 
@@ -2177,6 +2180,27 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn budget_stop_completes_with_a_user_safe_status() {
+        let (_continuation, stream) =
+            continuation_budget_stop(TurnBudgetStopReason::WallClockLimit {
+                elapsed_ms: 60_001,
+                limit_ms: 60_000,
+            });
+        let events = futures::executor::block_on(async {
+            use futures::StreamExt;
+            stream.collect::<Vec<_>>().await
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text })),
+                Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { turn: None })),
+            ] if text.contains("Send “continue”") && !text.contains("elapsed=")
+        ));
     }
 
     #[test]
