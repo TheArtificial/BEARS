@@ -73,6 +73,7 @@ mod tests {
             requires_write,
             image: None,
             network: Default::default(),
+            prepare_cargo_dependencies: false,
             env: Default::default(),
             limits: Default::default(),
             labels: Default::default(),

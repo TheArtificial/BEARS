@@ -58,6 +58,9 @@ impl DockerCliBackend {
     pub async fn provision(&self, spec: &ProvisionSpec) -> Result<(), BackendError> {
         let container = container_name(&spec.id);
         let mut env = spec.env.clone();
+        if spec.cargo_home_bind_source.is_some() {
+            env.insert("CARGO_HOME".to_string(), "/den/cargo-home".to_string());
+        }
         // Resolved from the original callback URL, before any relay rewrite.
         let add_host = callback_add_host(&env).await;
 
@@ -640,6 +643,13 @@ fn sandbox_run_args(
         args.push("--add-host".into());
         args.push(mapping.into());
     }
+    if let Some(cargo_home) = &spec.cargo_home_bind_source {
+        args.push("-v".into());
+        args.push(format!(
+            "{}:/den/cargo-home:ro",
+            cargo_home.to_string_lossy()
+        ));
+    }
     for (key, value) in &spec.labels {
         args.push("--label".into());
         args.push(format!("den.{key}={value}"));
@@ -688,6 +698,7 @@ mod tests {
             image: "bears/sandbox:latest".into(),
             env: BTreeMap::new(),
             network,
+            cargo_home_bind_source: None,
             allowed_outbound_hosts: Vec::new(),
             memory_mb: None,
             cpus: None,
@@ -715,6 +726,15 @@ mod tests {
         // The bind source is the HOST path, never the provider-local one.
         assert!(joined.contains("-v /host/ws/abc123:/workspace"), "{joined}");
         assert!(!joined.contains("/srv/ws/abc123"), "{joined}");
+
+        let mut prepared = spec(NetworkMode::Restricted);
+        prepared.cargo_home_bind_source = Some(PathBuf::from("/host/ws/abc123/.den-cargo-home"));
+        let args = sandbox_run_args(&prepared, "den-sbx-abc123", "/tmp/e.env", None, None);
+        let joined = args.join(" ");
+        assert!(
+            joined.contains("-v /host/ws/abc123/.den-cargo-home:/den/cargo-home:ro"),
+            "{joined}"
+        );
 
         // Open mode dials the callback directly, so it carries the resolved
         // extra-host mapping.

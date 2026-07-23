@@ -174,6 +174,11 @@ pub struct CreateSandboxRequest {
     /// Network posture; defaults to [`NetworkMode::Restricted`].
     #[serde(default)]
     pub network: NetworkMode,
+    /// Prepare the root Cargo.lock dependency set in a provider-controlled
+    /// helper, then expose its cache read-only to this sandbox. This does not
+    /// grant the sandbox any additional network access.
+    #[serde(default)]
+    pub prepare_cargo_dependencies: bool,
     /// Environment injected into the sandbox (armature credentials, work
     /// order id, ...). Values are never logged by the provider.
     #[serde(default)]

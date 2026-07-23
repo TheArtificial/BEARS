@@ -33,6 +33,8 @@ pub struct ProvisionSpec {
     pub image: String,
     pub env: BTreeMap<String, String>,
     pub network: crate::protocol::NetworkMode,
+    /// Provider-managed Cargo cache mounted read-only into the sandbox.
+    pub cargo_home_bind_source: Option<PathBuf>,
     /// Exact HTTPS hosts permitted by the root's saved egress allowlist.
     pub allowed_outbound_hosts: Vec<String>,
     pub memory_mb: Option<u64>,
