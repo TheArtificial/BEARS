@@ -314,6 +314,19 @@ impl DockerCliBackend {
             } else {
                 "failed".to_string()
             },
+            code: if out.success() {
+                "prepared".to_string()
+            } else if out.timed_out {
+                "helper_timed_out".to_string()
+            } else {
+                "cargo_preparation_failed".to_string()
+            },
+            stage: if out.success() {
+                "publish".to_string()
+            } else {
+                "helper".to_string()
+            },
+            retryable: !out.success(),
             content,
             lockfile_changed,
         })

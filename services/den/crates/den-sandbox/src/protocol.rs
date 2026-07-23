@@ -221,6 +221,9 @@ pub enum RustDependencyPreparation {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PrepareRustDependenciesResponse {
     pub status: String,
+    pub code: String,
+    pub stage: String,
+    pub retryable: bool,
     pub content: String,
     pub lockfile_changed: bool,
 }

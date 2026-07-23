@@ -30,9 +30,29 @@ pub struct PrepareRustDependenciesRequest {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PrepareRustDependenciesResult {
+    /// `prepared`, `failed`, `rejected`, or `unavailable`.
     pub status: String,
+    /// Stable, machine-readable reason for the result.
+    pub code: String,
+    /// The broker lifecycle stage that produced the result.
+    pub stage: String,
+    /// Whether retrying unchanged input can reasonably succeed.
+    pub retryable: bool,
     pub content: String,
     pub lockfile_changed: bool,
+}
+
+impl PrepareRustDependenciesResult {
+    fn rejected(code: &str, content: &str) -> Self {
+        Self {
+            status: "rejected".to_string(),
+            code: code.to_string(),
+            stage: "authorize".to_string(),
+            retryable: false,
+            content: content.to_string(),
+            lockfile_changed: false,
+        }
+    }
 }
 
 #[allow(async_fn_in_trait)]
@@ -56,11 +76,12 @@ pub async fn execute_prepare_rust_dependencies(
     invocation: &DenToolInvocationContext,
     arguments: PrepareRustDependenciesArguments,
 ) -> Result<PrepareRustDependenciesResult, DenError> {
-    let work_run_id = invocation.work_run_id.ok_or_else(|| {
-        DenError::Authorization(
-            "prepare_rust_dependencies requires an active authorized work run".to_string(),
-        )
-    })?;
+    let Some(work_run_id) = invocation.work_run_id else {
+        return Ok(PrepareRustDependenciesResult::rejected(
+            "missing_work_run_binding",
+            "Dependency preparation requires an active work-run binding; no Cargo helper was invoked.",
+        ));
+    };
     validate_manifest_path(&arguments.manifest_path)?;
     validate_package_name(&arguments.package)?;
 

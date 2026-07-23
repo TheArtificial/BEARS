@@ -128,6 +128,9 @@ impl den_service::rust_dependencies::RustDependencyPreparationRunner
         Ok(
             den_service::rust_dependencies::PrepareRustDependenciesResult {
                 status: response.status,
+                code: response.code,
+                stage: response.stage,
+                retryable: response.retryable,
                 content: response.content,
                 lockfile_changed: response.lockfile_changed,
             },
