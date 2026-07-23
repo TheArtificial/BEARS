@@ -1066,6 +1066,26 @@ mod tests {
     }
 
     #[test]
+    fn wall_clock_warning_steers_to_a_user_facing_checkpoint() {
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            52_000,
+            &state(),
+            &[observation("memory_read", r#"{\"path\":\"a\"}"#, false)],
+        );
+        let warning = evaluation.warning.expect("wall-clock warning");
+
+        assert_eq!(warning.code, "wall_clock_warning");
+        assert!(warning
+            .message
+            .contains("Do not begin another broad tool sequence"));
+        assert!(warning
+            .message
+            .contains("progress/checkpoint status for the user"));
+    }
+
+    #[test]
     fn budget_warning_mentions_docket_for_durable_work_tracking() {
         let evaluation = evaluate_turn_budget(
             policy(),
