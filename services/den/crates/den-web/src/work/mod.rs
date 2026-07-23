@@ -223,14 +223,22 @@ fn run_diagnostic(
     })
 }
 
-/// The work-run result is the canonical evidence for the primary outcome.
-/// In particular, a terminal Armature turn is only transport evidence: it
-/// must never outrank a structured validation blocker recorded by Den.
+/// Render the canonical outcome persisted by Docket. Older runs without it
+/// retain the legacy fallback until they are retried or finalized again.
 fn work_run_outcome(
     run: &WorkRunRow,
     task_statuses: &[(Uuid, String)],
     cargo_failure: Option<&serde_json::Value>,
 ) -> String {
+    if let Some(summary) = run
+        .result_refs
+        .as_ref()
+        .and_then(|refs| refs.pointer("/outcome/summary"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|summary| !summary.trim().is_empty())
+    {
+        return summary.to_string();
+    }
     if cargo_failure
         .and_then(|failure| failure.get("code"))
         .and_then(serde_json::Value::as_str)

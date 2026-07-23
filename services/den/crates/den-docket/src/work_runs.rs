@@ -686,6 +686,97 @@ pub struct WorkRunFinalize {
     pub error: Option<String>,
 }
 
+/// The one user-facing outcome for a work run. Turn and Armature reports are
+/// evidence only: neither may claim that work completed. A completed worker
+/// process is only eligible for a completed work outcome; durable task state
+/// and structured validation evidence decide the outcome.
+pub fn canonical_work_run_state(
+    state: WorkRunState,
+    refs: &Value,
+    task_statuses: &[String],
+) -> WorkRunState {
+    if !matches!(state, WorkRunState::Succeeded) {
+        return state;
+    }
+    if refs.pointer("/cargo_failure/code").and_then(Value::as_str)
+        == Some("cargo_offline_cache_miss")
+        || task_statuses.iter().any(|status| status == "blocked")
+        || task_statuses
+            .iter()
+            .any(|status| matches!(status.as_str(), "pending" | "in_progress"))
+    {
+        WorkRunState::Blocked
+    } else {
+        state
+    }
+}
+
+pub fn canonical_work_run_outcome(
+    state: WorkRunState,
+    refs: &Value,
+    task_statuses: &[String],
+) -> Value {
+    if matches!(state, WorkRunState::Blocked)
+        && refs.pointer("/cargo_failure/code").and_then(Value::as_str)
+            == Some("cargo_offline_cache_miss")
+    {
+        let package = refs
+            .pointer("/cargo_failure/required_package")
+            .and_then(Value::as_str)
+            .map(|package| format!(" `{package}` could not be resolved."))
+            .unwrap_or_default();
+        return json!({
+            "status": "blocked",
+            "code": "cargo_offline_cache_miss",
+            "summary": format!("Rust dependencies are unavailable in the offline cache.{package}"),
+            "next_action": "Prepare Rust dependencies with the hosted dependency tool, then retry Cargo.",
+            "evidence_refs": ["cargo_failure", "turn_outcome", "armature_report"],
+        });
+    }
+
+    if matches!(state, WorkRunState::Blocked) {
+        let blocked = task_statuses
+            .iter()
+            .filter(|status| *status == "blocked")
+            .count();
+        if blocked > 0 {
+            return json!({
+                "status": "blocked",
+                "code": "task_blocked",
+                "summary": format!("Work is blocked: {blocked} task(s) are blocked."),
+                "evidence_refs": ["task_run_states", "turn_outcome", "armature_report"],
+            });
+        }
+        let unfinished = task_statuses
+            .iter()
+            .filter(|status| matches!(status.as_str(), "pending" | "in_progress"))
+            .count();
+        if unfinished > 0 {
+            return json!({
+                "status": "incomplete",
+                "code": "work_incomplete",
+                "summary": format!("Work is incomplete: {unfinished} task(s) remain unfinished."),
+                "evidence_refs": ["task_run_states", "turn_outcome", "armature_report"],
+            });
+        }
+    }
+
+    let (status, code, summary) = match state {
+        WorkRunState::Succeeded => ("completed", "completed", "Work completed."),
+        WorkRunState::Blocked => ("blocked", "work_blocked", "Work is blocked."),
+        WorkRunState::Failed => ("failed", "work_failed", "Work failed."),
+        WorkRunState::TimedOut => ("timed_out", "work_timed_out", "Work timed out."),
+        WorkRunState::Cancelled => ("cancelled", "work_cancelled", "Work was cancelled."),
+        _ => ("incomplete", "work_incomplete", "Work is incomplete."),
+    };
+    json!({
+        "status": status,
+        "code": code,
+        "summary": summary,
+        "evidence_refs": ["turn_outcome", "armature_report"],
+    })
+}
+
 /// Terminal transition; clears the lease, stamps finished_at, and appends the
 /// matching task audit event.
 pub async fn finalize_work_run(
@@ -726,8 +817,38 @@ pub async fn finalize_work_run(
     .ok_or_else(|| {
         DenError::ValidationError(format!("work run {run_id} is already finalized or unknown"))
     })?;
+    let task_statuses: Vec<(String,)> = sqlx::query_as(
+        "SELECT COALESCE(s.status, 'pending')
+         FROM bear_tasks t
+         LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+         WHERE t.job_id = $1",
+    )
+    .bind(row.job_id)
+    .bind(row.job_run_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let task_statuses: Vec<String> = task_statuses.into_iter().map(|(status,)| status).collect();
+    let result_refs = row.result_refs.as_ref().unwrap_or(&Value::Null);
+    let canonical_state = canonical_work_run_state(state, result_refs, &task_statuses);
+    let canonical_outcome =
+        canonical_work_run_outcome(canonical_state, result_refs, &task_statuses);
+    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
+        "UPDATE bear_work_runs
+         SET state = $2,
+             result_summary = $3,
+             result_refs = COALESCE(result_refs, '{{}}'::jsonb)
+                 || jsonb_build_object('outcome', $4::jsonb)
+         WHERE id = $1
+         RETURNING {WORK_RUN_COLUMNS}"
+    ))
+    .bind(run_id)
+    .bind(canonical_state.as_str())
+    .bind(canonical_outcome["summary"].as_str())
+    .bind(&canonical_outcome)
+    .fetch_one(&mut *tx)
+    .await?;
 
-    let event_type = match state {
+    let event_type = match canonical_state {
         WorkRunState::Succeeded => "completed",
         WorkRunState::Cancelled => "cancelled",
         _ => "blocked",
@@ -746,7 +867,7 @@ pub async fn finalize_work_run(
             json!({
                 "work_run_id": row.id,
                 "attempt": row.attempt,
-                "final_state": state.as_str(),
+                "final_state": canonical_state.as_str(),
                 "error": finalize.error,
             }),
         )
@@ -755,6 +876,69 @@ pub async fn finalize_work_run(
 
     tx.commit().await?;
     Ok(row)
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    #[test]
+    fn cargo_cache_miss_blocks_even_when_turn_completed() {
+        let refs = json!({
+            "cargo_failure": {
+                "code": "cargo_offline_cache_miss",
+                "required_package": "serde"
+            },
+            "turn_outcome": { "kind": "completed" },
+            "armature_report": { "status_hint": "completed" }
+        });
+        let task_statuses = vec!["pending".to_string()];
+        let state = canonical_work_run_state(WorkRunState::Succeeded, &refs, &task_statuses);
+        let outcome = canonical_work_run_outcome(state, &refs, &task_statuses);
+        assert_eq!(outcome["status"], "blocked");
+        assert_eq!(outcome["code"], "cargo_offline_cache_miss");
+        assert!(outcome["summary"].as_str().unwrap().contains("serde"));
+        assert!(outcome["next_action"]
+            .as_str()
+            .unwrap()
+            .contains("Prepare Rust dependencies"));
+    }
+
+    #[test]
+    fn unfinished_tasks_prevent_completed_outcome() {
+        let refs = json!({ "turn_outcome": { "kind": "completed" } });
+        let task_statuses = vec!["done".to_string(), "pending".to_string()];
+        let state = canonical_work_run_state(WorkRunState::Succeeded, &refs, &task_statuses);
+        let outcome = canonical_work_run_outcome(state, &refs, &task_statuses);
+        assert_eq!(state, WorkRunState::Blocked);
+        assert_eq!(outcome["status"], "incomplete");
+        assert_eq!(outcome["code"], "work_incomplete");
+    }
+
+    #[test]
+    fn terminal_worker_failures_remain_authoritative() {
+        let refs = json!({
+            "cargo_failure": { "code": "cargo_offline_cache_miss" },
+            "turn_outcome": { "kind": "completed" },
+        });
+        let task_statuses = vec!["pending".to_string()];
+        let state = canonical_work_run_state(WorkRunState::TimedOut, &refs, &task_statuses);
+        let outcome = canonical_work_run_outcome(state, &refs, &task_statuses);
+        assert_eq!(state, WorkRunState::TimedOut);
+        assert_eq!(outcome["status"], "timed_out");
+        assert_eq!(outcome["code"], "work_timed_out");
+    }
+
+    #[test]
+    fn blocked_task_beats_unfinished_task_count() {
+        let refs = json!({ "turn_outcome": { "kind": "completed" } });
+        let task_statuses = vec!["blocked".to_string(), "pending".to_string()];
+        let state = canonical_work_run_state(WorkRunState::Succeeded, &refs, &task_statuses);
+        let outcome = canonical_work_run_outcome(state, &refs, &task_statuses);
+        assert_eq!(state, WorkRunState::Blocked);
+        assert_eq!(outcome["status"], "blocked");
+        assert_eq!(outcome["code"], "task_blocked");
+    }
 }
 
 /// Ask the owning worker to cancel; teardown happens asynchronously. Returns
