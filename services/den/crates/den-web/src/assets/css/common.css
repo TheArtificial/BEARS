@@ -32,6 +32,7 @@ select {
 }
 
 button, .button-link, .button-action, .button-borderless {
+    margin: 0 calc(var(--shadow-offset) / 2) calc(var(--shadow-offset) / 2) 0;
     padding-left: 1rem;
     padding-right: 1rem;
     padding-top: 2px;
@@ -46,6 +47,7 @@ button, .button-link, .button-action, .button-borderless {
 
     text-transform: uppercase;
     text-decoration: none;
+    border-radius: 0.25rem;
     box-shadow: calc(var(--shadow-offset) / 2) calc(var(--shadow-offset) / 2) 0 0 var(--border-color);
 }
 .button-link {
@@ -78,6 +80,21 @@ button:active, .button-link:active, .button-action:active {
     display: inline-block;
     width: 8ch;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Compact, readable task tree on the Docket job page. */
+table.job-tasks {
+    border: solid var(--box-border-width) var(--border-color);
+    border-collapse: collapse;
+}
+table.job-tasks th,
+table.job-tasks td {
+    padding: calc(var(--spacing-unit) / 2) var(--spacing-unit);
+    text-align: left;
+    vertical-align: top;
+}
+table.job-tasks tr + tr {
+    border-top: solid var(--thin-line-unit) var(--border-color);
 }
 
 

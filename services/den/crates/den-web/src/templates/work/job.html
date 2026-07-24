@@ -112,8 +112,8 @@
             </form>
         </details>
         {% endif %}
-        <table>
-            <thead><tr><th>Move</th><th>Task</th><th>Status</th></tr></thead>
+        <table class="job-tasks">
+            <thead><tr><th>Move</th><th>Task</th></tr></thead>
             <tbody>
                 {% for task in tasks %}
                 <tr>
@@ -124,8 +124,13 @@
                     <td style="padding-left: {{ task.depth * 1.5 }}rem">
                         <a href="#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}"><code class="entity-reference-id">{{ task.display_id }}</code></a>
                         {{ task.description }} <small>({{ task.kind }})</small>
-                    </td>
-                    <td>{{ task.status }}
+                        <div>
+                            {% if task.status == "done" %}✅ done
+                            {% elif task.status == "blocked" %}🚫 blocked
+                            {% elif task.status == "in_progress" %}🔄 in progress
+                            {% elif task.status == "cancelled" %}🚫 cancelled
+                            {% else %}⏳ pending{% endif %}
+                        </div>
                         <details>
                             <summary>Details</summary>
                             <p>{{ task.title }}</p>
