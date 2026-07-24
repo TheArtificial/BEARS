@@ -2,10 +2,11 @@
 {% block title %}Work job{% endblock %}
 {% block content %}
 <p><a href="/work">← Work</a></p>
-<h1><a href="/work/jobs/{{ job_id }}" title="UUID prefix for {{ job_full_id }}">Job <code class="entity-reference-id">{{ job_display_id }}</code>: {{ job_title }}</a></h1>
+<h1>Job <code class="entity-reference-id">{{ job_display_id }}</code></h1>
+<h2>{{ goal }}</h2>
 <p>
-    Bear <strong>{{ bear_slug }}</strong> · status <strong>{{ status }}</strong>
-    {% if work_surface_ref %} · work surface <code>{{ work_surface_ref }}</code>{% endif %}
+    Bear <a href="/bear/{{ bear_slug | urlencode }}">{{ bear_name }}</a> · status <strong>{{ status }}</strong>
+    {% if work_surface_name %} · work surface <a href="/work/surfaces/{{ work_surface_id }}">{{ work_surface_name }}</a>{% endif %}
     · output policy <strong>{{ commit_policy_label }}</strong>
     {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
 </p>
@@ -48,15 +49,6 @@
         <small>Accepts any remaining job-level criteria as met and closes the current Docket run.</small>
     </form>
     {% endif %}
-    <details>
-        <summary>Extend with another work task</summary>
-        <form method="post" action="/work/jobs/{{ job_id }}/extend">
-            <p><label>Task title<br><input name="title" required size="60"></label></p>
-            <p><label>Task body<br><textarea name="body" rows="3" cols="70" placeholder="Defaults to the title"></textarea></label></p>
-            <p><label>Completion criteria <small>(semicolon-separated)</small><br><input name="criteria" required size="70"></label></p>
-            <button type="submit">Extend job</button>
-        </form>
-    </details>
 </section>
 {% endif %}
 
@@ -101,62 +93,55 @@
         <button type="submit">Dispatch job</button>
     </form>
     {% else %}
-    <p><button type="button" disabled>Dispatch job</button> No pending or blocked tasks are currently runnable. Extend the job with another task, or inspect active/completed runs below.</p>
+    <p><button type="button" disabled>Dispatch job</button> No pending or blocked tasks are currently runnable. Add a task above, or inspect the work runs below.</p>
     {% endif %}
 </section>
 {% endif %}
 
 <section>
-    <h2>Tasks</h2>
-    <table>
-        <thead>
-            <tr><th>Task</th><th>Kind</th><th>Status</th></tr>
-        </thead>
-        <tbody>
-            {% for task in tasks %}
-            <tr>
-                <td>
-                    {% if task.parent_task_id %}<small>child task</small> {% endif %}
-                    <a href="#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}">Task <code class="entity-reference-id">{{ task.display_id }}</code>: {{ task.title_display }}</a>
-                    <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/up" class="inline-form"><button type="submit" aria-label="Move task up">↑</button></form>
-                    <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/down" class="inline-form"><button type="submit" aria-label="Move task down">↓</button></form>
-                    <details>
-                        <summary>Add child task</summary>
-                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/children">
-                            <label>Title<br><input name="title" required size="50"></label>
-                            <label>Completion criteria <small>(semicolon-separated)</small><br><input name="criteria" required size="50"></label>
-                            <label>Details<br><textarea name="body" rows="2" cols="50"></textarea></label>
-                            <button type="submit">Add child</button>
-                        </form>
-                    </details>
-                    <details>
-                        <summary>criteria</summary>
-                        <ul>
-                            {% for criterion in task.completion_criteria %}
-                            <li>{{ criterion }}</li>
-                            {% endfor %}
-                        </ul>
-                    </details>
-                </td>
-                <td>{{ task.kind }}</td>
-                <td>{{ task.status }}
-                    {% if task.blocker_reason %}<p><strong>Blocked because:</strong> {{ task.blocker_reason }}</p>{% endif %}
-                    {% if task.retry_reason %}<p><small>Retry requested: {{ task.retry_reason }}{% if task.previous_blocked_reason %} (previous blocker: {{ task.previous_blocked_reason }}){% endif %}</small></p>{% endif %}
-                    {% if task.run_route_id %} · <a href="/work/runs/{{ task.run_route_id }}">Run <code class="entity-reference-id">{{ task.run_display_id }}</code></a>{% endif %}
-                    {% if task.can_retry %}
-                    <details>
-                        <summary>Retry</summary>
-                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/retry">
-                            <label>Reason<br><input name="reason" required size="50" placeholder="What changed externally?"></label>
-                            <button type="submit">Retry task</button>
-                        </form>
-                    </details>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <details open>
+        <summary><h2>Tasks</h2></summary>
+        {% if status not in ["completed", "cancelled"] %}
+        <details>
+            <summary>Add top-level task</summary>
+            <form method="post" action="/work/jobs/{{ job_id }}/tasks">
+                <p><label>Task title<br><input name="title" required size="60"></label></p>
+                <p><label>Task body<br><textarea name="body" rows="3" cols="70" placeholder="Defaults to the title"></textarea></label></p>
+                <p><label>Completion criteria <small>(semicolon-separated)</small><br><input name="criteria" required size="70"></label></p>
+                <button type="submit">Add task</button>
+            </form>
+        </details>
+        {% endif %}
+        <table>
+            <thead><tr><th>Move</th><th>Task</th><th>Status</th></tr></thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td>
+                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/up" class="inline-form"><button type="submit" aria-label="Move task up">↑</button></form>
+                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/down" class="inline-form"><button type="submit" aria-label="Move task down">↓</button></form>
+                    </td>
+                    <td style="padding-left: {{ task.depth * 1.5 }}rem">
+                        <a href="#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}"><code class="entity-reference-id">{{ task.display_id }}</code></a>
+                        {{ task.description }} <small>({{ task.kind }})</small>
+                    </td>
+                    <td>{{ task.status }}
+                        <details>
+                            <summary>Details</summary>
+                            <p>{{ task.title }}</p>
+                            {% if task.blocker_reason %}<p><strong>Blocked because:</strong> {{ task.blocker_reason }}</p>{% endif %}
+                            {% if task.retry_reason %}<p><small>Retry requested: {{ task.retry_reason }}{% if task.previous_blocked_reason %} (previous blocker: {{ task.previous_blocked_reason }}){% endif %}</small></p>{% endif %}
+                            {% if task.run_route_id %}<p><a href="/work/runs/{{ task.run_route_id }}">Run <code class="entity-reference-id">{{ task.run_display_id }}</code></a></p>{% endif %}
+                            <ul>{% for criterion in task.completion_criteria %}<li>{{ criterion }}</li>{% endfor %}</ul>
+                            {% if task.can_retry %}<form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/retry"><label>Reason <input name="reason" required></label><button type="submit">Retry task</button></form>{% endif %}
+                            <details><summary>Add child task</summary><form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/children"><label>Title <input name="title" required></label><label>Criteria <input name="criteria" required></label><label>Details <textarea name="body"></textarea></label><button type="submit">Add child</button></form></details>
+                        </details>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </details>
 </section>
 
 <section>

@@ -9,6 +9,7 @@ use axum::{
     routing::get,
 };
 use axum_login::AuthnBackend;
+use http_body_util::BodyExt;
 use minijinja::Environment;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
@@ -274,6 +275,74 @@ async fn create_job_form_creates_work_job_with_tasks() {
     assert!(surface.is_none());
     assert_eq!(policy.as_deref(), Some("per_job"));
     assert_eq!(branch.as_deref(), Some("feature/updated"));
+}
+
+#[tokio::test]
+async fn work_dashboard_hides_completed_jobs_until_requested() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let (user_id, bear_id) = seed_member(&pool).await;
+    let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, user_id).await;
+    let unique = Uuid::new_v4().simple().to_string();
+    let active_goal = format!("Active dashboard job {unique}");
+    let completed_goal = format!("Completed dashboard job {unique}");
+
+    for goal in [&active_goal, &completed_goal] {
+        let response = post_form(
+            &app,
+            &cookie,
+            "/work/new",
+            format!(
+                "bear_id={bear_id}&goal={}&root=&commit_policy=&work_branch=&task_title=&task_criteria=",
+                urlencoding::encode(goal)
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    }
+    sqlx::query("UPDATE bear_jobs SET status = 'completed' WHERE bear_id = $1 AND goal = $2")
+        .bind(bear_id)
+        .bind(&completed_goal)
+        .execute(&pool)
+        .await
+        .expect("complete dashboard job");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/work")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("dashboard response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
+        .into_owned();
+    assert!(body.contains(&active_goal));
+    assert!(!body.contains(&completed_goal));
+    assert!(body.contains("Show completed jobs"));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/work?completed=show")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("completed dashboard response");
+    let body = String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
+        .into_owned();
+    assert!(body.contains(&active_goal));
+    assert!(body.contains(&completed_goal));
+    assert!(body.contains("Hide completed jobs"));
 }
 
 #[tokio::test]
@@ -691,9 +760,14 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .await
         .expect("dispatch response");
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let redirect = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .expect("dispatch redirect");
 
-    let runs: Vec<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT root_name, image_name, git_ref FROM bear_work_runs
+    let runs: Vec<(Uuid, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, root_name, image_name, git_ref FROM bear_work_runs
          WHERE job_id = $1 AND state = 'queued' ORDER BY queued_at",
     )
     .bind(job_id)
@@ -701,7 +775,8 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     .await
     .expect("queued job runs");
     assert_eq!(runs.len(), 1);
-    let (root, image, git_ref) = &runs[0];
+    let (run_id, root, image, git_ref) = &runs[0];
+    assert_eq!(redirect, format!("/work/runs/{}", route_id(*run_id)));
     assert_eq!(root.as_deref(), Some("site"));
     assert_eq!(image.as_deref(), Some("rust"));
     assert!(git_ref.is_none(), "blank git_ref stays unset");

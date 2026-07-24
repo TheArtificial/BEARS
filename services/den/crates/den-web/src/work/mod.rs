@@ -5,7 +5,7 @@
 //! directly.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Router,
@@ -20,6 +20,31 @@ const ROUTE_ID_HEX_LEN: usize = 16;
 
 fn uuid_hex_prefix(id: Uuid, len: usize) -> String {
     id.simple().to_string()[..len].to_string()
+}
+
+fn tasks_parent_first<'a>(
+    tasks: &'a [den_docket::DocketTaskRow],
+) -> Vec<(&'a den_docket::DocketTaskRow, usize)> {
+    fn visit<'a>(
+        tasks: &'a [den_docket::DocketTaskRow],
+        parent: Option<Uuid>,
+        depth: usize,
+        ordered: &mut Vec<(&'a den_docket::DocketTaskRow, usize)>,
+    ) {
+        let mut children: Vec<_> = tasks
+            .iter()
+            .filter(|task| task.parent_task_id == parent)
+            .collect();
+        children.sort_by_key(|task| task.sibling_order);
+        for task in children {
+            ordered.push((task, depth));
+            visit(tasks, Some(task.id), depth + 1, ordered);
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(tasks.len());
+    visit(tasks, None, 0, &mut ordered);
+    ordered
 }
 
 pub(crate) fn entity_ref(
@@ -108,7 +133,7 @@ pub fn router() -> Router<AppState> {
         .route("/work/jobs/{job_id}/edit", post(edit_job))
         .route("/work/jobs/{job_id}/duplicate", post(duplicate_job))
         .route("/work/jobs/{job_id}/complete", post(complete_job))
-        .route("/work/jobs/{job_id}/extend", post(extend_job))
+        .route("/work/jobs/{job_id}/tasks", post(add_top_level_task))
         .route("/work/jobs/{job_id}/dispatch", post(dispatch_job))
         .route(
             "/work/jobs/{job_id}/tasks/{task_id}/retry",
@@ -414,17 +439,22 @@ async fn member_bears(
         .collect())
 }
 
+#[derive(Deserialize, Default)]
+struct WorkIndexQuery {
+    completed: Option<String>,
+}
+
 async fn index(
     State(state): State<AppState>,
     auth_session: AuthSession,
+    Query(query): Query<WorkIndexQuery>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
+    let show_completed = query.completed.as_deref() == Some("show");
 
-    let mut runs: Vec<RunView> = Vec::new();
-    let mut run_rows: Vec<WorkRunRow> = Vec::new();
-    let mut jobs_with_work: Vec<serde_json::Value> = Vec::new();
     let mut attention: Vec<serde_json::Value> = Vec::new();
+    let mut jobs_with_work: Vec<serde_json::Value> = Vec::new();
     let mut awaiting_completion: Vec<serde_json::Value> = Vec::new();
     for (bear_id, bear_slug) in &bears {
         for run in work_runs::attention_work_runs(state.sqlx_pool(), *bear_id, None, 20).await? {
@@ -452,31 +482,26 @@ async fn index(
                 "status": job.status,
             }));
         }
-        let bear_runs = work_runs::list_work_runs(
-            state.sqlx_pool(),
-            WorkRunListFilter {
-                bear_id: Some(*bear_id),
-                limit: 50,
-                ..WorkRunListFilter::default()
-            },
-        )
-        .await?;
-        for run in &bear_runs {
-            let job_title: String = sqlx::query_scalar("SELECT goal FROM bear_jobs WHERE id = $1")
-                .bind(run.job_id)
-                .fetch_optional(state.sqlx_pool())
-                .await
-                .map_err(den_core::DenError::from)?
-                .unwrap_or_else(|| "Untitled job".to_string());
-            runs.push(run_view(run, bear_slug, &job_title));
-        }
-        run_rows.extend(bear_runs);
 
         let service = PgDocketService::from_pool(state.sqlx_pool());
         let jobs = service
             .list_jobs(*bear_id, DocketJobListFilter::default())
             .await?;
+        let job_ids: Vec<Uuid> = jobs.iter().map(|job| job.id).collect();
+        let run_counts: std::collections::HashMap<Uuid, i64> = sqlx::query_as(
+            "SELECT job_id, count(*) FROM bear_work_runs WHERE job_id = ANY($1) GROUP BY job_id",
+        )
+        .bind(&job_ids)
+        .fetch_all(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?
+        .into_iter()
+        .collect();
         for job in jobs {
+            if !show_completed && job.status == "completed" {
+                continue;
+            }
+            let run_count = run_counts.get(&job.id).copied().unwrap_or_default();
             jobs_with_work.push(serde_json::json!({
                 "id": job.id.to_string(),
                 "display_id": uuid_hex_prefix(job.id, DISPLAY_ID_HEX_LEN),
@@ -487,12 +512,10 @@ async fn index(
                 "goal": job.goal,
                 "status": job.status,
                 "work_surface_ref": job.work_surface_ref,
+                "run_count": run_count,
             }));
         }
     }
-    attach_queue_info(&state, &run_rows, &mut runs).await?;
-    runs.sort_by(|a, b| b.queued_at.cmp(&a.queued_at));
-    let active: Vec<&RunView> = runs.iter().filter(|run| run.is_active).collect();
 
     // Dispatch-path status so "why is my queued run not starting?" is
     // answerable from this page: is a provider configured, and is it
@@ -533,12 +556,11 @@ async fn index(
         auth_session,
         context! {
             title => "Work",
-            active_runs => active,
-            runs => runs,
             jobs => jobs_with_work,
             attention => attention,
             awaiting_completion => awaiting_completion,
             provider_status => provider_status,
+            show_completed => show_completed,
         },
     )
     .await
@@ -1075,7 +1097,7 @@ async fn complete_job(
 }
 
 #[derive(Debug, Deserialize)]
-struct ExtendJobForm {
+struct AddTopLevelTaskForm {
     title: String,
     #[serde(default)]
     body: String,
@@ -1090,11 +1112,11 @@ struct AddChildTaskForm {
     criteria: String,
 }
 
-async fn extend_job(
+async fn add_top_level_task(
     State(state): State<AppState>,
     auth_session: AuthSession,
     Path(job_ref): Path<String>,
-    Form(form): Form<ExtendJobForm>,
+    Form(form): Form<AddTopLevelTaskForm>,
 ) -> Result<Response, CustomError> {
     let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
@@ -1114,13 +1136,14 @@ async fn extend_job(
         .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
     if matches!(projection.job.status.as_str(), "completed" | "cancelled") {
         return Err(CustomError::ValidationError(
-            "completed or cancelled jobs cannot be extended; duplicate the job instead".to_string(),
+            "completed or cancelled jobs cannot receive new tasks; duplicate the job instead"
+                .to_string(),
         ));
     }
     let title = form.title.trim();
     if title.is_empty() {
         return Err(CustomError::ValidationError(
-            "extension task title is required".to_string(),
+            "task title is required".to_string(),
         ));
     }
     let criteria: Vec<String> = form
@@ -1132,7 +1155,7 @@ async fn extend_job(
         .collect();
     if criteria.is_empty() {
         return Err(CustomError::ValidationError(
-            "extension task needs at least one semicolon-separated criterion".to_string(),
+            "task needs at least one semicolon-separated criterion".to_string(),
         ));
     }
     let run_id = projection
@@ -1206,6 +1229,12 @@ async fn job_detail(
     let Some((bear_id, bear_slug)) = owner else {
         return Err(CustomError::NotFound("job not found".to_string()));
     };
+    let bear_name = bears_db::list_bears_for_user(state.sqlx_pool(), user_id)
+        .await?
+        .into_iter()
+        .find(|row| row.bear.id == bear_id)
+        .map(|row| row.bear.name)
+        .unwrap_or_else(|| bear_slug.clone());
 
     let service = PgDocketService::from_pool(state.sqlx_pool());
     let projection = service
@@ -1234,17 +1263,18 @@ async fn job_detail(
             .iter()
             .map(|state| (state.task_id, state))
             .collect();
-    let tasks: Vec<serde_json::Value> = projection
-        .tasks
-        .iter()
-        .map(|task| {
+    let tasks: Vec<serde_json::Value> = tasks_parent_first(&projection.tasks)
+        .into_iter()
+        .map(|(task, depth)| {
             let state = task_states.get(&task.id).copied();
             let status = state.map(|state| state.status.as_str()).unwrap_or("pending");
             serde_json::json!({
-                "id": task.id.to_string(),
+                "id": route_id(task.id),
                 "display_id": uuid_hex_prefix(task.id, DISPLAY_ID_HEX_LEN),
                 "full_id": task.id.to_string(),
-                "title_display": entity_ref(task.id, "Task", &task.title, Some(status))["title"],
+                "title": task.title,
+                "description": task.body,
+                "depth": depth,
                 "kind": task.kind,
                 "status": status,
                 "completion_criteria": task.completion_criteria.0,
@@ -1301,6 +1331,7 @@ async fn job_detail(
             title => "Work job",
             bear_id => bear_id.to_string(),
             bear_slug => bear_slug,
+            bear_name => bear_name,
             job_id => route_id(job_id),
             goal => projection.job.goal,
             job_display_id => uuid_hex_prefix(job_id, DISPLAY_ID_HEX_LEN),
@@ -1308,7 +1339,8 @@ async fn job_detail(
             job_title => entity_ref(job_id, "Job", &projection.job.goal, Some(&projection.job.status))["title"],
             status => projection.job.status,
             work_surface_ref => projection.job.work_surface_ref,
-            work_surface_id => projection.job.work_surface_id.map(|id| id.to_string()),
+            work_surface_id => projection.job.work_surface_id.map(|id| route_id(id)),
+            work_surface_name => projection.job.work_surface_id.and_then(|surface_id| available_surfaces.iter().find(|surface| surface.id == surface_id).map(|surface| surface.name.clone())),
             available_surfaces => available_surfaces,
             commit_policy_label => commit_policy_label(projection.job.commit_policy.as_deref()),
             commit_policy => projection.job.commit_policy,
@@ -1697,7 +1729,7 @@ async fn dispatch_job(
     } else {
         clean_form_field(&form.root)
     };
-    work_runs::enqueue_work_job(
+    let runs = work_runs::enqueue_work_job(
         state.sqlx_pool(),
         work_runs::WorkJobEnqueue {
             bear_id,
@@ -1709,7 +1741,10 @@ async fn dispatch_job(
         },
     )
     .await?;
-    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
+    let run = runs.last().ok_or_else(|| {
+        CustomError::ValidationError("dispatch did not create a work run".to_string())
+    })?;
+    Ok(Redirect::to(&format!("/work/runs/{}", route_id(run.id))).into_response())
 }
 
 async fn cancel_run(

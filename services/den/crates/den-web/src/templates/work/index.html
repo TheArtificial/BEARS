@@ -1,76 +1,29 @@
 {% extends "base.html" %}
 {% block title %}Work{% endblock %}
-{% block head %}
-{% if active_runs %}<meta http-equiv="refresh" content="10" />{% endif %}
-{% endblock %}
 {% block content %}
 <h1>Work</h1>
 
 <section>
     {% if not provider_status.configured %}
-    <p>
-        ⚠ <strong>Work dispatch is not configured</strong> — no sandbox
-        provider is set (<code>SANDBOX_SERVER_URL</code>), so queued runs
-        will never start. See the sandbox server ops guide.
-    </p>
+    <p>⚠ <strong>Work dispatch is not configured</strong> — no sandbox provider is set (<code>SANDBOX_SERVER_URL</code>), so queued runs will not start.</p>
     {% elif not provider_status.reachable %}
-    <p>
-        ⚠ <strong>Sandbox provider unreachable</strong> at
-        <code>{{ provider_status.url }}</code>: {{ provider_status.error }}.
-        Queued runs will not start until it is back.
-    </p>
+    <p>⚠ <strong>Sandbox provider unreachable</strong> at <code>{{ provider_status.url }}</code>: {{ provider_status.error }}.</p>
     {% else %}
-    <p>
-        Sandbox provider <code>{{ provider_status.url }}</code> is reachable
-        ({{ provider_status.active_sandboxes }} active sandbox{{ "es" if provider_status.active_sandboxes != 1 }}{% if not provider_status.backend_available %};
-        ⚠ its container backend reports <strong>unavailable</strong>{% endif %}).
-        The dispatch worker runs in the workers process
-        (<code>RUN_WORKERS=true</code>) — its startup logs
-        <code>work_dispatch loop starting</code>.
-    </p>
+    <p>Sandbox provider <code>{{ provider_status.url }}</code> is reachable ({{ provider_status.active_sandboxes }} active sandbox{{ "es" if provider_status.active_sandboxes != 1 }}{% if not provider_status.backend_available %}; ⚠ its container backend is unavailable{% endif %}).</p>
     {% endif %}
 </section>
-
-{% if active_runs %}
-<section>
-    <h2>Active runs ({{ active_runs | length }})</h2>
-    <p>Sandboxes are running and consuming server resources. This page refreshes every 10 seconds.</p>
-    <table>
-        <thead>
-            <tr><th>Run</th><th>Bear</th><th>State</th><th>Sandbox</th><th>Queued</th></tr>
-        </thead>
-        <tbody>
-            {% for run in active_runs %}
-            <tr>
-                <td><a href="/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></td>
-                <td>{{ run.bear_slug }}</td>
-                <td>{{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}</td>
-                <td>{{ run.sandbox_type or "—" }}</td>
-                <td>{{ run.queued_at }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</section>
-{% else %}
-<p>No work is currently running.</p>
-{% endif %}
 
 {% if attention %}
 <section>
     <h2>⚠ Needs attention ({{ attention | length }})</h2>
     <p>Latest attempts that ended blocked or failed, with no retry queued.</p>
     <table>
-        <thead>
-            <tr><th>Job</th><th>Bear</th><th>State</th><th>Reason</th><th></th></tr>
-        </thead>
+        <thead><tr><th>Job</th><th>Bear</th><th>State</th><th>Reason</th><th></th></tr></thead>
         <tbody>
             {% for item in attention %}
             <tr>
                 <td><a href="/work/jobs/{{ item.job_id }}">{{ item.job_goal }}</a></td>
-                <td>{{ item.bear_slug }}</td>
-                <td>{{ item.state }}</td>
-                <td>{{ item.reason or "—" }}</td>
+                <td>{{ item.bear_slug }}</td><td>{{ item.state }}</td><td>{{ item.reason or "—" }}</td>
                 <td><a href="/work/runs/{{ item.run_id }}">run</a></td>
             </tr>
             {% endfor %}
@@ -82,64 +35,29 @@
 {% if awaiting_completion %}
 <section>
     <h2>Awaiting completion ({{ awaiting_completion | length }})</h2>
-    <p>All tasks are done but the job has not been closed out — review criteria and complete or extend the job.</p>
-    <ul>
-        {% for job in awaiting_completion %}
+    <p>All tasks are done but the job has not been closed out — review criteria and complete the job.</p>
+    <ul>{% for job in awaiting_completion %}
         <li><a href="/work/jobs/{{ job.route_id }}" title="UUID prefix for {{ job.full_id }}">Job <code class="entity-reference-id">{{ job.display_id }}</code>: {{ job.title }}</a> ({{ job.bear_slug }}, {{ job.status }})</li>
-        {% endfor %}
-    </ul>
+    {% endfor %}</ul>
 </section>
 {% endif %}
 
 <section>
     <h2>Jobs</h2>
     <p><a href="/work/new">New work job</a> · <a href="/work/surfaces">Work surfaces</a></p>
+    {% if show_completed %}<p><a href="/work">Hide completed jobs</a></p>{% else %}<p><a href="/work?completed=show">Show completed jobs</a></p>{% endif %}
     {% if jobs %}
     <table>
-        <thead>
-            <tr><th>Goal</th><th>Bear</th><th>Status</th><th>Work surface</th></tr>
-        </thead>
-        <tbody>
-            {% for job in jobs %}
+        <thead><tr><th>Job</th><th>Bear</th><th>Status</th><th>Work surface</th><th>Runs</th></tr></thead>
+        <tbody>{% for job in jobs %}
             <tr>
                 <td><a href="/work/jobs/{{ job.route_id }}" title="UUID prefix for {{ job.full_id }}">Job <code class="entity-reference-id">{{ job.display_id }}</code>: {{ job.title }}</a></td>
-                <td>{{ job.bear_slug }}</td>
-                <td>{{ job.status }}</td>
-                <td>{{ job.work_surface_ref or "—" }}</td>
+                <td>{{ job.bear_slug }}</td><td>{{ job.status }}</td><td>{{ job.work_surface_ref or "—" }}</td><td>{{ job.run_count }}</td>
             </tr>
-            {% endfor %}
-        </tbody>
+        {% endfor %}</tbody>
     </table>
     {% else %}
-    <p>No Docket jobs yet.</p>
-    {% endif %}
-</section>
-
-<section>
-    <h2>Run history</h2>
-    {% if runs %}
-    <table>
-        <thead>
-            <tr><th>Run</th><th>Bear</th><th>State</th><th>Attempt</th><th>Result</th><th>Finished</th></tr>
-        </thead>
-        <tbody>
-            {% for run in runs %}
-            <tr>
-                <td><a href="/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></td>
-                <td>{{ run.bear_slug }}</td>
-                <td>
-                    {{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}
-                    {%- if run.queue_position %} (#{{ run.queue_position }} in job queue){% endif %}
-                </td>
-                <td>{{ run.attempt }}</td>
-                <td>{{ run.result_summary or run.error or "—" }}</td>
-                <td>{{ run.finished_at or "—" }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p>No work runs yet. Assign Docket tasks to the work stance and dispatch their job.</p>
+    <p>{% if show_completed %}No Docket jobs yet.{% else %}No active Docket jobs. <a href="/work?completed=show">Show completed jobs</a>.{% endif %}</p>
     {% endif %}
 </section>
 {% endblock %}

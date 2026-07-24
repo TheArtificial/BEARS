@@ -4,9 +4,9 @@
 {% if run.is_active %}<meta http-equiv="refresh" content="10" />{% endif %}
 {% endblock %}
 {% block content %}
-<p><a href="/work">← Work</a> · <a href="/work/jobs/{{ run.job_route_id }}" title="UUID prefix for {{ run.job_full_id }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code>: {{ run.job_title }}</a></p>
-<h1><a href="/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></h1>
-<p>{{ job_goal }}</p>
+<p><a href="/work">← Work</a> · <a href="/work/jobs/{{ run.job_route_id }}" title="{{ run.job_title }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code></a></p>
+<h1>Work Run <code class="entity-reference-id">{{ run.display_id }}</code></h1>
+<h2>{{ run.title }}</h2>
 {% if conversation_id %}
 <p><a href="/bear/{{ run.bear_slug | urlencode }}/?conversation_id={{ conversation_id | urlencode }}">Open headless conversation transcript →</a></p>
 {% endif %}
