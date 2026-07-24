@@ -1341,6 +1341,7 @@ async fn job_detail(
             work_surface_ref => projection.job.work_surface_ref,
             work_surface_id => projection.job.work_surface_id.map(|id| route_id(id)),
             work_surface_name => projection.job.work_surface_id.and_then(|surface_id| available_surfaces.iter().find(|surface| surface.id == surface_id).map(|surface| surface.name.clone())),
+            work_surface_default_ref => projection.job.work_surface_id.and_then(|surface_id| available_surfaces.iter().find(|surface| surface.id == surface_id).map(|surface| surface.default_ref.clone())),
             available_surfaces => available_surfaces,
             commit_policy_label => commit_policy_label(projection.job.commit_policy.as_deref()),
             commit_policy => projection.job.commit_policy,

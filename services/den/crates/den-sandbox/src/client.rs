@@ -6,7 +6,8 @@ use crate::protocol::{
     HealthResponse, ImageStoreResponse, LogsResponse, ManagedConfig, ManagedConfigStatus,
     OperationAccepted, OperationDescriptor, PrepareRustDependenciesRequest,
     PrepareRustDependenciesResponse, PublishRequest, PublishResponse, PullImageRequest,
-    RemoveImageRequest, RootInspectionResponse, SandboxDescriptor, SyncRootResponse,
+    RemoveImageRequest, RootComparisonResponse, RootInspectionResponse, SandboxDescriptor,
+    SyncRootResponse,
 };
 use std::time::Duration;
 
@@ -176,6 +177,20 @@ impl SandboxClient {
         name: &str,
     ) -> Result<RootInspectionResponse, SandboxClientError> {
         self.get_json(&format!("/sandbox/v1/roots/{name}")).await
+    }
+
+    pub async fn compare_root(
+        &self,
+        name: &str,
+        base: &str,
+        head: &str,
+    ) -> Result<RootComparisonResponse, SandboxClientError> {
+        self.get_json(&format!(
+            "/sandbox/v1/roots/{name}/compare?base={}&head={}",
+            urlencoding::encode(base),
+            urlencoding::encode(head)
+        ))
+        .await
     }
 
     pub async fn sync_root(&self, name: &str) -> Result<SyncRootResponse, SandboxClientError> {

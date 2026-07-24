@@ -374,6 +374,46 @@ impl RootsManager {
         })
     }
 
+    pub async fn compare_root(
+        &self,
+        root: &SyncableRoot,
+        base_ref: &str,
+        head_ref: &str,
+    ) -> Result<crate::protocol::RootComparisonResponse, RootsError> {
+        let pristine = self.pristine_dir(root);
+        if !pristine.is_dir() {
+            return Err(RootsError::Workspace {
+                name: root.name.clone(),
+                detail: "pristine clone is not prepared".to_string(),
+            });
+        }
+        let env = root
+            .upstream
+            .as_ref()
+            .map(|upstream| credential_env(root, upstream))
+            .transpose()?
+            .unwrap_or_default();
+        let base = self.resolve_commit(root, &pristine, &env, base_ref).await?;
+        let head = self.resolve_commit(root, &pristine, &env, head_ref).await?;
+        let patch = self
+            .git(
+                root,
+                Some(&pristine),
+                &env,
+                &["diff", "--no-ext-diff", "--find-renames", &base, &head],
+            )
+            .await?;
+        Ok(crate::protocol::RootComparisonResponse {
+            base_ref: base_ref.to_string(),
+            head_ref: head_ref.to_string(),
+            base_commit: Some(base),
+            head_commit: Some(head),
+            patch_truncated: patch.len() >= GIT_OUTPUT_CAP,
+            patch,
+            worktree_clean: true,
+        })
+    }
+
     /// Ensure the pristine bare clone exists and fast-forward it from
     /// upstream. Bare clones have no working tree, so there is nothing to
     /// dirty or reset; a non-fast-forward fetch fails and is reported as-is.

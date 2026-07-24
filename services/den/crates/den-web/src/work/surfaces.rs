@@ -39,6 +39,7 @@ pub fn router() -> Router<AppState> {
         .route("/work/surfaces", get(index))
         .route("/work/surfaces/new", get(new_form).post(create))
         .route("/work/surfaces/{surface_id}", get(detail))
+        .route("/work/surfaces/{surface_id}/diff", get(diff_detail))
         .route("/work/surfaces/{surface_id}/update", post(update))
         .route(
             "/work/surfaces/{surface_id}/credential",
@@ -384,6 +385,45 @@ async fn create(
         Err(error) => format!("Work surface created, but is not ready: {error}"),
     };
     Ok(surface_redirect(surface.id, &message, None))
+}
+
+#[derive(Debug, Deserialize)]
+struct DiffQuery {
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    head: Option<String>,
+}
+
+async fn diff_detail(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(surface_ref): Path<String>,
+    Query(query): Query<DiffQuery>,
+) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
+    let base = query.base.unwrap_or_else(|| surface.default_ref.clone());
+    let head = query.head.unwrap_or_else(|| "origin/HEAD".to_string());
+    let (comparison, unavailable) = match state
+        .config
+        .sandbox_server_url
+        .as_deref()
+        .filter(|url| !url.trim().is_empty())
+    {
+        Some(url) => match SandboxClient::new(url.trim(), &state.config.sandbox_server_token)
+            .compare_root(&surface.name, &base, &head)
+            .await
+        {
+            Ok(value) => (Some(value), None),
+            Err(err) => (None, Some(err.to_string())),
+        },
+        None => (None, Some("No sandbox provider configured.".to_string())),
+    };
+    web::render_template(&state, "work/diff.html", auth_session, context! {
+        title => "Work surface diff", surface_id => route_id(surface.id), surface_name => surface.name,
+        base => base, head => head, comparison => comparison, unavailable => unavailable,
+    }).await
 }
 
 async fn detail(
