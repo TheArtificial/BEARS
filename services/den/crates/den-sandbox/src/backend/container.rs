@@ -363,6 +363,22 @@ impl DockerCliBackend {
             });
         }
         let cargo_args = rust_preparation_cargo_args(request);
+        let init_out = self
+            .docker_owned(&cargo_home_init_args(cargo_home_volume, image), None)
+            .await?;
+        if !init_out.success() {
+            return Ok(PrepareRustDependenciesResponse {
+                status: "failed".to_string(),
+                code: "cargo_cache_initialization_failed".to_string(),
+                stage: "helper".to_string(),
+                retryable: false,
+                content: format!(
+                    "Cargo cache initialization failed: {}",
+                    bounded_cargo_diagnostic(&init_out.stderr_lossy())
+                ),
+                lockfile_changed: false,
+            });
+        }
         let helper = format!("den-cargo-helper-{id}");
         let mut args = vec![
             "run".to_string(),
@@ -803,6 +819,23 @@ fn relay_run_args(
     args
 }
 
+fn cargo_home_init_args(cargo_home_volume: &str, image: &str) -> Vec<String> {
+    vec![
+        "run".into(),
+        "--rm".into(),
+        "--user".into(),
+        "root".into(),
+        "-v".into(),
+        format!("{cargo_home_volume}:/den/cargo-home:rw"),
+        "--entrypoint".into(),
+        "chown".into(),
+        image.into(),
+        "-R".into(),
+        "bear:bear".into(),
+        "/den/cargo-home".into(),
+    ]
+}
+
 fn sandbox_run_args(
     spec: &ProvisionSpec,
     container: &str,
@@ -1083,6 +1116,28 @@ mod tests {
             .await
             .expect("localhost resolves");
         assert!(mapping.starts_with("localhost:"), "{mapping}");
+    }
+
+    #[test]
+    fn cargo_cache_is_initialized_for_the_sandbox_user() {
+        let args = cargo_home_init_args("den-cargo-cache-run123", "bears/sandbox-rust:latest");
+        assert_eq!(
+            args,
+            [
+                "run",
+                "--rm",
+                "--user",
+                "root",
+                "-v",
+                "den-cargo-cache-run123:/den/cargo-home:rw",
+                "--entrypoint",
+                "chown",
+                "bears/sandbox-rust:latest",
+                "-R",
+                "bear:bear",
+                "/den/cargo-home",
+            ]
+        );
     }
 
     #[test]
