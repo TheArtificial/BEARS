@@ -415,6 +415,21 @@ pub struct RootInspectionResponse {
     pub origin_status: String,
 }
 
+/// Read-only comparison of two refs in the provider's pristine bare clone.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RootComparisonResponse {
+    pub base_ref: String,
+    pub head_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
+    pub patch: String,
+    pub patch_truncated: bool,
+    /// Pristine roots are bare clones, therefore never have a dirty worktree.
+    pub worktree_clean: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncRootResponse {
     pub synced: bool,
@@ -422,6 +437,28 @@ pub struct SyncRootResponse {
     pub head: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RootComparisonResponse;
+
+    #[test]
+    fn root_comparison_keeps_refs_commits_and_cleanliness() {
+        let comparison = RootComparisonResponse {
+            base_ref: "main".into(),
+            head_ref: "den/job-1".into(),
+            base_commit: Some("a".repeat(40)),
+            head_commit: Some("b".repeat(40)),
+            patch: "diff --git a/a b/a\n".into(),
+            patch_truncated: false,
+            worktree_clean: true,
+        };
+        let value = serde_json::to_value(comparison).unwrap();
+        assert_eq!(value["base_ref"], "main");
+        assert_eq!(value["head_ref"], "den/job-1");
+        assert_eq!(value["worktree_clean"], true);
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

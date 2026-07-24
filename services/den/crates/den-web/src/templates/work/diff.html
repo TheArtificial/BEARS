@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Work surface diff{% endblock %}
+{% block content %}
+<p><a href="/work/surfaces/{{ surface_id }}">← {{ surface_name }}</a></p>
+<h1>Diff details</h1>
+<p>Comparing <code>{{ base }}</code> to <code>{{ head }}</code>.</p>
+{% if comparison %}
+<p>Base <code>{{ comparison.base_commit[:8] }}</code> · head <code>{{ comparison.head_commit[:8] }}</code> · provider worktree {% if comparison.worktree_clean %}clean{% else %}dirty{% endif %}.</p>
+{% if comparison.patch %}<pre><code>{{ comparison.patch }}</code></pre>{% else %}<p>No changes between these refs.</p>{% endif %}
+{% if comparison.patch_truncated %}<p><strong>Diff truncated by provider output limit.</strong></p>{% endif %}
+{% else %}
+<p><strong>Diff unavailable.</strong> {{ unavailable or "The selected refs could not be inspected." }}</p>
+{% endif %}
+{% endblock %}

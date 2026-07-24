@@ -9,6 +9,11 @@
 {% endif %}
 
 <section>
+    <h2>Repository comparison</h2>
+    <p><a href="/work/surfaces/{{ surface_id }}/diff?base={{ default_ref | urlencode }}&head=origin%2FHEAD">Inspect default ref versus origin</a>. The provider reports resolved commits and its pristine worktree state.</p>
+</section>
+
+<section>
     <h2>Settings</h2>
     <form method="post" action="/work/surfaces/{{ surface_id }}/update">
         <p>

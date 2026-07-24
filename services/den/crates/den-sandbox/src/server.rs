@@ -15,9 +15,9 @@ use crate::protocol::{
     CatalogImage, CatalogResponse, CatalogRoot, CleanupState, CreateSandboxRequest, DiffResponse,
     ErrorBody, HealthResponse, ManagedConfig, ManagedConfigStatus, NetworkMode,
     PrepareRustDependenciesRequest, PrepareRustDependenciesResponse, PublishRequest,
-    RootInspectionResponse, RootStatus, RustDependencyPreparation, RustDependencyResolution,
-    SandboxDescriptor, SandboxLifecycleState, SandboxLimits, SandboxType, SandboxUsage,
-    SyncRootResponse, WorkSurface,
+    RootComparisonResponse, RootInspectionResponse, RootStatus, RustDependencyPreparation,
+    RustDependencyResolution, SandboxDescriptor, SandboxLifecycleState, SandboxLimits, SandboxType,
+    SandboxUsage, SyncRootResponse, WorkSurface,
 };
 use crate::recognize::recognize_work_surface;
 use crate::roots::{RootsError, RootsManager};
@@ -268,6 +268,7 @@ pub fn create_sandbox_app(config: SandboxServerConfig) -> Result<Router, RootsEr
         )
         .route("/sandbox/v1/catalog", get(catalog))
         .route("/sandbox/v1/roots/{name}", get(inspect_root))
+        .route("/sandbox/v1/roots/{name}/compare", get(compare_root))
         .route("/sandbox/v1/roots/{name}/sync", post(sync_root))
         .route(
             "/sandbox/v1/managed-config",
@@ -1373,6 +1374,28 @@ async fn inspect_root(
     };
     match roots.inspect_root(&root).await {
         Ok(inspection) => Json::<RootInspectionResponse>(inspection).into_response(),
+        Err(err) => roots_error_response(&err),
+    }
+}
+
+#[derive(Deserialize)]
+struct CompareRootQuery {
+    base: String,
+    head: String,
+}
+
+async fn compare_root(
+    State(state): State<Arc<ProviderState>>,
+    AxumPath(name): AxumPath<String>,
+    Query(query): Query<CompareRootQuery>,
+) -> Response {
+    let roots = state.roots_snapshot().await;
+    let root = match roots.get(&name) {
+        Ok(root) => root.clone(),
+        Err(err) => return roots_error_response(&err),
+    };
+    match roots.compare_root(&root, &query.base, &query.head).await {
+        Ok(value) => Json::<RootComparisonResponse>(value).into_response(),
         Err(err) => roots_error_response(&err),
     }
 }

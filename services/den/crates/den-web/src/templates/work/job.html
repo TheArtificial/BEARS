@@ -10,6 +10,9 @@
     · output policy <strong>{{ commit_policy_label }}</strong>
     {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
 </p>
+{% if work_surface_id and work_branch %}
+<p><a href="/work/surfaces/{{ work_surface_id }}/diff?base={{ work_surface_default_ref | urlencode }}&head={{ work_branch | urlencode }}">Inspect work branch diff and provider diagnostics</a>.</p>
+{% endif %}
 <details>
     <summary>Edit job settings</summary>
     <form method="post" action="/work/jobs/{{ job_id }}/edit">
