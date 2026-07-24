@@ -927,11 +927,7 @@ async fn provision(
         )
     })?;
 
-    if work_surface
-        .language_hints
-        .iter()
-        .any(|language| language == "rust")
-    {
+    for manifest_path in &work_surface.cargo_manifest_paths {
         let Some(cargo_home_volume) = request.cargo_home_volume.as_deref() else {
             return Err(error_response(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -940,7 +936,7 @@ async fn provision(
             ));
         };
         let preparation_request = PrepareRustDependenciesRequest {
-            manifest_path: "Cargo.toml".to_string(),
+            manifest_path: manifest_path.clone(),
             package: String::new(),
             resolution: RustDependencyResolution::Locked,
             preparation: RustDependencyPreparation::Fetch,

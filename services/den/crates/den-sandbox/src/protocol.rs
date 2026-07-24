@@ -242,6 +242,9 @@ pub struct WorkSurface {
     pub writable: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub language_hints: Vec<String>,
+    /// Workspace-relative Cargo manifests recognized as Rust roots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cargo_manifest_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub package_manager_hints: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
