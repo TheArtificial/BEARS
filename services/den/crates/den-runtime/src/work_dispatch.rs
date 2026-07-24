@@ -332,6 +332,10 @@ async fn provision_run(
         sandbox_type: descriptor.sandbox_type.as_str().to_string(),
         sandbox_strength: descriptor.strength_label.clone(),
         work_surface: serde_json::to_value(&descriptor.work_surface).unwrap_or(Value::Null),
+        rust_dependency_preparation: descriptor
+            .rust_dependency_preparation
+            .as_ref()
+            .and_then(|result| serde_json::to_value(result).ok()),
     };
     if let Err(err) = work_runs::record_work_run_provisioned(pool, run.id, &provisioned).await {
         tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: record_provisioned failed");

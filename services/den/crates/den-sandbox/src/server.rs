@@ -14,7 +14,8 @@ use crate::proc::{run_command, CommandSpec};
 use crate::protocol::{
     CatalogImage, CatalogResponse, CatalogRoot, CleanupState, CreateSandboxRequest, DiffResponse,
     ErrorBody, HealthResponse, ManagedConfig, ManagedConfigStatus, NetworkMode,
-    PrepareRustDependenciesRequest, PublishRequest, RootInspectionResponse, RootStatus,
+    PrepareRustDependenciesRequest, PrepareRustDependenciesResponse, PublishRequest,
+    RootInspectionResponse, RootStatus, RustDependencyPreparation, RustDependencyResolution,
     SandboxDescriptor, SandboxLifecycleState, SandboxLimits, SandboxType, SandboxUsage,
     SyncRootResponse, WorkSurface,
 };
@@ -156,6 +157,7 @@ struct SandboxRecord {
     workspace: Option<PathBuf>,
     image: String,
     cargo_home_volume: Option<String>,
+    rust_dependency_preparation: Option<PrepareRustDependenciesResponse>,
     created_at: OffsetDateTime,
     started: Instant,
     deadline: Option<Instant>,
@@ -179,6 +181,7 @@ impl SandboxRecord {
             root: self.root.clone(),
             git_ref: self.git_ref.clone(),
             work_surface: self.work_surface.clone(),
+            rust_dependency_preparation: self.rust_dependency_preparation.clone(),
             exit_code: self.exit_code,
             usage: self.usage.clone(),
             cleanup: self.cleanup.clone(),
@@ -460,9 +463,30 @@ async fn prepare_rust_dependencies(
         };
         (workspace, volume, record.image.clone())
     };
+    let workspace_bind_source = match host_bind_source(
+        &workspace,
+        &state.config.workspaces_dir,
+        state.config.workspaces_host_dir.as_deref(),
+    ) {
+        Ok(path) => path,
+        Err(detail) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                SandboxErrorKind::BindSource,
+                detail,
+            )
+        }
+    };
     match state
         .backend
-        .prepare_rust_dependencies(&id, &workspace, &volume, &image, &request)
+        .prepare_rust_dependencies(
+            &id,
+            &workspace,
+            &workspace_bind_source,
+            &volume,
+            &image,
+            &request,
+        )
         .await
     {
         Ok(result) => Json(result).into_response(),
@@ -797,6 +821,7 @@ async fn create_sandbox(
                 workspace: None,
                 image: image.clone(),
                 cargo_home_volume: request.cargo_home_volume.clone(),
+                rust_dependency_preparation: None,
                 created_at: OffsetDateTime::now_utc(),
                 started: Instant::now(),
                 deadline: Some(Instant::now() + Duration::from_secs(timeout_secs)),
@@ -901,6 +926,52 @@ async fn provision(
             detail,
         )
     })?;
+
+    if work_surface
+        .language_hints
+        .iter()
+        .any(|language| language == "rust")
+    {
+        let Some(cargo_home_volume) = request.cargo_home_volume.as_deref() else {
+            return Err(error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                SandboxErrorKind::BackendError,
+                "Rust workspace requires a Den-managed Cargo cache",
+            ));
+        };
+        let preparation_request = PrepareRustDependenciesRequest {
+            manifest_path: "Cargo.toml".to_string(),
+            package: String::new(),
+            resolution: RustDependencyResolution::Locked,
+            preparation: RustDependencyPreparation::Fetch,
+        };
+        let result = state
+            .backend
+            .prepare_rust_dependencies(
+                sandbox_id,
+                &workspace,
+                &workspace_bind_source,
+                cargo_home_volume,
+                &image,
+                &preparation_request,
+            )
+            .await
+            .map_err(|err| backend_error_response(&err))?;
+        {
+            let mut registry = state.registry.lock().await;
+            if let Some(record) = registry.get_mut(sandbox_id) {
+                record.rust_dependency_preparation = Some(result.clone());
+            }
+        }
+        if result.status != "prepared" {
+            return Err(error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                SandboxErrorKind::BackendError,
+                result.content.clone(),
+            ));
+        }
+    }
+
     let spec = ProvisionSpec {
         id: sandbox_id.to_string(),
         workspace,
@@ -1396,6 +1467,7 @@ async fn adopt_orphans(state: &Arc<ProviderState>) {
                 // preparation is intentionally unavailable for adopted runs.
                 image: String::new(),
                 cargo_home_volume: None,
+                rust_dependency_preparation: None,
                 created_at: OffsetDateTime::now_utc(),
                 started: Instant::now(),
                 // Adopted sandboxes get the default deadline from adoption

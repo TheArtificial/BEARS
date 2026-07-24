@@ -90,14 +90,22 @@ impl Backend {
         &self,
         id: &str,
         workspace: &std::path::Path,
+        workspace_bind_source: &std::path::Path,
         cargo_home_volume: &str,
         image: &str,
         request: &crate::protocol::PrepareRustDependenciesRequest,
     ) -> Result<crate::protocol::PrepareRustDependenciesResponse, BackendError> {
         match self {
             Self::DockerCli(b) => {
-                b.prepare_rust_dependencies(id, workspace, cargo_home_volume, image, request)
-                    .await
+                b.prepare_rust_dependencies(
+                    id,
+                    workspace,
+                    workspace_bind_source,
+                    cargo_home_volume,
+                    image,
+                    request,
+                )
+                .await
             }
         }
     }

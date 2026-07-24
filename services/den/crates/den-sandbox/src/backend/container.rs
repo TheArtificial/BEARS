@@ -42,6 +42,29 @@ fn bounded_cargo_diagnostic(stderr: &str) -> String {
         .collect()
 }
 
+fn rust_preparation_cargo_args(request: &PrepareRustDependenciesRequest) -> Vec<String> {
+    let command = match request.preparation {
+        RustDependencyPreparation::Fetch => "fetch",
+        RustDependencyPreparation::Check => "check",
+        RustDependencyPreparation::TestNoRun => "test",
+    };
+    let mut args = vec![
+        command.to_string(),
+        "--manifest-path".to_string(),
+        request.manifest_path.clone(),
+    ];
+    if !request.package.is_empty() {
+        args.extend(["-p".to_string(), request.package.clone()]);
+    }
+    if request.preparation == RustDependencyPreparation::TestNoRun {
+        args.push("--no-run".to_string());
+    }
+    if request.resolution == RustDependencyResolution::Locked {
+        args.push("--locked".to_string());
+    }
+    args
+}
+
 fn classify_cargo_failure(diagnostic: &str) -> &'static str {
     if diagnostic.contains("failed to download")
         || diagnostic.contains("failed to get")
@@ -315,6 +338,7 @@ impl DockerCliBackend {
         &self,
         id: &str,
         workspace: &std::path::Path,
+        workspace_bind_source: &std::path::Path,
         cargo_home_volume: &str,
         image: &str,
         request: &PrepareRustDependenciesRequest,
@@ -338,23 +362,7 @@ impl DockerCliBackend {
                 lockfile_changed: false,
             });
         }
-        let command = match request.preparation {
-            RustDependencyPreparation::Check => "check",
-            RustDependencyPreparation::TestNoRun => "test",
-        };
-        let mut cargo_args = vec![
-            command.to_string(),
-            "--manifest-path".to_string(),
-            request.manifest_path.clone(),
-            "-p".to_string(),
-            request.package.clone(),
-        ];
-        if request.preparation == RustDependencyPreparation::TestNoRun {
-            cargo_args.push("--no-run".to_string());
-        }
-        if request.resolution == RustDependencyResolution::Locked {
-            cargo_args.push("--locked".to_string());
-        }
+        let cargo_args = rust_preparation_cargo_args(request);
         let helper = format!("den-cargo-helper-{id}");
         let mut args = vec![
             "run".to_string(),
@@ -362,13 +370,15 @@ impl DockerCliBackend {
             "--name".to_string(),
             helper,
             "-v".to_string(),
-            format!("{}:/workspace:rw", workspace.display()),
+            format!("{}:/workspace:rw", workspace_bind_source.display()),
             "-v".to_string(),
             format!("{cargo_home_volume}:/den/cargo-home:rw"),
             "-w".to_string(),
             "/workspace".to_string(),
             "-e".to_string(),
             "CARGO_HOME=/den/cargo-home".to_string(),
+            "-e".to_string(),
+            "SQLX_OFFLINE=true".to_string(),
             "--network".to_string(),
             "bridge".to_string(),
             image.to_string(),
@@ -379,6 +389,7 @@ impl DockerCliBackend {
             request.resolution == RustDependencyResolution::UpdateLockfile && out.success();
         let (status, code, stage, retryable, content) = if out.success() {
             let mode = match request.preparation {
+                RustDependencyPreparation::Fetch => "fetch",
                 RustDependencyPreparation::Check => "check",
                 RustDependencyPreparation::TestNoRun => "test --no-run",
             };
@@ -1070,6 +1081,17 @@ mod tests {
             .await
             .expect("localhost resolves");
         assert!(mapping.starts_with("localhost:"), "{mapping}");
+    }
+
+    #[test]
+    fn whole_workspace_preparation_fetches_locked_manifest_without_empty_package_flag() {
+        let args = rust_preparation_cargo_args(&PrepareRustDependenciesRequest {
+            manifest_path: "Cargo.toml".to_string(),
+            package: String::new(),
+            resolution: RustDependencyResolution::Locked,
+            preparation: RustDependencyPreparation::Fetch,
+        });
+        assert_eq!(args, ["fetch", "--manifest-path", "Cargo.toml", "--locked"]);
     }
 
     #[test]

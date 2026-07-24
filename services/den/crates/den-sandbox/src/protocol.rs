@@ -214,6 +214,7 @@ pub enum RustDependencyResolution {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RustDependencyPreparation {
+    Fetch,
     Check,
     TestNoRun,
 }
@@ -271,6 +272,9 @@ pub struct SandboxDescriptor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
     pub work_surface: WorkSurface,
+    /// Trusted provisioning performed before the sandbox process started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_dependency_preparation: Option<PrepareRustDependenciesResponse>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i64>,
     pub usage: SandboxUsage,

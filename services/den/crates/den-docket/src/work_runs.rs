@@ -545,6 +545,7 @@ pub struct WorkRunProvisioned {
     pub sandbox_type: String,
     pub sandbox_strength: String,
     pub work_surface: Value,
+    pub rust_dependency_preparation: Option<Value>,
 }
 
 /// Record sandbox placement and transition claimed → running.
@@ -558,6 +559,11 @@ pub async fn record_work_run_provisioned(
          SET state = 'running',
              sandbox_server_url = $2, sandbox_id = $3, sandbox_type = $4,
              sandbox_strength = $5, work_surface = $6,
+             result_refs = CASE
+                 WHEN $7::jsonb IS NULL THEN result_refs
+                 ELSE COALESCE(result_refs, '{{}}'::jsonb)
+                      || jsonb_build_object('rust_dependency_preparation', $7::jsonb)
+             END,
              started_at = COALESCE(started_at, now()), updated_at = now()
          WHERE id = $1 AND state IN ('claimed', 'provisioning')
          RETURNING {WORK_RUN_COLUMNS}"
@@ -568,6 +574,7 @@ pub async fn record_work_run_provisioned(
     .bind(&provisioned.sandbox_type)
     .bind(&provisioned.sandbox_strength)
     .bind(&provisioned.work_surface)
+    .bind(&provisioned.rust_dependency_preparation)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| {
