@@ -477,7 +477,6 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     assert!(checkout
         .prompt
         .contains("Alpha work task is verifiably complete"));
-    assert!(checkout.prompt.contains("never wait for user input"));
     let (execution_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM docket_execution_sessions
          WHERE bear_id = $1 AND owner_profile = 'work' AND session_id = $2 AND state = 'active'",

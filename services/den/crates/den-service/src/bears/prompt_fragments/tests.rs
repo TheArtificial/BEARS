@@ -25,6 +25,10 @@ fn repository_registry_contains_work_stance_fragment() {
     let fragment = registry.require("stance_work").unwrap();
     assert_eq!(fragment.frontmatter.templating_phase, "compile");
     assert!(fragment.body.contains("Execution Space"));
+    assert!(fragment.body.contains("none will respond"));
+    assert!(fragment
+        .body
+        .contains("Complete the assigned work and its completion criteria autonomously"));
 }
 
 #[test]

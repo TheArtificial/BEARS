@@ -1055,9 +1055,7 @@ fn build_work_prompt(
 ) -> String {
     let mut prompt = String::new();
     prompt.push_str(
-        "You are executing a Docket task autonomously in the work stance, inside a sandbox. \
-         No user is present in this session and none will respond — never wait for user input \
-         or ask questions.\n\n",
+        "You are executing a Docket task autonomously in the work stance, inside a sandbox.\n\n",
     );
     prompt.push_str(&format!("Job objective: {goal}\n\n"));
     prompt.push_str("Docket execution identifiers:\n");
