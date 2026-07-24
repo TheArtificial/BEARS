@@ -381,6 +381,8 @@ impl DockerCliBackend {
             "SQLX_OFFLINE=true".to_string(),
             "--network".to_string(),
             "bridge".to_string(),
+            "--entrypoint".to_string(),
+            "cargo".to_string(),
             image.to_string(),
         ];
         args.extend(cargo_args);
