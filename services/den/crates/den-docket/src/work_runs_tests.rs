@@ -75,7 +75,7 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     (user_id, bear_id)
 }
 
-fn work_task(title: &str, order: i32, stance: BearProfile) -> DocketTaskInput {
+fn work_task(title: &str, order: i32, _stance: BearProfile) -> DocketTaskInput {
     DocketTaskInput {
         client_key: Some(format!("k{order}")),
         parent_client_key: None,
@@ -459,6 +459,7 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
             sandbox_type: "container".into(),
             sandbox_strength: "container: test".into(),
             work_surface: serde_json::json!({ "is_git": true }),
+            rust_dependency_preparation: None,
         },
     )
     .await
@@ -543,7 +544,8 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
         .await
         .unwrap());
 
-    // Completed audit event exists.
+    // Finalizing a run must not synthesize task completion. Task status is
+    // owned by explicit task events from the worker.
     let (events,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM bear_task_events WHERE task_id = $1 AND event_type = 'completed'",
     )
@@ -551,7 +553,7 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(events, 1);
+    assert_eq!(events, 0);
 
     // A finished task can be re-enqueued (attempt 2).
     let retry = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
@@ -621,6 +623,7 @@ async fn publish_wiring_image_branch_and_prompt() {
             sandbox_type: "container".into(),
             sandbox_strength: "container: test".into(),
             work_surface: serde_json::json!({ "is_git": true }),
+            rust_dependency_preparation: None,
         },
     )
     .await

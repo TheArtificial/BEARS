@@ -855,32 +855,6 @@ pub async fn finalize_work_run(
     .fetch_one(&mut *tx)
     .await?;
 
-    let event_type = match canonical_state {
-        WorkRunState::Succeeded => "completed",
-        WorkRunState::Cancelled => "cancelled",
-        _ => "blocked",
-    };
-    let task_ids: Vec<(Uuid,)> = sqlx::query_as("SELECT id FROM bear_tasks WHERE job_id = $1")
-        .bind(row.job_id)
-        .fetch_all(&mut *tx)
-        .await?;
-    for (task_id,) in task_ids {
-        append_task_event(
-            &mut tx,
-            task_id,
-            row.job_run_id,
-            event_type,
-            None,
-            json!({
-                "work_run_id": row.id,
-                "attempt": row.attempt,
-                "final_state": canonical_state.as_str(),
-                "error": finalize.error,
-            }),
-        )
-        .await?;
-    }
-
     tx.commit().await?;
     Ok(row)
 }
@@ -1331,28 +1305,6 @@ pub async fn ensure_job_work_branch(pool: &PgPool, job_id: Uuid) -> Result<Strin
     .fetch_one(pool)
     .await?;
     Ok(branch)
-}
-
-async fn append_task_event(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    task_id: Uuid,
-    job_run_id: Uuid,
-    event_type: &str,
-    by_user_id: Option<i32>,
-    payload: Value,
-) -> Result<(), DenError> {
-    sqlx::query(
-        "INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_user_id, payload)
-         VALUES ($1, $2, $3, 'work', $4, $5::jsonb)",
-    )
-    .bind(task_id)
-    .bind(job_run_id)
-    .bind(event_type)
-    .bind(by_user_id)
-    .bind(&payload)
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
 }
 
 #[cfg(test)]
