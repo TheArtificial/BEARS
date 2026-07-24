@@ -365,6 +365,11 @@ async fn provision_run(
             .await
         {
             tracing::warn!(error = %err, work_run_id = %run.id, task_id = %task.task.id, "work_dispatch: mark_task_started failed");
+        } else if let Err(err) =
+            work_runs::merge_work_run_result_refs(pool, run.id, &json!({ "task_id": task.task.id }))
+                .await
+        {
+            tracing::warn!(error = %err, work_run_id = %run.id, task_id = %task.task.id, "work_dispatch: failed to persist active task");
         }
     }
     tracing::info!(
@@ -498,6 +503,19 @@ async fn reconcile_running(
     }
 }
 
+fn work_run_succeeded(
+    commit_policy: Option<&str>,
+    active_task_id: Option<Uuid>,
+    task_statuses: &[(Uuid, String)],
+) -> bool {
+    match commit_policy {
+        Some("per_task") => active_task_id
+            .and_then(|task_id| task_statuses.iter().find(|(id, _)| *id == task_id))
+            .is_some_and(|(_, status)| status == "done"),
+        _ => !task_statuses.is_empty() && task_statuses.iter().all(|(_, status)| status == "done"),
+    }
+}
+
 fn work_run_outcome_summary(
     succeeded: bool,
     armature_summary: Option<String>,
@@ -556,8 +574,22 @@ async fn harvest_run(
     let task_statuses = work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
         .await
         .unwrap_or_default();
-    let succeeded =
-        !task_statuses.is_empty() && task_statuses.iter().all(|(_, status)| status == "done");
+    let context = work_runs::get_work_run_dispatch_context(pool, run.id)
+        .await
+        .ok();
+    let active_task_id = run
+        .result_refs
+        .as_ref()
+        .and_then(|refs| refs.get("task_id"))
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok());
+    let succeeded = work_run_succeeded(
+        context
+            .as_ref()
+            .and_then(|context| context.commit_policy.as_deref()),
+        active_task_id,
+        &task_statuses,
+    );
 
     let turn_summary = run
         .result_refs
@@ -577,9 +609,7 @@ async fn harvest_run(
     let mut published: Option<Value> = None;
     let mut publish_failed: Option<String> = None;
     if succeeded {
-        let context = work_runs::get_work_run_dispatch_context(pool, run.id)
-            .await
-            .ok();
+        let context = context;
         if let Some(context) = context.filter(WorkRunDispatchContext::publishes) {
             match (sandbox_id, context.work_branch.as_deref()) {
                 (Some(id), Some(branch)) => {
@@ -829,7 +859,26 @@ async fn revoke_token_for_run(pool: &PgPool, run_id: Uuid) {
 
 #[cfg(test)]
 mod tests {
-    use super::work_run_outcome_summary;
+    use uuid::Uuid;
+
+    use super::{work_run_outcome_summary, work_run_succeeded};
+
+    #[test]
+    fn per_task_succeeds_when_its_checked_out_task_is_done() {
+        let done = Uuid::new_v4();
+        let pending = Uuid::new_v4();
+        let statuses = vec![(done, "done".to_string()), (pending, "pending".to_string())];
+
+        assert!(work_run_succeeded(Some("per_task"), Some(done), &statuses));
+        assert!(!work_run_succeeded(
+            Some("per_task"),
+            Some(pending),
+            &statuses
+        ));
+        assert!(!work_run_succeeded(Some("per_task"), None, &statuses));
+        assert!(!work_run_succeeded(Some("per_job"), Some(done), &statuses));
+        assert!(!work_run_succeeded(None, Some(done), &statuses));
+    }
 
     #[test]
     fn blocked_summary_is_not_hidden_by_generic_armature_completion() {

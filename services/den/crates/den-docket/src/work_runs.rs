@@ -1015,8 +1015,6 @@ pub async fn checkout_work_run_for_session(
             .bind(run.job_id)
             .fetch_one(pool)
             .await?;
-    let publishes = matches!(commit_policy.as_deref(), Some("per_task" | "per_job"));
-
     crate::db::upsert_execution_session(
         pool,
         DocketExecutionSessionUpsert {
@@ -1038,7 +1036,13 @@ pub async fn checkout_work_run_for_session(
         tasks.len(),
         if tasks.len() == 1 { "" } else { "s" }
     );
-    let prompt = build_work_prompt(run.job_id, run.job_run_id, &goal, &tasks, publishes);
+    let prompt = build_work_prompt(
+        run.job_id,
+        run.job_run_id,
+        &goal,
+        &tasks,
+        commit_policy.as_deref(),
+    );
     Ok(WorkRunCheckout {
         run,
         prompt,
@@ -1051,7 +1055,7 @@ fn build_work_prompt(
     run_id: Uuid,
     goal: &str,
     tasks: &[(Uuid, String, String, sqlx::types::Json<Vec<String>>)],
-    publishes: bool,
+    commit_policy: Option<&str>,
 ) -> String {
     let mut prompt = String::new();
     prompt.push_str(
@@ -1082,15 +1086,16 @@ fn build_work_prompt(
          - If you cannot make progress on a task, mark that task blocked with a specific reason \
            using update_current_task_status instead of guessing or stopping silently.\n",
     );
-    if publishes {
-        prompt.push_str(
-            "- Commit your work as you go with clear, specific git commit messages; \
-               your commits are published to the job's work branch after the run.\n\
-             - Do not push, deploy, or call external services; publishing happens \
-               outside the sandbox after the run completes.\n",
-        );
-    } else {
-        prompt.push_str("- Do not push, publish, deploy, or call external services.\n");
+    match commit_policy {
+        Some("per_task") => prompt.push_str(
+            "- Commit the completed task with a clear, specific git commit message; Den publishes that commit to the job's work branch before the next task runs.\n\
+             - Do not push, deploy, or call external services; publishing happens outside the sandbox.\n",
+        ),
+        Some("per_job") => prompt.push_str(
+            "- Commit your work as you go with clear, specific git commit messages; Den publishes the final job commit to the job's work branch after the job completes.\n\
+             - Do not push, deploy, or call external services; publishing happens outside the sandbox after the job completes.\n",
+        ),
+        _ => prompt.push_str("- Do not push, publish, deploy, or call external services.\n"),
     }
     prompt
 }
