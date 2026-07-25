@@ -17,6 +17,7 @@ pub struct RunDiagnostics {
     pub current_task: Option<DiagnosticTask>,
     pub explanation: String,
     pub attention: Option<DiagnosticAttention>,
+    pub attachment: Option<DiagnosticAttachment>,
     pub rollups: Vec<DiagnosticRollup>,
     pub timeline: Vec<DiagnosticEvent>,
 }
@@ -35,6 +36,18 @@ pub struct DiagnosticAttention {
     pub recovery_action: String,
     pub evidence: Value,
     pub created_at: OffsetDateTime,
+}
+
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct DiagnosticAttachment {
+    pub execution_target: String,
+    pub client_session_id: Option<String>,
+    pub state: Option<String>,
+    pub warning: Option<String>,
+    pub disconnected_at: Option<OffsetDateTime>,
+    pub deadline_at: Option<OffsetDateTime>,
+    pub source_work_run_id: Option<String>,
+    pub recovery_eligible: bool,
 }
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
@@ -108,6 +121,16 @@ pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnosti
     // sqlx-dynamic: transitional static query; see module ratchet note above.
     let attention = sqlx::query_as::<_, DiagnosticAttention>(
         "SELECT task_id, cause_code AS cause, recovery_action, evidence_refs AS evidence, created_at FROM docket_attention WHERE run_id=$1 AND resolved_at IS NULL",
+    ).bind(run_id).fetch_optional(pool).await?;
+    // sqlx-dynamic: transitional static query; see module ratchet note above.
+    let attachment = sqlx::query_as::<_, DiagnosticAttachment>(
+        "SELECT execution_target, attached_client_session_id AS client_session_id,
+                attachment_state AS state, attachment_warning AS warning,
+                disconnected_at, disconnect_deadline_at AS deadline_at,
+                result_refs #>> '{recovery,source_work_run_id}' AS source_work_run_id,
+                (execution_target = 'attached_armature' AND state = 'timed_out'
+                 AND result_refs #>> '{outcome,code}' = 'armature_disconnect_timeout') AS recovery_eligible
+         FROM bear_work_runs WHERE job_run_id=$1 ORDER BY attempt DESC LIMIT 1",
     ).bind(run_id).fetch_optional(pool).await?;
     // sqlx-dynamic: transitional static query; see module ratchet note above.
     let rollups = sqlx::query_as::<_, DiagnosticRollup>(
@@ -198,6 +221,7 @@ pub async fn run_diagnostics(pool: &PgPool, run_id: Uuid) -> Result<RunDiagnosti
         current_task,
         explanation,
         attention,
+        attachment,
         rollups,
         timeline,
     })

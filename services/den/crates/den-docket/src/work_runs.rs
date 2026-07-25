@@ -7,6 +7,8 @@
 //! checkpoints inside that job run (Docket schedules, gates, and records — it
 //! never executes task bodies; ADR-0034).
 
+use std::time::Duration as StdDuration;
+
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -24,6 +26,29 @@ use crate::service::PgDocketService;
 /// Explicit root name for a provider-managed empty workspace. Absence is not
 /// scratch: callers must opt in so rootless dispatch stays invalid.
 pub const SCRATCH_ROOT_NAME: &str = "scratch";
+pub const ATTACHED_DISCONNECT_TIMEOUT: StdDuration = StdDuration::from_secs(15 * 60);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkExecutionTarget {
+    Sandbox,
+    AttachedArmature { client_session_id: String },
+}
+
+impl WorkExecutionTarget {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Sandbox => "sandbox",
+            Self::AttachedArmature { .. } => "attached_armature",
+        }
+    }
+
+    fn client_session_id(&self) -> Option<&str> {
+        match self {
+            Self::Sandbox => None,
+            Self::AttachedArmature { client_session_id } => Some(client_session_id),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkRunState {
@@ -85,6 +110,8 @@ impl WorkRunState {
 const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, job_run_id, attempt, state, \
      runner_id, lease_expires_at, cancel_requested, root_name, git_ref, image_name, \
      sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, \
+     execution_target, attached_client_session_id, attachment_state, attachment_warning, \
+     disconnected_at, disconnect_deadline_at, \
      bearwire_session_id, result_summary, result_refs, usage, error, \
      queued_at, started_at, finished_at, updated_at";
 
@@ -108,6 +135,12 @@ pub struct WorkRunRow {
     pub sandbox_type: Option<String>,
     pub sandbox_strength: Option<String>,
     pub work_surface: Option<Value>,
+    pub execution_target: String,
+    pub attached_client_session_id: Option<String>,
+    pub attachment_state: Option<String>,
+    pub attachment_warning: Option<String>,
+    pub disconnected_at: Option<OffsetDateTime>,
+    pub disconnect_deadline_at: Option<OffsetDateTime>,
     pub bearwire_session_id: Option<String>,
     pub result_summary: Option<String>,
     pub result_refs: Option<Value>,
@@ -148,6 +181,8 @@ pub struct WorkJobEnqueue {
     pub git_ref: Option<String>,
     pub image_name: Option<String>,
     pub requested_by_user_id: Option<i32>,
+    pub execution_target: WorkExecutionTarget,
+    pub attachment_warning: Option<String>,
 }
 
 /// Legacy test fixture input. Production dispatch is job-scoped; tests use a
@@ -185,6 +220,8 @@ pub async fn enqueue_work_run(
             git_ref: enqueue.git_ref,
             image_name: enqueue.image_name,
             requested_by_user_id: enqueue.requested_by_user_id,
+            execution_target: WorkExecutionTarget::Sandbox,
+            attachment_warning: None,
         },
     )
     .await
@@ -265,12 +302,19 @@ pub async fn enqueue_work_job(
     .bind(enqueue.job_id)
     .fetch_one(&mut *tx)
     .await?;
+    let execution_target = enqueue.execution_target.as_str();
+    let attached_client_session_id = enqueue.execution_target.client_session_id();
+    let attachment_state = attached_client_session_id.map(|_| "attached");
     let run = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id, attempt, root_name, git_ref, image_name)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {WORK_RUN_COLUMNS}"
+        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id, attempt, root_name, git_ref, image_name,
+                                     execution_target, attached_client_session_id, attachment_state,
+                                     attachment_warning)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING {WORK_RUN_COLUMNS}"
     ))
     .bind(enqueue.bear_id).bind(enqueue.job_id).bind(job_run_id).bind(attempt)
     .bind(root_name).bind(enqueue.git_ref).bind(enqueue.image_name)
+    .bind(execution_target).bind(attached_client_session_id).bind(attachment_state)
+    .bind(enqueue.attachment_warning)
     .fetch_one(&mut *tx)
     .await
     .map_err(|err| match err {
@@ -331,6 +375,7 @@ async fn claim_next_work_run_once(
              SELECT id FROM bear_work_runs r
              WHERE (
                      r.state = 'queued'
+                     AND r.execution_target = 'sandbox'
                      AND NOT EXISTS (
                          SELECT 1 FROM bear_work_runs sibling
                          WHERE sibling.job_id = r.job_id
@@ -968,6 +1013,228 @@ pub async fn get_live_work_run_by_session(
     Ok(row)
 }
 
+/// Project the native BearWire permission obligation onto an attached work
+/// run. The obligation remains the authority; this state is diagnostic only
+/// and cannot grant permission.
+pub async fn mark_attached_work_run_permission_required(
+    pool: &PgPool,
+    session_id: &str,
+) -> Result<bool, DenError> {
+    // ponytail: runtime SQL until Phase 4 migration metadata can be prepared against Postgres;
+    // upgrade to query! when cargo-sqlx and a migrated database are available.
+    // sqlx-dynamic: checked metadata cannot be generated in this database-free session.
+    let result = sqlx::query(
+        "UPDATE bear_work_runs
+         SET attachment_state = 'permission_required', updated_at = now()
+         WHERE attached_client_session_id = $1
+           AND execution_target = 'attached_armature'
+           AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
+           AND attachment_state IN ('attached', 'permission_required')",
+    )
+    .bind(session_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Clear the diagnostic permission state after the authoritative obligation
+/// accepts a current client decision. Late and conflicting decisions never
+/// reach this function.
+pub async fn settle_attached_work_run_permission(
+    pool: &PgPool,
+    session_id: &str,
+) -> Result<bool, DenError> {
+    // ponytail: runtime SQL until Phase 4 migration metadata can be prepared against Postgres;
+    // upgrade to query! when cargo-sqlx and a migrated database are available.
+    // sqlx-dynamic: checked metadata cannot be generated in this database-free session.
+    let result = sqlx::query(
+        "UPDATE bear_work_runs
+         SET attachment_state = 'attached', updated_at = now()
+         WHERE attached_client_session_id = $1
+           AND execution_target = 'attached_armature'
+           AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
+           AND attachment_state = 'permission_required'",
+    )
+    .bind(session_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn disconnect_attached_work_run(
+    pool: &PgPool,
+    session_id: &str,
+    timeout: StdDuration,
+) -> Result<Option<WorkRunRow>, DenError> {
+    let deadline = OffsetDateTime::now_utc()
+        + time::Duration::try_from(timeout)
+            .map_err(|_| DenError::ValidationError("disconnect timeout is too large".into()))?;
+    // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
+    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
+        "UPDATE bear_work_runs
+         SET state = 'paused', attachment_state = 'disconnected',
+             disconnected_at = COALESCE(disconnected_at, now()),
+             disconnect_deadline_at = COALESCE(disconnect_deadline_at, $2),
+             runner_id = NULL, lease_expires_at = NULL, updated_at = now()
+         WHERE attached_client_session_id = $1
+           AND execution_target = 'attached_armature'
+           AND state IN ('queued', 'claimed', 'provisioning', 'running', 'paused', 'reporting')
+           AND attachment_state <> 'timed_out'
+         RETURNING {WORK_RUN_COLUMNS}"
+    ))
+    .bind(session_id)
+    .bind(deadline)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn reconnect_attached_work_run(
+    pool: &PgPool,
+    session_id: &str,
+) -> Result<Option<WorkRunRow>, DenError> {
+    // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
+    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
+        "UPDATE bear_work_runs
+         SET attachment_state = 'attached', disconnected_at = NULL,
+             disconnect_deadline_at = NULL, updated_at = now()
+         WHERE attached_client_session_id = $1
+           AND execution_target = 'attached_armature'
+           AND state = 'paused' AND attachment_state = 'disconnected'
+           AND disconnect_deadline_at > now()
+         RETURNING {WORK_RUN_COLUMNS}"
+    ))
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn timeout_disconnected_work_runs(pool: &PgPool) -> Result<Vec<WorkRunRow>, DenError> {
+    // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
+    let rows = sqlx::query_as::<_, WorkRunRow>(&format!(
+        "UPDATE bear_work_runs
+         SET state = 'timed_out', attachment_state = 'timed_out',
+             result_summary = 'Attached armature disconnected and did not reconnect before the deadline.',
+             result_refs = COALESCE(result_refs, '{{}}'::jsonb) || jsonb_build_object(
+                 'outcome', jsonb_build_object(
+                     'status', 'timed_out',
+                     'code', 'armature_disconnect_timeout',
+                     'summary', 'Attached armature disconnected and did not reconnect before the deadline.',
+                     'next_action', 'Reconnect the armature and recover this run.'
+                 ),
+                 'attachment', jsonb_build_object(
+                     'disconnected_at', disconnected_at,
+                     'deadline_at', disconnect_deadline_at
+                 )
+             ),
+             error = 'armature_disconnect_timeout', finished_at = COALESCE(finished_at, now()),
+             runner_id = NULL, lease_expires_at = NULL, updated_at = now()
+         WHERE execution_target = 'attached_armature'
+           AND state = 'paused' AND attachment_state = 'disconnected'
+           AND disconnect_deadline_at <= now()
+         RETURNING {WORK_RUN_COLUMNS}"
+    ))
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+fn is_attached_recovery_source(
+    execution_target: &str,
+    state: &str,
+    result_refs: Option<&Value>,
+) -> bool {
+    execution_target == "attached_armature"
+        && state == "timed_out"
+        && result_refs
+            .and_then(|refs| refs.pointer("/outcome/code"))
+            .and_then(Value::as_str)
+            == Some("armature_disconnect_timeout")
+}
+
+pub async fn recover_attached_work_run(
+    pool: &PgPool,
+    source_run_id: Uuid,
+    bear_id: Uuid,
+) -> Result<WorkRunRow, DenError> {
+    let mut tx = pool.begin().await?;
+    // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
+    let source = sqlx::query_as::<_, WorkRunRow>(&format!(
+        "SELECT {WORK_RUN_COLUMNS} FROM bear_work_runs
+         WHERE id = $1 AND bear_id = $2 FOR UPDATE"
+    ))
+    .bind(source_run_id)
+    .bind(bear_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| DenError::NotFound(format!("work run not found: {source_run_id}")))?;
+    if !is_attached_recovery_source(
+        &source.execution_target,
+        &source.state,
+        source.result_refs.as_ref(),
+    ) {
+        return Err(DenError::ValidationError(
+            "work run is not eligible for attached-armature recovery".into(),
+        ));
+    }
+    let session_id = source
+        .attached_client_session_id
+        .as_deref()
+        .ok_or_else(|| {
+            DenError::ValidationError("recovery source has no attached session".into())
+        })?;
+    // ponytail: runtime SQL until Phase 4 migration metadata can be prepared against Postgres;
+    // upgrade to query_scalar! when cargo-sqlx and a migrated database are available.
+    // sqlx-dynamic: checked metadata cannot be generated in this database-free session.
+    let attempt: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(attempt), 0) + 1 FROM bear_work_runs WHERE job_id = $1",
+    )
+    .bind(source.job_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    // sqlx-dynamic: the shared WORK_RUN_COLUMNS projection keeps WorkRunRow decoding aligned.
+    let recovered = sqlx::query_as::<_, WorkRunRow>(&format!(
+        "INSERT INTO bear_work_runs (
+             bear_id, job_id, job_run_id, attempt, root_name, git_ref, image_name,
+             execution_target, attached_client_session_id, attachment_state,
+             attachment_warning, result_refs
+         ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7,
+             'attached_armature', $8, 'attached', $9,
+             jsonb_build_object('recovery', jsonb_build_object(
+                 'source_work_run_id', $10::text,
+                 'source_outcome', COALESCE($11::jsonb, '{{}}'::jsonb)
+             ))
+         ) RETURNING {WORK_RUN_COLUMNS}"
+    ))
+    .bind(source.bear_id)
+    .bind(source.job_id)
+    .bind(source.job_run_id)
+    .bind(attempt)
+    .bind(source.root_name.as_deref())
+    .bind(source.git_ref.as_deref())
+    .bind(source.image_name.as_deref())
+    .bind(session_id)
+    .bind(source.attachment_warning.as_deref())
+    .bind(source.id)
+    .bind(source.result_refs.as_ref())
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::Database(db)
+            if db.constraint() == Some("idx_bear_work_runs_one_active_per_job") =>
+        {
+            DenError::ValidationError(
+                "recovery already started or the job has another active work run".into(),
+            )
+        }
+        other => other.into(),
+    })?;
+    tx.commit().await?;
+    Ok(recovered)
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkRunCheckout {
     pub run: WorkRunRow,
@@ -1042,7 +1309,11 @@ pub async fn checkout_work_run_for_session(
             source: TurnSource::Dispatch,
             originating_conversation_id: None,
             parent_conversation_id: None,
-            surface: ExecutionSurface::Sandbox,
+            surface: if run.execution_target == "attached_armature" {
+                ExecutionSurface::Armature
+            } else {
+                ExecutionSurface::Sandbox
+            },
             resolved_profile: Some(persisted_profile),
             attempt: run.attempt,
         },
@@ -1387,7 +1658,34 @@ pub async fn ensure_job_work_branch(pool: &PgPool, job_id: Uuid) -> Result<Strin
 
 #[cfg(test)]
 mod tests {
-    use super::effective_work_run_root;
+    use serde_json::json;
+
+    use super::{effective_work_run_root, is_attached_recovery_source};
+
+    #[test]
+    fn attached_recovery_requires_the_canonical_timeout_outcome() {
+        let timeout = json!({"outcome": {"code": "armature_disconnect_timeout"}});
+        assert!(is_attached_recovery_source(
+            "attached_armature",
+            "timed_out",
+            Some(&timeout)
+        ));
+        assert!(!is_attached_recovery_source(
+            "sandbox",
+            "timed_out",
+            Some(&timeout)
+        ));
+        assert!(!is_attached_recovery_source(
+            "attached_armature",
+            "failed",
+            Some(&timeout)
+        ));
+        assert!(!is_attached_recovery_source(
+            "attached_armature",
+            "timed_out",
+            Some(&json!({"outcome": {"code": "activity_timeout"}}))
+        ));
+    }
 
     #[test]
     fn effective_work_run_root_prefers_trimmed_request_then_job_default() {

@@ -1360,6 +1360,11 @@ pub(crate) async fn client_permission_result_result(
             result,
         } => {
             let result = require_settlement_result(result, "record-and-settle permission outcome")?;
+            den_docket::work_runs::settle_attached_work_run_permission(
+                &state.sqlx_pool,
+                &session_id,
+            )
+            .await?;
             if normalized_decision == "granted" {
                 record_web_fetch_approval_from_permission(
                     &state.sqlx_pool,
@@ -1411,6 +1416,11 @@ pub(crate) async fn client_permission_result_result(
         }
         PermissionResultCoordinatorOutcome::ContinueModel { run: transitioned, result } => {
             let result = require_settlement_result(result, "record-and-settle permission outcome")?;
+            den_docket::work_runs::settle_attached_work_run_permission(
+                &state.sqlx_pool,
+                &session_id,
+            )
+            .await?;
             if normalized_decision == "granted" {
                 record_web_fetch_approval_from_permission(
                     &state.sqlx_pool,

@@ -309,6 +309,39 @@ async fn create_task_without_job_defaults_to_current_session_or_fails_before_db(
 }
 
 #[test]
+fn attached_work_dispatch_requires_current_explicit_workspace() {
+    let context = pair_context();
+    let args: super::super::WorkDispatchArguments = serde_json::from_value(json!({
+        "job_id": uuid::Uuid::new_v4(),
+        "root": "/workspace",
+        "target": "attached_armature"
+    }))
+    .unwrap();
+
+    let target = super::super::attached_dispatch_target(&args, &context).unwrap();
+    assert_eq!(
+        target,
+        den_docket::work_runs::WorkExecutionTarget::AttachedArmature {
+            client_session_id: "client-test".to_string()
+        }
+    );
+    assert!(super::super::attached_dispatch_warning(args.target, args.dirty_worktree).is_none());
+
+    let args: super::super::WorkDispatchArguments = serde_json::from_value(json!({
+        "job_id": uuid::Uuid::new_v4(),
+        "root": "/somewhere-else",
+        "target": "attached_armature"
+    }))
+    .unwrap();
+    assert!(
+        super::super::attached_dispatch_target(&args, &context)
+            .unwrap_err()
+            .to_string()
+            .contains("not attached")
+    );
+}
+
+#[test]
 fn tool_warning_payload_has_expected_shape() {
     let payload = tool_warning_payload(
         "den.memory.write_entry",

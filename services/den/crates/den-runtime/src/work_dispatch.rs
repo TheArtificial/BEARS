@@ -73,6 +73,9 @@ pub async fn run_work_dispatch_worker_loop(
         if config.work_dispatch_auto {
             auto_enqueue(&pool).await;
         }
+        if let Err(err) = work_runs::timeout_disconnected_work_runs(&pool).await {
+            tracing::warn!(error = %err, "work_dispatch: attached disconnect timeout sweep failed");
+        }
         monitor_owned_runs(&pool, &config, &client, &runner_id).await;
         claim_and_provision(&pool, &config, &client, &runner_id).await;
 
@@ -137,6 +140,8 @@ async fn auto_enqueue(pool: &PgPool) {
                     git_ref: None,
                     image_name: None,
                     requested_by_user_id,
+                    execution_target: work_runs::WorkExecutionTarget::Sandbox,
+                    attachment_warning: None,
                 },
             )
             .await
@@ -814,6 +819,8 @@ async fn maybe_requeue(pool: &PgPool, config: &Arc<Config>, run: &WorkRunRow) {
             git_ref: run.git_ref.clone(),
             image_name: run.image_name.clone(),
             requested_by_user_id: Some(context.created_by_user_id),
+            execution_target: work_runs::WorkExecutionTarget::Sandbox,
+            attachment_warning: None,
         },
     )
     .await

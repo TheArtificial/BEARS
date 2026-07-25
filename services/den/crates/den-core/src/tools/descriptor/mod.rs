@@ -704,11 +704,11 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_DISPATCH,
             "Dispatch work job",
-            "Queue every runnable work-assigned task in a Docket job as one background-work package. Runs execute one at a time in task order and build on the shared job work branch. Requires a sandbox root or job work surface. Returns all work run ids.",
+            "Queue a ready Docket job for background execution. The default target is a sandbox. attached_armature requires an explicit workspace attached to the current client session, preserves dirty worktrees, and keeps local permissions authoritative.",
             "bear.docket",
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
-            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Managed work surface or provider root; defaults to the job work surface."},"git_ref":{"type":"string"},"image":{"type":"string","description":"Catalog image name."}},"required":["job_id"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"job_id":{"type":"string","format":"uuid"},"root":{"type":"string","description":"Managed work surface, sandbox provider root, or explicit current armature workspace."},"git_ref":{"type":"string"},"image":{"type":"string","description":"Catalog image name; sandbox only."},"target":{"enum":["sandbox","attached_armature"],"default":"sandbox"},"dirty_worktree":{"type":"boolean","description":"Trusted current-armature observation; records a non-blocking preservation warning."}},"required":["job_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_WORK_RUN_LIST,
