@@ -51,7 +51,7 @@ BEARS adopts a two-level durable work-management model — **jobs** and **tasks*
 
 ### Execution invariant
 
-This control-plane placement holds **only** because task *execution* stays inside the Bear. Den dispatches a task to the Bear's own role runtime (e.g. `work`) **running with the Bear's scoped memory context**. Den schedules, gates (acceptance criteria), and records; it does **not** execute task `body` content via generic, non-Bear subagents. If Den ever executed task bodies outside the Bear's memory context, the task tree would be Bear cognition smuggled into the control plane, and the storage decision in principle 7 (and the ADR-0031 amendment it rests on) would no longer be justified.
+This control-plane placement holds **only** because Job execution stays inside the Bear. Den dispatches a Job to the Bear's own role runtime (e.g. `work`) **running with the Bear's scoped memory context**. One Job Run owns one sandbox/workspace/session and advances the Job's task tree with at most one task `in_progress` at a time. Den schedules, gates (acceptance criteria), and records; it does **not** execute task `body` content via generic, non-Bear subagents. If Den ever executed task bodies outside the Bear's memory context, the task tree would be Bear cognition smuggled into the control plane, and the storage decision in principle 7 (and the ADR-0031 amendment it rests on) would no longer be justified.
 
 ### Docket, `pair`, and the bear/Den boundary
 
@@ -230,7 +230,7 @@ Evolves the `den.work_plan.*` tools.
 
 - **Job management (`pair` / `chat` / UI):** `den.job.create` (goal, criteria, initial task tree, work_surface_ref, commit_policy), `den.job.get` (job + task tree + rendered report), `den.job.list`.
 - **Task tree (all roles):** `den.task.create` (body, kind, parent_task_id, job_id or session_anchor_id), `den.task.update` (status/result via run context), `den.task.list`.
-- **Execution (`work`):** receives a per-task dispatch from Den (one `in_progress` at a time) with job goal and acceptance criteria injected; may call `den.task.create` to add run-scoped children.
+- **Execution (`work`):** receives one Job dispatch from Den. The Job Run retains one sandbox/workspace/session while `work` advances the task tree (one `in_progress` task at a time), with Job goal and acceptance criteria injected; it may call `den.task.create` to add run-scoped children.
 
 The `den.work_plan.request_handoff` tool is retired — job creation *is* the handoff from planning to durable work.
 

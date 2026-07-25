@@ -27,6 +27,9 @@ pub struct AgentLoopSession {
     pub user_id: Option<i32>,
     pub conversation_id: String,
     pub client_session_id: String,
+    /// Concrete dispatched work run bound by `work.checkout`. This is copied
+    /// into Den-hosted tool invocations; it is absent for ordinary sessions.
+    pub work_run_id: Option<Uuid>,
     pub workspace_roots: Vec<String>,
     pub request_id: Option<String>,
     pub run_id: Option<String>,
@@ -384,6 +387,7 @@ mod tests {
             user_id: Some(7),
             conversation_id: "den-conv-test".to_string(),
             client_session_id: "client-test".to_string(),
+            work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
             request_id: Some("request-test".to_string()),
             run_id: Some("run-test".to_string()),

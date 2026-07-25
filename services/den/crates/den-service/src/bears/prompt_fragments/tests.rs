@@ -25,6 +25,10 @@ fn repository_registry_contains_work_stance_fragment() {
     let fragment = registry.require("stance_work").unwrap();
     assert_eq!(fragment.frontmatter.templating_phase, "compile");
     assert!(fragment.body.contains("Execution Space"));
+    assert!(fragment.body.contains("none will respond"));
+    assert!(fragment
+        .body
+        .contains("Complete the assigned work and its completion criteria autonomously"));
 }
 
 #[test]
@@ -116,10 +120,29 @@ fn focused_runtime_fragments_keep_execution_moving_across_tasks() {
         .contains("refresh the focused Job/task state"));
     assert!(execution
         .body
+        .contains("This task was explicitly retried after a blocked attempt"));
+    assert!(execution
+        .body
+        .contains("check whether the prior blocker still applies"));
+    assert!(execution
+        .body
         .contains("continue the next incomplete unblocked task"));
     assert!(execution
         .body
         .contains("Final-answer only when the Job is complete"));
+}
+
+#[test]
+fn pair_fragment_treats_jobs_as_the_dispatch_unit() {
+    let registry = repository_prompt_fragment_registry().unwrap();
+    let guidance = registry.require("stance_job_dispatch").unwrap();
+    assert!(guidance.body.contains("Docket Job is the complete unit"));
+    assert!(guidance
+        .body
+        .contains("call `dispatch_work` once with the `job_id`"));
+    assert!(guidance
+        .body
+        .contains("executes their runs sequentially in task order"));
 }
 
 #[test]

@@ -162,6 +162,7 @@ pub fn apply(
                 credential,
             }),
             default_image: surface.default_image.clone(),
+            allowed_outbound_hosts: surface.allowed_outbound_hosts.as_slice().to_vec(),
         });
     }
 
@@ -250,7 +251,7 @@ fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<(), RootsErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{ManagedImage, ManagedSurface};
+    use crate::protocol::{AllowedOutboundHosts, ManagedImage, ManagedSurface};
 
     fn tempdir() -> PathBuf {
         let dir =
@@ -265,6 +266,7 @@ mod tests {
             upstream_url: "https://example.invalid/repo.git".to_string(),
             default_ref: "main".to_string(),
             default_image: Some("base".to_string()),
+            allowed_outbound_hosts: AllowedOutboundHosts::default(),
             credential,
         }
     }

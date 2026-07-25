@@ -9,10 +9,51 @@ use axum::{
     routing::get,
 };
 use axum_login::AuthnBackend;
+use http_body_util::BodyExt;
 use minijinja::Environment;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
+
+#[test]
+fn cargo_offline_cache_miss_is_the_primary_outcome() {
+    let failure = serde_json::json!({
+        "code": "cargo_offline_cache_miss",
+        "required_package": "serde",
+    });
+    let run = WorkRunRow {
+        id: Uuid::nil(),
+        bear_id: Uuid::nil(),
+        job_id: Uuid::nil(),
+        job_run_id: Uuid::nil(),
+        attempt: 1,
+        state: "succeeded".into(),
+        runner_id: None,
+        lease_expires_at: None,
+        cancel_requested: false,
+        root_name: None,
+        git_ref: None,
+        image_name: None,
+        sandbox_server_url: None,
+        sandbox_id: None,
+        sandbox_type: None,
+        sandbox_strength: None,
+        work_surface: None,
+        bearwire_session_id: None,
+        result_summary: Some("headless turn reached a terminal run event".into()),
+        result_refs: None,
+        usage: None,
+        error: None,
+        queued_at: time::OffsetDateTime::UNIX_EPOCH,
+        started_at: None,
+        finished_at: None,
+        updated_at: time::OffsetDateTime::UNIX_EPOCH,
+    };
+    assert_eq!(
+        work_run_outcome(&run, &[(Uuid::nil(), "pending".into())], Some(&failure)),
+        "Blocked: Rust dependencies are unavailable in the offline cache. `serde` could not be resolved. Dependency preparation was not attempted; prepare Rust dependencies, then retry Cargo.",
+    );
+}
 use tower_sessions_sqlx_store::PostgresStore;
 
 use crate::{auth_backend::Backend, config::Config};
@@ -158,6 +199,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
          &task_title=&task_criteria="
     );
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -204,16 +246,103 @@ async fn create_job_form_creates_work_job_with_tasks() {
     assert_eq!(policy.as_deref(), Some("per_task"));
     assert!(branch.is_none(), "blank branch stays unset until dispatch");
 
-    // Exactly one non-blank task, assigned to work, with the criterion.
-    let tasks: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT title, assigned_to_role FROM bear_tasks WHERE job_id = $1")
-            .bind(job_id)
-            .fetch_all(&pool)
-            .await
-            .expect("tasks");
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].0, "Update headline");
-    assert_eq!(tasks[0].1.as_deref(), Some("work"));
+    // Exactly one non-blank task with the criterion.
+    let tasks: Vec<String> = sqlx::query_scalar("SELECT title FROM bear_tasks WHERE job_id = $1")
+        .bind(job_id)
+        .fetch_all(&pool)
+        .await
+        .expect("tasks");
+    assert_eq!(tasks, vec!["Update headline"]);
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/edit"),
+        "goal=Ship+the+updated+site&surface_id=&commit_policy=per_job&work_branch=feature%2Fupdated"
+            .to_string(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let (goal, surface, policy, branch): (String, Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as(
+            "SELECT goal, work_surface_ref, commit_policy, work_branch FROM bear_jobs WHERE id = $1",
+        )
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .expect("edited job row");
+    assert_eq!(goal, "Ship the updated site");
+    assert!(surface.is_none());
+    assert_eq!(policy.as_deref(), Some("per_job"));
+    assert_eq!(branch.as_deref(), Some("feature/updated"));
+}
+
+#[tokio::test]
+async fn work_dashboard_hides_completed_jobs_until_requested() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let (user_id, bear_id) = seed_member(&pool).await;
+    let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, user_id).await;
+    let unique = Uuid::new_v4().simple().to_string();
+    let active_goal = format!("Active dashboard job {unique}");
+    let completed_goal = format!("Completed dashboard job {unique}");
+
+    for goal in [&active_goal, &completed_goal] {
+        let response = post_form(
+            &app,
+            &cookie,
+            "/work/new",
+            format!(
+                "bear_id={bear_id}&goal={}&root=&commit_policy=&work_branch=&task_title=&task_criteria=",
+                urlencoding::encode(goal)
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    }
+    sqlx::query("UPDATE bear_jobs SET status = 'completed' WHERE bear_id = $1 AND goal = $2")
+        .bind(bear_id)
+        .bind(&completed_goal)
+        .execute(&pool)
+        .await
+        .expect("complete dashboard job");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/work")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("dashboard response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
+        .into_owned();
+    assert!(body.contains(&active_goal));
+    assert!(!body.contains(&completed_goal));
+    assert!(body.contains("Show completed jobs"));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/work?completed=show")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("completed dashboard response");
+    let body = String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
+        .into_owned();
+    assert!(body.contains(&active_goal));
+    assert!(body.contains(&completed_goal));
+    assert!(body.contains("Hide completed jobs"));
 }
 
 #[tokio::test]
@@ -296,13 +425,8 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     let duplicate_run_id = current_run.expect("fresh duplicate run");
     assert_ne!(duplicate_run_id, source_run_id);
 
-    let tasks: Vec<(
-        String,
-        String,
-        sqlx::types::Json<Vec<String>>,
-        Option<String>,
-    )> = sqlx::query_as(
-        "SELECT title, body, completion_criteria, assigned_to_role \
+    let tasks: Vec<(String, String, sqlx::types::Json<Vec<String>>)> = sqlx::query_as(
+        "SELECT title, body, completion_criteria \
              FROM bear_tasks WHERE job_id = $1 ORDER BY sibling_order",
     )
     .bind(duplicate_id)
@@ -313,7 +437,6 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     assert_eq!(tasks[0].0, "Build artifact");
     assert_eq!(tasks[0].1, "Build artifact");
     assert_eq!(tasks[0].2 .0, vec!["artifact exists", "tests pass"]);
-    assert_eq!(tasks[0].3.as_deref(), Some("work"));
     let task_statuses: Vec<String> =
         sqlx::query_scalar("SELECT status FROM bear_task_run_state WHERE run_id = $1")
             .bind(duplicate_run_id)
@@ -321,6 +444,91 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
             .await
             .expect("duplicate task states");
     assert_eq!(task_statuses, vec!["pending"]);
+}
+
+#[tokio::test]
+async fn task_tree_can_add_children_and_reorder_siblings() {
+    let _guard = TEST_DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let (user_id, bear_id) = seed_member(&pool).await;
+    let app = test_app(pool.clone()).await;
+    let cookie = login_cookie(&app, user_id).await;
+
+    let response = post_form(
+        &app,
+        &cookie,
+        "/work/new",
+        format!(
+            "bear_id={bear_id}&goal=Edit+the+tree&root=&commit_policy=propose_only\\
+             &task_title=First+root&task_criteria=first+done"
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let job_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("job id");
+    let first_root_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM bear_tasks WHERE job_id = $1 AND title = 'First root'")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("first root task");
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/tasks/{first_root_id}/children"),
+        "title=First+child&criteria=child+done&body=".to_string(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let child: (Option<Uuid>, i32) = sqlx::query_as(
+        "SELECT parent_task_id, sibling_order FROM bear_tasks WHERE job_id = $1 AND title = 'First child'",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("child task");
+    assert_eq!(child, (Some(first_root_id), 0));
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/extend"),
+        "title=Second+root&body=&criteria=second+done".to_string(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let second_root_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM bear_tasks WHERE job_id = $1 AND title = 'Second root'")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("second root task");
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/tasks/{second_root_id}/move/up"),
+        String::new(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let roots: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM bear_tasks WHERE job_id = $1 AND parent_task_id IS NULL ORDER BY sibling_order",
+    )
+    .bind(job_id)
+    .fetch_all(&pool)
+    .await
+    .expect("root ordering");
+    assert_eq!(roots, vec![second_root_id, first_root_id]);
 }
 
 #[tokio::test]
@@ -443,13 +651,12 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response
-            .headers()
-            .get(header::LOCATION)
-            .and_then(|value| value.to_str().ok()),
-        Some(format!("/work/jobs/{job_id}").as_str())
-    );
+    let redirect = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
     let (surface_ref, surface_id): (Option<String>, Option<Uuid>) =
         sqlx::query_as("SELECT work_surface_ref, work_surface_id FROM bear_jobs WHERE id = $1")
             .bind(job_id)
@@ -458,6 +665,11 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
             .expect("attached job surface");
     assert_eq!(surface_ref.as_deref(), Some(surface_name.as_str()));
     let surface_id = surface_id.expect("surface id");
+    assert!(redirect.starts_with(&format!(
+        "/work/surfaces/{}?message=",
+        surface_id.simple().to_string()[..16].to_string()
+    )));
+    assert!(redirect.contains("not%20ready"));
     let assignment_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2",
     )
@@ -467,6 +679,33 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     .await
     .expect("surface assignment");
     assert_eq!(assignment_count, 1);
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/edit"),
+        format!("goal=Surface+job&surface_id={surface_id}&commit_policy=per_task&work_branch=main"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/work/jobs/{job_id}/edit"),
+        format!(
+            "goal=Surface+job&surface_id={surface_id}&commit_policy=per_task&work_branch=&allow_default_ref=true"
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let branch: Option<String> =
+        sqlx::query_scalar("SELECT work_branch FROM bear_jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("default work branch");
+    assert_eq!(branch.as_deref(), Some("main"));
 }
 
 #[tokio::test]
@@ -482,7 +721,8 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     // Create the job through the same form, then dispatch its task.
     let body = format!(
         "bear_id={bear_id}&goal=Dispatch+me&root=&commit_policy=propose_only\
-         &task_title=Do+the+thing&task_criteria=thing+is+done"
+         &task_title=Do+the+thing&task_criteria=thing+is+done\
+         &task_title=Do+the+next+thing&task_criteria=next+thing+is+done"
     );
     let response = app
         .clone()
@@ -499,18 +739,19 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .expect("create job response");
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
 
-    let (task_id,): (Uuid,) =
-        sqlx::query_as("SELECT id FROM bear_tasks WHERE bear_id = $1 AND title = 'Do the thing'")
-            .bind(bear_id)
-            .fetch_one(&pool)
-            .await
-            .expect("task id");
+    let (_task_id, job_id): (Uuid, Uuid) = sqlx::query_as(
+        "SELECT id, job_id FROM bear_tasks WHERE bear_id = $1 AND title = 'Do the thing'",
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("task id");
 
     let response = app
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/work/tasks/{task_id}/dispatch"))
+                .uri(format!("/work/jobs/{job_id}/dispatch"))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from("root=site&image=rust&git_ref="))
@@ -519,15 +760,23 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .await
         .expect("dispatch response");
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let redirect = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .expect("dispatch redirect");
 
-    let (root, image, git_ref): (Option<String>, Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT root_name, image_name, git_ref FROM bear_work_runs
-         WHERE task_id = $1 AND state = 'queued'",
+    let runs: Vec<(Uuid, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, root_name, image_name, git_ref FROM bear_work_runs
+         WHERE job_id = $1 AND state = 'queued' ORDER BY queued_at",
     )
-    .bind(task_id)
-    .fetch_one(&pool)
+    .bind(job_id)
+    .fetch_all(&pool)
     .await
-    .expect("queued run");
+    .expect("queued job runs");
+    assert_eq!(runs.len(), 1);
+    let (run_id, root, image, git_ref) = &runs[0];
+    assert_eq!(redirect, format!("/work/runs/{}", route_id(*run_id)));
     assert_eq!(root.as_deref(), Some("site"));
     assert_eq!(image.as_deref(), Some("rust"));
     assert!(git_ref.is_none(), "blank git_ref stays unset");
@@ -553,6 +802,23 @@ async fn post_form(
         )
         .await
         .expect("form response")
+}
+
+#[test]
+fn cargo_registry_network_diagnostic_is_actionable() {
+    let diagnostic = run_diagnostic(
+        Some("cargo test timed out while Cargo attempted to update the crates.io index"),
+        None,
+        "spurious network error: TLS transfer failed",
+    )
+    .expect("Cargo registry failure is recognized");
+    assert_eq!(diagnostic.title, "Cargo dependency access failed");
+    assert!(diagnostic.recovery.contains("retry the blocked task"));
+}
+
+#[test]
+fn unrelated_timeout_does_not_claim_network_diagnosis() {
+    assert!(run_diagnostic(Some("worker timed out"), None, "").is_none());
 }
 
 #[tokio::test]

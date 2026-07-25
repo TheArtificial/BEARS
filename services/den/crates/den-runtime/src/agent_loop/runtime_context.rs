@@ -1,4 +1,5 @@
 use den_core::DenError;
+use den_docket::{DocketExecutionSessionRow, DocketService, PgDocketService};
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -132,6 +133,55 @@ fn render_objective_orientation_context(
     }
 }
 
+async fn render_docket_execution_context(
+    pool: &PgPool,
+    bear_id: Uuid,
+    execution: &DocketExecutionSessionRow,
+) -> Result<String, DenError> {
+    let task = if let Some(task_id) = execution.task_id {
+        let docket = PgDocketService::from_pool(pool);
+        docket
+            .get_job(bear_id, execution.job_id)
+            .await?
+            .and_then(|job| {
+                job.task_states
+                    .into_iter()
+                    .find(|state| state.run_id == execution.run_id && state.task_id == task_id)
+            })
+    } else {
+        None
+    };
+    let retry = task.as_ref().and_then(|state| {
+        state
+            .result_refs
+            .as_ref()
+            .and_then(|refs| refs.get("retry"))
+            .and_then(serde_json::Value::as_object)
+            .map(|retry| {
+                json!({
+                    "reason": retry.get("reason").and_then(serde_json::Value::as_str),
+                    "previous_blocked_reason": retry
+                        .get("previous_blocked_reason")
+                        .and_then(serde_json::Value::as_str),
+                })
+            })
+    });
+    render_runtime_fragment(
+        "runtime_docket_execution_active",
+        json!({
+            "execution": {
+                "surface": { "adapter": "Den", "stance": execution.owner_profile },
+                "job_id": execution.job_id,
+                "run_id": execution.run_id,
+                "task_id": execution.task_id,
+                "state": execution.state,
+                "gate": { "state": "open" },
+                "retry": retry,
+            }
+        }),
+    )
+}
+
 async fn load_prompt_memory_runtime_text(
     pool: &PgPool,
     bear_id: Uuid,
@@ -183,12 +233,16 @@ pub async fn assemble_den_owned_runtime_supplement(
     session_id: &str,
     workspace_roots: &[String],
     objective_orientation: &ObjectiveOrientation,
+    active_execution: Option<&DocketExecutionSessionRow>,
 ) -> Result<String, DenError> {
     let mut parts = Vec::new();
     parts.push(render_objective_orientation_context(
         profile_slug,
         objective_orientation,
     )?);
+    if let Some(execution) = active_execution {
+        parts.push(render_docket_execution_context(pool, bear_id, execution).await?);
+    }
     let prompt_memory =
         load_prompt_memory_runtime_text(pool, bear_id, profile_slug, session_id, workspace_roots)
             .await?;

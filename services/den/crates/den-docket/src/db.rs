@@ -4,7 +4,7 @@
 //! outside Docket go through the service, never here. Docket job/task data is
 //! stored in the ADR-0034 relational tables.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -183,7 +183,6 @@ fn docket_task_definition_payload(task: &DocketTaskRow) -> Value {
         "completion_criteria": task.completion_criteria.0,
         "difficulty": task.difficulty,
         "effort_hint": task.effort_hint,
-        "assigned_to_role": task.assigned_to_role,
     })
 }
 
@@ -225,11 +224,11 @@ async fn insert_task_for_job(
         r"
         INSERT INTO bear_tasks (
             bear_id, job_id, parent_task_id, sibling_order, kind, scope, title, body,
-            completion_criteria, difficulty, effort_hint, assigned_to_role, created_by_role, created_by_user_id
+            completion_criteria, difficulty, effort_hint, created_by_role, created_by_user_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+                  kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   created_at, updated_at
         ",
@@ -242,10 +241,11 @@ async fn insert_task_for_job(
     .bind(task.scope.as_str())
     .bind(task.title.trim())
     .bind(task.body.trim())
-    .bind(serde_json::to_value(normalize_completion_criteria(&task.completion_criteria))?)
+    .bind(serde_json::to_value(normalize_completion_criteria(
+        &task.completion_criteria,
+    ))?)
     .bind(task.difficulty.map(|difficulty| difficulty.as_str()))
     .bind(task.effort_hint.map(|effort| effort.as_str()))
-    .bind(task.assigned_to_role.map(|role| role.as_str()))
     .bind(create.created_by_role.trim())
     .bind(create.created_by_user_id)
     .fetch_one(&mut **tx)
@@ -331,12 +331,12 @@ async fn insert_task(
         r"
         INSERT INTO bear_tasks (
             bear_id, job_id, session_anchor_id, parent_task_id, sibling_order, kind, scope,
-            title, body, completion_criteria, difficulty, effort_hint, assigned_to_role, created_by_role,
+            title, body, completion_criteria, difficulty, effort_hint, created_by_role,
             created_by_user_id, created_by_agent_id, created_in_run_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16)
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+                  kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   created_at, updated_at
         ",
@@ -350,10 +350,11 @@ async fn insert_task(
     .bind(create.scope.as_str())
     .bind(create.title.trim())
     .bind(create.body.trim())
-    .bind(serde_json::to_value(normalize_completion_criteria(&create.completion_criteria))?)
+    .bind(serde_json::to_value(normalize_completion_criteria(
+        &create.completion_criteria,
+    ))?)
     .bind(create.difficulty.map(|difficulty| difficulty.as_str()))
     .bind(create.effort_hint.map(|effort| effort.as_str()))
-    .bind(create.assigned_to_role.map(|role| role.as_str()))
     .bind(create.created_by_role.trim())
     .bind(create.created_by_user_id)
     .bind(create.created_by_agent_id.as_deref())
@@ -456,7 +457,7 @@ pub(super) async fn get_job(
     let tasks = sqlx::query_as::<_, DocketTaskRow>(
         r"
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+               kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                created_at, updated_at
         FROM bear_tasks
@@ -586,8 +587,9 @@ pub(super) async fn update_job(
             work_surface_ref = $4,
             work_surface_id = $5,
             commit_policy = $6,
-            status = $7,
-            visibility = $8,
+            work_branch = $7,
+            status = $8,
+            visibility = $9,
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
@@ -619,6 +621,12 @@ pub(super) async fn update_job(
             .commit_policy
             .map(|policy| policy.map(|policy| policy.as_str().to_string()))
             .unwrap_or_else(|| current.commit_policy.clone()),
+    )
+    .bind(
+        update
+            .work_branch
+            .clone()
+            .unwrap_or_else(|| current.work_branch.clone()),
     )
     .bind(
         update
@@ -1077,27 +1085,6 @@ pub(super) async fn execute_job(
         ));
     };
 
-    if let Some(active) = projection
-        .task_states
-        .iter()
-        .find(|state| state.status == "in_progress")
-    {
-        mark_job_running(pool, &request, run.id).await?;
-        record_execution_session(pool, &request, run.id, Some(active.task_id), "active").await?;
-        let job = get_job(pool, request.bear_id, request.job_id)
-            .await?
-            .ok_or_else(|| {
-                DenError::NotFound(format!("Docket job not found: {}", request.job_id))
-            })?;
-        return Ok(DocketJobExecuteOutcome {
-            job,
-            selected_task_id: Some(active.task_id),
-            completed: false,
-            blocked: false,
-            message: "Job already has an in-progress task.".to_string(),
-        });
-    }
-
     if projection
         .task_states
         .iter()
@@ -1116,6 +1103,7 @@ pub(super) async fn execute_job(
                 work_surface_ref: None,
                 work_surface_id: None,
                 commit_policy: None,
+                work_branch: None,
                 status: Some(DocketJobStatus::Blocked),
                 visibility: None,
             },
@@ -1135,12 +1123,41 @@ pub(super) async fn execute_job(
         .iter()
         .map(|state| (state.task_id, state.status.as_str()))
         .collect::<HashMap<_, _>>();
-    if let Some(next) = projection.tasks.iter().find(|task| {
-        !matches!(
-            state_by_task.get(&task.id).copied().unwrap_or("pending"),
-            "done" | "cancelled" | "blocked"
-        )
-    }) {
+    if let Some(active) = projection
+        .task_states
+        .iter()
+        .find(|state| state.status == "in_progress")
+    {
+        // Re-evaluate the active task against the plan. Treating it as pending
+        // asks whether it is still the first unfinished leaf rather than
+        // trusting a stale focus/session record.
+        let mut eligibility = state_by_task.clone();
+        eligibility.insert(active.task_id, "pending");
+        let selected =
+            first_pending_leaf_in_plan_order(&projection, &eligibility).map(|task| task.id);
+        if selected != Some(active.task_id) {
+            return Err(DenError::ValidationError(format!(
+                "Docket in-progress task {} is not the first eligible leaf in sibling order; refusing stale active task",
+                active.task_id
+            )));
+        }
+        mark_job_running(pool, &request, run.id).await?;
+        record_execution_session(pool, &request, run.id, Some(active.task_id), "active").await?;
+        let job = get_job(pool, request.bear_id, request.job_id)
+            .await?
+            .ok_or_else(|| {
+                DenError::NotFound(format!("Docket job not found: {}", request.job_id))
+            })?;
+        return Ok(DocketJobExecuteOutcome {
+            job,
+            selected_task_id: Some(active.task_id),
+            completed: false,
+            blocked: false,
+            message: "Job has the first eligible in-progress task.".to_string(),
+        });
+    }
+
+    if let Some(next) = first_pending_leaf_in_plan_order(&projection, &state_by_task) {
         mark_job_running(pool, &request, run.id).await?;
         record_execution_session(pool, &request, run.id, Some(next.id), "active").await?;
         update_task(
@@ -1199,6 +1216,7 @@ pub(super) async fn execute_job(
                 work_surface_ref: None,
                 work_surface_id: None,
                 commit_policy: None,
+                work_branch: None,
                 status: Some(DocketJobStatus::Completed),
                 visibility: None,
             },
@@ -1225,6 +1243,7 @@ pub(super) async fn execute_job(
                 work_surface_ref: None,
                 work_surface_id: None,
                 commit_policy: None,
+                work_branch: None,
                 status: Some(DocketJobStatus::Blocked),
                 visibility: None,
             },
@@ -1238,6 +1257,63 @@ pub(super) async fn execute_job(
             message: "All tasks are terminal, but acceptance criteria are not met.".to_string(),
         })
     }
+}
+
+/// Returns the first unfinished leaf in depth-first sibling order.
+///
+/// A task with children is a phase/roll-up, not independently executable. A
+/// leaf becomes eligible only after all its preceding siblings are terminal.
+fn first_pending_leaf_in_plan_order<'a>(
+    projection: &'a DocketJobProjection,
+    state_by_task: &HashMap<Uuid, &str>,
+) -> Option<&'a DocketTaskRow> {
+    let children = projection.tasks.iter().fold(
+        HashMap::<Option<Uuid>, Vec<&DocketTaskRow>>::new(),
+        |mut children, task| {
+            children.entry(task.parent_task_id).or_default().push(task);
+            children
+        },
+    );
+    let mut visited = HashSet::new();
+    first_pending_leaf_in_children(None, &children, state_by_task, &mut visited)
+        .ok()
+        .flatten()
+}
+
+/// Returns the next pending leaf, or `Err` when earlier non-terminal work
+/// blocks advancement to later siblings.
+fn first_pending_leaf_in_children<'a>(
+    parent_id: Option<Uuid>,
+    children: &HashMap<Option<Uuid>, Vec<&'a DocketTaskRow>>,
+    state_by_task: &HashMap<Uuid, &str>,
+    visited: &mut HashSet<Uuid>,
+) -> Result<Option<&'a DocketTaskRow>, ()> {
+    let Some(siblings) = children.get(&parent_id) else {
+        return Ok(None);
+    };
+    let mut siblings = siblings.clone();
+    siblings.sort_by_key(|task| (task.sibling_order, task.created_at));
+
+    for task in siblings {
+        if !visited.insert(task.id) {
+            continue;
+        }
+        if children.contains_key(&Some(task.id)) {
+            match first_pending_leaf_in_children(Some(task.id), children, state_by_task, visited) {
+                Ok(Some(next)) => return Ok(Some(next)),
+                Err(()) => return Err(()),
+                Ok(None) => continue,
+            }
+        }
+        match state_by_task.get(&task.id).copied().unwrap_or("pending") {
+            "done" | "cancelled" => continue,
+            "pending" => return Ok(Some(task)),
+            // An earlier in-progress or blocked leaf owns its place in the
+            // plan. Do not skip it to offer a later sibling.
+            _ => return Err(()),
+        }
+    }
+    Ok(None)
 }
 
 async fn mark_job_running(
@@ -1337,7 +1413,7 @@ pub(super) async fn list_tasks(
         sqlx::query_as::<_, DocketTaskRow>(
             r"
             SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+                   kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                    created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                    created_at, updated_at
             FROM bear_tasks
@@ -1380,7 +1456,7 @@ async fn list_tasks_with_descendants(
         r"
         WITH RECURSIVE task_tree AS (
             SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+                   kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                    created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                    created_at, updated_at
             FROM bear_tasks
@@ -1395,14 +1471,14 @@ async fn list_tasks_with_descendants(
             SELECT child.id, child.bear_id, child.job_id, child.session_anchor_id,
                    child.parent_task_id, child.sibling_order, child.kind, child.scope,
                    child.title, child.body, child.completion_criteria, child.difficulty, child.effort_hint,
-                   child.assigned_to_role, child.created_by_role, child.created_by_user_id,
+                   child.created_by_role, child.created_by_user_id,
                    child.created_by_agent_id, child.created_in_run_id, child.created_at,
                    child.updated_at
             FROM bear_tasks child
             JOIN task_tree parent ON child.parent_task_id = parent.id
         )
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+               kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                created_at, updated_at
         FROM task_tree
@@ -1481,6 +1557,13 @@ pub(super) async fn update_task(
     let mut tx = pool.begin().await?;
     let current = select_task(&mut tx, update.bear_id, update.task_id).await?;
     validate_task_update_scope(&mut tx, &current, &update).await?;
+    if let Some(run_state) = update
+        .run_state
+        .as_ref()
+        .filter(|state| state.status.as_str() == "done")
+    {
+        validate_parent_completion(&mut tx, &current, run_state.run_id).await?;
+    }
     let patched = update_task_definition(&mut tx, &current, &update.definition).await?;
     append_task_updated_events(&mut tx, &patched, &update).await?;
     let run_state = if let Some(run_state) = update.run_state.as_ref() {
@@ -1488,11 +1571,105 @@ pub(super) async fn update_task(
     } else {
         None
     };
+    if let Some(run_state) = update
+        .run_state
+        .as_ref()
+        .filter(|state| matches!(state.status.as_str(), "done" | "cancelled"))
+    {
+        roll_up_completed_parents(&mut tx, current.parent_task_id, run_state.run_id).await?;
+    }
     tx.commit().await?;
     Ok(DocketTaskProjection {
         task: patched,
         run_state,
     })
+}
+
+async fn validate_parent_completion(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task: &DocketTaskRow,
+    run_id: Uuid,
+) -> Result<(), DenError> {
+    let unfinished_children = sqlx::query_scalar::<_, i64>(
+        r"
+        WITH RECURSIVE descendants AS (
+            SELECT id FROM bear_tasks WHERE parent_task_id = $1
+            UNION ALL
+            SELECT child.id
+            FROM bear_tasks child
+            JOIN descendants parent ON child.parent_task_id = parent.id
+        )
+        SELECT COUNT(*)
+        FROM descendants
+        LEFT JOIN bear_task_run_state state
+          ON state.task_id = descendants.id AND state.run_id = $2
+        WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled')
+        ",
+    )
+    .bind(task.id)
+    .bind(run_id)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    if unfinished_children > 0 {
+        return Err(DenError::ValidationError(format!(
+            "Docket phase cannot be completed while {unfinished_children} child task(s) remain unfinished: task_id={}",
+            task.id
+        )));
+    }
+    Ok(())
+}
+
+async fn roll_up_completed_parents(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    mut parent_id: Option<Uuid>,
+    run_id: Uuid,
+) -> Result<(), DenError> {
+    while let Some(task_id) = parent_id {
+        let unfinished_descendants = sqlx::query_scalar::<_, i64>(
+            r"
+            WITH RECURSIVE descendants AS (
+                SELECT id FROM bear_tasks WHERE parent_task_id = $1
+                UNION ALL
+                SELECT child.id
+                FROM bear_tasks child
+                JOIN descendants parent ON child.parent_task_id = parent.id
+            )
+            SELECT COUNT(*)
+            FROM descendants
+            LEFT JOIN bear_task_run_state state
+              ON state.task_id = descendants.id AND state.run_id = $2
+            WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled')
+            ",
+        )
+        .bind(task_id)
+        .bind(run_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if unfinished_descendants != 0 {
+            break;
+        }
+
+        sqlx::query(
+            r"
+            UPDATE bear_task_run_state
+            SET status = 'done',
+                result_summary = COALESCE(NULLIF(result_summary, ''), 'All child tasks are terminal.'),
+                finished_at = COALESCE(finished_at, NOW()),
+                updated_at = NOW()
+            WHERE run_id = $1 AND task_id = $2 AND status NOT IN ('done', 'cancelled')
+            ",
+        )
+        .bind(run_id)
+        .bind(task_id)
+        .execute(&mut **tx)
+        .await?;
+        parent_id = sqlx::query_scalar("SELECT parent_task_id FROM bear_tasks WHERE id = $1")
+            .bind(task_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    }
+    Ok(())
 }
 
 fn validate_docket_task_run_state_update(
@@ -1550,7 +1727,7 @@ async fn select_task(
     sqlx::query_as::<_, DocketTaskRow>(
         r"
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+               kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                created_at, updated_at
         FROM bear_tasks
@@ -1625,11 +1802,10 @@ async fn update_task_definition(
             scope = $9,
             difficulty = $10,
             effort_hint = $11,
-            assigned_to_role = $12,
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, assigned_to_role,
+                  kind, scope, title, body, completion_criteria, difficulty, effort_hint,
                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   created_at, updated_at
         ",
@@ -1682,12 +1858,6 @@ async fn update_task_definition(
             .effort_hint
             .map(|value| value.map(|effort| effort.as_str().to_string()))
             .unwrap_or_else(|| current.effort_hint.clone()),
-    )
-    .bind(
-        patch
-            .assigned_to_role
-            .map(|value| value.map(|role| role.as_str().to_string()))
-            .unwrap_or_else(|| current.assigned_to_role.clone()),
     )
     .fetch_one(&mut **tx)
     .await
@@ -1941,7 +2111,6 @@ pub(super) async fn sync_task_list(
                         .unwrap_or_else(|| format!("Complete: {}", item.title))],
                     difficulty: None,
                     effort_hint: None,
-                    assigned_to_role: Some(BearProfile::Work),
                     created_by_role: request.task_list.owner_profile.clone(),
                     created_by_user_id: None,
                     created_by_agent_id: None,

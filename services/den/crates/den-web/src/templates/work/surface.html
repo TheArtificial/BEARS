@@ -2,11 +2,16 @@
 {% block title %}Surface {{ name }}{% endblock %}
 {% block content %}
 <p><a href="/work/surfaces">← Work surfaces</a></p>
-<h1>Surface <code>{{ name }}</code></h1>
+<h1><a href="/work/surfaces/{{ surface_reference.route_id }}" title="UUID prefix for {{ surface_reference.full_id }}">{{ surface_reference.kind }} <code class="entity-reference-id">{{ surface_reference.id }}</code>: {{ surface_reference.title }}</a></h1>
 
 {% if message %}
 <p><strong>{{ message }}</strong></p>
 {% endif %}
+
+<section>
+    <h2>Repository comparison</h2>
+    <p><a href="/work/surfaces/{{ surface_id }}/diff?base={{ default_ref | urlencode }}&head=origin%2FHEAD">Inspect default ref versus origin</a>. The provider reports resolved commits and its pristine worktree state.</p>
+</section>
 
 <section>
     <h2>Settings</h2>
@@ -39,6 +44,13 @@
                     <option value="{{ image.name }}" {% if image.name == default_image %}selected{% endif %}>{{ image.name }}</option>
                     {% endfor %}
                 </select>
+            </label>
+        </p>
+        <p>
+            <label>Allowed outbound hosts <small>(one exact hostname per line, HTTPS only)</small><br>
+                <textarea name="allowed_outbound_hosts" rows="3" cols="60"
+                          placeholder="index.crates.io&#10;static.crates.io">{{ allowed_outbound_hosts }}</textarea><br>
+                <small>Leave empty to deny sandbox egress. Host access does not provide credentials.</small>
             </label>
         </p>
         <p><button type="submit">Save</button></p>
@@ -144,14 +156,53 @@
 </section>
 
 <section>
-    <h2>Provider sync</h2>
+    <h2>Readiness</h2>
+    {% if provider_root_status %}
     <p>
-        Changes push to the sandbox provider automatically; the dispatch worker
-        also reconciles every 5 minutes.
+        Provider root: {% if provider_root_status.ok %}<strong>ready</strong>{% else %}<strong>not ready</strong>{% endif %}
+        {% if provider_root_status.detail %}— {{ provider_root_status.detail }}{% endif %}
+    </p>
+    {% else %}
+    <p>Provider readiness has not been verified.</p>
+    {% endif %}
+    {% if provider_root_inspection %}
+    <h3>Default ref snapshot</h3>
+    <p>
+        <code>{{ provider_root_inspection.default_ref }}</code> @
+        <code title="{{ provider_root_inspection.head }}">{{ provider_root_inspection.short_head }}</code>
+        — {{ provider_root_inspection.subject }}
+    </p>
+    <p>
+        Origin status:
+        {% if provider_root_inspection.origin_status == "in_sync" %}<strong>in sync</strong>
+        {% elif provider_root_inspection.origin_status == "remote_differs" %}<strong>remote differs; Test &amp; prepare to fetch</strong>
+        {% else %}<strong>remote unavailable</strong>{% endif %}
+        · {{ provider_root_inspection.files | length }} file(s)
+        · +{{ provider_root_inspection.additions }} / -{{ provider_root_inspection.deletions }} lines
+    </p>
+    {% if provider_root_inspection.files %}
+    <details>
+        <summary>Files in latest commit</summary>
+        <table>
+            <thead><tr><th>File</th><th>Added</th><th>Deleted</th></tr></thead>
+            <tbody>
+                {% for file in provider_root_inspection.files %}
+                <tr><td><code>{{ file.path }}</code></td><td>{{ file.additions if file.additions is not none else "binary" }}</td><td>{{ file.deletions if file.deletions is not none else "binary" }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </details>
+    {% endif %}
+    {% endif %}
+    <p>
+        <strong>Test &amp; prepare</strong> pushes current configuration, verifies credentials and
+        upstream reachability, clones/fetches the pristine mirror, and resolves the default ref.
+        This does not launch a work sandbox.
     </p>
     <form method="post" action="/work/surfaces/{{ surface_id }}/sync">
-        <p><button type="submit">Sync now</button></p>
+        <p><button type="submit">Test &amp; prepare surface</button></p>
     </form>
+    <p><small>Pushes are generated from successful run workspaces, not from the pristine surface mirror. Choose <strong>Publish after each task</strong> or <strong>Publish to the job branch</strong> on the job to publish automatically. <strong>No output</strong> does not publish or preserve a pushable workspace.</small></p>
 </section>
 
 <section>

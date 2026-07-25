@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::{Arc, Mutex},
 };
 
@@ -57,6 +57,7 @@ pub enum TerminalReason {
     EndTurn,
     StreamComplete,
     StreamError,
+    ToolExecutionFailed,
     ToolTimeout,
     Cancelled,
     OrphanedRequiresApproval,
@@ -281,6 +282,7 @@ impl ActiveTurnCancelRegistry {
 pub struct TurnController {
     phase: TurnPhase,
     obligations: BTreeMap<String, ToolObligation>,
+    failed_tool_names: BTreeSet<String>,
     ready_terminal: Option<TerminalOutcome>,
     emitted_terminal: Option<TerminalOutcome>,
     orphaned_requires_approval: bool,
@@ -302,6 +304,7 @@ impl TurnController {
         Self {
             phase: TurnPhase::Created,
             obligations: BTreeMap::new(),
+            failed_tool_names: BTreeSet::new(),
             ready_terminal: None,
             emitted_terminal: None,
             orphaned_requires_approval: false,
@@ -625,9 +628,18 @@ impl TurnController {
             self.phase = TurnPhase::WaitingForObligations;
             return;
         }
+        let tool_failed = !self.failed_tool_names.is_empty();
         self.ready_terminal.get_or_insert(TerminalOutcome {
-            status: TerminalStatus::Ok,
-            reason: TerminalReason::EndTurn,
+            status: if tool_failed {
+                TerminalStatus::Failed
+            } else {
+                TerminalStatus::Ok
+            },
+            reason: if tool_failed {
+                TerminalReason::ToolExecutionFailed
+            } else {
+                TerminalReason::EndTurn
+            },
         });
     }
 
@@ -690,6 +702,9 @@ impl TurnController {
         };
         if ok {
             self.last_settled_tool_name = Some(obligation.tool_name.clone());
+            self.failed_tool_names.remove(&obligation.tool_name);
+        } else {
+            self.failed_tool_names.insert(obligation.tool_name.clone());
         }
         self.advance_after_obligation_change();
         ToolResultDisposition::Accepted

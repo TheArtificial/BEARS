@@ -14,7 +14,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::DenError;
-use den_sandbox::protocol::{ManagedConfig, ManagedCredential, ManagedImage, ManagedSurface};
+use den_sandbox::protocol::{
+    AllowedOutboundHosts, ManagedConfig, ManagedCredential, ManagedImage, ManagedSurface,
+};
 
 pub const SURFACE_ROLE_OWNER: &str = "owner";
 pub const SURFACE_ROLE_MANAGER: &str = "manager";
@@ -47,6 +49,12 @@ fn validate_name(name: &str) -> Result<(), DenError> {
     }
 }
 
+fn validate_allowed_outbound_hosts(hosts: Vec<String>) -> Result<Vec<String>, DenError> {
+    AllowedOutboundHosts::new(hosts)
+        .map(|hosts| hosts.as_slice().to_vec())
+        .map_err(DenError::ValidationError)
+}
+
 fn validate_credential_kind(kind: &str) -> Result<(), DenError> {
     match kind {
         CREDENTIAL_KIND_SSH_KEY | CREDENTIAL_KIND_HTTPS_TOKEN => Ok(()),
@@ -67,6 +75,7 @@ pub struct WorkSurfaceRow {
     pub upstream_url: String,
     pub default_ref: String,
     pub default_image: Option<String>,
+    pub allowed_outbound_hosts: Vec<String>,
     pub credential_kind: Option<String>,
     pub created_by_user_id: i32,
     pub created_at: time::OffsetDateTime,
@@ -74,7 +83,7 @@ pub struct WorkSurfaceRow {
 }
 
 const SURFACE_COLUMNS: &str = "id, name, description, upstream_url, default_ref, default_image, \
-     credential_kind, created_by_user_id, created_at, updated_at";
+     allowed_outbound_hosts, credential_kind, created_by_user_id, created_at, updated_at";
 
 #[derive(Debug, Clone)]
 pub struct NewWorkSurface {
@@ -83,6 +92,7 @@ pub struct NewWorkSurface {
     pub upstream_url: String,
     pub default_ref: String,
     pub default_image: Option<String>,
+    pub allowed_outbound_hosts: Vec<String>,
     /// (kind, plaintext value); encrypted before it reaches the database.
     pub credential: Option<(String, String)>,
 }
@@ -93,6 +103,8 @@ pub struct WorkSurfaceUpdate {
     pub upstream_url: Option<String>,
     pub default_ref: Option<String>,
     pub default_image: Option<Option<String>>,
+    /// Replaces the full surface-owned list; an empty list denies all egress.
+    pub allowed_outbound_hosts: Option<Vec<String>>,
 }
 
 pub async fn create_surface(
@@ -107,6 +119,7 @@ pub async fn create_surface(
             "upstream URL must not be empty".to_string(),
         ));
     }
+    let allowed_outbound_hosts = validate_allowed_outbound_hosts(surface.allowed_outbound_hosts)?;
     let (credential_kind, credential_encrypted) = match &surface.credential {
         Some((kind, value)) => {
             validate_credential_kind(kind)?;
@@ -123,8 +136,8 @@ pub async fn create_surface(
         r"
         INSERT INTO work_surfaces
             (name, description, upstream_url, default_ref, default_image,
-             credential_kind, credential_encrypted, created_by_user_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             allowed_outbound_hosts, credential_kind, credential_encrypted, created_by_user_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING {SURFACE_COLUMNS}
         ",
     ))
@@ -133,6 +146,7 @@ pub async fn create_surface(
     .bind(surface.upstream_url.trim())
     .bind(surface.default_ref.trim())
     .bind(&surface.default_image)
+    .bind(&allowed_outbound_hosts)
     .bind(&credential_kind)
     .bind(&credential_encrypted)
     .bind(owner_user_id)
@@ -182,6 +196,9 @@ pub async fn update_surface(
             ));
         }
     }
+    if let Some(hosts) = update.allowed_outbound_hosts.clone() {
+        validate_allowed_outbound_hosts(hosts)?;
+    }
     sqlx::query_as::<_, WorkSurfaceRow>(&format!(
         r"
         UPDATE work_surfaces SET
@@ -189,6 +206,7 @@ pub async fn update_surface(
             upstream_url = COALESCE($4, upstream_url),
             default_ref = COALESCE($5, default_ref),
             default_image = CASE WHEN $6 THEN $7 ELSE default_image END,
+            allowed_outbound_hosts = CASE WHEN $8 THEN $9 ELSE allowed_outbound_hosts END,
             updated_at = now()
         WHERE id = $1
         RETURNING {SURFACE_COLUMNS}
@@ -201,6 +219,13 @@ pub async fn update_surface(
     .bind(update.default_ref.as_deref().map(str::trim))
     .bind(update.default_image.is_some())
     .bind(update.default_image.flatten())
+    .bind(update.allowed_outbound_hosts.is_some())
+    .bind(
+        update
+            .allowed_outbound_hosts
+            .map(validate_allowed_outbound_hosts)
+            .transpose()?,
+    )
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| DenError::NotFound("work surface not found".to_string()))
@@ -661,6 +686,7 @@ struct SurfaceSyncRow {
     upstream_url: String,
     default_ref: String,
     default_image: Option<String>,
+    allowed_outbound_hosts: Vec<String>,
     credential_kind: Option<String>,
     credential_encrypted: Option<String>,
 }
@@ -675,7 +701,7 @@ pub async fn build_managed_config(
 ) -> Result<ManagedConfig, DenError> {
     let surface_rows = sqlx::query_as::<_, SurfaceSyncRow>(
         r"
-        SELECT name, upstream_url, default_ref, default_image,
+        SELECT name, upstream_url, default_ref, default_image, allowed_outbound_hosts,
                credential_kind, credential_encrypted
         FROM work_surfaces
         ORDER BY name
@@ -694,6 +720,11 @@ pub async fn build_managed_config(
         hasher.update(row.default_ref.as_bytes());
         hasher.update([0]);
         hasher.update(row.default_image.as_deref().unwrap_or("").as_bytes());
+        hasher.update([0]);
+        for host in &row.allowed_outbound_hosts {
+            hasher.update(host.as_bytes());
+            hasher.update([0]);
+        }
         hasher.update([0]);
         hasher.update(row.credential_kind.as_deref().unwrap_or("").as_bytes());
         hasher.update([0]);
@@ -714,6 +745,7 @@ pub async fn build_managed_config(
 
     let mut surfaces = Vec::with_capacity(surface_rows.len());
     for row in surface_rows {
+        let allowed_outbound_hosts = validate_allowed_outbound_hosts(row.allowed_outbound_hosts)?;
         let credential = match (row.credential_kind.as_deref(), &row.credential_encrypted) {
             (Some(CREDENTIAL_KIND_SSH_KEY), Some(encrypted)) => Some(ManagedCredential::SshKey {
                 private_key: crate::secrets::decrypt_secret(encrypted, secret_key)?,
@@ -730,6 +762,8 @@ pub async fn build_managed_config(
             upstream_url: row.upstream_url,
             default_ref: row.default_ref,
             default_image: row.default_image,
+            allowed_outbound_hosts: AllowedOutboundHosts::new(allowed_outbound_hosts)
+                .expect("validated before managed config construction"),
             credential,
         });
     }

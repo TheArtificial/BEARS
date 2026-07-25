@@ -2,13 +2,42 @@
 {% block title %}Work job{% endblock %}
 {% block content %}
 <p><a href="/work">← Work</a></p>
-<h1>{{ goal }}</h1>
+<h1>Job <code class="entity-reference-id">{{ job_display_id }}</code></h1>
+<h2>{{ goal }}</h2>
 <p>
-    Bear <strong>{{ bear_slug }}</strong> · status <strong>{{ status }}</strong>
-    {% if work_surface_ref %} · work surface <code>{{ work_surface_ref }}</code>{% endif %}
-    {% if commit_policy %} · commit policy <code>{{ commit_policy }}</code>{% endif %}
+    Bear <a href="/bear/{{ bear_slug | urlencode }}">{{ bear_name }}</a> · status <strong>{{ status }}</strong>
+    {% if work_surface_name %} · work surface <a href="/work/surfaces/{{ work_surface_id }}">{{ work_surface_name }}</a>{% endif %}
+    · output policy <strong>{{ commit_policy_label }}</strong>
     {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
 </p>
+{% if work_surface_id and work_branch %}
+<p><a href="/work/surfaces/{{ work_surface_id }}/diff?base={{ work_surface_default_ref | urlencode }}&head={{ work_branch | urlencode }}">Inspect work branch diff and provider diagnostics</a>.</p>
+{% endif %}
+<details>
+    <summary>Edit job settings</summary>
+    <form method="post" action="/work/jobs/{{ job_id }}/edit">
+        <p><label>Goal<br><input name="goal" value="{{ goal }}" required size="80"></label></p>
+        <p><label>Work surface<br>
+            <select name="surface_id">
+                <option value="">— none —</option>
+                {% for surface in available_surfaces %}
+                <option value="{{ surface.id }}" {% if surface.id == work_surface_id %}selected{% endif %}>{{ surface.name }} ({{ surface.default_ref }})</option>
+                {% endfor %}
+            </select>
+        </label></p>
+        <p><label>Output policy<br>
+            <select name="commit_policy" required>
+                <option value="per_task" {% if commit_policy == "per_task" %}selected{% endif %}>Publish after each task</option>
+                <option value="per_job" {% if commit_policy == "per_job" %}selected{% endif %}>Publish to the job branch</option>
+                <option value="propose_only" {% if commit_policy == "propose_only" %}selected{% endif %}>No output</option>
+                <option value="none" {% if commit_policy == "none" %}selected{% endif %}>No source changes expected</option>
+            </select>
+        </label></p>
+        <p><label>Work branch <small>(blank regenerates <code>den/job-&lt;id&gt;</code> on the next publishable dispatch)</small><br><input name="work_branch" value="{% if not allow_default_ref %}{{ work_branch or '' }}{% endif %}" size="50"></label></p>
+        <p><label><input type="checkbox" name="allow_default_ref" value="true" {% if allow_default_ref %}checked{% endif %}> Work directly on the surface's default branch</label><br><small>Warning: this bypasses the normal work-branch safety boundary and pushes successful work directly to the configured default branch. It is never enabled by default.</small></p>
+        <button type="submit">Save job settings</button>
+    </form>
+</details>
 <form method="post" action="/work/jobs/{{ job_id }}/duplicate">
     <button type="submit">Duplicate job</button>
     <small>Copies job intent, criteria, work-surface settings, and task definitions into a fresh job.</small>
@@ -20,18 +49,9 @@
     {% if tasks_complete %}
     <form method="post" action="/work/jobs/{{ job_id }}/complete">
         <button type="submit">Mark job completed</button>
-        <small>Accepts any remaining job-level criteria as met and closes the current Docket run.</</section></h2>small>
+        <small>Accepts any remaining job-level criteria as met and closes the current Docket run.</small>
     </form>
     {% endif %}
-    <details>
-        <summary>Extend with</summary></small> another work task</summary></details>
-        <form method="post" action="/work/jobs/{{ job_id }}/extend">
-            <p><label>Task title<br><input name="title" required</label> size="60"></label></p>
-            <p><label>Task body<br><textarea</label> name="body" rows="3" cols="70" placeholder="Defaults to the title"></textarea></label></p>
-            <p><label>Completion criteria <small>(semicolon-separated)</small><br><</label>input name="criteria" required size="70"></label></p>
-            <button type="submit">Extend job</button>
-        </form>
-    </details>
 </section>
 {% endif %}
 
@@ -43,66 +63,93 @@
 </p>
 {% endif %}
 
+{% if attention_run %}
 <section>
-    <h2>Tasks</h2>
-    <table>
-        <thead>
-            <tr><th>Task</th><th>Kind</th><th>Stance</th><th>Status</th><th></th></tr>
-        </thead>
-        <tbody>
-            {% for task in tasks %}
-            <tr>
-                <td>
-                    {{ task.title }}
-                    <details>
-                        <summary>criteria</summary>
-                        <ul>
-                            {% for criterion in task.completion_criteria %}
-                            <li>{{ criterion }}</li>
-                            {% endfor %}
-                        </ul>
-                    </details>
-                </td>
-                <td>{{ task.kind }}</td>
-                <td>{{ task.assigned_to_role or "—" }}</td>
-                <td>{{ task.status }}</td>
-                <td>
-                    {% if task.is_work and task.status in ["pending", "blocked"] %}
-                    <form method="post" action="/work/tasks/{{ task.id }}/dispatch">
-                        {% if work_surface_ref %}
-                        <p><small>Using job work surface <code>{{ work_surface_ref }}</code> unless a root is selected.</small></p>
-                        {% else %}
-                        <p><small><strong>Workspace selection:</strong> This job has no default work surface. <a href="/work/surfaces/new?bear_id={{ bear_id | urlencode }}&amp;return_job_id={{ job_id | urlencode }}">Create and attach a Git work surface</a>, choose an existing root, or explicitly use an empty scratch workspace. Scratch returns reports/artifacts only; it does not imply publishable repo changes. This guidance is not the job's blocked reason; see the latest run result below.</small></p>
-                        {% endif %}
-                        {% if catalog and catalog.roots %}
-                        <select name="root" title="sandbox root">
-                            <option value="">{% if work_surface_ref %}root: job default{% else %}choose root…{% endif %}</option>
-                            {% for root in catalog.roots %}
-                            <option value="{{ root.name }}" {% if root.name == work_surface_ref %}selected{% endif %}>{{ root.name }}</option>
-                            {% endfor %}
-                        </select>
-                        {% elif not work_surface_ref %}
-                        <input name="root" placeholder="sandbox root name" />
-                        {% endif %}
-                        {% if not work_surface_ref %}
-                        <label><input type="checkbox" name="scratch" value="true" /> empty scratch workspace</label>
-                        {% endif %}
-                        {% if catalog and catalog.images %}
-                        <select name="image" title="toolchain image">
-                            <option value="">image: root default</option>
-                            {% for image in catalog.images %}
-                            <option value="{{ image.name }}">{{ image.name }}{% if image.description %} — {{ image.description }}{% endif %}</option>
-                            {% endfor %}
-                        </select>
-                        {% endif %}
-                        <button type="submit">Dispatch</button>
-                    </form>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <h2>Work needs attention</h2>
+    <p><strong>{{ attention_run.state }}</strong>: {{ attention_run.result_summary or attention_run.error or "The work run ended before all tasks were complete." }}</p>
+    <p><a href="/work/runs/{{ attention_run.route_id }}">{{ attention_run.title }}</a>. Inspect the task list to see whether the worker marked a task blocked and, if so, its rerun condition.</p>
+</section>
+{% endif %}
+
+{% if status not in ["completed", "cancelled"] %}
+<section>
+    <h2>Dispatch job</h2>
+    <p>Queues one sandbox run for this job's pending or blocked tasks. The tasks run within that shared job session.</p>
+    {% if has_active_work_run %}
+    <p><button type="button" disabled>Dispatch job</button> A job work session is already active. <a href="/work/runs/{{ active_work_run.route_id }}">{{ active_work_run.title }}</a>.</p>
+    {% elif has_runnable_work %}
+    <form method="post" action="/work/jobs/{{ job_id }}/dispatch">
+        {% if work_surface_ref %}
+        <p>Using job work surface <code>{{ work_surface_ref }}</code>.</p>
+        {% elif catalog and catalog.roots %}
+        <select name="root" required>
+            <option value="">choose root…</option>
+            {% for root in catalog.roots %}<option value="{{ root.name }}">{{ root.name }}</option>{% endfor %}
+        </select>
+        {% else %}
+        <input name="root" placeholder="sandbox root name" required>
+        {% endif %}
+        {% if not work_surface_ref %}<label><input type="checkbox" name="scratch" value="true"> empty Scratch workspace</label>{% endif %}
+        {% if catalog and catalog.images %}
+        <select name="image"><option value="">image: surface default</option>{% for image in catalog.images %}<option value="{{ image.name }}">{{ image.name }}</option>{% endfor %}</select>
+        {% endif %}
+        <button type="submit">Dispatch job</button>
+    </form>
+    {% else %}
+    <p><button type="button" disabled>Dispatch job</button> No pending or blocked tasks are currently runnable. Add a task above, or inspect the work runs below.</p>
+    {% endif %}
+</section>
+{% endif %}
+
+<section>
+    <details open>
+        <summary><h2>Tasks</h2></summary>
+        {% if status not in ["completed", "cancelled"] %}
+        <details>
+            <summary>Add top-level task</summary>
+            <form method="post" action="/work/jobs/{{ job_id }}/tasks">
+                <p><label>Task title<br><input name="title" required size="60"></label></p>
+                <p><label>Task body<br><textarea name="body" rows="3" cols="70" placeholder="Defaults to the title"></textarea></label></p>
+                <p><label>Completion criteria <small>(semicolon-separated)</small><br><input name="criteria" required size="70"></label></p>
+                <button type="submit">Add task</button>
+            </form>
+        </details>
+        {% endif %}
+        <table class="job-tasks">
+            <thead><tr><th>Move</th><th>Task</th></tr></thead>
+            <tbody>
+                {% for task in tasks %}
+                <tr>
+                    <td>
+                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/up" class="inline-form"><button type="submit" aria-label="Move task up">↑</button></form>
+                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/down" class="inline-form"><button type="submit" aria-label="Move task down">↓</button></form>
+                    </td>
+                    <td style="padding-left: {{ task.depth * 1.5 }}rem">
+                        <a href="#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}"><code class="entity-reference-id">{{ task.display_id }}</code></a>
+                        {{ task.description }} <small>({{ task.kind }})</small>
+                        <div>
+                            {% if task.status == "done" %}✅ done
+                            {% elif task.status == "blocked" %}🚫 blocked
+                            {% elif task.status == "in_progress" %}🔄 in progress
+                            {% elif task.status == "cancelled" %}🚫 cancelled
+                            {% else %}⏳ pending{% endif %}
+                        </div>
+                        <details>
+                            <summary>Details</summary>
+                            <p>{{ task.title }}</p>
+                            {% if task.blocker_reason %}<p><strong>Blocked because:</strong> {{ task.blocker_reason }}</p>{% endif %}
+                            {% if task.retry_reason %}<p><small>Retry requested: {{ task.retry_reason }}{% if task.previous_blocked_reason %} (previous blocker: {{ task.previous_blocked_reason }}){% endif %}</small></p>{% endif %}
+                            {% if task.run_route_id %}<p><a href="/work/runs/{{ task.run_route_id }}">Run <code class="entity-reference-id">{{ task.run_display_id }}</code></a></p>{% endif %}
+                            <ul>{% for criterion in task.completion_criteria %}<li>{{ criterion }}</li>{% endfor %}</ul>
+                            {% if task.can_retry %}<form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/retry"><label>Reason <input name="reason" required></label><button type="submit">Retry task</button></form>{% endif %}
+                            <details><summary>Add child task</summary><form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/children"><label>Title <input name="title" required></label><label>Criteria <input name="criteria" required></label><label>Details <textarea name="body"></textarea></label><button type="submit">Add child</button></form></details>
+                        </details>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </details>
 </section>
 
 <section>
@@ -115,10 +162,10 @@
         <tbody>
             {% for run in runs %}
             <tr>
-                <td><a href="/work/runs/{{ run.id }}">{{ run.id[:8] }}…</a></td>
+                <td><a href="/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></td>
                 <td>
                     {{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}
-                    {%- if run.queue_position %} (#{{ run.queue_position }} in queue{% if run.waiting_on_run_id %}, behind <a href="/work/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}){% endif %}
+                    {%- if run.queue_position %} (#{{ run.queue_position }} in queue{% if run.waiting_on_run_id %}, behind <a href="/work/runs/{{ run.waiting_on_run_id }}">Run <code class="entity-reference-id">{{ run.waiting_on_run_id[:8] }}</code></a>{% endif %}){% endif %}
                 </td>
                 <td>{{ run.attempt }}</td>
                 <td>{{ run.result_summary or run.error or "—" }}</td>

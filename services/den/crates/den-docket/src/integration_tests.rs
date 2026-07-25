@@ -95,7 +95,6 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
                 completion_criteria: vec!["First task is actually done".to_string()],
                 difficulty: Some(DocketTaskDifficulty::Trivial),
                 effort_hint: Some(DocketEffortHint::Low),
-                assigned_to_role: Some(BearProfile::Pair),
             },
             DocketTaskInput {
                 client_key: Some("second".to_string()),
@@ -109,7 +108,6 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
                 completion_criteria: vec!["Second task is actually done".to_string()],
                 difficulty: Some(DocketTaskDifficulty::Trivial),
                 effort_hint: Some(DocketEffortHint::Low),
-                assigned_to_role: Some(BearProfile::Pair),
             },
         ],
     }
@@ -183,7 +181,6 @@ async fn conversation_objective_checkout_projects_active_subtree_after_reconnect
             completion_criteria: vec!["Subtree is projected".to_string()],
             difficulty: Some(DocketTaskDifficulty::Trivial),
             effort_hint: Some(DocketEffortHint::Low),
-            assigned_to_role: Some(BearProfile::Pair),
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -205,7 +202,6 @@ async fn conversation_objective_checkout_projects_active_subtree_after_reconnect
             completion_criteria: vec!["Child is current".to_string()],
             difficulty: Some(DocketTaskDifficulty::Trivial),
             effort_hint: Some(DocketEffortHint::Low),
-            assigned_to_role: Some(BearProfile::Pair),
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -306,7 +302,6 @@ async fn creates_session_anchored_task_without_job() {
             completion_criteria: vec!["Task row is inserted".to_string()],
             difficulty: Some(DocketTaskDifficulty::Trivial),
             effort_hint: Some(DocketEffortHint::Low),
-            assigned_to_role: Some(BearProfile::Pair),
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -370,7 +365,6 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             completion_criteria: vec!["Task status is projected".to_string()],
             difficulty: Some(DocketTaskDifficulty::Trivial),
             effort_hint: Some(DocketEffortHint::Low),
-            assigned_to_role: Some(BearProfile::Pair),
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -781,9 +775,7 @@ async fn docket_dispatcher_finds_starts_and_records_work_task_outcomes() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "dispatcher").await;
     let service = PgDocketService::from_pool(&pool);
     let mut create = two_task_job(user_id, bear_id);
-    create.tasks[0].assigned_to_role = Some(BearProfile::Work);
     create.tasks[1].parent_client_key = Some("first".to_string());
-    create.tasks[1].assigned_to_role = Some(BearProfile::Work);
 
     let created = service.create_job(create).await.expect("create job");
     let run_id = created.job.current_run_id.expect("current run");
@@ -795,14 +787,13 @@ async fn docket_dispatcher_finds_starts_and_records_work_task_outcomes() {
         .runnable_work_tasks(bear_id, 10)
         .await
         .expect("runnable work tasks");
-    assert_eq!(runnable.len(), 2);
-    assert!(runnable.iter().any(|task| task.task.id == parent_task_id));
-    assert!(runnable.iter().any(|task| task.task.id == child_task_id));
+    assert_eq!(runnable.len(), 1);
+    assert_eq!(runnable[0].task.id, child_task_id);
 
     let started = service
         .mark_task_started(
             bear_id,
-            parent_task_id,
+            child_task_id,
             run_id,
             Some("dispatcher-test".to_string()),
         )
@@ -813,7 +804,7 @@ async fn docket_dispatcher_finds_starts_and_records_work_task_outcomes() {
     let done = service
         .record_task_success(
             bear_id,
-            parent_task_id,
+            child_task_id,
             run_id,
             "work task completed".to_string(),
             Some(serde_json::json!({"artifact":"dispatcher-test"})),
@@ -847,5 +838,257 @@ async fn docket_dispatcher_finds_starts_and_records_work_task_outcomes() {
             .result_summary
             .as_deref(),
         Some("waiting for sandbox capability")
+    );
+}
+
+#[tokio::test]
+async fn docket_execute_rejects_stale_later_active_task() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed stale active-task test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "stale-active-task").await;
+    let service = PgDocketService::from_pool(&pool);
+    let created = service
+        .create_job(two_task_job(user_id, bear_id))
+        .await
+        .expect("create job");
+    let run_id = created.job.current_run_id.expect("current run");
+    let phase_zero_id = created.tasks[0].id;
+    let stale_phase_nine_id = created.tasks[1].id;
+
+    // Simulate an active-task record written by the pre-ordering scheduler.
+    // The public dispatcher rejects this transition now; direct SQL preserves
+    // the historical stale-state case at the execute/resume boundary.
+    sqlx::query(
+        "UPDATE bear_task_run_state SET status = 'in_progress', started_at = NOW() \
+         WHERE run_id = $1 AND task_id = $2",
+    )
+    .bind(run_id)
+    .bind(stale_phase_nine_id)
+    .execute(&pool)
+    .await
+    .expect("seed stale later active task");
+
+    let error = service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id: created.job.id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: None,
+            source_conversation_id: None,
+            source_client_session_id: None,
+        })
+        .await
+        .expect_err("resume rejects Phase 9 while Phase 0 is pending");
+    assert!(error.to_string().contains("refusing stale active task"));
+
+    let state: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM bear_task_run_state WHERE run_id = $1 AND task_id = $2",
+    )
+    .bind(run_id)
+    .bind(phase_zero_id)
+    .fetch_optional(&pool)
+    .await
+    .expect("read Phase 0 state");
+    assert_eq!(
+        state.as_deref(),
+        Some("pending"),
+        "Phase 0 remains pending and was not silently skipped or started"
+    );
+}
+
+#[tokio::test]
+async fn docket_dispatcher_follows_depth_first_sibling_order() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket dispatcher test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "dispatcher-order").await;
+    let service = PgDocketService::from_pool(&pool);
+    let mut create = two_task_job(user_id, bear_id);
+    create.tasks[0].title = "Phase one".to_string();
+    create.tasks[1].title = "Phase two".to_string();
+    create.tasks[1].parent_client_key = None;
+
+    let created = service.create_job(create).await.expect("create job");
+    let run_id = created.job.current_run_id.expect("current run");
+    let phase_one_id = created.tasks[0].id;
+    let phase_two_id = created.tasks[1].id;
+    let first_child = service
+        .create_task(DocketTaskCreate {
+            bear_id,
+            job_id: Some(created.job.id),
+            session_anchor_id: None,
+            parent_task_id: Some(phase_one_id),
+            sibling_order: 0,
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Template,
+            title: "Phase one, first step".to_string(),
+            body: "Do the first step".to_string(),
+            completion_criteria: vec!["First step done".to_string()],
+            difficulty: None,
+            effort_hint: None,
+            created_by_role: "pair".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: Some(run_id),
+        })
+        .await
+        .expect("create first child");
+    let second_child = service
+        .create_task(DocketTaskCreate {
+            bear_id,
+            job_id: Some(created.job.id),
+            session_anchor_id: None,
+            parent_task_id: Some(phase_one_id),
+            sibling_order: 1,
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Template,
+            title: "Phase one, second step".to_string(),
+            body: "Do the second step".to_string(),
+            completion_criteria: vec!["Second step done".to_string()],
+            difficulty: None,
+            effort_hint: None,
+            created_by_role: "pair".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: Some(run_id),
+        })
+        .await
+        .expect("create second child");
+
+    let runnable = service
+        .runnable_work_tasks(bear_id, 10)
+        .await
+        .expect("first runnable task");
+    assert_eq!(
+        runnable.iter().map(|task| task.task.id).collect::<Vec<_>>(),
+        vec![first_child.id]
+    );
+
+    service
+        .mark_task_started(
+            bear_id,
+            first_child.id,
+            run_id,
+            Some("dispatcher-order".to_string()),
+        )
+        .await
+        .expect("start first child");
+    let error = service
+        .mark_task_started(bear_id, phase_two_id, run_id, None)
+        .await
+        .expect_err("cannot directly start a later phase");
+    assert!(error
+        .to_string()
+        .contains("not the first eligible pending leaf"));
+    let runnable = service
+        .runnable_work_tasks(bear_id, 10)
+        .await
+        .expect("active earlier work blocks later tasks");
+    assert!(
+        runnable.is_empty(),
+        "the next phase must not be offered while the first child is in progress"
+    );
+
+    service
+        .record_task_success(
+            bear_id,
+            first_child.id,
+            run_id,
+            "first step complete".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("complete first child");
+    let runnable = service
+        .runnable_work_tasks(bear_id, 10)
+        .await
+        .expect("second runnable task");
+    assert_eq!(
+        runnable.iter().map(|task| task.task.id).collect::<Vec<_>>(),
+        vec![second_child.id]
+    );
+
+    service
+        .record_task_success(
+            bear_id,
+            second_child.id,
+            run_id,
+            "second step complete".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("complete second child");
+    let runnable = service
+        .runnable_work_tasks(bear_id, 10)
+        .await
+        .expect("phase two runnable task");
+    assert_eq!(
+        runnable.iter().map(|task| task.task.id).collect::<Vec<_>>(),
+        vec![phase_two_id]
+    );
+}
+
+#[tokio::test]
+async fn docket_rejects_parent_completion_until_children_are_terminal() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket parent completion test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "parent-rollup").await;
+    let service = PgDocketService::from_pool(&pool);
+    let mut create = two_task_job(user_id, bear_id);
+    create.tasks[1].parent_client_key = Some("first".to_string());
+    let created = service.create_job(create).await.expect("create job");
+    let run_id = created.job.current_run_id.expect("current run");
+    let parent_id = created.tasks[0].id;
+    let child_id = created.tasks[1].id;
+
+    let error = service
+        .record_task_success(
+            bear_id,
+            parent_id,
+            run_id,
+            "phase complete".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect_err("parent cannot complete before its child");
+    assert!(error
+        .to_string()
+        .contains("child task(s) remain unfinished"));
+
+    service
+        .record_task_success(
+            bear_id,
+            child_id,
+            run_id,
+            "child complete".to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("complete child");
+    let projection = service
+        .get_job(bear_id, created.job.id)
+        .await
+        .expect("load job")
+        .expect("job exists");
+    let parent_state = projection
+        .task_states
+        .iter()
+        .find(|state| state.task_id == parent_id)
+        .expect("parent run state");
+    assert_eq!(parent_state.status.as_str(), "done");
+    assert_eq!(
+        parent_state.result_summary.as_deref(),
+        Some("All child tasks are terminal.")
     );
 }

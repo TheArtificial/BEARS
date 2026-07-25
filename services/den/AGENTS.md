@@ -83,7 +83,7 @@ Rules:
 
 **`cargo` is available** in typical dev containers and CI images that include the Rust toolchain. After editing this crate, run checks from the repository root with `--manifest-path services/den/Cargo.toml`, or from `services/den/` directly, for example:
 
-- `cargo build` or `cargo check` — compile the library + binary.
+- `cargo build` or `cargo check` — compile the library + binary; for host-side commands, prefix with `SQLX_OFFLINE=true` (details below).
 - `cargo test` — unit tests; integration tests that need Postgres require `DATABASE_URL` and applied migrations (see [`docs/quickstart.md`](docs/quickstart.md)).
 - `cargo clippy --all-targets` — Clippy is not suppressed at the crate root; the heaviest legacy bundle remains scoped on [`src/api/oauth/mod.rs`](src/api/oauth/mod.rs). Fix warnings in code you touch and shrink those module-level allows over time.
 
@@ -91,8 +91,10 @@ Do not assume the environment is “simulated only”: prefer running focused `c
 
 Useful focused checks:
 
+> **SQLx offline builds:** Normal focused Rust checks must use the checked-in SQLx query metadata rather than trying to resolve a development database host. Prefix host-side commands with `SQLX_OFFLINE=true`, for example `SQLX_OFFLINE=true cargo check --manifest-path services/den/Cargo.toml -p den-web`. The Docker smoke-stack build already enables this. Do not replace SQLx compile-time macros with runtime queries to work around an unavailable database; refresh `.sqlx` with `cargo sqlx prepare --workspace` from an environment with the migrated database when queries or schema change.
+
 ```bash
-cargo test --manifest-path services/den/Cargo.toml -p den-bearwire bearwire_
+SQLX_OFFLINE=true cargo test --manifest-path services/den/Cargo.toml -p den-bearwire bearwire_
 cargo test --manifest-path services/den/Cargo.toml -p den-runtime pair_
 cargo test --manifest-path services/den/Cargo.toml -p den-runtime den_tools_route_server_side_but_client_tools_do_not
 cargo test --manifest-path services/den/Cargo.toml -p den-bearwire bearwire_

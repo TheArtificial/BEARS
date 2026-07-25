@@ -41,6 +41,13 @@
             </select>
         </label>
     </p>
+    <p>
+        <label>Allowed outbound hosts <small>(optional; one exact hostname per line, HTTPS only)</small><br>
+            <textarea name="allowed_outbound_hosts" rows="3" cols="60"
+                      placeholder="index.crates.io&#10;static.crates.io"></textarea><br>
+            <small>Leave empty to deny sandbox egress. Host access does not provide credentials.</small>
+        </label>
+    </p>
 
     <h2>Credential <small>(optional; stored encrypted, write-only)</small></h2>
     <p>

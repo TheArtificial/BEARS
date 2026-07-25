@@ -13,9 +13,11 @@ use crate::policy::{validate_selection, PolicyContext, PolicyError};
 use crate::proc::{run_command, CommandSpec};
 use crate::protocol::{
     CatalogImage, CatalogResponse, CatalogRoot, CleanupState, CreateSandboxRequest, DiffResponse,
-    ErrorBody, HealthResponse, ManagedConfig, ManagedConfigStatus, NetworkMode, PublishRequest,
-    RootStatus, SandboxDescriptor, SandboxLifecycleState, SandboxLimits, SandboxType, SandboxUsage,
-    SyncRootResponse, WorkSurface,
+    ErrorBody, HealthResponse, ManagedConfig, ManagedConfigStatus, NetworkMode,
+    PrepareRustDependenciesRequest, PrepareRustDependenciesResponse, PublishRequest,
+    RootComparisonResponse, RootInspectionResponse, RootStatus, RustDependencyPreparation,
+    RustDependencyResolution, SandboxDescriptor, SandboxLifecycleState, SandboxLimits, SandboxType,
+    SandboxUsage, SyncRootResponse, WorkSurface,
 };
 use crate::recognize::recognize_work_surface;
 use crate::roots::{RootsError, RootsManager};
@@ -153,6 +155,9 @@ struct SandboxRecord {
     network: NetworkMode,
     labels: BTreeMap<String, String>,
     workspace: Option<PathBuf>,
+    image: String,
+    cargo_home_volume: Option<String>,
+    rust_dependency_preparation: Option<PrepareRustDependenciesResponse>,
     created_at: OffsetDateTime,
     started: Instant,
     deadline: Option<Instant>,
@@ -176,6 +181,7 @@ impl SandboxRecord {
             root: self.root.clone(),
             git_ref: self.git_ref.clone(),
             work_surface: self.work_surface.clone(),
+            rust_dependency_preparation: self.rust_dependency_preparation.clone(),
             exit_code: self.exit_code,
             usage: self.usage.clone(),
             cleanup: self.cleanup.clone(),
@@ -256,7 +262,13 @@ pub fn create_sandbox_app(config: SandboxServerConfig) -> Result<Router, RootsEr
         .route("/sandbox/v1/sandboxes/{id}/logs", get(sandbox_logs))
         .route("/sandbox/v1/sandboxes/{id}/diff", get(sandbox_diff))
         .route("/sandbox/v1/sandboxes/{id}/publish", post(publish_sandbox))
+        .route(
+            "/sandbox/v1/sandboxes/{id}/rust-dependencies",
+            post(prepare_rust_dependencies),
+        )
         .route("/sandbox/v1/catalog", get(catalog))
+        .route("/sandbox/v1/roots/{name}", get(inspect_root))
+        .route("/sandbox/v1/roots/{name}/compare", get(compare_root))
         .route("/sandbox/v1/roots/{name}/sync", post(sync_root))
         .route(
             "/sandbox/v1/managed-config",
@@ -413,6 +425,74 @@ async fn put_managed_config(
         "managed config applied"
     );
     Json(status).into_response()
+}
+
+async fn prepare_rust_dependencies(
+    State(state): State<Arc<ProviderState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<PrepareRustDependenciesRequest>,
+) -> Response {
+    let (workspace, volume, image) = {
+        let registry = state.registry.lock().await;
+        let Some(record) = registry.get(&id) else {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                SandboxErrorKind::UnknownSandbox,
+                "sandbox not found",
+            );
+        };
+        if !record.is_active() {
+            return error_response(
+                StatusCode::CONFLICT,
+                SandboxErrorKind::BackendError,
+                "sandbox is not active",
+            );
+        }
+        let Some(workspace) = record.workspace.clone() else {
+            return error_response(
+                StatusCode::CONFLICT,
+                SandboxErrorKind::NoWorkspace,
+                "sandbox workspace is unavailable",
+            );
+        };
+        let Some(volume) = record.cargo_home_volume.clone() else {
+            return error_response(
+                StatusCode::CONFLICT,
+                SandboxErrorKind::BackendError,
+                "sandbox has no Den-managed Cargo cache",
+            );
+        };
+        (workspace, volume, record.image.clone())
+    };
+    let workspace_bind_source = match host_bind_source(
+        &workspace,
+        &state.config.workspaces_dir,
+        state.config.workspaces_host_dir.as_deref(),
+    ) {
+        Ok(path) => path,
+        Err(detail) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                SandboxErrorKind::BindSource,
+                detail,
+            )
+        }
+    };
+    match state
+        .backend
+        .prepare_rust_dependencies(
+            &id,
+            &workspace,
+            &workspace_bind_source,
+            &volume,
+            &image,
+            &request,
+        )
+        .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(err) => backend_error_response(&err),
+    }
 }
 
 async fn managed_config_status(
@@ -740,6 +820,9 @@ async fn create_sandbox(
                 network: request.network,
                 labels: request.labels.clone(),
                 workspace: None,
+                image: image.clone(),
+                cargo_home_volume: request.cargo_home_volume.clone(),
+                rust_dependency_preparation: None,
                 created_at: OffsetDateTime::now_utc(),
                 started: Instant::now(),
                 deadline: Some(Instant::now() + Duration::from_secs(timeout_secs)),
@@ -844,6 +927,48 @@ async fn provision(
             detail,
         )
     })?;
+
+    for manifest_path in &work_surface.cargo_manifest_paths {
+        let Some(cargo_home_volume) = request.cargo_home_volume.as_deref() else {
+            return Err(error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                SandboxErrorKind::BackendError,
+                "Rust workspace requires a Den-managed Cargo cache",
+            ));
+        };
+        let preparation_request = PrepareRustDependenciesRequest {
+            manifest_path: manifest_path.clone(),
+            package: String::new(),
+            resolution: RustDependencyResolution::Locked,
+            preparation: RustDependencyPreparation::Fetch,
+        };
+        let result = state
+            .backend
+            .prepare_rust_dependencies(
+                sandbox_id,
+                &workspace,
+                &workspace_bind_source,
+                cargo_home_volume,
+                &image,
+                &preparation_request,
+            )
+            .await
+            .map_err(|err| backend_error_response(&err))?;
+        {
+            let mut registry = state.registry.lock().await;
+            if let Some(record) = registry.get_mut(sandbox_id) {
+                record.rust_dependency_preparation = Some(result.clone());
+            }
+        }
+        if result.status != "prepared" {
+            return Err(error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                SandboxErrorKind::BackendError,
+                result.content.clone(),
+            ));
+        }
+    }
+
     let spec = ProvisionSpec {
         id: sandbox_id.to_string(),
         workspace,
@@ -851,10 +976,12 @@ async fn provision(
         image,
         env: request.env.clone(),
         network: request.network,
+        allowed_outbound_hosts: root.allowed_outbound_hosts.clone(),
         memory_mb: request.limits.memory_mb,
         cpus: request.limits.cpus,
         pids: request.limits.pids,
         labels: request.labels.clone(),
+        cargo_home_volume: request.cargo_home_volume.clone(),
     };
     state
         .backend
@@ -1236,6 +1363,43 @@ async fn catalog(State(state): State<Arc<ProviderState>>) -> Json<CatalogRespons
     Json(CatalogResponse { images, roots })
 }
 
+async fn inspect_root(
+    State(state): State<Arc<ProviderState>>,
+    AxumPath(name): AxumPath<String>,
+) -> Response {
+    let roots = state.roots_snapshot().await;
+    let root = match roots.get(&name) {
+        Ok(root) => root.clone(),
+        Err(err) => return roots_error_response(&err),
+    };
+    match roots.inspect_root(&root).await {
+        Ok(inspection) => Json::<RootInspectionResponse>(inspection).into_response(),
+        Err(err) => roots_error_response(&err),
+    }
+}
+
+#[derive(Deserialize)]
+struct CompareRootQuery {
+    base: String,
+    head: String,
+}
+
+async fn compare_root(
+    State(state): State<Arc<ProviderState>>,
+    AxumPath(name): AxumPath<String>,
+    Query(query): Query<CompareRootQuery>,
+) -> Response {
+    let roots = state.roots_snapshot().await;
+    let root = match roots.get(&name) {
+        Ok(root) => root.clone(),
+        Err(err) => return roots_error_response(&err),
+    };
+    match roots.compare_root(&root, &query.base, &query.head).await {
+        Ok(value) => Json::<RootComparisonResponse>(value).into_response(),
+        Err(err) => roots_error_response(&err),
+    }
+}
+
 async fn sync_root(
     State(state): State<Arc<ProviderState>>,
     AxumPath(name): AxumPath<String>,
@@ -1317,6 +1481,12 @@ async fn adopt_orphans(state: &Arc<ProviderState>) {
                 network,
                 labels: orphan.labels,
                 workspace: workspace.exists().then_some(workspace),
+                // The provider can recover sandbox identity after restart, but
+                // not its original catalog image/cache binding. Hosted Cargo
+                // preparation is intentionally unavailable for adopted runs.
+                image: String::new(),
+                cargo_home_volume: None,
+                rust_dependency_preparation: None,
                 created_at: OffsetDateTime::now_utc(),
                 started: Instant::now(),
                 // Adopted sandboxes get the default deadline from adoption
@@ -1573,7 +1743,7 @@ mod tests {
                     {"name": "rust", "image": "bears/sandbox-rust:latest"}
                 ],
                 "roots": [
-                    {"name": "scratch", "path": source.to_string_lossy(), "default_image": "rust"}
+                    {"name": "scratch", "path": source.to_string_lossy(), "default_image": "rust", "allowed_outbound_hosts": []}
                 ]
             })
             .to_string(),
@@ -1683,6 +1853,7 @@ mod tests {
     async fn managed_config_push_updates_catalog_and_status() {
         let config = test_config("");
         let workspaces_dir = config.workspaces_dir.clone();
+        std::fs::create_dir_all(&workspaces_dir).unwrap();
         let app = create_sandbox_app(config).unwrap();
 
         // Nothing pushed yet.

@@ -25,7 +25,7 @@
         <tbody>
             {% for surface in managed %}
             <tr>
-                <td><a href="/work/surfaces/{{ surface.id }}">{{ surface.name }}</a></td>
+                <td><a href="/work/surfaces/{{ surface.reference.route_id }}" title="UUID prefix for {{ surface.reference.full_id }}">{{ surface.reference.kind }} <code class="entity-reference-id">{{ surface.reference.id }}</code>: {{ surface.reference.title }}</a></td>
                 <td><code>{{ surface.upstream_url }}</code></td>
                 <td>{{ surface.default_ref }}</td>
                 <td>{{ surface.credential_kind or "none" }}</td>
@@ -49,7 +49,7 @@
         <tbody>
             {% for surface in available %}
             <tr>
-                <td>{{ surface.name }}</td>
+                <td><a href="/work/surfaces/{{ surface.reference.route_id }}" title="UUID prefix for {{ surface.reference.full_id }}">{{ surface.reference.kind }} <code class="entity-reference-id">{{ surface.reference.id }}</code>: {{ surface.reference.title }}</a></td>
                 <td>{{ surface.bear_slug }}</td>
                 <td>{{ surface.description or "—" }}</td>
             </tr>

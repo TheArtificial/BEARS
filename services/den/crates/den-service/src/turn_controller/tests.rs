@@ -139,6 +139,56 @@ fn active_turn_runtime_snapshot_reports_requires_action_with_pending_tool() {
 }
 
 #[test]
+fn client_turn_failed_adapter_tool_then_end_turn_fails() {
+    let mut turn = TurnController::new();
+    turn.on_stream_started();
+    turn.on_tool_request(
+        "call_1",
+        "fs_list_directory",
+        ToolExecutionRoute::AdapterLocal,
+    );
+    assert_eq!(
+        turn.on_adapter_tool_result("call_1", false),
+        ToolResultDisposition::Accepted
+    );
+
+    turn.on_stream_end();
+    let terminal = turn.take_terminal_event().expect("terminal ready");
+    assert_eq!(terminal.status, TerminalStatus::Failed);
+    assert_eq!(terminal.reason, TerminalReason::ToolExecutionFailed);
+}
+
+#[test]
+fn client_turn_successful_retry_clears_prior_tool_failure() {
+    let mut turn = TurnController::new();
+    turn.on_stream_started();
+    turn.on_tool_request(
+        "call_1",
+        "fs_list_directory",
+        ToolExecutionRoute::AdapterLocal,
+    );
+    assert_eq!(
+        turn.on_adapter_tool_result("call_1", false),
+        ToolResultDisposition::Accepted
+    );
+    turn.on_stream_started();
+    turn.on_tool_request(
+        "call_2",
+        "fs_list_directory",
+        ToolExecutionRoute::AdapterLocal,
+    );
+    assert_eq!(
+        turn.on_adapter_tool_result("call_2", true),
+        ToolResultDisposition::Accepted
+    );
+
+    turn.on_stream_end();
+    let terminal = turn.take_terminal_event().expect("terminal ready");
+    assert_eq!(terminal.status, TerminalStatus::Ok);
+    assert_eq!(terminal.reason, TerminalReason::EndTurn);
+}
+
+#[test]
 fn client_turn_text_only_completes_once() {
     let mut turn = TurnController::new();
     turn.on_stream_started();

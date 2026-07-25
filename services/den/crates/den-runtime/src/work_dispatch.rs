@@ -99,8 +99,8 @@ pub async fn run_work_dispatch_worker_loop(
     Ok(())
 }
 
-/// Optional sweep: queue every runnable work task. Off by default — the
-/// primary v1 path is explicit dispatch via the den.work.dispatch tool or UI.
+/// Optional sweep: queue every job with runnable work tasks. Off by default —
+/// explicit and automatic dispatch share the same job-level operation.
 async fn auto_enqueue(pool: &PgPool) {
     let bears = match work_runs::list_bears_with_work_tasks(pool).await {
         Ok(bears) => bears,
@@ -118,29 +118,35 @@ async fn auto_enqueue(pool: &PgPool) {
                 continue;
             }
         };
-        for projection in tasks {
-            let task = projection.task;
-            let enqueued = work_runs::enqueue_work_run(
+        let jobs: std::collections::BTreeMap<Uuid, Option<i32>> = tasks
+            .into_iter()
+            .filter_map(|projection| {
+                projection
+                    .task
+                    .job_id
+                    .map(|job_id| (job_id, projection.task.created_by_user_id))
+            })
+            .collect();
+        for (job_id, requested_by_user_id) in jobs {
+            match work_runs::enqueue_work_job(
                 pool,
-                work_runs::WorkRunEnqueue {
+                work_runs::WorkJobEnqueue {
                     bear_id,
-                    task_id: task.id,
+                    job_id,
                     root_name: None,
                     git_ref: None,
                     image_name: None,
-                    requested_by_user_id: task.created_by_user_id,
+                    requested_by_user_id,
                 },
             )
-            .await;
-            match enqueued {
-                Ok(run) => {
-                    tracing::info!(work_run_id = %run.id, task_id = %task.id, "work_dispatch: auto-enqueued task");
+            .await
+            {
+                Ok(runs) => {
+                    tracing::info!(job_id = %job_id, queued_tasks = runs.len(), "work_dispatch: auto-enqueued job");
                 }
-                // Duplicate-active and validation rejections are expected here
-                // (already dispatched, no job, ...).
                 Err(DenError::ValidationError(_)) => {}
                 Err(err) => {
-                    tracing::warn!(error = %err, task_id = %task.id, "work_dispatch: auto-enqueue failed");
+                    tracing::warn!(error = %err, %job_id, "work_dispatch: auto-enqueue job failed");
                 }
             }
         }
@@ -268,13 +274,17 @@ async fn provision_run(
     env.insert("DEN_TOKEN".to_string(), token.raw_token.clone());
     env.insert("DEN_WORK_ORDER_ID".to_string(), run.id.to_string());
     env.insert("DEN_WORKSPACE".to_string(), "/workspace".to_string());
+    // The provider mounts a Den-managed cache read-only. Cargo must never
+    // fall back to network access from the restricted task sandbox.
+    env.insert("CARGO_HOME".to_string(), "/den/cargo-home".to_string());
+    env.insert("CARGO_NET_OFFLINE".to_string(), "true".to_string());
     env.insert(
         "DEN_HEADLESS_DEADLINE_SECS".to_string(),
         deadline_secs.to_string(),
     );
     // In-run commits carry the bear's identity (the provider's auto-commit of
     // leftovers uses its own).
-    let git_identity = format!("{} (Den work)", context.bear_slug);
+    let git_identity = context.bear_name.clone();
     let git_email = format!("{}@work.den.invalid", context.bear_slug);
     env.insert("GIT_AUTHOR_NAME".to_string(), git_identity.clone());
     env.insert("GIT_AUTHOR_EMAIL".to_string(), git_email.clone());
@@ -301,6 +311,10 @@ async fn provision_run(
             ..SandboxLimits::default()
         },
         labels: std::collections::BTreeMap::from([("work_run_id".to_string(), run.id.to_string())]),
+        // ponytail: this run-scoped cache volume survives container replacement
+        // but is not yet content-addressed by Cargo.lock. Upgrade path: publish
+        // immutable cache volumes keyed by lockfile/toolchain digest.
+        cargo_home_volume: Some(format!("den-cargo-work-run-{}", run.id)),
     };
 
     let descriptor = match client.create_sandbox(&request).await {
@@ -318,6 +332,10 @@ async fn provision_run(
         sandbox_type: descriptor.sandbox_type.as_str().to_string(),
         sandbox_strength: descriptor.strength_label.clone(),
         work_surface: serde_json::to_value(&descriptor.work_surface).unwrap_or(Value::Null),
+        rust_dependency_preparation: descriptor
+            .rust_dependency_preparation
+            .as_ref()
+            .and_then(|result| serde_json::to_value(result).ok()),
     };
     if let Err(err) = work_runs::record_work_run_provisioned(pool, run.id, &provisioned).await {
         tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: record_provisioned failed");
@@ -327,21 +345,37 @@ async fn provision_run(
         return;
     }
     let service = PgDocketService::from_pool(pool);
-    if let Err(err) = service
-        .mark_task_started(
-            run.bear_id,
-            run.task_id,
-            run.job_run_id,
-            Some("work-dispatch".to_string()),
-        )
-        .await
-    {
-        tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: mark_task_started failed");
+    let task = match service.runnable_work_tasks(run.bear_id, 500).await {
+        Ok(tasks) => tasks
+            .into_iter()
+            .find(|task| task.task.job_id == Some(run.job_id)),
+        Err(err) => {
+            tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: runnable task lookup failed");
+            None
+        }
+    };
+    if let Some(task) = task {
+        if let Err(err) = service
+            .mark_task_started(
+                run.bear_id,
+                task.task.id,
+                run.job_run_id,
+                Some("work-dispatch".to_string()),
+            )
+            .await
+        {
+            tracing::warn!(error = %err, work_run_id = %run.id, task_id = %task.task.id, "work_dispatch: mark_task_started failed");
+        } else if let Err(err) =
+            work_runs::merge_work_run_result_refs(pool, run.id, &json!({ "task_id": task.task.id }))
+                .await
+        {
+            tracing::warn!(error = %err, work_run_id = %run.id, task_id = %task.task.id, "work_dispatch: failed to persist active task");
+        }
     }
     tracing::info!(
         work_run_id = %run.id,
         sandbox_id = %descriptor.id,
-        task_id = %run.task_id,
+        job_id = %run.job_id,
         "work_dispatch: sandbox provisioned, armature launching"
     );
 }
@@ -469,6 +503,19 @@ async fn reconcile_running(
     }
 }
 
+fn work_run_succeeded(
+    commit_policy: Option<&str>,
+    active_task_id: Option<Uuid>,
+    task_statuses: &[(Uuid, String)],
+) -> bool {
+    match commit_policy {
+        Some("per_task") => active_task_id
+            .and_then(|task_id| task_statuses.iter().find(|(id, _)| *id == task_id))
+            .is_some_and(|(_, status)| status == "done"),
+        _ => !task_statuses.is_empty() && task_statuses.iter().all(|(_, status)| status == "done"),
+    }
+}
+
 fn work_run_outcome_summary(
     succeeded: bool,
     armature_summary: Option<String>,
@@ -483,7 +530,7 @@ fn work_run_outcome_summary(
 
     let status = task_status.unwrap_or("pending");
     let blocked = format!(
-        "turn completed, but the model did not mark the Docket task done (task run status: {status})"
+        "turn completed with unfinished job tasks (task run status: {status}); unfinished tasks remain pending"
     );
     match armature_summary {
         Some(summary) if !summary.trim().is_empty() => {
@@ -524,11 +571,25 @@ async fn harvest_run(
         None => None,
     };
 
-    let task_status = work_runs::get_task_run_status(pool, run.job_run_id, run.task_id)
+    let task_statuses = work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
         .await
-        .ok()
-        .flatten();
-    let succeeded = task_status.as_deref() == Some("done");
+        .unwrap_or_default();
+    let context = work_runs::get_work_run_dispatch_context(pool, run.id)
+        .await
+        .ok();
+    let active_task_id = run
+        .result_refs
+        .as_ref()
+        .and_then(|refs| refs.get("task_id"))
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok());
+    let succeeded = work_run_succeeded(
+        context
+            .as_ref()
+            .and_then(|context| context.commit_policy.as_deref()),
+        active_task_id,
+        &task_statuses,
+    );
 
     let turn_summary = run
         .result_refs
@@ -548,16 +609,15 @@ async fn harvest_run(
     let mut published: Option<Value> = None;
     let mut publish_failed: Option<String> = None;
     if succeeded {
-        let context = work_runs::get_work_run_dispatch_context(pool, run.id)
-            .await
-            .ok();
+        let context = context;
         if let Some(context) = context.filter(WorkRunDispatchContext::publishes) {
             match (sandbox_id, context.work_branch.as_deref()) {
                 (Some(id), Some(branch)) => {
                     let request = PublishRequest {
                         branch: branch.to_string(),
                         auto_commit_leftovers: true,
-                        allow_default_ref: false,
+                        allow_default_ref: context.allow_default_ref,
+                        author_name: Some(context.bear_name.clone()),
                         run_label: Some(run.id.to_string()),
                     };
                     match client.publish(id, &request).await {
@@ -591,7 +651,7 @@ async fn harvest_run(
         succeeded,
         turn_summary,
         changed_files,
-        task_status.as_deref(),
+        (!succeeded).then_some("one or more work tasks are incomplete"),
     );
 
     let summary = match &publish_failed {
@@ -607,34 +667,6 @@ async fn harvest_run(
         "published": published,
         "publish_failed": publish_failed,
     });
-
-    let service = PgDocketService::from_pool(pool);
-    let docket_result = if succeeded {
-        service
-            .record_task_success(
-                run.bear_id,
-                run.task_id,
-                run.job_run_id,
-                summary.clone(),
-                Some(refs.clone()),
-                Some("work-dispatch".to_string()),
-            )
-            .await
-    } else {
-        service
-            .record_task_blocked(
-                run.bear_id,
-                run.task_id,
-                run.job_run_id,
-                summary.clone(),
-                Some(refs.clone()),
-                Some("work-dispatch".to_string()),
-            )
-            .await
-    };
-    if let Err(err) = docket_result {
-        tracing::warn!(error = %err, work_run_id = %run.id, "work_dispatch: docket outcome record failed");
-    }
 
     if let Some(session_id) = run.bearwire_session_id.as_deref() {
         let _ = work_runs::close_work_execution_session(pool, run.bear_id, session_id).await;
@@ -675,17 +707,6 @@ async fn cancel_run(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient,
     if let Some(session_id) = run.bearwire_session_id.as_deref() {
         let _ = work_runs::close_work_execution_session(pool, run.bear_id, session_id).await;
     }
-    let service = PgDocketService::from_pool(pool);
-    let _ = service
-        .record_task_blocked(
-            run.bear_id,
-            run.task_id,
-            run.job_run_id,
-            "work run cancelled by operator".to_string(),
-            None,
-            Some("work-dispatch".to_string()),
-        )
-        .await;
     let _ = work_runs::finalize_work_run(
         pool,
         run.id,
@@ -741,16 +762,25 @@ async fn fail_run(
 ) {
     tracing::warn!(work_run_id = %run.id, reason, message, "work_dispatch: run failed");
     let service = PgDocketService::from_pool(pool);
-    let _ = service
-        .record_task_blocked(
-            run.bear_id,
-            run.task_id,
-            run.job_run_id,
-            format!("work run failed ({reason}): {message}"),
-            None,
-            Some("work-dispatch".to_string()),
-        )
-        .await;
+    for (task_id, status) in
+        work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
+            .await
+            .unwrap_or_default()
+    {
+        if status == "done" {
+            continue;
+        }
+        let _ = service
+            .record_task_blocked(
+                run.bear_id,
+                task_id,
+                run.job_run_id,
+                format!("work run failed ({reason}): {message}"),
+                None,
+                Some("work-dispatch".to_string()),
+            )
+            .await;
+    }
     let _ = work_runs::finalize_work_run(
         pool,
         run.id,
@@ -775,11 +805,11 @@ async fn maybe_requeue(pool: &PgPool, config: &Arc<Config>, run: &WorkRunRow) {
         Ok(context) => context,
         Err(_) => return,
     };
-    match work_runs::enqueue_work_run(
+    match work_runs::enqueue_work_job(
         pool,
-        work_runs::WorkRunEnqueue {
+        work_runs::WorkJobEnqueue {
             bear_id: run.bear_id,
-            task_id: run.task_id,
+            job_id: run.job_id,
             root_name: run.root_name.clone(),
             git_ref: run.git_ref.clone(),
             image_name: run.image_name.clone(),
@@ -789,6 +819,7 @@ async fn maybe_requeue(pool: &PgPool, config: &Arc<Config>, run: &WorkRunRow) {
     .await
     {
         Ok(retry) => {
+            let retry = &retry[0];
             tracing::info!(
                 work_run_id = %retry.id,
                 previous = %run.id,
@@ -828,7 +859,26 @@ async fn revoke_token_for_run(pool: &PgPool, run_id: Uuid) {
 
 #[cfg(test)]
 mod tests {
-    use super::work_run_outcome_summary;
+    use uuid::Uuid;
+
+    use super::{work_run_outcome_summary, work_run_succeeded};
+
+    #[test]
+    fn per_task_succeeds_when_its_checked_out_task_is_done() {
+        let done = Uuid::new_v4();
+        let pending = Uuid::new_v4();
+        let statuses = vec![(done, "done".to_string()), (pending, "pending".to_string())];
+
+        assert!(work_run_succeeded(Some("per_task"), Some(done), &statuses));
+        assert!(!work_run_succeeded(
+            Some("per_task"),
+            Some(pending),
+            &statuses
+        ));
+        assert!(!work_run_succeeded(Some("per_task"), None, &statuses));
+        assert!(!work_run_succeeded(Some("per_job"), Some(done), &statuses));
+        assert!(!work_run_succeeded(None, Some(done), &statuses));
+    }
 
     #[test]
     fn blocked_summary_is_not_hidden_by_generic_armature_completion() {
@@ -839,7 +889,8 @@ mod tests {
             Some("in_progress"),
         );
 
-        assert!(summary.contains("did not mark the Docket task done"));
+        assert!(summary.contains("unfinished job tasks"));
+        assert!(summary.contains("unfinished tasks remain pending"));
         assert!(summary.contains("task run status: in_progress"));
         assert!(summary.contains("armature: headless turn reached"));
     }

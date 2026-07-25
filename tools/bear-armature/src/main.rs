@@ -1162,10 +1162,16 @@ impl ServerVersion {
 
 fn truncate_for_log(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max])
+        return s.to_string();
     }
+
+    let end = s
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|&index| index <= max)
+        .last()
+        .unwrap_or(0);
+    format!("{}...", &s[..end])
 }
 
 fn summarize_mcp_for_log(mcp: Option<&Value>) -> Value {
@@ -11142,6 +11148,13 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    #[test]
+    fn truncate_for_log_preserves_utf8_boundaries() {
+        let input = format!("{}§tail", "x".repeat(239));
+
+        assert_eq!(truncate_for_log(&input, 240), format!("{}...", "x".repeat(239)));
+    }
 
     #[test]
     fn headless_suppresses_only_acp_session_updates() {

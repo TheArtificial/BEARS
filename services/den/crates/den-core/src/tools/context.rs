@@ -24,6 +24,10 @@ pub struct DenToolInvocationContext {
     pub membership_role: Option<String>,
     pub conversation_id: String,
     pub session_id: String,
+    /// The active work run, when this invocation originates in a dispatched
+    /// work sandbox. This is an authority binding, not a workspace hint.
+    #[serde(default)]
+    pub work_run_id: Option<Uuid>,
     #[serde(default)]
     pub client_session_id: Option<String>,
     #[serde(default)]

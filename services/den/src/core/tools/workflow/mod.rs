@@ -4,11 +4,11 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use den_core::tools::constants::{
-    DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_GET, DEN_JOB_LIST,
-    DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_LIST, DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST,
-    DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT, DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE,
-    DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL,
-    DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+    DEN_JOB_CREATE, DEN_JOB_EVALUATE_CRITERION, DEN_JOB_EXECUTE, DEN_JOB_FIND, DEN_JOB_GET,
+    DEN_JOB_LIST, DEN_JOB_UPDATE, DEN_TASK_CREATE, DEN_TASK_FIND, DEN_TASK_LIST,
+    DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT,
+    DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
+    DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy,
@@ -51,11 +51,13 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_JOB_CREATE
             | DEN_JOB_LIST
             | DEN_JOB_GET
+            | DEN_JOB_FIND
             | DEN_JOB_UPDATE
             | DEN_JOB_EXECUTE
             | DEN_JOB_EVALUATE_CRITERION
             | DEN_TASK_CREATE
             | DEN_TASK_LIST
+            | DEN_TASK_FIND
             | DEN_TASK_UPDATE
             | DEN_TASK_UPDATE_CURRENT_STATUS
             | DEN_TASK_LIST_SYNC
@@ -63,6 +65,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_WORK_DISPATCH
             | DEN_WORK_RUN_LIST
             | DEN_WORK_RUN_GET
+            | DEN_WORK_RUN_FIND
             | DEN_WORK_RUN_CANCEL
             | DEN_WORK_CATALOG
     )
@@ -110,6 +113,11 @@ pub(crate) struct DocketJobListArguments {
 #[derive(Debug, Deserialize)]
 pub(crate) struct DocketJobGetArguments {
     pub(crate) job_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketJobFindArguments {
+    pub(crate) job_ref: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,9 +176,14 @@ pub(crate) struct DocketTaskCreateArguments {
     #[serde(default)]
     pub(crate) effort_hint: Option<DocketEffortHint>,
     #[serde(default)]
-    pub(crate) assigned_to_role: Option<BearProfile>,
-    #[serde(default)]
     pub(crate) created_in_run_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DocketTaskFindArguments {
+    pub(crate) task_ref: String,
+    #[serde(default)]
+    pub(crate) job_ref: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,8 +224,6 @@ pub(crate) struct DocketTaskUpdateArguments {
     #[serde(default)]
     pub(crate) effort_hint: Option<DocketEffortHint>,
     #[serde(default)]
-    pub(crate) assigned_to_role: Option<BearProfile>,
-    #[serde(default)]
     pub(crate) run_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) status: Option<DocketTaskStatus>,
@@ -247,6 +258,35 @@ pub(crate) struct TaskListCheckoutArguments {
     pub(crate) job_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) parent_task_id: Option<Uuid>,
+}
+
+fn resolve_reference(
+    reference: &str,
+    kind: &str,
+    candidates: impl IntoIterator<Item = Uuid>,
+) -> Result<Uuid, CustomError> {
+    let normalized = reference.replace('-', "").to_ascii_lowercase();
+    if normalized.len() < 8
+        || normalized.len() > 32
+        || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(CustomError::ValidationError(format!(
+            "{kind} reference must be a UUID or at least 8 hexadecimal characters"
+        )));
+    }
+    let matches: Vec<Uuid> = candidates
+        .into_iter()
+        .filter(|id| id.simple().to_string().starts_with(&normalized))
+        .collect();
+    match matches.as_slice() {
+        [id] => Ok(*id),
+        [] => Err(CustomError::NotFound(format!(
+            "{kind} not found: {reference}"
+        ))),
+        _ => Err(CustomError::ValidationError(format!(
+            "{kind} reference is ambiguous: {reference}"
+        ))),
+    }
 }
 
 fn default_job_status() -> DocketJobStatus {
@@ -1068,6 +1108,31 @@ pub(crate) async fn list_jobs(
     }))
 }
 
+pub(crate) async fn find_job(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketJobFindArguments = serde_json::from_value(arguments)?;
+    let job_id = resolve_reference(
+        &args.job_ref,
+        "job",
+        PgDocketService::from_pool(pool)
+            .list_jobs(
+                context.bear_id,
+                DocketJobListFilter {
+                    include_cancelled: true,
+                    limit: 200,
+                    ..DocketJobListFilter::default()
+                },
+            )
+            .await?
+            .into_iter()
+            .map(|job| job.id),
+    )?;
+    get_job(pool, context, json!({ "job_id": job_id })).await
+}
+
 pub(crate) async fn get_job(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -1187,6 +1252,7 @@ pub(crate) async fn update_job(
                 .clear_commit_policy
                 .then_some(None)
                 .or_else(|| args.commit_policy.map(Some)),
+            work_branch: None,
             status: args.status,
             visibility: args.visibility,
         })
@@ -1383,7 +1449,6 @@ pub(crate) async fn create_task(
             completion_criteria: args.completion_criteria,
             difficulty: args.difficulty,
             effort_hint: args.effort_hint,
-            assigned_to_role: args.assigned_to_role,
             created_by_role: role.as_str().to_string(),
             created_by_user_id: Some(context.user_id),
             created_by_agent_id: clean_optional(&context.binding_id),
@@ -1485,6 +1550,55 @@ pub(crate) async fn list_tasks(
     }))
 }
 
+pub(crate) async fn find_task(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: DocketTaskFindArguments = serde_json::from_value(arguments)?;
+    let service = PgDocketService::from_pool(pool);
+    let job_id = if let Some(reference) = args.job_ref.as_deref() {
+        let jobs = service
+            .list_jobs(
+                context.bear_id,
+                DocketJobListFilter {
+                    include_cancelled: true,
+                    limit: 200,
+                    ..DocketJobListFilter::default()
+                },
+            )
+            .await?;
+        Some(resolve_reference(
+            reference,
+            "job",
+            jobs.into_iter().map(|job| job.id),
+        )?)
+    } else {
+        None
+    };
+    let tasks = service
+        .list_tasks(
+            context.bear_id,
+            DocketTaskListFilter {
+                job_id,
+                include_descendants: true,
+                limit: 500,
+                ..DocketTaskListFilter::default()
+            },
+        )
+        .await?;
+    let task_id = resolve_reference(
+        &args.task_ref,
+        "task",
+        tasks.iter().map(|task| task.task.id),
+    )?;
+    let task = tasks
+        .into_iter()
+        .find(|task| task.task.id == task_id)
+        .expect("resolved task is listed");
+    Ok(json!({ "ok": true, "task": task }))
+}
+
 pub(crate) async fn update_task(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -1523,7 +1637,6 @@ pub(crate) async fn update_task(
                 scope: args.scope,
                 difficulty: args.difficulty.map(Some),
                 effort_hint: args.effort_hint.map(Some),
-                assigned_to_role: args.assigned_to_role.map(Some),
             },
             run_state: None,
         })
@@ -1862,7 +1975,6 @@ mod test {
                 completion_criteria: sqlx::types::Json(vec!["Done".to_string()]),
                 difficulty: None,
                 effort_hint: None,
-                assigned_to_role: None,
                 created_by_role: "pair".to_string(),
                 created_by_user_id: None,
                 created_by_agent_id: None,
@@ -1999,7 +2111,7 @@ mod test {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct WorkDispatchArguments {
-    task_id: Uuid,
+    job_id: Uuid,
     #[serde(default)]
     root: Option<String>,
     #[serde(default)]
@@ -2022,11 +2134,11 @@ pub(crate) async fn dispatch_work(
         )));
     }
     let args: WorkDispatchArguments = serde_json::from_value(arguments)?;
-    let run = den_docket::work_runs::enqueue_work_run(
+    let runs = den_docket::work_runs::enqueue_work_job(
         pool,
-        den_docket::work_runs::WorkRunEnqueue {
+        den_docket::work_runs::WorkJobEnqueue {
             bear_id: context.bear_id,
-            task_id: args.task_id,
+            job_id: args.job_id,
             root_name: args.root.as_deref().and_then(clean_optional),
             git_ref: args.git_ref.as_deref().and_then(clean_optional),
             image_name: args.image.as_deref().and_then(clean_optional),
@@ -2034,38 +2146,19 @@ pub(crate) async fn dispatch_work(
         },
     )
     .await?;
-    // Runs serialize per job: tell the model where this run sits in the
-    // job's queue and what it is waiting behind.
-    let queue = den_docket::work_runs::queued_run_positions(pool, &[run.id])
-        .await?
-        .into_iter()
-        .next();
-    let note = match &queue {
-        Some(info) if info.waiting_on_run_id.is_some() => format!(
-            "queued at position {} in the job's queue, behind active run {}; \
-             runs within a job execute one at a time in dispatch order",
-            info.position,
-            info.waiting_on_run_id.unwrap_or_default()
-        ),
-        Some(info) if info.position > 1 => format!(
-            "queued at position {} in the job's queue; runs within a job execute \
-             one at a time in dispatch order",
-            info.position
-        ),
-        _ => "queued for the dispatch worker; inspect progress with get_work_run".to_string(),
-    };
+    let run_ids: Vec<Uuid> = runs.iter().map(|run| run.id).collect();
+    let queue = den_docket::work_runs::queued_run_positions(pool, &run_ids).await?;
     Ok(json!({
         "ok": true,
-        "work_run_id": run.id,
-        "state": run.state,
-        "attempt": run.attempt,
-        "task_id": run.task_id,
-        "job_id": run.job_id,
-        "queue": queue.map(|info| json!({
+        "job_id": args.job_id,
+        "work_run_ids": run_ids,
+        "queued_tasks": runs.len(),
+        "queue": queue.iter().map(|info| json!({
+            "run_id": info.run_id,
             "position": info.position,
             "waiting_on_run_id": info.waiting_on_run_id,
-        })),
-        "note": note,
+        })).collect::<Vec<_>>(),
+        "note": "Job queued; one work run will execute its runnable work tasks in the shared sandbox.",
     }))
 }
 
@@ -2073,8 +2166,6 @@ pub(crate) async fn dispatch_work(
 pub(crate) struct WorkRunListArguments {
     #[serde(default)]
     job_id: Option<Uuid>,
-    #[serde(default)]
-    task_id: Option<Uuid>,
     #[serde(default)]
     state: Option<String>,
     #[serde(default)]
@@ -2092,7 +2183,6 @@ pub(crate) async fn list_work_runs(
         den_docket::work_runs::WorkRunListFilter {
             bear_id: Some(context.bear_id),
             job_id: args.job_id,
-            task_id: args.task_id,
             state: args.state.as_deref().and_then(clean_optional),
             limit: args.limit.unwrap_or(50),
         },
@@ -2139,6 +2229,16 @@ async fn work_run_queue_map(
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct WorkRunFindArguments {
+    #[serde(default)]
+    run_ref: Option<String>,
+    #[serde(default)]
+    job_ref: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct WorkRunGetArguments {
     work_run_id: Uuid,
 }
@@ -2168,6 +2268,51 @@ pub(crate) async fn get_work_run(
     }
     value["usage"] = run.usage.unwrap_or(Value::Null);
     Ok(json!({ "ok": true, "work_run": value }))
+}
+
+pub(crate) async fn find_work_run(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    let args: WorkRunFindArguments = serde_json::from_value(arguments)?;
+    match (args.run_ref.as_deref(), args.job_ref.as_deref()) {
+        (Some(_), Some(_)) | (None, None) => Err(CustomError::ValidationError(
+            "provide exactly one of run_ref or job_ref".to_string(),
+        )),
+        (Some(reference), None) => {
+            let runs = den_docket::work_runs::list_work_runs(
+                pool,
+                den_docket::work_runs::WorkRunListFilter {
+                    bear_id: Some(context.bear_id),
+                    limit: 200,
+                    ..den_docket::work_runs::WorkRunListFilter::default()
+                },
+            )
+            .await?;
+            let run_id = resolve_reference(reference, "work run", runs.iter().map(|run| run.id))?;
+            get_work_run(pool, context, json!({ "work_run_id": run_id })).await
+        }
+        (None, Some(reference)) => {
+            let jobs = PgDocketService::from_pool(pool)
+                .list_jobs(
+                    context.bear_id,
+                    DocketJobListFilter {
+                        include_cancelled: true,
+                        limit: 200,
+                        ..DocketJobListFilter::default()
+                    },
+                )
+                .await?;
+            let job_id = resolve_reference(reference, "job", jobs.into_iter().map(|job| job.id))?;
+            list_work_runs(
+                pool,
+                context,
+                json!({ "job_id": job_id, "limit": args.limit.unwrap_or(50) }),
+            )
+            .await
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -2271,7 +2416,6 @@ fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
         "state": run.state,
         "attempt": run.attempt,
         "job_id": run.job_id,
-        "task_id": run.task_id,
         "cancel_requested": run.cancel_requested,
         "root": run.root_name,
         "git_ref": run.git_ref,

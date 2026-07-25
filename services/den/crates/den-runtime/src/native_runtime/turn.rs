@@ -10,9 +10,9 @@ use std::sync::{Arc, LazyLock};
 use den_memory::MemoryStoreManager;
 use den_protocol::{
     ContinueTurnRequest, RoleRuntimeBinding, RuntimeContinuation, RuntimeConversationBackend,
-    RuntimeConversationRef, RuntimeErrorCategory, RuntimeEventStream, RuntimeHistoryPage,
-    RuntimeHistoryRecord, RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent,
-    RuntimeToolResultStatus, StartTurnRequest,
+    RuntimeConversationRef, RuntimeEventStream, RuntimeHistoryPage, RuntimeHistoryRecord,
+    RuntimeSemanticEvent, RuntimeStreamContinuation, RuntimeStreamEvent, RuntimeToolResultStatus,
+    StartTurnRequest,
 };
 use den_service::{
     bears::{
@@ -298,6 +298,28 @@ async fn persisted_tool_call_exists(
     Ok(exists)
 }
 
+fn native_tool_result_diagnostics(
+    status: RuntimeToolResultStatus,
+    status_label: ToolResultStatus,
+    tool_call_id: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "component": "den.native_runtime",
+        "phase": if matches!(status, RuntimeToolResultStatus::Error) {
+            "client_tool_result_failed"
+        } else {
+            "client_tool_result_recorded"
+        },
+        "tool_call_id": tool_call_id,
+        "tool_status": status_label.as_str(),
+        "failure_class": if matches!(status, RuntimeToolResultStatus::Error) {
+            Some("adapter_tool_error")
+        } else {
+            None
+        },
+    })
+}
+
 pub async fn record_native_client_tool_result(
     pool: &PgPool,
     conversation_id: &str,
@@ -395,13 +417,25 @@ pub async fn record_native_client_tool_result(
             RuntimeToolResultStatus::Timeout => ToolResultStatus::Timeout,
             RuntimeToolResultStatus::Error => ToolResultStatus::Error,
         };
+        // Preserve an adapter-reported failure in the structured error field as
+        // well as the display content. Diagnostics can then report the actual
+        // failure without inferring it from an opaque lifecycle phase.
+        let error = if matches!(status, RuntimeToolResultStatus::Error) {
+            tool_message
+                .content
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null)
+        } else {
+            serde_json::Value::Null
+        };
         let compacted = compact_client_tool_result(&ClientToolResultInput::new(
             tool_call_id.to_string(),
             tool_name.clone(),
             status_label,
             tool_message.content.clone(),
             serde_json::Value::Null,
-            serde_json::Value::Null,
+            error,
         ));
         persist_canonical_conversation_record(
             &persistence_context,
@@ -417,10 +451,7 @@ pub async fn record_native_client_tool_result(
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_string),
                     compacted.payload.clone(),
-                    serde_json::json!({
-                        "component": "den.native_runtime",
-                        "phase": "client_tool_result_recorded",
-                    }),
+                    native_tool_result_diagnostics(status, status_label, tool_call_id),
                     Some(request_id.to_string()),
                 ),
                 &provenance,
@@ -820,6 +851,16 @@ async fn build_session(
         profile: agent_loop_control.profile.with_budget(profile.turn_budget),
         ..agent_loop_control
     };
+    // `work.checkout` binds the Armature session before the native loop starts.
+    // Carry that authoritative binding into hosted-tool invocations instead of
+    // deriving authority from a model-provided path or identifier.
+    let work_run_id = if profile.profile == BearProfile::Work {
+        den_docket::work_runs::get_live_work_run_by_session(deps.pool, client_session_id)
+            .await?
+            .map(|run| run.id)
+    } else {
+        None
+    };
     tracing::info!(
         bear_id = %bear_id,
         profile = %profile.profile.as_str(),
@@ -837,6 +878,7 @@ async fn build_session(
         user_id,
         conversation_id: conversation_id.to_string(),
         client_session_id: client_session_id.to_string(),
+        work_run_id,
         workspace_roots: workspace_roots
             .map(|items| items.to_vec())
             .unwrap_or_default(),
@@ -1230,13 +1272,16 @@ fn parse_args_or_empty_object(raw: &str) -> serde_json::Value {
 fn continuation_budget_stop(
     reason: TurnBudgetStopReason,
 ) -> (RuntimeStreamContinuation, RuntimeEventStream) {
-    let stream: RuntimeEventStream = Box::pin(stream::iter(vec![Ok(
-        RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnFailed {
-            turn: None,
-            category: RuntimeErrorCategory::Internal,
-            message: reason.user_message(),
-        }),
-    )]));
+    let stream: RuntimeEventStream = Box::pin(stream::iter(vec![
+        Ok(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::AssistantTextDelta {
+                text: reason.user_message(),
+            },
+        )),
+        Ok(RuntimeStreamEvent::Semantic(
+            RuntimeSemanticEvent::TurnCompleted { turn: None },
+        )),
+    ]));
     (RuntimeStreamContinuation::Deferred, stream)
 }
 
@@ -1608,6 +1653,7 @@ async fn execute_approved_den_tool_for_session(
         membership_role: None,
         conversation_id: session.conversation_id.clone(),
         session_id: session.client_session_id.clone(),
+        work_run_id: None,
         client_session_id: Some(session.client_session_id.clone()),
         conversation_selection: Some(session.conversation_id.clone()),
         runtime_target: Some(session.conversation_id.clone()),
@@ -2009,6 +2055,19 @@ mod tests {
     }
 
     #[test]
+    fn native_tool_failure_diagnostics_are_actionable_without_tool_arguments() {
+        let diagnostics = native_tool_result_diagnostics(
+            RuntimeToolResultStatus::Error,
+            ToolResultStatus::Error,
+            "call-123",
+        );
+        assert_eq!(diagnostics["phase"], "client_tool_result_failed");
+        assert_eq!(diagnostics["failure_class"], "adapter_tool_error");
+        assert_eq!(diagnostics["tool_status"], "error");
+        assert_eq!(diagnostics["tool_call_id"], "call-123");
+        assert!(diagnostics.get("arguments").is_none());
+    }
+    #[test]
     fn mvp_grounding_probe_signal_follows_tool_result_status_and_content() {
         let (ok_signal, ok_finding) = mvp_grounding_probe_signal_from_tool_result(
             RuntimeToolResultStatus::Ok,
@@ -2076,6 +2135,7 @@ mod tests {
             user_id: Some(1),
             conversation_id: "conv".to_string(),
             client_session_id: "session".to_string(),
+            work_run_id: None,
             workspace_roots: vec![],
             request_id: None,
             run_id: None,
@@ -2123,6 +2183,27 @@ mod tests {
     }
 
     #[test]
+    fn budget_stop_completes_with_a_user_safe_status() {
+        let (_continuation, stream) =
+            continuation_budget_stop(TurnBudgetStopReason::WallClockLimit {
+                elapsed_ms: 60_001,
+                limit_ms: 60_000,
+            });
+        let events = futures::executor::block_on(async {
+            use futures::StreamExt;
+            stream.collect::<Vec<_>>().await
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { text })),
+                Ok(RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::TurnCompleted { turn: None })),
+            ] if text.contains("Send “continue”") && !text.contains("elapsed=")
+        ));
+    }
+
+    #[test]
     fn forced_budget_stop_resets_reusable_turn_budget_state() {
         let mut session = AgentLoopSession {
             session_key: "session".to_string(),
@@ -2131,6 +2212,7 @@ mod tests {
             user_id: Some(1),
             conversation_id: "conv".to_string(),
             client_session_id: "session".to_string(),
+            work_run_id: None,
             workspace_roots: vec![],
             request_id: None,
             run_id: None,
@@ -2215,6 +2297,7 @@ mod tests {
             user_id: Some(1),
             conversation_id: "conv".to_string(),
             client_session_id: "session".to_string(),
+            work_run_id: None,
             workspace_roots: vec![],
             request_id: None,
             run_id: None,
@@ -2270,6 +2353,7 @@ mod tests {
             user_id: Some(1),
             conversation_id: "conv".to_string(),
             client_session_id: "session".to_string(),
+            work_run_id: None,
             workspace_roots: vec![],
             request_id: None,
             run_id: None,
@@ -2403,6 +2487,7 @@ mod tests {
             user_id: Some(1),
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
+            work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
             request_id: None,
             run_id: Some("run-max-step".to_string()),
@@ -2492,6 +2577,7 @@ mod tests {
             user_id: Some(1),
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
+            work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
             request_id: Some("request-before-tool".to_string()),
             run_id: Some("run-visible-tool".to_string()),
@@ -2668,6 +2754,7 @@ mod tests {
             user_id: Some(user_id),
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
+            work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
             request_id: Some(request_id.clone()),
             run_id: Some("run-persisted-visible".to_string()),
@@ -2824,6 +2911,7 @@ mod tests {
             user_id: Some(user_id),
             conversation_id: conversation_id.clone(),
             client_session_id: client_session_id.clone(),
+            work_run_id: None,
             workspace_roots: vec!["/workspace".to_string()],
             request_id: Some(request_id.clone()),
             run_id: Some("run-load-history".to_string()),

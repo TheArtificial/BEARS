@@ -4,9 +4,9 @@
 {% if run.is_active %}<meta http-equiv="refresh" content="10" />{% endif %}
 {% endblock %}
 {% block content %}
-<p><a href="/work">← Work</a> · <a href="/work/jobs/{{ run.job_id }}">Job</a></p>
-<h1>Run {{ run.id[:8] }}… <small>({{ run.state }})</small></h1>
-<p>{{ job_goal }}</p>
+<p><a href="/work">← Work</a> · <a href="/work/jobs/{{ run.job_route_id }}" title="{{ run.job_title }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code></a></p>
+<h1>Work Run <code class="entity-reference-id">{{ run.display_id }}</code></h1>
+<h2>{{ run.title }}</h2>
 {% if conversation_id %}
 <p><a href="/bear/{{ run.bear_slug | urlencode }}/?conversation_id={{ conversation_id | urlencode }}">Open headless conversation transcript →</a></p>
 {% endif %}
@@ -25,7 +25,7 @@
                 {% endif %}
             </td></tr>
             <tr><th>Attempt</th><td>{{ run.attempt }}</td></tr>
-            <tr><th>Root / ref</th><td>{{ run.root or "—" }} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
+            <tr><th>Root / ref</th><td>{% if work_surface_link and run.root == work_surface_link.name %}<a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ run.root }}</code></a>{% else %}{{ run.root or "—" }}{% endif %} {% if run.git_ref %}@ {{ run.git_ref }}{% endif %}</td></tr>
             <tr><th>Image</th><td>{{ run.image or "root default" }}</td></tr>
             <tr><th>Sandbox</th><td>{{ run.sandbox_type or "—" }}</td></tr>
             <tr><th>Sandbox strength</th><td>{{ run.sandbox_strength or "—" }}</td></tr>
@@ -48,10 +48,50 @@
     {% endif %}
 </section>
 
-{% if run.result_summary or run.error or run.published_branch or run.publish_failed %}
+{% if diagnostic %}
+<section>
+    <h2>Diagnostic</h2>
+    <p><strong>{{ diagnostic.title }}</strong></p>
+    <dl>
+        <dt>Attempted operation</dt><dd>{{ diagnostic.operation }}</dd>
+        <dt>Observed evidence</dt><dd>{{ diagnostic.evidence }}</dd>
+        <dt>Recovery</dt><dd>{{ diagnostic.recovery }}</dd>
+    </dl>
+</section>
+{% endif %}
+
+{% if cargo_failure %}
+<section>
+    <h2>Rust dependency cache</h2>
+    <p><strong>Not ready for offline Cargo.</strong> {{ cargo_failure.diagnostic }}</p>
+    <dl>
+        <dt>Failure</dt><dd><code>{{ cargo_failure.code }}</code></dd>
+        <dt>Stage</dt><dd><code>{{ cargo_failure.stage }}</code></dd>
+        {% if cargo_failure.required_package %}<dt>Missing package</dt><dd><code>{{ cargo_failure.required_package }}</code></dd>{% endif %}
+        <dt>Dependency preparation</dt><dd>not attempted</dd>
+        <dt>Next action</dt><dd>{{ cargo_failure.action }}</dd>
+    </dl>
+</section>
+{% elif dependency_preparation %}
+<section>
+    <h2>Rust dependency cache</h2>
+    <p><strong>{{ dependency_preparation.status }}</strong> — {{ dependency_preparation.content }}</p>
+    <dl>
+        <dt>Stage</dt><dd><code>{{ dependency_preparation.stage }}</code></dd>
+        <dt>Code</dt><dd><code>{{ dependency_preparation.code }}</code></dd>
+        <dt>Package</dt><dd><code>{{ dependency_preparation.package }}</code></dd>
+        <dt>Manifest</dt><dd><code>{{ dependency_preparation.manifest_path }}</code></dd>
+        <dt>Offline cache</dt><dd>{% if dependency_preparation.status == "prepared" %}prepared and mounted read-only for this run{% else %}not ready{% endif %}</dd>
+        <dt>Lockfile</dt><dd>{% if dependency_preparation.lockfile_changed %}updated{% else %}unchanged{% endif %}</dd>
+        <dt>Retry</dt><dd>{% if dependency_preparation.retryable %}retry may succeed{% else %}input or environment must change first{% endif %}</dd>
+    </dl>
+</section>
+{% endif %}
+
+{% if run.result_summary or run.error or run.published_branch or run.publish_failed or not run.is_active %}
 <section>
     <h2>Outcome</h2>
-    {% if run.result_summary %}<p>{{ run.result_summary }}</p>{% endif %}
+    <p>{{ outcome }}</p>
     {% if run.error %}<p><strong>Error:</strong> {{ run.error }}</p>{% endif %}
     {% if run.published_branch %}
     <p><strong>Published:</strong> <code>{{ run.published_branch }}</code> @ <code>{{ run.published_commit }}</code></p>
@@ -60,13 +100,13 @@
     <p><strong>⚠ Publish failed:</strong> {{ run.publish_failed }} — the task's commits remain in the run diff below.</p>
     {% endif %}
     {% if armature_report %}<p><small>Armature report: <code>{{ armature_report }}</code></small></p>{% endif %}
-    {% if turn_outcome %}<p><small>Turn outcome: <code>{{ turn_outcome }}</code></small></p>{% endif %}
+    {% if turn_outcome and turn_outcome != "headless turn reached a terminal run event" %}<p><small>Turn outcome: <code>{{ turn_outcome }}</code></small></p>{% endif %}
 </section>
 {% endif %}
 
 {% if work_surface %}
 <section>
-    <h2>Work surface</h2>
+    <h2>Work surface{% if work_surface_link %}: <a href="/work/surfaces/{{ work_surface_link.id }}"><code>{{ work_surface_link.name }}</code></a>{% endif %}</h2>
     <pre><code>{{ work_surface }}</code></pre>
 </section>
 {% endif %}

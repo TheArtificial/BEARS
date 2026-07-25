@@ -73,7 +73,6 @@ pub(crate) enum RunFailureReason {
     DescriptorResolutionFailed,
     InitialStreamWatchdogTimeout,
     StreamError,
-    StreamEndedWithoutRuntimeTerminal,
     StartFailed,
     ClientObligationTimeout,
     #[cfg(test)]
@@ -90,7 +89,6 @@ impl RunFailureReason {
             Self::DescriptorResolutionFailed => "descriptor_resolution_failed",
             Self::InitialStreamWatchdogTimeout => "initial_stream_watchdog_timeout",
             Self::StreamError => "stream_error",
-            Self::StreamEndedWithoutRuntimeTerminal => "stream_ended_without_runtime_terminal",
             Self::StartFailed => "start_failed",
             Self::ClientObligationTimeout => "client_obligation_timeout",
             #[cfg(test)]
@@ -129,6 +127,10 @@ async fn bear_display_name(pool: &sqlx::PgPool, bear_id: uuid::Uuid) -> String {
         .map(|bear| bear.name)
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| "The bear".to_string())
+}
+
+fn initial_stream_interruption_message() -> &'static str {
+    "Den lost the model connection before the response finished. Your conversation and completed tool results were preserved. Send another message to retry."
 }
 
 async fn persist_visible_runtime_marker(
@@ -545,6 +547,10 @@ async fn run_is_terminal(pool: &sqlx::PgPool, run_id: &str) -> bool {
         .is_some_and(|run| matches!(run.state.as_str(), "completed" | "failed" | "cancelled"))
 }
 
+fn run_progress_is_warning(detail: &Value) -> bool {
+    detail.get("event_kind").and_then(Value::as_str) == Some("error")
+}
+
 pub(crate) async fn persist_run_progress(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -565,14 +571,25 @@ pub(crate) async fn persist_run_progress(
         );
         return;
     }
-    tracing::info!(
-        session_id = %session_id,
-        run_id = %run_id,
-        kind,
-        elapsed_ms = started_at.elapsed().as_millis(),
-        detail = %detail,
-        "BearWire run progress"
-    );
+    if run_progress_is_warning(&detail) {
+        tracing::warn!(
+            session_id = %session_id,
+            run_id = %run_id,
+            kind,
+            elapsed_ms = started_at.elapsed().as_millis(),
+            detail = %detail,
+            "BearWire run progress"
+        );
+    } else {
+        tracing::debug!(
+            session_id = %session_id,
+            run_id = %run_id,
+            kind,
+            elapsed_ms = started_at.elapsed().as_millis(),
+            detail = %detail,
+            "BearWire run progress"
+        );
+    }
     let mut event = BearWireEvent::ephemeral(
         "run.progress",
         json!({
@@ -603,6 +620,49 @@ pub(crate) async fn persist_run_progress(
             "failed to persist BearWire run.progress event"
         );
     }
+}
+
+async fn incomplete_stream_pending_tools(pool: &sqlx::PgPool, run_id: &str) -> Vec<Value> {
+    // Diagnostics deliberately retain only IDs and lifecycle state, never tool arguments.
+    sqlx::query(
+        r#"
+        SELECT tool_call_id, state
+        FROM turn_obligations
+        WHERE run_id = $1
+          AND tool_call_id IS NOT NULL
+          AND state IN ('requested', 'waiting_for_client')
+        ORDER BY created_at ASC, id ASC
+        "#,
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .map(|rows| {
+        rows.into_iter()
+            .map(|row| {
+                json!({
+                    "id": row.get::<String, _>("tool_call_id"),
+                    "state": row.get::<String, _>("state"),
+                })
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn runtime_event_has_assistant_content(event: &den_protocol::RuntimeStreamEvent) -> bool {
+    matches!(
+        event,
+        den_protocol::RuntimeStreamEvent::Semantic(
+            den_protocol::RuntimeSemanticEvent::AssistantTextDelta { .. }
+        )
+    )
+}
+
+fn initial_stream_eof_is_recoverable(terminal_or_wait_seen: bool, cancellation_seen: bool) -> bool {
+    // EOF is transport loss, not a run outcome. A terminal event or an answerable
+    // client wait already supplies the durable boundary the client needs instead.
+    !terminal_or_wait_seen && !cancellation_seen
 }
 
 fn runtime_event_satisfies_eager_prefix(event: &den_protocol::RuntimeStreamEvent) -> bool {
@@ -1910,6 +1970,11 @@ pub(crate) async fn run_start_result(
                 let mut provider_activity_seen = false;
                 let mut terminal_or_wait_seen = false;
                 let mut cancellation_seen = false;
+                let mut runtime_event_count = 0usize;
+                let mut assistant_content_seen = false;
+                let mut terminal_event_seen = false;
+                let mut wait_event_seen = false;
+                let mut last_event_kind: Option<&'static str> = None;
                 let idle_watchdog_timeout = crate::methods::client::continuation_watchdog_timeout();
                 let handshake_timeout = den_runtime::agent_loop::native_llm_handshake_timeout();
                 let first_event_watchdog_timeout =
@@ -1978,6 +2043,14 @@ pub(crate) async fn run_start_result(
                                     continue;
                                 }
                                 Ok(runtime_event) => {
+                                    runtime_event_count += 1;
+                                    assistant_content_seen |= runtime_event_has_assistant_content(&runtime_event);
+                                    last_event_kind = Some(runtime_event_kind(&runtime_event));
+                                    match runtime_stream_boundary(&runtime_event) {
+                                        RuntimeStreamBoundary::Terminal => terminal_event_seen = true,
+                                        RuntimeStreamBoundary::ClientWait => wait_event_seen = true,
+                                        RuntimeStreamBoundary::Continue => {}
+                                    }
                                     if runtime_event_is_terminal_or_wait(&runtime_event) {
                                         terminal_or_wait_seen = true;
                                     }
@@ -2039,26 +2112,56 @@ pub(crate) async fn run_start_result(
                         }
                     }
                 }
-                if !terminal_or_wait_seen && !cancellation_seen {
+                if initial_stream_eof_is_recoverable(terminal_or_wait_seen, cancellation_seen) {
                     if let Some(tx) = eager_prefix_tx.take() {
                         let _ = tx.send(());
                     }
-                    persist_run_failed(
+                    // An EOF only ends this delivery stream. Do not settle the run or its
+                    // obligations: a later client retry can reconcile from persisted events.
+                    let _ = turn_runs::transition_run(
+                        &pool,
+                        &run_id_for_task,
+                        turn_runs::TurnRunState::Running,
+                        Some("initial_stream_interrupted"),
+                    )
+                    .await;
+                    let pending_tool_calls =
+                        incomplete_stream_pending_tools(&pool, &run_id_for_task).await;
+                    let detail = json!({
+                        "request_id": request_id,
+                        "final_run_state": "running",
+                        "first_event_seen": first_event_seen,
+                        "provider_activity_seen": provider_activity_seen,
+                        "assistant_content_seen": assistant_content_seen,
+                        "runtime_event_count": runtime_event_count,
+                        "terminal_event_seen": terminal_event_seen,
+                        "wait_event_seen": wait_event_seen,
+                        "last_event_kind": last_event_kind,
+                        "pending_tool_calls": pending_tool_calls,
+                        "recovery_attempted": false,
+                        "recovery_outcome": "retryable_from_persisted_state",
+                    });
+                    persist_run_progress(
                         &pool,
                         &session_for_task,
                         &run_id_for_task,
                         bear_id,
                         user_id,
-                        RunFailureReason::StreamEndedWithoutRuntimeTerminal,
-                        if first_event_seen {
-                            "The model stream ended after non-terminal runtime events but did not emit a tool request, completion, cancellation, or error.".to_string()
-                        } else {
-                            "The model stream ended without emitting any runtime event for BearWire to deliver.".to_string()
-                        },
-                        Some(json!({
-                            "request_id": request_id,
-                            "first_event_seen": first_event_seen,
-                        })),
+                        run_started_at,
+                        "initial_stream_interrupted",
+                        "The model connection ended before the run finished. The run is preserved for retry.",
+                        detail.clone(),
+                    )
+                    .await;
+                    persist_visible_runtime_marker(
+                        &pool,
+                        &session_for_task,
+                        &run_id_for_task,
+                        bear_id,
+                        user_id,
+                        "initial_stream_interrupted",
+                        initial_stream_interruption_message().to_string(),
+                        detail,
                     )
                     .await;
                 }
@@ -2346,6 +2449,15 @@ mod tests {
     }
 
     #[test]
+    fn run_progress_warnings_are_reserved_for_runtime_error_events() {
+        assert!(run_progress_is_warning(&json!({ "event_kind": "error" })));
+        assert!(!run_progress_is_warning(
+            &json!({ "event_kind": "turn_completed" })
+        ));
+        assert!(!run_progress_is_warning(&json!({})));
+    }
+
+    #[test]
     fn run_failure_reasons_preserve_persisted_strings() {
         assert_eq!(
             RunFailureReason::ContinuationWatchdogTimeout.as_str(),
@@ -2363,6 +2475,53 @@ mod tests {
             RunFailureReason::ContinuationStartFailed.as_str(),
             "continuation_start_failed"
         );
+    }
+
+    #[test]
+    fn initial_stream_eof_policy_preserves_waiting_runs_and_retries_unbounded_runs() {
+        // run.started → tool activity → client.waiting/run.paused → EOF is already a
+        // durable client boundary, so the session remains available without failing it.
+        assert!(!initial_stream_eof_is_recoverable(true, false));
+        // Terminal completion remains a durable boundary too.
+        assert!(!initial_stream_eof_is_recoverable(true, false));
+        // EOF without either boundary is the recoverable path: persisted state is used
+        // for later reconciliation rather than rerunning tools.
+        assert!(initial_stream_eof_is_recoverable(false, false));
+        // Explicit cancellation is never resumed.
+        assert!(!initial_stream_eof_is_recoverable(false, true));
+    }
+
+    #[test]
+    fn initial_stream_interruption_message_is_den_branded_and_safe() {
+        let message = initial_stream_interruption_message();
+        assert!(message.starts_with("Den "));
+        assert!(message.contains("preserved"));
+        assert!(!message.contains("BearWire"));
+        assert!(!message.contains("frames="));
+        assert!(!message.contains("version="));
+    }
+
+    #[test]
+    fn assistant_content_tracking_excludes_status_and_tool_events() {
+        use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
+
+        assert!(runtime_event_has_assistant_content(
+            &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta {
+                text: "hello".to_string(),
+            })
+        ));
+        assert!(!runtime_event_has_assistant_content(
+            &RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::StatusText {
+                text: "working".to_string(),
+            })
+        ));
+    }
+
+    #[test]
+    fn initial_stream_eof_is_recoverable_only_without_durable_boundary() {
+        assert!(initial_stream_eof_is_recoverable(false, false));
+        assert!(!initial_stream_eof_is_recoverable(true, false));
+        assert!(!initial_stream_eof_is_recoverable(false, true));
     }
 
     #[test]

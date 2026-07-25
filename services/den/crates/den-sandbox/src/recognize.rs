@@ -61,12 +61,18 @@ fn recognize_toolchain(path: &Path, surface: &mut WorkSurface) {
         }
     };
 
-    if path.join("Cargo.toml").exists() {
+    surface.cargo_manifest_paths = cargo_manifest_paths(path);
+    if !surface.cargo_manifest_paths.is_empty() {
         lang("rust");
         surface.package_manager_hints.push("cargo".to_string());
         surface.test_command_hints.push("cargo test".to_string());
-        if path.join("Cargo.lock").exists() {
-            surface.lockfiles.push("Cargo.lock".to_string());
+        for manifest in &surface.cargo_manifest_paths {
+            let lockfile = Path::new(manifest).with_file_name("Cargo.lock");
+            if path.join(&lockfile).exists() {
+                surface
+                    .lockfiles
+                    .push(lockfile.to_string_lossy().into_owned());
+            }
         }
     }
 
@@ -116,6 +122,41 @@ fn recognize_toolchain(path: &Path, surface: &mut WorkSurface) {
     }
 }
 
+fn cargo_manifest_paths(root: &Path) -> Vec<String> {
+    fn visit(root: &Path, relative: &Path, manifests: &mut Vec<String>) {
+        let directory = root.join(relative);
+        if directory.join("Cargo.toml").is_file() {
+            manifests.push(relative.join("Cargo.toml").to_string_lossy().into_owned());
+            return;
+        }
+
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            return;
+        };
+        let mut directories = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter(|entry| {
+                !matches!(
+                    entry.file_name().to_str(),
+                    Some(".git" | "target" | "node_modules")
+                )
+            })
+            .collect::<Vec<_>>();
+        directories.sort_by_key(|entry| entry.file_name());
+        for entry in directories {
+            visit(root, &relative.join(entry.file_name()), manifests);
+        }
+    }
+
+    // ponytail: scan stops at the first Cargo manifest in each directory tree,
+    // treating it as that tree's workspace root. If nested independent Cargo
+    // projects become necessary, replace recognition with explicit catalog data.
+    let mut manifests = Vec::new();
+    visit(root, Path::new(""), &mut manifests);
+    manifests
+}
+
 fn is_writable(path: &Path) -> bool {
     // Probe rather than inspect mode bits: correct across ownership,
     // ACLs, and read-only mounts.
@@ -161,11 +202,35 @@ mod tests {
         std::fs::write(dir.join("pnpm-lock.yaml"), "").unwrap();
         let surface = recognize_work_surface(&dir).await;
         assert_eq!(surface.language_hints, vec!["rust", "javascript"]);
+        assert_eq!(surface.cargo_manifest_paths, vec!["Cargo.toml"]);
         assert!(surface.package_manager_hints.iter().any(|pm| pm == "pnpm"));
         assert!(surface.lockfiles.contains(&"Cargo.lock".to_string()));
         assert!(surface
             .test_command_hints
             .contains(&"cargo test".to_string()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn recognizes_nested_rust_workspace() {
+        let dir = tempdir("nested-rust");
+        std::fs::create_dir_all(dir.join("services/den/crates/member")).unwrap();
+        std::fs::write(dir.join("services/den/Cargo.toml"), "[workspace]\n").unwrap();
+        std::fs::write(
+            dir.join("services/den/crates/member/Cargo.toml"),
+            "[package]\nname = \"member\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("services/den/Cargo.lock"), "").unwrap();
+
+        let surface = recognize_work_surface(&dir).await;
+
+        assert_eq!(
+            surface.cargo_manifest_paths,
+            vec!["services/den/Cargo.toml"]
+        );
+        assert_eq!(surface.language_hints, vec!["rust"]);
+        assert_eq!(surface.lockfiles, vec!["services/den/Cargo.lock"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

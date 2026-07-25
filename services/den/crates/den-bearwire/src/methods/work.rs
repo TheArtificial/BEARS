@@ -44,7 +44,6 @@ pub(crate) async fn work_checkout_result(
 
     tracing::info!(
         work_run_id = %checkout.run.id,
-        task_id = %checkout.run.task_id,
         job_id = %checkout.run.job_id,
         session_id = %request.session_id,
         bear_slug = %bear.slug,
@@ -55,7 +54,6 @@ pub(crate) async fn work_checkout_result(
         "ok": true,
         "work_run_id": checkout.run.id,
         "job_id": checkout.run.job_id,
-        "task_id": checkout.run.task_id,
         "task_title": checkout.task_title,
         "attempt": checkout.run.attempt,
         "prompt": checkout.prompt,

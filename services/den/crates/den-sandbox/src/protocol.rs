@@ -6,6 +6,62 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Exact DNS names a work-surface owner has approved for outbound HTTPS.
+///
+/// This is deliberately neither a URL nor a pattern: ports, IP literals,
+/// wildcards, and trailing-dot aliases are rejected at the protocol boundary.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct AllowedOutboundHosts(Vec<String>);
+
+impl AllowedOutboundHosts {
+    pub fn new(hosts: Vec<String>) -> Result<Self, String> {
+        let mut normalized = Vec::with_capacity(hosts.len());
+        for host in hosts {
+            let host = host.trim().to_ascii_lowercase();
+            if !is_exact_hostname(&host) {
+                return Err(format!(
+                    "allowed outbound host must be an exact DNS hostname: {host:?}"
+                ));
+            }
+            if !normalized.contains(&host) {
+                normalized.push(host);
+            }
+        }
+        Ok(Self(normalized))
+    }
+
+    pub fn as_slice(&self) -> &[String] {
+        &self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<'de> Deserialize<'de> for AllowedOutboundHosts {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::new(Vec::<String>::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+fn is_exact_hostname(host: &str) -> bool {
+    !host.is_empty()
+        && host.len() <= 253
+        && !host.ends_with('.')
+        && host.parse::<std::net::IpAddr>().is_err()
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+}
+
 /// Execution boundary type. Only [`SandboxType::Container`] is implemented;
 /// the rest exist so requests name their intent explicitly and get an explicit
 /// "unimplemented" error instead of a silently different boundary.
@@ -128,10 +184,49 @@ pub struct CreateSandboxRequest {
     /// so orphans can be reconciled after a provider restart.
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
+    /// Provider-owned volume with prepared Cargo registry artifacts. The
+    /// sandbox receives it read-only at `/den/cargo-home`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cargo_home_volume: Option<String>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PrepareRustDependenciesRequest {
+    /// Checkout-relative path to the selected Cargo manifest.
+    pub manifest_path: String,
+    /// Cargo package name, validated by Den before it reaches the provider.
+    pub package: String,
+    pub resolution: RustDependencyResolution,
+    pub preparation: RustDependencyPreparation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RustDependencyResolution {
+    Locked,
+    UpdateLockfile,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RustDependencyPreparation {
+    Fetch,
+    Check,
+    TestNoRun,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PrepareRustDependenciesResponse {
+    pub status: String,
+    pub code: String,
+    pub stage: String,
+    pub retryable: bool,
+    pub content: String,
+    pub lockfile_changed: bool,
 }
 
 /// Facts recognized about the workspace at provision time.
@@ -147,6 +242,9 @@ pub struct WorkSurface {
     pub writable: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub language_hints: Vec<String>,
+    /// Workspace-relative Cargo manifests recognized as Rust roots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cargo_manifest_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub package_manager_hints: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -177,6 +275,9 @@ pub struct SandboxDescriptor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
     pub work_surface: WorkSurface,
+    /// Trusted provisioning performed before the sandbox process started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rust_dependency_preparation: Option<PrepareRustDependenciesResponse>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i64>,
     pub usage: SandboxUsage,
@@ -228,6 +329,9 @@ pub struct PublishRequest {
     /// pushing to `main` must always be an explicit choice.
     #[serde(default)]
     pub allow_default_ref: bool,
+    /// Git author/committer name for provider-created leftover commits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_name: Option<String>,
     /// Caller label used in the auto-commit message (e.g. the work run id).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_label: Option<String>,
@@ -287,12 +391,74 @@ pub struct RootStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RootCommitFileChange {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additions: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RootInspectionResponse {
+    pub name: String,
+    pub default_ref: String,
+    pub head: String,
+    pub short_head: String,
+    pub subject: String,
+    pub files: Vec<RootCommitFileChange>,
+    pub additions: u64,
+    pub deletions: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_head: Option<String>,
+    /// `in_sync`, `remote_differs`, or `remote_unavailable`.
+    pub origin_status: String,
+}
+
+/// Read-only comparison of two refs in the provider's pristine bare clone.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RootComparisonResponse {
+    pub base_ref: String,
+    pub head_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
+    pub patch: String,
+    pub patch_truncated: bool,
+    /// Pristine roots are bare clones, therefore never have a dirty worktree.
+    pub worktree_clean: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SyncRootResponse {
     pub synced: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RootComparisonResponse;
+
+    #[test]
+    fn root_comparison_keeps_refs_commits_and_cleanliness() {
+        let comparison = RootComparisonResponse {
+            base_ref: "main".into(),
+            head_ref: "den/job-1".into(),
+            base_commit: Some("a".repeat(40)),
+            head_commit: Some("b".repeat(40)),
+            patch: "diff --git a/a b/a\n".into(),
+            patch_truncated: false,
+            worktree_clean: true,
+        };
+        let value = serde_json::to_value(comparison).unwrap();
+        assert_eq!(value["base_ref"], "main");
+        assert_eq!(value["head_ref"], "den/job-1");
+        assert_eq!(value["worktree_clean"], true);
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -337,6 +503,9 @@ pub struct ManagedSurface {
     /// Catalog image name this surface's sandboxes default to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_image: Option<String>,
+    /// Owner-approved destinations. Empty deliberately means no egress.
+    #[serde(default, skip_serializing_if = "AllowedOutboundHosts::is_empty")]
+    pub allowed_outbound_hosts: AllowedOutboundHosts,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<ManagedCredential>,
 }
@@ -402,6 +571,29 @@ mod managed_config_tests {
             err.to_string().contains("unknown field"),
             "unexpected serde error: {err}"
         );
+    }
+
+    #[test]
+    fn allowed_outbound_hosts_normalizes_and_rejects_non_hostnames() {
+        let hosts = AllowedOutboundHosts::new(vec![
+            " INDEX.CRATES.IO ".to_string(),
+            "index.crates.io".to_string(),
+            "static.crates.io".to_string(),
+        ])
+        .expect("valid hosts");
+        assert_eq!(hosts.as_slice(), ["index.crates.io", "static.crates.io"]);
+
+        for invalid in [
+            "https://example.com",
+            "*.example.com",
+            "127.0.0.1",
+            "example.com:443",
+        ] {
+            assert!(
+                AllowedOutboundHosts::new(vec![invalid.to_string()]).is_err(),
+                "{invalid}"
+            );
+        }
     }
 }
 

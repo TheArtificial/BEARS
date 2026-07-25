@@ -259,10 +259,7 @@ impl TurnBudgetStopReason {
 
     pub fn user_message(&self) -> String {
         match self {
-            Self::WallClockLimit { elapsed_ms, limit_ms } => format!(
-                "I stopped because this turn exhausted its wall-clock budget (elapsed={}ms/limit={}ms). The recent tool results were recorded, but this run needs a fresh turn to continue safely.",
-                elapsed_ms, limit_ms
-            ),
+            Self::WallClockLimit { .. } => "I ran out of execution time after recording the work completed so far. Send “continue” and I’ll pick up from the recorded state.".to_string(),
             Self::TotalToolCallLimit { count, limit } => format!(
                 "I stopped because this turn exhausted its emergency total tool-call fuse (tool_calls={count}/limit={limit}). The recent tool results were recorded, but this run needs a fresh turn to continue safely."
             ),
@@ -1066,6 +1063,26 @@ mod tests {
             evaluation.warning.as_ref().map(|warning| warning.code),
             Some("wall_clock_finalization_warning")
         );
+    }
+
+    #[test]
+    fn wall_clock_warning_steers_to_a_user_facing_checkpoint() {
+        let evaluation = evaluate_turn_budget(
+            policy(),
+            2,
+            52_000,
+            &state(),
+            &[observation("memory_read", r#"{\"path\":\"a\"}"#, false)],
+        );
+        let warning = evaluation.warning.expect("wall-clock warning");
+
+        assert_eq!(warning.code, "wall_clock_warning");
+        assert!(warning
+            .message
+            .contains("Do not begin another broad tool sequence"));
+        assert!(warning
+            .message
+            .contains("progress/checkpoint status for the user"));
     }
 
     #[test]

@@ -32,13 +32,14 @@ use den_service::work_surfaces::{
     SURFACE_ROLE_OWNER,
 };
 
-use super::{member_bears, require_user};
+use super::{entity_ref, member_bears, require_user, resolve_uuid_prefix, route_id};
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/work/surfaces", get(index))
         .route("/work/surfaces/new", get(new_form).post(create))
         .route("/work/surfaces/{surface_id}", get(detail))
+        .route("/work/surfaces/{surface_id}/diff", get(diff_detail))
         .route("/work/surfaces/{surface_id}/update", post(update))
         .route(
             "/work/surfaces/{surface_id}/credential",
@@ -124,10 +125,38 @@ pub(crate) async fn push_surfaces_best_effort(state: &AppState) -> Option<String
     }
 }
 
+async fn prepare_surface(state: &AppState, name: &str) -> Result<String, String> {
+    if let Some(note) = push_surfaces_best_effort(state).await {
+        return Err(note);
+    }
+    let url = state
+        .config
+        .sandbox_server_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| "No sandbox provider configured.".to_string())?;
+    let result = SandboxClient::new(url, &state.config.sandbox_server_token)
+        .sync_root(name)
+        .await
+        .map_err(|err| format!("Provider root test failed: {err}"))?;
+    if result.synced {
+        Ok(match result.head {
+            Some(head) => format!("Surface is ready at commit {head}."),
+            None => "Surface is ready.".to_string(),
+        })
+    } else {
+        Err(result
+            .error
+            .unwrap_or_else(|| "Provider could not prepare the surface.".to_string()))
+    }
+}
+
 fn surface_redirect(surface_id: Uuid, message: &str, sync_note: Option<String>) -> Response {
     let full = format!("{message}{}", sync_note.unwrap_or_default());
     Redirect::to(&format!(
-        "/work/surfaces/{surface_id}?message={}",
+        "/work/surfaces/{}?message={}",
+        route_id(surface_id),
         urlencoding::encode(&full)
     ))
     .into_response()
@@ -159,7 +188,8 @@ async fn index(
             .into_iter()
             .map(|surface| {
                 serde_json::json!({
-                    "id": surface.id.to_string(),
+                    "id": route_id(surface.id),
+                    "reference": entity_ref(surface.id, "Work surface", &surface.name, None),
                     "name": surface.name,
                     "description": surface.description,
                     "bear_slug": bears.get(&surface.bear_id).cloned().unwrap_or_default(),
@@ -171,7 +201,8 @@ async fn index(
         .into_iter()
         .map(|surface| {
             serde_json::json!({
-                "id": surface.id.to_string(),
+                "id": route_id(surface.id),
+                "reference": entity_ref(surface.id, "Work surface", &surface.name, None),
                 "name": surface.name,
                 "description": surface.description,
                 "upstream_url": surface.upstream_url,
@@ -240,6 +271,10 @@ struct NewSurfaceForm {
     default_ref: String,
     #[serde(default)]
     default_image: String,
+    /// One exact hostname per line. The service owns validation and
+    /// normalization so this form deliberately does not duplicate it.
+    #[serde(default)]
+    allowed_outbound_hosts: String,
     #[serde(default)]
     credential_kind: String,
     #[serde(default)]
@@ -257,6 +292,15 @@ fn clean(value: &str) -> Option<String> {
     } else {
         Some(value.to_string())
     }
+}
+
+fn outbound_hosts_from_form(value: &str) -> Vec<String> {
+    value
+        .lines()
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn credential_from_form(kind: &str, value: &str) -> Result<Option<(String, String)>, CustomError> {
@@ -305,6 +349,7 @@ async fn create(
             upstream_url: form.upstream_url.trim().to_string(),
             default_ref: clean(&form.default_ref).unwrap_or_else(|| "main".to_string()),
             default_image: clean(&form.default_image),
+            allowed_outbound_hosts: outbound_hosts_from_form(&form.allowed_outbound_hosts),
             credential,
         },
         &state.config.den_secret_encryption_key,
@@ -324,34 +369,99 @@ async fn create(
                     work_surface_ref: Some(Some(surface.name.clone())),
                     work_surface_id: Some(Some(surface.id)),
                     commit_policy: None,
+                    work_branch: None,
                     status: None,
                     visibility: None,
                 })
                 .await?;
         }
     }
-    let sync_note = push_surfaces_best_effort(&state).await;
-    if let Some(job_id) = form.return_job_id {
+    let prepared = prepare_surface(&state, &surface.name).await;
+    if let (Some(job_id), Ok(_)) = (form.return_job_id, &prepared) {
         return Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response());
     }
-    Ok(surface_redirect(
-        surface.id,
-        "Work surface created.",
-        sync_note,
-    ))
+    let message = match prepared {
+        Ok(message) => format!("Work surface created. {message}"),
+        Err(error) => format!("Work surface created, but is not ready: {error}"),
+    };
+    Ok(surface_redirect(surface.id, &message, None))
+}
+
+#[derive(Debug, Deserialize)]
+struct DiffQuery {
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    head: Option<String>,
+}
+
+async fn diff_detail(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(surface_ref): Path<String>,
+    Query(query): Query<DiffQuery>,
+) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
+    let base = query.base.unwrap_or_else(|| surface.default_ref.clone());
+    let head = query.head.unwrap_or_else(|| "origin/HEAD".to_string());
+    let (comparison, unavailable) = match state
+        .config
+        .sandbox_server_url
+        .as_deref()
+        .filter(|url| !url.trim().is_empty())
+    {
+        Some(url) => match SandboxClient::new(url.trim(), &state.config.sandbox_server_token)
+            .compare_root(&surface.name, &base, &head)
+            .await
+        {
+            Ok(value) => (Some(value), None),
+            Err(err) => (None, Some(err.to_string())),
+        },
+        None => (None, Some("No sandbox provider configured.".to_string())),
+    };
+    web::render_template(&state, "work/diff.html", auth_session, context! {
+        title => "Work surface diff", surface_id => route_id(surface.id), surface_name => surface.name,
+        base => base, head => head, comparison => comparison, unavailable => unavailable,
+    }).await
 }
 
 async fn detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Query(query): Query<MessageQuery>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
     let managers = work_surfaces::list_managers(state.sqlx_pool(), surface_id).await?;
     let assigned = work_surfaces::list_assigned_bears(state.sqlx_pool(), surface_id).await?;
     let images = work_surfaces::list_catalog_images(state.sqlx_pool()).await?;
+    let provider_root_status = match state.config.sandbox_server_url.as_deref() {
+        Some(url) if !url.trim().is_empty() => {
+            SandboxClient::new(url.trim(), &state.config.sandbox_server_token)
+                .health()
+                .await
+                .ok()
+                .and_then(|health| {
+                    health
+                        .roots
+                        .into_iter()
+                        .find(|root| root.name == surface.name)
+                })
+        }
+        _ => None,
+    };
+    let provider_root_inspection = match state.config.sandbox_server_url.as_deref() {
+        Some(url) if !url.trim().is_empty() => {
+            SandboxClient::new(url.trim(), &state.config.sandbox_server_token)
+                .inspect_root(&surface.name)
+                .await
+                .ok()
+        }
+        _ => None,
+    };
 
     // Bears the viewer can assign: their member bears (admins: all bears),
     // minus ones already assigned.
@@ -394,17 +504,21 @@ async fn detail(
         auth_session,
         context! {
             title => "Work surface",
-            surface_id => surface.id.to_string(),
+            surface_id => route_id(surface.id),
+            surface_reference => entity_ref(surface.id, "Work surface", &surface.name, None),
             name => surface.name,
             description => surface.description,
             upstream_url => surface.upstream_url,
             default_ref => surface.default_ref,
             default_image => surface.default_image,
+            allowed_outbound_hosts => surface.allowed_outbound_hosts.join("\n"),
             credential_kind => surface.credential_kind,
             managers => managers,
             assigned_bears => assigned,
             assignable_bears => assignable,
             images => images,
+            provider_root_status => provider_root_status,
+            provider_root_inspection => provider_root_inspection,
             message => query.message,
         },
     )
@@ -419,14 +533,17 @@ struct UpdateSurfaceForm {
     default_ref: String,
     #[serde(default)]
     default_image: String,
+    #[serde(default)]
+    allowed_outbound_hosts: String,
 }
 
 async fn update(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<UpdateSurfaceForm>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::update_surface(
         state.sqlx_pool(),
@@ -436,6 +553,7 @@ async fn update(
             upstream_url: clean(&form.upstream_url),
             default_ref: clean(&form.default_ref),
             default_image: Some(clean(&form.default_image)),
+            allowed_outbound_hosts: Some(outbound_hosts_from_form(&form.allowed_outbound_hosts)),
         },
     )
     .await?;
@@ -452,9 +570,10 @@ struct CredentialForm {
 async fn set_credential(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<CredentialForm>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     let Some((kind, value)) = credential_from_form(&form.credential_kind, &form.credential_value)?
     else {
@@ -481,8 +600,9 @@ async fn set_credential(
 async fn clear_credential(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::clear_credential(state.sqlx_pool(), surface_id).await?;
     let sync_note = push_surfaces_best_effort(&state).await;
@@ -503,10 +623,11 @@ struct GrantManagerForm {
 async fn grant_manager(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<GrantManagerForm>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     let username = form.username.trim();
     let Some(target) = user_db::get_user_by_username(state.sqlx_pool(), username).await? else {
@@ -541,9 +662,10 @@ struct RevokeManagerForm {
 async fn revoke_manager(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<RevokeManagerForm>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::revoke_manager(state.sqlx_pool(), surface_id, form.user_id).await?;
     Ok(surface_redirect(surface_id, "Manager removed.", None))
@@ -557,10 +679,11 @@ struct BearForm {
 async fn assign_bear(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<BearForm>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     // Managers assign from their own member bears; site admins any bear.
     if !viewer_is_admin(&auth_session)
@@ -575,9 +698,10 @@ async fn assign_bear(
 async fn unassign_bear(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
     Form(form): Form<BearForm>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::unassign_bear(state.sqlx_pool(), surface_id, form.bear_id).await?;
     Ok(surface_redirect(surface_id, "Bear unassigned.", None))
@@ -586,8 +710,9 @@ async fn unassign_bear(
 async fn delete(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
     let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
     work_surfaces::delete_surface(state.sqlx_pool(), surface_id).await?;
     let sync_note = push_surfaces_best_effort(&state).await;
@@ -605,23 +730,13 @@ async fn delete(
 async fn sync_now(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(surface_id): Path<Uuid>,
+    Path(surface_ref): Path<String>,
 ) -> Result<Response, CustomError> {
-    load_managed_surface(&state, &auth_session, surface_id).await?;
-    let message = match push_surfaces_best_effort(&state).await {
-        None => {
-            if state
-                .config
-                .sandbox_server_url
-                .as_deref()
-                .is_some_and(|url| !url.trim().is_empty())
-            {
-                "Synced to the sandbox provider."
-            } else {
-                "No sandbox provider configured (SANDBOX_SERVER_URL unset)."
-            }
-        }
-        Some(_) => "Provider sync failed — the dispatch worker retries within 5 minutes.",
+    let surface_id = resolve_uuid_prefix(state.sqlx_pool(), "work_surfaces", &surface_ref).await?;
+    let surface = load_managed_surface(&state, &auth_session, surface_id).await?;
+    let message = match prepare_surface(&state, &surface.name).await {
+        Ok(message) => message,
+        Err(error) => format!("Surface is not ready: {error}"),
     };
-    Ok(surface_redirect(surface_id, message, None))
+    Ok(surface_redirect(surface_id, &message, None))
 }

@@ -84,6 +84,9 @@ pub struct SyncableRoot {
     /// Catalog image name this root's sandboxes default to.
     #[serde(default)]
     pub default_image: Option<String>,
+    /// Exact HTTPS hosts this root's restricted sandboxes may reach.
+    #[serde(default)]
+    pub allowed_outbound_hosts: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -144,6 +147,7 @@ impl RootsManager {
                 path: Some(scratch_path.to_string_lossy().into_owned()),
                 upstream: None,
                 default_image: None,
+                allowed_outbound_hosts: Vec::new(),
             },
         );
     }
@@ -267,6 +271,149 @@ impl RootsManager {
         }
     }
 
+    pub async fn inspect_root(
+        &self,
+        root: &SyncableRoot,
+    ) -> Result<crate::protocol::RootInspectionResponse, RootsError> {
+        let upstream = root
+            .upstream
+            .as_ref()
+            .ok_or_else(|| RootsError::Workspace {
+                name: root.name.clone(),
+                detail: "root has no Git upstream".to_string(),
+            })?;
+        let pristine = self.pristine_dir(root);
+        if !pristine.is_dir() {
+            return Err(RootsError::Workspace {
+                name: root.name.clone(),
+                detail: "pristine clone is not prepared".to_string(),
+            });
+        }
+        let env = credential_env(root, upstream)?;
+        let head = self
+            .resolve_commit(root, &pristine, &env, &upstream.default_ref)
+            .await?;
+        let subject = self
+            .git(
+                root,
+                Some(&pristine),
+                &[],
+                &["show", "-s", "--format=%s", &head],
+            )
+            .await?
+            .trim()
+            .to_string();
+        let numstat = self
+            .git(
+                root,
+                Some(&pristine),
+                &[],
+                &[
+                    "diff-tree",
+                    "--root",
+                    "--no-commit-id",
+                    "--numstat",
+                    "-r",
+                    &head,
+                ],
+            )
+            .await?;
+        let mut additions = 0_u64;
+        let mut deletions = 0_u64;
+        let files = numstat
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.splitn(3, '\t');
+                let added = fields.next()?;
+                let deleted = fields.next()?;
+                let path = fields.next()?.to_string();
+                let added = added.parse::<u64>().ok();
+                let deleted = deleted.parse::<u64>().ok();
+                additions = additions.saturating_add(added.unwrap_or(0));
+                deletions = deletions.saturating_add(deleted.unwrap_or(0));
+                Some(crate::protocol::RootCommitFileChange {
+                    path,
+                    additions: added,
+                    deletions: deleted,
+                })
+            })
+            .collect();
+        let remote_ref = if upstream.default_ref.starts_with("refs/") {
+            upstream.default_ref.clone()
+        } else {
+            format!("refs/heads/{}", upstream.default_ref)
+        };
+        let remote_head = self
+            .git(
+                root,
+                None,
+                &env,
+                &["ls-remote", "--exit-code", &upstream.url, &remote_ref],
+            )
+            .await
+            .ok()
+            .and_then(|output| output.split_whitespace().next().map(str::to_string));
+        let origin_status = match remote_head.as_deref() {
+            Some(remote) if remote == head => "in_sync",
+            Some(_) => "remote_differs",
+            None => "remote_unavailable",
+        }
+        .to_string();
+        let short_head = head.chars().take(8).collect();
+        Ok(crate::protocol::RootInspectionResponse {
+            name: root.name.clone(),
+            default_ref: upstream.default_ref.clone(),
+            head,
+            short_head,
+            subject,
+            files,
+            additions,
+            deletions,
+            remote_head,
+            origin_status,
+        })
+    }
+
+    pub async fn compare_root(
+        &self,
+        root: &SyncableRoot,
+        base_ref: &str,
+        head_ref: &str,
+    ) -> Result<crate::protocol::RootComparisonResponse, RootsError> {
+        let pristine = self.pristine_dir(root);
+        if !pristine.is_dir() {
+            return Err(RootsError::Workspace {
+                name: root.name.clone(),
+                detail: "pristine clone is not prepared".to_string(),
+            });
+        }
+        let env = root
+            .upstream
+            .as_ref()
+            .map(|upstream| credential_env(root, upstream))
+            .transpose()?
+            .unwrap_or_default();
+        let base = self.resolve_commit(root, &pristine, &env, base_ref).await?;
+        let head = self.resolve_commit(root, &pristine, &env, head_ref).await?;
+        let patch = self
+            .git(
+                root,
+                Some(&pristine),
+                &env,
+                &["diff", "--no-ext-diff", "--find-renames", &base, &head],
+            )
+            .await?;
+        Ok(crate::protocol::RootComparisonResponse {
+            base_ref: base_ref.to_string(),
+            head_ref: head_ref.to_string(),
+            base_commit: Some(base),
+            head_commit: Some(head),
+            patch_truncated: patch.len() >= GIT_OUTPUT_CAP,
+            patch,
+            worktree_clean: true,
+        })
+    }
+
     /// Ensure the pristine bare clone exists and fast-forward it from
     /// upstream. Bare clones have no working tree, so there is nothing to
     /// dirty or reset; a non-fast-forward fetch fails and is reported as-is.
@@ -311,14 +458,9 @@ impl RootsManager {
         }
 
         let head = self
-            .git(
-                root,
-                Some(&pristine),
-                &env,
-                &["rev-parse", &upstream.default_ref],
-            )
+            .resolve_commit(root, &pristine, &env, &upstream.default_ref)
             .await?;
-        Ok(Some(head.trim().to_string()))
+        Ok(Some(head))
     }
 
     /// Materialize a workspace for one sandbox: a self-contained local clone
@@ -359,16 +501,12 @@ impl RootsManager {
             )
             .await?;
             let reference = git_ref.unwrap_or(&upstream.default_ref);
-            let checkout = self
-                .git(
-                    root,
-                    Some(&workspace),
-                    &[],
-                    &["checkout", "--detach", reference],
-                )
-                .await;
-            match checkout {
-                Ok(_) => {}
+            // Resolve in the pristine bare mirror, where every fetched branch
+            // is a local refs/heads/* ref. In a normal clone, a non-HEAD branch
+            // may exist only as origin/<name>, so resolving the same short name
+            // there can fail even after a successful root readiness check.
+            let commit = match self.resolve_commit(root, &pristine, &[], reference).await {
+                Ok(commit) => commit,
                 // A requested ref that does not exist yet (e.g. a job work
                 // branch before its first publish) falls back to the default
                 // ref instead of failing the provision.
@@ -379,22 +517,27 @@ impl RootsManager {
                         fallback = %upstream.default_ref,
                         "requested ref missing; provisioning at the default ref"
                     );
-                    self.git(
-                        root,
-                        Some(&workspace),
-                        &[],
-                        &["checkout", "--detach", &upstream.default_ref],
-                    )
-                    .await
-                    .inspect_err(|_| {
-                        let _ = std::fs::remove_dir_all(&workspace);
-                    })?;
+                    self.resolve_commit(root, &pristine, &[], &upstream.default_ref)
+                        .await
+                        .inspect_err(|_| {
+                            let _ = std::fs::remove_dir_all(&workspace);
+                        })?
                 }
                 Err(err) => {
                     let _ = std::fs::remove_dir_all(&workspace);
                     return Err(err);
                 }
-            }
+            };
+            self.git(
+                root,
+                Some(&workspace),
+                &[],
+                &["checkout", "--detach", &commit],
+            )
+            .await
+            .inspect_err(|_| {
+                let _ = std::fs::remove_dir_all(&workspace);
+            })?;
         } else {
             let source = root.path.as_deref().ok_or_else(|| RootsError::Workspace {
                 name: root.name.clone(),
@@ -452,13 +595,19 @@ impl RootsManager {
             if !status.trim().is_empty() {
                 self.git(root, Some(workspace), &[], &["add", "-A"]).await?;
                 let label = request.run_label.as_deref().unwrap_or("unknown");
+                let author_name = request
+                    .author_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("Den Work");
                 self.git(
                     root,
                     Some(workspace),
                     &[],
                     &[
                         "-c",
-                        "user.name=Den Work",
+                        &format!("user.name={author_name}"),
                         "-c",
                         "user.email=work@den.invalid",
                         "commit",
@@ -534,6 +683,44 @@ impl RootsManager {
             tokio::fs::remove_dir_all(&workspace).await?;
         }
         Ok(())
+    }
+
+    async fn resolve_commit(
+        &self,
+        root: &SyncableRoot,
+        repository: &Path,
+        env: &[(String, String)],
+        reference: &str,
+    ) -> Result<String, RootsError> {
+        let expression = format!("{reference}^{{commit}}");
+        let resolved = match self
+            .git(
+                root,
+                Some(repository),
+                env,
+                &["rev-parse", "--verify", "--end-of-options", &expression],
+            )
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(RootsError::Git { name, detail }) => {
+                return Err(RootsError::Git {
+                    name,
+                    detail: format!(
+                        "ref {reference:?} does not resolve to a commit; verify the surface default ref and that the upstream repository is not empty ({detail})"
+                    ),
+                });
+            }
+            Err(err) => return Err(err),
+        };
+        let oid = resolved.trim();
+        if !matches!(oid.len(), 40 | 64) || !oid.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return Err(RootsError::Git {
+                name: root.name.clone(),
+                detail: format!("ref {reference:?} resolved to an invalid commit object id"),
+            });
+        }
+        Ok(oid.to_string())
     }
 
     async fn git(
@@ -685,6 +872,7 @@ mod tests {
                 }),
             }),
             default_image: None,
+            allowed_outbound_hosts: Vec::new(),
         };
         let upstream = root.upstream.as_ref().unwrap();
         let env = credential_env(&root, upstream).unwrap();
@@ -758,6 +946,7 @@ mod tests {
             path: Some("/srv/x".to_string()),
             upstream: None,
             default_image: None,
+            allowed_outbound_hosts: Vec::new(),
         }
     }
 
@@ -873,6 +1062,7 @@ mod tests {
                 credential: None,
             }),
             default_image: None,
+            allowed_outbound_hosts: Vec::new(),
         };
         let manager = RootsManager {
             roots: std::iter::once(("fixture".to_string(), root.clone())).collect(),
@@ -893,8 +1083,80 @@ mod tests {
             branch: branch.to_string(),
             auto_commit_leftovers: true,
             allow_default_ref: false,
+            author_name: Some("Test Bear".to_string()),
             run_label: Some("test-run".to_string()),
         }
+    }
+
+    #[tokio::test]
+    async fn provision_uses_non_head_default_branch_resolved_from_pristine_mirror() {
+        let mut fx = publish_fixture();
+        let seed = fx.tmp.join("seed");
+        let upstream = fx.tmp.join("upstream.git");
+        sh_git(&seed, &["checkout", "-b", "test"]);
+        std::fs::write(seed.join("TEST.md"), "test branch\n").unwrap();
+        sh_git(&seed, &["add", "-A"]);
+        sh_git(&seed, &["commit", "-m", "test branch"]);
+        sh_git(&seed, &["push", &upstream.to_string_lossy(), "test"]);
+        let test_commit = sh_git(&seed, &["rev-parse", "HEAD"]).trim().to_string();
+        fx.root.upstream.as_mut().unwrap().default_ref = "test".to_string();
+
+        assert_eq!(
+            fx.manager.sync_root(&fx.root).await.unwrap().as_deref(),
+            Some(test_commit.as_str())
+        );
+        let inspection = fx.manager.inspect_root(&fx.root).await.unwrap();
+        assert_eq!(inspection.head, test_commit);
+        assert_eq!(inspection.default_ref, "test");
+        assert_eq!(inspection.subject, "test branch");
+        assert_eq!(inspection.origin_status, "in_sync");
+        assert_eq!(inspection.additions, 1);
+        assert_eq!(inspection.deletions, 0);
+        assert!(inspection.files.iter().any(|file| file.path == "TEST.md"));
+        let workspace = fx
+            .manager
+            .provision_workspace(&fx.root, None, "sbx-non-head-default")
+            .await
+            .expect("prepared non-HEAD default branch should provision");
+        assert_eq!(
+            sh_git(&workspace, &["rev-parse", "HEAD"]).trim(),
+            test_commit
+        );
+    }
+
+    #[tokio::test]
+    async fn unresolved_ref_error_names_the_ref_and_remediation() {
+        let fx = publish_fixture();
+        fx.manager.sync_root(&fx.root).await.unwrap();
+        let err = fx
+            .manager
+            .resolve_commit(
+                &fx.root,
+                &fx.manager.pristine_dir(&fx.root),
+                &[],
+                "missing-branch",
+            )
+            .await
+            .expect_err("missing ref should fail");
+        let message = err.to_string();
+        assert!(message.contains("missing-branch"), "{message}");
+        assert!(message.contains("surface default ref"), "{message}");
+        assert!(message.contains("not empty"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn option_like_requested_ref_falls_back_without_checkout_option_injection() {
+        let fx = publish_fixture();
+        fx.manager.sync_root(&fx.root).await.unwrap();
+        let workspace = fx
+            .manager
+            .provision_workspace(&fx.root, Some("-b"), "sbx-option-ref")
+            .await
+            .expect("option-like ref should fall back to default");
+        assert_eq!(
+            sh_git(&workspace, &["rev-parse", "HEAD"]).trim(),
+            fx.base_commit
+        );
     }
 
     #[tokio::test]
@@ -926,6 +1188,10 @@ mod tests {
         assert!(outcome.pushed);
         assert!(outcome.auto_committed);
         assert_eq!(outcome.commits_pushed, 2);
+        assert_eq!(
+            sh_git(&workspace, &["show", "-s", "--format=%an", "HEAD"]).trim(),
+            "Test Bear"
+        );
 
         // The upstream branch exists and matches the workspace head.
         let upstream = fx.tmp.join("upstream.git");

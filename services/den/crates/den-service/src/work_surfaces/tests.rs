@@ -57,6 +57,7 @@ fn new_surface(name: &str) -> NewWorkSurface {
         upstream_url: "https://example.invalid/repo.git".to_string(),
         default_ref: "main".to_string(),
         default_image: Some("base".to_string()),
+        allowed_outbound_hosts: Vec::new(),
         credential: None,
     }
 }
@@ -273,6 +274,7 @@ async fn surface_update_and_delete() {
             upstream_url: Some("https://example.invalid/other.git".to_string()),
             default_ref: Some("trunk".to_string()),
             default_image: Some(Some("rust".to_string())),
+            allowed_outbound_hosts: None,
         },
     )
     .await

@@ -1,11 +1,11 @@
 //! Durable dispatch/claim/lease state for autonomous `work`-stance execution.
 //!
-//! One `bear_work_runs` row per dispatch attempt of one task. The dispatch
+//! One `bear_work_runs` row per dispatch attempt of one job run. The dispatch
 //! worker (den-runtime) claims rows with a lease; the BearWire `work.*`
 //! methods bind the in-sandbox armature's session and record the turn
-//! outcome; the worker harvests and finalizes. Lifecycle audit reuses
-//! `bear_task_events` (Docket schedules, gates, and records — it never
-//! executes task bodies; ADR-0034).
+//! outcome; the worker harvests and finalizes. Tasks remain the execution
+//! checkpoints inside that job run (Docket schedules, gates, and records — it
+//! never executes task bodies; ADR-0034).
 
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -14,7 +14,9 @@ use uuid::Uuid;
 
 use den_core::{BearProfile, DenError};
 
+use crate::dispatcher::TaskDispatcher;
 use crate::model::DocketExecutionSessionUpsert;
+use crate::service::PgDocketService;
 
 /// Explicit root name for a provider-managed empty workspace. Absence is not
 /// scratch: callers must opt in so rootless dispatch stays invalid.
@@ -74,7 +76,7 @@ impl WorkRunState {
     }
 }
 
-const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, task_id, job_run_id, attempt, state, \
+const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, job_run_id, attempt, state, \
      runner_id, lease_expires_at, cancel_requested, root_name, git_ref, image_name, \
      sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, \
      bearwire_session_id, result_summary, result_refs, usage, error, \
@@ -85,7 +87,6 @@ pub struct WorkRunRow {
     pub id: Uuid,
     pub bear_id: Uuid,
     pub job_id: Uuid,
-    pub task_id: Uuid,
     pub job_run_id: Uuid,
     pub attempt: i32,
     pub state: String,
@@ -134,84 +135,78 @@ pub fn effective_work_run_root(
 }
 
 #[derive(Clone, Debug)]
+pub struct WorkJobEnqueue {
+    pub bear_id: Uuid,
+    pub job_id: Uuid,
+    pub root_name: Option<String>,
+    pub git_ref: Option<String>,
+    pub image_name: Option<String>,
+    pub requested_by_user_id: Option<i32>,
+}
+
+/// Legacy test fixture input. Production dispatch is job-scoped; tests use a
+/// task only to locate its owning job.
+#[cfg(test)]
+#[derive(Clone, Debug)]
 pub struct WorkRunEnqueue {
     pub bear_id: Uuid,
     pub task_id: Uuid,
     pub root_name: Option<String>,
     pub git_ref: Option<String>,
-    /// Catalog image name on the sandbox provider (None = root/provider default).
     pub image_name: Option<String>,
-    /// Recorded on the audit event; also the identity work-run tokens are
-    /// minted under (v1: only user-created jobs dispatch to work).
     pub requested_by_user_id: Option<i32>,
 }
 
-async fn ensure_bear_assigned_to_surface(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    bear_id: Uuid,
-    surface_id: Uuid,
-    surface_name: &str,
-) -> Result<(), DenError> {
-    let assigned: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM work_surface_bears WHERE surface_id = $1 AND bear_id = $2)",
-    )
-    .bind(surface_id)
-    .bind(bear_id)
-    .fetch_one(&mut **tx)
-    .await?;
-    if assigned {
-        Ok(())
-    } else {
-        Err(DenError::ValidationError(format!(
-            "bear is not assigned to work surface '{surface_name}'"
-        )))
-    }
-}
-
-/// Queue a work run for a task assigned to the `work` stance. Ensures the
-/// job has an active `bear_job_runs` row (creating an `event`-triggered one
-/// when needed). The partial unique index rejects a second active run for the
-/// same task. Jobs bound to a managed work surface (or explicit root
-/// overrides naming one) additionally require the bear's surface assignment.
+#[cfg(test)]
 pub async fn enqueue_work_run(
     pool: &PgPool,
     enqueue: WorkRunEnqueue,
 ) -> Result<WorkRunRow, DenError> {
-    let mut tx = pool.begin().await?;
-
-    let task: Option<(Uuid, Option<Uuid>, Option<String>)> = sqlx::query_as(
-        "SELECT bear_id, job_id, assigned_to_role FROM bear_tasks WHERE id = $1 AND bear_id = $2",
+    let job_id: Option<(Uuid,)> =
+        sqlx::query_as("SELECT job_id FROM bear_tasks WHERE id = $1 AND bear_id = $2")
+            .bind(enqueue.task_id)
+            .bind(enqueue.bear_id)
+            .fetch_optional(pool)
+            .await?;
+    let (job_id,) = job_id
+        .ok_or_else(|| DenError::NotFound(format!("Docket task not found: {}", enqueue.task_id)))?;
+    enqueue_work_job(
+        pool,
+        WorkJobEnqueue {
+            bear_id: enqueue.bear_id,
+            job_id,
+            root_name: enqueue.root_name,
+            git_ref: enqueue.git_ref,
+            image_name: enqueue.image_name,
+            requested_by_user_id: enqueue.requested_by_user_id,
+        },
     )
-    .bind(enqueue.task_id)
+    .await
+    .map(|mut runs| runs.remove(0))
+}
+
+/// Queue one job-scoped work run. The job must have at least one runnable
+/// work task; task state is deliberately not encoded on the work-run row.
+pub async fn enqueue_work_job(
+    pool: &PgPool,
+    enqueue: WorkJobEnqueue,
+) -> Result<Vec<WorkRunRow>, DenError> {
+    let mut tx = pool.begin().await?;
+    let job: Option<(Option<String>, Option<Uuid>, Option<Uuid>, Option<String>)> = sqlx::query_as(
+        "SELECT work_surface_ref, work_surface_id, current_run_id, status
+         FROM bear_jobs WHERE id = $1 AND bear_id = $2 FOR UPDATE",
+    )
+    .bind(enqueue.job_id)
     .bind(enqueue.bear_id)
     .fetch_optional(&mut *tx)
-    .await?
-    .map(|row: (Uuid, Option<Uuid>, Option<String>)| row);
-
-    let Some((_, job_id, assigned_to_role)) = task else {
+    .await?;
+    let Some((job_work_surface_ref, _surface_id, current_run_id, _status)) = job else {
         return Err(DenError::NotFound(format!(
-            "Docket task not found: {}",
-            enqueue.task_id
+            "Docket job not found: {}",
+            enqueue.job_id
         )));
     };
-    let Some(job_id) = job_id else {
-        return Err(DenError::ValidationError(
-            "task is not part of a Docket job; only job tasks can dispatch to work".into(),
-        ));
-    };
-    if assigned_to_role.as_deref() != Some("work") {
-        return Err(DenError::ValidationError(format!(
-            "task {} is not assigned to the work stance (assigned_to_role={})",
-            enqueue.task_id,
-            assigned_to_role.as_deref().unwrap_or("<none>")
-        )));
-    }
 
-    let job_work_surface_ref: Option<String> =
-        sqlx::query_scalar("SELECT work_surface_ref FROM bear_jobs WHERE id = $1")
-            .bind(job_id)
-            .fetch_one(&mut *tx)
-            .await?;
     let root_name = effective_work_run_root(
         enqueue.root_name.as_deref(),
         job_work_surface_ref.as_deref(),
@@ -221,119 +216,64 @@ pub async fn enqueue_work_run(
             "no sandbox root configured: choose a root, set work_surface_ref on the job, or explicitly dispatch to scratch".into(),
         ));
     }
-
-    // Managed-surface enforcement: a job bound to a work surface (and any
-    // explicit root override naming one) requires the bear to be assigned to
-    // that surface. Free-text roots matching no managed surface pass through;
-    // the provider stays the final validator for those.
-    let job_surface: Option<(Uuid, String)> = sqlx::query_as(
-        "SELECT s.id, s.name FROM bear_jobs j
-         JOIN work_surfaces s ON s.id = j.work_surface_id
-         WHERE j.id = $1",
+    let runnable: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM bear_tasks t
+             LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+             WHERE t.job_id = $1
+               AND COALESCE(s.status, 'pending') IN ('pending', 'blocked')
+         )",
     )
-    .bind(job_id)
-    .fetch_optional(&mut *tx)
+    .bind(enqueue.job_id)
+    .bind(current_run_id)
+    .fetch_one(&mut *tx)
     .await?;
-    if let Some((surface_id, surface_name)) = &job_surface {
-        ensure_bear_assigned_to_surface(&mut tx, enqueue.bear_id, *surface_id, surface_name)
-            .await?;
-    }
-    if let Some(root_name) = root_name.as_deref() {
-        let named_surface: Option<(Uuid,)> =
-            sqlx::query_as("SELECT id FROM work_surfaces WHERE name = $1")
-                .bind(root_name)
-                .fetch_optional(&mut *tx)
-                .await?;
-        if let Some((surface_id,)) = named_surface {
-            ensure_bear_assigned_to_surface(&mut tx, enqueue.bear_id, surface_id, root_name)
-                .await?;
-        }
+    if !runnable {
+        return Err(DenError::ValidationError(
+            "job has no runnable work tasks to dispatch".into(),
+        ));
     }
 
-    // Reuse the job's current run when it is still live; otherwise open a new
-    // event-triggered run so run-scoped task state has a home.
-    let current_run: Option<(Uuid, String)> = sqlx::query_as(
-        "SELECT r.id, r.state FROM bear_jobs j
-         JOIN bear_job_runs r ON r.id = j.current_run_id
-         WHERE j.id = $1",
-    )
-    .bind(job_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-    let job_run_id = match current_run {
-        Some((run_id, state))
-            if !matches!(state.as_str(), "completed" | "failed" | "cancelled") =>
-        {
-            run_id
-        }
-        _ => {
-            let (run_id,): (Uuid,) = sqlx::query_as(
-                "INSERT INTO bear_job_runs (job_id, trigger, state)
-                 VALUES ($1, 'event', 'running')
-                 RETURNING id",
+    let job_run_id = match current_run_id {
+        Some(run_id) => run_id,
+        None => {
+            let run_id: Uuid = sqlx::query_scalar(
+                "INSERT INTO bear_job_runs (job_id, trigger, state) VALUES ($1, 'event', 'running') RETURNING id",
             )
-            .bind(job_id)
+            .bind(enqueue.job_id)
             .fetch_one(&mut *tx)
             .await?;
             sqlx::query(
                 "UPDATE bear_jobs SET current_run_id = $2, updated_at = now() WHERE id = $1",
             )
-            .bind(job_id)
+            .bind(enqueue.job_id)
             .bind(run_id)
             .execute(&mut *tx)
             .await?;
             run_id
         }
     };
-
-    let (attempt,): (i32,) = sqlx::query_as(
-        "SELECT COALESCE(MAX(attempt), 0) + 1 FROM bear_work_runs WHERE task_id = $1",
+    let attempt: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(attempt), 0) + 1 FROM bear_work_runs WHERE job_id = $1",
     )
-    .bind(enqueue.task_id)
+    .bind(enqueue.job_id)
     .fetch_one(&mut *tx)
     .await?;
-
-    let inserted = sqlx::query_as::<_, WorkRunRow>(&format!(
-        "INSERT INTO bear_work_runs (bear_id, job_id, task_id, job_run_id, attempt, root_name, git_ref, image_name)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING {WORK_RUN_COLUMNS}"
+    let run = sqlx::query_as::<_, WorkRunRow>(&format!(
+        "INSERT INTO bear_work_runs (bear_id, job_id, job_run_id, attempt, root_name, git_ref, image_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {WORK_RUN_COLUMNS}"
     ))
-    .bind(enqueue.bear_id)
-    .bind(job_id)
-    .bind(enqueue.task_id)
-    .bind(job_run_id)
-    .bind(attempt)
-    .bind(root_name.as_deref())
-    .bind(enqueue.git_ref.as_deref())
-    .bind(enqueue.image_name.as_deref())
+    .bind(enqueue.bear_id).bind(enqueue.job_id).bind(job_run_id).bind(attempt)
+    .bind(root_name).bind(enqueue.git_ref).bind(enqueue.image_name)
     .fetch_one(&mut *tx)
-    .await;
-
-    let run = match inserted {
-        Ok(run) => run,
-        Err(sqlx::Error::Database(db))
-            if db.constraint() == Some("idx_bear_work_runs_one_active_per_task") =>
-        {
-            return Err(DenError::ValidationError(format!(
-                "task {} already has an active work run",
-                enqueue.task_id
-            )));
-        }
-        Err(e) => return Err(e.into()),
-    };
-
-    append_task_event(
-        &mut tx,
-        run.task_id,
-        run.job_run_id,
-        "claimed",
-        enqueue.requested_by_user_id,
-        json!({ "work_run_id": run.id, "attempt": run.attempt, "phase": "enqueued" }),
-    )
-    .await?;
-
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::Database(db) if db.constraint() == Some("idx_bear_work_runs_one_active_per_job") =>
+            DenError::ValidationError("job already has an active work run".into()),
+        other => other.into(),
+    })?;
     tx.commit().await?;
-    Ok(run)
+    Ok(vec![run])
 }
 
 /// Claim the next dispatchable run with a lease (`FOR UPDATE SKIP LOCKED`).
@@ -499,15 +439,12 @@ pub async fn queued_run_positions(
     Ok(rows)
 }
 
-/// A work run that needs someone's attention: the newest attempt for its
-/// task ended blocked/failed/timed_out and no newer attempt has been queued.
-/// Joined with task/job context so surfaces can render it standalone.
+/// A job-scoped work run that needs attention. Tasks remain visible in the
+/// task list; the run is deliberately not attributed to one task.
 #[derive(Clone, Debug, serde::Serialize, sqlx::FromRow)]
 pub struct AttentionWorkRun {
     pub run_id: Uuid,
     pub job_id: Uuid,
-    pub task_id: Uuid,
-    pub task_title: String,
     pub job_goal: String,
     pub state: String,
     pub result_summary: Option<String>,
@@ -515,9 +452,8 @@ pub struct AttentionWorkRun {
     pub finished_at: Option<OffsetDateTime>,
 }
 
-/// Latest-attempt runs in attention states for a bear (optionally one job).
-/// A newer queued/active attempt supersedes an older failure — the task is
-/// being retried, so it no longer needs attention.
+/// Latest-attempt job runs in attention states. A newer queued/active attempt
+/// supersedes an older failure for the same job.
 pub async fn attention_work_runs(
     pool: &PgPool,
     bear_id: Uuid,
@@ -525,17 +461,15 @@ pub async fn attention_work_runs(
     limit: i64,
 ) -> Result<Vec<AttentionWorkRun>, DenError> {
     let rows = sqlx::query_as::<_, AttentionWorkRun>(
-        "SELECT latest.id AS run_id, latest.job_id, latest.task_id,
-                t.title AS task_title, j.goal AS job_goal,
+        "SELECT latest.id AS run_id, latest.job_id, j.goal AS job_goal,
                 latest.state, latest.result_summary, latest.error, latest.finished_at
          FROM (
-             SELECT DISTINCT ON (task_id)
-                    id, job_id, task_id, state, result_summary, error, finished_at
+             SELECT DISTINCT ON (job_id)
+                    id, job_id, state, result_summary, error, finished_at
              FROM bear_work_runs
              WHERE bear_id = $1 AND ($2::uuid IS NULL OR job_id = $2)
-             ORDER BY task_id, queued_at DESC, id DESC
+             ORDER BY job_id, queued_at DESC, id DESC
          ) latest
-         JOIN bear_tasks t ON t.id = latest.task_id
          JOIN bear_jobs j ON j.id = latest.job_id
          WHERE latest.state IN ('blocked', 'failed', 'timed_out')
          ORDER BY latest.finished_at DESC NULLS LAST
@@ -611,6 +545,7 @@ pub struct WorkRunProvisioned {
     pub sandbox_type: String,
     pub sandbox_strength: String,
     pub work_surface: Value,
+    pub rust_dependency_preparation: Option<Value>,
 }
 
 /// Record sandbox placement and transition claimed → running.
@@ -624,6 +559,11 @@ pub async fn record_work_run_provisioned(
          SET state = 'running',
              sandbox_server_url = $2, sandbox_id = $3, sandbox_type = $4,
              sandbox_strength = $5, work_surface = $6,
+             result_refs = CASE
+                 WHEN $7::jsonb IS NULL THEN result_refs
+                 ELSE COALESCE(result_refs, '{{}}'::jsonb)
+                      || jsonb_build_object('rust_dependency_preparation', $7::jsonb)
+             END,
              started_at = COALESCE(started_at, now()), updated_at = now()
          WHERE id = $1 AND state IN ('claimed', 'provisioning')
          RETURNING {WORK_RUN_COLUMNS}"
@@ -634,6 +574,7 @@ pub async fn record_work_run_provisioned(
     .bind(&provisioned.sandbox_type)
     .bind(&provisioned.sandbox_strength)
     .bind(&provisioned.work_surface)
+    .bind(&provisioned.rust_dependency_preparation)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| {
@@ -719,6 +660,30 @@ pub async fn record_work_run_report(
     Ok(())
 }
 
+/// Store the latest hosted Cargo dependency-preparation result for a work run.
+/// This is durable run evidence for the web UI; it deliberately excludes any
+/// provider credentials or unbounded helper output.
+pub async fn record_work_run_dependency_preparation(
+    pool: &PgPool,
+    run_id: Uuid,
+    bear_id: Uuid,
+    result: &Value,
+) -> Result<(), DenError> {
+    sqlx::query(
+        "UPDATE bear_work_runs
+         SET result_refs = COALESCE(result_refs, '{}'::jsonb)
+                 || jsonb_build_object('rust_dependency_preparation', $3::jsonb),
+             updated_at = now()
+         WHERE id = $1 AND bear_id = $2",
+    )
+    .bind(run_id)
+    .bind(bear_id)
+    .bind(result)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WorkRunFinalize {
     pub result_summary: Option<String>,
@@ -726,6 +691,97 @@ pub struct WorkRunFinalize {
     pub result_refs: Option<Value>,
     pub usage: Option<Value>,
     pub error: Option<String>,
+}
+
+/// The one user-facing outcome for a work run. Turn and Armature reports are
+/// evidence only: neither may claim that work completed. A completed worker
+/// process is only eligible for a completed work outcome; durable task state
+/// and structured validation evidence decide the outcome.
+pub fn canonical_work_run_state(
+    state: WorkRunState,
+    refs: &Value,
+    task_statuses: &[String],
+) -> WorkRunState {
+    if !matches!(state, WorkRunState::Succeeded) {
+        return state;
+    }
+    if refs.pointer("/cargo_failure/code").and_then(Value::as_str)
+        == Some("cargo_offline_cache_miss")
+        || task_statuses.iter().any(|status| status == "blocked")
+        || task_statuses
+            .iter()
+            .any(|status| matches!(status.as_str(), "pending" | "in_progress"))
+    {
+        WorkRunState::Blocked
+    } else {
+        state
+    }
+}
+
+pub fn canonical_work_run_outcome(
+    state: WorkRunState,
+    refs: &Value,
+    task_statuses: &[String],
+) -> Value {
+    if matches!(state, WorkRunState::Blocked)
+        && refs.pointer("/cargo_failure/code").and_then(Value::as_str)
+            == Some("cargo_offline_cache_miss")
+    {
+        let package = refs
+            .pointer("/cargo_failure/required_package")
+            .and_then(Value::as_str)
+            .map(|package| format!(" `{package}` could not be resolved."))
+            .unwrap_or_default();
+        return json!({
+            "status": "blocked",
+            "code": "cargo_offline_cache_miss",
+            "summary": format!("Rust dependencies are unavailable in the offline cache.{package}"),
+            "next_action": "Prepare Rust dependencies with the hosted dependency tool, then retry Cargo.",
+            "evidence_refs": ["cargo_failure", "turn_outcome", "armature_report"],
+        });
+    }
+
+    if matches!(state, WorkRunState::Blocked) {
+        let blocked = task_statuses
+            .iter()
+            .filter(|status| *status == "blocked")
+            .count();
+        if blocked > 0 {
+            return json!({
+                "status": "blocked",
+                "code": "task_blocked",
+                "summary": format!("Work is blocked: {blocked} task(s) are blocked."),
+                "evidence_refs": ["task_run_states", "turn_outcome", "armature_report"],
+            });
+        }
+        let unfinished = task_statuses
+            .iter()
+            .filter(|status| matches!(status.as_str(), "pending" | "in_progress"))
+            .count();
+        if unfinished > 0 {
+            return json!({
+                "status": "incomplete",
+                "code": "work_incomplete",
+                "summary": format!("Work is incomplete: {unfinished} task(s) remain unfinished."),
+                "evidence_refs": ["task_run_states", "turn_outcome", "armature_report"],
+            });
+        }
+    }
+
+    let (status, code, summary) = match state {
+        WorkRunState::Succeeded => ("completed", "completed", "Work completed."),
+        WorkRunState::Blocked => ("blocked", "work_blocked", "Work is blocked."),
+        WorkRunState::Failed => ("failed", "work_failed", "Work failed."),
+        WorkRunState::TimedOut => ("timed_out", "work_timed_out", "Work timed out."),
+        WorkRunState::Cancelled => ("cancelled", "work_cancelled", "Work was cancelled."),
+        _ => ("incomplete", "work_incomplete", "Work is incomplete."),
+    };
+    json!({
+        "status": status,
+        "code": code,
+        "summary": summary,
+        "evidence_refs": ["turn_outcome", "armature_report"],
+    })
 }
 
 /// Terminal transition; clears the lease, stamps finished_at, and appends the
@@ -768,29 +824,102 @@ pub async fn finalize_work_run(
     .ok_or_else(|| {
         DenError::ValidationError(format!("work run {run_id} is already finalized or unknown"))
     })?;
-
-    let event_type = match state {
-        WorkRunState::Succeeded => "completed",
-        WorkRunState::Cancelled => "cancelled",
-        _ => "blocked",
-    };
-    append_task_event(
-        &mut tx,
-        row.task_id,
-        row.job_run_id,
-        event_type,
-        None,
-        json!({
-            "work_run_id": row.id,
-            "attempt": row.attempt,
-            "final_state": state.as_str(),
-            "error": finalize.error,
-        }),
+    let task_statuses: Vec<(String,)> = sqlx::query_as(
+        "SELECT COALESCE(s.status, 'pending')
+         FROM bear_tasks t
+         LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+         WHERE t.job_id = $1",
     )
+    .bind(row.job_id)
+    .bind(row.job_run_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let task_statuses: Vec<String> = task_statuses.into_iter().map(|(status,)| status).collect();
+    let result_refs = row.result_refs.as_ref().unwrap_or(&Value::Null);
+    let canonical_state = canonical_work_run_state(state, result_refs, &task_statuses);
+    let canonical_outcome =
+        canonical_work_run_outcome(canonical_state, result_refs, &task_statuses);
+    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
+        "UPDATE bear_work_runs
+         SET state = $2,
+             result_summary = $3,
+             result_refs = COALESCE(result_refs, '{{}}'::jsonb)
+                 || jsonb_build_object('outcome', $4::jsonb)
+         WHERE id = $1
+         RETURNING {WORK_RUN_COLUMNS}"
+    ))
+    .bind(run_id)
+    .bind(canonical_state.as_str())
+    .bind(canonical_outcome["summary"].as_str())
+    .bind(&canonical_outcome)
+    .fetch_one(&mut *tx)
     .await?;
 
     tx.commit().await?;
     Ok(row)
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    #[test]
+    fn cargo_cache_miss_blocks_even_when_turn_completed() {
+        let refs = json!({
+            "cargo_failure": {
+                "code": "cargo_offline_cache_miss",
+                "required_package": "serde"
+            },
+            "turn_outcome": { "kind": "completed" },
+            "armature_report": { "status_hint": "completed" }
+        });
+        let task_statuses = vec!["pending".to_string()];
+        let state = canonical_work_run_state(WorkRunState::Succeeded, &refs, &task_statuses);
+        let outcome = canonical_work_run_outcome(state, &refs, &task_statuses);
+        assert_eq!(outcome["status"], "blocked");
+        assert_eq!(outcome["code"], "cargo_offline_cache_miss");
+        assert!(outcome["summary"].as_str().unwrap().contains("serde"));
+        assert!(outcome["next_action"]
+            .as_str()
+            .unwrap()
+            .contains("Prepare Rust dependencies"));
+    }
+
+    #[test]
+    fn unfinished_tasks_prevent_completed_outcome() {
+        let refs = json!({ "turn_outcome": { "kind": "completed" } });
+        let task_statuses = vec!["done".to_string(), "pending".to_string()];
+        let state = canonical_work_run_state(WorkRunState::Succeeded, &refs, &task_statuses);
+        let outcome = canonical_work_run_outcome(state, &refs, &task_statuses);
+        assert_eq!(state, WorkRunState::Blocked);
+        assert_eq!(outcome["status"], "incomplete");
+        assert_eq!(outcome["code"], "work_incomplete");
+    }
+
+    #[test]
+    fn terminal_worker_failures_remain_authoritative() {
+        let refs = json!({
+            "cargo_failure": { "code": "cargo_offline_cache_miss" },
+            "turn_outcome": { "kind": "completed" },
+        });
+        let task_statuses = vec!["pending".to_string()];
+        let state = canonical_work_run_state(WorkRunState::TimedOut, &refs, &task_statuses);
+        let outcome = canonical_work_run_outcome(state, &refs, &task_statuses);
+        assert_eq!(state, WorkRunState::TimedOut);
+        assert_eq!(outcome["status"], "timed_out");
+        assert_eq!(outcome["code"], "work_timed_out");
+    }
+
+    #[test]
+    fn blocked_task_beats_unfinished_task_count() {
+        let refs = json!({ "turn_outcome": { "kind": "completed" } });
+        let task_statuses = vec!["blocked".to_string(), "pending".to_string()];
+        let state = canonical_work_run_state(WorkRunState::Succeeded, &refs, &task_statuses);
+        let outcome = canonical_work_run_outcome(state, &refs, &task_statuses);
+        assert_eq!(state, WorkRunState::Blocked);
+        assert_eq!(outcome["status"], "blocked");
+        assert_eq!(outcome["code"], "task_blocked");
+    }
 }
 
 /// Ask the owning worker to cancel; teardown happens asynchronously. Returns
@@ -851,18 +980,41 @@ pub async fn checkout_work_run_for_session(
 ) -> Result<WorkRunCheckout, DenError> {
     let run = bind_work_run_session(pool, run_id, bear_id, session_id).await?;
 
-    let task: (String, String, sqlx::types::Json<Vec<String>>) =
-        sqlx::query_as("SELECT title, body, completion_criteria FROM bear_tasks WHERE id = $1")
-            .bind(run.task_id)
-            .fetch_one(pool)
-            .await?;
+    let active_task: Option<(Uuid, String, String, sqlx::types::Json<Vec<String>>)> =
+        sqlx::query_as(
+            "SELECT t.id, t.title, t.body, t.completion_criteria
+         FROM bear_tasks t
+         JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+         WHERE t.job_id = $1 AND s.status = 'in_progress'
+         ORDER BY t.sibling_order, t.created_at
+         LIMIT 1",
+        )
+        .bind(run.job_id)
+        .bind(run.job_run_id)
+        .fetch_optional(pool)
+        .await?;
+    let task = match active_task {
+        Some(task) => task,
+        None => {
+            let service = PgDocketService::from_pool(pool);
+            let task = service
+                .runnable_work_tasks(run.bear_id, 500)
+                .await?
+                .into_iter()
+                .find(|task| task.task.job_id == Some(run.job_id))
+                .ok_or_else(|| {
+                    DenError::ValidationError("job has no runnable work task for checkout".into())
+                })?
+                .task;
+            (task.id, task.title, task.body, task.completion_criteria)
+        }
+    };
+    let tasks = vec![task];
     let (goal, commit_policy): (String, Option<String>) =
         sqlx::query_as("SELECT goal, commit_policy FROM bear_jobs WHERE id = $1")
             .bind(run.job_id)
             .fetch_one(pool)
             .await?;
-    let publishes = matches!(commit_policy.as_deref(), Some("per_task" | "per_job"));
-
     crate::db::upsert_execution_session(
         pool,
         DocketExecutionSessionUpsert {
@@ -873,22 +1025,23 @@ pub async fn checkout_work_run_for_session(
             source_client_session_id: Some(session_id.to_string()),
             job_id: run.job_id,
             run_id: run.job_run_id,
-            task_id: Some(run.task_id),
+            task_id: None,
             state: "active".to_string(),
         },
     )
     .await?;
 
-    let (task_title, task_body, criteria) = (task.0, task.1, task.2 .0);
+    let task_title = format!(
+        "{} work task{}",
+        tasks.len(),
+        if tasks.len() == 1 { "" } else { "s" }
+    );
     let prompt = build_work_prompt(
         run.job_id,
         run.job_run_id,
-        run.task_id,
         &goal,
-        &task_title,
-        &task_body,
-        &criteria,
-        publishes,
+        &tasks,
+        commit_policy.as_deref(),
     );
     Ok(WorkRunCheckout {
         run,
@@ -900,50 +1053,49 @@ pub async fn checkout_work_run_for_session(
 fn build_work_prompt(
     job_id: Uuid,
     run_id: Uuid,
-    task_id: Uuid,
     goal: &str,
-    title: &str,
-    body: &str,
-    criteria: &[String],
-    publishes: bool,
+    tasks: &[(Uuid, String, String, sqlx::types::Json<Vec<String>>)],
+    commit_policy: Option<&str>,
 ) -> String {
     let mut prompt = String::new();
     prompt.push_str(
-        "You are executing a Docket task autonomously in the work stance, inside a sandbox. \
-         No user is present in this session and none will respond — never wait for user input \
-         or ask questions.\n\n",
+        "You are executing a Docket task autonomously in the work stance, inside a sandbox.\n\n",
     );
     prompt.push_str(&format!("Job objective: {goal}\n\n"));
     prompt.push_str("Docket execution identifiers:\n");
     prompt.push_str(&format!("- job_id: {job_id}\n"));
     prompt.push_str(&format!("- run_id: {run_id}\n"));
-    prompt.push_str(&format!("- task_id: {task_id}\n\n"));
-    prompt.push_str(&format!("Task: {title}\n"));
-    if !body.trim().is_empty() {
-        prompt.push_str(&format!("{body}\n"));
-    }
-    prompt.push_str("\nCompletion criteria — the task is done only when all of these hold:\n");
-    for criterion in criteria {
-        prompt.push_str(&format!("- {criterion}\n"));
+    prompt.push('\n');
+    for (task_id, title, body, criteria) in tasks {
+        prompt.push_str(&format!("Task ({task_id}): {title}\n"));
+        if !body.trim().is_empty() {
+            prompt.push_str(&format!("{body}\n"));
+        }
+        prompt.push_str("Completion criteria — this task is done only when all of these hold:\n");
+        for criterion in &criteria.0 {
+            prompt.push_str(&format!("- {criterion}\n"));
+        }
+        prompt.push('\n');
     }
     prompt.push_str(
         "\nRules:\n\
          - Operate only inside the sandbox workspace; it contains the work surface.\n\
-         - When every criterion is satisfied, call update_current_task_status with the \
-           job_id, run_id, and task_id above, status `done`, and a non-empty result_summary \
-           explaining how the criteria were satisfied — this is how success is recorded.\n\
-         - If you cannot make progress, mark the task blocked with a specific reason \
+         - Work through the listed tasks in order. When each task's criteria are satisfied, \
+           call update_current_task_status with its task_id plus the job_id and run_id above, \
+           status `done`, and a non-empty result_summary explaining the result.\n\
+         - If you cannot make progress on a task, mark that task blocked with a specific reason \
            using update_current_task_status instead of guessing or stopping silently.\n",
     );
-    if publishes {
-        prompt.push_str(
-            "- Commit your work as you go with clear, specific git commit messages; \
-               your commits are published to the job's work branch after the run.\n\
-             - Do not push, deploy, or call external services; publishing happens \
-               outside the sandbox after the run completes.\n",
-        );
-    } else {
-        prompt.push_str("- Do not push, publish, deploy, or call external services.\n");
+    match commit_policy {
+        Some("per_task") => prompt.push_str(
+            "- Commit the completed task with a clear, specific git commit message; Den publishes that commit to the job's work branch before the next task runs.\n\
+             - Do not push, deploy, or call external services; publishing happens outside the sandbox.\n",
+        ),
+        Some("per_job") => prompt.push_str(
+            "- Commit your work as you go with clear, specific git commit messages; Den publishes the final job commit to the job's work branch after the job completes.\n\
+             - Do not push, deploy, or call external services; publishing happens outside the sandbox after the job completes.\n",
+        ),
+        _ => prompt.push_str("- Do not push, publish, deploy, or call external services.\n"),
     }
     prompt
 }
@@ -962,7 +1114,6 @@ pub async fn get_work_run(pool: &PgPool, run_id: Uuid) -> Result<Option<WorkRunR
 pub struct WorkRunListFilter {
     pub bear_id: Option<Uuid>,
     pub job_id: Option<Uuid>,
-    pub task_id: Option<Uuid>,
     pub state: Option<String>,
     pub limit: i64,
 }
@@ -980,14 +1131,12 @@ pub async fn list_work_runs(
         "SELECT {WORK_RUN_COLUMNS} FROM bear_work_runs
          WHERE ($1::uuid IS NULL OR bear_id = $1)
            AND ($2::uuid IS NULL OR job_id = $2)
-           AND ($3::uuid IS NULL OR task_id = $3)
-           AND ($4::text IS NULL OR state = $4)
+           AND ($3::text IS NULL OR state = $3)
          ORDER BY queued_at DESC
-         LIMIT $5"
+         LIMIT $4"
     ))
     .bind(filter.bear_id)
     .bind(filter.job_id)
-    .bind(filter.task_id)
     .bind(filter.state.as_deref())
     .bind(limit)
     .fetch_all(pool)
@@ -1049,6 +1198,28 @@ pub async fn get_task_run_status(
     Ok(row.map(|(status,)| status))
 }
 
+/// Run-scoped states for every unfinished task in a job. A job-scoped work run
+/// owns the sandbox lifecycle; these remain the individual completion
+/// checkpoints reported by the agent.
+pub async fn get_job_work_task_run_statuses(
+    pool: &PgPool,
+    job_id: Uuid,
+    job_run_id: Uuid,
+) -> Result<Vec<(Uuid, String)>, DenError> {
+    sqlx::query_as(
+        "SELECT t.id, COALESCE(s.status, 'pending')
+         FROM bear_tasks t
+         LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+         WHERE t.job_id = $1
+         ORDER BY t.sibling_order, t.created_at",
+    )
+    .bind(job_id)
+    .bind(job_run_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
 /// Close the work-stance execution session opened by `work.checkout`.
 pub async fn close_work_execution_session(
     pool: &PgPool,
@@ -1068,13 +1239,14 @@ pub async fn close_work_execution_session(
     Ok(())
 }
 
-/// Bears that have any work-assigned tasks, for the optional auto-enqueue
+/// Bears that have jobs with unfinished tasks, for the optional auto-enqueue
 /// sweep (`WORK_DISPATCH_AUTO`).
 pub async fn list_bears_with_work_tasks(pool: &PgPool) -> Result<Vec<Uuid>, DenError> {
-    let rows: Vec<(Uuid,)> =
-        sqlx::query_as("SELECT DISTINCT bear_id FROM bear_tasks WHERE assigned_to_role = 'work'")
-            .fetch_all(pool)
-            .await?;
+    let rows: Vec<(Uuid,)> = sqlx::query_as(
+        "SELECT DISTINCT bear_id FROM bear_jobs WHERE status IN ('ready', 'running', 'blocked')",
+    )
+    .fetch_all(pool)
+    .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
@@ -1082,11 +1254,13 @@ pub async fn list_bears_with_work_tasks(pool: &PgPool) -> Result<Vec<Uuid>, DenE
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct WorkRunDispatchContext {
     pub bear_slug: String,
+    pub bear_name: String,
     pub created_by_user_id: i32,
     pub job_goal: String,
     pub work_surface_ref: Option<String>,
     pub commit_policy: Option<String>,
     pub work_branch: Option<String>,
+    pub allow_default_ref: bool,
 }
 
 impl WorkRunDispatchContext {
@@ -1103,11 +1277,13 @@ pub async fn get_work_run_dispatch_context(
     run_id: Uuid,
 ) -> Result<WorkRunDispatchContext, DenError> {
     sqlx::query_as::<_, WorkRunDispatchContext>(
-        "SELECT b.slug AS bear_slug, j.created_by_user_id, j.goal AS job_goal, j.work_surface_ref,
-                j.commit_policy, j.work_branch
+        "SELECT b.slug AS bear_slug, b.name AS bear_name, j.created_by_user_id, j.goal AS job_goal, j.work_surface_ref,
+                j.commit_policy, j.work_branch,
+                COALESCE(j.work_branch = s.default_ref, FALSE) AS allow_default_ref
          FROM bear_work_runs r
          JOIN bears b ON b.id = r.bear_id
          JOIN bear_jobs j ON j.id = r.job_id
+         LEFT JOIN work_surfaces s ON s.id = j.work_surface_id
          WHERE r.id = $1",
     )
     .bind(run_id)
@@ -1132,28 +1308,6 @@ pub async fn ensure_job_work_branch(pool: &PgPool, job_id: Uuid) -> Result<Strin
     .fetch_one(pool)
     .await?;
     Ok(branch)
-}
-
-async fn append_task_event(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    task_id: Uuid,
-    job_run_id: Uuid,
-    event_type: &str,
-    by_user_id: Option<i32>,
-    payload: Value,
-) -> Result<(), DenError> {
-    sqlx::query(
-        "INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_user_id, payload)
-         VALUES ($1, $2, $3, 'work', $4, $5::jsonb)",
-    )
-    .bind(task_id)
-    .bind(job_run_id)
-    .bind(event_type)
-    .bind(by_user_id)
-    .bind(&payload)
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
 }
 
 #[cfg(test)]

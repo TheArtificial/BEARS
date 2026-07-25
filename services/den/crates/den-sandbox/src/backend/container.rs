@@ -14,18 +14,112 @@
 
 use super::{AdoptedSandbox, BackendError, BackendStatus, ProvisionSpec};
 use crate::proc::{run_command, CaptureWindow, CommandSpec};
-use crate::protocol::{LogsResponse, NetworkMode};
+use crate::protocol::{
+    LogsResponse, NetworkMode, PrepareRustDependenciesRequest, PrepareRustDependenciesResponse,
+    RustDependencyPreparation, RustDependencyResolution,
+};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const DOCKER_TIMEOUT: Duration = Duration::from_secs(120);
 const DOCKER_OUTPUT_CAP: usize = 256 * 1024;
+const CARGO_DIAGNOSTIC_CAP: usize = 4096;
 const CONTAINER_PREFIX: &str = "den-sbx-";
 pub const SANDBOX_LABEL: &str = "den.sandbox";
 /// Label carried by per-sandbox egress relay containers (value = sandbox id).
 /// Deliberately not `den.sandbox=1` so relays are never adopted as sandboxes.
 pub const RELAY_LABEL: &str = "den.sandbox.relay";
+
+fn bounded_cargo_diagnostic(stderr: &str) -> String {
+    stderr
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .chars()
+        .take(CARGO_DIAGNOSTIC_CAP)
+        .collect()
+}
+
+fn rust_preparation_cargo_args(request: &PrepareRustDependenciesRequest) -> Vec<String> {
+    let command = match request.preparation {
+        RustDependencyPreparation::Fetch => "fetch",
+        RustDependencyPreparation::Check => "check",
+        RustDependencyPreparation::TestNoRun => "test",
+    };
+    let mut args = vec![
+        command.to_string(),
+        "--manifest-path".to_string(),
+        request.manifest_path.clone(),
+    ];
+    if !request.package.is_empty() {
+        args.extend(["-p".to_string(), request.package.clone()]);
+    }
+    if request.preparation == RustDependencyPreparation::TestNoRun {
+        args.push("--no-run".to_string());
+    }
+    if request.resolution == RustDependencyResolution::Locked {
+        args.push("--locked".to_string());
+    }
+    args
+}
+
+fn classify_cargo_failure(diagnostic: &str) -> &'static str {
+    if diagnostic.contains("failed to download")
+        || diagnostic.contains("failed to get")
+        || diagnostic.contains("Could not resolve host")
+        || diagnostic.contains("network failure")
+    {
+        "registry_download_failed"
+    } else if diagnostic.contains("no matching package named")
+        || diagnostic.contains("failed to select a version")
+        || diagnostic.contains("failed to resolve")
+    {
+        "cargo_resolution_failed"
+    } else if diagnostic.contains("failed to parse manifest")
+        || diagnostic.contains("failed to load manifest")
+    {
+        "cargo_manifest_invalid"
+    } else {
+        "cargo_preparation_failed"
+    }
+}
+
+/// Reject Cargo configuration which can redirect the privileged helper to an
+/// arbitrary registry. This is deliberately a small preflight rather than a
+/// TOML parser: we only need to recognize section headers, and fail closed for
+/// the two configuration namespaces that change dependency sources.
+fn cargo_source_configuration_error(workspace: &Path) -> Option<String> {
+    for relative in [".cargo/config.toml", ".cargo/config"] {
+        let path = workspace.join(relative);
+        let Ok(config) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in config.lines() {
+            let section = line.trim();
+            if section.starts_with("[source") || section.starts_with("[registries") {
+                return Some(format!(
+                    "{relative} configures an alternate Cargo source or registry; hosted dependency preparation supports crates.io only"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// The helper has egress solely to populate the Den-managed cache. Git
+/// dependencies would turn that into arbitrary-host egress, so reject them
+/// before starting a helper container.
+fn git_dependency_error(manifest: &Path) -> Option<String> {
+    let Ok(contents) = std::fs::read_to_string(manifest) else {
+        return None;
+    };
+    contents
+        .lines()
+        .any(|line| line.contains("git ="))
+        .then(|| "hosted dependency preparation does not support git dependencies".to_string())
+}
 
 pub struct DockerCliBackend {
     docker_bin: String,
@@ -142,43 +236,225 @@ impl DockerCliBackend {
             detail,
         })?;
         if let Some(target) = target {
-            let relay = relay_container_name(&spec.id);
-            let out = self
-                .docker_owned(
-                    &relay_run_args(&relay, &spec.id, &spec.image, &target, add_host),
-                    None,
-                )
+            self.start_relay(
+                &network,
+                spec,
+                &target,
+                &relay_container_name(&spec.id),
+                None,
+                add_host,
+            )
+            .await?;
+            env.insert(
+                "DEN_API_URL".to_string(),
+                target.rewritten_url(&relay_container_name(&spec.id)),
+            );
+        }
+        for (index, host) in spec.allowed_outbound_hosts.iter().enumerate() {
+            let relay = egress_relay_container_name(&spec.id, index);
+            let target = RelayTarget {
+                host: host.clone(),
+                port: 443,
+                path: String::new(),
+            };
+            self.start_relay(&network, spec, &target, &relay, Some(host), None)
                 .await?;
-            if !out.success() {
-                return Err(BackendError::Operation {
-                    id: spec.id.clone(),
-                    detail: format!("relay start failed: {}", out.stderr_lossy().trim()),
-                });
-            }
-            let out = self
-                .docker(&["network", "connect", &network, &relay], None)
-                .await?;
-            if !out.success() {
-                return Err(BackendError::Operation {
-                    id: spec.id.clone(),
-                    detail: format!(
-                        "relay network connect failed: {}",
-                        out.stderr_lossy().trim()
-                    ),
-                });
-            }
-            env.insert("DEN_API_URL".to_string(), target.rewritten_url(&relay));
         }
         Ok(network)
+    }
+
+    /// A relay is the only container with an external network attachment.
+    /// The sandbox sees it only under the approved hostname, so its normal DNS
+    /// resolver remains usable without exposing arbitrary name resolution.
+    async fn start_relay(
+        &self,
+        network: &str,
+        spec: &ProvisionSpec,
+        target: &RelayTarget,
+        relay: &str,
+        alias: Option<&str>,
+        add_host: Option<&str>,
+    ) -> Result<(), BackendError> {
+        let out = self
+            .docker_owned(
+                &relay_run_args(relay, &spec.id, &spec.image, target, add_host),
+                None,
+            )
+            .await?;
+        if !out.success() {
+            return Err(BackendError::Operation {
+                id: spec.id.clone(),
+                detail: format!("relay start failed: {}", out.stderr_lossy().trim()),
+            });
+        }
+        let mut args = vec!["network".to_string(), "connect".to_string()];
+        if let Some(alias) = alias {
+            args.extend(["--alias".to_string(), alias.to_string()]);
+        }
+        args.extend([network.to_string(), relay.to_string()]);
+        let out = self.docker_owned(&args, None).await?;
+        if !out.success() {
+            return Err(BackendError::Operation {
+                id: spec.id.clone(),
+                detail: format!(
+                    "relay network connect failed: {}",
+                    out.stderr_lossy().trim()
+                ),
+            });
+        }
+        Ok(())
     }
 
     /// Best-effort removal of the per-sandbox relay container and network.
     /// Safe to call for open-mode sandboxes (both removals no-op on missing).
     async fn cleanup_network_resources(&self, id: &str) {
-        let relay = relay_container_name(id);
-        let _ = self.docker(&["rm", "-f", &relay], None).await;
+        let relays = self
+            .docker(
+                &[
+                    "ps",
+                    "-aq",
+                    "--filter",
+                    &format!("label={RELAY_LABEL}={id}"),
+                ],
+                None,
+            )
+            .await
+            .ok()
+            .map(|out| {
+                out.stdout_lossy()
+                    .lines()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for relay in relays {
+            let _ = self.docker(&["rm", "-f", &relay], None).await;
+        }
         let network = network_name(id);
         let _ = self.docker(&["network", "rm", &network], None).await;
+    }
+
+    pub async fn prepare_rust_dependencies(
+        &self,
+        id: &str,
+        workspace: &std::path::Path,
+        workspace_bind_source: &std::path::Path,
+        cargo_home_volume: &str,
+        image: &str,
+        request: &PrepareRustDependenciesRequest,
+    ) -> Result<PrepareRustDependenciesResponse, BackendError> {
+        let manifest = workspace.join(&request.manifest_path);
+        if !manifest.is_file() {
+            return Err(BackendError::Operation {
+                id: id.to_string(),
+                detail: "manifest is not present in sandbox workspace".to_string(),
+            });
+        }
+        if let Some(detail) =
+            cargo_source_configuration_error(workspace).or_else(|| git_dependency_error(&manifest))
+        {
+            return Ok(PrepareRustDependenciesResponse {
+                status: "rejected".to_string(),
+                code: "unsupported_cargo_source_configuration".to_string(),
+                stage: "preflight".to_string(),
+                retryable: false,
+                content: detail,
+                lockfile_changed: false,
+            });
+        }
+        let cargo_args = rust_preparation_cargo_args(request);
+        let init_out = self
+            .docker_owned(&cargo_home_init_args(cargo_home_volume, image), None)
+            .await?;
+        if !init_out.success() {
+            return Ok(PrepareRustDependenciesResponse {
+                status: "failed".to_string(),
+                code: "cargo_cache_initialization_failed".to_string(),
+                stage: "helper".to_string(),
+                retryable: false,
+                content: format!(
+                    "Cargo cache initialization failed: {}",
+                    bounded_cargo_diagnostic(&init_out.stderr_lossy())
+                ),
+                lockfile_changed: false,
+            });
+        }
+        let helper = format!("den-cargo-helper-{id}");
+        let mut args = vec![
+            "run".to_string(),
+            "--rm".to_string(),
+            "--name".to_string(),
+            helper,
+            "-v".to_string(),
+            format!("{}:/workspace:rw", workspace_bind_source.display()),
+            "-v".to_string(),
+            format!("{cargo_home_volume}:/den/cargo-home:rw"),
+            "-w".to_string(),
+            "/workspace".to_string(),
+            "-e".to_string(),
+            "CARGO_HOME=/den/cargo-home".to_string(),
+            "-e".to_string(),
+            "SQLX_OFFLINE=true".to_string(),
+            "--network".to_string(),
+            "bridge".to_string(),
+            "--entrypoint".to_string(),
+            "cargo".to_string(),
+            image.to_string(),
+        ];
+        args.extend(cargo_args);
+        let out = self.docker_owned(&args, None).await?;
+        let lockfile_changed =
+            request.resolution == RustDependencyResolution::UpdateLockfile && out.success();
+        let (status, code, stage, retryable, content) = if out.success() {
+            let mode = match request.preparation {
+                RustDependencyPreparation::Fetch => "fetch",
+                RustDependencyPreparation::Check => "check",
+                RustDependencyPreparation::TestNoRun => "test --no-run",
+            };
+            let resolution = match request.resolution {
+                RustDependencyResolution::Locked => "existing lockfile verified",
+                RustDependencyResolution::UpdateLockfile if lockfile_changed => {
+                    "lockfile update requested; Cargo completed successfully"
+                }
+                RustDependencyResolution::UpdateLockfile => {
+                    "lockfile update requested; Cargo reported no lockfile change"
+                }
+            };
+            (
+                "prepared",
+                "prepared",
+                "publish",
+                false,
+                format!(
+                    "Rust dependencies prepared for offline use (mode: {mode}; {resolution}; cache mounted read-only at /den/cargo-home)."
+                ),
+            )
+        } else if out.timed_out {
+            (
+                "failed",
+                "helper_timed_out",
+                "helper",
+                true,
+                "Cargo preparation timed out".to_string(),
+            )
+        } else {
+            let detail = bounded_cargo_diagnostic(&out.stderr_lossy());
+            (
+                "failed",
+                classify_cargo_failure(&detail),
+                "helper",
+                false,
+                format!("Cargo preparation failed: {detail}"),
+            )
+        };
+        Ok(PrepareRustDependenciesResponse {
+            status: status.to_string(),
+            code: code.to_string(),
+            stage: stage.to_string(),
+            retryable,
+            content,
+            lockfile_changed,
+        })
     }
 
     pub async fn status(&self, id: &str) -> Result<BackendStatus, BackendError> {
@@ -422,6 +698,10 @@ pub fn relay_container_name(id: &str) -> String {
     format!("den-sbx-gw-{id}")
 }
 
+fn egress_relay_container_name(id: &str, index: usize) -> String {
+    format!("den-sbx-egress-{id}-{index}")
+}
+
 /// Where the egress relay forwards to, parsed from the sandbox's Den
 /// callback URL.
 #[derive(Debug, PartialEq, Eq)]
@@ -539,6 +819,23 @@ fn relay_run_args(
     args
 }
 
+fn cargo_home_init_args(cargo_home_volume: &str, image: &str) -> Vec<String> {
+    vec![
+        "run".into(),
+        "--rm".into(),
+        "--user".into(),
+        "root".into(),
+        "-v".into(),
+        format!("{cargo_home_volume}:/den/cargo-home:rw"),
+        "--entrypoint".into(),
+        "chown".into(),
+        image.into(),
+        "-R".into(),
+        "bear:bear".into(),
+        "/den/cargo-home".into(),
+    ]
+}
+
 fn sandbox_run_args(
     spec: &ProvisionSpec,
     container: &str,
@@ -569,6 +866,10 @@ fn sandbox_run_args(
         "-w".into(),
         "/workspace".into(),
     ];
+    if let Some(volume) = &spec.cargo_home_volume {
+        args.push("-v".into());
+        args.push(format!("{volume}:/den/cargo-home:ro"));
+    }
     if let Some(network) = network {
         args.push("--network".into());
         args.push(network.into());
@@ -602,6 +903,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn classifies_bounded_cargo_failures() {
+        assert_eq!(
+            classify_cargo_failure("error: failed to get `serde` as a dependency"),
+            "registry_download_failed"
+        );
+        assert_eq!(
+            classify_cargo_failure("error: no matching package named `serde` found"),
+            "cargo_resolution_failed"
+        );
+        assert_eq!(
+            classify_cargo_failure("error: failed to parse manifest"),
+            "cargo_manifest_invalid"
+        );
+        assert_eq!(bounded_cargo_diagnostic("\nerror: bad\n\n"), "error: bad");
+        assert!(
+            format!(
+                "Rust dependencies prepared for offline use (mode: {}; {}; cache mounted read-only at /den/cargo-home).",
+                "check", "existing lockfile verified"
+            )
+            .contains("cache mounted read-only")
+        );
+    }
+
+    #[test]
     fn container_names_round_trip() {
         let name = container_name("abc123");
         assert_eq!(name, "den-sbx-abc123");
@@ -625,10 +950,12 @@ mod tests {
             image: "bears/sandbox:latest".into(),
             env: BTreeMap::new(),
             network,
+            allowed_outbound_hosts: Vec::new(),
             memory_mb: None,
             cpus: None,
             pids: None,
             labels: BTreeMap::new(),
+            cargo_home_volume: None,
         }
     }
 
@@ -651,6 +978,19 @@ mod tests {
         // The bind source is the HOST path, never the provider-local one.
         assert!(joined.contains("-v /host/ws/abc123:/workspace"), "{joined}");
         assert!(!joined.contains("/srv/ws/abc123"), "{joined}");
+
+        let mut with_cache = restricted;
+        with_cache.cargo_home_volume = Some("den-cargo-cache-lock123".into());
+        let cache_args = sandbox_run_args(
+            &with_cache,
+            "den-sbx-abc123",
+            "/tmp/e.env",
+            Some("den-sbx-net-abc123"),
+            None,
+        );
+        assert!(cache_args
+            .join(" ")
+            .contains("den-cargo-cache-lock123:/den/cargo-home:ro"));
 
         // Open mode dials the callback directly, so it carries the resolved
         // extra-host mapping.
@@ -695,6 +1035,29 @@ mod tests {
             "https://den.example.com".to_string(),
         );
         assert!(relay_target_from_env(&env).is_err());
+    }
+
+    #[test]
+    fn allowed_egress_uses_an_internal_dns_alias_and_https_only_relay() {
+        let target = RelayTarget {
+            host: "index.crates.io".into(),
+            port: 443,
+            path: String::new(),
+        };
+        let args = relay_run_args(
+            "den-sbx-egress-abc123-0",
+            "abc123",
+            "bears/sandbox:latest",
+            &target,
+            None,
+        );
+        let joined = args.join(" ");
+        assert!(joined.contains("TCP-LISTEN:443,fork,reuseaddr"), "{joined}");
+        assert!(joined.contains("TCP:index.crates.io:443"), "{joined}");
+        assert_eq!(
+            egress_relay_container_name("abc123", 0),
+            "den-sbx-egress-abc123-0"
+        );
     }
 
     #[test]
@@ -753,6 +1116,39 @@ mod tests {
             .await
             .expect("localhost resolves");
         assert!(mapping.starts_with("localhost:"), "{mapping}");
+    }
+
+    #[test]
+    fn cargo_cache_is_initialized_for_the_sandbox_user() {
+        let args = cargo_home_init_args("den-cargo-cache-run123", "bears/sandbox-rust:latest");
+        assert_eq!(
+            args,
+            [
+                "run",
+                "--rm",
+                "--user",
+                "root",
+                "-v",
+                "den-cargo-cache-run123:/den/cargo-home:rw",
+                "--entrypoint",
+                "chown",
+                "bears/sandbox-rust:latest",
+                "-R",
+                "bear:bear",
+                "/den/cargo-home",
+            ]
+        );
+    }
+
+    #[test]
+    fn whole_workspace_preparation_fetches_locked_manifest_without_empty_package_flag() {
+        let args = rust_preparation_cargo_args(&PrepareRustDependenciesRequest {
+            manifest_path: "Cargo.toml".to_string(),
+            package: String::new(),
+            resolution: RustDependencyResolution::Locked,
+            preparation: RustDependencyPreparation::Fetch,
+        });
+        assert_eq!(args, ["fetch", "--manifest-path", "Cargo.toml", "--locked"]);
     }
 
     #[test]

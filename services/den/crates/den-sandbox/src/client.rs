@@ -4,8 +4,10 @@
 use crate::protocol::{
     BuildImageRequest, CatalogResponse, CreateSandboxRequest, DiffResponse, ErrorBody,
     HealthResponse, ImageStoreResponse, LogsResponse, ManagedConfig, ManagedConfigStatus,
-    OperationAccepted, OperationDescriptor, PublishRequest, PublishResponse, PullImageRequest,
-    RemoveImageRequest, SandboxDescriptor, SyncRootResponse,
+    OperationAccepted, OperationDescriptor, PrepareRustDependenciesRequest,
+    PrepareRustDependenciesResponse, PublishRequest, PublishResponse, PullImageRequest,
+    RemoveImageRequest, RootComparisonResponse, RootInspectionResponse, SandboxDescriptor,
+    SyncRootResponse,
 };
 use std::time::Duration;
 
@@ -147,9 +149,48 @@ impl SandboxClient {
         Self::json_or_error(response).await
     }
 
+    /// Run the provider-owned fixed Cargo helper for an existing sandbox.
+    /// This is intentionally not a generic command-execution endpoint.
+    pub async fn prepare_rust_dependencies(
+        &self,
+        id: &str,
+        request: &PrepareRustDependenciesRequest,
+    ) -> Result<PrepareRustDependenciesResponse, SandboxClientError> {
+        let response = self
+            .authorized(
+                self.http
+                    .post(self.url(&format!("/sandbox/v1/sandboxes/{id}/rust-dependencies"))),
+            )
+            .json(request)
+            .send()
+            .await?;
+        Self::json_or_error(response).await
+    }
+
     /// Selectable roots and images on this provider.
     pub async fn catalog(&self) -> Result<CatalogResponse, SandboxClientError> {
         self.get_json("/sandbox/v1/catalog").await
+    }
+
+    pub async fn inspect_root(
+        &self,
+        name: &str,
+    ) -> Result<RootInspectionResponse, SandboxClientError> {
+        self.get_json(&format!("/sandbox/v1/roots/{name}")).await
+    }
+
+    pub async fn compare_root(
+        &self,
+        name: &str,
+        base: &str,
+        head: &str,
+    ) -> Result<RootComparisonResponse, SandboxClientError> {
+        self.get_json(&format!(
+            "/sandbox/v1/roots/{name}/compare?base={}&head={}",
+            urlencoding::encode(base),
+            urlencoding::encode(head)
+        ))
+        .await
     }
 
     pub async fn sync_root(&self, name: &str) -> Result<SyncRootResponse, SandboxClientError> {

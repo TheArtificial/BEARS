@@ -76,6 +76,7 @@ mod tests {
             env: Default::default(),
             limits: Default::default(),
             labels: Default::default(),
+            cargo_home_volume: None,
         }
     }
 

@@ -368,6 +368,27 @@ Use when the session is bound to a backing runtime context.
 
 `open_obligations` is optional and diagnostic. When present, it exposes Den-owned liveness state so armatures can report or recover from missed local-tool/permission obligations without inferring state from rendered transcript text.
 
+#### `runtime.objective_orientation`
+
+A non-blocking, advisory runtime-context update. It describes the current conversation objective/orientation for diagnostics and compatible surface projections. It does not create a client obligation, alter run liveness, require a response, or require model continuation.
+
+```json
+{
+  "conversation_id": "conv_123",
+  "kind": "focused",
+  "orientation": {
+    "job": {
+      "active_task_ref": {
+        "job_id": "job_123",
+        "task_id": "task_123"
+      }
+    }
+  }
+}
+```
+
+Armatures that do not project this metadata must ignore it. They should classify it as an optional compatibility event rather than reporting it as an unknown protocol event.
+
 #### `model.selection.changed`
 
 Emitted when the conversation-scoped model selection for a BearWire/ACP session changes.

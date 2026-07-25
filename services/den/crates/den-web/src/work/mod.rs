@@ -1,12 +1,11 @@
 // ROUTES: When modifying routes in this file, update /src/ROUTES.md.
 //! Operator UI for autonomous work: Docket jobs with work tasks, work runs,
-//! and their sandbox execution results. Read-mostly; the only controls are
-//! the safe trio (dispatch, cancel, retry), all of which flow through the
-//! same durable state the dispatch worker uses — this UI never touches the
-//! sandbox host directly.
+//! and their sandbox execution results. Controls flow through the same durable
+//! state the dispatch worker uses — this UI never touches the sandbox host
+//! directly.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Router,
@@ -15,6 +14,93 @@ use axum_extra::extract::Form;
 use minijinja::context;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+const DISPLAY_ID_HEX_LEN: usize = 8;
+const ROUTE_ID_HEX_LEN: usize = 16;
+
+fn uuid_hex_prefix(id: Uuid, len: usize) -> String {
+    id.simple().to_string()[..len].to_string()
+}
+
+fn tasks_parent_first<'a>(
+    tasks: &'a [den_docket::DocketTaskRow],
+) -> Vec<(&'a den_docket::DocketTaskRow, usize)> {
+    fn visit<'a>(
+        tasks: &'a [den_docket::DocketTaskRow],
+        parent: Option<Uuid>,
+        depth: usize,
+        ordered: &mut Vec<(&'a den_docket::DocketTaskRow, usize)>,
+    ) {
+        let mut children: Vec<_> = tasks
+            .iter()
+            .filter(|task| task.parent_task_id == parent)
+            .collect();
+        children.sort_by_key(|task| task.sibling_order);
+        for task in children {
+            ordered.push((task, depth));
+            visit(tasks, Some(task.id), depth + 1, ordered);
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(tasks.len());
+    visit(tasks, None, 0, &mut ordered);
+    ordered
+}
+
+pub(crate) fn entity_ref(
+    id: Uuid,
+    kind: &str,
+    title: impl Into<String>,
+    status: Option<&str>,
+) -> serde_json::Value {
+    let marker = match status {
+        Some("running" | "in_progress" | "queued" | "claimed" | "provisioning" | "reporting") => {
+            "▶️ "
+        }
+        Some("blocked" | "failed" | "timed_out") => "⚠️ ",
+        Some("completed" | "done" | "succeeded") => "✅ ",
+        _ => "",
+    };
+    serde_json::json!({
+        "kind": kind,
+        "id": uuid_hex_prefix(id, DISPLAY_ID_HEX_LEN),
+        "route_id": uuid_hex_prefix(id, ROUTE_ID_HEX_LEN),
+        "full_id": id.to_string(),
+        "title": format!("{marker}{}", title.into()),
+    })
+}
+
+pub(crate) fn route_id(id: Uuid) -> String {
+    uuid_hex_prefix(id, ROUTE_ID_HEX_LEN)
+}
+
+pub(crate) async fn resolve_uuid_prefix(
+    pool: &sqlx::PgPool,
+    table: &'static str,
+    prefix: &str,
+) -> Result<Uuid, CustomError> {
+    if !(prefix.len() == ROUTE_ID_HEX_LEN || prefix.len() == 32 || prefix.len() == 36)
+        || !prefix.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+    {
+        return Err(CustomError::NotFound("entity not found".to_string()));
+    }
+    if let Ok(id) = Uuid::parse_str(prefix) {
+        return Ok(id);
+    }
+    let sql =
+        format!("SELECT id FROM {table} WHERE replace(id::text, '-', '') LIKE $1 || '%' LIMIT 2");
+    let ids: Vec<Uuid> = sqlx::query_scalar(&sql)
+        .bind(prefix.to_ascii_lowercase())
+        .fetch_all(pool)
+        .await
+        .map_err(den_core::DenError::from)?;
+    match ids.as_slice() {
+        [id] => Ok(*id),
+        _ => Err(CustomError::NotFound(
+            "entity not found or reference is ambiguous".to_string(),
+        )),
+    }
+}
 
 use crate::{
     auth_backend::AuthSession,
@@ -25,8 +111,9 @@ use den_docket::work_runs::{self, WorkRunListFilter, WorkRunRow, SCRATCH_ROOT_NA
 use den_docket::{
     DocketCommitPolicy, DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint,
     DocketJobCreate, DocketJobCriterionInput, DocketJobListFilter, DocketJobStatus,
-    DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDifficulty, DocketTaskInput,
-    DocketTaskKind, DocketTaskScope, PgDocketService, TaskListVisibility,
+    DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskRunStateUpdate,
+    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, TaskListVisibility,
 };
 use den_sandbox::protocol::CatalogResponse;
 use den_sandbox::SandboxClient;
@@ -43,11 +130,24 @@ pub fn router() -> Router<AppState> {
         .route("/work", get(index))
         .route("/work/new", get(new_job_form).post(create_job))
         .route("/work/jobs/{job_id}", get(job_detail))
+        .route("/work/jobs/{job_id}/edit", post(edit_job))
         .route("/work/jobs/{job_id}/duplicate", post(duplicate_job))
         .route("/work/jobs/{job_id}/complete", post(complete_job))
-        .route("/work/jobs/{job_id}/extend", post(extend_job))
+        .route("/work/jobs/{job_id}/tasks", post(add_top_level_task))
+        .route("/work/jobs/{job_id}/dispatch", post(dispatch_job))
+        .route(
+            "/work/jobs/{job_id}/tasks/{task_id}/retry",
+            post(retry_task),
+        )
+        .route(
+            "/work/jobs/{job_id}/tasks/{task_id}/children",
+            post(add_child_task),
+        )
+        .route(
+            "/work/jobs/{job_id}/tasks/{task_id}/move/{direction}",
+            post(move_task),
+        )
         .route("/work/runs/{run_id}", get(run_detail))
-        .route("/work/tasks/{task_id}/dispatch", post(dispatch_task))
         .route("/work/runs/{run_id}/cancel", post(cancel_run))
         .route("/work/runs/{run_id}/retry", post(retry_run))
         .merge(surfaces::router())
@@ -74,12 +174,19 @@ async fn provider_catalog(state: &AppState) -> Option<CatalogResponse> {
 #[derive(Serialize)]
 struct RunView {
     id: String,
+    display_id: String,
+    route_id: String,
+    full_id: String,
+    title: String,
     state: String,
     is_active: bool,
     attempt: i32,
     bear_slug: String,
     job_id: String,
-    task_id: String,
+    job_display_id: String,
+    job_route_id: String,
+    job_full_id: String,
+    job_title: String,
     root: Option<String>,
     git_ref: Option<String>,
     image: Option<String>,
@@ -103,13 +210,121 @@ struct RunView {
     waiting_on_run_id: Option<String>,
 }
 
+#[derive(Serialize)]
+struct RunDiagnostic {
+    title: &'static str,
+    operation: &'static str,
+    evidence: &'static str,
+    recovery: &'static str,
+}
+
+/// Recognize only failures for which this UI can give a concrete, safe next
+/// step. Everything else remains visible in the stored outcome and raw log.
+fn run_diagnostic(
+    result_summary: Option<&str>,
+    error: Option<&str>,
+    log_tail: &str,
+) -> Option<RunDiagnostic> {
+    let evidence = [
+        result_summary.unwrap_or_default(),
+        error.unwrap_or_default(),
+        log_tail,
+    ]
+    .join("\n")
+    .to_ascii_lowercase();
+    let cargo = evidence.contains("cargo")
+        && (evidence.contains("crates.io")
+            || evidence.contains("crates.io index")
+            || evidence.contains("updating the crates.io index"));
+    let network_failure = evidence.contains("tls")
+        || evidence.contains("transfer")
+        || evidence.contains("timeout")
+        || evidence.contains("network failure");
+    (cargo && network_failure).then_some(RunDiagnostic {
+        title: "Cargo dependency access failed",
+        operation: "Cargo attempted to update the crates.io index.",
+        evidence: "The run recorded a TLS, transfer, or timeout failure while accessing the registry.",
+        recovery: "Restore sandbox access to the required registry host, or provide a local Cargo index and dependency cache; then retry the blocked task and dispatch the job again.",
+    })
+}
+
+/// Render the canonical outcome persisted by Docket. Older runs without it
+/// retain the legacy fallback until they are retried or finalized again.
+fn work_run_outcome(
+    run: &WorkRunRow,
+    task_statuses: &[(Uuid, String)],
+    cargo_failure: Option<&serde_json::Value>,
+) -> String {
+    if let Some(summary) = run
+        .result_refs
+        .as_ref()
+        .and_then(|refs| refs.pointer("/outcome/summary"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|summary| !summary.trim().is_empty())
+    {
+        return summary.to_string();
+    }
+    if cargo_failure
+        .and_then(|failure| failure.get("code"))
+        .and_then(serde_json::Value::as_str)
+        == Some("cargo_offline_cache_miss")
+    {
+        let package = cargo_failure
+            .and_then(|failure| failure.get("required_package"))
+            .and_then(serde_json::Value::as_str)
+            .map(|package| format!(" `{package}`"))
+            .unwrap_or_default();
+        return format!(
+            "Blocked: Rust dependencies are unavailable in the offline cache.{package} could not be resolved. Dependency preparation was not attempted; prepare Rust dependencies, then retry Cargo."
+        );
+    }
+    let unfinished = task_statuses
+        .iter()
+        .filter(|(_, status)| status != "done" && status != "cancelled")
+        .collect::<Vec<_>>();
+    if !unfinished.is_empty() && run.state == "succeeded" {
+        let blocked = unfinished
+            .iter()
+            .filter(|(_, status)| status.as_str() == "blocked")
+            .count();
+        let status = if blocked > 0 { "blocked" } else { "incomplete" };
+        return format!(
+            "Work {status}: {} task{} remain {}. The Armature terminal event only confirms that the agent turn ended.",
+            unfinished.len(),
+            if unfinished.len() == 1 { "" } else { "s" },
+            if blocked > 0 { "blocked" } else { "unfinished" },
+        );
+    }
+    if let Some(summary) = run
+        .result_summary
+        .as_deref()
+        .filter(|summary| !summary.trim().is_empty())
+    {
+        return summary.to_string();
+    }
+    if let Some(error) = run
+        .error
+        .as_deref()
+        .filter(|error| !error.trim().is_empty())
+    {
+        return format!("Execution failed: {error}");
+    }
+    match run.state.as_str() {
+        "succeeded" => "The worker completed without a detailed summary.".to_string(),
+        "blocked" => "Execution is blocked; inspect the diagnostic and run output for the cause.".to_string(),
+        "failed" | "timed_out" => "Execution stopped before producing a detailed outcome; inspect the diagnostic and run output.".to_string(),
+        "cancelled" => "Execution was cancelled before completion.".to_string(),
+        _ => "Execution is still in progress.".to_string(),
+    }
+}
+
 fn ts(value: time::OffsetDateTime) -> String {
     value
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default()
 }
 
-fn run_view(run: &WorkRunRow, bear_slug: &str) -> RunView {
+fn run_view(run: &WorkRunRow, bear_slug: &str, job_title: &str) -> RunView {
     let is_active = run.state_enum().is_some_and(|state| !state.is_terminal());
     let duration_secs = run.started_at.map(|started| {
         let end = run
@@ -130,14 +345,31 @@ fn run_view(run: &WorkRunRow, bear_slug: &str) -> RunView {
             .and_then(serde_json::Value::as_str)
             .map(str::to_string)
     };
+    let reference = entity_ref(run.id, "Run", job_title, Some(&run.state));
     RunView {
         id: run.id.to_string(),
+        display_id: reference["id"].as_str().unwrap_or_default().to_string(),
+        route_id: reference["route_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        full_id: reference["full_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        title: reference["title"].as_str().unwrap_or_default().to_string(),
         state: run.state.clone(),
         is_active,
         attempt: run.attempt,
         bear_slug: bear_slug.to_string(),
-        job_id: run.job_id.to_string(),
-        task_id: run.task_id.to_string(),
+        job_id: route_id(run.job_id),
+        job_display_id: uuid_hex_prefix(run.job_id, DISPLAY_ID_HEX_LEN),
+        job_route_id: route_id(run.job_id),
+        job_full_id: run.job_id.to_string(),
+        job_title: entity_ref(run.job_id, "Job", job_title, None)["title"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         root: run.root_name.clone(),
         git_ref: run.git_ref.clone(),
         image: run.image_name.clone(),
@@ -207,67 +439,83 @@ async fn member_bears(
         .collect())
 }
 
+#[derive(Deserialize, Default)]
+struct WorkIndexQuery {
+    completed: Option<String>,
+}
+
 async fn index(
     State(state): State<AppState>,
     auth_session: AuthSession,
+    Query(query): Query<WorkIndexQuery>,
 ) -> Result<Response, CustomError> {
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
+    let show_completed = query.completed.as_deref() == Some("show");
 
-    let mut runs: Vec<RunView> = Vec::new();
-    let mut run_rows: Vec<WorkRunRow> = Vec::new();
-    let mut jobs_with_work: Vec<serde_json::Value> = Vec::new();
     let mut attention: Vec<serde_json::Value> = Vec::new();
+    let mut jobs_with_work: Vec<serde_json::Value> = Vec::new();
     let mut awaiting_completion: Vec<serde_json::Value> = Vec::new();
     for (bear_id, bear_slug) in &bears {
         for run in work_runs::attention_work_runs(state.sqlx_pool(), *bear_id, None, 20).await? {
             attention.push(serde_json::json!({
-                "run_id": run.run_id.to_string(),
-                "job_id": run.job_id.to_string(),
+                "run_id": route_id(run.run_id),
+                "run_display_id": uuid_hex_prefix(run.run_id, DISPLAY_ID_HEX_LEN),
+                "run_full_id": run.run_id.to_string(),
+                "job_id": route_id(run.job_id),
+                "job_display_id": uuid_hex_prefix(run.job_id, DISPLAY_ID_HEX_LEN),
+                "job_full_id": run.job_id.to_string(),
                 "bear_slug": bear_slug,
-                "task_title": run.task_title,
-                "job_goal": run.job_goal,
+                "job_goal": entity_ref(run.job_id, "Job", &run.job_goal, None)["title"],
+                "run_title": entity_ref(run.run_id, "Run", &run.job_goal, Some(&run.state))["title"],
                 "state": run.state,
                 "reason": run.result_summary.or(run.error),
             }));
         }
         for job in work_runs::jobs_awaiting_completion(state.sqlx_pool(), *bear_id).await? {
             awaiting_completion.push(serde_json::json!({
-                "id": job.id.to_string(),
+                "id": route_id(job.id),
+                "display_id": uuid_hex_prefix(job.id, DISPLAY_ID_HEX_LEN),
+                "full_id": job.id.to_string(),
+                "title": entity_ref(job.id, "Job", &job.goal, Some(&job.status))["title"],
                 "bear_slug": bear_slug,
-                "goal": job.goal,
                 "status": job.status,
             }));
         }
-        let bear_runs = work_runs::list_work_runs(
-            state.sqlx_pool(),
-            WorkRunListFilter {
-                bear_id: Some(*bear_id),
-                limit: 50,
-                ..WorkRunListFilter::default()
-            },
-        )
-        .await?;
-        runs.extend(bear_runs.iter().map(|run| run_view(run, bear_slug)));
-        run_rows.extend(bear_runs);
 
         let service = PgDocketService::from_pool(state.sqlx_pool());
         let jobs = service
             .list_jobs(*bear_id, DocketJobListFilter::default())
             .await?;
+        let job_ids: Vec<Uuid> = jobs.iter().map(|job| job.id).collect();
+        let run_counts: std::collections::HashMap<Uuid, i64> = sqlx::query_as(
+            "SELECT job_id, count(*) FROM bear_work_runs WHERE job_id = ANY($1) GROUP BY job_id",
+        )
+        .bind(&job_ids)
+        .fetch_all(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?
+        .into_iter()
+        .collect();
         for job in jobs {
+            if !show_completed && job.status == "completed" {
+                continue;
+            }
+            let run_count = run_counts.get(&job.id).copied().unwrap_or_default();
             jobs_with_work.push(serde_json::json!({
                 "id": job.id.to_string(),
+                "display_id": uuid_hex_prefix(job.id, DISPLAY_ID_HEX_LEN),
+                "route_id": uuid_hex_prefix(job.id, ROUTE_ID_HEX_LEN),
+                "full_id": job.id.to_string(),
+                "title": entity_ref(job.id, "Job", &job.goal, Some(&job.status))["title"],
                 "bear_slug": bear_slug,
                 "goal": job.goal,
                 "status": job.status,
                 "work_surface_ref": job.work_surface_ref,
+                "run_count": run_count,
             }));
         }
     }
-    attach_queue_info(&state, &run_rows, &mut runs).await?;
-    runs.sort_by(|a, b| b.queued_at.cmp(&a.queued_at));
-    let active: Vec<&RunView> = runs.iter().filter(|run| run.is_active).collect();
 
     // Dispatch-path status so "why is my queued run not starting?" is
     // answerable from this page: is a provider configured, and is it
@@ -308,12 +556,11 @@ async fn index(
         auth_session,
         context! {
             title => "Work",
-            active_runs => active,
-            runs => runs,
             jobs => jobs_with_work,
             attention => attention,
             awaiting_completion => awaiting_completion,
             provider_status => provider_status,
+            show_completed => show_completed,
         },
     )
     .await
@@ -380,6 +627,8 @@ struct NewJobForm {
     #[serde(default)]
     work_branch: String,
     #[serde(default)]
+    allow_default_ref: bool,
+    #[serde(default)]
     task_title: Vec<String>,
     #[serde(default)]
     task_criteria: Vec<String>,
@@ -397,7 +646,11 @@ async fn create_job(
     }
 
     let commit_policy = match form.commit_policy.trim() {
-        "" => None,
+        "" => {
+            return Err(CustomError::ValidationError(
+                "choose a commit policy explicitly".to_string(),
+            ));
+        }
         raw => Some(
             serde_json::from_value::<DocketCommitPolicy>(serde_json::json!(raw)).map_err(|_| {
                 CustomError::ValidationError(format!("invalid commit policy '{raw}'"))
@@ -441,7 +694,6 @@ async fn create_job(
             completion_criteria: criteria,
             difficulty: None,
             effort_hint: None,
-            assigned_to_role: Some(BearProfile::Work),
         });
     }
     if tasks.is_empty() {
@@ -494,6 +746,31 @@ async fn create_job(
         (None, None)
     };
 
+    let surface_default_ref = match work_surface_id {
+        Some(surface_id) => {
+            den_service::work_surfaces::surface_by_id(state.sqlx_pool(), surface_id)
+                .await?
+                .map(|surface| surface.default_ref)
+        }
+        None => None,
+    };
+    let entered_branch = clean_form_field(&form.work_branch);
+    let work_branch = if form.allow_default_ref {
+        Some(surface_default_ref.clone().ok_or_else(|| {
+            CustomError::ValidationError(
+                "working on the default branch requires a managed work surface".to_string(),
+            )
+        })?)
+    } else {
+        if entered_branch.is_some() && entered_branch.as_deref() == surface_default_ref.as_deref() {
+            return Err(CustomError::ValidationError(
+                "work branch matches the surface default; use the explicit default-branch override instead"
+                    .to_string(),
+            ));
+        }
+        entered_branch
+    };
+
     let job = PgDocketService::from_pool(state.sqlx_pool())
         .create_job(DocketJobCreate {
             bear_id: form.bear_id,
@@ -503,8 +780,7 @@ async fn create_job(
             work_surface_ref,
             work_surface_id,
             commit_policy,
-            work_branch: Some(form.work_branch.trim().to_string())
-                .filter(|branch| !branch.is_empty()),
+            work_branch,
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::SameUser,
             source_conversation_id: None,
@@ -521,6 +797,120 @@ async fn create_job(
     Ok(Redirect::to(&format!("/work/jobs/{}", job.job.id)).into_response())
 }
 
+#[derive(Debug, Deserialize)]
+struct EditJobForm {
+    goal: String,
+    #[serde(default)]
+    surface_id: Option<Uuid>,
+    commit_policy: String,
+    #[serde(default)]
+    work_branch: String,
+    #[serde(default)]
+    allow_default_ref: bool,
+}
+
+async fn edit_job(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(job_ref): Path<String>,
+    Form(form): Form<EditJobForm>,
+) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let bear_id: Option<Uuid> = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some(bear_id) = bear_id.filter(|bear_id| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let goal = form.goal.trim();
+    if goal.is_empty() {
+        return Err(CustomError::ValidationError(
+            "job goal is required".to_string(),
+        ));
+    }
+    let commit_policy =
+        parse_docket_enum::<DocketCommitPolicy>("commit policy", form.commit_policy.trim())?;
+    let entered_branch = clean_form_field(&form.work_branch);
+    if entered_branch
+        .as_deref()
+        .is_some_and(|branch| branch.starts_with('-') || branch.chars().any(char::is_whitespace))
+    {
+        return Err(CustomError::ValidationError(
+            "work branch must be a branch name, not a Git option or command".to_string(),
+        ));
+    }
+    let (work_surface_ref, work_surface_id, surface_default_ref) = match form.surface_id {
+        Some(surface_id) => {
+            let surface = den_service::work_surfaces::surface_by_id(state.sqlx_pool(), surface_id)
+                .await?
+                .ok_or_else(|| CustomError::NotFound("work surface not found".to_string()))?;
+            if !den_service::work_surfaces::bear_may_use_surface(
+                state.sqlx_pool(),
+                bear_id,
+                surface_id,
+            )
+            .await?
+            {
+                return Err(CustomError::ValidationError(
+                    "the job's Bear is not assigned to that work surface".to_string(),
+                ));
+            }
+            (
+                Some(surface.name),
+                Some(surface.id),
+                Some(surface.default_ref),
+            )
+        }
+        None => (None, None, None),
+    };
+    let work_branch = if form.allow_default_ref {
+        Some(surface_default_ref.clone().ok_or_else(|| {
+            CustomError::ValidationError(
+                "working on the default branch requires a managed work surface".to_string(),
+            )
+        })?)
+    } else {
+        if entered_branch.is_some() && entered_branch.as_deref() == surface_default_ref.as_deref() {
+            return Err(CustomError::ValidationError(
+                "work branch matches the surface default; use the explicit default-branch override instead"
+                    .to_string(),
+            ));
+        }
+        entered_branch
+    };
+    PgDocketService::from_pool(state.sqlx_pool())
+        .update_job(DocketJobUpdate {
+            bear_id,
+            job_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            goal: Some(goal.to_string()),
+            work_surface_ref: Some(work_surface_ref),
+            work_surface_id: Some(work_surface_id),
+            commit_policy: Some(Some(commit_policy)),
+            work_branch: Some(work_branch),
+            status: None,
+            visibility: None,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
+}
+
+fn commit_policy_label(policy: Option<&str>) -> &'static str {
+    match policy {
+        Some("per_task") => "Publish after each task",
+        Some("per_job") => "Publish to the job branch",
+        Some("propose_only") => "No output",
+        Some("none") | None => "No source changes expected",
+        Some(_) => "Unknown policy",
+    }
+}
+
 fn parse_docket_enum<T: serde::de::DeserializeOwned>(
     field: &str,
     value: &str,
@@ -533,8 +923,9 @@ fn parse_docket_enum<T: serde::de::DeserializeOwned>(
 async fn duplicate_job(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(job_id): Path<Uuid>,
+    Path(job_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
@@ -583,11 +974,6 @@ async fn duplicate_job(
                     .as_deref()
                     .map(|value| parse_docket_enum::<DocketEffortHint>("task effort", value))
                     .transpose()?,
-                assigned_to_role: task
-                    .assigned_to_role
-                    .as_deref()
-                    .map(|value| parse_docket_enum::<BearProfile>("assigned role", value))
-                    .transpose()?,
             })
         })
         .collect::<Result<Vec<_>, CustomError>>()?;
@@ -635,8 +1021,9 @@ async fn duplicate_job(
 async fn complete_job(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(job_id): Path<Uuid>,
+    Path(job_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
@@ -701,6 +1088,7 @@ async fn complete_job(
             work_surface_ref: None,
             work_surface_id: None,
             commit_policy: None,
+            work_branch: None,
             status: Some(DocketJobStatus::Completed),
             visibility: None,
         })
@@ -709,19 +1097,28 @@ async fn complete_job(
 }
 
 #[derive(Debug, Deserialize)]
-struct ExtendJobForm {
+struct AddTopLevelTaskForm {
     title: String,
     #[serde(default)]
     body: String,
     criteria: String,
 }
 
-async fn extend_job(
+#[derive(Debug, Deserialize)]
+struct AddChildTaskForm {
+    title: String,
+    #[serde(default)]
+    body: String,
+    criteria: String,
+}
+
+async fn add_top_level_task(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(job_id): Path<Uuid>,
-    Form(form): Form<ExtendJobForm>,
+    Path(job_ref): Path<String>,
+    Form(form): Form<AddTopLevelTaskForm>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
@@ -739,13 +1136,14 @@ async fn extend_job(
         .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
     if matches!(projection.job.status.as_str(), "completed" | "cancelled") {
         return Err(CustomError::ValidationError(
-            "completed or cancelled jobs cannot be extended; duplicate the job instead".to_string(),
+            "completed or cancelled jobs cannot receive new tasks; duplicate the job instead"
+                .to_string(),
         ));
     }
     let title = form.title.trim();
     if title.is_empty() {
         return Err(CustomError::ValidationError(
-            "extension task title is required".to_string(),
+            "task title is required".to_string(),
         ));
     }
     let criteria: Vec<String> = form
@@ -757,7 +1155,7 @@ async fn extend_job(
         .collect();
     if criteria.is_empty() {
         return Err(CustomError::ValidationError(
-            "extension task needs at least one semicolon-separated criterion".to_string(),
+            "task needs at least one semicolon-separated criterion".to_string(),
         ));
     }
     let run_id = projection
@@ -785,7 +1183,6 @@ async fn extend_job(
             completion_criteria: criteria,
             difficulty: None,
             effort_hint: None,
-            assigned_to_role: Some(BearProfile::Work),
             created_by_role: "ui".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -803,6 +1200,7 @@ async fn extend_job(
             work_surface_ref: None,
             work_surface_id: None,
             commit_policy: None,
+            work_branch: None,
             status: Some(DocketJobStatus::Ready),
             visibility: None,
         })
@@ -813,8 +1211,9 @@ async fn extend_job(
 async fn job_detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(job_id): Path<Uuid>,
+    Path(job_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
 
@@ -830,6 +1229,12 @@ async fn job_detail(
     let Some((bear_id, bear_slug)) = owner else {
         return Err(CustomError::NotFound("job not found".to_string()));
     };
+    let bear_name = bears_db::list_bears_for_user(state.sqlx_pool(), user_id)
+        .await?
+        .into_iter()
+        .find(|row| row.bear.id == bear_id)
+        .map(|row| row.bear.name)
+        .unwrap_or_else(|| bear_slug.clone());
 
     let service = PgDocketService::from_pool(state.sqlx_pool());
     let projection = service
@@ -846,32 +1251,77 @@ async fn job_detail(
         },
     )
     .await?;
-    let mut run_views: Vec<RunView> = runs.iter().map(|run| run_view(run, &bear_slug)).collect();
+    let mut run_views: Vec<RunView> = runs
+        .iter()
+        .map(|run| run_view(run, &bear_slug, &projection.job.goal))
+        .collect();
     attach_queue_info(&state, &runs, &mut run_views).await?;
 
-    let task_states: std::collections::HashMap<Uuid, &str> = projection
-        .task_states
-        .iter()
-        .map(|state| (state.task_id, state.status.as_str()))
-        .collect();
-    let tasks: Vec<serde_json::Value> = projection
-        .tasks
-        .iter()
-        .map(|task| {
-            let status = task_states.get(&task.id).copied().unwrap_or("pending");
+    let task_states: std::collections::HashMap<Uuid, &den_docket::DocketTaskRunStateRow> =
+        projection
+            .task_states
+            .iter()
+            .map(|state| (state.task_id, state))
+            .collect();
+    let tasks: Vec<serde_json::Value> = tasks_parent_first(&projection.tasks)
+        .into_iter()
+        .map(|(task, depth)| {
+            let state = task_states.get(&task.id).copied();
+            let status = state.map(|state| state.status.as_str()).unwrap_or("pending");
             serde_json::json!({
-                "id": task.id.to_string(),
+                "id": route_id(task.id),
+                "display_id": uuid_hex_prefix(task.id, DISPLAY_ID_HEX_LEN),
+                "full_id": task.id.to_string(),
                 "title": task.title,
+                "description": task.body,
+                "depth": depth,
                 "kind": task.kind,
-                "assigned_to_role": task.assigned_to_role,
                 "status": status,
-                "is_work": task.assigned_to_role.as_deref() == Some("work"),
                 "completion_criteria": task.completion_criteria.0,
+                "can_retry": status == "blocked",
+                "parent_task_id": task.parent_task_id.map(|id| id.to_string()),
+                "sibling_order": task.sibling_order,
+                "blocker_reason": (status == "blocked").then(|| state.and_then(|state| state.result_summary.clone())).flatten(),
+                "retry_reason": state
+                    .and_then(|state| state.result_refs.as_ref())
+                    .and_then(|refs| refs.get("retry"))
+                    .and_then(|retry| retry.get("reason"))
+                    .and_then(serde_json::Value::as_str),
+                "previous_blocked_reason": state
+                    .and_then(|state| state.result_refs.as_ref())
+                    .and_then(|refs| refs.get("retry"))
+                    .and_then(|retry| retry.get("previous_blocked_reason"))
+                    .and_then(serde_json::Value::as_str),
+                "run_display_id": state.map(|state| uuid_hex_prefix(state.run_id, DISPLAY_ID_HEX_LEN)),
+                "run_route_id": state.map(|state| route_id(state.run_id)),
             })
         })
         .collect();
 
+    let has_runnable_work = tasks.iter().any(|task| {
+        matches!(
+            task.get("status").and_then(serde_json::Value::as_str),
+            Some("pending" | "blocked")
+        )
+    });
+    let active_work_run = run_views.iter().find(|run| run.is_active);
+    let attention_run = run_views
+        .iter()
+        .find(|run| matches!(run.state.as_str(), "blocked" | "failed" | "timed_out"));
     let status_report = den_docket::docket_job_status_report(&projection);
+    let available_surfaces =
+        den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[bear_id]).await?;
+    let allow_default_ref = projection
+        .job
+        .work_surface_id
+        .and_then(|surface_id| {
+            available_surfaces
+                .iter()
+                .find(|surface| surface.id == surface_id)
+        })
+        .is_some_and(|surface| {
+            projection.job.work_branch.as_deref() == Some(surface.default_ref.as_str())
+        });
     let catalog = provider_catalog(&state).await;
     web::render_template(
         &state,
@@ -881,28 +1331,272 @@ async fn job_detail(
             title => "Work job",
             bear_id => bear_id.to_string(),
             bear_slug => bear_slug,
-            job_id => job_id.to_string(),
+            bear_name => bear_name,
+            job_id => route_id(job_id),
             goal => projection.job.goal,
+            job_display_id => uuid_hex_prefix(job_id, DISPLAY_ID_HEX_LEN),
+            job_full_id => job_id.to_string(),
+            job_title => entity_ref(job_id, "Job", &projection.job.goal, Some(&projection.job.status))["title"],
             status => projection.job.status,
             work_surface_ref => projection.job.work_surface_ref,
+            work_surface_id => projection.job.work_surface_id.map(|id| route_id(id)),
+            work_surface_name => projection.job.work_surface_id.and_then(|surface_id| available_surfaces.iter().find(|surface| surface.id == surface_id).map(|surface| surface.name.clone())),
+            work_surface_default_ref => projection.job.work_surface_id.and_then(|surface_id| available_surfaces.iter().find(|surface| surface.id == surface_id).map(|surface| surface.default_ref.clone())),
+            available_surfaces => available_surfaces,
+            commit_policy_label => commit_policy_label(projection.job.commit_policy.as_deref()),
             commit_policy => projection.job.commit_policy,
             work_branch => projection.job.work_branch,
+            allow_default_ref => allow_default_ref,
             tasks => tasks,
             runs => run_views,
             catalog => catalog,
             tasks_complete => status_report.tasks_complete,
             criteria_complete => status_report.criteria_complete,
             next_action => status_report.next_action,
+            has_runnable_work => has_runnable_work,
+            has_active_work_run => active_work_run.is_some(),
+            active_work_run => active_work_run,
+            attention_run => attention_run,
         },
     )
     .await
 }
 
+async fn add_child_task(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path((job_ref, parent_ref)): Path<(String, String)>,
+    Form(form): Form<AddChildTaskForm>,
+) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    let parent_task_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_tasks", &parent_ref).await?;
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let Some(bear_id) = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?
+        .filter(|bear_id| bears.contains_key(bear_id))
+    else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let title = form.title.trim();
+    let criteria: Vec<String> = form
+        .criteria
+        .split(';')
+        .map(str::trim)
+        .filter(|criterion| !criterion.is_empty())
+        .map(str::to_string)
+        .collect();
+    if title.is_empty() || criteria.is_empty() {
+        return Err(CustomError::ValidationError(
+            "child task title and at least one completion criterion are required".to_string(),
+        ));
+    }
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let projection = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    if !projection
+        .tasks
+        .iter()
+        .any(|task| task.id == parent_task_id)
+    {
+        return Err(CustomError::NotFound(
+            "parent task not found in this job".to_string(),
+        ));
+    }
+    let sibling_order = projection
+        .tasks
+        .iter()
+        .filter(|task| task.parent_task_id == Some(parent_task_id))
+        .map(|task| task.sibling_order)
+        .max()
+        .unwrap_or(-1)
+        .saturating_add(1);
+    service
+        .create_task(DocketTaskCreate {
+            bear_id,
+            job_id: Some(job_id),
+            session_anchor_id: None,
+            parent_task_id: Some(parent_task_id),
+            sibling_order,
+            kind: DocketTaskKind::Execution,
+            scope: DocketTaskScope::Template,
+            title: title.to_string(),
+            body: clean_form_field(&form.body).unwrap_or_else(|| title.to_string()),
+            completion_criteria: criteria,
+            difficulty: None,
+            effort_hint: None,
+            created_by_role: "ui".to_string(),
+            created_by_user_id: Some(user_id),
+            created_by_agent_id: None,
+            created_in_run_id: projection.job.current_run_id,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{}", route_id(job_id))).into_response())
+}
+
+async fn move_task(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path((job_ref, task_ref, direction)): Path<(String, String, String)>,
+) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    let task_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_tasks", &task_ref).await?;
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let Some(bear_id) = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?
+        .filter(|bear_id| bears.contains_key(bear_id))
+    else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let projection = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    let task = projection
+        .tasks
+        .iter()
+        .find(|task| task.id == task_id)
+        .ok_or_else(|| CustomError::NotFound("task not found in this job".to_string()))?;
+    let mut siblings: Vec<_> = projection
+        .tasks
+        .iter()
+        .filter(|other| other.parent_task_id == task.parent_task_id)
+        .collect();
+    siblings.sort_by_key(|task| (task.sibling_order, task.created_at));
+    let position = siblings
+        .iter()
+        .position(|other| other.id == task_id)
+        .ok_or_else(|| CustomError::NotFound("task not found in this job".to_string()))?;
+    let other_position = match direction.as_str() {
+        "up" if position > 0 => position - 1,
+        "down" if position + 1 < siblings.len() => position + 1,
+        "up" | "down" => {
+            return Ok(Redirect::to(&format!("/work/jobs/{}", route_id(job_id))).into_response())
+        }
+        _ => {
+            return Err(CustomError::ValidationError(
+                "move direction must be up or down".to_string(),
+            ))
+        }
+    };
+    let other = siblings[other_position];
+    let temporary_order = -2_147_483_648_i32;
+    sqlx::query("UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3")
+        .bind(temporary_order)
+        .bind(bear_id)
+        .bind(task.id)
+        .execute(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    sqlx::query("UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3")
+        .bind(task.sibling_order)
+        .bind(bear_id)
+        .bind(other.id)
+        .execute(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    sqlx::query("UPDATE bear_tasks SET sibling_order = $1, updated_at = NOW() WHERE bear_id = $2 AND id = $3")
+        .bind(other.sibling_order)
+        .bind(bear_id)
+        .bind(task.id)
+        .execute(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    Ok(Redirect::to(&format!("/work/jobs/{}", route_id(job_id))).into_response())
+}
+
+async fn retry_task(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path((job_ref, task_ref)): Path<(String, String)>,
+    Form(form): Form<RetryTaskForm>,
+) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    let task_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_tasks", &task_ref).await?;
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let Some(bear_id) = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?
+        .filter(|bear_id| bears.contains_key(bear_id))
+    else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let reason = form.reason.trim();
+    if reason.is_empty() {
+        return Err(CustomError::ValidationError(
+            "a retry reason is required".to_string(),
+        ));
+    }
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let projection = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    let run_id = projection
+        .job
+        .current_run_id
+        .ok_or_else(|| CustomError::ValidationError("job has no current run".to_string()))?;
+    let state_row = projection
+        .task_states
+        .iter()
+        .find(|state| state.task_id == task_id && state.run_id == run_id)
+        .ok_or_else(|| {
+            CustomError::NotFound("task not found in the job's current run".to_string())
+        })?;
+    if state_row.status != "blocked" {
+        return Err(CustomError::ValidationError(
+            "only blocked tasks can be retried".to_string(),
+        ));
+    }
+    service
+        .update_task(DocketTaskUpdate {
+            bear_id,
+            job_id: Some(job_id),
+            task_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            definition: DocketTaskDefinitionPatch::default(),
+            run_state: Some(DocketTaskRunStateUpdate {
+                run_id,
+                status: DocketTaskStatus::Pending,
+                result_refs: Some(serde_json::json!({
+                    "retry": {
+                        "reason": reason,
+                        "previous_blocked_reason": state_row.result_summary,
+                    }
+                })),
+                result_summary: Some(format!("Retried: {reason}")),
+            }),
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct RetryTaskForm {
+    reason: String,
+}
+
 async fn run_detail(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(run_id): Path<Uuid>,
+    Path(run_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let run_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_work_runs", &run_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let run = work_runs::get_work_run(state.sqlx_pool(), run_id)
@@ -931,6 +1625,16 @@ async fn run_detail(
         .unwrap_or_default();
     let armature_report = refs.get("armature_report").cloned();
     let turn_outcome = refs.get("turn_outcome").cloned();
+    let dependency_preparation = refs.get("rust_dependency_preparation").cloned();
+    let cargo_failure = refs.get("cargo_failure").cloned();
+    let task_statuses =
+        work_runs::get_job_work_task_run_statuses(state.sqlx_pool(), run.job_id, run.job_run_id)
+            .await?;
+    let diagnostic = run_diagnostic(
+        run.result_summary.as_deref(),
+        run.error.as_deref(),
+        &log_tail,
+    );
     let conversation_id: Option<String> = match run.bearwire_session_id.as_deref() {
         Some(session_id) => sqlx::query_scalar(
             "SELECT COALESCE(NULLIF(resolved_conversation_id, ''), conversation_id) \
@@ -945,8 +1649,19 @@ async fn run_detail(
         None => None,
     };
     let work_surface = run.work_surface.clone();
+    let work_surface_link = match dispatch_context.work_surface_ref.as_deref() {
+        Some(name) => den_service::work_surfaces::surface_by_name(state.sqlx_pool(), name)
+            .await?
+            .map(|surface| {
+                serde_json::json!({
+                    "id": surface.id.to_string(),
+                    "name": surface.name,
+                })
+            }),
+        None => None,
+    };
     let usage = run.usage.clone();
-    let mut views = vec![run_view(&run, &bear_slug)];
+    let mut views = vec![run_view(&run, &bear_slug, &dispatch_context.job_goal)];
     attach_queue_info(&state, std::slice::from_ref(&run), &mut views).await?;
     let view = views.remove(0);
     let can_retry = !view.is_active;
@@ -958,14 +1673,18 @@ async fn run_detail(
         context! {
             title => "Work run",
             run => view,
-            job_goal => dispatch_context.job_goal,
+            outcome => work_run_outcome(&run, &task_statuses, cargo_failure.as_ref()),
             log_tail => log_tail,
             diff_patch => diff_patch,
             changed_files => changed_files,
             armature_report => armature_report,
             turn_outcome => turn_outcome,
+            dependency_preparation => dependency_preparation,
+            cargo_failure => cargo_failure,
+            diagnostic => diagnostic,
             conversation_id => conversation_id,
             work_surface => work_surface,
+            work_surface_link => work_surface_link,
             usage => usage,
             can_retry => can_retry,
         },
@@ -989,33 +1708,33 @@ fn clean_form_field(raw: &str) -> Option<String> {
     Some(raw.trim().to_string()).filter(|value| !value.is_empty())
 }
 
-async fn dispatch_task(
+async fn dispatch_job(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(task_id): Path<Uuid>,
+    Path(job_ref): Path<String>,
     Form(form): Form<DispatchForm>,
 ) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
-    let row: Option<(Uuid, Option<Uuid>)> =
-        sqlx::query_as("SELECT bear_id, job_id FROM bear_tasks WHERE id = $1")
-            .bind(task_id)
-            .fetch_optional(state.sqlx_pool())
-            .await
-            .map_err(den_core::DenError::from)?;
-    let Some((bear_id, job_id)) = row.filter(|(bear_id, _)| bears.contains_key(bear_id)) else {
-        return Err(CustomError::NotFound("task not found".to_string()));
+    let bear_id: Option<Uuid> = sqlx::query_scalar("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some(bear_id) = bear_id.filter(|bear_id| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
     };
     let root_name = if form.scratch {
         Some(SCRATCH_ROOT_NAME.to_string())
     } else {
         clean_form_field(&form.root)
     };
-    work_runs::enqueue_work_run(
+    let runs = work_runs::enqueue_work_job(
         state.sqlx_pool(),
-        work_runs::WorkRunEnqueue {
+        work_runs::WorkJobEnqueue {
             bear_id,
-            task_id,
+            job_id,
             root_name,
             git_ref: clean_form_field(&form.git_ref),
             image_name: clean_form_field(&form.image),
@@ -1023,18 +1742,18 @@ async fn dispatch_task(
         },
     )
     .await?;
-    let destination = job_id.map_or_else(
-        || "/work".to_string(),
-        |job_id| format!("/work/jobs/{job_id}"),
-    );
-    Ok(Redirect::to(&destination).into_response())
+    let run = runs.last().ok_or_else(|| {
+        CustomError::ValidationError("dispatch did not create a work run".to_string())
+    })?;
+    Ok(Redirect::to(&format!("/work/runs/{}", route_id(run.id))).into_response())
 }
 
 async fn cancel_run(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(run_id): Path<Uuid>,
+    Path(run_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let run_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_work_runs", &run_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let run = work_runs::get_work_run(state.sqlx_pool(), run_id)
@@ -1048,19 +1767,20 @@ async fn cancel_run(
 async fn retry_run(
     State(state): State<AppState>,
     auth_session: AuthSession,
-    Path(run_id): Path<Uuid>,
+    Path(run_ref): Path<String>,
 ) -> Result<Response, CustomError> {
+    let run_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_work_runs", &run_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let run = work_runs::get_work_run(state.sqlx_pool(), run_id)
         .await?
         .filter(|run| bears.contains_key(&run.bear_id))
         .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
-    let retry = work_runs::enqueue_work_run(
+    let mut retries = work_runs::enqueue_work_job(
         state.sqlx_pool(),
-        work_runs::WorkRunEnqueue {
+        work_runs::WorkJobEnqueue {
             bear_id: run.bear_id,
-            task_id: run.task_id,
+            job_id: run.job_id,
             root_name: run.root_name.clone(),
             git_ref: run.git_ref.clone(),
             image_name: run.image_name.clone(),
@@ -1068,5 +1788,8 @@ async fn retry_run(
         },
     )
     .await?;
+    let retry = retries
+        .pop()
+        .expect("enqueue_work_job returns one job-scoped work run");
     Ok(Redirect::to(&format!("/work/runs/{}", retry.id)).into_response())
 }

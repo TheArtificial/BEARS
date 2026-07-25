@@ -1,8 +1,10 @@
-//! Minimal dispatch seam for future `work` stance execution.
+//! Minimal dispatch seam for job-level work execution.
 //!
 //! Docket owns job/task state, but it must not execute task bodies itself
 //! (ADR-0034 execution invariant). Runtime code can use this trait to poll for
 //! runnable work tasks and record outcomes after a Bear runtime executes them.
+
+use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
 
@@ -52,6 +54,82 @@ pub trait TaskDispatcher: Send + Sync {
     ) -> Result<DocketTaskProjection, DenError>;
 }
 
+/// Select one pending leaf per job in depth-first sibling order. Parent tasks
+/// are phase roll-ups, so dispatch only sees executable leaves.
+fn first_pending_leaves_in_plan_order(
+    tasks: Vec<DocketTaskProjection>,
+) -> Vec<DocketTaskProjection> {
+    let children = tasks.iter().enumerate().fold(
+        HashMap::<(Option<Uuid>, Option<Uuid>), Vec<usize>>::new(),
+        |mut children, (index, projection)| {
+            children
+                .entry((projection.task.job_id, projection.task.parent_task_id))
+                .or_default()
+                .push(index);
+            children
+        },
+    );
+    let jobs = tasks
+        .iter()
+        .filter_map(|task| task.task.job_id)
+        .collect::<HashSet<_>>();
+    let mut selected = Vec::new();
+    for job_id in jobs {
+        let mut visited = HashSet::new();
+        if let Some(index) =
+            first_pending_leaf_for_parent(job_id, None, &tasks, &children, &mut visited)
+                .ok()
+                .flatten()
+        {
+            selected.push(tasks[index].clone());
+        }
+    }
+    selected
+}
+
+fn first_pending_leaf_for_parent(
+    job_id: Uuid,
+    parent_id: Option<Uuid>,
+    tasks: &[DocketTaskProjection],
+    children: &HashMap<(Option<Uuid>, Option<Uuid>), Vec<usize>>,
+    visited: &mut HashSet<Uuid>,
+) -> Result<Option<usize>, ()> {
+    let Some(siblings) = children.get(&(Some(job_id), parent_id)) else {
+        return Ok(None);
+    };
+    let mut siblings = siblings.clone();
+    siblings.sort_by_key(|index| {
+        let task = &tasks[*index].task;
+        (task.sibling_order, task.created_at)
+    });
+    for index in siblings {
+        let task = &tasks[index].task;
+        if !visited.insert(task.id) {
+            continue;
+        }
+        if children.contains_key(&(Some(job_id), Some(task.id))) {
+            match first_pending_leaf_for_parent(job_id, Some(task.id), tasks, children, visited) {
+                Ok(Some(next)) => return Ok(Some(next)),
+                Err(()) => return Err(()),
+                Ok(None) => continue,
+            }
+        }
+        match tasks[index]
+            .run_state
+            .as_ref()
+            .map(|state| state.status.as_str())
+            .unwrap_or("pending")
+        {
+            "done" | "cancelled" => continue,
+            "pending" => return Ok(Some(index)),
+            // Do not skip earlier claimed or blocked work to offer a later
+            // sibling in the same sequential plan.
+            _ => return Err(()),
+        }
+    }
+    Ok(None)
+}
+
 impl TaskDispatcher for PgDocketService {
     async fn runnable_work_tasks(
         &self,
@@ -59,31 +137,22 @@ impl TaskDispatcher for PgDocketService {
         limit: i64,
     ) -> Result<Vec<DocketTaskProjection>, DenError> {
         let scan_limit = if limit <= 0 { 100 } else { limit.min(500) };
-        // ponytail: simple DB polling over the task tree is enough for the first
-        // Docket slice; upgrade to queue/lease-based dispatch when multiple
-        // workers compete or the task table is large.
         let tasks = db::list_tasks(
             &self.pool,
             bear_id,
             DocketTaskListFilter {
                 include_descendants: true,
-                limit: scan_limit,
+                // ponytail: scan the bounded local task tree until queue/lease
+                // dispatch is needed for very large jobs.
+                limit: 500,
                 ..DocketTaskListFilter::default()
             },
         )
         .await?;
 
-        Ok(tasks
+        Ok(first_pending_leaves_in_plan_order(tasks)
             .into_iter()
-            .filter(|projection| projection.task.assigned_to_role.as_deref() == Some("work"))
-            .filter(|projection| {
-                projection
-                    .run_state
-                    .as_ref()
-                    .map(|state| state.status.as_str())
-                    .unwrap_or("pending")
-                    == "pending"
-            })
+            .take(scan_limit as usize)
             .collect())
     }
 
@@ -94,6 +163,12 @@ impl TaskDispatcher for PgDocketService {
         run_id: Uuid,
         actor_agent_id: Option<String>,
     ) -> Result<DocketTaskProjection, DenError> {
+        let runnable = self.runnable_work_tasks(bear_id, 500).await?;
+        if runnable.first().map(|task| task.task.id) != Some(task_id) {
+            return Err(DenError::ValidationError(format!(
+                "Docket task {task_id} is not the first eligible pending leaf in sibling order"
+            )));
+        }
         update_run_state(
             self,
             bear_id,
