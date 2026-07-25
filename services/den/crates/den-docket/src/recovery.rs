@@ -8,6 +8,51 @@ use uuid::Uuid;
 
 use den_core::DenError;
 
+use crate::execution_profiles::{ExecutionProfile, ResolvedExecutionProfile};
+
+pub const MAX_TURN_ATTEMPTS: i32 = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EscalationDecision {
+    Complete,
+    Retry { profile: Option<ExecutionProfile> },
+    Handoff,
+}
+
+/// Supervisor-owned retry policy. Only normalized infrastructure/capability
+/// failures may increase the symbolic profile, and each attempt advances at
+/// most one tier. Unknown-profile fallback retries without inventing a model.
+pub fn decide_escalation(
+    profile: Option<ExecutionProfile>,
+    attempt: i32,
+    outcome: AttemptOutcome,
+    cause_code: &str,
+) -> EscalationDecision {
+    if outcome == AttemptOutcome::Completed {
+        return EscalationDecision::Complete;
+    }
+    if attempt >= MAX_TURN_ATTEMPTS || !escalation_eligible(outcome, cause_code) {
+        return EscalationDecision::Handoff;
+    }
+    match profile {
+        Some(current) => current
+            .next()
+            .map(|profile| EscalationDecision::Retry {
+                profile: Some(profile),
+            })
+            .unwrap_or(EscalationDecision::Handoff),
+        None => EscalationDecision::Retry { profile: None },
+    }
+}
+
+fn escalation_eligible(outcome: AttemptOutcome, cause_code: &str) -> bool {
+    matches!(outcome, AttemptOutcome::Failed | AttemptOutcome::TimedOut)
+        && matches!(
+            cause_code,
+            "activity_timeout" | "context_exhausted" | "model_unavailable" | "provider_error"
+        )
+}
+
 #[derive(Clone, Debug, sqlx::FromRow, Serialize)]
 pub struct TurnAttempt {
     pub id: Uuid,
@@ -19,27 +64,35 @@ pub struct TurnAttempt {
     pub cause_code: Option<String>,
     pub retry_disposition: Option<String>,
     pub evidence_refs: Option<Value>,
+    pub resolved_profile: Option<String>,
+    pub profile_provenance: String,
+    pub latency_ms: Option<i64>,
+    pub cost_microusd: Option<i64>,
     pub started_at: OffsetDateTime,
     pub last_activity_at: OffsetDateTime,
     pub finished_at: Option<OffsetDateTime>,
 }
 
-const ATTEMPT_COLUMNS: &str = "id, routing_decision_id, work_run_id, attempt, state, outcome, cause_code, retry_disposition, evidence_refs, started_at, last_activity_at, finished_at";
+const ATTEMPT_COLUMNS: &str = "id, routing_decision_id, work_run_id, attempt, state, outcome, cause_code, retry_disposition, evidence_refs, resolved_profile, profile_provenance, latency_ms, cost_microusd, started_at, last_activity_at, finished_at";
 
 pub async fn start_turn_attempt(
     pool: &PgPool,
     routing_decision_id: Uuid,
     work_run_id: Option<Uuid>,
     attempt: i32,
+    resolved: ResolvedExecutionProfile,
 ) -> Result<TurnAttempt, DenError> {
     if attempt < 1 {
         return Err(DenError::ValidationError(
             "turn attempt must be positive".into(),
         ));
     }
+    let provenance = resolved.provenance.as_str();
+    let profile = resolved.profile.map(ExecutionProfile::as_str);
+    // sqlx-dynamic: ATTEMPT_COLUMNS is a fixed local projection shared by attempt reads.
     sqlx::query_as::<_, TurnAttempt>(&format!(
-        "INSERT INTO docket_turn_attempts (routing_decision_id, work_run_id, attempt) VALUES ($1,$2,$3) ON CONFLICT (routing_decision_id, attempt) DO UPDATE SET last_activity_at = docket_turn_attempts.last_activity_at RETURNING {ATTEMPT_COLUMNS}"))
-        .bind(routing_decision_id).bind(work_run_id).bind(attempt).fetch_one(pool).await.map_err(Into::into)
+        "INSERT INTO docket_turn_attempts (routing_decision_id, work_run_id, attempt, resolved_profile, profile_provenance) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (routing_decision_id, attempt) DO UPDATE SET last_activity_at = docket_turn_attempts.last_activity_at RETURNING {ATTEMPT_COLUMNS}"))
+        .bind(routing_decision_id).bind(work_run_id).bind(attempt).bind(profile).bind(provenance).fetch_one(pool).await.map_err(Into::into)
 }
 
 pub async fn record_turn_activity(
@@ -69,6 +122,17 @@ impl AttemptOutcome {
             Self::Failed => "failed",
             Self::TimedOut => "timed_out",
             Self::Cancelled => "cancelled",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "completed" => Some(Self::Completed),
+            "blocked" => Some(Self::Blocked),
+            "failed" => Some(Self::Failed),
+            "timed_out" => Some(Self::TimedOut),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
         }
     }
 }
@@ -102,15 +166,51 @@ pub async fn terminalize_turn_attempt(
     cause_code: &str,
     disposition: RetryDisposition,
     evidence: Value,
+    latency_ms: Option<i64>,
+    cost_microusd: Option<i64>,
 ) -> Result<bool, DenError> {
     if cause_code.trim().is_empty() {
         return Err(DenError::ValidationError(
             "terminal attempt requires a cause code".into(),
         ));
     }
-    let result = sqlx::query("UPDATE docket_turn_attempts SET state='terminal', outcome=$2, cause_code=$3, retry_disposition=$4, evidence_refs=COALESCE(evidence_refs, '{}'::jsonb) || $5::jsonb, finished_at=now(), last_activity_at=now() WHERE id=$1 AND state='running'")
-        .bind(attempt_id).bind(outcome.as_str()).bind(cause_code).bind(disposition.as_str()).bind(evidence).execute(pool).await?;
+    if latency_ms.is_some_and(|value| value < 0) || cost_microusd.is_some_and(|value| value < 0) {
+        return Err(DenError::ValidationError(
+            "attempt attribution cannot be negative".into(),
+        ));
+    }
+    let result = sqlx::query("UPDATE docket_turn_attempts SET state='terminal', outcome=$2, cause_code=$3, retry_disposition=$4, evidence_refs=COALESCE(evidence_refs, '{}'::jsonb) || $5::jsonb, latency_ms=$6, cost_microusd=$7, finished_at=now(), last_activity_at=now() WHERE id=$1 AND state='running'")
+        .bind(attempt_id).bind(outcome.as_str()).bind(cause_code).bind(disposition.as_str()).bind(evidence).bind(latency_ms).bind(cost_microusd).execute(pool).await?;
     Ok(result.rows_affected() == 1)
+}
+
+/// Decide the next supervisor action from a durable terminal attempt. This is
+/// read-only and deterministic, so crash recovery cannot ask the model to
+/// choose whether it should retry or escalate.
+pub async fn escalation_for_attempt(
+    pool: &PgPool,
+    attempt_id: Uuid,
+) -> Result<EscalationDecision, DenError> {
+    let row: (i32, Option<String>, Option<String>, String) = sqlx::query_as(
+        "SELECT attempt, resolved_profile, outcome, cause_code
+         FROM docket_turn_attempts
+         WHERE id = $1 AND state = 'terminal'",
+    )
+    .bind(attempt_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DenError::NotFound(format!("terminal turn attempt {attempt_id}")))?;
+    let outcome = row
+        .2
+        .as_deref()
+        .and_then(AttemptOutcome::parse)
+        .ok_or_else(|| DenError::ValidationError("terminal attempt has invalid outcome".into()))?;
+    Ok(decide_escalation(
+        row.1.as_deref().and_then(ExecutionProfile::parse),
+        row.0,
+        outcome,
+        &row.3,
+    ))
 }
 
 /// Watchdog/process-loss sweeper. Each stale row is terminalized at most once.
@@ -166,6 +266,77 @@ pub async fn parent_rollup_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supervisor_escalates_only_eligible_failures_one_tier() {
+        assert_eq!(
+            decide_escalation(
+                Some(ExecutionProfile::Economy),
+                1,
+                AttemptOutcome::Failed,
+                "provider_error",
+            ),
+            EscalationDecision::Retry {
+                profile: Some(ExecutionProfile::Balanced)
+            }
+        );
+        assert_eq!(
+            decide_escalation(
+                Some(ExecutionProfile::Balanced),
+                2,
+                AttemptOutcome::TimedOut,
+                "activity_timeout",
+            ),
+            EscalationDecision::Retry {
+                profile: Some(ExecutionProfile::Advanced)
+            }
+        );
+    }
+
+    #[test]
+    fn supervisor_stops_at_ceiling_or_noneligible_outcome() {
+        assert_eq!(
+            decide_escalation(
+                Some(ExecutionProfile::Advanced),
+                1,
+                AttemptOutcome::Failed,
+                "provider_error",
+            ),
+            EscalationDecision::Handoff
+        );
+        assert_eq!(
+            decide_escalation(
+                Some(ExecutionProfile::Economy),
+                MAX_TURN_ATTEMPTS,
+                AttemptOutcome::Failed,
+                "provider_error",
+            ),
+            EscalationDecision::Handoff
+        );
+        assert_eq!(
+            decide_escalation(
+                Some(ExecutionProfile::Economy),
+                1,
+                AttemptOutcome::Blocked,
+                "approval_required",
+            ),
+            EscalationDecision::Handoff
+        );
+    }
+
+    #[test]
+    fn successful_attempt_never_retries() {
+        assert_eq!(
+            decide_escalation(
+                Some(ExecutionProfile::Economy),
+                1,
+                AttemptOutcome::Completed,
+                "task_completed",
+            ),
+            EscalationDecision::Complete
+        );
+    }
+
     #[test]
     fn rollups_require_content() {
         let rollup = ResultRollup {

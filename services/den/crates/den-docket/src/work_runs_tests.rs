@@ -6,6 +6,7 @@ use den_core::{BearProfile, DenError};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::execution_profiles::{ProfileProvenance, ResolvedExecutionProfile};
 use crate::recovery::{
     parent_rollup_context, persist_result_rollup, start_turn_attempt, terminalize_stale_attempts,
     terminalize_turn_attempt, AttemptOutcome, ResultRollup, RetryDisposition,
@@ -700,10 +701,19 @@ async fn publish_wiring_image_branch_and_prompt() {
     .await
     .unwrap();
     assert_eq!(
-        start_turn_attempt(&pool, decision_id, Some(run.id), 1)
-            .await
-            .unwrap()
-            .id,
+        start_turn_attempt(
+            &pool,
+            decision_id,
+            Some(run.id),
+            1,
+            ResolvedExecutionProfile {
+                profile: None,
+                provenance: ProfileProvenance::ConversationFallback,
+            },
+        )
+        .await
+        .unwrap()
+        .id,
         attempt_id
     );
     assert!(terminalize_turn_attempt(
@@ -713,6 +723,8 @@ async fn publish_wiring_image_branch_and_prompt() {
         "task_completed",
         RetryDisposition::None,
         serde_json::json!({"result": "ok"}),
+        Some(10),
+        Some(25),
     )
     .await
     .unwrap());
@@ -723,6 +735,8 @@ async fn publish_wiring_image_branch_and_prompt() {
         "late_watchdog",
         RetryDisposition::Handoff,
         serde_json::json!({"synthetic": true}),
+        None,
+        None,
     )
     .await
     .unwrap());
@@ -858,6 +872,80 @@ async fn attention_and_completion_visibility() {
     finalize_work_run(
         &pool,
         retry.id,
+        WorkRunState::Cancelled,
+        WorkRunFinalize::default(),
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn pause_resume_is_compare_and_set() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "pause-resume").await;
+    let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+    claim_next_work_run(&pool, "runner-pause", std::time::Duration::from_secs(60))
+        .await
+        .unwrap()
+        .expect("claim");
+    record_work_run_provisioned(
+        &pool,
+        run.id,
+        &WorkRunProvisioned {
+            sandbox_server_url: "http://sandbox:3002".into(),
+            sandbox_id: "pause123".into(),
+            sandbox_type: "container".into(),
+            sandbox_strength: "container: test".into(),
+            work_surface: serde_json::json!({}),
+            rust_dependency_preparation: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(crate::supervisor::set_work_run_paused(&pool, run.id, true)
+        .await
+        .unwrap());
+    assert!(!crate::supervisor::set_work_run_paused(&pool, run.id, true)
+        .await
+        .unwrap());
+    assert_eq!(
+        get_work_run(&pool, run.id)
+            .await
+            .unwrap()
+            .expect("work run")
+            .state_enum(),
+        Some(WorkRunState::Paused)
+    );
+
+    assert!(crate::supervisor::set_work_run_paused(&pool, run.id, false)
+        .await
+        .unwrap());
+    assert!(
+        !crate::supervisor::set_work_run_paused(&pool, run.id, false)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        get_work_run(&pool, run.id)
+            .await
+            .unwrap()
+            .expect("work run")
+            .state_enum(),
+        Some(WorkRunState::Running)
+    );
+
+    finalize_work_run(
+        &pool,
+        run.id,
         WorkRunState::Cancelled,
         WorkRunFinalize::default(),
     )

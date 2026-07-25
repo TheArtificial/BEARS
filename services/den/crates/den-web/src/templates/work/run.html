@@ -37,14 +37,69 @@
             {% if run.cleanup_failed %}<tr><th>Cleanup</th><td>⚠ failed — sandbox resources may need manual removal</td></tr>{% endif %}
         </tbody>
     </table>
+    {% if can_pause %}
+    <form method="post" action="/work/runs/{{ run.id }}/pause">
+        <button type="submit">Pause at boundary</button>
+    </form>
+    {% elif can_resume %}
+    <form method="post" action="/work/runs/{{ run.id }}/resume">
+        <button type="submit">Resume run</button>
+    </form>
+    {% endif %}
     {% if run.is_active %}
     <form method="post" action="/work/runs/{{ run.id }}/cancel">
-        <button type="submit">Cancel run</button>
+        <button type="submit">Stop run</button>
     </form>
     {% elif can_retry %}
     <form method="post" action="/work/runs/{{ run.id }}/retry">
         <button type="submit">Retry (new attempt)</button>
     </form>
+    {% endif %}
+</section>
+
+<section aria-labelledby="run-diagnostics-heading">
+    <h2 id="run-diagnostics-heading">Run diagnostics</h2>
+    <p role="status"><strong>{{ canonical_diagnostics.run_state }}</strong> — {{ canonical_diagnostics.explanation }}</p>
+    <dl>
+        <dt>Job state</dt><dd>{{ canonical_diagnostics.job_status }}</dd>
+        <dt>Run state</dt><dd>{{ canonical_diagnostics.run_state }}</dd>
+        <dt>Current execution task</dt>
+        <dd>{% if canonical_diagnostics.current_task %}{{ canonical_diagnostics.current_task.title }} ({{ canonical_diagnostics.current_task.status }}){% else %}—{% endif %}</dd>
+        {% if canonical_diagnostics.attention %}
+        <dt>Attention</dt><dd>{{ canonical_diagnostics.attention.cause }}</dd>
+        <dt>Recovery</dt><dd>{{ canonical_diagnostics.attention.recovery_action }}</dd>
+        {% endif %}
+    </dl>
+
+    {% if canonical_diagnostics.rollups %}
+    <h3>Parent-visible rollups</h3>
+    <ol>
+        {% for rollup in canonical_diagnostics.rollups %}
+        <li><p>{{ rollup.summary }}</p><details><summary>Evidence</summary><pre><code>{{ rollup.evidence }}</code></pre></details></li>
+        {% endfor %}
+    </ol>
+    {% endif %}
+
+    <h3>Timeline</h3>
+    {% if canonical_diagnostics.timeline %}
+    <ol>
+        {% for event in canonical_diagnostics.timeline %}
+        <li>
+            <strong>{{ event.kind }}</strong> — {{ event.summary }}
+            {% if event.outcome %}
+            <dl>
+                <dt>Outcome</dt><dd>{{ event.outcome.outcome }}</dd>
+                {% if event.outcome.cause %}<dt>Cause</dt><dd>{{ event.outcome.cause }}</dd>{% endif %}
+                {% if event.outcome.disposition %}<dt>Disposition</dt><dd>{{ event.outcome.disposition }}</dd>{% endif %}
+                {% if event.outcome.recovery_action %}<dt>Recovery</dt><dd>{{ event.outcome.recovery_action }}</dd>{% endif %}
+                {% if event.outcome.evidence %}<dt>Evidence</dt><dd><pre><code>{{ event.outcome.evidence }}</code></pre></dd>{% endif %}
+            </dl>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p>No routing or attempt events have been recorded yet.</p>
     {% endif %}
 </section>
 

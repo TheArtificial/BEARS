@@ -15,7 +15,8 @@ use uuid::Uuid;
 use den_core::{BearProfile, DenError};
 
 use crate::dispatcher::TaskDispatcher;
-use crate::model::DocketExecutionSessionUpsert;
+use crate::execution_profiles::resolve_execution_profile;
+use crate::model::{DocketExecutionSessionUpsert, DocketTaskDifficulty};
 use crate::recovery::start_turn_attempt;
 use crate::routing::{route_turn, ExecutionSurface, TurnIntent, TurnSource};
 use crate::service::PgDocketService;
@@ -985,19 +986,24 @@ pub async fn checkout_work_run_for_session(
 ) -> Result<WorkRunCheckout, DenError> {
     let run = bind_work_run_session(pool, run_id, bear_id, session_id).await?;
 
-    let active_task: Option<(Uuid, String, String, sqlx::types::Json<Vec<String>>)> =
-        sqlx::query_as(
-            "SELECT t.id, t.title, t.body, t.completion_criteria
+    let active_task: Option<(
+        Uuid,
+        String,
+        String,
+        sqlx::types::Json<Vec<String>>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT t.id, t.title, t.body, t.completion_criteria, t.difficulty
          FROM bear_tasks t
          JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
          WHERE t.job_id = $1 AND s.status = 'in_progress'
          ORDER BY t.sibling_order, t.created_at
          LIMIT 1",
-        )
-        .bind(run.job_id)
-        .bind(run.job_run_id)
-        .fetch_optional(pool)
-        .await?;
+    )
+    .bind(run.job_id)
+    .bind(run.job_run_id)
+    .fetch_optional(pool)
+    .await?;
     let task = match active_task {
         Some(task) => task,
         None => {
@@ -1011,9 +1017,19 @@ pub async fn checkout_work_run_for_session(
                     DenError::ValidationError("job has no runnable work task for checkout".into())
                 })?
                 .task;
-            (task.id, task.title, task.body, task.completion_criteria)
+            (
+                task.id,
+                task.title,
+                task.body,
+                task.completion_criteria,
+                task.difficulty
+                    .map(|difficulty| difficulty.as_str().to_string()),
+            )
         }
     };
+    let difficulty = task.4.as_deref().and_then(parse_task_difficulty);
+    let resolved_profile = resolve_execution_profile(difficulty);
+    let persisted_profile = resolved_profile.persisted_value();
     let routing = route_turn(
         pool,
         TurnIntent {
@@ -1027,13 +1043,20 @@ pub async fn checkout_work_run_for_session(
             originating_conversation_id: None,
             parent_conversation_id: None,
             surface: ExecutionSurface::Sandbox,
-            resolved_profile: None,
+            resolved_profile: Some(persisted_profile),
             attempt: run.attempt,
         },
     )
     .await?;
-    start_turn_attempt(pool, routing.id, Some(run.id), run.attempt).await?;
-    let tasks = vec![task];
+    start_turn_attempt(
+        pool,
+        routing.id,
+        Some(run.id),
+        run.attempt,
+        resolved_profile,
+    )
+    .await?;
+    let tasks = vec![(task.0, task.1, task.2, task.3)];
     let (goal, commit_policy): (String, Option<String>) =
         sqlx::query_as("SELECT goal, commit_policy FROM bear_jobs WHERE id = $1")
             .bind(run.job_id)
@@ -1071,6 +1094,16 @@ pub async fn checkout_work_run_for_session(
         run,
         prompt,
         task_title,
+    })
+}
+
+fn parse_task_difficulty(raw: &str) -> Option<DocketTaskDifficulty> {
+    Some(match raw {
+        "trivial" => DocketTaskDifficulty::Trivial,
+        "moderate" => DocketTaskDifficulty::Moderate,
+        "hard" => DocketTaskDifficulty::Hard,
+        "unknown" => DocketTaskDifficulty::Unknown,
+        _ => return None,
     })
 }
 
