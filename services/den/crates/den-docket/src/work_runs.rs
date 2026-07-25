@@ -16,6 +16,8 @@ use den_core::{BearProfile, DenError};
 
 use crate::dispatcher::TaskDispatcher;
 use crate::model::DocketExecutionSessionUpsert;
+use crate::recovery::start_turn_attempt;
+use crate::routing::{route_turn, ExecutionSurface, TurnIntent, TurnSource};
 use crate::service::PgDocketService;
 
 /// Explicit root name for a provider-managed empty workspace. Absence is not
@@ -28,6 +30,7 @@ pub enum WorkRunState {
     Claimed,
     Provisioning,
     Running,
+    Paused,
     Reporting,
     Succeeded,
     Blocked,
@@ -43,6 +46,7 @@ impl WorkRunState {
             Self::Claimed => "claimed",
             Self::Provisioning => "provisioning",
             Self::Running => "running",
+            Self::Paused => "paused",
             Self::Reporting => "reporting",
             Self::Succeeded => "succeeded",
             Self::Blocked => "blocked",
@@ -58,6 +62,7 @@ impl WorkRunState {
             "claimed" => Self::Claimed,
             "provisioning" => Self::Provisioning,
             "running" => Self::Running,
+            "paused" => Self::Paused,
             "reporting" => Self::Reporting,
             "succeeded" => Self::Succeeded,
             "blocked" => Self::Blocked,
@@ -1009,6 +1014,25 @@ pub async fn checkout_work_run_for_session(
             (task.id, task.title, task.body, task.completion_criteria)
         }
     };
+    let routing = route_turn(
+        pool,
+        TurnIntent {
+            // One work run is one durable dispatch turn. Re-checkout reuses it.
+            idempotency_key: run.id,
+            bear_id,
+            job_id: run.job_id,
+            run_id: run.job_run_id,
+            task_id: task.0,
+            source: TurnSource::Dispatch,
+            originating_conversation_id: None,
+            parent_conversation_id: None,
+            surface: ExecutionSurface::Sandbox,
+            resolved_profile: None,
+            attempt: run.attempt,
+        },
+    )
+    .await?;
+    start_turn_attempt(pool, routing.id, Some(run.id), run.attempt).await?;
     let tasks = vec![task];
     let (goal, commit_policy): (String, Option<String>) =
         sqlx::query_as("SELECT goal, commit_policy FROM bear_jobs WHERE id = $1")
@@ -1261,6 +1285,9 @@ pub struct WorkRunDispatchContext {
     pub commit_policy: Option<String>,
     pub work_branch: Option<String>,
     pub allow_default_ref: bool,
+    /// Validated child summaries for this task. Raw child transcripts and tool traces
+    /// are intentionally not projected into the dispatch context.
+    pub child_result_rollups: serde_json::Value,
 }
 
 impl WorkRunDispatchContext {
@@ -1279,7 +1306,15 @@ pub async fn get_work_run_dispatch_context(
     sqlx::query_as::<_, WorkRunDispatchContext>(
         "SELECT b.slug AS bear_slug, b.name AS bear_name, j.created_by_user_id, j.goal AS job_goal, j.work_surface_ref,
                 j.commit_policy, j.work_branch,
-                COALESCE(j.work_branch = s.default_ref, FALSE) AS allow_default_ref
+                COALESCE(j.work_branch = s.default_ref, FALSE) AS allow_default_ref,
+                COALESCE((
+                    SELECT jsonb_agg(
+                        jsonb_build_object('summary', rr.summary, 'evidence_refs', rr.evidence_refs)
+                        ORDER BY rr.created_at, rr.task_id
+                    )
+                    FROM docket_result_rollups rr
+                    WHERE rr.run_id = r.job_run_id AND rr.parent_task_id = r.task_id
+                ), '[]'::jsonb) AS child_result_rollups
          FROM bear_work_runs r
          JOIN bears b ON b.id = r.bear_id
          JOIN bear_jobs j ON j.id = r.job_id

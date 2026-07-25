@@ -694,6 +694,9 @@ async fn create_job(
             completion_criteria: criteria,
             difficulty: None,
             effort_hint: None,
+            routing_strategy: Default::default(),
+            expected_context_size: None,
+            result_rollup_policy: None,
         });
     }
     if tasks.is_empty() {
@@ -974,6 +977,13 @@ async fn duplicate_job(
                     .as_deref()
                     .map(|value| parse_docket_enum::<DocketEffortHint>("task effort", value))
                     .transpose()?,
+                routing_strategy: parse_docket_enum("routing strategy", &task.routing_strategy)?,
+                expected_context_size: task.expected_context_size,
+                result_rollup_policy: task
+                    .result_rollup_policy
+                    .as_deref()
+                    .map(|value| parse_docket_enum("result rollup policy", value))
+                    .transpose()?,
             })
         })
         .collect::<Result<Vec<_>, CustomError>>()?;
@@ -1183,6 +1193,9 @@ async fn add_top_level_task(
             completion_criteria: criteria,
             difficulty: None,
             effort_hint: None,
+            routing_strategy: Default::default(),
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "ui".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,
@@ -1430,6 +1443,9 @@ async fn add_child_task(
             completion_criteria: criteria,
             difficulty: None,
             effort_hint: None,
+            routing_strategy: Default::default(),
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "ui".to_string(),
             created_by_user_id: Some(user_id),
             created_by_agent_id: None,

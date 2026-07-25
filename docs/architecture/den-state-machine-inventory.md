@@ -245,6 +245,14 @@ Invariants:
 
 ### Focus, Docket, and task orientation
 
+ADR-0056 Phase 0/1 splits attention from execution authority:
+
+- `docket_cursors` are per-client browsing viewports (`job_id`, optional `task_id`). They never select, claim, resume, or complete work.
+- `bear_task_run_state` is the sole execution-position authority. A partial unique index permits at most one `in_progress` task per run.
+- `docket_conversation_bindings` owns the preferred durable transcript container for a task; `docket_conversation_binding_runs` preserves which conversation each run used.
+- `docket_routing_decisions` records immutable, idempotent placement decisions. Durable turn attempts and result rollups reference those decisions/run-task identities.
+- Job completion is criteria-gated: no actionable task is not evidence of completion. If required work remains and nothing is actionable, the derived job state is `blocked`, with one open attention record per run.
+
 Representative state:
 
 - conversation-focused Docket Job id;

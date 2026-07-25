@@ -183,6 +183,9 @@ fn docket_task_definition_payload(task: &DocketTaskRow) -> Value {
         "completion_criteria": task.completion_criteria.0,
         "difficulty": task.difficulty,
         "effort_hint": task.effort_hint,
+        "routing_strategy": task.routing_strategy,
+        "expected_context_size": task.expected_context_size,
+        "result_rollup_policy": task.result_rollup_policy,
     })
 }
 
@@ -224,12 +227,13 @@ async fn insert_task_for_job(
         r"
         INSERT INTO bear_tasks (
             bear_id, job_id, parent_task_id, sibling_order, kind, scope, title, body,
-            completion_criteria, difficulty, effort_hint, created_by_role, created_by_user_id
+            completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                  result_rollup_policy, created_by_role, created_by_user_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16)
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint,
-                  created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                  result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   created_at, updated_at
         ",
     )
@@ -246,6 +250,9 @@ async fn insert_task_for_job(
     ))?)
     .bind(task.difficulty.map(|difficulty| difficulty.as_str()))
     .bind(task.effort_hint.map(|effort| effort.as_str()))
+    .bind(task.routing_strategy.as_str())
+    .bind(task.expected_context_size)
+    .bind(task.result_rollup_policy.map(|policy| policy.as_str()))
     .bind(create.created_by_role.trim())
     .bind(create.created_by_user_id)
     .fetch_one(&mut **tx)
@@ -331,13 +338,14 @@ async fn insert_task(
         r"
         INSERT INTO bear_tasks (
             bear_id, job_id, session_anchor_id, parent_task_id, sibling_order, kind, scope,
-            title, body, completion_criteria, difficulty, effort_hint, created_by_role,
+            title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                  result_rollup_policy, created_by_role,
             created_by_user_id, created_by_agent_id, created_in_run_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17, $18, $19)
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint,
-                  created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                  result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   created_at, updated_at
         ",
     )
@@ -355,6 +363,9 @@ async fn insert_task(
     ))?)
     .bind(create.difficulty.map(|difficulty| difficulty.as_str()))
     .bind(create.effort_hint.map(|effort| effort.as_str()))
+    .bind(create.routing_strategy.as_str())
+    .bind(create.expected_context_size)
+    .bind(create.result_rollup_policy.map(|policy| policy.as_str()))
     .bind(create.created_by_role.trim())
     .bind(create.created_by_user_id)
     .bind(create.created_by_agent_id.as_deref())
@@ -457,8 +468,8 @@ pub(super) async fn get_job(
     let tasks = sqlx::query_as::<_, DocketTaskRow>(
         r"
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint,
-               created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+               kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+               result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                created_at, updated_at
         FROM bear_tasks
         WHERE bear_id = $1 AND job_id = $2
@@ -1085,39 +1096,6 @@ pub(super) async fn execute_job(
         ));
     };
 
-    if projection
-        .task_states
-        .iter()
-        .any(|state| state.status == "blocked")
-    {
-        record_execution_session(pool, &request, run.id, None, "blocked").await?;
-        let job = update_job(
-            pool,
-            DocketJobUpdate {
-                bear_id: request.bear_id,
-                job_id: request.job_id,
-                actor_role: request.actor_role,
-                actor_user_id: request.actor_user_id,
-                actor_agent_id: request.actor_agent_id,
-                goal: None,
-                work_surface_ref: None,
-                work_surface_id: None,
-                commit_policy: None,
-                work_branch: None,
-                status: Some(DocketJobStatus::Blocked),
-                visibility: None,
-            },
-        )
-        .await?;
-        return Ok(DocketJobExecuteOutcome {
-            job,
-            selected_task_id: None,
-            completed: false,
-            blocked: true,
-            message: "A task is blocked; job marked blocked.".to_string(),
-        });
-    }
-
     let state_by_task = projection
         .task_states
         .iter()
@@ -1202,7 +1180,13 @@ pub(super) async fn execute_job(
                 .map(|state| matches!(state.status.as_str(), "met" | "waived"))
                 .unwrap_or(false)
         });
-    if criteria_complete {
+    let tasks_complete = projection.tasks.iter().all(|task| {
+        matches!(
+            state_by_task.get(&task.id).copied(),
+            Some("done" | "cancelled")
+        )
+    });
+    if tasks_complete && criteria_complete {
         record_execution_session(pool, &request, run.id, None, "completed").await?;
         let job = update_job(
             pool,
@@ -1254,7 +1238,9 @@ pub(super) async fn execute_job(
             selected_task_id: None,
             completed: false,
             blocked: true,
-            message: "All tasks are terminal, but acceptance criteria are not met.".to_string(),
+            message:
+                "No task is actionable, but required work or acceptance criteria remain incomplete."
+                    .to_string(),
         })
     }
 }
@@ -1413,8 +1399,8 @@ pub(super) async fn list_tasks(
         sqlx::query_as::<_, DocketTaskRow>(
             r"
             SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                   kind, scope, title, body, completion_criteria, difficulty, effort_hint,
-                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                    created_at, updated_at
             FROM bear_tasks
             WHERE bear_id = $1
@@ -1456,8 +1442,8 @@ async fn list_tasks_with_descendants(
         r"
         WITH RECURSIVE task_tree AS (
             SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                   kind, scope, title, body, completion_criteria, difficulty, effort_hint,
-                   created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                   kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                   result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                    created_at, updated_at
             FROM bear_tasks
             WHERE bear_id = $1
@@ -1471,15 +1457,15 @@ async fn list_tasks_with_descendants(
             SELECT child.id, child.bear_id, child.job_id, child.session_anchor_id,
                    child.parent_task_id, child.sibling_order, child.kind, child.scope,
                    child.title, child.body, child.completion_criteria, child.difficulty, child.effort_hint,
-                   child.created_by_role, child.created_by_user_id,
+                   child.routing_strategy, child.expected_context_size, child.result_rollup_policy, child.created_by_role, child.created_by_user_id,
                    child.created_by_agent_id, child.created_in_run_id, child.created_at,
                    child.updated_at
             FROM bear_tasks child
             JOIN task_tree parent ON child.parent_task_id = parent.id
         )
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint,
-               created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+               kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+               result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                created_at, updated_at
         FROM task_tree
         ORDER BY COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid), sibling_order, created_at
@@ -1727,8 +1713,8 @@ async fn select_task(
     sqlx::query_as::<_, DocketTaskRow>(
         r"
         SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-               kind, scope, title, body, completion_criteria, difficulty, effort_hint,
-               created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+               kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+               result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                created_at, updated_at
         FROM bear_tasks
         WHERE bear_id = $1 AND id = $2
@@ -1802,11 +1788,14 @@ async fn update_task_definition(
             scope = $9,
             difficulty = $10,
             effort_hint = $11,
+            routing_strategy = $12,
+            expected_context_size = $13,
+            result_rollup_policy = $14,
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
-                  kind, scope, title, body, completion_criteria, difficulty, effort_hint,
-                  created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                  kind, scope, title, body, completion_criteria, difficulty, effort_hint, routing_strategy, expected_context_size,
+                  result_rollup_policy, created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
                   created_at, updated_at
         ",
     )
@@ -1858,6 +1847,23 @@ async fn update_task_definition(
             .effort_hint
             .map(|value| value.map(|effort| effort.as_str().to_string()))
             .unwrap_or_else(|| current.effort_hint.clone()),
+    )
+    .bind(
+        patch
+            .routing_strategy
+            .map(|strategy| strategy.as_str())
+            .unwrap_or(&current.routing_strategy),
+    )
+    .bind(
+        patch
+            .expected_context_size
+            .unwrap_or(current.expected_context_size),
+    )
+    .bind(
+        patch
+            .result_rollup_policy
+            .map(|value| value.map(|policy| policy.as_str().to_string()))
+            .unwrap_or_else(|| current.result_rollup_policy.clone()),
     )
     .fetch_one(&mut **tx)
     .await
@@ -2111,6 +2117,9 @@ pub(super) async fn sync_task_list(
                         .unwrap_or_else(|| format!("Complete: {}", item.title))],
                     difficulty: None,
                     effort_hint: None,
+                    routing_strategy: super::model::RoutingStrategy::Auto,
+                    expected_context_size: None,
+                    result_rollup_policy: None,
                     created_by_role: request.task_list.owner_profile.clone(),
                     created_by_user_id: None,
                     created_by_agent_id: None,

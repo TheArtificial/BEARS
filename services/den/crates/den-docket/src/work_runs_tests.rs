@@ -6,6 +6,10 @@ use den_core::{BearProfile, DenError};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::recovery::{
+    parent_rollup_context, persist_result_rollup, start_turn_attempt, terminalize_stale_attempts,
+    terminalize_turn_attempt, AttemptOutcome, ResultRollup, RetryDisposition,
+};
 use crate::work_runs::{
     checkout_work_run_for_session, claim_next_work_run, enqueue_work_run, ensure_job_work_branch,
     finalize_work_run, get_live_work_run_by_session, get_work_run, get_work_run_dispatch_context,
@@ -15,7 +19,7 @@ use crate::work_runs::{
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
     DocketJobStatus, DocketService, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
-    DocketTaskScope, PgDocketService, TaskListVisibility,
+    DocketTaskScope, PgDocketService, RoutingStrategy, TaskListVisibility,
 };
 
 /// `claim_next_work_run` is deliberately global (any runner takes the oldest
@@ -88,6 +92,9 @@ fn work_task(title: &str, order: i32, _stance: BearProfile) -> DocketTaskInput {
         completion_criteria: vec![format!("{title} is verifiably complete")],
         difficulty: Some(DocketTaskDifficulty::Trivial),
         effort_hint: None,
+        routing_strategy: RoutingStrategy::Auto,
+        expected_context_size: None,
+        result_rollup_policy: None,
     }
 }
 
@@ -600,6 +607,48 @@ async fn publish_wiring_image_branch_and_prompt() {
     let context = get_work_run_dispatch_context(&pool, run.id).await.unwrap();
     assert!(context.publishes());
     assert!(context.work_branch.is_none());
+    assert_eq!(context.child_result_rollups, serde_json::json!([]));
+
+    // Parent dispatch receives validated child rollups, never child transcripts.
+    sqlx::query("UPDATE bear_tasks SET parent_task_id = $1 WHERE id = $2")
+        .bind(task_ids[0])
+        .bind(task_ids[1])
+        .execute(&pool)
+        .await
+        .unwrap();
+    let rollup = ResultRollup {
+        summary: "child completed safely".into(),
+        evidence_refs: serde_json::json!({"artifact": "artifact:test"}),
+    };
+    assert!(
+        persist_result_rollup(&pool, run.job_run_id, task_ids[1], task_ids[0], rollup)
+            .await
+            .unwrap()
+    );
+    assert!(!persist_result_rollup(
+        &pool,
+        run.job_run_id,
+        task_ids[1],
+        task_ids[0],
+        ResultRollup {
+            summary: "duplicate must not replace the first result".into(),
+            evidence_refs: serde_json::json!({"raw_transcript": "must not appear"}),
+        },
+    )
+    .await
+    .unwrap());
+    let summaries = parent_rollup_context(&pool, run.job_run_id, task_ids[0])
+        .await
+        .unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].summary, "child completed safely");
+    let context = get_work_run_dispatch_context(&pool, run.id).await.unwrap();
+    assert_eq!(context.child_result_rollups.as_array().unwrap().len(), 1);
+    assert_eq!(
+        context.child_result_rollups[0]["summary"],
+        "child completed safely"
+    );
+
     let branch = ensure_job_work_branch(&pool, job_id).await.unwrap();
     assert!(branch.starts_with("den/job-"), "{branch}");
     assert_eq!(ensure_job_work_branch(&pool, job_id).await.unwrap(), branch);
@@ -630,6 +679,55 @@ async fn publish_wiring_image_branch_and_prompt() {
     let checkout = checkout_work_run_for_session(&pool, run.id, bear_id, &session_id)
         .await
         .unwrap();
+
+    // Attempt creation and terminalization are idempotent across replay/crash windows.
+    let (attempt_id, decision_id): (Uuid, Uuid) = sqlx::query_as(
+        "SELECT a.id, a.routing_decision_id
+         FROM docket_turn_attempts a
+         JOIN docket_routing_decisions d ON d.id = a.routing_decision_id
+         WHERE a.work_run_id = $1",
+    )
+    .bind(run.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        start_turn_attempt(&pool, decision_id, Some(run.id), 1)
+            .await
+            .unwrap()
+            .id,
+        attempt_id
+    );
+    assert!(terminalize_turn_attempt(
+        &pool,
+        attempt_id,
+        AttemptOutcome::Completed,
+        "task_completed",
+        RetryDisposition::None,
+        serde_json::json!({"result": "ok"}),
+    )
+    .await
+    .unwrap());
+    assert!(!terminalize_turn_attempt(
+        &pool,
+        attempt_id,
+        AttemptOutcome::TimedOut,
+        "late_watchdog",
+        RetryDisposition::Handoff,
+        serde_json::json!({"synthetic": true}),
+    )
+    .await
+    .unwrap());
+    assert_eq!(
+        terminalize_stale_attempts(
+            &pool,
+            time::OffsetDateTime::now_utc() + time::Duration::hours(1)
+        )
+        .await
+        .unwrap(),
+        0
+    );
+
     assert!(checkout.prompt.contains(&format!("job_id: {}", run.job_id)));
     assert!(checkout
         .prompt
