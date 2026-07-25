@@ -1285,7 +1285,7 @@ pub struct WorkRunDispatchContext {
     pub commit_policy: Option<String>,
     pub work_branch: Option<String>,
     pub allow_default_ref: bool,
-    /// Validated child summaries for this task. Raw child transcripts and tool traces
+    /// Validated child summaries for this job run. Raw child transcripts and tool traces
     /// are intentionally not projected into the dispatch context.
     pub child_result_rollups: serde_json::Value,
 }
@@ -1313,7 +1313,14 @@ pub async fn get_work_run_dispatch_context(
                         ORDER BY rr.created_at, rr.task_id
                     )
                     FROM docket_result_rollups rr
-                    WHERE rr.run_id = r.job_run_id AND rr.parent_task_id = r.task_id
+                    WHERE rr.run_id = r.job_run_id
+                      AND rr.parent_task_id = (
+                          SELECT task_state.task_id
+                          FROM bear_task_run_state task_state
+                          WHERE task_state.run_id = r.job_run_id
+                            AND task_state.status = 'in_progress'
+                          LIMIT 1
+                      )
                 ), '[]'::jsonb) AS child_result_rollups
          FROM bear_work_runs r
          JOIN bears b ON b.id = r.bear_id
