@@ -9,16 +9,21 @@
 //! `docs/roadmap/DOCKET_IMPLEMENTATION_PLAN.md`; the crate split itself in
 //! `docs/roadmap/DEN_CRATE_SPLIT_PLAN.md`.
 
+pub mod cursors;
 mod db;
 mod dispatcher;
 #[cfg(test)]
 mod integration_tests;
 pub mod model;
+pub mod recovery;
+pub mod routing;
 pub mod service;
+pub mod supervisor;
 pub mod work_runs;
 #[cfg(test)]
 mod work_runs_tests;
 
+pub use cursors::{clear_cursor, get_cursor, set_cursor, DocketCursor};
 pub use dispatcher::TaskDispatcher;
 pub use model::{
     docket_job_status_report, docket_task_status_from_task_list_item_status,
@@ -37,10 +42,19 @@ pub use model::{
     DocketRunTrigger, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
     DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow,
     DocketTaskRunStateRow, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
-    DocketTaskUpdate, DocketValidationError, TaskListCheckoutRequest, TaskListCheckoutSource,
-    TaskListHandoffOutcome, TaskListHandoffRequest, TaskListItem, TaskListItemStatus,
-    TaskListLocalProjection, TaskListProjection, TaskListSourceRef, TaskListStatus,
-    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState, TaskListUpdate,
-    TaskListUpdateItem, TaskListValidationError, TaskListVisibility,
+    DocketTaskUpdate, DocketValidationError, ResultRollupPolicy, RoutingStrategy,
+    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,
+    TaskListHandoffRequest, TaskListItem, TaskListItemStatus, TaskListLocalProjection,
+    TaskListProjection, TaskListSourceRef, TaskListStatus, TaskListSyncOutcome,
+    TaskListSyncRequest, TaskListSyncState, TaskListUpdate, TaskListUpdateItem,
+    TaskListValidationError, TaskListVisibility,
+};
+pub use recovery::{
+    parent_rollup_context, persist_result_rollup, record_turn_activity, start_turn_attempt,
+    terminalize_stale_attempts, terminalize_turn_attempt, AttemptOutcome, ResultRollup,
+    RetryDisposition, TurnAttempt,
+};
+pub use routing::{
+    route_turn, ConversationStrategy, ExecutionSurface, RoutingDecision, TurnIntent, TurnSource,
 };
 pub use service::{DocketService, PgDocketService};

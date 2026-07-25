@@ -761,6 +761,43 @@ impl DocketEffortHint {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingStrategy {
+    Inline,
+    Scoped,
+    Delegated,
+    #[default]
+    Auto,
+}
+
+impl RoutingStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::Scoped => "scoped",
+            Self::Delegated => "delegated",
+            Self::Auto => "auto",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultRollupPolicy {
+    SummaryToParent,
+    None,
+}
+
+impl ResultRollupPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SummaryToParent => "summary_to_parent",
+            Self::None => "none",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocketTaskStatus {
@@ -866,6 +903,9 @@ pub struct DocketTaskRow {
     pub completion_criteria: Json<Vec<String>>,
     pub difficulty: Option<String>,
     pub effort_hint: Option<String>,
+    pub routing_strategy: String,
+    pub expected_context_size: Option<i32>,
+    pub result_rollup_policy: Option<String>,
     pub created_by_role: String,
     pub created_by_user_id: Option<i32>,
     pub created_by_agent_id: Option<String>,
@@ -974,6 +1014,12 @@ pub struct DocketTaskInput {
     pub difficulty: Option<DocketTaskDifficulty>,
     #[serde(default)]
     pub effort_hint: Option<DocketEffortHint>,
+    #[serde(default)]
+    pub routing_strategy: RoutingStrategy,
+    #[serde(default)]
+    pub expected_context_size: Option<i32>,
+    #[serde(default)]
+    pub result_rollup_policy: Option<ResultRollupPolicy>,
 }
 
 fn default_task_kind() -> DocketTaskKind {
@@ -1126,6 +1172,9 @@ pub struct DocketTaskCreate {
     pub completion_criteria: Vec<String>,
     pub difficulty: Option<DocketTaskDifficulty>,
     pub effort_hint: Option<DocketEffortHint>,
+    pub routing_strategy: RoutingStrategy,
+    pub expected_context_size: Option<i32>,
+    pub result_rollup_policy: Option<ResultRollupPolicy>,
     pub created_by_role: String,
     pub created_by_user_id: Option<i32>,
     pub created_by_agent_id: Option<String>,
@@ -1160,6 +1209,9 @@ pub struct DocketTaskDefinitionPatch {
     pub scope: Option<DocketTaskScope>,
     pub difficulty: Option<Option<DocketTaskDifficulty>>,
     pub effort_hint: Option<Option<DocketEffortHint>>,
+    pub routing_strategy: Option<RoutingStrategy>,
+    pub expected_context_size: Option<Option<i32>>,
+    pub result_rollup_policy: Option<Option<ResultRollupPolicy>>,
 }
 
 #[derive(Debug, Clone)]
@@ -2032,6 +2084,9 @@ mod tests {
             completion_criteria: Json(vec!["Plan is visible".to_string()]),
             difficulty: None,
             effort_hint: None,
+            routing_strategy: "auto".to_string(),
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "pair".to_string(),
             created_by_user_id: None,
             created_by_agent_id: None,
@@ -2159,6 +2214,9 @@ mod tests {
                 completion_criteria: vec!["Child task is actually done".to_string()],
                 difficulty: Some(DocketTaskDifficulty::Moderate),
                 effort_hint: Some(DocketEffortHint::Medium),
+                routing_strategy: RoutingStrategy::Auto,
+                expected_context_size: None,
+                result_rollup_policy: None,
             }],
         };
 
@@ -2185,6 +2243,9 @@ mod tests {
             completion_criteria: Vec::new(),
             difficulty: Some(DocketTaskDifficulty::Unknown),
             effort_hint: None,
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(42),
             created_by_agent_id: None,
@@ -2212,6 +2273,9 @@ mod tests {
             completion_criteria: vec!["Relevant facts are identified".to_string()],
             difficulty: Some(DocketTaskDifficulty::Unknown),
             effort_hint: None,
+            routing_strategy: RoutingStrategy::Auto,
+            expected_context_size: None,
+            result_rollup_policy: None,
             created_by_role: "pair".to_string(),
             created_by_user_id: Some(42),
             created_by_agent_id: None,
@@ -2284,6 +2348,9 @@ mod tests {
                 completion_criteria: Json(vec!["Root work done".to_string()]),
                 difficulty: None,
                 effort_hint: None,
+                routing_strategy: "auto".to_string(),
+                expected_context_size: None,
+                result_rollup_policy: None,
                 created_by_role: "pair".to_string(),
                 created_by_user_id: Some(42),
                 created_by_agent_id: None,
@@ -2363,6 +2430,9 @@ mod tests {
                     completion_criteria: sqlx::types::Json(vec!["Root work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
+                    routing_strategy: "auto".to_string(),
+                    expected_context_size: None,
+                    result_rollup_policy: None,
                     created_by_role: "pair".to_string(),
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,
@@ -2384,6 +2454,9 @@ mod tests {
                     completion_criteria: sqlx::types::Json(vec!["Peer work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
+                    routing_strategy: "auto".to_string(),
+                    expected_context_size: None,
+                    result_rollup_policy: None,
                     created_by_role: "pair".to_string(),
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,
@@ -2405,6 +2478,9 @@ mod tests {
                     completion_criteria: sqlx::types::Json(vec!["Child work done".to_string()]),
                     difficulty: None,
                     effort_hint: None,
+                    routing_strategy: "auto".to_string(),
+                    expected_context_size: None,
+                    result_rollup_policy: None,
                     created_by_role: "pair".to_string(),
                     created_by_user_id: Some(42),
                     created_by_agent_id: None,

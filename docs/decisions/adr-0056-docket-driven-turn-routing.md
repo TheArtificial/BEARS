@@ -1,6 +1,6 @@
 # ADR-0056: Docket-driven turn routing
 
-**Status:** Proposed  
+**Status:** Accepted; Phase 0/1 implemented
 **Date:** 2026-07-17 (revised 2026-07-20)  
 **Amends:** [ADR-0034: Jobs and Tasks Work-Management Model](adr-0034-jobs-and-tasks-work-management.md), [ADR-0043: ACP as edge adapter over a protocol-agnostic core](adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md), [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md), [ADR-0053: Stance-scoped delegated runs](adr-0053-stance-scoped-delegated-runs.md)  
 **Related:** [ADR-0033: Model tasks layer](adr-0033-model-tasks-layer.md), [ADR-0050: Agent loop control, adaptive budgets, and runtime checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md), [ADR-0051: Reflection performance assessments](adr-0051-reflection-performance-assessments.md)
