@@ -642,6 +642,14 @@ async fn publish_wiring_image_branch_and_prompt() {
         .unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].summary, "child completed safely");
+    sqlx::query(
+        "UPDATE bear_task_run_state SET status = 'in_progress' WHERE run_id = $1 AND task_id = $2",
+    )
+    .bind(run.job_run_id)
+    .bind(task_ids[0])
+    .execute(&pool)
+    .await
+    .unwrap();
     let context = get_work_run_dispatch_context(&pool, run.id).await.unwrap();
     assert_eq!(context.child_result_rollups.as_array().unwrap().len(), 1);
     assert_eq!(
