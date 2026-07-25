@@ -149,6 +149,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/work/runs/{run_id}", get(run_detail))
         .route("/work/runs/{run_id}/cancel", post(cancel_run))
+        .route("/work/runs/{run_id}/pause", post(pause_run))
+        .route("/work/runs/{run_id}/resume", post(resume_run))
         .route("/work/runs/{run_id}/retry", post(retry_run))
         .merge(surfaces::router())
 }
@@ -1129,6 +1131,7 @@ async fn add_top_level_task(
     Form(form): Form<AddTopLevelTaskForm>,
 ) -> Result<Response, CustomError> {
     let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    ensure_safe_task_mutation_boundary(state.sqlx_pool(), job_id).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
@@ -1375,6 +1378,26 @@ async fn job_detail(
     .await
 }
 
+async fn ensure_safe_task_mutation_boundary(
+    pool: &sqlx::PgPool,
+    job_id: Uuid,
+) -> Result<(), CustomError> {
+    // sqlx-dynamic: static query pending checked-metadata refresh; guarded by the repository ratchet.
+    let unsafe_active: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM bear_work_runs WHERE job_id=$1 AND state IN ('claimed','provisioning','running','reporting'))",
+    )
+    .bind(job_id)
+    .fetch_one(pool)
+    .await
+    .map_err(den_core::DenError::from)?;
+    if unsafe_active {
+        return Err(CustomError::ValidationError(
+            "pause the active run before adding or reordering tasks".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 async fn add_child_task(
     State(state): State<AppState>,
     auth_session: AuthSession,
@@ -1382,6 +1405,7 @@ async fn add_child_task(
     Form(form): Form<AddChildTaskForm>,
 ) -> Result<Response, CustomError> {
     let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    ensure_safe_task_mutation_boundary(state.sqlx_pool(), job_id).await?;
     let parent_task_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_tasks", &parent_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
@@ -1461,6 +1485,7 @@ async fn move_task(
     Path((job_ref, task_ref, direction)): Path<(String, String, String)>,
 ) -> Result<Response, CustomError> {
     let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    ensure_safe_task_mutation_boundary(state.sqlx_pool(), job_id).await?;
     let task_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_tasks", &task_ref).await?;
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
@@ -1623,6 +1648,8 @@ async fn run_detail(
 
     let dispatch_context =
         work_runs::get_work_run_dispatch_context(state.sqlx_pool(), run.id).await?;
+    let canonical_diagnostics =
+        den_docket::run_diagnostics(state.sqlx_pool(), run.job_run_id).await?;
     let refs = run.result_refs.clone().unwrap_or(serde_json::Value::Null);
     let log_tail = refs
         .get("log_tail")
@@ -1681,6 +1708,8 @@ async fn run_detail(
     attach_queue_info(&state, std::slice::from_ref(&run), &mut views).await?;
     let view = views.remove(0);
     let can_retry = !view.is_active;
+    let can_pause = run.state == "running";
+    let can_resume = run.state == "paused";
 
     web::render_template(
         &state,
@@ -1698,11 +1727,14 @@ async fn run_detail(
             dependency_preparation => dependency_preparation,
             cargo_failure => cargo_failure,
             diagnostic => diagnostic,
+            canonical_diagnostics => canonical_diagnostics,
             conversation_id => conversation_id,
             work_surface => work_surface,
             work_surface_link => work_surface_link,
             usage => usage,
             can_retry => can_retry,
+            can_pause => can_pause,
+            can_resume => can_resume,
         },
     )
     .await
@@ -1761,6 +1793,44 @@ async fn dispatch_job(
     let run = runs.last().ok_or_else(|| {
         CustomError::ValidationError("dispatch did not create a work run".to_string())
     })?;
+    Ok(Redirect::to(&format!("/work/runs/{}", route_id(run.id))).into_response())
+}
+
+async fn pause_run(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(run_ref): Path<String>,
+) -> Result<Response, CustomError> {
+    steer_run(&state, &auth_session, &run_ref, true).await
+}
+
+async fn resume_run(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(run_ref): Path<String>,
+) -> Result<Response, CustomError> {
+    steer_run(&state, &auth_session, &run_ref, false).await
+}
+
+async fn steer_run(
+    state: &AppState,
+    auth_session: &AuthSession,
+    run_ref: &str,
+    paused: bool,
+) -> Result<Response, CustomError> {
+    let run_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_work_runs", run_ref).await?;
+    let user_id = require_user(auth_session)?;
+    let bears = member_bears(state, user_id).await?;
+    let run = work_runs::get_work_run(state.sqlx_pool(), run_id)
+        .await?
+        .filter(|run| bears.contains_key(&run.bear_id))
+        .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
+    if !den_docket::supervisor::set_work_run_paused(state.sqlx_pool(), run.id, paused).await? {
+        return Err(CustomError::ValidationError(format!(
+            "run changed state before it could be {}; refresh and try again",
+            if paused { "paused" } else { "resumed" }
+        )));
+    }
     Ok(Redirect::to(&format!("/work/runs/{}", route_id(run.id))).into_response())
 }
 

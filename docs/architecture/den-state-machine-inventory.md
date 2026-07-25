@@ -251,6 +251,10 @@ ADR-0056 Phase 0/1 splits attention from execution authority:
 - `bear_task_run_state` is the sole execution-position authority. A partial unique index permits at most one `in_progress` task per run.
 - `docket_conversation_bindings` owns the preferred durable transcript container for a task; `docket_conversation_binding_runs` preserves which conversation each run used.
 - `docket_routing_decisions` records immutable, idempotent placement decisions. Durable turn attempts and result rollups reference those decisions/run-task identities.
+- Symbolic execution profiles (`economy`, `balanced`, `advanced`) are selected deterministically from typed task difficulty. Normalized eligible failures may advance one tier at a time, with an explicit three-attempt ceiling; concrete provider/model selection remains outside task state.
+- `docket_turn_attempts` records profile provenance, normalized terminal outcome, evidence, latency, and optional cost attribution. The supervisor—not the model—derives retry, escalation, or handoff.
+- The canonical run-diagnostics projection combines authoritative run/task state, routing decisions, attempts, rollups, and attention into one semantic model rendered by the work-run UI. Browsing cursors are never consulted for execution position.
+- Paused work runs remain active and non-terminal. Pause/resume transitions use compare-and-set semantics, and task mutation at an active execution boundary requires the run to be paused.
 - Job completion is criteria-gated: no actionable task is not evidence of completion. If required work remains and nothing is actionable, the derived job state is `blocked`, with one open attention record per run.
 
 Representative state:

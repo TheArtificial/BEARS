@@ -102,6 +102,7 @@ pub async fn set_work_run_paused(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::work_runs::WorkRunState;
     #[test]
     fn empty_queue_is_not_completion() {
         assert_eq!(
@@ -116,5 +117,11 @@ mod tests {
             derive_job_state(["done", "cancelled"], true),
             DerivedJobState::Completed
         );
+    }
+
+    #[test]
+    fn paused_runs_remain_active_and_are_not_terminal() {
+        assert!(!WorkRunState::Paused.is_terminal());
+        assert_eq!(WorkRunState::parse("paused"), Some(WorkRunState::Paused));
     }
 }

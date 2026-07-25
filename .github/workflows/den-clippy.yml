@@ -33,6 +33,9 @@ jobs:
               with:
                   workspaces: services/den
 
+            - name: Enforce checked SQLx query ratchet
+              run: sh scripts/check-sqlx-queries.sh
+
             # v2 gate (DEN_CRATE_SPLIT_PLAN.md): the default lint set plus clippy
             # pedantic/nursery (set to `deny` in `[workspace.lints.clippy]` with a
             # curated allow-list) are enforced. `-D warnings` fails the build on any

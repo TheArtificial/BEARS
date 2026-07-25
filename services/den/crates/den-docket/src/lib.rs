@@ -11,7 +11,9 @@
 
 pub mod cursors;
 mod db;
+pub mod diagnostics;
 mod dispatcher;
+pub mod execution_profiles;
 #[cfg(test)]
 mod integration_tests;
 pub mod model;
@@ -24,7 +26,14 @@ pub mod work_runs;
 mod work_runs_tests;
 
 pub use cursors::{clear_cursor, get_cursor, set_cursor, DocketCursor};
+pub use diagnostics::{
+    run_diagnostics, DiagnosticAttention, DiagnosticEvent, DiagnosticOutcome, DiagnosticRollup,
+    DiagnosticTask, RunDiagnostics,
+};
 pub use dispatcher::TaskDispatcher;
+pub use execution_profiles::{
+    resolve_execution_profile, ExecutionProfile, ProfileProvenance, ResolvedExecutionProfile,
+};
 pub use model::{
     docket_job_status_report, docket_task_status_from_task_list_item_status,
     normalize_task_list_item_ids, render_task_list_prompt_context, role_can_read_task_list,
@@ -50,9 +59,10 @@ pub use model::{
     TaskListValidationError, TaskListVisibility,
 };
 pub use recovery::{
-    parent_rollup_context, persist_result_rollup, record_turn_activity, start_turn_attempt,
-    terminalize_stale_attempts, terminalize_turn_attempt, AttemptOutcome, ResultRollup,
-    RetryDisposition, TurnAttempt,
+    decide_escalation, escalation_for_attempt, parent_rollup_context, persist_result_rollup,
+    record_turn_activity, start_turn_attempt, terminalize_stale_attempts, terminalize_turn_attempt,
+    AttemptOutcome, EscalationDecision, ResultRollup, RetryDisposition, TurnAttempt,
+    MAX_TURN_ATTEMPTS,
 };
 pub use routing::{
     route_turn, ConversationStrategy, ExecutionSurface, RoutingDecision, TurnIntent, TurnSource,
