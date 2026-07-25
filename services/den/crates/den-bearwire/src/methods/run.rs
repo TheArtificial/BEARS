@@ -547,6 +547,10 @@ async fn run_is_terminal(pool: &sqlx::PgPool, run_id: &str) -> bool {
         .is_some_and(|run| matches!(run.state.as_str(), "completed" | "failed" | "cancelled"))
 }
 
+fn run_progress_is_warning(detail: &Value) -> bool {
+    detail.get("event_kind").and_then(Value::as_str) == Some("error")
+}
+
 pub(crate) async fn persist_run_progress(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -567,14 +571,25 @@ pub(crate) async fn persist_run_progress(
         );
         return;
     }
-    tracing::info!(
-        session_id = %session_id,
-        run_id = %run_id,
-        kind,
-        elapsed_ms = started_at.elapsed().as_millis(),
-        detail = %detail,
-        "BearWire run progress"
-    );
+    if run_progress_is_warning(&detail) {
+        tracing::warn!(
+            session_id = %session_id,
+            run_id = %run_id,
+            kind,
+            elapsed_ms = started_at.elapsed().as_millis(),
+            detail = %detail,
+            "BearWire run progress"
+        );
+    } else {
+        tracing::debug!(
+            session_id = %session_id,
+            run_id = %run_id,
+            kind,
+            elapsed_ms = started_at.elapsed().as_millis(),
+            detail = %detail,
+            "BearWire run progress"
+        );
+    }
     let mut event = BearWireEvent::ephemeral(
         "run.progress",
         json!({
@@ -2431,6 +2446,15 @@ mod tests {
             .iter()
             .filter_map(|item| item.get("name").and_then(Value::as_str))
             .collect()
+    }
+
+    #[test]
+    fn run_progress_warnings_are_reserved_for_runtime_error_events() {
+        assert!(run_progress_is_warning(&json!({ "event_kind": "error" })));
+        assert!(!run_progress_is_warning(
+            &json!({ "event_kind": "turn_completed" })
+        ));
+        assert!(!run_progress_is_warning(&json!({})));
     }
 
     #[test]
