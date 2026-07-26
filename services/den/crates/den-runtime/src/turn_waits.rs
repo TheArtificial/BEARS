@@ -427,6 +427,10 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
         })
     } else {
         BearWireEvent::tool_call_requested(ToolCallRequestedWire {
+            expected_responder_action: obligation
+                .as_ref()
+                .map(|_| "tool_result".to_string()),
+            obligation_id: obligation.as_ref().map(|obligation| obligation.id.to_string()),
             policy: request_payload.get("policy").cloned(),
             tool_call,
             approval_required: false,

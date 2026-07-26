@@ -1,6 +1,6 @@
 # ADR-0056: Docket-driven turn routing
 
-**Status:** Accepted; Phases 0–3 implemented
+**Status:** Accepted; Phases 0–4 implemented
 **Date:** 2026-07-17 (revised 2026-07-20)  
 **Amends:** [ADR-0034: Jobs and Tasks Work-Management Model](adr-0034-jobs-and-tasks-work-management.md), [ADR-0043: ACP as edge adapter over a protocol-agnostic core](adr-0043-acp-as-edge-adapter-protocol-agnostic-core.md), [ADR-0045: Session task lists as Docket checkouts and working projections](adr-0045-session-task-lists-and-docket-checkout.md), [ADR-0053: Stance-scoped delegated runs](adr-0053-stance-scoped-delegated-runs.md)  
 **Related:** [ADR-0033: Model tasks layer](adr-0033-model-tasks-layer.md), [ADR-0050: Agent loop control, adaptive budgets, and runtime checkpoints](adr-0050-agent-loop-control-adaptive-budgets-and-runtime-checkpoints.md), [ADR-0051: Reflection performance assessments](adr-0051-reflection-performance-assessments.md)
@@ -732,14 +732,14 @@ Autonomous execution **leads**. In scope for v1:
 - rollup events and the parent read path;
 - execution-profile resolution via a small typed model-tasks mapping, with the resolved profile and cost/latency attribution recorded from the first turn; bounded automatic escalation follows after recovery and attribution are verified;
 - **`pair` visibility and task-tree mutation**: per-session cursors, tree/transcript/browsing APIs, live job-event streaming, and `pair`-side task-tree edits through the existing checkout/sync surface (ADR-0045) plus user-editable `routing_strategy`;
-- **run steering**: pause/resume/stop plus tree-mutation-as-steering with boundary pickup, rights keyed to bear rights.
+- **run steering**: pause/resume/stop plus tree-mutation-as-steering with boundary pickup, rights keyed to bear rights;
+- **armature-attached dispatch**: an explicit typed target bound to the current authorized client session and workspace root. The run records attachment lifecycle, preserves dirty working trees with a non-blocking warning, and leaves BearWire permission obligations authoritative. Disconnect auto-pauses the run; reconnect clears disconnect state without implicitly resuming; a bounded timeout records normalized failure evidence exactly once. Eligible timeout failures expose one authorized recovery action that creates one replacement run from durable incomplete task state while leaving the source run immutable.
 
 Explicitly deferred beyond v1:
 
 - configurable/learned escalation or routing policy beyond the fixed typed tiers and three-attempt supervisor ceiling;
 - a configurable/learned `auto` policy beyond the fixed v1 rule table;
 
-- armature-attached dispatch (unattended `work` on a user's armature; semantics fixed in **Execution surface** above, build deferred);
 - the ACP one-continuous-session illusion (adapter projection; the core router makes it possible per ADR-0043, but no chat client requires it yet);
 - the ADR-0053 delegation broker (`delegated` resolves to the work-run lane until then);
 - intra-job fan-out (ADR-0034 deferral stands);

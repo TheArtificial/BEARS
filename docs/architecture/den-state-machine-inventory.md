@@ -255,6 +255,11 @@ ADR-0056 Phase 0/1 splits attention from execution authority:
 - `docket_turn_attempts` records profile provenance, normalized terminal outcome, evidence, latency, and optional cost attribution. The supervisor—not the model—derives retry, escalation, or handoff.
 - The canonical run-diagnostics projection combines authoritative run/task state, routing decisions, attempts, rollups, and attention into one semantic model rendered by the work-run UI. Browsing cursors are never consulted for execution position.
 - Paused work runs remain active and non-terminal. Pause/resume transitions use compare-and-set semantics, and task mutation at an active execution boundary requires the run to be paused.
+- Phase 4 adds an explicit `sandbox | attached_armature` work execution target. Attached execution is valid only for the selected current client session and explicit workspace root; it never silently chooses a local surface or mutates/stashes a dirty tree.
+- BearWire permission obligations remain the sole command-approval authority for attached unattended work. Approval-required work is projected as a durable wait; only a current accepted outcome may clear it, and stale or duplicate outcomes cannot resume a run.
+- Attached-session disconnect uses compare-and-set lifecycle transitions: an affected active run auto-pauses and records a bounded deadline; reconnect clears disconnect state but does not implicitly resume. An overdue disconnect terminalizes exactly once with normalized `armature_disconnect_timeout` evidence and a failure rollup.
+- Recovery eligibility derives from that typed persisted timeout outcome. One authorized action creates at most one replacement active run from durable incomplete task state, preserves source evidence, and leaves the terminal source run immutable.
+- The canonical diagnostics projection owns attachment, permission, disconnect, timeout, and recovery semantics for conversation and work-run UI projections; labels and UI text are not recovery authority.
 - Job completion is criteria-gated: no actionable task is not evidence of completion. If required work remains and nothing is actionable, the derived job state is `blocked`, with one open attention record per run.
 
 Representative state:

@@ -93,6 +93,24 @@ pub async fn append_bearwire_event_on(
     })
 }
 
+pub async fn append_ephemeral_bearwire_event(
+    pool: &PgPool,
+    session_id: &str,
+    bear_id: Option<Uuid>,
+    user_id: Option<i32>,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> Result<BearWireEventRow, DenError> {
+    append_bearwire_event(
+        pool,
+        session_id,
+        bear_id,
+        user_id,
+        BearWireEvent::ephemeral(event_type, payload),
+    )
+    .await
+}
+
 pub async fn append_bearwire_event(
     pool: &PgPool,
     session_id: &str,

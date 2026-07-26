@@ -12,10 +12,13 @@ use crate::recovery::{
     terminalize_turn_attempt, AttemptOutcome, ResultRollup, RetryDisposition,
 };
 use crate::work_runs::{
-    checkout_work_run_for_session, claim_next_work_run, enqueue_work_run, ensure_job_work_branch,
-    finalize_work_run, get_live_work_run_by_session, get_work_run, get_work_run_dispatch_context,
-    heartbeat_work_run, record_work_run_provisioned, record_work_run_turn_outcome,
-    request_work_run_cancel, WorkRunEnqueue, WorkRunFinalize, WorkRunProvisioned, WorkRunState,
+    checkout_work_run_for_session, claim_next_work_run, disconnect_attached_work_run,
+    enqueue_work_job, enqueue_work_run, ensure_job_work_branch, finalize_work_run,
+    get_live_work_run_by_session, get_work_run, get_work_run_dispatch_context, heartbeat_work_run,
+    reconnect_attached_work_run, record_work_run_provisioned, record_work_run_turn_outcome,
+    recover_attached_work_run, request_work_run_cancel, timeout_disconnected_work_runs,
+    WorkExecutionTarget, WorkJobEnqueue, WorkRunEnqueue, WorkRunFinalize, WorkRunProvisioned,
+    WorkRunState,
 };
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
@@ -153,6 +156,101 @@ fn enqueue_for(bear_id: Uuid, task_id: Uuid, user_id: i32) -> WorkRunEnqueue {
         image_name: None,
         requested_by_user_id: Some(user_id),
     }
+}
+
+#[tokio::test]
+async fn attached_disconnect_reconnect_and_timeout_are_idempotent() {
+    let _guard = DB_LOCK.lock().await;
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "attached-lifecycle").await;
+    let (job_id, _) = seed_work_job(&pool, user_id, bear_id).await;
+    let session_id = format!("attached-{}", Uuid::new_v4().simple());
+    let run = enqueue_work_job(
+        &pool,
+        WorkJobEnqueue {
+            bear_id,
+            job_id,
+            root_name: Some("/workspace".into()),
+            git_ref: None,
+            image_name: None,
+            requested_by_user_id: Some(user_id),
+            execution_target: WorkExecutionTarget::AttachedArmature {
+                client_session_id: session_id.clone(),
+            },
+            attachment_warning: None,
+        },
+    )
+    .await
+    .expect("enqueue attached run")
+    .remove(0);
+
+    let disconnected =
+        disconnect_attached_work_run(&pool, &session_id, std::time::Duration::from_secs(60))
+            .await
+            .expect("disconnect")
+            .expect("active attached run");
+    assert_eq!(disconnected.state, "paused");
+    assert_eq!(
+        disconnected.attachment_state.as_deref(),
+        Some("disconnected")
+    );
+
+    let reconnected = reconnect_attached_work_run(&pool, &session_id)
+        .await
+        .expect("reconnect")
+        .expect("disconnected run");
+    assert_eq!(reconnected.state, "paused");
+    assert_eq!(reconnected.attachment_state.as_deref(), Some("attached"));
+    assert!(reconnect_attached_work_run(&pool, &session_id)
+        .await
+        .expect("replayed reconnect")
+        .is_none());
+
+    disconnect_attached_work_run(&pool, &session_id, std::time::Duration::ZERO)
+        .await
+        .expect("second disconnect");
+    let timed_out = timeout_disconnected_work_runs(&pool)
+        .await
+        .expect("timeout sweep");
+    let timed_out_run = timed_out
+        .iter()
+        .find(|row| row.id == run.id)
+        .expect("source run timed out");
+    let recovered = recover_attached_work_run(&pool, timed_out_run.id, bear_id)
+        .await
+        .expect("recover timed-out run");
+    assert_ne!(recovered.id, timed_out_run.id);
+    assert_eq!(recovered.job_id, timed_out_run.job_id);
+    assert_eq!(recovered.job_run_id, timed_out_run.job_run_id);
+    assert_eq!(recovered.execution_target, "attached_armature");
+    let source_id = timed_out_run.id.to_string();
+    assert_eq!(
+        recovered
+            .result_refs
+            .as_ref()
+            .and_then(|refs| refs.pointer("/recovery/source_work_run_id"))
+            .and_then(serde_json::Value::as_str),
+        Some(source_id.as_str())
+    );
+    assert!(recover_attached_work_run(&pool, timed_out_run.id, bear_id)
+        .await
+        .is_err());
+    assert_eq!(
+        get_work_run(&pool, timed_out_run.id)
+            .await
+            .expect("read immutable source")
+            .expect("source exists")
+            .state,
+        "timed_out"
+    );
+    assert!(timeout_disconnected_work_runs(&pool)
+        .await
+        .expect("replayed sweep")
+        .iter()
+        .all(|row| row.id != run.id));
 }
 
 #[tokio::test]

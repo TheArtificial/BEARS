@@ -2115,6 +2115,14 @@ mod test {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum WorkDispatchTarget {
+    #[default]
+    Sandbox,
+    AttachedArmature,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct WorkDispatchArguments {
     job_id: Uuid,
@@ -2125,6 +2133,75 @@ pub(crate) struct WorkDispatchArguments {
     /// Catalog image name on the sandbox provider (see get_work_catalog).
     #[serde(default)]
     image: Option<String>,
+    /// Trusted adapter observation for the explicitly attached workspace. A
+    /// dirty tree is allowed but recorded as a warning; Den never mutates it.
+    #[serde(default)]
+    dirty_worktree: bool,
+    /// Execution is sandboxed unless the caller explicitly selects the
+    /// currently attached armature.
+    #[serde(default)]
+    target: WorkDispatchTarget,
+}
+
+fn attached_dispatch_warning(target: WorkDispatchTarget, dirty_worktree: bool) -> Option<String> {
+    match (target, dirty_worktree) {
+        (WorkDispatchTarget::AttachedArmature, true) => Some(
+            "Attached workspace has uncommitted changes; they will be preserved and local permissions remain authoritative."
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+fn attached_dispatch_target(
+    args: &WorkDispatchArguments,
+    context: &DenToolInvocationContext,
+) -> Result<den_docket::work_runs::WorkExecutionTarget, CustomError> {
+    match args.target {
+        WorkDispatchTarget::Sandbox => Ok(den_docket::work_runs::WorkExecutionTarget::Sandbox),
+        WorkDispatchTarget::AttachedArmature => {
+            let client_session_id = context
+                .client_session_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    CustomError::ValidationError(
+                        "attached_armature dispatch requires the current client session"
+                            .to_string(),
+                    )
+                })?;
+            let root = args
+                .root
+                .as_deref()
+                .and_then(clean_optional)
+                .ok_or_else(|| {
+                    CustomError::ValidationError(
+                        "attached_armature dispatch requires an explicit workspace root"
+                            .to_string(),
+                    )
+                })?;
+            if !context
+                .workspace_roots
+                .iter()
+                .any(|allowed| allowed == &root)
+            {
+                return Err(CustomError::ValidationError(format!(
+                    "workspace root {root:?} is not attached to the current client session"
+                )));
+            }
+            if args.image.as_deref().and_then(clean_optional).is_some() {
+                return Err(CustomError::ValidationError(
+                    "attached_armature dispatch does not accept a sandbox image".to_string(),
+                ));
+            }
+            Ok(
+                den_docket::work_runs::WorkExecutionTarget::AttachedArmature {
+                    client_session_id: client_session_id.to_string(),
+                },
+            )
+        }
+    }
 }
 
 pub(crate) async fn dispatch_work(
@@ -2140,6 +2217,8 @@ pub(crate) async fn dispatch_work(
         )));
     }
     let args: WorkDispatchArguments = serde_json::from_value(arguments)?;
+    let execution_target = attached_dispatch_target(&args, context)?;
+    let attachment_warning = attached_dispatch_warning(args.target, args.dirty_worktree);
     let runs = den_docket::work_runs::enqueue_work_job(
         pool,
         den_docket::work_runs::WorkJobEnqueue {
@@ -2149,10 +2228,33 @@ pub(crate) async fn dispatch_work(
             git_ref: args.git_ref.as_deref().and_then(clean_optional),
             image_name: args.image.as_deref().and_then(clean_optional),
             requested_by_user_id: Some(context.user_id),
+            execution_target,
+            attachment_warning: attachment_warning.clone(),
         },
     )
     .await?;
     let run_ids: Vec<Uuid> = runs.iter().map(|run| run.id).collect();
+    if let WorkDispatchTarget::AttachedArmature = args.target {
+        let client_session_id = context
+            .client_session_id
+            .as_deref()
+            .expect("attached_dispatch_target validated the current client session");
+        for run in &runs {
+            den_runtime::bearwire_events::append_ephemeral_bearwire_event(
+                pool,
+                client_session_id,
+                Some(context.bear_id),
+                Some(context.user_id),
+                "work.dispatch_requested",
+                json!({
+                    "work_order_id": run.id,
+                    "job_id": run.job_id,
+                    "root": run.root_name,
+                }),
+            )
+            .await?;
+        }
+    }
     let queue = den_docket::work_runs::queued_run_positions(pool, &run_ids).await?;
     Ok(json!({
         "ok": true,
@@ -2164,7 +2266,15 @@ pub(crate) async fn dispatch_work(
             "position": info.position,
             "waiting_on_run_id": info.waiting_on_run_id,
         })).collect::<Vec<_>>(),
-        "note": "Job queued; one work run will execute its runnable work tasks in the shared sandbox.",
+        "execution_target": match args.target {
+            WorkDispatchTarget::Sandbox => "sandbox",
+            WorkDispatchTarget::AttachedArmature => "attached_armature",
+        },
+        "warning": attachment_warning,
+        "note": match args.target {
+            WorkDispatchTarget::Sandbox => "Job queued; one work run will execute its runnable work tasks in the shared sandbox.",
+            WorkDispatchTarget::AttachedArmature => "Job queued for unattended execution on the explicitly attached armature; local permissions remain authoritative.",
+        },
     }))
 }
 

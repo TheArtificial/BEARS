@@ -1637,6 +1637,20 @@ async fn update_run_state_for_runtime_event(
                     None
                 }
             };
+            if effective_approval_required {
+                if let Err(err) = den_docket::work_runs::mark_attached_work_run_permission_required(
+                    pool, session_id,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        error = %err,
+                        session_id,
+                        run_id,
+                        "failed to project permission requirement onto attached work run"
+                    );
+                }
+            }
             if let Some(started_at) = started_at {
                 let (kind, text) = if effective_approval_required {
                     (

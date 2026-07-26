@@ -225,6 +225,10 @@ pub enum ExecutionTargetWire {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCallRequestedWire {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_responder_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub obligation_id: Option<String>,
     pub tool_call: ToolCallWire,
     pub approval_required: bool,
     pub execution_target: ExecutionTargetWire,

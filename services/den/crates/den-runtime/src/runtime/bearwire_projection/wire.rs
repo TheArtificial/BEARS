@@ -217,6 +217,8 @@ pub fn runtime_semantic_event_to_bearwire_events(
                 })
             } else {
                 BearWireEvent::tool_call_requested(ToolCallRequestedWire {
+                    expected_responder_action: None,
+                    obligation_id: None,
                     policy: tool_call_policy(&tool_name),
                     tool_call,
                     approval_required: false,

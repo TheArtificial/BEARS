@@ -504,6 +504,10 @@ pub(crate) async fn session_open_result(
         },
     )
     .await?;
+    let reconnected =
+        den_docket::work_runs::reconnect_attached_work_run(&state.sqlx_pool, &session_id)
+            .await?
+            .is_some();
     if let Some(client_context) = client_context.as_ref() {
         client_sessions::update_adapter_environment(
             &state.sqlx_pool,
@@ -573,6 +577,7 @@ pub(crate) async fn session_open_result(
         "session": session,
         "event_sequence": persisted.sequence_no,
         "cleared_focus_count": cleared_focus_count,
+        "attached_work_reconnected": reconnected,
     }))
 }
 
@@ -657,6 +662,13 @@ pub(crate) async fn session_close_result(
             }
         };
     client_sessions::mark_closed(&state.sqlx_pool, session.id).await?;
+    let disconnected = den_docket::work_runs::disconnect_attached_work_run(
+        &state.sqlx_pool,
+        &session_id,
+        den_docket::work_runs::ATTACHED_DISCONNECT_TIMEOUT,
+    )
+    .await?
+    .is_some();
     let mut event = BearWireEvent::ephemeral(
         "session.closed",
         json!({
@@ -682,6 +694,7 @@ pub(crate) async fn session_close_result(
         "session_id": session_id,
         "event_sequence": persisted.sequence_no,
         "pair_reflection": reflection_payload,
+        "attached_work_disconnected": disconnected,
     }))
 }
 

@@ -194,6 +194,12 @@ struct RunView {
     image: Option<String>,
     sandbox_type: Option<String>,
     sandbox_strength: Option<String>,
+    execution_target: String,
+    attached_client_session_id: Option<String>,
+    attachment_state: Option<String>,
+    attachment_warning: Option<String>,
+    disconnected_at: Option<String>,
+    disconnect_deadline_at: Option<String>,
     result_summary: Option<String>,
     error: Option<String>,
     cancel_requested: bool,
@@ -377,6 +383,12 @@ fn run_view(run: &WorkRunRow, bear_slug: &str, job_title: &str) -> RunView {
         image: run.image_name.clone(),
         sandbox_type: run.sandbox_type.clone(),
         sandbox_strength: run.sandbox_strength.clone(),
+        execution_target: run.execution_target.clone(),
+        attached_client_session_id: run.attached_client_session_id.clone(),
+        attachment_state: run.attachment_state.clone(),
+        attachment_warning: run.attachment_warning.clone(),
+        disconnected_at: run.disconnected_at.map(ts),
+        disconnect_deadline_at: run.disconnect_deadline_at.map(ts),
         result_summary: run.result_summary.clone(),
         error: run.error.clone(),
         cancel_requested: run.cancel_requested,
@@ -1707,7 +1719,17 @@ async fn run_detail(
     let mut views = vec![run_view(&run, &bear_slug, &dispatch_context.job_goal)];
     attach_queue_info(&state, std::slice::from_ref(&run), &mut views).await?;
     let view = views.remove(0);
-    let can_retry = !view.is_active;
+    let can_retry = if run.execution_target == "attached_armature" {
+        run.state == "timed_out"
+            && run
+                .result_refs
+                .as_ref()
+                .and_then(|refs| refs.pointer("/outcome/code"))
+                .and_then(serde_json::Value::as_str)
+                == Some("armature_disconnect_timeout")
+    } else {
+        !view.is_active
+    };
     let can_pause = run.state == "running";
     let can_resume = run.state == "paused";
 
@@ -1787,6 +1809,8 @@ async fn dispatch_job(
             git_ref: clean_form_field(&form.git_ref),
             image_name: clean_form_field(&form.image),
             requested_by_user_id: Some(user_id),
+            execution_target: work_runs::WorkExecutionTarget::Sandbox,
+            attachment_warning: None,
         },
     )
     .await?;
@@ -1862,20 +1886,26 @@ async fn retry_run(
         .await?
         .filter(|run| bears.contains_key(&run.bear_id))
         .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
-    let mut retries = work_runs::enqueue_work_job(
-        state.sqlx_pool(),
-        work_runs::WorkJobEnqueue {
-            bear_id: run.bear_id,
-            job_id: run.job_id,
-            root_name: run.root_name.clone(),
-            git_ref: run.git_ref.clone(),
-            image_name: run.image_name.clone(),
-            requested_by_user_id: Some(user_id),
-        },
-    )
-    .await?;
-    let retry = retries
-        .pop()
-        .expect("enqueue_work_job returns one job-scoped work run");
+    let retry = if run.execution_target == "attached_armature" {
+        work_runs::recover_attached_work_run(state.sqlx_pool(), run.id, run.bear_id).await?
+    } else {
+        let mut retries = work_runs::enqueue_work_job(
+            state.sqlx_pool(),
+            work_runs::WorkJobEnqueue {
+                bear_id: run.bear_id,
+                job_id: run.job_id,
+                root_name: run.root_name.clone(),
+                git_ref: run.git_ref.clone(),
+                image_name: run.image_name.clone(),
+                requested_by_user_id: Some(user_id),
+                execution_target: work_runs::WorkExecutionTarget::Sandbox,
+                attachment_warning: None,
+            },
+        )
+        .await?;
+        retries
+            .pop()
+            .expect("enqueue_work_job returns one job-scoped work run")
+    };
     Ok(Redirect::to(&format!("/work/runs/{}", retry.id)).into_response())
 }

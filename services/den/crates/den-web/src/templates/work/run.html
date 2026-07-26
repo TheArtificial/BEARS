@@ -29,6 +29,12 @@
             <tr><th>Image</th><td>{{ run.image or "root default" }}</td></tr>
             <tr><th>Sandbox</th><td>{{ run.sandbox_type or "—" }}</td></tr>
             <tr><th>Sandbox strength</th><td>{{ run.sandbox_strength or "—" }}</td></tr>
+            <tr><th>Execution target</th><td>{{ run.execution_target }}</td></tr>
+            {% if run.attached_client_session_id %}<tr><th>Attached session</th><td><code>{{ run.attached_client_session_id }}</code></td></tr>{% endif %}
+            {% if run.attachment_state %}<tr><th>Attachment state</th><td>{{ run.attachment_state }}</td></tr>{% endif %}
+            {% if run.attachment_warning %}<tr><th>Worktree warning</th><td role="status">⚠ {{ run.attachment_warning }}</td></tr>{% endif %}
+            {% if run.disconnected_at %}<tr><th>Disconnected</th><td>{{ run.disconnected_at }}</td></tr>{% endif %}
+            {% if run.disconnect_deadline_at %}<tr><th>Reconnect deadline</th><td>{{ run.disconnect_deadline_at }}</td></tr>{% endif %}
             <tr><th>Queued</th><td>{{ run.queued_at }}</td></tr>
             <tr><th>Started</th><td>{{ run.started_at or "—" }}</td></tr>
             <tr><th>Finished</th><td>{{ run.finished_at or "—" }}</td></tr>
@@ -52,7 +58,7 @@
     </form>
     {% elif can_retry %}
     <form method="post" action="/work/runs/{{ run.id }}/retry">
-        <button type="submit">Retry (new attempt)</button>
+        <button type="submit">{% if run.execution_target == "attached_armature" %}Recover on attached armature{% else %}Retry (new attempt){% endif %}</button>
     </form>
     {% endif %}
 </section>
@@ -68,6 +74,15 @@
         {% if canonical_diagnostics.attention %}
         <dt>Attention</dt><dd>{{ canonical_diagnostics.attention.cause }}</dd>
         <dt>Recovery</dt><dd>{{ canonical_diagnostics.attention.recovery_action }}</dd>
+        {% endif %}
+        {% if canonical_diagnostics.attachment %}
+        <dt>Execution target</dt><dd>{{ canonical_diagnostics.attachment.execution_target }}</dd>
+        {% if canonical_diagnostics.attachment.state %}<dt>Attachment</dt><dd>{{ canonical_diagnostics.attachment.state }}</dd>{% endif %}
+        {% if canonical_diagnostics.attachment.warning %}<dt>Warning</dt><dd>⚠ {{ canonical_diagnostics.attachment.warning }}</dd>{% endif %}
+        {% if canonical_diagnostics.attachment.disconnected_at %}<dt>Disconnected</dt><dd>{{ canonical_diagnostics.attachment.disconnected_at }}</dd>{% endif %}
+        {% if canonical_diagnostics.attachment.deadline_at %}<dt>Deadline</dt><dd>{{ canonical_diagnostics.attachment.deadline_at }}</dd>{% endif %}
+        {% if canonical_diagnostics.attachment.source_work_run_id %}<dt>Recovered from</dt><dd><code>{{ canonical_diagnostics.attachment.source_work_run_id }}</code></dd>{% endif %}
+        {% if canonical_diagnostics.attachment.recovery_eligible %}<dt>Recovery</dt><dd>Reconnect the armature, then use the recovery action above.</dd>{% endif %}
         {% endif %}
     </dl>
 
