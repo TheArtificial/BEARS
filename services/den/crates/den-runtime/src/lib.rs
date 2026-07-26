@@ -50,6 +50,8 @@ pub mod turn_runs;
 pub mod turn_steps;
 /// Transactional core wait/obligation persistence helpers.
 pub mod turn_waits;
+/// Readable, ordered work activity projected from the canonical BearWire event log.
+pub mod work_activity;
 
 /// Runtime-side memory glue over the `den-memory` leaf: curation, curate-executor,
 /// prompt-block store/blocks, proposals, observations, and admin inspection.

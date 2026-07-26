@@ -63,6 +63,26 @@
     {% endif %}
 </section>
 
+<section aria-labelledby="run-activity-heading">
+    <h2 id="run-activity-heading">Activity</h2>
+    {% if activity %}
+    <ol>
+        {% for entry in activity %}
+        <li>
+            <strong>{{ entry.kind }}</strong>
+            {% if entry.tool_call_id %}<code>{{ entry.tool_call_id }}</code>{% endif %}
+            <p>{{ entry.text }}{% if entry.truncated %} <em>[truncated]</em>{% endif %}</p>
+            <small>events {{ entry.first_sequence }}{% if entry.last_sequence != entry.first_sequence %}–{{ entry.last_sequence }}{% endif %}</small>
+        </li>
+        {% endfor %}
+    </ol>
+    {% elif conversation_id %}
+    <p>No canonical activity events were recorded for this older run. The legacy conversation remains available above.</p>
+    {% else %}
+    <p>No activity has been recorded yet.</p>
+    {% endif %}
+</section>
+
 <section aria-labelledby="run-diagnostics-heading">
     <h2 id="run-diagnostics-heading">Run diagnostics</h2>
     <p role="status"><strong>{{ canonical_diagnostics.run_state }}</strong> — {{ canonical_diagnostics.explanation }}</p>

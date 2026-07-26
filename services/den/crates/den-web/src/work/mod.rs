@@ -1703,6 +1703,19 @@ async fn run_detail(
         .map_err(den_core::DenError::from)?,
         None => None,
     };
+    let activity = match run.bearwire_session_id.as_deref() {
+        Some(session_id) => {
+            let events = den_runtime::bearwire_events::list_bearwire_events_after(
+                state.sqlx_pool(),
+                session_id,
+                None,
+                500,
+            )
+            .await?;
+            den_runtime::work_activity::project_work_activity(events)
+        }
+        None => Vec::new(),
+    };
     let work_surface = run.work_surface.clone();
     let work_surface_link = match dispatch_context.work_surface_ref.as_deref() {
         Some(name) => den_service::work_surfaces::surface_by_name(state.sqlx_pool(), name)
@@ -1750,6 +1763,7 @@ async fn run_detail(
             cargo_failure => cargo_failure,
             diagnostic => diagnostic,
             canonical_diagnostics => canonical_diagnostics,
+            activity => activity,
             conversation_id => conversation_id,
             work_surface => work_surface,
             work_surface_link => work_surface_link,

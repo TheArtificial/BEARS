@@ -993,6 +993,24 @@ pub async fn request_work_run_cancel(
     Ok(result.rows_affected() == 1)
 }
 
+/// The latest work run bound to a BearWire session, including terminal runs.
+pub async fn get_work_run_by_session(
+    pool: &PgPool,
+    session_id: &str,
+) -> Result<Option<WorkRunRow>, DenError> {
+    // sqlx-dynamic: the shared typed work-run column projection is assembled centrally.
+    let row = sqlx::query_as::<_, WorkRunRow>(&format!(
+        "SELECT {WORK_RUN_COLUMNS} FROM bear_work_runs
+         WHERE bearwire_session_id = $1
+         ORDER BY updated_at DESC
+         LIMIT 1"
+    ))
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
 /// The live work run bound to a BearWire session, if any. This is the stance
 /// signal for `run.start`: a session bound via `work.checkout` runs in the
 /// Work stance; everything else stays Pair.

@@ -11,7 +11,10 @@ use bearwire_protocol::{
     surface::{SurfaceHistoryEvent, SurfaceResourceRef},
 };
 use den_http::errors::CustomError;
-use den_runtime::bearwire_events;
+use den_runtime::{
+    bearwire_events,
+    work_activity::{WorkActivityEntry, WorkActivityKind},
+};
 use den_service::{client_sessions, conversation::persistence, DenState};
 
 use crate::auth::authenticated_bear;
@@ -316,6 +319,61 @@ pub(crate) async fn conversation_surface_history_result(
     .await
 }
 
+fn work_activity_surface_event(entry: WorkActivityEntry) -> Option<SurfaceHistoryEvent> {
+    let id = Some(format!("bearwire:{}", entry.id));
+    let created_at = Some(entry.created_at.to_string());
+    let text = if entry.truncated {
+        format!("{} [truncated]", entry.text)
+    } else {
+        entry.text
+    };
+    match entry.kind {
+        WorkActivityKind::AssistantMessage => Some(SurfaceHistoryEvent::Message {
+            id,
+            role: "assistant".to_string(),
+            text,
+            resources: Vec::new(),
+            created_at,
+        }),
+        WorkActivityKind::ReasoningSummary => Some(SurfaceHistoryEvent::ReasoningDelta {
+            id,
+            role: Some("assistant".to_string()),
+            text,
+            source: Some("provider_reasoning".to_string()),
+            replay_policy: Some("thought".to_string()),
+            created_at,
+        }),
+        WorkActivityKind::ToolCall => Some(SurfaceHistoryEvent::ToolCall {
+            id,
+            role: Some("assistant".to_string()),
+            tool_call_id: entry.tool_call_id?,
+            tool_name: entry.tool_name.unwrap_or_else(|| "tool".to_string()),
+            status: "requested".to_string(),
+            arguments: Value::Null,
+            created_at,
+        }),
+        WorkActivityKind::ToolResult => Some(SurfaceHistoryEvent::ToolResult {
+            id,
+            role: Some("tool".to_string()),
+            tool_call_id: entry.tool_call_id?,
+            tool_name: entry.tool_name.unwrap_or_else(|| "tool".to_string()),
+            status: "completed".to_string(),
+            text: Some(text),
+            raw_output: Value::Null,
+            created_at,
+        }),
+        WorkActivityKind::Approval | WorkActivityKind::Lifecycle => {
+            Some(SurfaceHistoryEvent::Message {
+                id,
+                role: "system".to_string(),
+                text,
+                resources: Vec::new(),
+                created_at,
+            })
+        }
+    }
+}
+
 async fn conversation_history_like_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -460,93 +518,108 @@ async fn conversation_history_like_result(
                 limit,
             )
             .await?;
-            for row in surface_event_rows {
-                if row.event_type == "runtime.objective_orientation" {
-                    let event_id = row
-                        .event
-                        .event_id
-                        .unwrap_or_else(|| format!("bearwire:{}", row.id));
-                    messages.push(json!(SurfaceHistoryEvent::Message {
-                        id: Some(event_id),
-                        role: "system".to_string(),
-                        text: orientation_diagnostic_text(&row.event.data),
-                        resources: Vec::<SurfaceResourceRef>::new(),
-                        created_at: Some(row.created_at.to_string()),
-                    }));
-                    continue;
-                }
+            let is_work_session = den_docket::work_runs::get_work_run_by_session(
+                &state.sqlx_pool,
+                &session.client_session_id,
+            )
+            .await?
+            .is_some();
+            if is_work_session {
+                messages.extend(
+                    den_runtime::work_activity::project_work_activity(surface_event_rows)
+                        .into_iter()
+                        .filter_map(work_activity_surface_event)
+                        .map(|event| json!(event)),
+                );
+            } else {
+                for row in surface_event_rows {
+                    if row.event_type == "runtime.objective_orientation" {
+                        let event_id = row
+                            .event
+                            .event_id
+                            .unwrap_or_else(|| format!("bearwire:{}", row.id));
+                        messages.push(json!(SurfaceHistoryEvent::Message {
+                            id: Some(event_id),
+                            role: "system".to_string(),
+                            text: orientation_diagnostic_text(&row.event.data),
+                            resources: Vec::<SurfaceResourceRef>::new(),
+                            created_at: Some(row.created_at.to_string()),
+                        }));
+                        continue;
+                    }
 
-                if row.event_type == "session_info_update" {
-                    let title = row
+                    if row.event_type == "session_info_update" {
+                        let title = row
+                            .event
+                            .data
+                            .get("title")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|title| !title.is_empty());
+                        let updated_at = row.event.data.get("updated_at").and_then(Value::as_str);
+                        if title.is_none() && updated_at.is_none() {
+                            continue;
+                        }
+                        let event_id = row
+                            .event
+                            .event_id
+                            .unwrap_or_else(|| format!("bearwire:{}", row.id));
+                        messages.push(json!(SurfaceHistoryEvent::SessionInfoUpdate {
+                            id: Some(event_id),
+                            role: Some("system".to_string()),
+                            session_id: Some(session.client_session_id.clone()),
+                            title: project_focus_title(title.map(str::to_string), focused),
+                            title_updated_at: updated_at.map(str::to_string),
+                            current_mode: None,
+                            created_at: Some(row.created_at.to_string()),
+                        }));
+                        continue;
+                    }
+
+                    if row.event_type != "message.reasoning.delta" {
+                        continue;
+                    }
+                    let delta = row
                         .event
                         .data
-                        .get("title")
+                        .get("delta")
+                        .or_else(|| row.event.data.get("text"))
                         .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|title| !title.is_empty());
-                    let updated_at = row.event.data.get("updated_at").and_then(Value::as_str);
-                    if title.is_none() && updated_at.is_none() {
+                        .unwrap_or("")
+                        .trim();
+                    if delta.is_empty() {
+                        continue;
+                    }
+                    let source = row
+                        .event
+                        .data
+                        .get("source")
+                        .and_then(Value::as_str)
+                        .unwrap_or("provider_reasoning")
+                        .to_string();
+                    let replay_policy = row
+                        .event
+                        .data
+                        .get("replay_policy")
+                        .and_then(Value::as_str)
+                        .unwrap_or("none")
+                        .to_string();
+                    if replay_policy != "thought" {
                         continue;
                     }
                     let event_id = row
                         .event
                         .event_id
                         .unwrap_or_else(|| format!("bearwire:{}", row.id));
-                    messages.push(json!(SurfaceHistoryEvent::SessionInfoUpdate {
+                    messages.push(json!(SurfaceHistoryEvent::ReasoningDelta {
                         id: Some(event_id),
-                        role: Some("system".to_string()),
-                        session_id: Some(session.client_session_id.clone()),
-                        title: project_focus_title(title.map(str::to_string), focused),
-                        title_updated_at: updated_at.map(str::to_string),
-                        current_mode: None,
+                        role: Some("assistant".to_string()),
+                        text: delta.to_string(),
+                        source: Some(source),
+                        replay_policy: Some(replay_policy),
                         created_at: Some(row.created_at.to_string()),
                     }));
-                    continue;
                 }
-
-                if row.event_type != "message.reasoning.delta" {
-                    continue;
-                }
-                let delta = row
-                    .event
-                    .data
-                    .get("delta")
-                    .or_else(|| row.event.data.get("text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim();
-                if delta.is_empty() {
-                    continue;
-                }
-                let source = row
-                    .event
-                    .data
-                    .get("source")
-                    .and_then(Value::as_str)
-                    .unwrap_or("provider_reasoning")
-                    .to_string();
-                let replay_policy = row
-                    .event
-                    .data
-                    .get("replay_policy")
-                    .and_then(Value::as_str)
-                    .unwrap_or("none")
-                    .to_string();
-                if replay_policy != "thought" {
-                    continue;
-                }
-                let event_id = row
-                    .event
-                    .event_id
-                    .unwrap_or_else(|| format!("bearwire:{}", row.id));
-                messages.push(json!(SurfaceHistoryEvent::ReasoningDelta {
-                    id: Some(event_id),
-                    role: Some("assistant".to_string()),
-                    text: delta.to_string(),
-                    source: Some(source),
-                    replay_policy: Some(replay_policy),
-                    created_at: Some(row.created_at.to_string()),
-                }));
             }
         }
 
@@ -586,6 +659,38 @@ async fn conversation_history_like_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn work_activity_surface_events_preserve_safe_activity_details() {
+        let entry = |kind, text: &str| WorkActivityEntry {
+            id: Uuid::from_u128(7),
+            first_sequence: 1,
+            last_sequence: 1,
+            kind,
+            text: text.to_string(),
+            tool_call_id: Some("call-1".to_string()),
+            tool_name: Some("fs.read".to_string()),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            truncated: false,
+        };
+
+        let assistant = work_activity_surface_event(entry(
+            WorkActivityKind::AssistantMessage,
+            "Inspecting files.",
+        ))
+        .expect("assistant activity");
+        let tool = work_activity_surface_event(entry(WorkActivityKind::ToolCall, "safe summary"))
+            .expect("tool activity");
+
+        assert_eq!(
+            serde_json::to_value(assistant).unwrap()["text"],
+            "Inspecting files."
+        );
+        let tool = serde_json::to_value(tool).unwrap();
+        assert_eq!(tool["tool_call_id"], "call-1");
+        assert_eq!(tool["tool_name"], "fs.read");
+        assert_eq!(tool["arguments"], Value::Null);
+    }
 
     #[test]
     fn docket_surface_event_id_preserves_wire_string() {

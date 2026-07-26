@@ -82,6 +82,12 @@ The system will support multiple projections over the same underlying model:
 - GUI applications may show the Docket task tree explicitly and allow users to navigate, inspect, and control routing decisions — including watching an autonomous run's position without disturbing it.
 - Debugging and audit tools may expose the full mapping between sessions, tasks, conversations, runs, and tool calls.
 
+### Work activity transcript
+
+A `work` run's conversation is an append-only projection of its canonical ordered execution events, not only its final assistant response. It records model-visible assistant messages, provider-exposed reasoning summaries, correlated tool calls and results, permission requests and decisions, lifecycle transitions, and the normalized terminal outcome. Hidden chain-of-thought is neither requested nor reconstructed.
+
+Events are persisted as execution proceeds with stable identity and ordering so reconnects and retries are idempotent and interrupted runs retain partial evidence. Redaction and truncation are explicit. The readable conversation and richer run diagnostics project the same canonical events and normalized outcome; they may differ in detail but must not maintain competing histories or disagree semantically.
+
 ## Terminology
 
 ### Turn intent
