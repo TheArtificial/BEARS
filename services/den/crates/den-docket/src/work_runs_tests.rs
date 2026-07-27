@@ -4,6 +4,7 @@
 
 use den_core::{BearProfile, DenError};
 use sqlx::PgPool;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::execution_profiles::{ProfileProvenance, ResolvedExecutionProfile};
@@ -671,6 +672,66 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
         get_work_run(&pool, run.id).await.unwrap().unwrap().id,
         run.id
     );
+}
+
+#[tokio::test]
+async fn successful_work_run_settles_completed_docket_job() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    purge_claimable_runs(&pool).await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "settles-job").await;
+    let (job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+
+    for task_id in task_ids {
+        sqlx::query(
+            "INSERT INTO bear_task_run_state (run_id, task_id, status, result_summary, finished_at)
+             VALUES ($1, $2, 'done', 'completed', NOW())",
+        )
+        .bind(run.job_run_id)
+        .bind(task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO bear_job_criteria_state (run_id, criterion_id, status, evaluated_at)
+         SELECT $1, id, 'met', NOW() FROM bear_job_criteria WHERE job_id = $2",
+    )
+    .bind(run.job_run_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    finalize_work_run(
+        &pool,
+        run.id,
+        WorkRunState::Succeeded,
+        WorkRunFinalize::default(),
+    )
+    .await
+    .unwrap();
+
+    let (job_status,): (String,) = sqlx::query_as("SELECT status FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let (run_state, finished_at): (String, Option<OffsetDateTime>) =
+        sqlx::query_as("SELECT state, finished_at FROM bear_job_runs WHERE id = $1")
+            .bind(run.job_run_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(job_status, "completed");
+    assert_eq!(run_state, "completed");
+    assert!(finished_at.is_some());
 }
 
 #[tokio::test]

@@ -906,8 +906,85 @@ pub async fn finalize_work_run(
     .fetch_one(&mut *tx)
     .await?;
 
+    if matches!(canonical_state, WorkRunState::Succeeded) {
+        settle_completed_job(&mut tx, &row, &canonical_outcome).await?;
+    }
+
     tx.commit().await?;
     Ok(row)
+}
+
+/// A work run is the terminal executor for its Docket run. Once it succeeds,
+/// settle the owning job in the same transaction when every task and criterion
+/// has reached its terminal success state. This avoids requiring a redundant
+/// `execute_job` call solely to persist the already-established outcome.
+async fn settle_completed_job(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    work_run: &WorkRunRow,
+    outcome: &Value,
+) -> Result<(), DenError> {
+    let tasks_complete = sqlx::query_scalar::<_, bool>(
+        "SELECT NOT EXISTS (
+             SELECT 1
+             FROM bear_tasks t
+             LEFT JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2
+             WHERE t.job_id = $1 AND COALESCE(s.status, 'pending') NOT IN ('done', 'cancelled')
+         )",
+    )
+    .bind(work_run.job_id)
+    .bind(work_run.job_run_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let criteria_complete = sqlx::query_scalar::<_, bool>(
+        "SELECT NOT EXISTS (
+             SELECT 1
+             FROM bear_job_criteria c
+             LEFT JOIN bear_job_criteria_state s ON s.criterion_id = c.id AND s.run_id = $2
+             WHERE c.job_id = $1 AND COALESCE(s.status, 'unmet') NOT IN ('met', 'waived')
+         )",
+    )
+    .bind(work_run.job_id)
+    .bind(work_run.job_run_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    if !tasks_complete || !criteria_complete {
+        return Ok(());
+    }
+
+    let settled = sqlx::query_scalar::<_, Uuid>(
+        "UPDATE bear_jobs
+         SET status = 'completed', updated_at = NOW()
+         WHERE id = $1 AND current_run_id = $2 AND status IN ('ready', 'running')
+         RETURNING id",
+    )
+    .bind(work_run.job_id)
+    .bind(work_run.job_run_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if settled.is_none() {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "UPDATE bear_job_runs
+         SET state = 'completed', outcome = $2::jsonb,
+             finished_at = COALESCE(finished_at, NOW()), updated_at = NOW()
+         WHERE id = $1",
+    )
+    .bind(work_run.job_run_id)
+    .bind(outcome)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, payload)
+         VALUES ($1, $2, 'job_completed', 'system', $3::jsonb)",
+    )
+    .bind(work_run.job_id)
+    .bind(work_run.job_run_id)
+    .bind(json!({"status": "completed", "source": "work_run"}))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]
