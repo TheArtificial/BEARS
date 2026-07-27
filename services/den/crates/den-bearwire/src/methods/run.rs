@@ -2317,6 +2317,37 @@ fn run_livestream_projection(
     })
 }
 
+fn run_audit_projection(run: &turn_runs::TurnRunRow, events: Vec<Value>) -> Value {
+    let events = events
+        .into_iter()
+        .filter(|event| {
+            !matches!(
+                event.get("event_type").and_then(Value::as_str),
+                Some("message.delta" | "message.reasoning.delta")
+            )
+        })
+        .map(|event| {
+            // Audit needs ordering and lifecycle evidence, not provider or tool payloads.
+            json!({
+                "id": event.get("id"),
+                "sequence_no": event.get("sequence_no"),
+                "event_type": event.get("event_type"),
+                "created_at": event.get("created_at"),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "kind": "audit",
+        "run_id": run.run_id,
+        "state": run.state,
+        "terminal_reason": run.terminal_reason,
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+        "completed_at": run.completed_at,
+        "events": events,
+    })
+}
+
 async fn run_recent_events_payload(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -2412,6 +2443,7 @@ pub(crate) async fn run_state_result(
         request.limit.unwrap_or(50),
     )
     .await?;
+    let audit = run_audit_projection(&run, recent_events.clone());
     let livestream = run_livestream_projection(&run, &open_obligations, recent_events);
     Ok(json!({
         "kind": "run_state",
@@ -2422,6 +2454,7 @@ pub(crate) async fn run_state_result(
         "results": results,
         "recent_events": livestream["events"],
         "livestream": livestream,
+        "audit": audit,
     }))
 }
 
@@ -2525,6 +2558,34 @@ mod tests {
         assert_eq!(projection["open_obligations"][0]["id"], "obl-1");
         assert_eq!(projection["events"].as_array().unwrap().len(), 1);
         assert_eq!(projection["events"][0]["event_type"], "tool_call.completed");
+    }
+
+    #[test]
+    fn audit_projection_keeps_timing_evidence_without_event_payloads() {
+        let run = turn_runs::TurnRunRow {
+            id: uuid::Uuid::nil(),
+            run_id: "run-test".to_string(),
+            session_id: "session-test".to_string(),
+            bear_id: uuid::Uuid::nil(),
+            user_id: 1,
+            state: "completed".to_string(),
+            terminal_reason: Some("completed".to_string()),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+            completed_at: Some(OffsetDateTime::UNIX_EPOCH),
+        };
+        let audit = run_audit_projection(
+            &run,
+            vec![
+                json!({ "id": "evt-1", "sequence_no": 1, "event_type": "message.delta", "event": { "secret": "no" }, "created_at": "now" }),
+                json!({ "id": "evt-2", "sequence_no": 2, "event_type": "tool_call.completed", "event": { "raw_output": "no" }, "created_at": "later" }),
+            ],
+        );
+
+        assert_eq!(audit["state"], "completed");
+        assert_eq!(audit["events"].as_array().unwrap().len(), 1);
+        assert_eq!(audit["events"][0]["event_type"], "tool_call.completed");
+        assert!(audit["events"][0].get("event").is_none());
     }
 
     #[test]
