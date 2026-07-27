@@ -2289,6 +2289,34 @@ async fn run_results_payload(pool: &sqlx::PgPool, run_id: &str) -> Result<Vec<Va
         .collect())
 }
 
+fn run_livestream_projection(
+    run: &turn_runs::TurnRunRow,
+    open_obligations: &[Value],
+    events: Vec<Value>,
+) -> Value {
+    let mut events = events
+        .into_iter()
+        .filter(|event| {
+            !matches!(
+                event.get("event_type").and_then(Value::as_str),
+                Some("run.progress" | "message.delta" | "message.reasoning.delta")
+            )
+        })
+        .collect::<Vec<_>>();
+    // ponytail: this snapshot only needs the latest durable lifecycle evidence;
+    // add a typed projection enum when a subscriber endpoint consumes it directly.
+    events.shrink_to_fit();
+    json!({
+        "kind": "livestream",
+        "run_id": run.run_id,
+        "state": run.state,
+        "updated_at": run.updated_at,
+        "waiting": !open_obligations.is_empty(),
+        "open_obligations": open_obligations,
+        "events": events,
+    })
+}
+
 async fn run_recent_events_payload(
     pool: &sqlx::PgPool,
     session_id: &str,
@@ -2377,13 +2405,14 @@ pub(crate) async fn run_state_result(
     )
     .map(turn_obligations::BlockingReason::as_str);
     let results = run_results_payload(&state.sqlx_pool, &run.run_id).await?;
-    let events = run_recent_events_payload(
+    let recent_events = run_recent_events_payload(
         &state.sqlx_pool,
         &run.session_id,
         &run.run_id,
         request.limit.unwrap_or(50),
     )
     .await?;
+    let livestream = run_livestream_projection(&run, &open_obligations, recent_events);
     Ok(json!({
         "kind": "run_state",
         "run": run,
@@ -2391,7 +2420,8 @@ pub(crate) async fn run_state_result(
         "open_obligations": open_obligations,
         "obligations": obligations,
         "results": results,
-        "recent_events": events,
+        "recent_events": livestream["events"],
+        "livestream": livestream,
     }))
 }
 
@@ -2464,6 +2494,37 @@ mod tests {
             &json!({ "event_kind": "turn_completed" })
         ));
         assert!(!run_progress_is_warning(&json!({})));
+    }
+
+    #[test]
+    fn livestream_projection_omits_transient_history_and_keeps_open_obligations() {
+        let run = turn_runs::TurnRunRow {
+            id: uuid::Uuid::nil(),
+            run_id: "run-test".to_string(),
+            session_id: "session-test".to_string(),
+            bear_id: uuid::Uuid::nil(),
+            user_id: 1,
+            state: "waiting_for_client".to_string(),
+            terminal_reason: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+            completed_at: None,
+        };
+        let projection = run_livestream_projection(
+            &run,
+            &[json!({ "id": "obl-1", "state": "waiting_for_client" })],
+            vec![
+                json!({ "event_type": "run.progress" }),
+                json!({ "event_type": "message.delta" }),
+                json!({ "event_type": "tool_call.completed" }),
+            ],
+        );
+
+        assert_eq!(projection["state"], "waiting_for_client");
+        assert_eq!(projection["waiting"], true);
+        assert_eq!(projection["open_obligations"][0]["id"], "obl-1");
+        assert_eq!(projection["events"].as_array().unwrap().len(), 1);
+        assert_eq!(projection["events"][0]["event_type"], "tool_call.completed");
     }
 
     #[test]
