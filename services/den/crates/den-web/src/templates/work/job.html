@@ -42,8 +42,11 @@
     <button type="submit">Duplicate job</button>
     <small>Copies job intent, criteria, work-surface settings, and task definitions into a fresh job.</small>
 </form>
+<form method="post" action="/work/jobs/{{ job_id }}/archive">
+    <button type="submit">{% if status == "archived" %}Unarchive job{% else %}Archive job{% endif %}</button>
+</form>
 
-{% if status not in ["completed", "cancelled"] %}
+{% if status not in ["completed", "cancelled", "archived"] %}
 <section>
     <h2>Job lifecycle</h2>
     {% if tasks_complete %}
@@ -55,7 +58,7 @@
 </section>
 {% endif %}
 
-{% if tasks_complete and status not in ["completed", "cancelled"] %}
+{% if tasks_complete and status not in ["completed", "cancelled", "archived"] %}
 <p>
     ✅ <strong>All tasks are done.</strong>
     {% if criteria_complete %}Criteria are met — this job can be marked completed.
@@ -71,7 +74,7 @@
 </section>
 {% endif %}
 
-{% if status not in ["completed", "cancelled"] %}
+{% if status not in ["completed", "cancelled", "archived"] %}
 <section>
     <h2>Dispatch job</h2>
     <p>Queues one sandbox run for this job's pending or blocked tasks. The tasks run within that shared job session.</p>
@@ -104,7 +107,7 @@
 <section>
     <details open>
         <summary><h2>Tasks</h2></summary>
-        {% if status not in ["completed", "cancelled"] %}
+        {% if status not in ["completed", "cancelled", "archived"] %}
         <details>
             <summary>Add top-level task</summary>
             <form method="post" action="/work/jobs/{{ job_id }}/tasks">

@@ -588,6 +588,7 @@ pub enum DocketJobStatus {
     Blocked,
     Completed,
     Cancelled,
+    Archived,
 }
 
 impl DocketJobStatus {
@@ -599,6 +600,7 @@ impl DocketJobStatus {
             Self::Blocked => "blocked",
             Self::Completed => "completed",
             Self::Cancelled => "cancelled",
+            Self::Archived => "archived",
         }
     }
 }
@@ -1064,6 +1066,7 @@ pub struct DocketConversationObjectiveRequest {
 pub struct DocketJobListFilter {
     pub statuses: Option<Vec<DocketJobStatus>>,
     pub include_cancelled: bool,
+    pub include_archived: bool,
     pub source_conversation_id: Option<String>,
     pub limit: i64,
 }
@@ -2157,6 +2160,19 @@ mod tests {
         .expect("completed session projection");
 
         assert_eq!(completed.status, "completed");
+    }
+
+    #[test]
+    fn docket_job_status_serializes_archived() {
+        assert_eq!(DocketJobStatus::Archived.as_str(), "archived");
+        assert_eq!(
+            serde_json::to_string(&DocketJobStatus::Archived).unwrap(),
+            "\"archived\""
+        );
+        assert_eq!(
+            serde_json::from_str::<DocketJobStatus>("\"archived\"").unwrap(),
+            DocketJobStatus::Archived
+        );
     }
 
     #[test]

@@ -45,7 +45,8 @@
 <section>
     <h2>Jobs</h2>
     <p><a href="/work/new">New work job</a> · <a href="/work/surfaces">Work surfaces</a></p>
-    {% if show_completed %}<p><a href="/work">Hide completed jobs</a></p>{% else %}<p><a href="/work?completed=show">Show completed jobs</a></p>{% endif %}
+    {% if show_completed %}<p><a href="/work{% if show_archived %}?archived=show{% endif %}">Hide completed jobs</a></p>{% else %}<p><a href="/work?completed=show{% if show_archived %}&archived=show{% endif %}">Show completed jobs</a></p>{% endif %}
+    {% if show_archived %}<p><a href="/work{% if show_completed %}?completed=show{% endif %}">Hide archived jobs</a></p>{% else %}<p><a href="/work?archived=show{% if show_completed %}&completed=show{% endif %}">Show archived jobs</a></p>{% endif %}
     {% if jobs %}
     <table>
         <thead><tr><th>Job</th><th>Bear</th><th>Status</th><th>Work surface</th><th>Runs</th></tr></thead>
