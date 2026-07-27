@@ -376,9 +376,10 @@ impl OpenReflectionCandidateRow {
 
 /// Finds open sessions eligible for automatic pair reflection.
 ///
-/// ponytail: event-count eligibility uses total session event count. The ceiling
-/// is unrelated events dominating the count; source-message watermarks from
-/// compaction/reflection prevent skipped reflections from hiding later summaries.
+/// ponytail: activity eligibility probes only through the configured threshold;
+/// exact event counts are collected only for the selected sweep candidates.
+/// The ceiling is a separate indexed event probe per open session; persist
+/// reflection state on the session if the open-session population grows large.
 pub async fn list_open_reflection_candidates(
     pool: &PgPool,
     params: OpenReflectionCandidatesParams,
@@ -386,30 +387,35 @@ pub async fn list_open_reflection_candidates(
     let default_stale_after_minutes = params.stale_after_minutes.max(1);
     let default_activity_threshold = params.activity_threshold.max(1);
     let default_limit = params.limit.clamp(1, 100);
-    let rows = sqlx::query_as::<_, OpenReflectionCandidateRow>(
+    let rows = sqlx::query_as!(
+        OpenReflectionCandidateRow,
         r#"
         WITH open_sessions AS (
             SELECT s.*,
-                   COALESCE(events.event_count, 0)::bigint AS event_count,
                    reflected.last_reflected_at,
                    latest_compaction.source_message_end_seq AS latest_compaction_source_end_seq,
                    reflected.last_reflected_source_end_seq,
-                   COALESCE(b.live_reflection_stale_after_minutes, $1)::bigint AS stale_after_minutes,
-                   COALESCE(b.live_reflection_activity_threshold, $2)::bigint AS activity_threshold,
-                   COALESCE(b.live_reflection_sweep_limit, $3)::bigint AS sweep_limit,
+                   COALESCE(b.live_reflection_stale_after_minutes::bigint, $1::bigint) AS stale_after_minutes,
+                   COALESCE(b.live_reflection_activity_threshold::bigint, $2::bigint) AS activity_threshold,
+                   COALESCE(b.live_reflection_sweep_limit::bigint, $3::bigint) AS sweep_limit,
                    CASE
-                       WHEN s.updated_at <= NOW() - (COALESCE(b.live_reflection_stale_after_minutes, $1) * INTERVAL '1 minute') THEN 'stale_open_sweep'
+                       WHEN s.updated_at <= NOW() - (COALESCE(b.live_reflection_stale_after_minutes::bigint, $1::bigint) * INTERVAL '1 minute') THEN 'stale_open_sweep'
                        ELSE 'activity_threshold_sweep'
-                   END AS reflection_trigger
+                   END AS reflection_trigger,
+                   CASE
+                       WHEN s.updated_at <= NOW() - (COALESCE(b.live_reflection_stale_after_minutes::bigint, $1::bigint) * INTERVAL '1 minute') THEN FALSE
+                       ELSE EXISTS (
+                           SELECT 1
+                           FROM bearwire_events e
+                           WHERE e.session_id = s.client_session_id
+                             AND e.bear_id = s.bear_id
+                             AND e.user_id = s.user_id
+                           OFFSET (GREATEST(COALESCE(b.live_reflection_activity_threshold::bigint, $2::bigint), 1) - 1)
+                           LIMIT 1
+                       )
+                   END AS activity_threshold_reached
             FROM client_sessions s
             INNER JOIN bears b ON b.id = s.bear_id
-            LEFT JOIN LATERAL (
-                SELECT COUNT(*)::bigint AS event_count
-                FROM bearwire_events e
-                WHERE e.session_id = s.client_session_id
-                  AND e.bear_id = s.bear_id
-                  AND e.user_id = s.user_id
-            ) events ON TRUE
             LEFT JOIN LATERAL (
                 SELECT MAX(e.created_at) AS reflection_requeued_at
                 FROM bearwire_events e
@@ -454,27 +460,39 @@ pub async fn list_open_reflection_candidates(
                    ROW_NUMBER() OVER (PARTITION BY bear_id ORDER BY updated_at ASC, id ASC) AS bear_sweep_rank
             FROM open_sessions
             WHERE (updated_at <= NOW() - (stale_after_minutes * INTERVAL '1 minute')
-                   OR event_count >= activity_threshold)
+                   OR activity_threshold_reached)
               AND (
                   (last_reflected_at IS NULL AND last_reflected_source_end_seq IS NULL)
                   OR latest_compaction_source_end_seq > COALESCE(last_reflected_source_end_seq, 0)
               )
+        ), selected_sessions AS MATERIALIZED (
+            SELECT *
+            FROM eligible_sessions
+            WHERE bear_sweep_rank <= sweep_limit
+            ORDER BY updated_at ASC, id ASC
+            LIMIT $3
         )
         SELECT id, user_id, bear_id, bear_slug, client_session_id, runtime_session_id,
                conversation_id, resolved_conversation_id, client, cwd, adapter_environment, current_mode,
                conversation_title, conversation_title_updated_at, conversation_title_synced_at,
-               closed_at, archived_at, created_at, updated_at, event_count, last_reflected_at,
+               closed_at, archived_at, created_at, updated_at,
+               events.event_count AS "event_count!", last_reflected_at,
                latest_compaction_source_end_seq, last_reflected_source_end_seq,
-               reflection_trigger
-        FROM eligible_sessions
-        WHERE bear_sweep_rank <= sweep_limit
+               reflection_trigger AS "reflection_trigger!"
+        FROM selected_sessions
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*)::bigint AS event_count
+            FROM bearwire_events e
+            WHERE e.session_id = selected_sessions.client_session_id
+              AND e.bear_id = selected_sessions.bear_id
+              AND e.user_id = selected_sessions.user_id
+        ) events ON TRUE
         ORDER BY updated_at ASC, id ASC
-        LIMIT $3
         "#,
+        default_stale_after_minutes,
+        default_activity_threshold,
+        default_limit,
     )
-    .bind(default_stale_after_minutes)
-    .bind(default_activity_threshold)
-    .bind(default_limit)
     .fetch_all(pool)
     .await?;
 
@@ -802,6 +820,28 @@ mod reflection_candidate_tests {
         .expect("insert artifact");
     }
 
+    async fn insert_event(
+        pool: &PgPool,
+        user_id: i32,
+        bear_id: Uuid,
+        session_id: &str,
+        event_type: &str,
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)
+            VALUES ($1, $2, $3, $4, '{}'::jsonb)
+            "#,
+        )
+        .bind(session_id)
+        .bind(bear_id)
+        .bind(user_id)
+        .bind(event_type)
+        .execute(pool)
+        .await
+        .expect("insert event");
+    }
+
     async fn insert_reflection_event(
         pool: &PgPool,
         user_id: i32,
@@ -827,6 +867,63 @@ mod reflection_candidate_tests {
         .execute(pool)
         .await
         .expect("insert reflection event");
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn activity_threshold_returns_exact_count_only_after_eligibility(pool: PgPool) {
+        let user_id = insert_test_user(&pool).await;
+        let (bear_id, bear_slug) = insert_test_bear(&pool).await;
+        insert_open_session(
+            &pool,
+            user_id,
+            bear_id,
+            &bear_slug,
+            "session-activity-threshold",
+            "conv-activity-threshold",
+        )
+        .await;
+
+        for _ in 0..3 {
+            insert_event(
+                &pool,
+                user_id,
+                bear_id,
+                "session-activity-threshold",
+                "message.created",
+            )
+            .await;
+        }
+        let params = OpenReflectionCandidatesParams {
+            stale_after_minutes: 120,
+            activity_threshold: 3,
+            limit: 25,
+        };
+        let candidates = list_open_reflection_candidates(&pool, params.clone())
+            .await
+            .expect("list candidates at threshold");
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.client_session_id == "session-activity-threshold")
+            .expect("threshold activity makes session eligible");
+        assert_eq!(candidate.event_count, 3);
+        assert_eq!(candidate.reflection_trigger, "activity_threshold_sweep");
+
+        insert_event(
+            &pool,
+            user_id,
+            bear_id,
+            "session-activity-threshold",
+            "message.created",
+        )
+        .await;
+        let candidates = list_open_reflection_candidates(&pool, params)
+            .await
+            .expect("list candidates above threshold");
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.client_session_id == "session-activity-threshold")
+            .expect("session stays eligible above threshold");
+        assert_eq!(candidate.event_count, 4);
     }
 
     #[sqlx::test(migrations = "../../migrations")]
