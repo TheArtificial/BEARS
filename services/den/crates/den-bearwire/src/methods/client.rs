@@ -483,6 +483,7 @@ fn spawn_continuation_task(
     continuation: RuntimeContinuation,
 ) {
     let pool = state.sqlx_pool.clone();
+    let livestream_state = state.clone();
     let config = state.config.clone();
     let memory_stores = state.memory_stores.clone();
     let request_id = Uuid::new_v4();
@@ -762,6 +763,7 @@ fn spawn_continuation_task(
                                     .await;
                                 }
                                 persist_runtime_event_as_bearwire(
+                                    &livestream_state,
                                     &pool,
                                     &run.session_id,
                                     &run.run_id,

@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use bearwire_protocol::{
     methods::{RunCancelRequest, RunStartRequest},
-    wire::{BearWireEvent, ResourceRef},
+    wire::BearWireEvent,
 };
 use den_http::errors::CustomError;
 use den_protocol::RoleRuntimeBinding;
@@ -552,7 +552,7 @@ fn run_progress_is_warning(detail: &Value) -> bool {
 }
 
 pub(crate) async fn persist_run_progress(
-    pool: &sqlx::PgPool,
+    _pool: &sqlx::PgPool,
     session_id: &str,
     run_id: &str,
     bear_id: uuid::Uuid,
@@ -562,15 +562,6 @@ pub(crate) async fn persist_run_progress(
     text: &str,
     detail: Value,
 ) {
-    if run_is_terminal(pool, run_id).await {
-        tracing::debug!(
-            session_id = %session_id,
-            run_id = %run_id,
-            kind,
-            "skipping BearWire run.progress for terminal run"
-        );
-        return;
-    }
     if run_progress_is_warning(&detail) {
         tracing::warn!(
             session_id = %session_id,
@@ -590,36 +581,33 @@ pub(crate) async fn persist_run_progress(
             "BearWire run progress"
         );
     }
-    let mut event = BearWireEvent::ephemeral(
-        "run.progress",
+
+    // ADR-0030 classifies run.progress as replaceable live status, not semantic
+    // history. Keep it in operational telemetry until its caller sends the safe
+    // summary to the bounded non-replay livestream channel.
+    let _ = (bear_id, user_id, text);
+}
+
+/// Publish the safe, replaceable counterpart of `run.progress` to connected
+/// livestream consumers. Progress details are intentionally not forwarded:
+/// several producers attach tool arguments for server-side diagnostics.
+pub(crate) fn publish_run_progress(
+    state: &DenState,
+    session_id: &str,
+    run_id: &str,
+    kind: &str,
+    text: &str,
+) {
+    state.publish_bearwire_livestream(
+        session_id,
         json!({
+            "type": "run.progress",
+            "scope": "ephemeral",
+            "run_id": run_id,
             "kind": kind,
             "text": text,
-            "elapsed_ms": started_at.elapsed().as_millis(),
-            "detail": detail,
         }),
     );
-    event.bear_id = Some(bear_id.to_string());
-    event.human_id = Some(user_id.to_string());
-    event.session_id = Some(session_id.to_string());
-    event.run_id = Some(run_id.to_string());
-    if let Err(err) = bearwire_events::append_bearwire_event(
-        pool,
-        session_id,
-        Some(bear_id),
-        Some(user_id),
-        event,
-    )
-    .await
-    {
-        tracing::warn!(
-            error = %err,
-            session_id = %session_id,
-            run_id = %run_id,
-            kind,
-            "failed to persist BearWire run.progress event"
-        );
-    }
 }
 
 async fn incomplete_stream_pending_tools(pool: &sqlx::PgPool, run_id: &str) -> Vec<Value> {
@@ -769,15 +757,55 @@ fn canonical_client_waiting_ids(event: &BearWireEvent) -> Option<(String, String
         .then(|| (permission_id.to_string(), tool_call_id.to_string()))
 }
 
-async fn append_answerable_client_waiting_event(
-    pool: &sqlx::PgPool,
-    session_id: &str,
-    bear_id: uuid::Uuid,
-    user_id: i32,
-    run_id: &str,
-    mut event: BearWireEvent,
+/// Make the live permission prompt from the canonical event without forwarding
+/// raw tool arguments. The durable obligation remains the reconnect authority.
+fn client_waiting_livestream_projection(
+    event: &BearWireEvent,
     obligation: &turn_obligations::TurnObligationRow,
-) -> Result<(), den_core::DenError> {
+    expected_client_method: &str,
+) -> Option<Value> {
+    let (permission_id, tool_call_id) = canonical_client_waiting_ids(event)?;
+    let data = event.data.as_object()?;
+    let tool_call = data.get("tool_call")?.as_object()?;
+    let permission = data.get("permission")?.as_object()?;
+    let optional = |object: &serde_json::Map<String, Value>, key| {
+        object.get(key).filter(|value| !value.is_null()).cloned()
+    };
+
+    Some(json!({
+        "type": "client.waiting",
+        "scope": "ephemeral",
+        "run_id": obligation.run_id,
+        "obligation_id": obligation.id.to_string(),
+        "expected_responder_action": obligation.expected_responder_action,
+        "expected_client_method": expected_client_method,
+        "turn_step_id": obligation.turn_step_id.map(|id| id.to_string()),
+        "tool_call": {
+            "id": tool_call_id,
+            "name": optional(tool_call, "name"),
+            "title": optional(tool_call, "title"),
+            "kind": optional(tool_call, "kind"),
+            "display": optional(tool_call, "display"),
+        },
+        "permission": {
+            "id": permission_id,
+            "reason": optional(permission, "reason"),
+            "title": optional(permission, "title"),
+            "target": optional(permission, "target"),
+        },
+        "approval_required": data.get("approval_required").and_then(Value::as_bool).unwrap_or(true),
+        "execution_target": optional(data, "execution_target"),
+        "policy": optional(data, "policy"),
+    }))
+}
+
+fn publish_answerable_client_waiting_event(
+    state: &DenState,
+    session_id: &str,
+    run_id: &str,
+    event: BearWireEvent,
+    obligation: &turn_obligations::TurnObligationRow,
+) {
     let Some(expected_client_method) =
         bearwire_client_method_for_action(&obligation.expected_responder_action)
     else {
@@ -786,9 +814,9 @@ async fn append_answerable_client_waiting_event(
             run_id = %run_id,
             obligation_id = %obligation.id,
             expected_responder_action = %obligation.expected_responder_action,
-            "refusing to append client.waiting event for obligation without BearWire client method"
+            "refusing to publish client.waiting for obligation without BearWire client method"
         );
-        return Ok(());
+        return;
     };
     if obligation.expected_responder_action != "permission_decision" {
         tracing::warn!(
@@ -796,9 +824,9 @@ async fn append_answerable_client_waiting_event(
             run_id = %run_id,
             obligation_id = %obligation.id,
             expected_responder_action = %obligation.expected_responder_action,
-            "refusing to append client.waiting event for non-permission obligation"
+            "refusing to publish client.waiting for non-permission obligation"
         );
-        return Ok(());
+        return;
     }
     let Some(permission_id) = obligation
         .permission_id
@@ -806,13 +834,7 @@ async fn append_answerable_client_waiting_event(
         .map(str::trim)
         .filter(|id| !id.is_empty())
     else {
-        tracing::warn!(
-            session_id = %session_id,
-            run_id = %run_id,
-            obligation_id = %obligation.id,
-            "refusing to append client.waiting event without persisted permission id"
-        );
-        return Ok(());
+        return;
     };
     let Some(tool_call_id) = obligation
         .tool_call_id
@@ -820,65 +842,24 @@ async fn append_answerable_client_waiting_event(
         .map(str::trim)
         .filter(|id| !id.is_empty())
     else {
-        tracing::warn!(
-            session_id = %session_id,
-            run_id = %run_id,
-            obligation_id = %obligation.id,
-            "refusing to append client.waiting event without persisted tool call id"
-        );
-        return Ok(());
+        return;
     };
-
     let Some((event_permission_id, event_tool_call_id)) = canonical_client_waiting_ids(&event)
     else {
-        tracing::warn!(
-            session_id = %session_id,
-            run_id = %run_id,
-            obligation_id = %obligation.id,
-            "refusing to append client.waiting event without canonical permission.id/tool_call.id"
-        );
-        return Ok(());
+        return;
     };
-    if event_permission_id != permission_id {
-        tracing::warn!(
-            session_id = %session_id,
-            run_id = %run_id,
-            obligation_id = %obligation.id,
-            expected_permission_id = %permission_id,
-            event_permission_id = %event_permission_id,
-            "refusing to append client.waiting event with malformed canonical permission id"
-        );
-        return Ok(());
-    }
-    if event_tool_call_id != tool_call_id {
-        tracing::warn!(
-            session_id = %session_id,
-            run_id = %run_id,
-            obligation_id = %obligation.id,
-            expected_tool_call_id = %tool_call_id,
-            event_tool_call_id = %event_tool_call_id,
-            "refusing to append client.waiting event with malformed canonical tool_call id"
-        );
-        return Ok(());
+    if event_permission_id != permission_id || event_tool_call_id != tool_call_id {
+        tracing::warn!(session_id = %session_id, run_id = %run_id, obligation_id = %obligation.id, "refusing to publish client.waiting with mismatched canonical ids");
+        return;
     }
 
-    event.data["obligation_id"] = json!(obligation.id.to_string());
-    event.data["expected_responder_action"] = json!(obligation.expected_responder_action);
-    event.data["expected_client_method"] = json!(expected_client_method);
-    event.data["turn_step_id"] = json!(obligation.turn_step_id.map(|id| id.to_string()));
-    event.resource_refs.push(ResourceRef::new(
-        "client_obligation",
-        obligation.id.to_string(),
-    ));
-    event.bear_id = Some(bear_id.to_string());
-    event.human_id = Some(user_id.to_string());
-    event.session_id = Some(session_id.to_string());
-    if event.run_id.is_none() {
-        event.run_id = Some(run_id.to_string());
-    }
-    bearwire_events::append_bearwire_event(pool, session_id, Some(bear_id), Some(user_id), event)
-        .await?;
-    Ok(())
+    let Some(projection) =
+        client_waiting_livestream_projection(&event, obligation, expected_client_method)
+    else {
+        return;
+    };
+    // The obligation is durable. This notification only updates an active livestream.
+    state.publish_bearwire_livestream(session_id, projection);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -960,6 +941,7 @@ async fn persist_tool_call_requested_transactionally(
 }
 
 pub(crate) async fn persist_runtime_event_as_bearwire(
+    state: &DenState,
     pool: &sqlx::PgPool,
     session_id: &str,
     run_id: &str,
@@ -1084,19 +1066,9 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
         if event.event_type == "client.waiting" {
             if let Some(obligation) = active_obligation.as_ref() {
-                if let Err(err) = append_answerable_client_waiting_event(
-                    pool, session_id, bear_id, user_id, run_id, event, obligation,
-                )
-                .await
-                {
-                    tracing::warn!(
-                        error = %err,
-                        session_id = %session_id,
-                        run_id = %run_id,
-                        obligation_id = %obligation.id,
-                        "failed to append answerable client.waiting BearWire event"
-                    );
-                }
+                publish_answerable_client_waiting_event(
+                    state, session_id, run_id, event, obligation,
+                );
             } else {
                 tracing::warn!(
                     session_id = %session_id,
@@ -1852,6 +1824,7 @@ pub(crate) async fn run_start_result(
     let _ = cancel_handle.record_run_id(run_id.as_str());
 
     let pool = state.sqlx_pool.clone();
+    let livestream_state = state.clone();
     let config = state.config.clone();
     let memory_stores = state.memory_stores.clone();
     let bear_slug = bear.slug.clone();
@@ -2094,6 +2067,7 @@ pub(crate) async fn run_start_result(
                                         .await;
                                     }
                                     persist_runtime_event_as_bearwire(
+                                        &livestream_state,
                                         &pool,
                                         &session_for_task,
                                         &run_id_for_task,
@@ -2673,6 +2647,59 @@ mod tests {
             unknown_capability_metadata(&entry),
             vec!["supports_responses_api", "supports_vision"]
         );
+    }
+
+    #[test]
+    fn client_waiting_livestream_projection_preserves_display_without_arguments() {
+        let event = BearWireEvent::ephemeral(
+            "client.waiting",
+            json!({
+                "tool_call": {
+                    "id": "call-1",
+                    "name": "fs_edit_file",
+                    "title": "Edit the file",
+                    "kind": "edit",
+                    "display": { "summary": "Edit src/lib.rs" },
+                    "arguments": { "path": "src/lib.rs", "secret": "do not send" }
+                },
+                "permission": {
+                    "id": "perm-1",
+                    "reason": "Writes a local file",
+                    "title": "Allow edit",
+                    "target": { "path": "src/lib.rs" }
+                },
+                "approval_required": true,
+                "execution_target": "armature_local"
+            }),
+        );
+        let obligation = turn_obligations::TurnObligationRow {
+            id: Uuid::nil(),
+            run_id: "run-1".to_string(),
+            session_id: "session-1".to_string(),
+            kind: "permission_decision".to_string(),
+            expected_responder_action: "permission_decision".to_string(),
+            tool_call_id: Some("call-1".to_string()),
+            permission_id: Some("perm-1".to_string()),
+            responder_ref_id: None,
+            state: "waiting_for_client".to_string(),
+            turn_step_id: None,
+            request_payload: Value::Null,
+            result_payload: None,
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            updated_at: OffsetDateTime::UNIX_EPOCH,
+            completed_at: None,
+        };
+
+        let projection =
+            client_waiting_livestream_projection(&event, &obligation, "client.permission.result")
+                .expect("canonical wait should project");
+
+        assert_eq!(
+            projection["tool_call"]["display"]["summary"],
+            "Edit src/lib.rs"
+        );
+        assert_eq!(projection["permission"]["reason"], "Writes a local file");
+        assert!(projection["tool_call"].get("arguments").is_none());
     }
 
     #[test]

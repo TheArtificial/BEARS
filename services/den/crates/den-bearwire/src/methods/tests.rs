@@ -2326,7 +2326,9 @@ async fn approval_required_tool_request_creates_permission_obligation(pool: sqlx
         .await
         .expect("create active run");
 
+    let state = test_state(pool.clone());
     crate::methods::run::persist_runtime_event_as_bearwire(
+        &state,
         &pool,
         &session_id,
         &run_id,

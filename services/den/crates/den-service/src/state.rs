@@ -8,7 +8,9 @@
 
 use std::sync::Arc;
 
+use serde_json::Value;
 use sqlx::PgPool;
+use tokio::sync::broadcast;
 
 use den_core::config::Config;
 
@@ -40,7 +42,22 @@ pub struct DenState {
     pub turn_cancellations: ActiveTurnCancelRegistry,
     /// Per-Bear SQLite memory stores (native runtime cognition).
     pub memory_stores: MemoryStoreManager,
+    /// Best-effort, process-local observations for active BearWire livestreams.
+    ///
+    /// These observations are deliberately outside the durable BearWire event
+    /// sequence: lagged subscribers reconnect from authoritative state instead
+    /// of replaying replaceable progress placeholders.
+    pub bearwire_livestream: broadcast::Sender<BearWireLivestreamEvent>,
 }
+
+/// A non-replayable BearWire observation scoped to one client session.
+#[derive(Clone, Debug)]
+pub struct BearWireLivestreamEvent {
+    pub session_id: String,
+    pub event: Value,
+}
+
+const BEARWIRE_LIVESTREAM_CAPACITY: usize = 64;
 
 impl DenState {
     /// Build the shared state, initializing the process-local turn coordinators.
@@ -52,6 +69,7 @@ impl DenState {
         bifrost: Arc<BifrostClient>,
         memory_stores: MemoryStoreManager,
     ) -> Self {
+        let (bearwire_livestream, _) = broadcast::channel(BEARWIRE_LIVESTREAM_CAPACITY);
         Self {
             sqlx_pool,
             config,
@@ -60,6 +78,16 @@ impl DenState {
             tool_turns: ToolTurnCoordinator::new(),
             turn_cancellations: ActiveTurnCancelRegistry::new(),
             memory_stores,
+            bearwire_livestream,
         }
+    }
+
+    /// Publish a replaceable live observation. No subscriber is required and a
+    /// lagged subscriber is expected to refresh its derived snapshot.
+    pub fn publish_bearwire_livestream(&self, session_id: impl Into<String>, event: Value) {
+        let _ = self.bearwire_livestream.send(BearWireLivestreamEvent {
+            session_id: session_id.into(),
+            event,
+        });
     }
 }

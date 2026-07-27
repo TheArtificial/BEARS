@@ -1770,7 +1770,10 @@ async fn run_detail(
                 500,
             )
             .await?;
-            den_runtime::work_activity::project_work_activity(events)
+            den_runtime::work_activity::project_work_activity_for(
+                events,
+                den_runtime::work_activity::WorkActivityAudience::Audit,
+            )
         }
         None => Vec::new(),
     };

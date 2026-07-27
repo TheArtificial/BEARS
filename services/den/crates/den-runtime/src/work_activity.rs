@@ -30,6 +30,13 @@ pub struct WorkActivityEntry {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkActivityAudience {
+    Livestream,
+    Review,
+    Audit,
+}
+
 /// Projects the canonical BearWire event log into finalized, readable work activity.
 ///
 /// Assistant and provider-exposed reasoning deltas are coalesced without inventing
@@ -38,9 +45,19 @@ pub struct WorkActivityEntry {
 pub fn project_work_activity(
     rows: impl IntoIterator<Item = BearWireEventRow>,
 ) -> Vec<WorkActivityEntry> {
+    project_work_activity_for(rows, WorkActivityAudience::Review)
+}
+
+pub fn project_work_activity_for(
+    rows: impl IntoIterator<Item = BearWireEventRow>,
+    audience: WorkActivityAudience,
+) -> Vec<WorkActivityEntry> {
     let mut activity = Vec::new();
 
     for row in rows {
+        if !visible_to(row.event_type.as_str(), audience) {
+            continue;
+        }
         let entry = match row.event_type.as_str() {
             "message.delta" => text_entry(&row, WorkActivityKind::AssistantMessage, "delta"),
             "message.reasoning.delta" if replayable_reasoning(&row) => {
@@ -83,6 +100,25 @@ pub fn project_work_activity(
     }
 
     activity
+}
+
+fn visible_to(event_type: &str, audience: WorkActivityAudience) -> bool {
+    match audience {
+        WorkActivityAudience::Livestream => event_type != "connection.heartbeat",
+        WorkActivityAudience::Review => !matches!(
+            event_type,
+            "client.waiting"
+                | "run.accepted"
+                | "run.started"
+                | "run.progress"
+                | "run.paused"
+                | "run.resumed"
+                | "tool_call.dispatched"
+                | "tool_call.started"
+                | "tool_call.progress"
+        ),
+        WorkActivityAudience::Audit => true,
+    }
 }
 
 fn replayable_reasoning(row: &BearWireEventRow) -> bool {
@@ -253,5 +289,26 @@ mod tests {
         assert_eq!(activity[2].tool_call_id.as_deref(), Some("call-1"));
         assert!(!activity[2].text.contains("secret"));
         assert_eq!(activity[4].kind, WorkActivityKind::Lifecycle);
+    }
+
+    #[test]
+    fn audiences_keep_review_concise_and_audit_detailed() {
+        let rows = || {
+            vec![
+                row(1, "run.started", json!({})),
+                row(2, "run.progress", json!({"text": "Waiting"})),
+                row(3, "client.waiting", json!({})),
+                row(4, "tool_call.completed", json!({"summary": "done"})),
+                row(5, "run.completed", json!({"outcome": "ok"})),
+            ]
+        };
+
+        let review = project_work_activity_for(rows(), WorkActivityAudience::Review);
+        assert_eq!(review.len(), 2);
+        assert_eq!(review[0].kind, WorkActivityKind::ToolResult);
+        assert_eq!(review[1].text, "run.completed");
+
+        let audit = project_work_activity_for(rows(), WorkActivityAudience::Audit);
+        assert_eq!(audit.len(), 5);
     }
 }

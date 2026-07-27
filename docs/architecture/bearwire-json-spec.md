@@ -31,7 +31,7 @@ It does not fully define:
 
 ## Transport binding
 
-BearWire v1 supports an HTTP profile for JSON-RPC control methods and server-owned JSON event pages. A future WebSocket profile may add a long-lived push binding.
+BearWire v1 supports an HTTP profile for JSON-RPC control methods, durable server-owned event pages, and a bounded best-effort livestream feed. A future WebSocket profile may combine durable replay and live delivery on a long-lived push binding.
 
 ### v1 HTTP profile
 
@@ -70,7 +70,9 @@ Response:
 }
 ```
 
-`next_after` is authoritative. Polling clients must feed it back as the next `after` cursor instead of deriving a cursor from the maximum sequence they successfully processed. If a page is empty, `next_after` remains the previous cursor; clients should not advance merely because an HTTP response was received.
+`next_after` is authoritative for the durable event sequence. Polling clients must feed it back as the next `after` cursor instead of deriving a cursor from the maximum sequence they successfully processed. If a page is empty, `next_after` remains the previous cursor; clients should not advance merely because an HTTP response was received.
+
+The page contains **persistent** events only. Events whose envelope scope is `ephemeral` are delivered on the livestream feed and are neither assigned a durable sequence nor replayed from this endpoint. A livestream client must obtain a derived current snapshot when it connects or reconnects, then treat subsequent ephemeral updates as best-effort replaceable observations.
 
 ### WebSocket profile (preferred future binding)
 
@@ -1156,7 +1158,6 @@ Compatibility rule: if an older or malformed stream sends reasoning/thinking con
 
 ## Open design questions
 
-- Which event types require durable persistence versus ephemeral delivery only?
 - Whether `run.accepted` should always precede `run.started` or remain optional.
 - Which resource kinds deserve stronger first-class schemas in v1.
 - Whether `session.bound` and `resource.bound` need additional normalization rules in multi-binding flows.
