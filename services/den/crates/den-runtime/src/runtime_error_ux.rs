@@ -142,6 +142,7 @@ pub fn normalized_operational_outcome(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let (kind, retryable, subsystem) = match reason {
+        "command_outcome_unknown" => ("command_outcome_unknown", false, "client_command"),
         "continuation_stream_error" => ("provider_stream_error", true, "llm_stream_transport"),
         "continuation_watchdog_timeout" => ("continuation_timeout", true, "continuation_runtime"),
         "continuation_start_failed" => ("continuation_start_failed", true, "continuation_runtime"),
@@ -194,6 +195,18 @@ pub fn is_budget_or_loop_failure(reason: &str, message: &str) -> bool {
 }
 
 pub fn run_failed_user_message(reason: &str, message: &str, bear_name: &str) -> Option<String> {
+    if reason == "command_outcome_unknown" {
+        return Some(format!(
+            "{} could not confirm the command's final status after the connected client stopped responding. The command may still be running or may already have made changes. Reconnect and inspect the process and workspace before retrying it.",
+            display_bear_name(bear_name)
+        ));
+    }
+    if reason == "client_obligation_timeout" {
+        return Some(format!(
+            "{} stopped because the connected client did not respond in time. Reconnect the client and send another message to retry.",
+            display_bear_name(bear_name)
+        ));
+    }
     if is_incomplete_stream(reason) {
         return Some(format!(
             "{} was interrupted before finishing. Your conversation and any completed tool results were preserved. Send another message to retry.",

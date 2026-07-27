@@ -2502,6 +2502,68 @@ async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) 
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn command_obligation_expiry_blocks_automatic_retry_as_outcome_unknown(pool: sqlx::PgPool) {
+    let user_id = create_test_user(&pool).await;
+    let (bear_id, bear_slug) = create_test_bear(&pool).await;
+    let session_id = format!("session-{}", Uuid::new_v4().simple());
+    let run_id = format!("run_{}", Uuid::new_v4().simple());
+    upsert_test_session(&pool, user_id, bear_id, &bear_slug, &session_id).await;
+    turn_runs::create_run(&pool, &run_id, &session_id, bear_id, user_id)
+        .await
+        .expect("create run");
+    let obligation = turn_obligations::upsert_tool_result_obligation(
+        &pool,
+        &run_id,
+        &session_id,
+        "call-command-timeout",
+        None,
+        json!({ "tool_name": "run_command" }),
+    )
+    .await
+    .expect("insert command obligation");
+    sqlx::query(
+        "UPDATE turn_obligations SET created_at = NOW() - INTERVAL '10 minutes' WHERE id = $1",
+    )
+    .bind(obligation.id)
+    .execute(&pool)
+    .await
+    .expect("age obligation");
+
+    assert_eq!(
+        crate::expire_client_obligations_once(&pool, 100)
+            .await
+            .expect("expire obligations"),
+        1
+    );
+
+    let run = turn_runs::get_run(&pool, &run_id)
+        .await
+        .expect("load run")
+        .expect("run exists");
+    assert_eq!(run.state, "failed");
+    assert_eq!(
+        run.terminal_reason.as_deref(),
+        Some("command_outcome_unknown")
+    );
+    let events = bearwire_events::list_bearwire_events_after(&pool, &session_id, None, 10)
+        .await
+        .expect("list events");
+    let failed = events
+        .iter()
+        .find(|row| row.event_type == "run.failed")
+        .expect("run.failed event");
+    assert_eq!(failed.event.data["reason"], "command_outcome_unknown");
+    assert_eq!(
+        failed.event.data["context"]["recovery"]["automatic_retry_allowed"],
+        false
+    );
+    assert_eq!(
+        failed.event.data["context"]["recovery"]["next_action"],
+        "reconnect_and_inspect"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn events_poll_does_not_expire_client_obligations(pool: sqlx::PgPool) {
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;

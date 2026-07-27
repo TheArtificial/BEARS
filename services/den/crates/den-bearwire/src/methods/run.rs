@@ -75,6 +75,7 @@ pub(crate) enum RunFailureReason {
     StreamError,
     StartFailed,
     ClientObligationTimeout,
+    CommandOutcomeUnknown,
     #[cfg(test)]
     RuntimeInternal,
     ContinuationWatchdogTimeout,
@@ -91,6 +92,7 @@ impl RunFailureReason {
             Self::StreamError => "stream_error",
             Self::StartFailed => "start_failed",
             Self::ClientObligationTimeout => "client_obligation_timeout",
+            Self::CommandOutcomeUnknown => "command_outcome_unknown",
             #[cfg(test)]
             Self::RuntimeInternal => "runtime_internal",
             Self::ContinuationWatchdogTimeout => "continuation_watchdog_timeout",
