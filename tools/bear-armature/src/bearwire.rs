@@ -434,7 +434,7 @@ pub(crate) async fn handle_prompt(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
-    response_id: Value,
+    response: crate::PromptResponseGuard,
     session_id: &str,
     prompt: &str,
     prompt_context: Value,
@@ -737,7 +737,11 @@ pub(crate) async fn handle_prompt(
         return Err(anyhow!("{reason}. Diagnostics: {}", diagnostics.summary()));
     }
 
-    crate::write_prompt_end_turn_response(response_id).await
+    if let Some(response_id) = response.claim() {
+        crate::write_prompt_end_turn_response(response_id).await
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) async fn post_session_close(config: &Config, session_id: &str) -> Result<Value> {
@@ -1237,7 +1241,7 @@ pub(crate) async fn try_handle_prompt(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
-    response_id: Value,
+    response: crate::PromptResponseGuard,
     session_id: &str,
     prompt: &str,
     prompt_context: Value,
@@ -1256,7 +1260,7 @@ pub(crate) async fn try_handle_prompt(
         config,
         adapter_state,
         shared_state,
-        response_id,
+        response,
         session_id,
         prompt,
         prompt_context,

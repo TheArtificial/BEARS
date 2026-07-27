@@ -69,7 +69,10 @@ use std::{
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     process::Command,
-    sync::{Arc, OnceLock, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock, RwLock,
+    },
 };
 use tokio::{
     io::{self, AsyncBufReadExt, BufReader},
@@ -169,6 +172,26 @@ struct CancellationNotice {
 struct ActivePromptTurn {
     token: Uuid,
     conversation_id: Option<String>,
+    response: PromptResponseGuard,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PromptResponseGuard {
+    id: Value,
+    sent: Arc<AtomicBool>,
+}
+
+impl PromptResponseGuard {
+    fn new(id: Value) -> Self {
+        Self {
+            id,
+            sent: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn claim(&self) -> Option<Value> {
+        (!self.sent.swap(true, Ordering::AcqRel)).then(|| self.id.clone())
+    }
 }
 
 #[allow(dead_code)]
@@ -2958,14 +2981,19 @@ async fn handle_request(
                 };
                 let turn_token = Uuid::new_v4();
                 let conversation_id_for_turn = prompt_conversation_id_from_params(&request.params);
+                let response = PromptResponseGuard::new(id.clone());
                 let previous = register_prompt_turn_for_session(
                     shared_state,
                     &session_id,
                     turn_token,
                     conversation_id_for_turn.clone(),
+                    response.clone(),
                 )
                 .await;
                 if let Some(previous) = previous {
+                    if let Some(previous_id) = previous.response.claim() {
+                        write_prompt_end_turn_response(previous_id).await?;
+                    }
                     let same_conversation = prompt_conversations_overlap(
                         previous.conversation_id.as_deref(),
                         conversation_id_for_turn.as_deref(),
@@ -3001,7 +3029,7 @@ async fn handle_request(
                         &config,
                         &mut prompt_state,
                         &shared_state,
-                        id.clone(),
+                        response.clone(),
                         request.params,
                         turn_token,
                     )
@@ -3015,15 +3043,17 @@ async fn handle_request(
                                 message.push_str("\n\n");
                                 message.push_str(&server_version.summary());
                             }
-                            let _ = write_response(
-                                id,
-                                Err(json_rpc_error(
-                                    -32003,
-                                    &format!("BEARS prompt failed: {message}"),
-                                    None,
-                                )),
-                            )
-                            .await;
+                            if let Some(response_id) = response.claim() {
+                                let _ = write_response(
+                                    response_id,
+                                    Err(json_rpc_error(
+                                        -32003,
+                                        &format!("BEARS prompt failed: {message}"),
+                                        None,
+                                    )),
+                                )
+                                .await;
+                            }
                         }
                     }
                 });
@@ -5130,7 +5160,7 @@ async fn handle_prompt(
     config: &Config,
     adapter_state: &mut AdapterState,
     shared_state: &AdapterSharedState,
-    response_id: Value,
+    response: PromptResponseGuard,
     params: Value,
     turn_token: Uuid,
 ) -> Result<()> {
@@ -5145,7 +5175,7 @@ async fn handle_prompt(
         adapter_state,
         shared_state,
         PromptRetryContext {
-            response_id,
+            response,
             params,
             turn_token,
         },
@@ -5162,7 +5192,7 @@ async fn handle_prompt(
 }
 
 struct PromptRetryContext {
-    response_id: Value,
+    response: PromptResponseGuard,
     params: Value,
     turn_token: Uuid,
 }
@@ -5175,7 +5205,7 @@ async fn handle_prompt_with_retry(
     retry: PromptRetryContext,
 ) -> Result<()> {
     let PromptRetryContext {
-        response_id,
+        response,
         params,
         turn_token,
     } = retry;
@@ -5227,7 +5257,9 @@ async fn handle_prompt_with_retry(
         )
         .await;
         send_agent_message_chunk_for_turn(shared_state, session_id, turn_token, &report).await?;
-        write_prompt_end_turn_response(response_id).await?;
+        if let Some(response_id) = response.claim() {
+            write_prompt_end_turn_response(response_id).await?;
+        }
         return Ok(());
     }
     let mut client_context = shared_state
@@ -5314,7 +5346,7 @@ async fn handle_prompt_with_retry(
         config,
         adapter_state,
         shared_state,
-        response_id.clone(),
+        response,
         session_id,
         &prompt,
         den_payload
@@ -7079,6 +7111,7 @@ async fn register_prompt_turn_for_session(
     session_id: &str,
     turn_token: Uuid,
     conversation_id_for_turn: Option<String>,
+    response: PromptResponseGuard,
 ) -> Option<ActivePromptTurn> {
     let previous = {
         let mut active = shared_state.active_prompts.lock().await;
@@ -7087,6 +7120,7 @@ async fn register_prompt_turn_for_session(
             ActivePromptTurn {
                 token: turn_token,
                 conversation_id: conversation_id_for_turn.clone(),
+                response,
             },
         )
     };
@@ -11153,7 +11187,10 @@ mod tests {
     fn truncate_for_log_preserves_utf8_boundaries() {
         let input = format!("{}§tail", "x".repeat(239));
 
-        assert_eq!(truncate_for_log(&input, 240), format!("{}...", "x".repeat(239)));
+        assert_eq!(
+            truncate_for_log(&input, 240),
+            format!("{}...", "x".repeat(239))
+        );
     }
 
     #[test]
@@ -12110,6 +12147,7 @@ mod tests {
             "acp-session".to_string(),
             ActivePromptTurn {
                 token: turn_token,
+                response: PromptResponseGuard::new(json!("test")),
                 conversation_id: Some("conv-1".to_string()),
             },
         );
@@ -12210,6 +12248,7 @@ mod tests {
             "acp-session".to_string(),
             ActivePromptTurn {
                 token: turn_token,
+                response: PromptResponseGuard::new(json!("test")),
                 conversation_id: Some("conv-1".to_string()),
             },
         );
@@ -12312,6 +12351,7 @@ mod tests {
             "acp-session".to_string(),
             ActivePromptTurn {
                 token: turn_token,
+                response: PromptResponseGuard::new(json!("test")),
                 conversation_id: Some("conv-1".to_string()),
             },
         );
@@ -12369,6 +12409,7 @@ mod tests {
             "acp-session",
             previous_token,
             Some("conv-1".to_string()),
+            PromptResponseGuard::new(json!(1)),
         )
         .await;
         let mut cancel_rx = shared.cancellation_tx.subscribe();
@@ -12377,12 +12418,19 @@ mod tests {
             "acp-session",
             next_token,
             Some("conv-1".to_string()),
+            PromptResponseGuard::new(json!(2)),
         )
         .await
         .expect("previous turn returned");
         let notice = cancel_rx.recv().await.expect("cancellation notice");
 
         assert_eq!(previous.token, previous_token);
+        assert_eq!(previous.response.claim(), Some(json!(1)));
+        assert_eq!(
+            previous.response.claim(),
+            None,
+            "superseded prompt handler must not send a second response"
+        );
         assert_eq!(notice.session_id, "acp-session");
         assert_eq!(notice.turn_token, Some(previous_token));
         assert_eq!(notice.conversation_id.as_deref(), Some("conv-1"));
@@ -12404,6 +12452,7 @@ mod tests {
             "acp-session",
             previous_token,
             Some("conv-1".to_string()),
+            PromptResponseGuard::new(json!(1)),
         )
         .await;
         let mut cancel_rx = shared.cancellation_tx.subscribe();
@@ -12412,11 +12461,18 @@ mod tests {
             "acp-session",
             next_token,
             Some("conv-2".to_string()),
+            PromptResponseGuard::new(json!(2)),
         )
         .await
         .expect("previous turn returned");
 
         assert_eq!(previous.token, previous_token);
+        assert_eq!(previous.response.claim(), Some(json!(1)));
+        assert_eq!(
+            previous.response.claim(),
+            None,
+            "superseded prompt handler must not send a second response"
+        );
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(50), cancel_rx.recv())
                 .await
@@ -17008,6 +17064,7 @@ mod tests {
             session_id.clone(),
             ActivePromptTurn {
                 token: turn_token,
+                response: PromptResponseGuard::new(json!("test")),
                 conversation_id: None,
             },
         );
@@ -17088,6 +17145,7 @@ mod tests {
             ActivePromptTurn {
                 token: current_turn,
                 conversation_id: Some("conv-current".to_string()),
+                response: PromptResponseGuard::new(json!("test")),
             },
         );
         let mut adapter_state = AdapterState {
