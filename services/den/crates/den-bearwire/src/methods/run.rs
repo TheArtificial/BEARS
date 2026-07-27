@@ -551,6 +551,10 @@ fn run_progress_is_warning(detail: &Value) -> bool {
     detail.get("event_kind").and_then(Value::as_str) == Some("error")
 }
 
+fn is_replaceable_livestream_event(event: &BearWireEvent) -> bool {
+    event.event_type == "run.progress"
+}
+
 pub(crate) async fn persist_run_progress(
     _pool: &sqlx::PgPool,
     session_id: &str,
@@ -1064,6 +1068,23 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
         return;
     }
     for mut event in runtime_stream_event_to_bearwire_events(runtime_event) {
+        if is_replaceable_livestream_event(&event) {
+            // ADR-0030: progress is a replaceable live observation, not durable
+            // semantic history. Do not let a newly added runtime producer turn it
+            // back into an append-only event row.
+            let kind = event
+                .data
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("status_text");
+            let text = event
+                .data
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            publish_run_progress(state, session_id, run_id, kind, text);
+            continue;
+        }
         if event.event_type == "client.waiting" {
             if let Some(obligation) = active_obligation.as_ref() {
                 publish_answerable_client_waiting_event(
@@ -2443,6 +2464,18 @@ mod tests {
             &json!({ "event_kind": "turn_completed" })
         ));
         assert!(!run_progress_is_warning(&json!({})));
+    }
+
+    #[test]
+    fn replaceable_livestream_events_are_not_persisted() {
+        assert!(is_replaceable_livestream_event(&BearWireEvent::ephemeral(
+            "run.progress",
+            json!({ "kind": "status_text", "text": "Thinking…" }),
+        )));
+        assert!(!is_replaceable_livestream_event(&BearWireEvent::ephemeral(
+            "tool_call.completed",
+            json!({}),
+        )));
     }
 
     #[test]
