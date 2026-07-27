@@ -30,6 +30,7 @@ pub async fn docket_jobs_list_result(
             bear.id,
             DocketJobListFilter {
                 include_cancelled: request.include_cancelled.unwrap_or(false),
+                include_archived: request.include_archived.unwrap_or(false),
                 source_conversation_id,
                 limit: request.limit.unwrap_or(50),
                 ..DocketJobListFilter::default()

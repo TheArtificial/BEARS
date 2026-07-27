@@ -133,6 +133,7 @@ pub fn router() -> Router<AppState> {
         .route("/work/jobs/{job_id}/edit", post(edit_job))
         .route("/work/jobs/{job_id}/duplicate", post(duplicate_job))
         .route("/work/jobs/{job_id}/complete", post(complete_job))
+        .route("/work/jobs/{job_id}/archive", post(archive_job))
         .route("/work/jobs/{job_id}/tasks", post(add_top_level_task))
         .route("/work/jobs/{job_id}/dispatch", post(dispatch_job))
         .route(
@@ -456,6 +457,7 @@ async fn member_bears(
 #[derive(Deserialize, Default)]
 struct WorkIndexQuery {
     completed: Option<String>,
+    archived: Option<String>,
 }
 
 async fn index(
@@ -466,6 +468,7 @@ async fn index(
     let user_id = require_user(&auth_session)?;
     let bears = member_bears(&state, user_id).await?;
     let show_completed = query.completed.as_deref() == Some("show");
+    let show_archived = query.archived.as_deref() == Some("show");
 
     let mut attention: Vec<serde_json::Value> = Vec::new();
     let mut jobs_with_work: Vec<serde_json::Value> = Vec::new();
@@ -499,7 +502,13 @@ async fn index(
 
         let service = PgDocketService::from_pool(state.sqlx_pool());
         let jobs = service
-            .list_jobs(*bear_id, DocketJobListFilter::default())
+            .list_jobs(
+                *bear_id,
+                DocketJobListFilter {
+                    include_archived: show_archived,
+                    ..DocketJobListFilter::default()
+                },
+            )
             .await?;
         let job_ids: Vec<Uuid> = jobs.iter().map(|job| job.id).collect();
         let run_counts: std::collections::HashMap<Uuid, i64> = sqlx::query_as(
@@ -575,6 +584,7 @@ async fn index(
             awaiting_completion => awaiting_completion,
             provider_status => provider_status,
             show_completed => show_completed,
+            show_archived => show_archived,
         },
     )
     .await
@@ -1120,6 +1130,51 @@ async fn complete_job(
     Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
 }
 
+async fn archive_job(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path(job_ref): Path<String>,
+) -> Result<Response, CustomError> {
+    let job_id = resolve_uuid_prefix(state.sqlx_pool(), "bear_jobs", &job_ref).await?;
+    let user_id = require_user(&auth_session)?;
+    let bears = member_bears(&state, user_id).await?;
+    let owner: Option<(Uuid,)> = sqlx::query_as("SELECT bear_id FROM bear_jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(state.sqlx_pool())
+        .await
+        .map_err(den_core::DenError::from)?;
+    let Some((bear_id,)) = owner.filter(|(bear_id,)| bears.contains_key(bear_id)) else {
+        return Err(CustomError::NotFound("job not found".to_string()));
+    };
+    let service = PgDocketService::from_pool(state.sqlx_pool());
+    let job = service
+        .get_job(bear_id, job_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
+    let status = if job.job.status == "archived" {
+        DocketJobStatus::Ready
+    } else {
+        DocketJobStatus::Archived
+    };
+    service
+        .update_job(DocketJobUpdate {
+            bear_id,
+            job_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            goal: None,
+            work_surface_ref: None,
+            work_surface_id: None,
+            commit_policy: None,
+            work_branch: None,
+            status: Some(status),
+            visibility: None,
+        })
+        .await?;
+    Ok(Redirect::to(&format!("/work/jobs/{job_id}")).into_response())
+}
+
 #[derive(Debug, Deserialize)]
 struct AddTopLevelTaskForm {
     title: String,
@@ -1159,9 +1214,12 @@ async fn add_top_level_task(
         .get_job(bear_id, job_id)
         .await?
         .ok_or_else(|| CustomError::NotFound("job not found".to_string()))?;
-    if matches!(projection.job.status.as_str(), "completed" | "cancelled") {
+    if matches!(
+        projection.job.status.as_str(),
+        "completed" | "cancelled" | "archived"
+    ) {
         return Err(CustomError::ValidationError(
-            "completed or cancelled jobs cannot receive new tasks; duplicate the job instead"
+            "completed, cancelled, or archived jobs cannot receive new tasks; duplicate the job instead"
                 .to_string(),
         ));
     }

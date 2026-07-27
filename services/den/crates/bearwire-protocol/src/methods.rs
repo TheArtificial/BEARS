@@ -169,6 +169,8 @@ pub struct DocketJobsListRequest {
     #[serde(default)]
     pub include_cancelled: Option<bool>,
     #[serde(default)]
+    pub include_archived: Option<bool>,
+    #[serde(default)]
     #[serde(deserialize_with = "deserialize_optional_i64_from_value")]
     pub limit: Option<i64>,
 }

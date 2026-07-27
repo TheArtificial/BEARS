@@ -405,6 +405,7 @@ pub(super) async fn list_jobs(
     Ok(rows
         .into_iter()
         .filter(|job| filter.include_cancelled || job.status != "cancelled")
+        .filter(|job| filter.include_archived || job.status != "archived")
         .filter(|job| {
             filter
                 .statuses
@@ -518,7 +519,7 @@ pub(super) async fn get_or_create_conversation_objective(
         WHERE bear_id = $1
           AND source_conversation_id = $2
           AND objective_kind = 'conversation_task_list'
-          AND status NOT IN ('completed', 'cancelled')
+          AND status NOT IN ('completed', 'cancelled', 'archived')
         ORDER BY updated_at DESC
         LIMIT 1
         ",
@@ -685,6 +686,7 @@ fn job_event_type_for_status(status: Option<DocketJobStatus>) -> &'static str {
         Some(DocketJobStatus::Blocked) => "job_blocked",
         Some(DocketJobStatus::Completed) => "job_completed",
         Some(DocketJobStatus::Cancelled) => "job_cancelled",
+        Some(DocketJobStatus::Archived) => "job_archived",
         _ => "note_added",
     }
 }
@@ -705,6 +707,7 @@ async fn update_run_for_job_status(
         DocketJobStatus::Blocked => (Some("paused"), false),
         DocketJobStatus::Completed => (Some("completed"), true),
         DocketJobStatus::Cancelled => (Some("cancelled"), true),
+        DocketJobStatus::Archived => (Some("cancelled"), true),
         _ => (None, false),
     };
     if let Some(state) = state {
