@@ -164,7 +164,7 @@ async fn conversation_objective_checkout_projects_active_subtree_after_reconnect
         WHERE bear_id = $1
           AND source_conversation_id = 'conversation-1'
           AND objective_kind = 'conversation_task_list'
-          AND status NOT IN ('completed', 'cancelled')
+          AND status NOT IN ('completed', 'cancelled', 'archived')
         ",
     )
     .bind(bear_id)
