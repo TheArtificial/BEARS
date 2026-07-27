@@ -217,6 +217,13 @@ fn orientation_diagnostic_text(data: &Value) -> String {
     )
 }
 
+fn omit_from_review_projection(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "run.progress" | "message.delta" | "message.reasoning.delta"
+    )
+}
+
 fn trimmed_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .filter_map(|key| value.get(*key).and_then(Value::as_str))
@@ -533,6 +540,9 @@ async fn conversation_history_like_result(
                 );
             } else {
                 for row in surface_event_rows {
+                    if omit_from_review_projection(&row.event_type) {
+                        continue;
+                    }
                     if row.event_type == "runtime.objective_orientation" {
                         let event_id = row
                             .event
@@ -575,50 +585,6 @@ async fn conversation_history_like_result(
                         }));
                         continue;
                     }
-
-                    if row.event_type != "message.reasoning.delta" {
-                        continue;
-                    }
-                    let delta = row
-                        .event
-                        .data
-                        .get("delta")
-                        .or_else(|| row.event.data.get("text"))
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .trim();
-                    if delta.is_empty() {
-                        continue;
-                    }
-                    let source = row
-                        .event
-                        .data
-                        .get("source")
-                        .and_then(Value::as_str)
-                        .unwrap_or("provider_reasoning")
-                        .to_string();
-                    let replay_policy = row
-                        .event
-                        .data
-                        .get("replay_policy")
-                        .and_then(Value::as_str)
-                        .unwrap_or("none")
-                        .to_string();
-                    if replay_policy != "thought" {
-                        continue;
-                    }
-                    let event_id = row
-                        .event
-                        .event_id
-                        .unwrap_or_else(|| format!("bearwire:{}", row.id));
-                    messages.push(json!(SurfaceHistoryEvent::ReasoningDelta {
-                        id: Some(event_id),
-                        role: Some("assistant".to_string()),
-                        text: delta.to_string(),
-                        source: Some(source),
-                        replay_policy: Some(replay_policy),
-                        created_at: Some(row.created_at.to_string()),
-                    }));
                 }
             }
         }
@@ -699,6 +665,17 @@ mod tests {
             DocketSurfaceEventId::new(id).to_string(),
             "docket:11111111-2222-3333-4444-555555555555"
         );
+    }
+
+    #[test]
+    fn review_projection_omits_transient_stream_events() {
+        assert!(omit_from_review_projection("run.progress"));
+        assert!(omit_from_review_projection("message.delta"));
+        assert!(omit_from_review_projection("message.reasoning.delta"));
+        assert!(!omit_from_review_projection("session_info_update"));
+        assert!(!omit_from_review_projection(
+            "runtime.objective_orientation"
+        ));
     }
 
     #[test]
