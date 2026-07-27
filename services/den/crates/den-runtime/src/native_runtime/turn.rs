@@ -1786,14 +1786,16 @@ pub async fn continue_native_client_turn_event_stream(
                 reason.as_deref(),
             )
             .await?;
-            // Approval is control-plane state. Armature-local approvals wait for the
-            // armature to execute the tool and send RuntimeContinuation::ToolResult;
-            // Den-hosted web_fetch approvals execute server-side immediately.
+            // Approval is control-plane state. Client-owned tools wait for the client
+            // to execute them and send RuntimeContinuation::ToolResult; Den-owned tools
+            // execute server-side immediately.
             if approve {
                 if let Some(session) = existing_session.as_ref() {
                     if let Some(tool_call_id) = tool_call_id.as_deref() {
                         if let Some(call) = session.find_pending_tool_call(tool_call_id) {
-                            if call_is_den_web_fetch(&call) {
+                            if builtin_den_tool_descriptor_for_provider_name(&call.function.name)
+                                .is_some()
+                            {
                                 let tool_message = execute_approved_den_tool_for_session(
                                     &request, session, &call, profile,
                                 )

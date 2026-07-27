@@ -1117,7 +1117,11 @@ fn descriptor(
         availability: "available",
         permissions,
         allowed_roles,
-        approval_policy: "never",
+        approval_policy: if name == DEN_WEB_FETCH {
+            "always"
+        } else {
+            "never"
+        },
         display: den_tool_display(name, label).to_json(),
         input_schema,
     }

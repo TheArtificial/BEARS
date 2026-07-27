@@ -23,14 +23,13 @@ use crate::runtime_error_ux::{
 };
 use crate::{
     agent_loop::{
-        approvals::create_native_approval,
         record_checkpoint_response, run_agent_step_stream,
         session_store::AgentLoopSessionStore,
         step::RUNTIME_CHECKPOINT_TOOL_NAME,
         tool_call_finished_event_for_content,
         tool_policy::{
-            maybe_pause_for_tool_approval, provider_tool_is_den_web_fetch,
-            provider_tool_requires_approval, provider_tool_supports_unilateral_execution,
+            maybe_pause_for_tool_approval, provider_tool_requires_approval,
+            provider_tool_supports_unilateral_execution,
         },
         validate_checkpoint_response, AgentStepOverflowContext, CheckpointResponseInput,
         CheckpointValidationStatus, RuntimeCheckpointRequest, RuntimeCheckpointResponse,
@@ -432,16 +431,10 @@ impl SessionTrackingStream {
         }
     }
 
-    fn should_request_den_tool_permission(&self, tool_name: &str) -> bool {
-        self.dispatch_mode == NativeToolDispatchMode::DeferToClient
-            && provider_tool_is_den_web_fetch(tool_name)
-    }
-
     fn should_execute_den_tool_server_side(&self, tool_name: &str) -> bool {
         self.dispatch_mode == NativeToolDispatchMode::DeferToClient
             && builtin_den_tool_descriptor_for_provider_name(tool_name).is_some()
             && provider_tool_supports_unilateral_execution(tool_name)
-            && !self.should_request_den_tool_permission(tool_name)
             && (self.may_define_task
                 || !is_task_definition_or_delegation_tool_provider_name(tool_name))
     }
@@ -509,31 +502,6 @@ impl SessionTrackingStream {
     fn started_tool_title(tool_name: &str) -> Option<String> {
         builtin_den_tool_descriptor_for_provider_name(tool_name)
             .map(|descriptor| descriptor.label.to_string())
-    }
-
-    fn web_fetch_permission_target(arguments: &serde_json::Value) -> serde_json::Value {
-        let mut target = arguments.clone();
-        if !target.is_object() {
-            target = serde_json::json!({});
-        }
-        target["kind"] = serde_json::json!("web_fetch");
-        if let Some(url) = target.get("url").and_then(|value| value.as_str()) {
-            if let Ok(parsed) = url::Url::parse(url.trim()) {
-                if let Some(host) = parsed.host_str() {
-                    let host = match parsed.port() {
-                        Some(port)
-                            if !((parsed.scheme() == "https" && port == 443)
-                                || (parsed.scheme() == "http" && port == 80)) =>
-                        {
-                            format!("{}:{port}", host.trim_end_matches('.').to_ascii_lowercase())
-                        }
-                        _ => host.trim_end_matches('.').to_ascii_lowercase(),
-                    };
-                    target["host"] = serde_json::json!(host);
-                }
-            }
-        }
-        target
     }
 
     fn plan_update_event_from_tool_message(message: &ChatMessage) -> Option<RuntimeSemanticEvent> {
@@ -1554,50 +1522,6 @@ impl Stream for SessionTrackingStream {
                     (tool_name.clone(), arguments.to_string()),
                 );
                 self.sync_assistant_tool_step_to_session();
-                if self.should_request_den_tool_permission(&tool_name) {
-                    let pool = self.pool.clone();
-                    let bear_id = self.bear_id;
-                    let conversation_id = self.conversation_id.clone();
-                    let client_session_id = self.client_session_id.clone();
-                    let permission_target = Self::web_fetch_permission_target(&arguments);
-                    let arguments_value = permission_target.clone();
-                    let approval_tool_call_id = tool_call_id.clone();
-                    let approval_tool_name = tool_name.clone();
-                    self.pending_tool_event = Some(RuntimeStreamEvent::Semantic(
-                        RuntimeSemanticEvent::ToolCallRequested {
-                            tool_call_id,
-                            tool_name: tool_name.clone(),
-                            title: Self::started_tool_title(&tool_name),
-                            kind: Some("function".to_string()),
-                            arguments: permission_target,
-                            approval_request_id: None,
-                            approval_required: true,
-                            approval_reason: Some(
-                                "web_fetch requires approval for this URL".to_string(),
-                            ),
-                            run_id: None,
-                        },
-                    ));
-                    self.pending_approval = Some(Box::pin(async move {
-                        let approval_id = create_native_approval(
-                            &pool,
-                            bear_id,
-                            &conversation_id,
-                            &client_session_id,
-                            &approval_tool_call_id,
-                            &approval_tool_name,
-                            &arguments_value,
-                        )
-                        .await?;
-                        Ok(Some(RuntimeSemanticEvent::RunPaused {
-                            reason: "requires_approval".to_string(),
-                            resume_token: Some(approval_id),
-                            expires_at: None,
-                        }))
-                    }));
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                }
                 let approval_required = provider_tool_requires_approval(&tool_name);
                 let event = RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::ToolCallRequested {
                     tool_call_id: tool_call_id.clone(),
@@ -2972,7 +2896,6 @@ mod tests {
         assert!(stream.should_execute_den_tool_server_side("create_job"));
         assert!(!stream.should_execute_den_tool_server_side("list_plans"));
         assert!(stream.should_execute_den_tool_server_side("session_info"));
-        assert!(stream.should_request_den_tool_permission("web_fetch"));
         assert!(!stream.should_execute_den_tool_server_side("web_fetch"));
         assert!(!stream.should_execute_den_tool_server_side("fs_read_text_file"));
         assert!(!stream.should_execute_den_tool_server_side("mcp__chrome_devtools_custom__click"));
