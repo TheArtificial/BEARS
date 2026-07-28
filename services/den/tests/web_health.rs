@@ -54,6 +54,7 @@ async fn api_app() -> axum::Router {
     api::create_api_app(pool, store, config, Vec::new())
         .await
         .expect("build api router")
+        .0
 }
 
 #[tokio::test]

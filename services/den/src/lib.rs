@@ -282,7 +282,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
                 ("/internal", crate::internal_tools::router()),
                 ("/bearwire", den_bearwire::router()),
             ];
-            let api_app = api::create_api_app(
+            let (api_app, api_state) = api::create_api_app(
                 sqlx_pool.clone(),
                 session_store.clone(),
                 config_api,
@@ -304,10 +304,9 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
 
             let expiry_token = CancellationToken::new();
             bearwire_expiry_token_opt = Some(expiry_token.clone());
-            let expiry_pool = sqlx_pool.clone();
             task_set.spawn(async move {
                 den_bearwire::run_client_obligation_expiry_loop(
-                    expiry_pool,
+                    api_state,
                     expiry_token,
                     std::time::Duration::from_secs(1),
                 )

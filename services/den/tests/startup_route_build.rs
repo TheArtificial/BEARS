@@ -38,7 +38,7 @@ async fn api_router_builds_without_startup_route_conflicts() {
         ("/bearwire", den_bearwire::router()),
     ];
 
-    let _app = api::create_api_app(pool, store, config, peer_routers)
+    let (_app, _state) = api::create_api_app(pool, store, config, peer_routers)
         .await
         .expect("API router should build without Axum route conflicts");
 }
