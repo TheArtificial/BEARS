@@ -124,8 +124,18 @@ pub fn run_failure_projection(
     RuntimeOperationalOutcomeProjection {
         model_summary,
         content,
-        user_message: run_failed_user_message(reason, message, bear_name),
-        history_marker: run_failed_history_marker(reason, message, bear_name),
+        user_message: run_failed_user_message(
+            reason,
+            message,
+            bear_name,
+            diagnostic_context.as_ref(),
+        ),
+        history_marker: run_failed_history_marker(
+            reason,
+            message,
+            bear_name,
+            diagnostic_context.as_ref(),
+        ),
         diagnostic_context,
     }
 }
@@ -194,7 +204,12 @@ pub fn is_budget_or_loop_failure(reason: &str, message: &str) -> bool {
     reason == "runtime_internal" && (message.contains("budget") || message.contains("rule of ko"))
 }
 
-pub fn run_failed_user_message(reason: &str, message: &str, bear_name: &str) -> Option<String> {
+pub fn run_failed_user_message(
+    reason: &str,
+    message: &str,
+    bear_name: &str,
+    context: Option<&Value>,
+) -> Option<String> {
     if reason == "command_outcome_unknown" {
         return Some(format!(
             "{} could not confirm the command's final status after the connected client stopped responding. The command may still be running or may already have made changes. Reconnect and inspect the process and workspace before retrying it.",
@@ -202,9 +217,30 @@ pub fn run_failed_user_message(reason: &str, message: &str, bear_name: &str) -> 
         ));
     }
     if reason == "client_obligation_timeout" {
+        let permission_ids = context
+            .and_then(|context| context.get("expired_obligations"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|obligation| {
+                obligation
+                    .get("expected_responder_action")
+                    .and_then(Value::as_str)
+                    == Some("permission_decision")
+            })
+            .filter_map(|obligation| obligation.get("permission_id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        let detail = match permission_ids.as_slice() {
+            [permission_id] => format!("Permission request {permission_id} timed out."),
+            [] => "The connected client did not respond in time.".to_string(),
+            permission_ids => format!(
+                "Permission requests {} timed out.",
+                permission_ids.join(", ")
+            ),
+        };
         return Some(format!(
-            "{} stopped because the connected client did not respond in time. Reconnect the client and send another message to retry.",
-            display_bear_name(bear_name)
+            "{} stopped because {detail} Reconnect the client and send another message to retry.",
+            display_bear_name(bear_name),
         ));
     }
     if is_incomplete_stream(reason) {
@@ -252,8 +288,13 @@ fn is_llm_stream_idle_timeout(reason: &str, message: &str) -> bool {
         && message.contains("LLM byte stream produced no data for 30s")
 }
 
-pub fn run_failed_history_marker(reason: &str, message: &str, bear_name: &str) -> Option<String> {
-    run_failed_user_message(reason, message, bear_name)
+pub fn run_failed_history_marker(
+    reason: &str,
+    message: &str,
+    bear_name: &str,
+    context: Option<&Value>,
+) -> Option<String> {
+    run_failed_user_message(reason, message, bear_name, context)
 }
 
 pub fn numeric_message_field(message: &str, field: &str) -> Option<u64> {
@@ -552,6 +593,32 @@ mod tests {
             "wait_for_user_retry_after_reporting_stream_timeout"
         );
         assert_eq!(context["diagnostic"]["idle_timeout_seconds"], 30);
+    }
+
+    #[test]
+    fn client_obligation_timeout_names_the_timed_out_permission_request() {
+        let projection = run_failure_projection(
+            "client_obligation_timeout",
+            "Permission request req-123 timed out waiting for a client response.",
+            "run-1",
+            "Builder Bear",
+            Some(json!({
+                "expired_obligations": [{
+                    "expected_responder_action": "permission_decision",
+                    "permission_id": "req-123",
+                }],
+            })),
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("Permission request req-123 timed out."));
+        assert!(user_message.contains("Reconnect the client"));
+        assert_eq!(projection.content["reason"], "client_obligation_timeout");
+        assert_eq!(
+            projection.diagnostic_context.expect("diagnostic context")["expired_obligations"][0]
+                ["permission_id"],
+            "req-123"
+        );
     }
 
     #[test]

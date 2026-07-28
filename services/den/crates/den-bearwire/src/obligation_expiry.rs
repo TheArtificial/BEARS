@@ -104,9 +104,30 @@ pub async fn expire_client_obligations_once(
                 })),
             )
         } else {
+            let timed_out_permissions = expired_obligations
+                .iter()
+                .filter(|obligation| {
+                    obligation
+                        .get("expected_responder_action")
+                        .and_then(Value::as_str)
+                        == Some("permission_decision")
+                })
+                .filter_map(|obligation| obligation.get("permission_id").and_then(Value::as_str))
+                .collect::<Vec<_>>();
+            let detail = match timed_out_permissions.as_slice() {
+                [permission_id] => {
+                    format!("Permission request {permission_id} timed out waiting for a client response.")
+                }
+                [] => "The connected client did not respond before the required step timed out."
+                    .to_string(),
+                permission_ids => format!(
+                    "Permission requests {} timed out waiting for client responses.",
+                    permission_ids.join(", ")
+                ),
+            };
             (
                 RunFailureReason::ClientObligationTimeout,
-                "The connected client did not respond before the required step timed out. Reconnect the client and start a new turn to retry.".to_string(),
+                format!("{detail} Reconnect the client and start a new turn to retry."),
                 None,
             )
         };
