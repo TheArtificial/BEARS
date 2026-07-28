@@ -35,9 +35,7 @@ The bear uses `create_job`. The pieces that matter:
 - **Tasks assigned to `work`** are the ones that run in sandboxes. Each task
   needs concrete **completion criteria** — the run is judged against them,
   so "the tests pass" beats "improve the code".
-- **`commit_policy`** decides what happens to changes:
-  - `propose_only` (default) — changes are captured as a diff you can review
-    on the run page; nothing is pushed.
+- **`commit_policy`** decides what happens to source changes:
   - `per_task` / `per_job` — each successful run's commits are **pushed to
     the job's work branch** on the upstream.
   - `none` — no changes expected (investigations).

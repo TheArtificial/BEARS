@@ -92,8 +92,8 @@ Publishing: with job `commit_policy` `per_task` or `per_job`, each successful
 run's commits are pushed **host-side with the root's credentials** to the
 job's upstream work branch (caller-specified; generated `den/job-<short-id>`
 by default; the default ref is refused). Later runs of the same job provision
-from that branch, so tasks build on each other. `propose_only` (the default)
-keeps runs diff-only.
+from that branch, so tasks build on each other. With `none`, no source changes
+are expected and runs are not published.
 
 Network: sandboxes default to `restricted` egress — a per-sandbox internal
 network whose only way out is a socat relay to the Den callback endpoint, so

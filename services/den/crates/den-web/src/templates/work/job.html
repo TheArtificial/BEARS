@@ -7,7 +7,7 @@
 <p>
     Bear <a href="/bear/{{ bear_slug | urlencode }}">{{ bear_name }}</a> · status <strong>{{ status }}</strong>
     {% if work_surface_name %} · work surface <a href="/work/surfaces/{{ work_surface_id }}">{{ work_surface_name }}</a>{% endif %}
-    · output policy <strong>{{ commit_policy_label }}</strong>
+    · source change policy <strong>{{ commit_policy_label }}</strong>
     {% if work_branch %} · publishes to <code>{{ work_branch }}</code>{% endif %}
 </p>
 {% if work_surface_id and work_branch %}
@@ -29,7 +29,6 @@
             <select name="commit_policy" required>
                 <option value="per_task" {% if commit_policy == "per_task" %}selected{% endif %}>Publish after each task</option>
                 <option value="per_job" {% if commit_policy == "per_job" %}selected{% endif %}>Publish to the job branch</option>
-                <option value="propose_only" {% if commit_policy == "propose_only" %}selected{% endif %}>No output</option>
                 <option value="none" {% if commit_policy == "none" %}selected{% endif %}>No source changes expected</option>
             </select>
         </label></p>

@@ -88,7 +88,7 @@ bear_jobs
 - created_by_role     bear_agent_role          -- channel the human used (pair | chat | ui)
 - goal                text NOT NULL            -- workplan: intent
 - work_surface_ref    text nullable            -- slug; FK once ADR-0006 lands
-- commit_policy       commit_policy nullable   -- none | per_task | per_job | propose_only
+- commit_policy       commit_policy nullable   -- none | per_task | per_job
 - status              job_status               -- activity: draft | ready | running | blocked | completed | cancelled
 - visibility          work_plan_visibility     -- reuse existing enum
 - current_run_id      uuid nullable FK         -- pointer to the active/latest run

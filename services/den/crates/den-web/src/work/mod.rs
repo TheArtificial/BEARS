@@ -932,7 +932,6 @@ fn commit_policy_label(policy: Option<&str>) -> &'static str {
     match policy {
         Some("per_task") => "Publish after each task",
         Some("per_job") => "Publish to the job branch",
-        Some("propose_only") => "No output",
         Some("none") | None => "No source changes expected",
         Some(_) => "Unknown policy",
     }

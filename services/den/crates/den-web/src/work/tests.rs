@@ -10,7 +10,6 @@ use axum::{
 };
 use axum_login::AuthnBackend;
 use http_body_util::BodyExt;
-use minijinja::Environment;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -96,8 +95,10 @@ async fn test_pool() -> Option<sqlx::PgPool> {
 }
 
 fn test_state(pool: sqlx::PgPool) -> AppState {
-    let config = Arc::new(Config::test_stub());
-    let template_env = Environment::new();
+    let mut config = Config::test_stub();
+    config.templates_dir = format!("{}/src/templates", env!("CARGO_MANIFEST_DIR"));
+    let config = Arc::new(config);
+    let template_env = crate::template_environment(config.as_ref());
     AppState::test_with_template_env(pool, template_env, config)
 }
 
@@ -302,7 +303,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
             &cookie,
             "/work/new",
             format!(
-                "bear_id={bear_id}&goal={}&root=&commit_policy=&work_branch=&task_title=&task_criteria=",
+                "bear_id={bear_id}&goal={}&root=&commit_policy=none&work_branch=&task_title=Check&task_criteria=done",
                 urlencoding::encode(goal)
             ),
         )
@@ -327,9 +328,10 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
         )
         .await
         .expect("dashboard response");
-    assert_eq!(response.status(), StatusCode::OK);
+    let status = response.status();
     let body = String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
         .into_owned();
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains(&active_goal));
     assert!(!body.contains(&completed_goal));
     assert!(body.contains("Show completed jobs"));
@@ -467,7 +469,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
         &cookie,
         "/work/new",
         format!(
-            "bear_id={bear_id}&goal=Edit+the+tree&root=&commit_policy=propose_only\\
+            "bear_id={bear_id}&goal=Edit+the+tree&root=&commit_policy=none\
              &task_title=First+root&task_criteria=first+done"
         ),
     )
@@ -507,7 +509,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{job_id}/extend"),
+        &format!("/work/jobs/{job_id}/tasks"),
         "title=Second+root&body=&criteria=second+done".to_string(),
     )
     .await;
@@ -551,7 +553,7 @@ async fn job_lifecycle_can_extend_then_complete() {
         &cookie,
         "/work/new",
         format!(
-            "bear_id={bear_id}&goal=Lifecycle+job&root=&commit_policy=propose_only\
+            "bear_id={bear_id}&goal=Lifecycle+job&root=&commit_policy=none\
              &task_title=First+task&task_criteria=first+done"
         ),
     )
@@ -572,7 +574,7 @@ async fn job_lifecycle_can_extend_then_complete() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{job_id}/extend"),
+        &format!("/work/jobs/{job_id}/tasks"),
         "title=Second+task&body=&criteria=second+done".to_string(),
     )
     .await;
@@ -632,7 +634,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
         &cookie,
         "/work/new",
         format!(
-            "bear_id={bear_id}&goal=Surface+job&root=&commit_policy=propose_only\
+            "bear_id={bear_id}&goal=Surface+job&root=&commit_policy=none\
              &task_title=Use+repo&task_criteria=repo+used"
         ),
     )
@@ -726,7 +728,7 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
 
     // Create the job through the same form, then dispatch its task.
     let body = format!(
-        "bear_id={bear_id}&goal=Dispatch+me&root=&commit_policy=propose_only\
+        "bear_id={bear_id}&goal=Dispatch+me&root=&commit_policy=none\
          &task_title=Do+the+thing&task_criteria=thing+is+done\
          &task_title=Do+the+next+thing&task_criteria=next+thing+is+done"
     );

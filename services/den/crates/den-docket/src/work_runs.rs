@@ -1691,8 +1691,7 @@ pub struct WorkRunDispatchContext {
 
 impl WorkRunDispatchContext {
     /// Whether the job's commit policy publishes successful runs to the
-    /// upstream work branch (`per_task` / `per_job`; `propose_only`/`none`
-    /// stay diff-only).
+    /// upstream work branch (`per_task` / `per_job`).
     pub fn publishes(&self) -> bool {
         matches!(self.commit_policy.as_deref(), Some("per_task" | "per_job"))
     }

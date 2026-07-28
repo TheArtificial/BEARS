@@ -169,7 +169,7 @@ The delegated run receives a capability bundle scoped to the authorization decis
     "external.send",
     "deploy.production"
   ],
-  "commit_policy": "propose_only"
+  "commit_policy": "per_job"
 }
 ```
 
@@ -179,7 +179,7 @@ Recommended defaults:
 
 | Initiating stance | Default delegation posture |
 |---|---|
-| `chat` | May request read-only/propose-only delegated work from user intent; writes require task/user authorization. |
+| `chat` | May request read-only delegated work from user intent; writes require task/user authorization. |
 | `pair` | May request write-capable `work` when attached to user-approved task/job policy. |
 | `work` | May request child `work` or `watch` within the same job/surface; cross-domain delegation is narrow. |
 | `curate` | May request curate work; repo writes are denied by default. |

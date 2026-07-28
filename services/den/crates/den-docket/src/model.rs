@@ -617,7 +617,6 @@ pub enum DocketCommitPolicy {
     None,
     PerTask,
     PerJob,
-    ProposeOnly,
 }
 
 impl DocketCommitPolicy {
@@ -626,7 +625,6 @@ impl DocketCommitPolicy {
             Self::None => "none",
             Self::PerTask => "per_task",
             Self::PerJob => "per_job",
-            Self::ProposeOnly => "propose_only",
         }
     }
 }
@@ -2184,7 +2182,7 @@ mod tests {
             goal: "Ship Docket".to_string(),
             work_surface_ref: None,
             work_surface_id: None,
-            commit_policy: Some(DocketCommitPolicy::ProposeOnly),
+            commit_policy: Some(DocketCommitPolicy::None),
             work_branch: None,
             status: DocketJobStatus::Ready,
             visibility: TaskListVisibility::BearVisible,
@@ -2317,7 +2315,7 @@ mod tests {
                 goal: "Ship Docket".to_string(),
                 work_surface_ref: Some("zed".to_string()),
                 work_surface_id: None,
-                commit_policy: Some("propose_only".to_string()),
+                commit_policy: Some("none".to_string()),
                 work_branch: None,
                 status: "running".to_string(),
                 visibility: "bear_visible".to_string(),
@@ -2419,7 +2417,7 @@ mod tests {
                 goal: "Ship Docket".to_string(),
                 work_surface_ref: Some("zed".to_string()),
                 work_surface_id: None,
-                commit_policy: Some("propose_only".to_string()),
+                commit_policy: Some("none".to_string()),
                 work_branch: None,
                 status: "running".to_string(),
                 visibility: "bear_visible".to_string(),

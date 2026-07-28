@@ -5,7 +5,7 @@
 <h1>New work job</h1>
 <p>
     Creates a Docket job that runs autonomously in one shared sandbox session.
-    Choose an output policy explicitly. Publishing policies push successful runs to the
+    Choose a source change policy explicitly. Publishing policies push successful runs to the
     job's work branch on the root's upstream.
 </p>
 
@@ -51,11 +51,10 @@
                 <option value="" selected disabled>— choose explicitly —</option>
                 <option value="per_task">Publish after each task</option>
                 <option value="per_job">Publish to the job branch</option>
-                <option value="propose_only">No output</option>
                 <option value="none">No source changes expected</option>
             </select>
         </label>
-        <br><small><strong>No output</strong> retains internal diagnostics only; it does not preserve a pushable workspace or branch after teardown.</small>
+        <br><small><strong>No source changes expected</strong> is for investigation/validation jobs. Use a publishing policy when source changes are expected; the job branch is the review boundary.</small>
     </p>
     <p>
         <label>Work branch <small>(optional; default <code>den/job-&lt;id&gt;</code>)</small><br>

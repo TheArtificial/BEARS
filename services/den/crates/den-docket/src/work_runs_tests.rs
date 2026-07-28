@@ -106,7 +106,7 @@ fn work_task(title: &str, order: i32, _stance: BearProfile) -> DocketTaskInput {
 /// Job with two work-assigned tasks and one pair task; returns
 /// (job_id, [task ids in sibling order]).
 async fn seed_work_job(pool: &PgPool, user_id: i32, bear_id: Uuid) -> (Uuid, Vec<Uuid>) {
-    seed_work_job_with_policy(pool, user_id, bear_id, DocketCommitPolicy::ProposeOnly).await
+    seed_work_job_with_policy(pool, user_id, bear_id, DocketCommitPolicy::None).await
 }
 
 async fn seed_work_job_with_policy(
