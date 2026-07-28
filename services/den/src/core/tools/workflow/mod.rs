@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -34,6 +34,47 @@ use den_service::{
 };
 
 const FOCUSED_CONVERSATION_TITLE_MAX_CHARS: usize = 120;
+
+/// Chat-facing identity for a Docket resource. `id` remains the only value
+/// callers may pass back to a tool; `display` is deliberately presentation
+/// only. Links are omitted until an authoritative Den UI route is available.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+struct DocketEntityPresentation {
+    id: Uuid,
+    display: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    href: Option<String>,
+}
+
+fn docket_entity_presentation(kind: &str, id: Uuid, ids: &[Uuid]) -> DocketEntityPresentation {
+    // Short handles are presentation only: tool inputs retain canonical UUIDs.
+    // Start at eight characters and extend only when this response contains a
+    // collision, so every displayed handle identifies exactly one result.
+    let id_text = id.to_string();
+    let prefix_len = (8..=id_text.len())
+        .find(|&len| {
+            ids.iter()
+                .filter(|other| **other != id)
+                .all(|other| !other.to_string().starts_with(&id_text[..len]))
+        })
+        .unwrap_or(id_text.len());
+    DocketEntityPresentation {
+        id,
+        display: format!("{kind} {}", &id_text[..prefix_len]),
+        href: None,
+    }
+}
+
+fn docket_entity_presentations(
+    kind: &str,
+    ids: impl IntoIterator<Item = Uuid>,
+) -> Vec<DocketEntityPresentation> {
+    let ids: Vec<Uuid> = ids.into_iter().collect();
+    ids.iter()
+        .copied()
+        .map(|id| docket_entity_presentation(kind, id, &ids))
+        .collect()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OrientedTaskCreatePolicy {
@@ -1092,6 +1133,7 @@ pub(crate) async fn create_job(
         "domain": "docket",
         "bear_id": context.bear_id,
         "summary": docket_job_summary(&job),
+        "presentation": docket_entity_presentation("job", job.job.id, &[job.job.id]),
         "job": job,
         "task_list": task_list,
         "notes": [
@@ -1123,6 +1165,7 @@ pub(crate) async fn list_jobs(
         "bear_id": context.bear_id,
         "summary": docket_job_rows_summary(&jobs),
         "count": jobs.len(),
+        "presentations": docket_entity_presentations("job", jobs.iter().map(|job| job.id)),
         "jobs": jobs,
     }))
 }
@@ -1563,6 +1606,7 @@ pub(crate) async fn list_tasks(
         "content": content,
         "summary": summary,
         "count": tasks.len(),
+        "presentations": docket_entity_presentations("task", tasks.iter().map(|task| task.task.id)),
         "counts": docket_task_counts(&tasks),
         "docket_scope": {
             "kind": if defaulted_to_conversation_objective { "conversation_objective" } else if job_id.is_some() { "explicit_job" } else { "session_task_list" },
@@ -2337,7 +2381,11 @@ pub(crate) async fn list_work_runs(
             item
         })
         .collect();
-    Ok(json!({ "ok": true, "work_runs": items }))
+    Ok(json!({
+        "ok": true,
+        "presentations": docket_entity_presentations("work run", runs.iter().map(|run| run.id)),
+        "work_runs": items,
+    }))
 }
 
 /// Queue placement for the queued runs in `runs`, keyed by run id (runs
@@ -2573,6 +2621,44 @@ fn work_run_may_contain_partial_changes(state: &str) -> bool {
     matches!(state, "blocked" | "failed" | "cancelled" | "timed_out")
 }
 
+#[cfg(test)]
+mod docket_entity_presentation_tests {
+    use super::{docket_entity_presentation, docket_entity_presentations};
+    use uuid::Uuid;
+
+    fn id(value: &str) -> Uuid {
+        Uuid::parse_str(value).expect("valid UUID fixture")
+    }
+
+    #[test]
+    fn uses_eight_character_typed_handle_when_unambiguous() {
+        let entity = docket_entity_presentation(
+            "job",
+            id("e4e4797b-2d29-4800-856e-b8220a9097dd"),
+            &[id("e4e4797b-2d29-4800-856e-b8220a9097dd")],
+        );
+
+        assert_eq!(entity.display, "job e4e4797b");
+        assert_eq!(entity.href, None);
+    }
+
+    #[test]
+    fn extends_handle_when_response_ids_share_the_default_prefix() {
+        let ids = [
+            id("e4e4797b-0d29-4800-856e-b8220a9097dd"),
+            id("e4e4797b-1d29-4800-856e-b8220a9097dd"),
+        ];
+
+        let entities = docket_entity_presentations("work run", ids);
+        let displays: Vec<_> = entities
+            .iter()
+            .map(|entity| entity.display.as_str())
+            .collect();
+
+        assert_eq!(displays, ["work run e4e4797b-0", "work run e4e4797b-1"]);
+    }
+}
+
 fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
     fn ts(value: Option<time::OffsetDateTime>) -> Value {
         value
@@ -2584,6 +2670,7 @@ fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
     }
     json!({
         "work_run_id": run.id,
+        "presentation": docket_entity_presentation("work run", run.id, &[run.id]),
         "state": run.state,
         "attempt": run.attempt,
         "job_id": run.job_id,
