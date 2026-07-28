@@ -17,9 +17,9 @@ use crate::work_runs::{
     enqueue_work_job, enqueue_work_run, ensure_job_work_branch, finalize_work_run,
     get_live_work_run_by_session, get_work_run, get_work_run_dispatch_context, heartbeat_work_run,
     reconnect_attached_work_run, record_work_run_provisioned, record_work_run_turn_outcome,
-    recover_attached_work_run, request_work_run_cancel, timeout_disconnected_work_runs,
-    WorkExecutionTarget, WorkJobEnqueue, WorkRunEnqueue, WorkRunFinalize, WorkRunProvisioned,
-    WorkRunState,
+    recover_attached_work_run, request_work_run_cancel, request_work_run_cancel_with_provenance,
+    timeout_disconnected_work_runs, WorkExecutionTarget, WorkJobEnqueue, WorkRunCancelRequest,
+    WorkRunEnqueue, WorkRunFinalize, WorkRunProvisioned, WorkRunState,
 };
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
@@ -610,10 +610,27 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .expect("session is bound");
     assert_eq!(reporting.state, "reporting");
 
-    // Cancel is still possible pre-finalize, then finalize wins.
-    assert!(request_work_run_cancel(&pool, run.id, bear_id)
+    // Cancellation is still possible pre-finalize and takes precedence over a
+    // subsequently reported success: the work result cannot be verified after
+    // its execution authority was revoked.
+    assert!(request_work_run_cancel_with_provenance(
+        &pool,
+        run.id,
+        bear_id,
+        &WorkRunCancelRequest {
+            requested_by: "test".into(),
+            reason: "test cancellation".into(),
+        },
+    )
+    .await
+    .unwrap());
+    let cancelled = get_work_run(&pool, run.id)
         .await
-        .unwrap());
+        .unwrap()
+        .expect("run exists");
+    assert_eq!(cancelled.cancel_requested_by.as_deref(), Some("test"));
+    assert_eq!(cancelled.cancel_reason.as_deref(), Some("test cancellation"));
+    assert!(cancelled.cancel_requested_at.is_some());
 
     let finalized = finalize_work_run(
         &pool,
@@ -628,7 +645,7 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     )
     .await
     .unwrap();
-    assert_eq!(finalized.state, "succeeded");
+    assert_eq!(finalized.state, "blocked");
     assert!(finalized.runner_id.is_none());
     assert!(finalized.lease_expires_at.is_none());
     assert!(finalized.finished_at.is_some());

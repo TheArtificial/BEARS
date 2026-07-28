@@ -108,7 +108,8 @@ impl WorkRunState {
 }
 
 const WORK_RUN_COLUMNS: &str = "id, bear_id, job_id, job_run_id, attempt, state, \
-     runner_id, lease_expires_at, cancel_requested, root_name, git_ref, image_name, \
+     runner_id, lease_expires_at, cancel_requested, cancel_requested_by, cancel_reason, \
+     cancel_requested_at, root_name, git_ref, image_name, \
      sandbox_server_url, sandbox_id, sandbox_type, sandbox_strength, work_surface, \
      execution_target, attached_client_session_id, attachment_state, attachment_warning, \
      disconnected_at, disconnect_deadline_at, \
@@ -126,6 +127,11 @@ pub struct WorkRunRow {
     pub runner_id: Option<String>,
     pub lease_expires_at: Option<OffsetDateTime>,
     pub cancel_requested: bool,
+    /// Origin that requested cancellation, e.g. `web:user:42` or `tool:pair`.
+    pub cancel_requested_by: Option<String>,
+    /// Caller-provided reason suitable for a diagnostic surface, never a secret.
+    pub cancel_reason: Option<String>,
+    pub cancel_requested_at: Option<OffsetDateTime>,
     pub root_name: Option<String>,
     pub git_ref: Option<String>,
     /// Catalog image name the run was dispatched with (None = provider default).
@@ -183,6 +189,13 @@ pub struct WorkJobEnqueue {
     pub requested_by_user_id: Option<i32>,
     pub execution_target: WorkExecutionTarget,
     pub attachment_warning: Option<String>,
+}
+
+/// Provenance captured when a user-facing control plane asks a worker to stop.
+#[derive(Clone, Debug)]
+pub struct WorkRunCancelRequest {
+    pub requested_by: String,
+    pub reason: String,
 }
 
 /// Legacy test fixture input. Production dispatch is job-scoped; tests use a
@@ -1057,14 +1070,40 @@ pub async fn request_work_run_cancel(
     run_id: Uuid,
     bear_id: Uuid,
 ) -> Result<bool, DenError> {
+    request_work_run_cancel_with_provenance(
+        pool,
+        run_id,
+        bear_id,
+        &WorkRunCancelRequest {
+            requested_by: "system".into(),
+            reason: "cancellation requested without caller provenance".into(),
+        },
+    )
+    .await
+}
+
+/// Ask the owning worker to cancel with caller provenance; teardown happens
+/// asynchronously. Returns false when the run is already terminal.
+pub async fn request_work_run_cancel_with_provenance(
+    pool: &PgPool,
+    run_id: Uuid,
+    bear_id: Uuid,
+    request: &WorkRunCancelRequest,
+) -> Result<bool, DenError> {
     let result = sqlx::query(
         "UPDATE bear_work_runs
-         SET cancel_requested = TRUE, updated_at = now()
+         SET cancel_requested = TRUE,
+             cancel_requested_by = COALESCE(cancel_requested_by, $3),
+             cancel_reason = COALESCE(cancel_reason, $4),
+             cancel_requested_at = COALESCE(cancel_requested_at, now()),
+             updated_at = now()
          WHERE id = $1 AND bear_id = $2
            AND state IN ('queued', 'claimed', 'provisioning', 'running', 'reporting')",
     )
     .bind(run_id)
     .bind(bear_id)
+    .bind(&request.requested_by)
+    .bind(&request.reason)
     .execute(pool)
     .await?;
     Ok(result.rows_affected() == 1)

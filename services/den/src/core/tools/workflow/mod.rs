@@ -2449,14 +2449,21 @@ pub(crate) async fn cancel_work_run(
         )));
     }
     let args: WorkRunCancelArguments = serde_json::from_value(arguments)?;
-    let requested =
-        den_docket::work_runs::request_work_run_cancel(pool, args.work_run_id, context.bear_id)
-            .await?;
+    let requested = den_docket::work_runs::request_work_run_cancel_with_provenance(
+        pool,
+        args.work_run_id,
+        context.bear_id,
+        &den_docket::work_runs::WorkRunCancelRequest {
+            requested_by: format!("tool:{}", role.as_str()),
+            reason: "cancelled through the Docket control tool".into(),
+        },
+    )
+    .await?;
     Ok(json!({
         "ok": true,
         "cancel_requested": requested,
         "note": if requested {
-            "the dispatch worker will tear the sandbox down and record the task as blocked"
+            "cancellation was requested; inspect the terminal work-run record for the final outcome and any partial progress"
         } else {
             "run is already terminal or unknown; nothing to cancel"
         },

@@ -1944,7 +1944,16 @@ async fn cancel_run(
         .await?
         .filter(|run| bears.contains_key(&run.bear_id))
         .ok_or_else(|| CustomError::NotFound("work run not found".to_string()))?;
-    work_runs::request_work_run_cancel(state.sqlx_pool(), run.id, run.bear_id).await?;
+    work_runs::request_work_run_cancel_with_provenance(
+        state.sqlx_pool(),
+        run.id,
+        run.bear_id,
+        &work_runs::WorkRunCancelRequest {
+            requested_by: format!("web:user:{user_id}"),
+            reason: "cancelled from the Den web UI".into(),
+        },
+    )
+    .await?;
     Ok(Redirect::to(&format!("/work/runs/{run_id}")).into_response())
 }
 
