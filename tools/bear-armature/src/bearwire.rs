@@ -723,6 +723,9 @@ pub(crate) async fn handle_prompt(
         sleep(BEARWIRE_POLL_INTERVAL).await;
     }
 
+    // See docs/architecture/bearwire-run-stream-completion.md. Stream observations
+    // are transport diagnostics; a missing terminal event must be reconciled against
+    // canonical run state before changing this prompt-end decision.
     if !stream_allows_prompt_end_response(
         saw_visible_output,
         saw_error,
@@ -1966,6 +1969,9 @@ async fn handle_bearwire_event(
             // as `client.waiting` with a persisted obligation. Keep this out of normal
             // stderr so stale pause status cannot look like a fresh permission request
             // after the armature already answered the matching obligation.
+            // See docs/architecture/bearwire-run-stream-completion.md: an EOF after
+            // this boundary is not a failed completion; reconcile canonical run state
+            // and obligations before deciding whether the prompt may end.
             if crate::bear_debug_verbose() {
                 let reason = event
                     .pointer("/data/reason")
