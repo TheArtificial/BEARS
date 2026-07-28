@@ -134,3 +134,35 @@ fn prompt_memory_upsert_descriptor_mentions_runtime_prompt_memory() {
         .contains("editable runtime prompt memory"));
     assert!(descriptor.description.contains("semantic memory"));
 }
+
+#[test]
+fn docket_work_descriptors_keep_execution_evidence_and_surfaces_explicit() {
+    let descriptors = builtin_den_tool_descriptors();
+    let dispatch = descriptors
+        .iter()
+        .find(|descriptor| descriptor.provider_name == "dispatch_work")
+        .expect("dispatch_work descriptor");
+    assert!(dispatch.description.contains("separate execution surface"));
+    assert!(dispatch.description.contains("work run e4e4797b"));
+
+    let work_run = descriptors
+        .iter()
+        .find(|descriptor| descriptor.provider_name == "get_work_run")
+        .expect("get_work_run descriptor");
+    assert!(work_run.description.contains("terminal result and durable evidence"));
+    assert!(work_run.description.contains("not implicitly accessible to Pair"));
+    assert!(work_run.description.contains("work run e4e4797b"));
+
+    for (provider_name, expected_handle) in [
+        ("create_job", "job e4e4797b"),
+        (DEN_TASK_CREATE_PROVIDER, "task e4e4797b"),
+        (DEN_TASK_LIST_PROVIDER, "short task handles"),
+        ("list_work_runs", "short work-run handles"),
+    ] {
+        let descriptor = descriptors
+            .iter()
+            .find(|descriptor| descriptor.provider_name == provider_name)
+            .unwrap_or_else(|| panic!("{provider_name} descriptor"));
+        assert!(descriptor.description.contains(expected_handle));
+    }
+}

@@ -587,7 +587,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_CREATE,
             "Create job",
-            "Create a durable Docket job with acceptance criteria and an optional initial task tree. Use Jobs for distinct objectives needing their own lifecycle, work surface, commit policy, execution tracking, or background work; do not create one for a small change that Pair can finish here. For pair conversation-scoped plans or checklists, prefer the implied conversation objective. Every initial task requires concrete completion_criteria. Creating a Job does not execute or dispatch it.",
+            "Create a durable Docket job with acceptance criteria and an optional initial task tree. Use Jobs for distinct objectives needing their own lifecycle, work surface, commit policy, execution tracking, or background work; do not create one for a small change that Pair can finish here. For pair conversation-scoped plans or checklists, prefer the implied conversation objective. Every initial task requires concrete completion_criteria. Creating a Job does not execute or dispatch it. Keep returned full UUIDs for tool calls and evidence; in ordinary prose present a typed short handle such as `job e4e4797b` (extend the prefix if ambiguous). Do not invent a web URL: use a UI link only when a tool result provides one.",
             "bear.docket",
             &["docket.job.write"],
             CHAT_AND_PAIR_PROFILES,
@@ -605,7 +605,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_GET,
             "Get Docket job",
-            "Read one durable Docket job with criteria, task tree, current run, and run-scoped task state. Includes recent work runs (with queue placement) and work_attention: latest-attempt runs that ended blocked/failed and need triage, with their reasons.",
+            "Read one durable Docket job with criteria, task tree, current run, and run-scoped task state. Includes recent work runs (with queue placement) and work_attention: latest-attempt runs that ended blocked/failed and need triage, with their reasons. Treat this durable result as canonical status; keep full UUIDs for calls/evidence and use typed short handles in prose.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -650,7 +650,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_CREATE,
             "Create Docket task",
-            "Create a durable Docket task under an explicit Docket job or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. session_anchor_id remains legacy compatibility only. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition.",
+            "Create a durable Docket task under an explicit Docket job or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. session_anchor_id remains legacy compatibility only. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition. Keep full UUIDs for tool calls and evidence; in prose use a typed unambiguous short handle such as `task e4e4797b` (extend the prefix if needed). Do not invent a web URL: use a UI link only when a tool result provides one.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
@@ -659,7 +659,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LIST,
             "List Docket tasks",
-            "List durable Docket task definitions for an explicit job/task subtree or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Includes current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for conversation/job working focus.",
+            "List durable Docket task definitions for an explicit job/task subtree or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Includes current-run state when available. Use for canonical Docket task hierarchy; use list_task_lists for conversation/job working focus. Treat returned full UUIDs as canonical identity/evidence and use typed unambiguous short task handles in prose.",
             "bear.docket",
             &["docket.task.read"],
             TASK_LIST_READ_PROFILES,
@@ -668,7 +668,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_FIND,
             "Find Docket task",
-            "Find one Docket task by its full UUID or an unambiguous UUID prefix; optionally limit the lookup to a job.",
+            "Find one Docket task by its full UUID or an unambiguous UUID prefix; optionally limit the lookup to a job. Keep the canonical UUID for follow-up calls and evidence; use a typed short task handle in prose.",
             "bear.docket",
             &["docket.task.read"],
             TASK_LIST_READ_PROFILES,
@@ -686,7 +686,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_UPDATE_CURRENT_STATUS,
             "Update current task status",
-            "Update a Docket task's status/results in a Docket run. Prefer passing job_id and run_id from get_job/execute_job for unambiguous updates; when omitted, the tool falls back to the focused active job/run context. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not edit durable task definitions or execute task bodies.",
+            "Update a Docket task's status/results in a Docket run. Prefer passing job_id and run_id from get_job/execute_job for unambiguous updates; when omitted, the tool falls back to the focused active job/run context. Setting status to done requires a non-empty result_summary describing how completion criteria were satisfied. Does not edit durable task definitions or execute task bodies. For externally reported changes, tests, failures, or commits, record matching evidence from the execution surface that produced it; do not mark a cancelled/timed-out work run as verified completion.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
@@ -704,7 +704,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_DISPATCH,
             "Dispatch work job",
-            "Queue a ready Docket job for background execution. The default target is a sandbox. attached_armature requires an explicit workspace attached to the current client session, preserves dirty worktrees, and keeps local permissions authoritative.",
+            "Queue a ready Docket job for background execution. The default target is a sandbox. attached_armature requires an explicit workspace attached to the current client session, preserves dirty worktrees, and keeps local permissions authoritative. A dispatched work run is a separate execution surface unless target is attached_armature: Pair cannot inspect, resume, verify, or commit its worktree without explicit transferred evidence or access. Keep full UUIDs for calls/evidence; report the result in prose as a typed unambiguous short handle such as `work run e4e4797b`.",
             "bear.docket",
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
@@ -713,7 +713,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_RUN_LIST,
             "List work runs",
-            "List autonomous work runs (sandbox executions of work-assigned Docket tasks) for this Bear, optionally filtered by job, task, or state. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind) — runs serialize per job.",
+            "List autonomous work runs (sandbox executions of work-assigned Docket tasks) for this Bear, optionally filtered by job, task, or state. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind) — runs serialize per job. Keep full UUIDs for evidence/follow-up calls and present typed unambiguous short work-run handles in prose.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -722,7 +722,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_RUN_GET,
             "Get work run",
-            "Read one autonomous work run: state, attempt, sandbox type and strength, recognized work surface, result summary (including published branch/commit in result_refs), changed files, bounded log tail, and error/blockage reason. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind).",
+            "Read one autonomous work run: state, attempt, sandbox type and strength, recognized work surface, result summary (including published branch/commit in result_refs), changed files, bounded log tail, and error/blockage reason. Queued runs include a queue object (position within the job's queue and the in-flight run they are waiting behind). Use its terminal result and durable evidence for claims about changes, tests, or commits; a failed/cancelled run proves only the recorded partial progress. Its work surface is not implicitly accessible to Pair. Keep the full UUID for tool calls/evidence and present `work run e4e4797b`-style handles in prose.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -731,7 +731,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_RUN_FIND,
             "Find work run",
-            "Find one work run by full UUID or an unambiguous UUID prefix, or list runs for a job UUID or prefix.",
+            "Find one work run by full UUID or an unambiguous UUID prefix, or list runs for a job UUID or prefix. Keep canonical UUIDs for calls/evidence and use typed unambiguous short work-run handles in prose.",
             "bear.docket",
             &["docket.job.read"],
             TASK_LIST_READ_PROFILES,
@@ -740,7 +740,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_WORK_RUN_CANCEL,
             "Cancel work run",
-            "Request cancellation of an active work run. The dispatch worker tears the sandbox down and records the task as blocked; this tool only sets the cancel flag and never touches the sandbox host directly.",
+            "Request cancellation of an active work run. The dispatch worker tears the sandbox down and records the task as blocked; this tool only sets the cancel flag and never touches the sandbox host directly. After requesting cancellation, read the canonical work-run result before describing the outcome; its separate worktree may contain partial changes. Keep the full UUID for the call and use a typed short handle in prose.",
             "bear.docket",
             &["docket.job.execute"],
             CHAT_AND_PAIR_PROFILES,
