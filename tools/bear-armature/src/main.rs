@@ -1291,8 +1291,9 @@ fn stream_allows_prompt_end_response(
     _saw_error: bool,
     saw_done: bool,
     _saw_tool_activity: bool,
+    canonical_run_state_allows_prompt_end: bool,
 ) -> bool {
-    saw_done
+    saw_done || canonical_run_state_allows_prompt_end
 }
 
 #[derive(Clone, Default)]
@@ -13170,26 +13171,35 @@ mod tests {
     #[test]
     fn error_without_run_terminal_does_not_allow_prompt_end_response() {
         assert!(!stream_allows_prompt_end_response(
-            false, true, false, false
+            false, true, false, false, false
         ));
     }
 
     #[test]
     fn visible_output_without_terminal_does_not_allow_prompt_end_response() {
         assert!(!stream_allows_prompt_end_response(
-            true, false, false, false
+            true, false, false, false, false
         ));
     }
 
     #[test]
     fn run_done_allows_prompt_end_response_without_output_or_tool_activity() {
-        assert!(stream_allows_prompt_end_response(false, false, true, false));
+        assert!(stream_allows_prompt_end_response(
+            false, false, true, false, false
+        ));
     }
 
     #[test]
     fn tool_activity_alone_does_not_allow_prompt_end_response() {
         assert!(!stream_allows_prompt_end_response(
-            false, false, false, true
+            false, false, false, true, false
+        ));
+    }
+
+    #[test]
+    fn canonical_run_state_allows_prompt_end_after_a_missed_terminal_event() {
+        assert!(stream_allows_prompt_end_response(
+            true, false, false, true, true
         ));
     }
 

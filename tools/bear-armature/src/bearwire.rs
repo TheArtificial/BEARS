@@ -726,16 +726,45 @@ pub(crate) async fn handle_prompt(
     // See docs/architecture/bearwire-run-stream-completion.md. Stream observations
     // are transport diagnostics; a missing terminal event must be reconciled against
     // canonical run state before changing this prompt-end decision.
+    let canonical_run_state_allows_end = if saw_done || run_id == "<unknown>" {
+        false
+    } else {
+        match fetch_run_state(http, config, session_id, run_id).await {
+            Ok(state) => {
+                service_run_state_tool_obligations(
+                    config,
+                    shared_state,
+                    session_id,
+                    run_id,
+                    &state,
+                    turn_token,
+                )
+                .await?;
+                canonical_run_state_allows_prompt_end(&state)
+            }
+            Err(err) => {
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    error = %err,
+                    "BearWire final run.state reconciliation failed"
+                );
+                false
+            }
+        }
+    };
     if !stream_allows_prompt_end_response(
         saw_visible_output,
         saw_error,
         saw_done,
         saw_tool_activity,
+        canonical_run_state_allows_end,
     ) {
-        let reason = if saw_tool_activity {
-            "BEARS BearWire stream ended after tool activity but before a terminal run event or assistant output"
+        let reason = if saw_visible_output || saw_tool_activity {
+            "Den BearWire delivery ended before a terminal run event"
         } else {
-            "BEARS BearWire stream ended without visible output, tool activity, or an error"
+            "Den BearWire delivery ended without visible output, tool activity, or a terminal run event"
         };
         return Err(anyhow!("{reason}. Diagnostics: {}", diagnostics.summary()));
     }
@@ -876,6 +905,16 @@ async fn fetch_run_state(
         }),
     )
     .await
+}
+
+fn canonical_run_state_allows_prompt_end(state: &Value) -> bool {
+    let run_state = state.pointer("/run/state").and_then(Value::as_str);
+    let has_open_obligations = state
+        .get("open_obligations")
+        .and_then(Value::as_array)
+        .is_some_and(|obligations| !obligations.is_empty());
+
+    matches!(run_state, Some("completed" | "paused")) && !has_open_obligations
 }
 
 fn run_state_obligation_summary(state: &Value) -> Option<String> {
@@ -2174,6 +2213,30 @@ mod tests {
         assert!(message.contains("stream_error"));
         assert!(message.contains("max_steps_exceeded"));
         assert!(message.contains("run-123"));
+    }
+
+    #[test]
+    fn canonical_run_state_allows_clean_paused_or_completed_prompt_end() {
+        assert!(canonical_run_state_allows_prompt_end(&json!({
+            "run": { "state": "paused" },
+            "open_obligations": []
+        })));
+        assert!(canonical_run_state_allows_prompt_end(&json!({
+            "run": { "state": "completed" },
+            "open_obligations": []
+        })));
+    }
+
+    #[test]
+    fn canonical_run_state_does_not_end_with_open_obligation_or_running_run() {
+        assert!(!canonical_run_state_allows_prompt_end(&json!({
+            "run": { "state": "paused" },
+            "open_obligations": [{ "id": "obl-1" }]
+        })));
+        assert!(!canonical_run_state_allows_prompt_end(&json!({
+            "run": { "state": "running" },
+            "open_obligations": []
+        })));
     }
 
     #[test]
