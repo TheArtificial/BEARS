@@ -690,34 +690,18 @@ pub async fn expire_open_client_obligations(
 }
 
 async fn expire_open_client_obligations_from_rows(
-    pool: &PgPool,
+    _pool: &PgPool,
     open: Vec<TurnObligationRow>,
 ) -> Result<Vec<TurnObligationRow>, DenError> {
     let now = OffsetDateTime::now_utc();
-    let mut expired = Vec::new();
-    for obligation in open
+    // Do not settle an obligation here. Its caller terminalizes the run in one
+    // transaction, which settles every open obligation. Mutating it first can
+    // leave an active run without a sweepable obligation if terminalization
+    // transiently fails.
+    Ok(open
         .into_iter()
         .filter(|obligation| obligation.timed_out(now))
-    {
-        let timeout_payload = serde_json::json!({
-            "status": "timeout",
-            "reason": "client_obligation_timeout",
-            "timeout_ms": obligation.timeout_ms(),
-            "expires_at": obligation.expires_at(),
-            "tool_call_id": obligation.tool_call_id,
-            "permission_id": obligation.permission_id,
-            "expected_responder_action": obligation.expected_responder_action,
-        });
-        if mark_result_received(pool, obligation.id, timeout_payload)
-            .await?
-            .is_some()
-        {
-            if let Some(row) = mark_failed(pool, obligation.id).await? {
-                expired.push(row);
-            }
-        }
-    }
-    Ok(expired)
+        .collect())
 }
 
 #[cfg(test)]

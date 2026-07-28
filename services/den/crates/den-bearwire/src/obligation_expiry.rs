@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, time::Duration};
 
 use den_core::{client_tools::ClientToolName, DenError};
 use den_runtime::{turn_obligations, turn_runs};
+use den_service::DenState;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
@@ -31,7 +32,7 @@ fn is_command_tool_result(obligation: &turn_obligations::TurnObligationRow) -> b
 }
 
 pub async fn run_client_obligation_expiry_loop(
-    pool: sqlx::PgPool,
+    state: DenState,
     token: CancellationToken,
     interval: Duration,
 ) -> Result<(), DenError> {
@@ -46,7 +47,7 @@ pub async fn run_client_obligation_expiry_loop(
                 return Ok(());
             }
             () = tokio::time::sleep(interval) => {
-                if let Err(err) = expire_client_obligations_once(&pool, DEFAULT_EXPIRY_BATCH_LIMIT).await {
+                if let Err(err) = expire_client_obligations_once(&state, DEFAULT_EXPIRY_BATCH_LIMIT).await {
                     tracing::warn!(error = %err, "BearWire client-obligation expiry sweep failed");
                 }
             }
@@ -55,9 +56,10 @@ pub async fn run_client_obligation_expiry_loop(
 }
 
 pub async fn expire_client_obligations_once(
-    pool: &sqlx::PgPool,
+    state: &DenState,
     limit: i64,
 ) -> Result<usize, DenError> {
+    let pool = &state.sqlx_pool;
     let expired = turn_obligations::expire_open_client_obligations(pool, limit).await?;
     if expired.is_empty() {
         return Ok(0);
@@ -131,6 +133,10 @@ pub async fn expire_client_obligations_once(
                 None,
             )
         };
+        // The durable failure alone does not wake an ACP continuation already
+        // blocked on this client response.
+        state.turn_cancellations.cancel_session(&run.session_id);
+        state.tool_turns.cancel_active_turn(&run.session_id);
         persist_run_failed(
             pool,
             &run.session_id,

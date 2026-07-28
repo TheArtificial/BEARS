@@ -2451,6 +2451,7 @@ async fn cross_session_tool_call_id_collision_is_isolated_by_run_and_session(poo
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) {
+    let state = test_state(pool.clone());
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
@@ -2469,6 +2470,11 @@ async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) 
     )
     .await
     .expect("insert tool obligation");
+    let request_id = Uuid::new_v4();
+    let active_turn = state
+        .tool_turns
+        .acquire_active_turn(&session_id, request_id, None)
+        .expect("register active session turn");
     sqlx::query(
         "UPDATE turn_obligations SET created_at = NOW() - INTERVAL '10 minutes' WHERE id = $1",
     )
@@ -2477,10 +2483,21 @@ async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) 
     .await
     .expect("age obligation");
 
-    let expired_runs = crate::expire_client_obligations_once(&pool, 100)
+    let expired_runs = crate::expire_client_obligations_once(&state, 100)
         .await
         .expect("expire obligations");
     assert_eq!(expired_runs, 1);
+    assert!(state
+        .tool_turns
+        .active_turn_for_session(&session_id)
+        .is_none());
+    // The active-turn guard may outlive cancellation, but must not restore it.
+    drop(active_turn);
+    let recovered_turn = state
+        .tool_turns
+        .acquire_active_turn(&session_id, Uuid::new_v4(), None)
+        .expect("accept a new turn after expiry");
+    drop(recovered_turn);
 
     let run = turn_runs::get_run(&pool, &run_id)
         .await
@@ -2503,6 +2520,7 @@ async fn client_obligation_expiry_sweep_fails_timed_out_run(pool: sqlx::PgPool) 
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn command_obligation_expiry_blocks_automatic_retry_as_outcome_unknown(pool: sqlx::PgPool) {
+    let state = test_state(pool.clone());
     let user_id = create_test_user(&pool).await;
     let (bear_id, bear_slug) = create_test_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
@@ -2530,7 +2548,7 @@ async fn command_obligation_expiry_blocks_automatic_retry_as_outcome_unknown(poo
     .expect("age obligation");
 
     assert_eq!(
-        crate::expire_client_obligations_once(&pool, 100)
+        crate::expire_client_obligations_once(&state, 100)
             .await
             .expect("expire obligations"),
         1
