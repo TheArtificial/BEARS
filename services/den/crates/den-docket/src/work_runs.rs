@@ -921,10 +921,82 @@ pub async fn finalize_work_run(
 
     if matches!(canonical_state, WorkRunState::Succeeded) {
         settle_completed_job(&mut tx, &row, &canonical_outcome).await?;
+    } else if matches!(canonical_state, WorkRunState::Blocked) && row.cancel_requested {
+        settle_cancelled_work_as_blocked(&mut tx, &row, &canonical_outcome).await?;
     }
 
     tx.commit().await?;
     Ok(row)
+}
+
+/// Cancellation revokes the worker's authority to establish completion. Keep
+/// the Docket run resumable, but project that terminal work-run result into
+/// the active task and job rather than leaving their status `running`.
+async fn settle_cancelled_work_as_blocked(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    work_run: &WorkRunRow,
+    outcome: &Value,
+) -> Result<(), DenError> {
+    let evidence = json!({
+        "work_run_id": work_run.id,
+        "state": work_run.state,
+        "cancel_requested_by": work_run.cancel_requested_by,
+        "cancel_reason": work_run.cancel_reason,
+        "cancel_requested_at": work_run.cancel_requested_at,
+    });
+    let summary = work_run
+        .cancel_reason
+        .as_deref()
+        .map(|reason| format!("Work run cancelled: {reason}"))
+        .unwrap_or_else(|| "Work run cancelled before completion could be verified.".into());
+
+    sqlx::query(
+        "UPDATE bear_task_run_state
+         SET status = 'blocked', result_summary = $3,
+             result_refs = COALESCE(result_refs, '{}'::jsonb) || $4::jsonb,
+             finished_at = NULL, updated_at = NOW()
+         WHERE run_id = $1 AND status = 'in_progress'
+           AND task_id IN (SELECT id FROM bear_tasks WHERE job_id = $2)",
+    )
+    .bind(work_run.job_run_id)
+    .bind(work_run.job_id)
+    .bind(&summary)
+    .bind(&evidence)
+    .execute(&mut **tx)
+    .await?;
+
+    let settled = sqlx::query_scalar::<_, Uuid>(
+        "UPDATE bear_jobs SET status = 'blocked', updated_at = NOW()
+         WHERE id = $1 AND current_run_id = $2 AND status IN ('ready', 'running')
+         RETURNING id",
+    )
+    .bind(work_run.job_id)
+    .bind(work_run.job_run_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if settled.is_none() {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "UPDATE bear_job_runs SET state = 'blocked', outcome = $2::jsonb,
+             finished_at = COALESCE(finished_at, NOW()), updated_at = NOW()
+         WHERE id = $1",
+    )
+    .bind(work_run.job_run_id)
+    .bind(outcome)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, payload)
+         VALUES ($1, $2, 'job_blocked', 'system', $3::jsonb)",
+    )
+    .bind(work_run.job_id)
+    .bind(work_run.job_run_id)
+    .bind(json!({"status": "blocked", "source": "cancelled_work_run", "work_run": evidence}))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// A work run is the terminal executor for its Docket run. Once it succeeds,
@@ -1428,6 +1500,33 @@ pub async fn checkout_work_run_for_session(
             )
         }
     };
+    // A checkout assigns one durable task to this work run. Persist that
+    // assignment before starting the turn so cancellation can block exactly
+    // this task rather than guessing from the job's pending tasks.
+    sqlx::query(
+        "UPDATE bear_task_run_state
+         SET status = 'pending', updated_at = NOW()
+         WHERE run_id = $1 AND task_id <> $2 AND status = 'in_progress'",
+    )
+    .bind(run.job_run_id)
+    .bind(task.0)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO bear_task_run_state (
+             run_id, task_id, status, started_at, updated_at
+         ) VALUES ($1, $2, 'in_progress', NOW(), NOW())
+         ON CONFLICT (run_id, task_id) DO UPDATE
+         SET status = 'in_progress',
+             started_at = COALESCE(bear_task_run_state.started_at, NOW()),
+             finished_at = NULL,
+             updated_at = NOW()",
+    )
+    .bind(run.job_run_id)
+    .bind(task.0)
+    .execute(pool)
+    .await?;
+
     let difficulty = task.4.as_deref().and_then(parse_task_difficulty);
     let resolved_profile = resolve_execution_profile(difficulty);
     let persisted_profile = resolved_profile.persisted_value();
@@ -1477,7 +1576,7 @@ pub async fn checkout_work_run_for_session(
             source_client_session_id: Some(session_id.to_string()),
             job_id: run.job_id,
             run_id: run.job_run_id,
-            task_id: None,
+            task_id: Some(task.0),
             state: "active".to_string(),
         },
     )

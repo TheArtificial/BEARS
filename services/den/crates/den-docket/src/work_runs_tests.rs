@@ -646,6 +646,32 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .await
     .unwrap();
     assert_eq!(finalized.state, "blocked");
+    let (task_status, task_summary, task_refs): (String, Option<String>, Option<serde_json::Value>) =
+        sqlx::query_as(
+            "SELECT status, result_summary, result_refs FROM bear_task_run_state \
+             WHERE run_id = $1 AND task_id = $2",
+        )
+        .bind(run.job_run_id)
+        .bind(task_ids[0])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(task_status, "blocked");
+    assert_eq!(task_summary.as_deref(), Some("Work run cancelled: test cancellation"));
+    assert_eq!(
+        task_refs.as_ref().and_then(|refs| refs.get("cancel_requested_by")),
+        Some(&serde_json::json!("test"))
+    );
+    let (job_status, job_run_state): (String, String) = sqlx::query_as(
+        "SELECT j.status, r.state FROM bear_jobs j JOIN bear_job_runs r ON r.id = j.current_run_id \
+         WHERE j.id = $1",
+    )
+    .bind(run.job_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(job_status, "blocked");
+    assert_eq!(job_run_state, "blocked");
     assert!(finalized.runner_id.is_none());
     assert!(finalized.lease_expires_at.is_none());
     assert!(finalized.finished_at.is_some());
