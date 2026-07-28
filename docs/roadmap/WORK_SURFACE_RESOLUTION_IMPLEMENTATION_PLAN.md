@@ -292,6 +292,46 @@ When memory/plans/artifacts are created after resolution:
 
 This prevents role-local observations from becoming overbroad Bear-global facts.
 
+### 5.1 Default resolved surfaces on Docket jobs
+
+When a `pair` session creates a Docket job intended for dispatch to `work`, job
+creation should use the current session work-surface resolution as a default.
+This is a creation-boundary concern, not a dispatch fallback: dispatch must
+continue to reject a job with neither an explicit root nor a bound work
+surface.
+
+Resolution rules:
+
+1. An explicitly supplied `work_surface_ref` remains authoritative, subject to
+   existing validation that the surface is assigned to the Bear.
+2. When no surface was supplied, match the session's current resolution against
+   the Bear's assigned managed work surfaces.
+3. Auto-bind only when that match is unique and the session state is
+   `resolved` or `confirmed`. Persist both `work_surface_ref` and the managed
+   `work_surface_id` atomically with the job.
+4. Do not bind jobs from `unresolved`, `candidate`, `ambiguous`, or `rejected`
+   state. A candidate slug is inference, not an identity suitable for a
+   potentially write-capable dispatch.
+5. If the surface is unresolved, ambiguous, unavailable to the Bear, or no
+   longer assigned, leave the job unbound and return structured anchoring
+   diagnostics so `pair` can ask the user to choose a surface before dispatch.
+
+The initial implementation should not add a second surface-resolution
+algorithm inside Docket. It should consume the canonical session-resolution
+result and the existing assigned-surface registry. This keeps a job's stored
+binding stable even if later inference changes.
+
+Tests:
+
+- a unique resolved assigned surface defaults both job surface fields;
+- a confirmed assigned surface defaults both fields;
+- an explicit surface overrides a session default;
+- candidate, unresolved, ambiguous, and rejected states leave the job
+  unbound;
+- a resolved slug with zero or multiple assigned-surface matches leaves the
+  job unbound with the appropriate diagnostic;
+- dispatch continues to fail clearly when an unbound job has no explicit root.
+
 ## UX expectations
 
 The Bear may say:
@@ -317,6 +357,18 @@ The Bear should not ask on every turn. It should ask when ambiguity materially a
 - [ ] Add tests for anchor-based resolution.
 - [ ] Design persistence for user-confirmed work-surface state.
 - [ ] Add confirmation tool only after read-only orientation proves useful.
+
+### Docket integration
+
+- [ ] Define the canonical session-resolution input consumed by Docket job
+  creation.
+- [ ] Match resolved/confirmed session surfaces against the Bear's assigned
+  managed work surfaces during `create_job`.
+- [ ] Atomically persist `work_surface_ref` and `work_surface_id` when the
+  match is unique.
+- [ ] Return anchoring diagnostics, without binding, for unresolved,
+  candidate, ambiguous, rejected, unavailable, and non-unique states.
+- [ ] Add job-creation and dispatch regression tests for the binding rules.
 
 ## Related docs
 
