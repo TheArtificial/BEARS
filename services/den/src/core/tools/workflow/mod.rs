@@ -1981,6 +1981,9 @@ mod test {
                 completion_criteria: sqlx::types::Json(vec!["Done".to_string()]),
                 difficulty: None,
                 effort_hint: None,
+                routing_strategy: "inline".to_string(),
+                expected_context_size: None,
+                result_rollup_policy: None,
                 created_by_role: "pair".to_string(),
                 created_by_user_id: None,
                 created_by_agent_id: None,
@@ -2525,6 +2528,32 @@ pub(crate) async fn get_work_catalog(
     }))
 }
 
+fn execution_surface_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
+    // A work run owns a separate execution surface. Pair can report its
+    // durable evidence but cannot inspect or continue that worktree without
+    // an explicit transfer or separately granted access.
+    json!({
+        "kind": execution_surface_kind(&run.execution_target),
+        "access_from_pair": "report_only",
+        "root": run.root_name,
+        "git_ref": run.git_ref,
+        "sandbox_id": run.sandbox_id,
+        "sandbox_type": run.sandbox_type,
+        "may_contain_partial_changes": work_run_may_contain_partial_changes(&run.state),
+    })
+}
+
+fn execution_surface_kind(execution_target: &str) -> &'static str {
+    match execution_target {
+        "attached_armature" => "attached_armature",
+        _ => "work_sandbox",
+    }
+}
+
+fn work_run_may_contain_partial_changes(state: &str) -> bool {
+    matches!(state, "blocked" | "failed" | "cancelled" | "timed_out")
+}
+
 fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
     fn ts(value: Option<time::OffsetDateTime>) -> Value {
         value
@@ -2540,11 +2569,15 @@ fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
         "attempt": run.attempt,
         "job_id": run.job_id,
         "cancel_requested": run.cancel_requested,
+        "cancel_requested_by": run.cancel_requested_by,
+        "cancel_reason": run.cancel_reason,
+        "cancel_requested_at": ts(run.cancel_requested_at),
         "root": run.root_name,
         "git_ref": run.git_ref,
         "sandbox_id": run.sandbox_id,
         "sandbox_type": run.sandbox_type,
         "sandbox_strength": run.sandbox_strength,
+        "execution_surface": execution_surface_json(run),
         "result_summary": run.result_summary,
         "error": run.error,
         "queued_at": ts(Some(run.queued_at)),

@@ -111,6 +111,7 @@ async fn memory_apply_core_update_projects_typed_conversation_records(
         membership_role: Some("admin".to_string()),
         conversation_id: "conv-memory-apply-tool-test".to_string(),
         session_id: "client-memory-apply-tool-session".to_string(),
+        work_run_id: None,
         client_session_id: Some("client-memory-apply-tool-session".to_string()),
         conversation_selection: Some("conv-memory-apply-tool-test".to_string()),
         runtime_target: None,

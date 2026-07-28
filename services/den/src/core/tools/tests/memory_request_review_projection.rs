@@ -85,6 +85,7 @@ async fn memory_request_review_projects_typed_conversation_records(
         membership_role: Some("owner".to_string()),
         conversation_id: "conv-memory-review-tool-test".to_string(),
         session_id: "client-memory-review-tool-session".to_string(),
+        work_run_id: None,
         client_session_id: Some("client-memory-review-tool-session".to_string()),
         conversation_selection: Some("conv-memory-review-tool-test".to_string()),
         runtime_target: None,

@@ -16,6 +16,7 @@ fn context_for(role: BearProfile) -> DenToolInvocationContext {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("client-test".to_string()),
         conversation_selection: Some("src/main.rs".to_string()),
         runtime_target: Some("repo:builder-bear".to_string()),

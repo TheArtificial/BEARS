@@ -11,6 +11,7 @@ fn pair_context() -> DenToolInvocationContext {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
@@ -322,7 +323,7 @@ fn attached_work_dispatch_requires_current_explicit_workspace() {
     assert_eq!(
         target,
         den_docket::work_runs::WorkExecutionTarget::AttachedArmature {
-            client_session_id: "client-test".to_string()
+            client_session_id: "client-test".to_string(),
         }
     );
     assert!(super::super::attached_dispatch_warning(args.target, args.dirty_worktree).is_none());
@@ -339,6 +340,18 @@ fn attached_work_dispatch_requires_current_explicit_workspace() {
             .to_string()
             .contains("not attached")
     );
+}
+
+#[test]
+fn work_run_surface_projection_keeps_pair_report_only() {
+    assert_eq!(super::super::execution_surface_kind("sandbox"), "work_sandbox");
+    assert_eq!(
+        super::super::execution_surface_kind("attached_armature"),
+        "attached_armature"
+    );
+    assert!(super::super::work_run_may_contain_partial_changes("blocked"));
+    assert!(super::super::work_run_may_contain_partial_changes("failed"));
+    assert!(!super::super::work_run_may_contain_partial_changes("succeeded"));
 }
 
 #[test]
@@ -369,6 +382,7 @@ async fn memory_write_entry_rejects_non_memory_domain_without_db_access() {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
@@ -433,6 +447,7 @@ async fn memory_write_entry_rejects_activity_content_class_without_db_access() {
         membership_role: None,
         conversation_id: "conv-test".to_string(),
         session_id: "sess-test".to_string(),
+        work_run_id: None,
         client_session_id: Some("client-test".to_string()),
         conversation_selection: None,
         runtime_target: None,
