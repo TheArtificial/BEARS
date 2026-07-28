@@ -812,6 +812,8 @@ async fn create_job(
             visibility: TaskListVisibility::SameUser,
             source_conversation_id: None,
             objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: den_docket::DocketJobOverlapResolution::Reject,
             criteria: vec![DocketJobCriterionInput {
                 kind: den_docket::DocketCriterionKind::Narrative,
                 description: "All tasks completed to their criteria".to_string(),
@@ -1044,6 +1046,8 @@ async fn duplicate_job(
             visibility,
             source_conversation_id: None,
             objective_kind: source.job.objective_kind,
+            supersedes_job_id: None,
+            overlap_resolution: den_docket::DocketJobOverlapResolution::Independent,
             criteria,
             tasks,
         })

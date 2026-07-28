@@ -6,7 +6,7 @@ use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketConversationObjectiveRequest, DocketCriterionKind,
     DocketCriterionStateUpdate, DocketEffortHint, DocketExecutionLookup, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobStatus, DocketService,
+    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
     DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
     DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
     DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskDispatcher,
@@ -67,7 +67,7 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
         bear_id,
         created_by_user_id: user_id,
         created_by_role: "pair".to_string(),
-        goal: "Docket integration lifecycle".to_string(),
+        goal: format!("Docket integration lifecycle {}", Uuid::new_v4().simple()),
         work_surface_ref: None,
         work_surface_id: None,
         commit_policy: Some(DocketCommitPolicy::None),
@@ -76,6 +76,8 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
         visibility: TaskListVisibility::SameUser,
         source_conversation_id: None,
         objective_kind: None,
+        supersedes_job_id: None,
+        overlap_resolution: DocketJobOverlapResolution::Reject,
         criteria: vec![DocketJobCriterionInput {
             kind: DocketCriterionKind::Narrative,
             description: "Both tasks are done".to_string(),
@@ -1115,4 +1117,59 @@ async fn docket_rejects_parent_completion_until_children_are_terminal() {
         parent_state.result_summary.as_deref(),
         Some("All child tasks are terminal.")
     );
+}
+
+#[tokio::test]
+async fn create_job_requires_explicit_resolution_for_exact_active_overlap() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed docket integration test; database unavailable");
+        return;
+    };
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "job-overlap").await;
+    let service = PgDocketService::from_pool(&pool);
+    let goal = format!("Exact overlap {}", Uuid::new_v4().simple());
+    let create = |resolution, supersedes_job_id| DocketJobCreate {
+        goal: goal.clone(),
+        overlap_resolution: resolution,
+        supersedes_job_id,
+        tasks: Vec::new(),
+        criteria: Vec::new(),
+        ..two_task_job(user_id, bear_id)
+    };
+
+    let first = service
+        .create_job(create(DocketJobOverlapResolution::Reject, None))
+        .await
+        .expect("create initial job");
+
+    let duplicate = service
+        .create_job(create(DocketJobOverlapResolution::Reject, None))
+        .await
+        .expect_err("exact active overlap is rejected by default");
+    assert!(matches!(
+        duplicate,
+        den_core::DenError::ValidationError(message) if message.contains(&first.job.id.to_string())
+    ));
+
+    let independent = service
+        .create_job(create(DocketJobOverlapResolution::Independent, None))
+        .await
+        .expect("explicit independent job");
+    assert_eq!(independent.job.supersedes_job_id, None);
+
+    let replacement = service
+        .create_job(create(
+            DocketJobOverlapResolution::Supersede,
+            Some(independent.job.id),
+        ))
+        .await
+        .expect("explicitly supersede the matching job");
+    assert_eq!(replacement.job.supersedes_job_id, Some(independent.job.id));
+
+    let predecessor = service
+        .get_job(bear_id, independent.job.id)
+        .await
+        .expect("read predecessor")
+        .expect("predecessor exists");
+    assert_eq!(predecessor.job.status, "cancelled");
 }

@@ -14,8 +14,8 @@ use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy,
     DocketConversationObjectiveRequest, DocketCriterionStateUpdate, DocketCriterionStatus,
     DocketEffortHint, DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobStatus,
-    DocketJobStatusReport, DocketJobUpdate, DocketService, DocketTaskCreate,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobOverlapResolution, DocketJobProjection,
+    DocketJobStatus, DocketJobStatusReport, DocketJobUpdate, DocketService, DocketTaskCreate,
     DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
     DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
     DocketTaskUpdate, DocketValidationError, PgDocketService, TaskListCheckoutRequest,
@@ -81,6 +81,15 @@ pub(crate) struct TaskListListArguments {
     pub(crate) include_artifacts: Option<bool>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum JobOverlapResolution {
+    #[default]
+    Reject,
+    Independent,
+    Supersede,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct DocketJobCreateArguments {
     pub(crate) goal: String,
@@ -94,6 +103,10 @@ pub(crate) struct DocketJobCreateArguments {
     pub(crate) status: DocketJobStatus,
     #[serde(default = "default_job_visibility")]
     pub(crate) visibility: TaskListVisibility,
+    #[serde(default)]
+    pub(crate) supersedes_job_id: Option<Uuid>,
+    #[serde(default)]
+    pub(crate) overlap_resolution: JobOverlapResolution,
     #[serde(default)]
     pub(crate) criteria: Vec<DocketJobCriterionInput>,
     #[serde(default)]
@@ -1064,6 +1077,12 @@ pub(crate) async fn create_job(
             visibility: args.visibility,
             source_conversation_id: clean_optional(&context.conversation_id),
             objective_kind: None,
+            supersedes_job_id: args.supersedes_job_id,
+            overlap_resolution: match args.overlap_resolution {
+                JobOverlapResolution::Reject => DocketJobOverlapResolution::Reject,
+                JobOverlapResolution::Independent => DocketJobOverlapResolution::Independent,
+                JobOverlapResolution::Supersede => DocketJobOverlapResolution::Supersede,
+            },
             criteria: args.criteria,
             tasks: args.tasks,
         })

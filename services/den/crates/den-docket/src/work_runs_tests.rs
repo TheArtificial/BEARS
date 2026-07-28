@@ -23,7 +23,7 @@ use crate::work_runs::{
 };
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobStatus, DocketService, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
+    DocketJobStatus, DocketJobOverlapResolution, DocketService, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
     DocketTaskScope, PgDocketService, RoutingStrategy, TaskListVisibility,
 };
 
@@ -121,7 +121,7 @@ async fn seed_work_job_with_policy(
             bear_id,
             created_by_user_id: user_id,
             created_by_role: "chat".to_string(),
-            goal: "Ship the work-run slice".to_string(),
+            goal: format!("Ship the work-run slice {}", Uuid::new_v4().simple()),
             work_surface_ref: None,
             work_surface_id: None,
             commit_policy: Some(commit_policy),
@@ -130,6 +130,8 @@ async fn seed_work_job_with_policy(
             visibility: TaskListVisibility::SameUser,
             source_conversation_id: None,
             objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: DocketJobOverlapResolution::Reject,
             criteria: vec![DocketJobCriterionInput {
                 kind: DocketCriterionKind::Narrative,
                 description: "Everything is done".to_string(),

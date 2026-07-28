@@ -611,6 +611,17 @@ impl fmt::Display for DocketJobStatus {
     }
 }
 
+/// Explicit caller intent when a new job has the same normalized goal and
+/// work surface as an active job. This is deliberately not a fuzzy goal
+/// similarity heuristic.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DocketJobOverlapResolution {
+    #[default]
+    Reject,
+    Independent,
+    Supersede,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocketCommitPolicy {
@@ -857,6 +868,9 @@ pub struct DocketJobRow {
     pub visibility: String,
     pub source_conversation_id: Option<String>,
     pub objective_kind: Option<String>,
+    /// The active job explicitly replaced by this job, if any. This preserves
+    /// ownership/history without guessing semantic equivalence from prose.
+    pub supersedes_job_id: Option<Uuid>,
     pub current_run_id: Option<Uuid>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
@@ -1048,6 +1062,10 @@ pub struct DocketJobCreate {
     pub visibility: TaskListVisibility,
     pub source_conversation_id: Option<String>,
     pub objective_kind: Option<String>,
+    /// Explicitly replace this active job. Required only when
+    /// `overlap_resolution` is `supersede`.
+    pub supersedes_job_id: Option<Uuid>,
+    pub overlap_resolution: DocketJobOverlapResolution,
     pub criteria: Vec<DocketJobCriterionInput>,
     pub tasks: Vec<DocketTaskInput>,
 }
@@ -1245,6 +1263,9 @@ pub enum DocketValidationError {
     TaskMissingAnchor,
     DuplicateTaskClientKey { client_key: String },
     MissingParentClientKey { client_key: String },
+    SupersedeRequiresPredecessor,
+    SupersedeRequiresMatchingActiveJob { job_id: Uuid },
+    ActiveJobOverlap { job_id: Uuid },
 }
 
 impl fmt::Display for DocketValidationError {
@@ -1279,6 +1300,15 @@ impl fmt::Display for DocketValidationError {
                     f,
                     "Docket task parent_client_key `{client_key}` does not exist"
                 )
+            }
+            Self::SupersedeRequiresPredecessor => {
+                f.write_str("Docket job overlap resolution `supersede` requires supersedes_job_id")
+            }
+            Self::SupersedeRequiresMatchingActiveJob { job_id } => {
+                write!(f, "Docket job `{job_id}` is not an active matching predecessor")
+            }
+            Self::ActiveJobOverlap { job_id } => {
+                write!(f, "an active Docket job already owns this goal and work surface: {job_id}")
             }
         }
     }
@@ -2188,6 +2218,8 @@ mod tests {
             visibility: TaskListVisibility::BearVisible,
             source_conversation_id: None,
             objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: DocketJobOverlapResolution::Reject,
             criteria: Vec::new(),
             tasks: Vec::new(),
         };
@@ -2215,6 +2247,8 @@ mod tests {
             visibility: TaskListVisibility::BearVisible,
             source_conversation_id: None,
             objective_kind: None,
+            supersedes_job_id: None,
+            overlap_resolution: DocketJobOverlapResolution::Reject,
             criteria: Vec::new(),
             tasks: vec![DocketTaskInput {
                 client_key: Some("child".to_string()),
@@ -2321,6 +2355,7 @@ mod tests {
                 visibility: "bear_visible".to_string(),
                 source_conversation_id: Some("conversation-1".to_string()),
                 objective_kind: Some("conversation_task_list".to_string()),
+                supersedes_job_id: None,
                 current_run_id: Some(run_id),
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,
@@ -2423,6 +2458,7 @@ mod tests {
                 visibility: "bear_visible".to_string(),
                 source_conversation_id: Some("conversation-1".to_string()),
                 objective_kind: Some("conversation_task_list".to_string()),
+                supersedes_job_id: None,
                 current_run_id: Some(run_id),
                 created_at: OffsetDateTime::UNIX_EPOCH,
                 updated_at: OffsetDateTime::UNIX_EPOCH,

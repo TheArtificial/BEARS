@@ -46,7 +46,7 @@ pub use model::{
     DocketCriterionStateUpdate, DocketCriterionStatus, DocketEffortHint, DocketExecutionLookup,
     DocketExecutionSessionRow, DocketExecutionSessionUpsert, DocketJobCreate,
     DocketJobCriterionInput, DocketJobCriterionRow, DocketJobExecuteOutcome,
-    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobOverlapResolution, DocketJobProjection, DocketJobRow,
     DocketJobRunRow, DocketJobStatus, DocketJobStatusReport, DocketJobUpdate, DocketRunState,
     DocketRunTrigger, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
     DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow,

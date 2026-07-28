@@ -20,6 +20,7 @@ use super::model::{
     DocketExecutionSessionRow, DocketExecutionSessionUpsert, DocketJobCreate,
     DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
+    DocketValidationError,
     DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
     DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
     TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncOutcome,
@@ -31,18 +32,72 @@ pub(super) async fn create_job(
     create: DocketJobCreate,
 ) -> Result<DocketJobProjection, DenError> {
     validate_docket_job_create(&create)?;
+    if matches!(create.overlap_resolution, super::model::DocketJobOverlapResolution::Supersede)
+        && create.supersedes_job_id.is_none()
+    {
+        return Err(DocketValidationError::SupersedeRequiresPredecessor.into());
+    }
 
     let mut tx = pool.begin().await?;
+    let predecessor = sqlx::query_scalar::<_, Uuid>(
+        r"
+        SELECT id
+        FROM bear_jobs
+        WHERE bear_id = $1
+          AND status IN ('draft', 'ready', 'running', 'blocked')
+          AND lower(btrim(goal)) = lower(btrim($2))
+          AND work_surface_id IS NOT DISTINCT FROM $3
+          AND work_surface_ref IS NOT DISTINCT FROM $4
+          AND ($5::uuid IS NULL OR id = $5)
+        ORDER BY created_at DESC
+        LIMIT 1
+        FOR UPDATE
+        ",
+    )
+    .bind(create.bear_id)
+    .bind(create.goal.trim())
+    .bind(create.work_surface_id)
+    .bind(create.work_surface_ref.as_deref())
+    .bind(create.supersedes_job_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    match (predecessor, create.overlap_resolution) {
+        (Some(job_id), super::model::DocketJobOverlapResolution::Reject) => {
+            return Err(DocketValidationError::ActiveJobOverlap { job_id }.into());
+        }
+        (Some(job_id), super::model::DocketJobOverlapResolution::Supersede)
+            if create.supersedes_job_id == Some(job_id) =>
+        {
+            sqlx::query("UPDATE bear_jobs SET status = 'cancelled', updated_at = NOW() WHERE id = $1")
+                .bind(job_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        (Some(job_id), super::model::DocketJobOverlapResolution::Supersede) => {
+            return Err(DocketValidationError::SupersedeRequiresMatchingActiveJob { job_id }.into());
+        }
+        (None, super::model::DocketJobOverlapResolution::Supersede) => {
+            return Err(DocketValidationError::SupersedeRequiresMatchingActiveJob {
+                job_id: create.supersedes_job_id.expect("validated above"),
+            }
+            .into());
+        }
+        (_, super::model::DocketJobOverlapResolution::Independent) | (None, _) => {}
+    }
+
+
     let job = sqlx::query_as::<_, DocketJobRow>(
         r"
         INSERT INTO bear_jobs (
             bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
-            commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind
+            commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind,
+            supersedes_job_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
                   commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind,
-                  current_run_id, created_at, updated_at
+                  supersedes_job_id, current_run_id, created_at, updated_at
         ",
     )
     .bind(create.bear_id)
@@ -63,6 +118,7 @@ pub(super) async fn create_job(
     .bind(create.visibility.as_str())
     .bind(create.source_conversation_id.as_deref())
     .bind(create.objective_kind.as_deref())
+    .bind(create.supersedes_job_id)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -84,7 +140,7 @@ pub(super) async fn create_job(
         SET current_run_id = $2, updated_at = NOW()
         WHERE id = $1
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
-                  commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, current_run_id, created_at, updated_at
+                  commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         ",
     )
     .bind(job.id)
@@ -388,7 +444,7 @@ pub(super) async fn list_jobs(
     let rows = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
-               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, current_run_id, created_at, updated_at
+               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1
           AND ($2::text IS NULL OR source_conversation_id = $2)
@@ -424,7 +480,7 @@ pub(super) async fn get_job(
     let Some(job) = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
-               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, current_run_id, created_at, updated_at
+               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
         ",
@@ -514,7 +570,7 @@ pub(super) async fn get_or_create_conversation_objective(
     if let Some(existing) = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
-               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, current_run_id, created_at, updated_at
+               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1
           AND source_conversation_id = $2
@@ -552,6 +608,8 @@ pub(super) async fn get_or_create_conversation_objective(
             visibility: super::model::TaskListVisibility::SameUser,
             source_conversation_id: Some(conversation_id.to_string()),
             objective_kind: Some("conversation_task_list".to_string()),
+            supersedes_job_id: None,
+            overlap_resolution: super::model::DocketJobOverlapResolution::Independent,
             criteria: Vec::new(),
             tasks: Vec::new(),
         },
@@ -577,7 +635,7 @@ pub(super) async fn update_job(
     let Some(current) = sqlx::query_as::<_, DocketJobRow>(
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
-               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, current_run_id, created_at, updated_at
+               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
         ",
@@ -605,7 +663,7 @@ pub(super) async fn update_job(
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
         RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
-                  commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, current_run_id, created_at, updated_at
+                  commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         ",
     )
     .bind(update.bear_id)
