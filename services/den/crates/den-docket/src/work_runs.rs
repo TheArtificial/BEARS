@@ -256,12 +256,26 @@ pub async fn enqueue_work_job(
     .bind(enqueue.bear_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((job_work_surface_ref, _surface_id, current_run_id, _status)) = job else {
+    let Some((job_work_surface_ref, surface_id, current_run_id, status)) = job else {
         return Err(DenError::NotFound(format!(
             "Docket job not found: {}",
             enqueue.job_id
         )));
     };
+    if surface_id.is_none()
+        || job_work_surface_ref
+            .as_deref()
+            .is_none_or(|surface_ref| surface_ref.trim().is_empty())
+    {
+        return Err(DenError::ValidationError(
+            "work_surface_required: this work job lacks a valid managed work-surface binding; select or rebind a surface before dispatch".into(),
+        ));
+    }
+    if !matches!(status.as_deref(), Some("ready") | Some("running")) {
+        return Err(DenError::ValidationError(
+            "job is not dispatchable; only ready or running work jobs can start work runs".into(),
+        ));
+    }
 
     let root_name = effective_work_run_root(
         enqueue.root_name.as_deref(),
@@ -389,6 +403,10 @@ async fn claim_next_work_run_once(
              WHERE (
                      r.state = 'queued'
                      AND r.execution_target = 'sandbox'
+                     AND EXISTS (
+                         SELECT 1 FROM bear_jobs j
+                         WHERE j.id = r.job_id AND j.status IN ('ready', 'running')
+                     )
                      AND NOT EXISTS (
                          SELECT 1 FROM bear_work_runs sibling
                          WHERE sibling.job_id = r.job_id
@@ -921,18 +939,17 @@ pub async fn finalize_work_run(
 
     if matches!(canonical_state, WorkRunState::Succeeded) {
         settle_completed_job(&mut tx, &row, &canonical_outcome).await?;
-    } else if matches!(canonical_state, WorkRunState::Blocked) && row.cancel_requested {
-        settle_cancelled_work_as_blocked(&mut tx, &row, &canonical_outcome).await?;
+    } else {
+        settle_failed_work_as_blocked(&mut tx, &row, &canonical_outcome).await?;
     }
 
     tx.commit().await?;
     Ok(row)
 }
 
-/// Cancellation revokes the worker's authority to establish completion. Keep
-/// the Docket run resumable, but project that terminal work-run result into
-/// the active task and job rather than leaving their status `running`.
-async fn settle_cancelled_work_as_blocked(
+/// Any non-success terminal work result stops the job by default. Project the
+/// cause into the active task, block pending work, and prevent later dispatch.
+async fn settle_failed_work_as_blocked(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     work_run: &WorkRunRow,
     outcome: &Value,
@@ -948,14 +965,19 @@ async fn settle_cancelled_work_as_blocked(
         .cancel_reason
         .as_deref()
         .map(|reason| format!("Work run cancelled: {reason}"))
-        .unwrap_or_else(|| "Work run cancelled before completion could be verified.".into());
+        .unwrap_or_else(|| {
+            format!(
+                "Work run ended {} before completion could be verified.",
+                work_run.state
+            )
+        });
 
     sqlx::query(
         "UPDATE bear_task_run_state
          SET status = 'blocked', result_summary = $3,
              result_refs = COALESCE(result_refs, '{}'::jsonb) || $4::jsonb,
              finished_at = NULL, updated_at = NOW()
-         WHERE run_id = $1 AND status = 'in_progress'
+         WHERE run_id = $1 AND status IN ('pending', 'in_progress')
            AND task_id IN (SELECT id FROM bear_tasks WHERE job_id = $2)",
     )
     .bind(work_run.job_run_id)
@@ -988,12 +1010,26 @@ async fn settle_cancelled_work_as_blocked(
     .execute(&mut **tx)
     .await?;
     sqlx::query(
+        "UPDATE bear_work_runs
+         SET state = 'cancelled',
+             result_summary = COALESCE(result_summary, $3),
+             result_refs = COALESCE(result_refs, '{}'::jsonb) || $4::jsonb,
+             finished_at = now(), updated_at = now()
+         WHERE job_id = $1 AND job_run_id = $2 AND state = 'queued'",
+    )
+    .bind(work_run.job_id)
+    .bind(work_run.job_run_id)
+    .bind(&summary)
+    .bind(&evidence)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
         "INSERT INTO bear_job_events (job_id, run_id, event_type, by_role, payload)
          VALUES ($1, $2, 'job_blocked', 'system', $3::jsonb)",
     )
     .bind(work_run.job_id)
     .bind(work_run.job_run_id)
-    .bind(json!({"status": "blocked", "source": "cancelled_work_run", "work_run": evidence}))
+    .bind(json!({"status": "blocked", "source": "failed_work_run", "work_run": evidence}))
     .execute(&mut **tx)
     .await?;
     Ok(())

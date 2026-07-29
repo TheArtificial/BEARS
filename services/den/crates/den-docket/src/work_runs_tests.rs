@@ -466,7 +466,7 @@ async fn runs_within_one_job_serialize() {
     assert_eq!(infos[0].position, 1);
     assert_eq!(infos[0].waiting_on_run_id, Some(run_a.id));
 
-    // Terminal first run unblocks the sibling.
+    // A failed run stops the job and cancels queued siblings by default.
     finalize_work_run(
         &pool,
         run_a.id,
@@ -475,21 +475,10 @@ async fn runs_within_one_job_serialize() {
     )
     .await
     .unwrap();
-    let second = claim_next_work_run(&pool, "runner-2", lease)
-        .await
-        .unwrap()
-        .expect("sibling claims once the job is idle");
-    assert_eq!(second.id, run_b.id);
-
-    // Cleanup so later tests' claims see no leftovers.
-    finalize_work_run(
-        &pool,
-        run_b.id,
-        WorkRunState::Failed,
-        WorkRunFinalize::default(),
-    )
-    .await
-    .unwrap();
+    let second = claim_next_work_run(&pool, "runner-2", lease).await.unwrap();
+    assert!(second.is_none(), "failed jobs must not start later work");
+    let sibling = get_work_run(&pool, run_b.id).await.unwrap().expect("sibling run");
+    assert_eq!(sibling.state, "cancelled");
 }
 
 #[tokio::test]
