@@ -14,5 +14,6 @@ ALTER TABLE bear_jobs
         AND btrim(work_surface_ref) <> ''
     ) NOT VALID;
 
-ALTER TABLE bear_jobs
-    VALIDATE CONSTRAINT bear_jobs_work_surface_binding;
+-- Keep this constraint unvalidated so malformed legacy work jobs remain
+-- inspectable and can be rejected explicitly by dispatch. PostgreSQL still
+-- enforces a NOT VALID check constraint for new and updated rows.
