@@ -274,7 +274,9 @@ async fn invoke_workflow_tool(
         DEN_TASK_LIST_CHECKOUT => {
             workflow::checkout_task_list(pool, context, role, arguments).await?
         }
-        DEN_WORK_DISPATCH => workflow::dispatch_work(pool, context, role, arguments).await?,
+        DEN_WORK_DISPATCH => {
+            workflow::dispatch_work(pool, config, context, role, arguments).await?
+        }
         DEN_WORK_RUN_LIST => workflow::list_work_runs(pool, config, context, arguments).await?,
         DEN_WORK_RUN_GET => workflow::get_work_run(pool, context, arguments).await?,
         DEN_WORK_RUN_FIND => workflow::find_work_run(pool, config, context, arguments).await?,

@@ -2348,6 +2348,7 @@ fn attached_dispatch_target(
 
 pub(crate) async fn dispatch_work(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
@@ -2398,10 +2399,15 @@ pub(crate) async fn dispatch_work(
         }
     }
     let queue = den_docket::work_runs::queued_run_positions(pool, &run_ids).await?;
+    let web_base = docket_web_base(pool, config, context.bear_id).await?;
+    let presentations = docket_entity_presentations("work run", run_ids.iter().copied(), |id| {
+        Some(docket_resource_href(&web_base, "runs", id))
+    });
     Ok(json!({
         "ok": true,
         "job_id": args.job_id,
         "work_run_ids": run_ids,
+        "presentations": presentations,
         "queued_tasks": runs.len(),
         "queue": queue.iter().map(|info| json!({
             "run_id": info.run_id,
