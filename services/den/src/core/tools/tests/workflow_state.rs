@@ -1,5 +1,5 @@
 use serde_json::json;
-
+use uuid::Uuid;
 fn pair_context() -> DenToolInvocationContext {
     DenToolInvocationContext {
         bear_id: uuid::Uuid::nil(),
@@ -35,6 +35,7 @@ use crate::core::tools::{
     support::validate_memory_write_entry_semantics,
 };
 use den_core::client_tools::{provider_tool_descriptor, ClientToolName};
+use den_service::bears::BearProfile;
 use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
 use den_docket::{TaskListItemStatus, TaskListLocalProjection, TaskListUpdateItem};
 use den_runtime::plan_mode::PlanModeSessionRow;
@@ -266,6 +267,44 @@ async fn memory_write_entry_returns_warning_payload_for_ambiguous_plan_like_memo
             .len()
             > 10
     );
+}
+
+#[tokio::test]
+async fn confirm_work_surface_requires_pair_before_database_access() {
+    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
+    let mut context = pair_context();
+    context.profile = Some(BearProfile::Chat);
+
+    let err = super::super::confirm_work_surface(
+        &pool,
+        &context,
+        BearProfile::Chat,
+        json!({"work_surface_id": Uuid::new_v4()}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("only to Pair"), "got: {err}");
+}
+
+#[tokio::test]
+async fn confirm_work_surface_requires_client_session_before_database_access() {
+    let pool = sqlx::PgPool::connect_lazy("postgres://unused:unused@localhost/unused").unwrap();
+    let mut context = pair_context();
+    context.client_session_id = None;
+
+    let err = super::super::confirm_work_surface(
+        &pool,
+        &context,
+        BearProfile::Pair,
+        json!({"work_surface_id": Uuid::new_v4()}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("active client session"), "got: {err}");
 }
 
 #[tokio::test]

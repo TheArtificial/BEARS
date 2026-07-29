@@ -20,7 +20,7 @@ use crate::tools::constants::{
     DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_TASK_WRITE_INTENT, DEN_TOOL_OUTPUT_READ,
     DEN_USER_GET_CURRENT, DEN_WEB_FETCH, DEN_WEB_FETCH_LEGACY_PROVIDER, DEN_WEB_SEARCH,
     DEN_WORK_CATALOG, DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET,
-    DEN_WORK_RUN_LIST,
+    DEN_WORK_RUN_LIST, DEN_WORK_SURFACE_CONFIRM,
 };
 
 pub fn provider_aliases_for_tool(name: &str) -> &'static [&'static str] {
@@ -123,6 +123,7 @@ pub fn is_builtin_den_tool(name: &str) -> bool {
             | DEN_WORK_RUN_FIND
             | DEN_WORK_RUN_CANCEL
             | DEN_WORK_CATALOG
+            | DEN_WORK_SURFACE_CONFIRM
             | DEN_PLAN_MODE_ENTER
             | DEN_PLAN_MODE_STATUS
             | DEN_PLAN_MODE_RECORD_APPROVAL

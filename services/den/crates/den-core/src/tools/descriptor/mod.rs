@@ -65,6 +65,7 @@ use crate::tools::{
         DEN_WORK_PREPARE_RUST_DEPENDENCIES_PROVIDER, DEN_WORK_RUN_CANCEL,
         DEN_WORK_RUN_CANCEL_PROVIDER, DEN_WORK_RUN_FIND, DEN_WORK_RUN_FIND_PROVIDER,
         DEN_WORK_RUN_GET, DEN_WORK_RUN_GET_PROVIDER, DEN_WORK_RUN_LIST, DEN_WORK_RUN_LIST_PROVIDER,
+        DEN_WORK_SURFACE_CONFIRM, DEN_WORK_SURFACE_CONFIRM_PROVIDER,
     },
     display::ToolDisplayDescriptor,
     tool_descriptor_guidance::{
@@ -159,6 +160,7 @@ pub fn provider_safe_tool_name(name: &str) -> String {
         DEN_WORK_RUN_FIND => return DEN_WORK_RUN_FIND_PROVIDER.to_string(),
         DEN_WORK_RUN_CANCEL => return DEN_WORK_RUN_CANCEL_PROVIDER.to_string(),
         DEN_WORK_CATALOG => return DEN_WORK_CATALOG_PROVIDER.to_string(),
+        DEN_WORK_SURFACE_CONFIRM => return DEN_WORK_SURFACE_CONFIRM_PROVIDER.to_string(),
         DEN_WORK_PREPARE_RUST_DEPENDENCIES => {
             return DEN_WORK_PREPARE_RUST_DEPENDENCIES_PROVIDER.to_string()
         }
@@ -430,6 +432,15 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
             &["memory.tree.read", "memory.file.read"],
             MEMORY_READ_PROFILES,
             empty_schema(),
+        ),
+        descriptor(
+            DEN_WORK_SURFACE_CONFIRM,
+            "Confirm work surface",
+            "Record the user's explicit selection of an assigned managed work surface for this Pair session. Call only after the user has chosen; this does not create or dispatch a work job.",
+            "work",
+            &["work_surface.confirm"],
+            PAIR_PROFILES,
+            json!({"type":"object","properties":{"work_surface_id":{"type":"string","format":"uuid","description":"Managed work-surface ID selected explicitly by the user."}},"required":["work_surface_id"],"additionalProperties":false}),
         ),
         descriptor(
             DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD,
@@ -1268,6 +1279,16 @@ pub fn den_tool_display(name: &'static str, label: &'static str) -> ToolDisplayD
             target_arg_keys: &[],
             sensitive_arg_keys: &[],
             approval_summary: "Read work-surface memory anchors and orientation.",
+        },
+        DEN_WORK_SURFACE_CONFIRM => ToolDisplayDescriptor {
+            label,
+            category: "work",
+            progress_verb: "Confirming work surface",
+            complete_verb: "Confirmed work surface",
+            target_arg_keys: &["work_surface_id"],
+            sensitive_arg_keys: &[],
+            approval_summary:
+                "Record the user's selected managed work surface for this Pair session.",
         },
         DEN_MEMORY_CREATE_WORK_SURFACE_SCAFFOLD => ToolDisplayDescriptor {
             label,

@@ -125,6 +125,8 @@ pub const DEN_WORK_RUN_CANCEL: &str = "den.work_run.cancel";
 pub const DEN_WORK_RUN_CANCEL_PROVIDER: &str = "cancel_work_run";
 pub const DEN_WORK_CATALOG: &str = "den.work.catalog";
 pub const DEN_WORK_CATALOG_PROVIDER: &str = "get_work_catalog";
+pub const DEN_WORK_SURFACE_CONFIRM: &str = "den.work_surface.confirm";
+pub const DEN_WORK_SURFACE_CONFIRM_PROVIDER: &str = "confirm_work_surface";
 /// Prepare one Rust package's dependencies outside the restricted work sandbox.
 /// This is intentionally a Den-hosted work action, not an Armature capability.
 pub const DEN_WORK_PREPARE_RUST_DEPENDENCIES: &str = "den.work.prepare_rust_dependencies";

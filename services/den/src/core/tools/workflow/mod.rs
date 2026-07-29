@@ -9,6 +9,7 @@ use den_core::tools::constants::{
     DEN_TASK_LISTS_GET_STATUS, DEN_TASK_LISTS_LIST, DEN_TASK_LISTS_UPDATE, DEN_TASK_LIST_CHECKOUT,
     DEN_TASK_LIST_SYNC, DEN_TASK_UPDATE, DEN_TASK_UPDATE_CURRENT_STATUS, DEN_WORK_CATALOG,
     DEN_WORK_DISPATCH, DEN_WORK_RUN_CANCEL, DEN_WORK_RUN_FIND, DEN_WORK_RUN_GET, DEN_WORK_RUN_LIST,
+    DEN_WORK_SURFACE_CONFIRM,
 };
 use den_docket::{
     self as docket, docket_job_status_report, DocketCommitPolicy, DocketCriterionStateUpdate,
@@ -136,6 +137,7 @@ pub(crate) fn is_workflow_tool(tool_name: &str) -> bool {
             | DEN_WORK_RUN_FIND
             | DEN_WORK_RUN_CANCEL
             | DEN_WORK_CATALOG
+            | DEN_WORK_SURFACE_CONFIRM
     )
 }
 
@@ -179,6 +181,11 @@ pub(crate) struct DocketJobCreateArguments {
     pub(crate) criteria: Vec<DocketJobCriterionInput>,
     #[serde(default)]
     pub(crate) tasks: Vec<DocketTaskInput>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConfirmWorkSurfaceArguments {
+    pub(crate) work_surface_id: Uuid,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1109,10 +1116,8 @@ async fn resolve_surface_ref(
         else {
             return Ok((None, None, false));
         };
-        let Some(resolution) = den_service::client_session_work_surface_resolutions::find(
-            pool, session.id,
-        )
-        .await?
+        let Some(resolution) =
+            den_service::client_session_work_surface_resolutions::find(pool, session.id).await?
         else {
             return Ok((None, None, false));
         };
@@ -1145,6 +1150,64 @@ async fn resolve_surface_ref(
         )
         .into()),
     }
+}
+
+pub(crate) async fn confirm_work_surface(
+    pool: &PgPool,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    arguments: Value,
+) -> Result<Value, CustomError> {
+    if role != BearProfile::Pair {
+        return Err(DenError::Authorization(
+            "confirm_work_surface is available only to Pair".to_string(),
+        )
+        .into());
+    }
+    let args: ConfirmWorkSurfaceArguments = serde_json::from_value(arguments)?;
+    let client_session_id = context.client_session_id.as_deref().ok_or_else(|| {
+        DenError::ValidationError(
+            "confirm_work_surface requires an active client session".to_string(),
+        )
+    })?;
+    let session = client_sessions::find_for_user_bear_session_id(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+    )
+    .await?
+    .ok_or_else(|| {
+        DenError::ValidationError(
+            "confirm_work_surface requires a known client session".to_string(),
+        )
+    })?;
+    if !den_service::work_surfaces::bear_may_use_surface(
+        pool,
+        context.bear_id,
+        args.work_surface_id,
+    )
+    .await?
+    {
+        return Err(DenError::ValidationError(
+            "work_surface_id must identify a managed surface assigned to this Bear".to_string(),
+        )
+        .into());
+    }
+    den_service::client_session_work_surface_resolutions::upsert(
+        pool,
+        session.id,
+        args.work_surface_id,
+        den_service::client_session_work_surface_resolutions::ClientSessionWorkSurfaceResolutionStatus::Confirmed,
+        json!({ "kind": "user_confirmation" }),
+    )
+    .await?;
+    Ok(json!({
+        "ok": true,
+        "status": "confirmed",
+        "work_surface_id": args.work_surface_id,
+        "notes": ["Recorded the user's explicit work-surface selection for this Pair session."]
+    }))
 }
 
 pub(crate) async fn create_job(
