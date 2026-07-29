@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}New work job{% endblock %}
+{% block title %}New Docket job{% endblock %}
 {% block content %}
-<p><a href="/bear/{{ bear_slug }}/work">← Work</a></p>
+<p><a href="/bear/{{ bear_slug }}/jobs">← Docket</a></p>
 <h1>New work job</h1>
 <p>
     Creates a Docket job that runs autonomously in one shared sandbox session.
@@ -9,7 +9,7 @@
     job's work branch on the root's upstream.
 </p>
 
-<form method="post" action="/bear/{{ bear_slug }}/work/new">
+<form method="post" action="/bear/{{ bear_slug }}/jobs/new">
     <p>
         <label>Goal<br>
             <input type="text" name="goal" size="80" required

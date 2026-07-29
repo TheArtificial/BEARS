@@ -92,7 +92,7 @@ async fn docket_web_base(
         .await?
         .ok_or_else(|| CustomError::NotFound(format!("bear not found: {bear_id}")))?;
     Ok(format!(
-        "{}/bear/{}/work",
+        "{}/bear/{}/jobs",
         config.web_server_url.trim_end_matches('/'),
         bear.slug
     ))

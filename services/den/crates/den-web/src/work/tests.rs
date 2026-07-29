@@ -215,7 +215,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/bear/{bear_slug}/work/new"))
+                .uri(&format!("/bear/{bear_slug}/jobs/new"))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from(body))
@@ -238,7 +238,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
             String::from_utf8_lossy(&body)
         );
     }
-    assert_eq!(location, format!("/bear/{bear_slug}/work/jobs/{}", route_id(sqlx::query_scalar::<_, Uuid>("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1").bind(bear_id).fetch_one(&pool).await.expect("job id"))));
+    assert_eq!(location, format!("/bear/{bear_slug}/jobs/{}", route_id(sqlx::query_scalar::<_, Uuid>("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1").bind(bear_id).fetch_one(&pool).await.expect("job id"))));
     let job_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
         .bind(bear_id)
         .fetch_one(&pool)
@@ -270,7 +270,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/jobs/{}/edit", route_id(job_id)),
+        &format!("/bear/{bear_slug}/jobs/{}/edit", route_id(job_id)),
         "goal=Ship+the+updated+site&surface_id=&commit_policy=per_job&work_branch=feature%2Fupdated"
             .to_string(),
     )
@@ -307,7 +307,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
         let response = post_form(
             &app,
             &cookie,
-            &format!("/bear/{bear_slug}/work/new"),
+            &format!("/bear/{bear_slug}/jobs/new"),
             format!(
                 "bear_id={bear_id}&goal={}&root=&commit_policy=none&work_branch=&task_title=Check&task_criteria=done",
                 urlencoding::encode(goal)
@@ -327,7 +327,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/bear/{bear_slug}/work"))
+                .uri(&format!("/bear/{bear_slug}/jobs"))
                 .header(header::COOKIE, &cookie)
                 .body(Body::empty())
                 .unwrap(),
@@ -345,7 +345,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri(&format!("/bear/{bear_slug}/work?completed=show"))
+                .uri(&format!("/bear/{bear_slug}/jobs?completed=show"))
                 .header(header::COOKIE, &cookie)
                 .body(Body::empty())
                 .unwrap(),
@@ -372,7 +372,7 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/new"),
+        &format!("/bear/{bear_slug}/jobs/new"),
         format!(
             "bear_id={bear_id}&goal=Reusable+job&root=site&commit_policy=per_task\
              &work_branch=&task_title=Build+artifact&task_criteria=artifact+exists%3Btests+pass"
@@ -397,7 +397,7 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/jobs/{}/duplicate", route_id(source_id)),
+        &format!("/bear/{bear_slug}/jobs/{}/duplicate", route_id(source_id)),
         String::new(),
     )
     .await;
@@ -463,7 +463,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/new"),
+        &format!("/bear/{bear_slug}/jobs/new"),
         format!(
             "bear_id={bear_id}&goal=Edit+the+tree&root=&commit_policy=none\
              &task_title=First+root&task_criteria=first+done"
@@ -488,7 +488,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/jobs/{}/tasks/{}/children", route_id(job_id), route_id(first_root_id)),
+        &format!("/bear/{bear_slug}/jobs/{}/tasks/{}/children", route_id(job_id), route_id(first_root_id)),
         "title=First+child&criteria=child+done&body=".to_string(),
     )
     .await;
@@ -505,7 +505,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/jobs/{}/tasks", route_id(job_id)),
+        &format!("/bear/{bear_slug}/jobs/{}/tasks", route_id(job_id)),
         "title=Second+root&body=&criteria=second+done".to_string(),
     )
     .await;
@@ -520,7 +520,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/jobs/{}/tasks/{}/move/up", route_id(job_id), route_id(second_root_id)),
+        &format!("/bear/{bear_slug}/jobs/{}/tasks/{}/move/up", route_id(job_id), route_id(second_root_id)),
         String::new(),
     )
     .await;
@@ -547,7 +547,7 @@ async fn job_lifecycle_can_extend_then_complete() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/new"),
+        &format!("/bear/{bear_slug}/jobs/new"),
         format!(
             "bear_id={bear_id}&goal=Lifecycle+job&root=&commit_policy=none\
              &task_title=First+task&task_criteria=first+done"
@@ -566,7 +566,7 @@ async fn job_lifecycle_can_extend_then_complete() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/jobs/{}/tasks", route_id(job_id)),
+        &format!("/bear/{bear_slug}/jobs/{}/tasks", route_id(job_id)),
         "title=Second+task&body=&criteria=second+done".to_string(),
     )
     .await;
@@ -586,7 +586,7 @@ async fn job_lifecycle_can_extend_then_complete() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/jobs/{}/complete", route_id(job_id)),
+        &format!("/bear/{bear_slug}/jobs/{}/complete", route_id(job_id)),
         String::new(),
     )
     .await;
@@ -624,7 +624,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/new"),
+        &format!("/bear/{bear_slug}/jobs/new"),
         format!(
             "bear_id={bear_id}&goal=Surface+job&root=&commit_policy=none\
              &task_title=Use+repo&task_criteria=repo+used"
@@ -679,7 +679,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/jobs/{}/edit", route_id(job_id)),
+        &format!("/bear/{bear_slug}/jobs/{}/edit", route_id(job_id)),
         format!("goal=Surface+job&surface_id={surface_id}&commit_policy=per_task&work_branch=main"),
     )
     .await;
@@ -688,7 +688,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/work/jobs/{}/edit", route_id(job_id)),
+        &format!("/bear/{bear_slug}/jobs/{}/edit", route_id(job_id)),
         format!(
             "goal=Surface+job&surface_id={surface_id}&commit_policy=per_task&work_branch=&allow_default_ref=true"
         ),
@@ -725,7 +725,7 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/bear/{bear_slug}/work/new"))
+                .uri(&format!("/bear/{bear_slug}/jobs/new"))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from(body))
@@ -747,7 +747,7 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/bear/{bear_slug}/work/jobs/{}/dispatch", route_id(job_id)))
+                .uri(format!("/bear/{bear_slug}/jobs/{}/dispatch", route_id(job_id)))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from("root=site&image=rust&git_ref="))
@@ -772,7 +772,7 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     .expect("queued job runs");
     assert_eq!(runs.len(), 1);
     let (run_id, root, image, git_ref) = &runs[0];
-    assert_eq!(redirect, format!("/bear/{bear_slug}/work/runs/{}", route_id(*run_id)));
+    assert_eq!(redirect, format!("/bear/{bear_slug}/jobs/runs/{}", route_id(*run_id)));
     assert_eq!(root.as_deref(), Some("site"));
     assert_eq!(image.as_deref(), Some("rust"));
     assert!(git_ref.is_none(), "blank git_ref stays unset");
@@ -937,7 +937,7 @@ async fn create_job_enforces_surface_assignment() {
         "bear_id={bear_id}&goal=Surface+gated&surface_id={surface_id}&root=&commit_policy=per_task\
          &task_title=Do+it&task_criteria=done"
     );
-    let response = post_form(&app, &cookie, &format!("/bear/{bear_slug}/work/new"), job_body.clone()).await;
+    let response = post_form(&app, &cookie, &format!("/bear/{bear_slug}/jobs/new"), job_body.clone()).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     // Assign the bear from the surface page, then the same form succeeds and
@@ -950,7 +950,7 @@ async fn create_job_enforces_surface_assignment() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let response = post_form(&app, &cookie, &format!("/bear/{bear_slug}/work/new"), job_body).await;
+    let response = post_form(&app, &cookie, &format!("/bear/{bear_slug}/jobs/new"), job_body).await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let (surface_ref, bound_id): (Option<String>, Option<Uuid>) = sqlx::query_as(
         "SELECT work_surface_ref, work_surface_id FROM bear_jobs

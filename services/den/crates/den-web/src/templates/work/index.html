@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Work{% endblock %}
+{% block title %}Docket{% endblock %}
 {% block content %}
-<h1>Work</h1>
+<h1>Docket</h1>
 
 <section>
     {% if not provider_status.configured %}
-    <p>⚠ <strong>Work dispatch is not configured</strong> — no sandbox provider is set (<code>SANDBOX_SERVER_URL</code>), so queued runs will not start.</p>
+    <p>⚠ <strong>Docket dispatch is not configured</strong> — no sandbox provider is set (<code>SANDBOX_SERVER_URL</code>), so queued runs will not start.</p>
     {% elif not provider_status.reachable %}
     <p>⚠ <strong>Sandbox provider unreachable</strong> at <code>{{ provider_status.url }}</code>: {{ provider_status.error }}.</p>
     {% else %}
@@ -13,52 +13,24 @@
     {% endif %}
 </section>
 
-{% if attention %}
-<section>
-    <h2>⚠ Needs attention ({{ attention | length }})</h2>
-    <p>Latest attempts that ended blocked or failed, with no retry queued.</p>
-    <table>
-        <thead><tr><th>Job</th><th>Bear</th><th>State</th><th>Reason</th><th></th></tr></thead>
-        <tbody>
-            {% for item in attention %}
-            <tr>
-                <td><a href="/bear/{{ bear_slug }}/work/jobs/{{ item.job_id }}">{{ item.job_goal }}</a></td>
-                <td>{{ item.bear_slug }}</td><td>{{ item.state }}</td><td>{{ item.reason or "—" }}</td>
-                <td><a href="/bear/{{ bear_slug }}/work/runs/{{ item.run_id }}">run</a></td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</section>
-{% endif %}
-
-{% if awaiting_completion %}
-<section>
-    <h2>Awaiting completion ({{ awaiting_completion | length }})</h2>
-    <p>All tasks are done but the job has not been closed out — review criteria and complete the job.</p>
-    <ul>{% for job in awaiting_completion %}
-        <li><a href="/bear/{{ bear_slug }}/work/jobs/{{ job.route_id }}" title="UUID prefix for {{ job.full_id }}">Job <code class="entity-reference-id">{{ job.display_id }}</code>: {{ job.title }}</a> ({{ job.bear_slug }}, {{ job.status }})</li>
-    {% endfor %}</ul>
-</section>
-{% endif %}
 
 <section>
     <h2>Jobs</h2>
-    <p><a href="/bear/{{ bear_slug }}/work/new">New work job</a> · <a href="/work/surfaces">Work surfaces</a></p>
-    {% if show_completed %}<p><a href="/bear/{{ bear_slug }}/work{% if show_archived %}?archived=show{% endif %}">Hide completed jobs</a></p>{% else %}<p><a href="/bear/{{ bear_slug }}/work?completed=show{% if show_archived %}&archived=show{% endif %}">Show completed jobs</a></p>{% endif %}
-    {% if show_archived %}<p><a href="/bear/{{ bear_slug }}/work{% if show_completed %}?completed=show{% endif %}">Hide archived jobs</a></p>{% else %}<p><a href="/bear/{{ bear_slug }}/work?archived=show{% if show_completed %}&completed=show{% endif %}">Show archived jobs</a></p>{% endif %}
+    <p><a href="/bear/{{ bear_slug }}/jobs/new">New job</a> · <a href="/work/surfaces">Work surfaces</a></p>
+    {% if show_completed %}<p><a href="/bear/{{ bear_slug }}/jobs{% if show_archived %}?archived=show{% endif %}">Hide completed jobs</a></p>{% else %}<p><a href="/bear/{{ bear_slug }}/jobs?completed=show{% if show_archived %}&archived=show{% endif %}">Show completed jobs</a></p>{% endif %}
+    {% if show_archived %}<p><a href="/bear/{{ bear_slug }}/jobs{% if show_completed %}?completed=show{% endif %}">Hide archived jobs</a></p>{% else %}<p><a href="/bear/{{ bear_slug }}/jobs?archived=show{% if show_completed %}&completed=show{% endif %}">Show archived jobs</a></p>{% endif %}
     {% if jobs %}
     <table>
         <thead><tr><th>Job</th><th>Bear</th><th>Status</th><th>Work surface</th><th>Runs</th></tr></thead>
         <tbody>{% for job in jobs %}
             <tr>
-                <td><a href="/bear/{{ bear_slug }}/work/jobs/{{ job.route_id }}" title="UUID prefix for {{ job.full_id }}">Job <code class="entity-reference-id">{{ job.display_id }}</code>: {{ job.title }}</a></td>
-                <td>{{ job.bear_slug }}</td><td>{{ job.status }}</td><td>{{ job.work_surface_ref or "—" }}</td><td>{{ job.run_count }}</td>
+                <td><a href="/bear/{{ bear_slug }}/jobs/{{ job.route_id }}" title="UUID prefix for {{ job.full_id }}">Job <code class="entity-reference-id">{{ job.display_id }}</code>: {{ job.title }}</a></td>
+                <td>{{ job.bear_slug }}</td><td>{% if job.status == "completed" %}✅ completed{% elif job.status == "blocked" %}🚫 blocked{% elif job.status == "running" %}🔄 running{% elif job.status == "cancelled" %}🚫 cancelled{% else %}⏳ {{ job.status }}{% endif %}</td><td>{{ job.work_surface_ref or "—" }}</td><td>{{ job.run_count }}</td>
             </tr>
         {% endfor %}</tbody>
     </table>
     {% else %}
-    <p>{% if show_completed %}No Docket jobs yet.{% else %}No active Docket jobs. <a href="/bear/{{ bear_slug }}/work?completed=show">Show completed jobs</a>.{% endif %}</p>
+    <p>{% if show_completed %}No Docket jobs yet.{% else %}No active Docket jobs. <a href="/bear/{{ bear_slug }}/jobs?completed=show">Show completed jobs</a>.{% endif %}</p>
     {% endif %}
 </section>
 {% endblock %}

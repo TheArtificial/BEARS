@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Work run{% endblock %}
+{% block title %}Docket run{% endblock %}
 {% block head %}
 {% if run.is_active %}<meta http-equiv="refresh" content="10" />{% endif %}
 {% endblock %}
 {% block content %}
-<p><a href="/bear/{{ bear_slug }}/work">← Work</a> · <a href="/bear/{{ bear_slug }}/work/jobs/{{ run.job_route_id }}" title="{{ run.job_title }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code></a></p>
-<h1>Work Run <code class="entity-reference-id">{{ run.display_id }}</code></h1>
+<p><a href="/bear/{{ bear_slug }}/jobs">← Docket</a> · <a href="/bear/{{ bear_slug }}/jobs/{{ run.job_route_id }}" title="{{ run.job_title }}">Job <code class="entity-reference-id">{{ run.job_display_id }}</code></a></p>
+<h1>Docket run <code class="entity-reference-id">{{ run.display_id }}</code></h1>
 <h2>{{ run.title }}</h2>
 {% if conversation_id %}
 <p><a href="/bear/{{ run.bear_slug | urlencode }}/?conversation_id={{ conversation_id | urlencode }}">Open headless conversation transcript →</a></p>
@@ -20,7 +20,7 @@
                 {{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}
                 {% if run.queue_position %}
                 — position {{ run.queue_position }} in the job's queue{% if run.waiting_on_run_id %},
-                waiting on run <a href="/bear/{{ bear_slug }}/work/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}
+                waiting on run <a href="/bear/{{ bear_slug }}/jobs/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:16] }}…</a>{% endif %}
                 (runs within a job execute one at a time)
                 {% endif %}
             </td></tr>
@@ -44,20 +44,20 @@
         </tbody>
     </table>
     {% if can_pause %}
-    <form method="post" action="/bear/{{ bear_slug }}/work/runs/{{ run.id }}/pause">
+    <form method="post" action="/bear/{{ bear_slug }}/jobs/runs/{{ run.id }}/pause">
         <button type="submit">Pause at boundary</button>
     </form>
     {% elif can_resume %}
-    <form method="post" action="/bear/{{ bear_slug }}/work/runs/{{ run.id }}/resume">
+    <form method="post" action="/bear/{{ bear_slug }}/jobs/runs/{{ run.id }}/resume">
         <button type="submit">Resume run</button>
     </form>
     {% endif %}
     {% if run.is_active %}
-    <form method="post" action="/bear/{{ bear_slug }}/work/runs/{{ run.id }}/cancel">
+    <form method="post" action="/bear/{{ bear_slug }}/jobs/runs/{{ run.id }}/cancel">
         <button type="submit">Stop run</button>
     </form>
     {% elif can_retry %}
-    <form method="post" action="/bear/{{ bear_slug }}/work/runs/{{ run.id }}/retry">
+    <form method="post" action="/bear/{{ bear_slug }}/jobs/runs/{{ run.id }}/retry">
         <button type="submit">{% if run.execution_target == "attached_armature" %}Recover on attached armature{% else %}Retry (new attempt){% endif %}</button>
     </form>
     {% endif %}
