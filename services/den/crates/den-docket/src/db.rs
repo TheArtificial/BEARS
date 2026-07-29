@@ -20,11 +20,10 @@ use super::model::{
     DocketExecutionSessionRow, DocketExecutionSessionUpsert, DocketJobCreate,
     DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
     DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
-    DocketValidationError,
     DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
     DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
-    TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncOutcome,
-    TaskListSyncRequest, TaskListSyncState,
+    DocketValidationError, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
+    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -32,8 +31,10 @@ pub(super) async fn create_job(
     create: DocketJobCreate,
 ) -> Result<DocketJobProjection, DenError> {
     validate_docket_job_create(&create)?;
-    if matches!(create.overlap_resolution, super::model::DocketJobOverlapResolution::Supersede)
-        && create.supersedes_job_id.is_none()
+    if matches!(
+        create.overlap_resolution,
+        super::model::DocketJobOverlapResolution::Supersede
+    ) && create.supersedes_job_id.is_none()
     {
         return Err(DocketValidationError::SupersedeRequiresPredecessor.into());
     }
@@ -69,13 +70,17 @@ pub(super) async fn create_job(
         (Some(job_id), super::model::DocketJobOverlapResolution::Supersede)
             if create.supersedes_job_id == Some(job_id) =>
         {
-            sqlx::query("UPDATE bear_jobs SET status = 'cancelled', updated_at = NOW() WHERE id = $1")
-                .bind(job_id)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "UPDATE bear_jobs SET status = 'cancelled', updated_at = NOW() WHERE id = $1",
+            )
+            .bind(job_id)
+            .execute(&mut *tx)
+            .await?;
         }
         (Some(job_id), super::model::DocketJobOverlapResolution::Supersede) => {
-            return Err(DocketValidationError::SupersedeRequiresMatchingActiveJob { job_id }.into());
+            return Err(
+                DocketValidationError::SupersedeRequiresMatchingActiveJob { job_id }.into(),
+            );
         }
         (None, super::model::DocketJobOverlapResolution::Supersede) => {
             return Err(DocketValidationError::SupersedeRequiresMatchingActiveJob {
@@ -85,7 +90,6 @@ pub(super) async fn create_job(
         }
         (_, super::model::DocketJobOverlapResolution::Independent) | (None, _) => {}
     }
-
 
     let job = sqlx::query_as::<_, DocketJobRow>(
         r"

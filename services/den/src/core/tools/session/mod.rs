@@ -254,8 +254,8 @@ async fn invoke_workflow_tool(
             )
             .await?
         }
-        DEN_JOB_CREATE => workflow::create_job(pool, context, role, arguments).await?,
-        DEN_JOB_LIST => workflow::list_jobs(pool, context, arguments).await?,
+        DEN_JOB_CREATE => workflow::create_job(pool, config, context, role, arguments).await?,
+        DEN_JOB_LIST => workflow::list_jobs(pool, config, context, arguments).await?,
         DEN_JOB_GET => workflow::get_job(pool, context, arguments).await?,
         DEN_JOB_FIND => workflow::find_job(pool, context, arguments).await?,
         DEN_JOB_UPDATE => workflow::update_job(pool, context, role, arguments).await?,
@@ -264,7 +264,7 @@ async fn invoke_workflow_tool(
             workflow::evaluate_criterion(pool, context, role, arguments).await?
         }
         DEN_TASK_CREATE => workflow::create_task(pool, context, role, arguments).await?,
-        DEN_TASK_LIST => workflow::list_tasks(pool, context, role, arguments).await?,
+        DEN_TASK_LIST => workflow::list_tasks(pool, config, context, role, arguments).await?,
         DEN_TASK_FIND => workflow::find_task(pool, context, arguments).await?,
         DEN_TASK_UPDATE => workflow::update_task(pool, context, role, arguments).await?,
         DEN_TASK_UPDATE_CURRENT_STATUS => {
@@ -275,9 +275,9 @@ async fn invoke_workflow_tool(
             workflow::checkout_task_list(pool, context, role, arguments).await?
         }
         DEN_WORK_DISPATCH => workflow::dispatch_work(pool, context, role, arguments).await?,
-        DEN_WORK_RUN_LIST => workflow::list_work_runs(pool, context, arguments).await?,
+        DEN_WORK_RUN_LIST => workflow::list_work_runs(pool, config, context, arguments).await?,
         DEN_WORK_RUN_GET => workflow::get_work_run(pool, context, arguments).await?,
-        DEN_WORK_RUN_FIND => workflow::find_work_run(pool, context, arguments).await?,
+        DEN_WORK_RUN_FIND => workflow::find_work_run(pool, config, context, arguments).await?,
         DEN_WORK_RUN_CANCEL => workflow::cancel_work_run(pool, context, role, arguments).await?,
         DEN_WORK_CATALOG => workflow::get_work_catalog(pool, config, context, arguments).await?,
         _ => {

@@ -30,6 +30,9 @@ fn cargo_offline_cache_miss_is_the_primary_outcome() {
         runner_id: None,
         lease_expires_at: None,
         cancel_requested: false,
+        cancel_requested_by: None,
+        cancel_reason: None,
+        cancel_requested_at: None,
         root_name: None,
         git_ref: None,
         image_name: None,
@@ -121,6 +124,7 @@ async fn test_app(pool: sqlx::PgPool) -> axum::Router {
     store.migrate().await.expect("session store migration");
     Router::new()
         .merge(router())
+        .nest("/bear/{bear_slug}", docket_router())
         .route("/test-login/{user_id}", get(test_login))
         .with_state(test_state(pool.clone()))
         .layer(
@@ -157,7 +161,7 @@ async fn login_cookie(app: &axum::Router, user_id: i32) -> String {
 }
 
 /// Member user + bear (admin membership) for the work UI's scoping checks.
-async fn seed_member(pool: &sqlx::PgPool) -> (i32, Uuid) {
+async fn seed_member(pool: &sqlx::PgPool) -> (i32, Uuid, String) {
     let unique = Uuid::new_v4().simple().to_string();
     let user_id = sqlx::query_scalar::<_, i32>(
         "INSERT INTO users (email, username, display_name, passhash)
@@ -170,10 +174,11 @@ async fn seed_member(pool: &sqlx::PgPool) -> (i32, Uuid) {
     .fetch_one(pool)
     .await
     .expect("create user");
+    let slug = format!("work-ui-{}", &unique[..12]);
     let bear_id = bears_db::create_bear(
         pool,
         bears_db::BearParams {
-            slug: &format!("work-ui-{}", &unique[..12]),
+            slug: &slug,
             name: "Work UI Test Bear",
             description: "",
             system_prompt: "",
@@ -187,7 +192,7 @@ async fn seed_member(pool: &sqlx::PgPool) -> (i32, Uuid) {
     bears_db::grant_membership(pool, user_id, bear_id, Some("admin"))
         .await
         .expect("grant membership");
-    (user_id, bear_id)
+    (user_id, bear_id, slug)
 }
 
 #[tokio::test]
@@ -196,7 +201,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
@@ -210,7 +215,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/work/new")
+                .uri(&format!("/bear/{bear_slug}/work/new"))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from(body))
@@ -233,11 +238,12 @@ async fn create_job_form_creates_work_job_with_tasks() {
             String::from_utf8_lossy(&body)
         );
     }
-    let job_id: Uuid = location
-        .rsplit('/')
-        .next()
-        .and_then(|raw| Uuid::parse_str(raw).ok())
-        .expect("redirect to job page");
+    assert_eq!(location, format!("/bear/{bear_slug}/work/jobs/{}", route_id(sqlx::query_scalar::<_, Uuid>("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1").bind(bear_id).fetch_one(&pool).await.expect("job id"))));
+    let job_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
+        .bind(bear_id)
+        .fetch_one(&pool)
+        .await
+        .expect("job id");
 
     let (goal, surface, policy, branch): (String, Option<String>, Option<String>, Option<String>) =
         sqlx::query_as(
@@ -264,7 +270,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{job_id}/edit"),
+        &format!("/bear/{bear_slug}/work/jobs/{}/edit", route_id(job_id)),
         "goal=Ship+the+updated+site&surface_id=&commit_policy=per_job&work_branch=feature%2Fupdated"
             .to_string(),
     )
@@ -290,7 +296,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
     let unique = Uuid::new_v4().simple().to_string();
@@ -301,7 +307,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
         let response = post_form(
             &app,
             &cookie,
-            "/work/new",
+            &format!("/bear/{bear_slug}/work/new"),
             format!(
                 "bear_id={bear_id}&goal={}&root=&commit_policy=none&work_branch=&task_title=Check&task_criteria=done",
                 urlencoding::encode(goal)
@@ -321,7 +327,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/work")
+                .uri(&format!("/bear/{bear_slug}/work"))
                 .header(header::COOKIE, &cookie)
                 .body(Body::empty())
                 .unwrap(),
@@ -339,7 +345,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/work?completed=show")
+                .uri(&format!("/bear/{bear_slug}/work?completed=show"))
                 .header(header::COOKIE, &cookie)
                 .body(Body::empty())
                 .unwrap(),
@@ -359,14 +365,14 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
     let response = post_form(
         &app,
         &cookie,
-        "/work/new",
+        &format!("/bear/{bear_slug}/work/new"),
         format!(
             "bear_id={bear_id}&goal=Reusable+job&root=site&commit_policy=per_task\
              &work_branch=&task_title=Build+artifact&task_criteria=artifact+exists%3Btests+pass"
@@ -374,13 +380,8 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let source_id = response
-        .headers()
-        .get(header::LOCATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|location| location.rsplit('/').next())
-        .and_then(|value| Uuid::parse_str(value).ok())
-        .expect("source job redirect");
+    let source_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
+        .bind(bear_id).fetch_one(&pool).await.expect("source job");
     sqlx::query("UPDATE bear_jobs SET work_branch = 'feature/original' WHERE id = $1")
         .bind(source_id)
         .execute(&pool)
@@ -396,18 +397,13 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{source_id}/duplicate"),
+        &format!("/bear/{bear_slug}/work/jobs/{}/duplicate", route_id(source_id)),
         String::new(),
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let duplicate_id = response
-        .headers()
-        .get(header::LOCATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|location| location.rsplit('/').next())
-        .and_then(|value| Uuid::parse_str(value).ok())
-        .expect("duplicate job redirect");
+    let duplicate_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
+        .bind(bear_id).fetch_one(&pool).await.expect("duplicate job");
     assert_ne!(duplicate_id, source_id);
 
     let (goal, surface, policy, branch, status, current_run): (
@@ -460,14 +456,14 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
     let response = post_form(
         &app,
         &cookie,
-        "/work/new",
+        &format!("/bear/{bear_slug}/work/new"),
         format!(
             "bear_id={bear_id}&goal=Edit+the+tree&root=&commit_policy=none\
              &task_title=First+root&task_criteria=first+done"
@@ -492,7 +488,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{job_id}/tasks/{first_root_id}/children"),
+        &format!("/bear/{bear_slug}/work/jobs/{}/tasks/{}/children", route_id(job_id), route_id(first_root_id)),
         "title=First+child&criteria=child+done&body=".to_string(),
     )
     .await;
@@ -509,7 +505,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{job_id}/tasks"),
+        &format!("/bear/{bear_slug}/work/jobs/{}/tasks", route_id(job_id)),
         "title=Second+root&body=&criteria=second+done".to_string(),
     )
     .await;
@@ -524,7 +520,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{job_id}/tasks/{second_root_id}/move/up"),
+        &format!("/bear/{bear_slug}/work/jobs/{}/tasks/{}/move/up", route_id(job_id), route_id(second_root_id)),
         String::new(),
     )
     .await;
@@ -545,26 +541,22 @@ async fn job_lifecycle_can_extend_then_complete() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
     let response = post_form(
         &app,
         &cookie,
-        "/work/new",
+        &format!("/bear/{bear_slug}/work/new"),
         format!(
             "bear_id={bear_id}&goal=Lifecycle+job&root=&commit_policy=none\
              &task_title=First+task&task_criteria=first+done"
         ),
     )
     .await;
-    let job_id = response
-        .headers()
-        .get(header::LOCATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|location| location.rsplit('/').next())
-        .and_then(|value| Uuid::parse_str(value).ok())
-        .expect("job redirect");
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let job_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
+        .bind(bear_id).fetch_one(&pool).await.expect("job id");
     let run_id: Uuid = sqlx::query_scalar("SELECT current_run_id FROM bear_jobs WHERE id = $1")
         .bind(job_id)
         .fetch_one(&pool)
@@ -574,7 +566,7 @@ async fn job_lifecycle_can_extend_then_complete() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{job_id}/tasks"),
+        &format!("/bear/{bear_slug}/work/jobs/{}/tasks", route_id(job_id)),
         "title=Second+task&body=&criteria=second+done".to_string(),
     )
     .await;
@@ -594,7 +586,7 @@ async fn job_lifecycle_can_extend_then_complete() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{job_id}/complete"),
+        &format!("/bear/{bear_slug}/work/jobs/{}/complete", route_id(job_id)),
         String::new(),
     )
     .await;
@@ -626,26 +618,22 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
     let response = post_form(
         &app,
         &cookie,
-        "/work/new",
+        &format!("/bear/{bear_slug}/work/new"),
         format!(
             "bear_id={bear_id}&goal=Surface+job&root=&commit_policy=none\
              &task_title=Use+repo&task_criteria=repo+used"
         ),
     )
     .await;
-    let job_id = response
-        .headers()
-        .get(header::LOCATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|location| location.rsplit('/').next())
-        .and_then(|value| Uuid::parse_str(value).ok())
-        .expect("job redirect");
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let job_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
+        .bind(bear_id).fetch_one(&pool).await.expect("job id");
     let surface_name = format!("job-surface-{}", &Uuid::new_v4().simple().to_string()[..12]);
     let response = post_form(
         &app,
@@ -691,7 +679,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{job_id}/edit"),
+        &format!("/bear/{bear_slug}/work/jobs/{}/edit", route_id(job_id)),
         format!("goal=Surface+job&surface_id={surface_id}&commit_policy=per_task&work_branch=main"),
     )
     .await;
@@ -700,7 +688,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/work/jobs/{job_id}/edit"),
+        &format!("/bear/{bear_slug}/work/jobs/{}/edit", route_id(job_id)),
         format!(
             "goal=Surface+job&surface_id={surface_id}&commit_policy=per_task&work_branch=&allow_default_ref=true"
         ),
@@ -722,7 +710,7 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
@@ -737,7 +725,7 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/work/new")
+                .uri(&format!("/bear/{bear_slug}/work/new"))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from(body))
@@ -759,7 +747,7 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/work/jobs/{job_id}/dispatch"))
+                .uri(format!("/bear/{bear_slug}/work/jobs/{}/dispatch", route_id(job_id)))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from("root=site&image=rust&git_ref="))
@@ -784,7 +772,7 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     .expect("queued job runs");
     assert_eq!(runs.len(), 1);
     let (run_id, root, image, git_ref) = &runs[0];
-    assert_eq!(redirect, format!("/work/runs/{}", route_id(*run_id)));
+    assert_eq!(redirect, format!("/bear/{bear_slug}/work/runs/{}", route_id(*run_id)));
     assert_eq!(root.as_deref(), Some("site"));
     assert_eq!(image.as_deref(), Some("rust"));
     assert!(git_ref.is_none(), "blank git_ref stays unset");
@@ -835,8 +823,8 @@ async fn surface_management_is_owner_scoped_and_grantable() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (owner_id, _bear_id) = seed_member(&pool).await;
-    let (other_id, _other_bear) = seed_member(&pool).await;
+    let (owner_id, _bear_id, _bear_slug) = seed_member(&pool).await;
+    let (other_id, _other_bear, _other_bear_slug) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let owner_cookie = login_cookie(&app, owner_id).await;
     let other_cookie = login_cookie(&app, other_id).await;
@@ -921,7 +909,7 @@ async fn create_job_enforces_surface_assignment() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let (user_id, bear_id) = seed_member(&pool).await;
+    let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
@@ -949,7 +937,7 @@ async fn create_job_enforces_surface_assignment() {
         "bear_id={bear_id}&goal=Surface+gated&surface_id={surface_id}&root=&commit_policy=per_task\
          &task_title=Do+it&task_criteria=done"
     );
-    let response = post_form(&app, &cookie, "/work/new", job_body.clone()).await;
+    let response = post_form(&app, &cookie, &format!("/bear/{bear_slug}/work/new"), job_body.clone()).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     // Assign the bear from the surface page, then the same form succeeds and
@@ -962,7 +950,7 @@ async fn create_job_enforces_surface_assignment() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let response = post_form(&app, &cookie, "/work/new", job_body).await;
+    let response = post_form(&app, &cookie, &format!("/bear/{bear_slug}/work/new"), job_body).await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let (surface_ref, bound_id): (Option<String>, Option<Uuid>) = sqlx::query_as(
         "SELECT work_surface_ref, work_surface_id FROM bear_jobs

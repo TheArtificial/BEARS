@@ -6,11 +6,12 @@ use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
     DocketCommitPolicy, DocketConversationObjectiveRequest, DocketCriterionKind,
     DocketCriterionStateUpdate, DocketEffortHint, DocketExecutionLookup, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput,
-    DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope,
-    DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskDispatcher,
-    TaskListCheckoutRequest, TaskListCheckoutSource, TaskListSyncRequest, TaskListVisibility,
+    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus,
+    DocketService, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
+    DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
+    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy,
+    TaskDispatcher, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListSyncRequest,
+    TaskListVisibility,
 };
 
 async fn test_pool() -> Option<PgPool> {

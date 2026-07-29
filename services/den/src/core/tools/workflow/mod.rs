@@ -29,6 +29,7 @@ use crate::{
 };
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
 use den_runtime::plan_mode;
+use den_service::bears::db::get_bear;
 use den_service::{
     bears::BearProfile, client_sessions, conversation::persistence as conversation_persistence,
 };
@@ -37,7 +38,7 @@ const FOCUSED_CONVERSATION_TITLE_MAX_CHARS: usize = 120;
 
 /// Chat-facing identity for a Docket resource. `id` remains the only value
 /// callers may pass back to a tool; `display` is deliberately presentation
-/// only. Links are omitted until an authoritative Den UI route is available.
+/// only.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 struct DocketEntityPresentation {
     id: Uuid,
@@ -46,34 +47,60 @@ struct DocketEntityPresentation {
     href: Option<String>,
 }
 
-fn docket_entity_presentation(kind: &str, id: Uuid, ids: &[Uuid]) -> DocketEntityPresentation {
+fn docket_entity_presentation(
+    kind: &str,
+    id: Uuid,
+    ids: &[Uuid],
+    href: Option<String>,
+) -> DocketEntityPresentation {
     // Short handles are presentation only: tool inputs retain canonical UUIDs.
-    // Start at eight characters and extend only when this response contains a
-    // collision, so every displayed handle identifies exactly one result.
-    let id_text = id.to_string();
-    let prefix_len = (8..=id_text.len())
+    // Canonical URLs require at least sixteen hexadecimal characters; extend
+    // only when this response contains a collision.
+    let id_text = id.simple().to_string();
+    let prefix_len = (16..=id_text.len())
         .find(|&len| {
             ids.iter()
                 .filter(|other| **other != id)
-                .all(|other| !other.to_string().starts_with(&id_text[..len]))
+                .all(|other| !other.simple().to_string().starts_with(&id_text[..len]))
         })
         .unwrap_or(id_text.len());
     DocketEntityPresentation {
         id,
         display: format!("{kind} {}", &id_text[..prefix_len]),
-        href: None,
+        href,
     }
 }
 
 fn docket_entity_presentations(
     kind: &str,
     ids: impl IntoIterator<Item = Uuid>,
+    href_for: impl Fn(Uuid) -> Option<String>,
 ) -> Vec<DocketEntityPresentation> {
     let ids: Vec<Uuid> = ids.into_iter().collect();
     ids.iter()
         .copied()
-        .map(|id| docket_entity_presentation(kind, id, &ids))
+        .map(|id| docket_entity_presentation(kind, id, &ids, href_for(id)))
         .collect()
+}
+
+async fn docket_web_base(
+    pool: &PgPool,
+    config: &Config,
+    bear_id: Uuid,
+) -> Result<String, CustomError> {
+    let bear = get_bear(pool, bear_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound(format!("bear not found: {bear_id}")))?;
+    Ok(format!(
+        "{}/bear/{}/work",
+        config.web_server_url.trim_end_matches('/'),
+        bear.slug
+    ))
+}
+
+fn docket_resource_href(base: &str, segment: &str, id: Uuid) -> String {
+    let compact_id = id.simple().to_string();
+    format!("{base}/{segment}/{}", &compact_id[..16])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1089,6 +1116,7 @@ async fn resolve_surface_ref(
 
 pub(crate) async fn create_job(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
@@ -1129,11 +1157,17 @@ pub(crate) async fn create_job(
         })
         .await?;
     let task_list = docket::task_list_projection_from_docket_job(&job, None);
+    let web_base = docket_web_base(pool, config, context.bear_id).await?;
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "summary": docket_job_summary(&job),
-        "presentation": docket_entity_presentation("job", job.job.id, &[job.job.id]),
+        "presentation": docket_entity_presentation(
+            "job",
+            job.job.id,
+            &[job.job.id],
+            Some(docket_resource_href(&web_base, "jobs", job.job.id)),
+        ),
         "job": job,
         "task_list": task_list,
         "notes": [
@@ -1145,6 +1179,7 @@ pub(crate) async fn create_job(
 
 pub(crate) async fn list_jobs(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -1160,12 +1195,15 @@ pub(crate) async fn list_jobs(
             },
         )
         .await?;
+    let web_base = docket_web_base(pool, config, context.bear_id).await?;
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "summary": docket_job_rows_summary(&jobs),
         "count": jobs.len(),
-        "presentations": docket_entity_presentations("job", jobs.iter().map(|job| job.id)),
+        "presentations": docket_entity_presentations("job", jobs.iter().map(|job| job.id), |id| {
+            Some(docket_resource_href(&web_base, "jobs", id))
+        }),
         "jobs": jobs,
     }))
 }
@@ -1227,7 +1265,7 @@ pub(crate) async fn get_job(
         let items: Vec<Value> = runs
             .iter()
             .map(|run| {
-                let mut item = work_run_summary_json(run);
+                let mut item = work_run_summary_json(run, None);
                 if let Some(queue) = queue_by_run.get(&run.id) {
                     item["queue"] = queue.clone();
                 }
@@ -1573,6 +1611,7 @@ pub(crate) async fn create_task(
 
 pub(crate) async fn list_tasks(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
@@ -1600,13 +1639,18 @@ pub(crate) async fn list_tasks(
     let content = docket_tasks_card_content(&tasks);
     let summary =
         docket_tasks_summary_for_scope(&tasks, job_id, defaulted_to_conversation_objective);
+    let web_base = docket_web_base(pool, config, context.bear_id).await?;
     Ok(json!({
         "domain": "docket",
         "bear_id": context.bear_id,
         "content": content,
         "summary": summary,
         "count": tasks.len(),
-        "presentations": docket_entity_presentations("task", tasks.iter().map(|task| task.task.id)),
+        "presentations": docket_entity_presentations("task", tasks.iter().map(|task| task.task.id), |id| {
+            tasks.iter().find(|task| task.task.id == id).and_then(|task| task.task.job_id).map(|job_id| {
+                format!("{}#task-{}", docket_resource_href(&web_base, "jobs", job_id), id)
+            })
+        }),
         "counts": docket_task_counts(&tasks),
         "docket_scope": {
             "kind": if defaulted_to_conversation_objective { "conversation_objective" } else if job_id.is_some() { "explicit_job" } else { "session_task_list" },
@@ -2356,6 +2400,7 @@ pub(crate) struct WorkRunListArguments {
 
 pub(crate) async fn list_work_runs(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -2370,11 +2415,13 @@ pub(crate) async fn list_work_runs(
         },
     )
     .await?;
+    let web_base = docket_web_base(pool, config, context.bear_id).await?;
     let queue_by_run = work_run_queue_map(pool, &runs).await?;
     let items: Vec<Value> = runs
         .iter()
         .map(|run| {
-            let mut item = work_run_summary_json(run);
+            let mut item =
+                work_run_summary_json(run, Some(docket_resource_href(&web_base, "runs", run.id)));
             if let Some(queue) = queue_by_run.get(&run.id) {
                 item["queue"] = queue.clone();
             }
@@ -2383,7 +2430,9 @@ pub(crate) async fn list_work_runs(
         .collect();
     Ok(json!({
         "ok": true,
-        "presentations": docket_entity_presentations("work run", runs.iter().map(|run| run.id)),
+        "presentations": docket_entity_presentations("work run", runs.iter().map(|run| run.id), |id| {
+            Some(docket_resource_href(&web_base, "runs", id))
+        }),
         "work_runs": items,
     }))
 }
@@ -2441,7 +2490,7 @@ pub(crate) async fn get_work_run(
         .ok_or_else(|| {
             CustomError::NotFound(format!("work run not found: {}", args.work_run_id))
         })?;
-    let mut value = work_run_summary_json(&run);
+    let mut value = work_run_summary_json(&run, None);
     value["work_surface"] = run.work_surface.clone().unwrap_or(Value::Null);
     // Result refs already carry the bounded log tail / diff captured at
     // harvest time; live logs for active runs are on the /work web UI.
@@ -2458,6 +2507,7 @@ pub(crate) async fn get_work_run(
 
 pub(crate) async fn find_work_run(
     pool: &PgPool,
+    config: &Config,
     context: &DenToolInvocationContext,
     arguments: Value,
 ) -> Result<Value, CustomError> {
@@ -2493,6 +2543,7 @@ pub(crate) async fn find_work_run(
             let job_id = resolve_reference(reference, "job", jobs.into_iter().map(|job| job.id))?;
             list_work_runs(
                 pool,
+                config,
                 context,
                 json!({ "job_id": job_id, "limit": args.limit.unwrap_or(50) }),
             )
@@ -2631,35 +2682,39 @@ mod docket_entity_presentation_tests {
     }
 
     #[test]
-    fn uses_eight_character_typed_handle_when_unambiguous() {
+    fn uses_sixteen_character_typed_handle_when_unambiguous() {
         let entity = docket_entity_presentation(
             "job",
             id("e4e4797b-2d29-4800-856e-b8220a9097dd"),
             &[id("e4e4797b-2d29-4800-856e-b8220a9097dd")],
+            None,
         );
 
-        assert_eq!(entity.display, "job e4e4797b");
+        assert_eq!(entity.display, "job e4e4797b2d294800");
         assert_eq!(entity.href, None);
     }
 
     #[test]
     fn extends_handle_when_response_ids_share_the_default_prefix() {
         let ids = [
-            id("e4e4797b-0d29-4800-856e-b8220a9097dd"),
-            id("e4e4797b-1d29-4800-856e-b8220a9097dd"),
+            id("e4e4797b-2d29-4800-856e-b8220a9097dd"),
+            id("e4e4797b-2d29-4800-956e-b8220a9097dd"),
         ];
 
-        let entities = docket_entity_presentations("work run", ids);
+        let entities = docket_entity_presentations("work run", ids, |_| None);
         let displays: Vec<_> = entities
             .iter()
             .map(|entity| entity.display.as_str())
             .collect();
 
-        assert_eq!(displays, ["work run e4e4797b-0", "work run e4e4797b-1"]);
+        assert_eq!(
+            displays,
+            ["work run e4e4797b2d2948008", "work run e4e4797b2d2948009"]
+        );
     }
 }
 
-fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
+fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow, href: Option<String>) -> Value {
     fn ts(value: Option<time::OffsetDateTime>) -> Value {
         value
             .and_then(|t| {
@@ -2670,7 +2725,7 @@ fn work_run_summary_json(run: &den_docket::work_runs::WorkRunRow) -> Value {
     }
     json!({
         "work_run_id": run.id,
-        "presentation": docket_entity_presentation("work run", run.id, &[run.id]),
+        "presentation": docket_entity_presentation("work run", run.id, &[run.id], href),
         "state": run.state,
         "attempt": run.attempt,
         "job_id": run.job_id,

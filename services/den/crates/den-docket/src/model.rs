@@ -1305,10 +1305,16 @@ impl fmt::Display for DocketValidationError {
                 f.write_str("Docket job overlap resolution `supersede` requires supersedes_job_id")
             }
             Self::SupersedeRequiresMatchingActiveJob { job_id } => {
-                write!(f, "Docket job `{job_id}` is not an active matching predecessor")
+                write!(
+                    f,
+                    "Docket job `{job_id}` is not an active matching predecessor"
+                )
             }
             Self::ActiveJobOverlap { job_id } => {
-                write!(f, "an active Docket job already owns this goal and work surface: {job_id}")
+                write!(
+                    f,
+                    "an active Docket job already owns this goal and work surface: {job_id}"
+                )
             }
         }
     }

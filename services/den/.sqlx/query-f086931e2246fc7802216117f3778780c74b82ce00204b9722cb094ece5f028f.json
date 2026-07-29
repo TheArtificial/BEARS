@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT t.id FROM bear_tasks t JOIN bear_jobs j ON j.id = t.job_id WHERE replace(t.id::text, '-', '') LIKE $1 || '%' AND j.bear_id = $2 LIMIT 2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f086931e2246fc7802216117f3778780c74b82ce00204b9722cb094ece5f028f"
+}

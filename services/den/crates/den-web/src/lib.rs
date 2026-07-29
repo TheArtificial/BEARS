@@ -337,6 +337,7 @@ pub async fn server(
                 .merge(bear::manage::router())
                 .merge(onboarding::router())
                 .merge(work::router())
+                .nest("/bear/{bear_slug}", work::docket_router())
                 // TSR: conversation links use `/bear/{slug}/?conversation_id=…`; plain `/bear/{slug}` is the canonical chat URL.
                 .route_with_tsr("/bear/{slug}", get(bear::chat::bear_page))
                 .route_layer(login_required!(Backend, login_url = "/login")),

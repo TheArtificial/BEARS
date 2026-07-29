@@ -23,8 +23,9 @@ use crate::work_runs::{
 };
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobStatus, DocketJobOverlapResolution, DocketService, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
-    DocketTaskScope, PgDocketService, RoutingStrategy, TaskListVisibility,
+    DocketJobOverlapResolution, DocketJobStatus, DocketService, DocketTaskDifficulty,
+    DocketTaskInput, DocketTaskKind, DocketTaskScope, PgDocketService, RoutingStrategy,
+    TaskListVisibility,
 };
 
 /// `claim_next_work_run` is deliberately global (any runner takes the oldest
@@ -631,7 +632,10 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
         .unwrap()
         .expect("run exists");
     assert_eq!(cancelled.cancel_requested_by.as_deref(), Some("test"));
-    assert_eq!(cancelled.cancel_reason.as_deref(), Some("test cancellation"));
+    assert_eq!(
+        cancelled.cancel_reason.as_deref(),
+        Some("test cancellation")
+    );
     assert!(cancelled.cancel_requested_at.is_some());
 
     let finalized = finalize_work_run(
@@ -648,20 +652,28 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .await
     .unwrap();
     assert_eq!(finalized.state, "blocked");
-    let (task_status, task_summary, task_refs): (String, Option<String>, Option<serde_json::Value>) =
-        sqlx::query_as(
-            "SELECT status, result_summary, result_refs FROM bear_task_run_state \
+    let (task_status, task_summary, task_refs): (
+        String,
+        Option<String>,
+        Option<serde_json::Value>,
+    ) = sqlx::query_as(
+        "SELECT status, result_summary, result_refs FROM bear_task_run_state \
              WHERE run_id = $1 AND task_id = $2",
-        )
-        .bind(run.job_run_id)
-        .bind(task_ids[0])
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    )
+    .bind(run.job_run_id)
+    .bind(task_ids[0])
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(task_status, "blocked");
-    assert_eq!(task_summary.as_deref(), Some("Work run cancelled: test cancellation"));
     assert_eq!(
-        task_refs.as_ref().and_then(|refs| refs.get("cancel_requested_by")),
+        task_summary.as_deref(),
+        Some("Work run cancelled: test cancellation")
+    );
+    assert_eq!(
+        task_refs
+            .as_ref()
+            .and_then(|refs| refs.get("cancel_requested_by")),
         Some(&serde_json::json!("test"))
     );
     let (job_status, job_run_state): (String, String) = sqlx::query_as(

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Work job{% endblock %}
 {% block content %}
-<p><a href="/work">← Work</a></p>
+<p><a href="/bear/{{ bear_slug }}/work">← Work</a></p>
 <h1>Job <code class="entity-reference-id">{{ job_display_id }}</code></h1>
 <h2>{{ goal }}</h2>
 <p>
@@ -15,7 +15,7 @@
 {% endif %}
 <details>
     <summary>Edit job settings</summary>
-    <form method="post" action="/work/jobs/{{ job_id }}/edit">
+    <form method="post" action="/bear/{{ bear_slug }}/work/jobs/{{ job_id }}/edit">
         <p><label>Goal<br><input name="goal" value="{{ goal }}" required size="80"></label></p>
         <p><label>Work surface<br>
             <select name="surface_id">
@@ -37,11 +37,11 @@
         <button type="submit">Save job settings</button>
     </form>
 </details>
-<form method="post" action="/work/jobs/{{ job_id }}/duplicate">
+<form method="post" action="/bear/{{ bear_slug }}/work/jobs/{{ job_id }}/duplicate">
     <button type="submit">Duplicate job</button>
     <small>Copies job intent, criteria, work-surface settings, and task definitions into a fresh job.</small>
 </form>
-<form method="post" action="/work/jobs/{{ job_id }}/archive">
+<form method="post" action="/bear/{{ bear_slug }}/work/jobs/{{ job_id }}/archive">
     <button type="submit">{% if status == "archived" %}Unarchive job{% else %}Archive job{% endif %}</button>
 </form>
 
@@ -49,7 +49,7 @@
 <section>
     <h2>Job lifecycle</h2>
     {% if tasks_complete %}
-    <form method="post" action="/work/jobs/{{ job_id }}/complete">
+    <form method="post" action="/bear/{{ bear_slug }}/work/jobs/{{ job_id }}/complete">
         <button type="submit">Mark job completed</button>
         <small>Accepts any remaining job-level criteria as met and closes the current Docket run.</small>
     </form>
@@ -69,7 +69,7 @@
 <section>
     <h2>Work needs attention</h2>
     <p><strong>{{ attention_run.state }}</strong>: {{ attention_run.result_summary or attention_run.error or "The work run ended before all tasks were complete." }}</p>
-    <p><a href="/work/runs/{{ attention_run.route_id }}">{{ attention_run.title }}</a>. Inspect the task list to see whether the worker marked a task blocked and, if so, its rerun condition.</p>
+    <p><a href="/bear/{{ bear_slug }}/work/runs/{{ attention_run.route_id }}">{{ attention_run.title }}</a>. Inspect the task list to see whether the worker marked a task blocked and, if so, its rerun condition.</p>
 </section>
 {% endif %}
 
@@ -78,9 +78,9 @@
     <h2>Dispatch job</h2>
     <p>Queues one sandbox run for this job's pending or blocked tasks. The tasks run within that shared job session.</p>
     {% if has_active_work_run %}
-    <p><button type="button" disabled>Dispatch job</button> A job work session is already active. <a href="/work/runs/{{ active_work_run.route_id }}">{{ active_work_run.title }}</a>.</p>
+    <p><button type="button" disabled>Dispatch job</button> A job work session is already active. <a href="/bear/{{ bear_slug }}/work/runs/{{ active_work_run.route_id }}">{{ active_work_run.title }}</a>.</p>
     {% elif has_runnable_work %}
-    <form method="post" action="/work/jobs/{{ job_id }}/dispatch">
+    <form method="post" action="/bear/{{ bear_slug }}/work/jobs/{{ job_id }}/dispatch">
         {% if work_surface_ref %}
         <p>Using job work surface <code>{{ work_surface_ref }}</code>.</p>
         {% elif catalog and catalog.roots %}
@@ -109,7 +109,7 @@
         {% if status not in ["completed", "cancelled", "archived"] %}
         <details>
             <summary>Add top-level task</summary>
-            <form method="post" action="/work/jobs/{{ job_id }}/tasks">
+            <form method="post" action="/bear/{{ bear_slug }}/work/jobs/{{ job_id }}/tasks">
                 <p><label>Task title<br><input name="title" required size="60"></label></p>
                 <p><label>Task body<br><textarea name="body" rows="3" cols="70" placeholder="Defaults to the title"></textarea></label></p>
                 <p><label>Completion criteria <small>(semicolon-separated)</small><br><input name="criteria" required size="70"></label></p>
@@ -123,8 +123,8 @@
                 {% for task in tasks %}
                 <tr>
                     <td>
-                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/up" class="inline-form"><button type="submit" aria-label="Move task up">↑</button></form>
-                        <form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/down" class="inline-form"><button type="submit" aria-label="Move task down">↓</button></form>
+                        <form method="post" action="/bear/{{ bear_slug }}/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/up" class="inline-form"><button type="submit" aria-label="Move task up">↑</button></form>
+                        <form method="post" action="/bear/{{ bear_slug }}/work/jobs/{{ job_id }}/tasks/{{ task.id }}/move/down" class="inline-form"><button type="submit" aria-label="Move task down">↓</button></form>
                     </td>
                     <td style="padding-left: {{ task.depth * 1.5 }}rem">
                         <a href="#task-{{ task.display_id }}" id="task-{{ task.display_id }}" title="UUID prefix for {{ task.full_id }}"><code class="entity-reference-id">{{ task.display_id }}</code></a>
@@ -141,10 +141,10 @@
                             <p>{{ task.title }}</p>
                             {% if task.blocker_reason %}<p><strong>Blocked because:</strong> {{ task.blocker_reason }}</p>{% endif %}
                             {% if task.retry_reason %}<p><small>Retry requested: {{ task.retry_reason }}{% if task.previous_blocked_reason %} (previous blocker: {{ task.previous_blocked_reason }}){% endif %}</small></p>{% endif %}
-                            {% if task.run_route_id %}<p><a href="/work/runs/{{ task.run_route_id }}">Run <code class="entity-reference-id">{{ task.run_display_id }}</code></a></p>{% endif %}
+                            {% if task.run_route_id %}<p><a href="/bear/{{ bear_slug }}/work/runs/{{ task.run_route_id }}">Run <code class="entity-reference-id">{{ task.run_display_id }}</code></a></p>{% endif %}
                             <ul>{% for criterion in task.completion_criteria %}<li>{{ criterion }}</li>{% endfor %}</ul>
-                            {% if task.can_retry %}<form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/retry"><label>Reason <input name="reason" required></label><button type="submit">Retry task</button></form>{% endif %}
-                            <details><summary>Add child task</summary><form method="post" action="/work/jobs/{{ job_id }}/tasks/{{ task.id }}/children"><label>Title <input name="title" required></label><label>Criteria <input name="criteria" required></label><label>Details <textarea name="body"></textarea></label><button type="submit">Add child</button></form></details>
+                            {% if task.can_retry %}<form method="post" action="/bear/{{ bear_slug }}/work/jobs/{{ job_id }}/tasks/{{ task.id }}/retry"><label>Reason <input name="reason" required></label><button type="submit">Retry task</button></form>{% endif %}
+                            <details><summary>Add child task</summary><form method="post" action="/bear/{{ bear_slug }}/work/jobs/{{ job_id }}/tasks/{{ task.id }}/children"><label>Title <input name="title" required></label><label>Criteria <input name="criteria" required></label><label>Details <textarea name="body"></textarea></label><button type="submit">Add child</button></form></details>
                         </details>
                     </td>
                 </tr>
@@ -164,10 +164,10 @@
         <tbody>
             {% for run in runs %}
             <tr>
-                <td><a href="/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></td>
+                <td><a href="/bear/{{ bear_slug }}/work/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></td>
                 <td>
                     {{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}
-                    {%- if run.queue_position %} (#{{ run.queue_position }} in queue{% if run.waiting_on_run_id %}, behind <a href="/work/runs/{{ run.waiting_on_run_id }}">Run <code class="entity-reference-id">{{ run.waiting_on_run_id[:8] }}</code></a>{% endif %}){% endif %}
+                    {%- if run.queue_position %} (#{{ run.queue_position }} in queue{% if run.waiting_on_run_id %}, behind <a href="/bear/{{ bear_slug }}/work/runs/{{ run.waiting_on_run_id }}">Run <code class="entity-reference-id">{{ run.waiting_on_run_id[:8] }}</code></a>{% endif %}){% endif %}
                 </td>
                 <td>{{ run.attempt }}</td>
                 <td>{{ run.result_summary or run.error or "—" }}</td>
