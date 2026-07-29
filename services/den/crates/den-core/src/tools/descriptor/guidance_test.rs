@@ -1,12 +1,29 @@
-use crate::tools::{
-    constants::{
-        DEN_JOB_CREATE_PROVIDER, DEN_JOB_FIND_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
-        DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER, DEN_TASK_CREATE_PROVIDER,
-        DEN_TASK_FIND_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT_PROVIDER,
-        DEN_TASK_LIST_PROVIDER, DEN_WORK_RUN_FIND_PROVIDER,
+use crate::{
+    client_tools::{provider_tool_descriptor, ClientToolName},
+    tools::{
+        constants::{
+            DEN_JOB_CREATE_PROVIDER, DEN_JOB_FIND_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
+            DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER, DEN_TASK_CREATE_PROVIDER,
+            DEN_TASK_FIND_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT_PROVIDER,
+            DEN_TASK_LIST_PROVIDER, DEN_WORK_RUN_FIND_PROVIDER,
+        },
+        descriptor::builtin_den_tool_descriptors,
     },
-    descriptor::builtin_den_tool_descriptors,
 };
+
+#[test]
+fn apply_patch_schema_explains_required_diff_and_edit_file_fallback() {
+    let schema = provider_tool_descriptor(ClientToolName::ApplyPatch)["parameters"].clone();
+    let description = schema["properties"]["patch"]["description"]
+        .as_str()
+        .expect("patch description");
+
+    assert!(description.contains("Restricted patch format"));
+    assert!(description.contains("--- a/path"));
+    assert!(description.contains("full target content"));
+    assert!(description.contains("Markdown fences"));
+    assert!(description.contains("fs_edit_file"));
+}
 
 #[test]
 fn session_info_descriptor_keeps_explicit_orientation_language() {
@@ -149,8 +166,12 @@ fn docket_work_descriptors_keep_execution_evidence_and_surfaces_explicit() {
         .iter()
         .find(|descriptor| descriptor.provider_name == "get_work_run")
         .expect("get_work_run descriptor");
-    assert!(work_run.description.contains("terminal result and durable evidence"));
-    assert!(work_run.description.contains("not implicitly accessible to Pair"));
+    assert!(work_run
+        .description
+        .contains("terminal result and durable evidence"));
+    assert!(work_run
+        .description
+        .contains("not implicitly accessible to Pair"));
     assert!(work_run.description.contains("work run e4e4797b"));
 
     for (provider_name, expected_handle) in [

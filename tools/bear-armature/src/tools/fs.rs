@@ -1664,7 +1664,7 @@ fn parse_simple_unified_patch(patch: &str) -> Result<Vec<PatchFile>> {
     }
     if files.is_empty() {
         return Err(anyhow!(
-            "fs_apply_patch patch did not contain any file diffs"
+            "fs_apply_patch found no file diff headers. Supply a non-empty patch with paired `--- a/path` and `+++ b/path` headers (or `/dev/null` for creates/deletes); omit prose and Markdown fences. For one exact replacement in one file, use fs_edit_file."
         ));
     }
     Ok(files)
@@ -2030,6 +2030,17 @@ fn format_search_results(query: &str, matches: &[Value], truncated: bool) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_simple_unified_patch_explains_missing_file_headers() {
+        let error = parse_simple_unified_patch("```diff\n+hello\n```")
+            .expect_err("patch without file headers must fail");
+        let message = error.to_string();
+
+        assert!(message.contains("found no file diff headers"));
+        assert!(message.contains("--- a/path"));
+        assert!(message.contains("fs_edit_file"));
+    }
 
     #[test]
     fn glob_match_supports_star_question_mark_and_globstar() {

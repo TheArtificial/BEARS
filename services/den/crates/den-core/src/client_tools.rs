@@ -1131,7 +1131,7 @@ pub fn provider_tool_descriptor(tool: ClientToolName) -> serde_json::Value {
         ),
         ClientToolName::ApplyPatch => object_schema(
             json!({
-                "patch": { "type": "string", "description": "Unified diff patch to apply within the workspace." },
+                "patch": { "type": "string", "description": "Restricted patch format: a non-empty patch with paired `--- a/path` and `+++ b/path` headers (or `/dev/null` for creates/deletes). The tool reconstructs each resulting file from context (` `) and added (`+`) lines; include the full target content, not a partial Git hunk. Do not send prose or Markdown fences. For one exact replacement in one file, use fs_edit_file instead." },
                 "dry_run": { "type": "boolean", "default": false, "description": "Validate without writing changes." }
             }),
             vec!["patch"],
