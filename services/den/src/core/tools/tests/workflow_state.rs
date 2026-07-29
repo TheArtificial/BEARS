@@ -27,21 +27,17 @@ fn pair_context() -> DenToolInvocationContext {
     }
 }
 
-use crate::core::{
-    tools::{
-        activity_payloads::{
-            activity_payload, no_active_workplan_payload, plan_mode_workplan_payload,
-        },
-        descriptor::builtin_den_tool_descriptor_for_provider_name,
-        memory_write::MemoryWriteEntryArguments,
-        session::{DenToolInvocationContext, invoke_den_tool},
-        support::validate_memory_write_entry_semantics,
-    },
+use crate::core::tools::{
+    activity_payloads::{activity_payload, no_active_workplan_payload, plan_mode_workplan_payload},
+    descriptor::builtin_den_tool_descriptor_for_provider_name,
+    memory_write::MemoryWriteEntryArguments,
+    session::{invoke_den_tool, DenToolInvocationContext},
+    support::validate_memory_write_entry_semantics,
 };
-use den_core::client_tools::{ClientToolName, provider_tool_descriptor};
-use den_core::tools::preflight::{ToolSemanticWarning, tool_warning_payload};
-use den_docket::{TaskListUpdateItem, TaskListItemStatus, TaskListLocalProjection};
-use den_runtime::{plan_mode::PlanModeSessionRow};
+use den_core::client_tools::{provider_tool_descriptor, ClientToolName};
+use den_core::tools::preflight::{tool_warning_payload, ToolSemanticWarning};
+use den_docket::{TaskListItemStatus, TaskListLocalProjection, TaskListUpdateItem};
+use den_runtime::plan_mode::PlanModeSessionRow;
 
 #[test]
 fn descriptor_exposes_turn_state_domain_metadata() {
@@ -62,7 +58,9 @@ fn descriptor_exposes_turn_state_domain_metadata() {
 fn armature_client_descriptors_expose_execution_domain_metadata() {
     let descriptor = provider_tool_descriptor(ClientToolName::ReadTextFile);
     assert_eq!(descriptor["name"], "fs_read_text_file");
-    assert!(descriptor["description"].as_str().is_some_and(|text| text.contains("armature.fs.read_text_file")));
+    assert!(descriptor["description"]
+        .as_str()
+        .is_some_and(|text| text.contains("armature.fs.read_text_file")));
 }
 
 #[test]
@@ -282,9 +280,14 @@ async fn create_task_preserves_explicit_session_anchor_without_current_session_l
     }))
     .unwrap();
 
-    let resolved = super::super::default_task_session_anchor_id(&pool, &pair_context(), &args)
-        .await
-        .unwrap();
+    let resolved = super::super::resolve_task_session_anchor_id(
+        &pool,
+        &pair_context(),
+        args.job_id,
+        args.session_anchor_id,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resolved, Some(anchor));
 }
@@ -301,10 +304,15 @@ async fn create_task_without_job_defaults_to_current_session_or_fails_before_db(
     }))
     .unwrap();
 
-    let err = super::super::default_task_session_anchor_id(&pool, &context, &args)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = super::super::resolve_task_session_anchor_id(
+        &pool,
+        &context,
+        args.job_id,
+        args.session_anchor_id,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
 
     assert!(err.contains("current client session"));
 }
@@ -334,24 +342,29 @@ fn attached_work_dispatch_requires_current_explicit_workspace() {
         "target": "attached_armature"
     }))
     .unwrap();
-    assert!(
-        super::super::attached_dispatch_target(&args, &context)
-            .unwrap_err()
-            .to_string()
-            .contains("not attached")
-    );
+    assert!(super::super::attached_dispatch_target(&args, &context)
+        .unwrap_err()
+        .to_string()
+        .contains("not attached"));
 }
 
 #[test]
 fn work_run_surface_projection_keeps_pair_report_only() {
-    assert_eq!(super::super::execution_surface_kind("sandbox"), "work_sandbox");
+    assert_eq!(
+        super::super::execution_surface_kind("sandbox"),
+        "work_sandbox"
+    );
     assert_eq!(
         super::super::execution_surface_kind("attached_armature"),
         "attached_armature"
     );
-    assert!(super::super::work_run_may_contain_partial_changes("blocked"));
+    assert!(super::super::work_run_may_contain_partial_changes(
+        "blocked"
+    ));
     assert!(super::super::work_run_may_contain_partial_changes("failed"));
-    assert!(!super::super::work_run_may_contain_partial_changes("succeeded"));
+    assert!(!super::super::work_run_may_contain_partial_changes(
+        "succeeded"
+    ));
 }
 
 #[test]

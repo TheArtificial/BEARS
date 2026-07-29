@@ -3,9 +3,9 @@ use crate::{
     tools::{
         constants::{
             DEN_JOB_CREATE_PROVIDER, DEN_JOB_FIND_PROVIDER, DEN_MEMORY_WRITE_ENTRY_PROVIDER,
-            DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER, DEN_TASK_CREATE_PROVIDER,
-            DEN_TASK_FIND_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER, DEN_TASK_LIST_CHECKOUT_PROVIDER,
-            DEN_TASK_LIST_PROVIDER, DEN_WORK_RUN_FIND_PROVIDER,
+            DEN_PROMPT_MEMORY_UPSERT_PROVIDER, DEN_SITUATION_GET_PROVIDER,
+            DEN_TASK_CREATE_PROVIDER, DEN_TASK_FIND_PROVIDER, DEN_TASK_LISTS_UPDATE_PROVIDER,
+            DEN_TASK_LIST_CHECKOUT_PROVIDER, DEN_TASK_LIST_PROVIDER, DEN_WORK_RUN_FIND_PROVIDER,
         },
         descriptor::builtin_den_tool_descriptors,
     },
@@ -77,9 +77,7 @@ fn task_list_update_descriptor_includes_active_work_state_guidance() {
         .description
         .contains("Use durable Docket job/task tools"));
     assert!(descriptor.description.contains("user-visible"));
-    assert!(descriptor
-        .description
-        .contains("current conversation's implied Docket objective"));
+    assert!(descriptor.description.contains("current Pair task tree"));
     assert!(descriptor
         .description
         .contains("do not authorize autonomous execution"));
@@ -87,7 +85,7 @@ fn task_list_update_descriptor_includes_active_work_state_guidance() {
 }
 
 #[test]
-fn docket_descriptors_distinguish_conversation_objectives_from_explicit_jobs() {
+fn docket_descriptors_distinguish_pair_task_trees_from_work_jobs() {
     let descriptors = builtin_den_tool_descriptors();
 
     let create_job = descriptors
@@ -108,26 +106,20 @@ fn docket_descriptors_distinguish_conversation_objectives_from_explicit_jobs() {
         .find(|descriptor| descriptor.provider_name == DEN_TASK_CREATE_PROVIDER)
         .expect("create_task descriptor");
     assert!(create_task.description.contains("durable/resumable plans"));
-    assert!(create_task
-        .description
-        .contains("current conversation's implied Docket objective"));
+    assert!(create_task.description.contains("current Pair task tree"));
     assert!(create_task.description.contains("does not execute work"));
 
     let list_tasks = descriptors
         .iter()
         .find(|descriptor| descriptor.provider_name == DEN_TASK_LIST_PROVIDER)
         .expect("list_tasks descriptor");
-    assert!(list_tasks
-        .description
-        .contains("current conversation's implied Docket objective"));
+    assert!(list_tasks.description.contains("current Pair task tree"));
 
     let checkout = descriptors
         .iter()
         .find(|descriptor| descriptor.provider_name == DEN_TASK_LIST_CHECKOUT_PROVIDER)
         .expect("checkout_task_list descriptor");
-    assert!(checkout
-        .description
-        .contains("current conversation's implied Docket objective"));
+    assert!(checkout.description.contains("current Pair task tree"));
     assert!(checkout.description.contains("does not execute tasks"));
     assert!(!checkout
         .input_schema

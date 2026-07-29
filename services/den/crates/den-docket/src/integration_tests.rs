@@ -4,13 +4,12 @@ use uuid::Uuid;
 
 use crate::{
     docket_task_status_from_task_list_item_status, task_list_projection_from_docket_job,
-    DocketCommitPolicy, DocketConversationObjectiveRequest, DocketCriterionKind,
-    DocketCriterionStateUpdate, DocketEffortHint, DocketExecutionLookup, DocketJobCreate,
-    DocketJobCriterionInput, DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus,
-    DocketService, DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskDifficulty,
-    DocketTaskInput, DocketTaskKind, DocketTaskListFilter, DocketTaskRunStateUpdate,
-    DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, PgDocketService, RoutingStrategy,
-    TaskDispatcher, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListSyncRequest,
+    DocketCommitPolicy, DocketCriterionKind, DocketCriterionStateUpdate, DocketEffortHint,
+    DocketExecutionLookup, DocketJobCreate, DocketJobCriterionInput, DocketJobExecuteRequest,
+    DocketJobOverlapResolution, DocketJobStatus, DocketService, DocketTaskCreate,
+    DocketTaskDefinitionPatch, DocketTaskDifficulty, DocketTaskInput, DocketTaskKind,
+    DocketTaskListFilter, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
+    DocketTaskUpdate, PgDocketService, RoutingStrategy, TaskDispatcher, TaskListSyncRequest,
     TaskListVisibility,
 };
 
@@ -25,6 +24,10 @@ async fn test_pool() -> Option<PgPool> {
         .ok()?;
     sqlx::migrate!("../../migrations").run(&pool).await.ok()?;
     Some(pool)
+}
+
+fn test_work_surface_id(bear_id: Uuid) -> Uuid {
+    bear_id
 }
 
 async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
@@ -60,6 +63,33 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     .await
     .expect("seed bear");
 
+    let surface_id = test_work_surface_id(bear_id);
+    let surface_name = format!("surface-{}", &surface_id.simple().to_string()[..12]);
+    sqlx::query!(
+        r#"
+        INSERT INTO work_surfaces (id, name, upstream_url, created_by_user_id)
+        VALUES ($1, $2, $3, $4)
+        "#,
+        surface_id,
+        surface_name,
+        "https://example.test/docket.git",
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .expect("seed work surface");
+    sqlx::query!(
+        r#"
+        INSERT INTO work_surface_bears (surface_id, bear_id)
+        VALUES ($1, $2)
+        "#,
+        surface_id,
+        bear_id,
+    )
+    .execute(pool)
+    .await
+    .expect("assign work surface");
+
     (user_id, bear_id)
 }
 
@@ -69,8 +99,8 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
         created_by_user_id: user_id,
         created_by_role: "pair".to_string(),
         goal: format!("Docket integration lifecycle {}", Uuid::new_v4().simple()),
-        work_surface_ref: None,
-        work_surface_id: None,
+        work_surface_ref: Some(format!("surface-{}", &bear_id.simple().to_string()[..12])),
+        work_surface_id: Some(test_work_surface_id(bear_id)),
         commit_policy: Some(DocketCommitPolicy::None),
         work_branch: None,
         status: DocketJobStatus::Ready,
@@ -120,159 +150,6 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
             },
         ],
     }
-}
-
-#[tokio::test]
-async fn conversation_objective_checkout_projects_active_subtree_after_reconnect() {
-    let Some(pool) = test_pool().await else {
-        eprintln!("skipping postgres-backed docket integration test; database unavailable");
-        return;
-    };
-    let (user_id, bear_id) = seed_user_and_bear(&pool, "conversation-objective").await;
-    let service = PgDocketService::from_pool(&pool);
-
-    let first = service
-        .get_or_create_conversation_objective(DocketConversationObjectiveRequest {
-            bear_id,
-            created_by_user_id: user_id,
-            created_by_role: "pair".to_string(),
-            source_conversation_id: "conversation-1".to_string(),
-        })
-        .await
-        .expect("create conversation objective");
-    let second = service
-        .get_or_create_conversation_objective(DocketConversationObjectiveRequest {
-            bear_id,
-            created_by_user_id: user_id,
-            created_by_role: "pair".to_string(),
-            source_conversation_id: "conversation-1".to_string(),
-        })
-        .await
-        .expect("reuse conversation objective");
-
-    assert_eq!(first.job.id, second.job.id);
-    assert_eq!(
-        first.job.source_conversation_id.as_deref(),
-        Some("conversation-1")
-    );
-    assert_eq!(
-        first.job.objective_kind.as_deref(),
-        Some("conversation_task_list")
-    );
-
-    let (count,): (i64,) = sqlx::query_as(
-        r"
-        SELECT COUNT(*)
-        FROM bear_jobs
-        WHERE bear_id = $1
-          AND source_conversation_id = 'conversation-1'
-          AND objective_kind = 'conversation_task_list'
-          AND status NOT IN ('completed', 'cancelled', 'archived')
-        ",
-    )
-    .bind(bear_id)
-    .fetch_one(&pool)
-    .await
-    .expect("count conversation objectives");
-    assert_eq!(count, 1);
-
-    let parent = service
-        .create_task(DocketTaskCreate {
-            bear_id,
-            job_id: Some(first.job.id),
-            session_anchor_id: None,
-            parent_task_id: None,
-            sibling_order: 0,
-            kind: DocketTaskKind::Execution,
-            scope: DocketTaskScope::Template,
-            title: "Parent task".to_string(),
-            body: "Own the active subtree".to_string(),
-            completion_criteria: vec!["Subtree is projected".to_string()],
-            difficulty: Some(DocketTaskDifficulty::Trivial),
-            effort_hint: Some(DocketEffortHint::Low),
-            routing_strategy: RoutingStrategy::Auto,
-            expected_context_size: None,
-            result_rollup_policy: None,
-            created_by_role: "pair".to_string(),
-            created_by_user_id: Some(user_id),
-            created_by_agent_id: None,
-            created_in_run_id: first.job.current_run_id,
-        })
-        .await
-        .expect("create parent task");
-    let child = service
-        .create_task(DocketTaskCreate {
-            bear_id,
-            job_id: Some(first.job.id),
-            session_anchor_id: None,
-            parent_task_id: Some(parent.id),
-            sibling_order: 0,
-            kind: DocketTaskKind::Execution,
-            scope: DocketTaskScope::Template,
-            title: "Child task".to_string(),
-            body: "Stay active across reconnect".to_string(),
-            completion_criteria: vec!["Child is current".to_string()],
-            difficulty: Some(DocketTaskDifficulty::Trivial),
-            effort_hint: Some(DocketEffortHint::Low),
-            routing_strategy: RoutingStrategy::Auto,
-            expected_context_size: None,
-            result_rollup_policy: None,
-            created_by_role: "pair".to_string(),
-            created_by_user_id: Some(user_id),
-            created_by_agent_id: None,
-            created_in_run_id: first.job.current_run_id,
-        })
-        .await
-        .expect("create child task");
-    service
-        .update_task(DocketTaskUpdate {
-            bear_id,
-            job_id: None,
-            task_id: child.id,
-            actor_role: BearProfile::Pair,
-            actor_user_id: Some(user_id),
-            actor_agent_id: None,
-            definition: DocketTaskDefinitionPatch::default(),
-            run_state: Some(DocketTaskRunStateUpdate {
-                run_id: first
-                    .job
-                    .current_run_id
-                    .expect("conversation objective run"),
-                status: DocketTaskStatus::InProgress,
-                result_refs: None,
-                result_summary: None,
-            }),
-        })
-        .await
-        .expect("mark child active");
-
-    let projected = service
-        .checkout_task_list(
-            bear_id,
-            BearProfile::Pair,
-            user_id,
-            TaskListCheckoutRequest {
-                source: TaskListCheckoutSource::ConversationObjective {
-                    request: DocketConversationObjectiveRequest {
-                        bear_id,
-                        created_by_user_id: user_id,
-                        created_by_role: "pair".to_string(),
-                        source_conversation_id: "conversation-1".to_string(),
-                    },
-                    active_subtree: true,
-                },
-            },
-        )
-        .await
-        .expect("checkout conversation objective")
-        .expect("conversation objective projection");
-    assert_eq!(projected.id, first.job.id);
-    assert_eq!(projected.items.len(), 1);
-    assert_eq!(projected.items[0].id, child.id.to_string());
-    assert_eq!(
-        projected.current_item.as_ref().map(|item| item.id.as_str()),
-        Some(child.id.to_string().as_str())
-    );
 }
 
 #[tokio::test]

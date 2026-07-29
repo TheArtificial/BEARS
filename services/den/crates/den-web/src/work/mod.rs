@@ -206,10 +206,7 @@ pub fn docket_router() -> Router<AppState> {
         .route("/jobs/{job_id}/archive", post(archive_job))
         .route("/jobs/{job_id}/tasks", post(add_top_level_task))
         .route("/jobs/{job_id}/dispatch", post(dispatch_job))
-        .route(
-            "/jobs/{job_id}/tasks/{task_id}/retry",
-            post(retry_task),
-        )
+        .route("/jobs/{job_id}/tasks/{task_id}/retry", post(retry_task))
         .route(
             "/jobs/{job_id}/tasks/{task_id}/children",
             post(add_child_task),
@@ -573,43 +570,43 @@ async fn index(
     let mut jobs_with_work: Vec<serde_json::Value> = Vec::new();
 
     let service = PgDocketService::from_pool(state.sqlx_pool());
-        let jobs = service
-            .list_jobs(
-                bear_id,
-                DocketJobListFilter {
-                    include_archived: show_archived,
-                    ..DocketJobListFilter::default()
-                },
-            )
-            .await?;
-        let job_ids: Vec<Uuid> = jobs.iter().map(|job| job.id).collect();
-        let run_counts: std::collections::HashMap<Uuid, i64> = sqlx::query_as(
-            "SELECT job_id, count(*) FROM bear_work_runs WHERE job_id = ANY($1) GROUP BY job_id",
+    let jobs = service
+        .list_jobs(
+            bear_id,
+            DocketJobListFilter {
+                include_archived: show_archived,
+                ..DocketJobListFilter::default()
+            },
         )
-        .bind(&job_ids)
-        .fetch_all(state.sqlx_pool())
-        .await
-        .map_err(den_core::DenError::from)?
-        .into_iter()
-        .collect();
-        for job in jobs {
-            if !show_completed && job.status == "completed" {
-                continue;
-            }
-            let run_count = run_counts.get(&job.id).copied().unwrap_or_default();
-            jobs_with_work.push(serde_json::json!({
-                "id": job.id.to_string(),
-                "display_id": uuid_hex_prefix(job.id, DISPLAY_ID_HEX_LEN),
-                "route_id": uuid_hex_prefix(job.id, ROUTE_ID_HEX_LEN),
-                "full_id": job.id.to_string(),
-                "title": entity_ref(job.id, "Job", &job.goal, Some(&job.status))["title"],
-                "bear_slug": bear_slug,
-                "goal": job.goal,
-                "status": job.status,
-                "work_surface_ref": job.work_surface_ref,
-                "run_count": run_count,
-            }));
+        .await?;
+    let job_ids: Vec<Uuid> = jobs.iter().map(|job| job.id).collect();
+    let run_counts: std::collections::HashMap<Uuid, i64> = sqlx::query_as(
+        "SELECT job_id, count(*) FROM bear_work_runs WHERE job_id = ANY($1) GROUP BY job_id",
+    )
+    .bind(&job_ids)
+    .fetch_all(state.sqlx_pool())
+    .await
+    .map_err(den_core::DenError::from)?
+    .into_iter()
+    .collect();
+    for job in jobs {
+        if !show_completed && job.status == "completed" {
+            continue;
         }
+        let run_count = run_counts.get(&job.id).copied().unwrap_or_default();
+        jobs_with_work.push(serde_json::json!({
+            "id": job.id.to_string(),
+            "display_id": uuid_hex_prefix(job.id, DISPLAY_ID_HEX_LEN),
+            "route_id": uuid_hex_prefix(job.id, ROUTE_ID_HEX_LEN),
+            "full_id": job.id.to_string(),
+            "title": entity_ref(job.id, "Job", &job.goal, Some(&job.status))["title"],
+            "bear_slug": bear_slug,
+            "goal": job.goal,
+            "status": job.status,
+            "work_surface_ref": job.work_surface_ref,
+            "run_count": run_count,
+        }));
+    }
 
     // Dispatch-path status so "why is my queued run not starting?" is
     // answerable from this page: is a provider configured, and is it
@@ -999,12 +996,7 @@ async fn edit_job(
             visibility: None,
         })
         .await?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/jobs/{}",
-        bear.slug,
-        route_id(job_id)
-    ))
-    .into_response())
+    Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
 }
 
 fn commit_policy_label(policy: Option<&str>) -> &'static str {
@@ -1214,12 +1206,7 @@ async fn complete_job(
             visibility: None,
         })
         .await?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/jobs/{}",
-        bear.slug,
-        route_id(job_id)
-    ))
-    .into_response())
+    Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
 }
 
 async fn archive_job(
@@ -1265,12 +1252,7 @@ async fn archive_job(
             visibility: None,
         })
         .await?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/jobs/{}",
-        bear.slug,
-        route_id(job_id)
-    ))
-    .into_response())
+    Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1390,12 +1372,7 @@ async fn add_top_level_task(
             visibility: None,
         })
         .await?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/jobs/{}",
-        bear.slug,
-        route_id(job_id)
-    ))
-    .into_response())
+    Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
 }
 
 async fn job_detail(
@@ -1652,12 +1629,7 @@ async fn add_child_task(
             created_in_run_id: projection.job.current_run_id,
         })
         .await?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/jobs/{}",
-        bear.slug,
-        route_id(job_id)
-    ))
-    .into_response())
+    Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
 }
 
 async fn move_task(
@@ -1704,12 +1676,10 @@ async fn move_task(
         "up" if position > 0 => position - 1,
         "down" if position + 1 < siblings.len() => position + 1,
         "up" | "down" => {
-            return Ok(Redirect::to(&format!(
-                "/bear/{}/jobs/{}",
-                bear.slug,
-                route_id(job_id)
-            ))
-            .into_response())
+            return Ok(
+                Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id)))
+                    .into_response(),
+            )
         }
         _ => {
             return Err(CustomError::ValidationError(
@@ -1740,12 +1710,7 @@ async fn move_task(
         .execute(state.sqlx_pool())
         .await
         .map_err(den_core::DenError::from)?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/jobs/{}",
-        bear.slug,
-        route_id(job_id)
-    ))
-    .into_response())
+    Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
 }
 
 async fn retry_task(
@@ -1817,12 +1782,7 @@ async fn retry_task(
             }),
         })
         .await?;
-    Ok(Redirect::to(&format!(
-        "/bear/{}/jobs/{}",
-        bear.slug,
-        route_id(job_id)
-    ))
-    .into_response())
+    Ok(Redirect::to(&format!("/bear/{}/jobs/{}", bear.slug, route_id(job_id))).into_response())
 }
 
 #[derive(Debug, Deserialize)]

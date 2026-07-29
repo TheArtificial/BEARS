@@ -3,9 +3,12 @@
 > **Direction changed (2026-06).** Work-surface resolution uses per-Bear SQLite memory + Docket context, not MemFS orientation tools or Codepool examples. Canonical target: [Den runtime](../architecture/den-runtime.md) ([runtime plan](DEN_RUNTIME_PLAN.md)).
 
 For the canonical stance model and current stance names, see [bear stances](../architecture/bear-stances.md).
+
 ## Status
 
-Draft. Follows the Pair Letta message-boundary and tool-discovery work.
+In progress. The consumer boundary is implemented: Pair creates session-anchored Pair task trees, while Docket work jobs require one assigned managed work surface. Anchor recognition and confirmation remain to be implemented before Docket can safely default that required selection.
+
+This plan follows the Pair Letta message-boundary and tool-discovery work.
 
 ## Problem
 
@@ -292,45 +295,67 @@ When memory/plans/artifacts are created after resolution:
 
 This prevents role-local observations from becoming overbroad Bear-global facts.
 
-### 5.1 Default resolved surfaces on Docket jobs
+### 5.1 Required surface selection for Docket work jobs
 
-When a `pair` session creates a Docket job intended for dispatch to `work`, job
-creation should use the current session work-surface resolution as a default.
-This is a creation-boundary concern, not a dispatch fallback: dispatch must
-continue to reject a job with neither an explicit root nor a bound work
-surface.
+A Docket job is a **work root**, not a generic conversation container. It is
+durable and dispatchable, so it must be bound to exactly one assigned managed
+work surface at creation. Pair conversation planning belongs in a separate,
+session-anchored **Pair task tree** and is never represented as a surface-less
+Docket job.
+
+The creation boundary is the enforcement point. `pair.create_job` must either
+supply a valid managed surface explicitly or obtain one from the canonical
+session-resolution result. It must otherwise fail before a job row or work run
+is created with `work_surface_required`. Dispatch retains a defense-in-depth
+preflight check for malformed legacy data, but it must not be the first normal
+validation point.
 
 Resolution rules:
 
 1. An explicitly supplied `work_surface_ref` remains authoritative, subject to
-   existing validation that the surface is assigned to the Bear.
-2. When no surface was supplied, match the session's current resolution against
-   the Bear's assigned managed work surfaces.
-3. Auto-bind only when that match is unique and the session state is
-   `resolved` or `confirmed`. Persist both `work_surface_ref` and the managed
+   validation that it names a managed surface assigned to the Bear.
+2. When no surface was supplied, consume the canonical session-resolution
+   record—not raw runtime targets, workspace paths, or candidate slugs.
+3. Auto-bind only when the record names one assigned managed surface and its
+   status is `resolved` or `confirmed`. Persist both `work_surface_ref` and
    `work_surface_id` atomically with the job.
-4. Do not bind jobs from `unresolved`, `candidate`, `ambiguous`, or `rejected`
-   state. A candidate slug is inference, not an identity suitable for a
-   potentially write-capable dispatch.
-5. If the surface is unresolved, ambiguous, unavailable to the Bear, or no
-   longer assigned, leave the job unbound and return structured anchoring
-   diagnostics so `pair` can ask the user to choose a surface before dispatch.
+4. `unresolved`, `candidate`, `ambiguous`, and `rejected` states are not
+   identities suitable for a write-capable work root. They must not bind a job.
+5. For those states, or when the resolved/confirmed surface is unavailable or
+   no longer assigned, fail creation with an actionable selection error. Do
+   not create an unbound job and do not enqueue a work run.
 
-The initial implementation should not add a second surface-resolution
-algorithm inside Docket. It should consume the canonical session-resolution
-result and the existing assigned-surface registry. This keeps a job's stored
-binding stable even if later inference changes.
+The consumer must not add a second resolution algorithm inside Docket. A
+job's stored binding remains stable if later inference changes.
+
+Current implementation status:
+
+- [x] Pair task trees use `session_anchor_id`; they do not create synthetic
+  Docket conversation-objective jobs.
+- [x] Pair job creation requires an assigned managed surface and rejects raw
+  or unassigned roots.
+- [x] The consumer accepts a typed adapter-environment session anchor only
+  when its status is `resolved` or `confirmed`, then verifies Bear assignment.
+- [x] Docket work-job persistence requires non-empty `work_surface_ref` and
+  `work_surface_id`; the legacy synthetic conversation-objective path is
+  removed.
+- [ ] Produce the canonical session-resolution record through Phases 1–3.
+- [ ] Add end-to-end coverage that a producer-created resolved/confirmed
+  record defaults a Docket work job.
 
 Tests:
 
-- a unique resolved assigned surface defaults both job surface fields;
+- explicit assigned surface creates a work job with both surface fields;
+- a unique resolved assigned surface defaults both fields;
 - a confirmed assigned surface defaults both fields;
 - an explicit surface overrides a session default;
-- candidate, unresolved, ambiguous, and rejected states leave the job
-  unbound;
-- a resolved slug with zero or multiple assigned-surface matches leaves the
-  job unbound with the appropriate diagnostic;
-- dispatch continues to fail clearly when an unbound job has no explicit root.
+- candidate, unresolved, ambiguous, and rejected states fail creation without
+  persisting a job;
+- unavailable or non-unique resolved identities fail creation without
+  persisting a job;
+- Pair task-tree create/list/checkout works with `session_anchor_id` and never
+  appears as a Docket job;
+- dispatch rejects malformed legacy work jobs before a run is queued.
 
 ## UX expectations
 
@@ -358,17 +383,22 @@ The Bear should not ask on every turn. It should ask when ambiguity materially a
 - [ ] Design persistence for user-confirmed work-surface state.
 - [ ] Add confirmation tool only after read-only orientation proves useful.
 
-### Docket integration
+### Docket work-root integration
 
-- [ ] Define the canonical session-resolution input consumed by Docket job
-  creation.
-- [ ] Match resolved/confirmed session surfaces against the Bear's assigned
-  managed work surfaces during `create_job`.
-- [ ] Atomically persist `work_surface_ref` and `work_surface_id` when the
-  match is unique.
-- [ ] Return anchoring diagnostics, without binding, for unresolved,
-  candidate, ambiguous, rejected, unavailable, and non-unique states.
-- [ ] Add job-creation and dispatch regression tests for the binding rules.
+- [x] Separate Pair task trees (`session_anchor_id`) from Docket work jobs;
+  remove synthetic conversation-objective jobs.
+- [x] Require an assigned managed surface for Docket work-job creation.
+- [x] Reject absent, raw, unknown, and unassigned selections at the creation
+  boundary; do not create an unbound work job.
+- [x] Consume a typed `resolved`/`confirmed` adapter-environment anchor when
+  available, with assigned-surface verification.
+- [x] Persist both `work_surface_ref` and `work_surface_id` for work jobs.
+- [ ] Define and produce the canonical session-resolution record consumed by
+  job creation (Phases 1–3).
+- [ ] Replace the adapter-environment bridge with that canonical record once
+  it exists, without changing the Docket decision rules.
+- [ ] Add producer-to-job end-to-end regression coverage and dispatch
+  malformed-data preflight coverage.
 
 ## Related docs
 

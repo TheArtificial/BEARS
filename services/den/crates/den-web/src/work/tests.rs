@@ -238,12 +238,28 @@ async fn create_job_form_creates_work_job_with_tasks() {
             String::from_utf8_lossy(&body)
         );
     }
-    assert_eq!(location, format!("/bear/{bear_slug}/jobs/{}", route_id(sqlx::query_scalar::<_, Uuid>("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1").bind(bear_id).fetch_one(&pool).await.expect("job id"))));
-    let job_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
-        .bind(bear_id)
-        .fetch_one(&pool)
-        .await
-        .expect("job id");
+    assert_eq!(
+        location,
+        format!(
+            "/bear/{bear_slug}/jobs/{}",
+            route_id(
+                sqlx::query_scalar::<_, Uuid>(
+                    "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1"
+                )
+                .bind(bear_id)
+                .fetch_one(&pool)
+                .await
+                .expect("job id")
+            )
+        )
+    );
+    let job_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("job id");
 
     let (goal, surface, policy, branch): (String, Option<String>, Option<String>, Option<String>) =
         sqlx::query_as(
@@ -381,8 +397,13 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let source_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
-        .bind(bear_id).fetch_one(&pool).await.expect("source job");
+    let source_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("source job");
     sqlx::query("UPDATE bear_jobs SET work_branch = 'feature/original' WHERE id = $1")
         .bind(source_id)
         .execute(&pool)
@@ -403,8 +424,13 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let duplicate_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
-        .bind(bear_id).fetch_one(&pool).await.expect("duplicate job");
+    let duplicate_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("duplicate job");
     assert_ne!(duplicate_id, source_id);
 
     let (goal, surface, policy, branch, status, current_run): (
@@ -489,7 +515,11 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/jobs/{}/tasks/{}/children", route_id(job_id), route_id(first_root_id)),
+        &format!(
+            "/bear/{bear_slug}/jobs/{}/tasks/{}/children",
+            route_id(job_id),
+            route_id(first_root_id)
+        ),
         "title=First+child&criteria=child+done&body=".to_string(),
     )
     .await;
@@ -521,7 +551,11 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
     let response = post_form(
         &app,
         &cookie,
-        &format!("/bear/{bear_slug}/jobs/{}/tasks/{}/move/up", route_id(job_id), route_id(second_root_id)),
+        &format!(
+            "/bear/{bear_slug}/jobs/{}/tasks/{}/move/up",
+            route_id(job_id),
+            route_id(second_root_id)
+        ),
         String::new(),
     )
     .await;
@@ -556,8 +590,13 @@ async fn job_lifecycle_can_extend_then_complete() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let job_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
-        .bind(bear_id).fetch_one(&pool).await.expect("job id");
+    let job_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("job id");
     let run_id: Uuid = sqlx::query_scalar("SELECT current_run_id FROM bear_jobs WHERE id = $1")
         .bind(job_id)
         .fetch_one(&pool)
@@ -633,8 +672,13 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let job_id: Uuid = sqlx::query_scalar("SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1")
-        .bind(bear_id).fetch_one(&pool).await.expect("job id");
+    let job_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM bear_jobs WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(bear_id)
+    .fetch_one(&pool)
+    .await
+    .expect("job id");
     let surface_name = format!("job-surface-{}", &Uuid::new_v4().simple().to_string()[..12]);
     let response = post_form(
         &app,
@@ -748,7 +792,10 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!("/bear/{bear_slug}/jobs/{}/dispatch", route_id(job_id)))
+                .uri(format!(
+                    "/bear/{bear_slug}/jobs/{}/dispatch",
+                    route_id(job_id)
+                ))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from("root=site&image=rust&git_ref="))
@@ -773,7 +820,10 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
     .expect("queued job runs");
     assert_eq!(runs.len(), 1);
     let (run_id, root, image, git_ref) = &runs[0];
-    assert_eq!(redirect, format!("/bear/{bear_slug}/jobs/runs/{}", route_id(*run_id)));
+    assert_eq!(
+        redirect,
+        format!("/bear/{bear_slug}/jobs/runs/{}", route_id(*run_id))
+    );
     assert_eq!(root.as_deref(), Some("site"));
     assert_eq!(image.as_deref(), Some("rust"));
     assert!(git_ref.is_none(), "blank git_ref stays unset");
@@ -938,7 +988,13 @@ async fn create_job_enforces_surface_assignment() {
         "bear_id={bear_id}&goal=Surface+gated&surface_id={surface_id}&root=&commit_policy=per_task\
          &task_title=Do+it&task_criteria=done"
     );
-    let response = post_form(&app, &cookie, &format!("/bear/{bear_slug}/jobs/new"), job_body.clone()).await;
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/bear/{bear_slug}/jobs/new"),
+        job_body.clone(),
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     // Assign the bear from the surface page, then the same form succeeds and
@@ -951,7 +1007,13 @@ async fn create_job_enforces_surface_assignment() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let response = post_form(&app, &cookie, &format!("/bear/{bear_slug}/jobs/new"), job_body).await;
+    let response = post_form(
+        &app,
+        &cookie,
+        &format!("/bear/{bear_slug}/jobs/new"),
+        job_body,
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     let (surface_ref, bound_id): (Option<String>, Option<Uuid>) = sqlx::query_as(
         "SELECT work_surface_ref, work_surface_id FROM bear_jobs

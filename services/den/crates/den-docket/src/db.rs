@@ -15,15 +15,15 @@ use den_core::{BearProfile, DenError};
 use super::model::{
     docket_parent_task_ref, docket_task_status_from_task_list_item_status,
     normalize_completion_criteria, task_list_projection_from_docket_job,
-    validate_docket_job_create, validate_docket_task_create, DocketConversationObjectiveRequest,
-    DocketCriterionStateRow, DocketCriterionStateUpdate, DocketExecutionLookup,
-    DocketExecutionSessionRow, DocketExecutionSessionUpsert, DocketJobCreate,
-    DocketJobCriterionRow, DocketJobExecuteOutcome, DocketJobExecuteRequest, DocketJobListFilter,
-    DocketJobProjection, DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobUpdate,
-    DocketTaskCreate, DocketTaskDefinitionPatch, DocketTaskInput, DocketTaskListFilter,
-    DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate,
-    DocketValidationError, TaskListItemStatus, TaskListProjection, TaskListSourceRef,
-    TaskListSyncOutcome, TaskListSyncRequest, TaskListSyncState,
+    validate_docket_job_create, validate_docket_task_create, DocketCriterionStateRow,
+    DocketCriterionStateUpdate, DocketExecutionLookup, DocketExecutionSessionRow,
+    DocketExecutionSessionUpsert, DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome,
+    DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
+    DocketJobRunRow, DocketJobStatus, DocketJobUpdate, DocketTaskCreate, DocketTaskDefinitionPatch,
+    DocketTaskInput, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow,
+    DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError, TaskListItemStatus,
+    TaskListProjection, TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest,
+    TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -561,66 +561,6 @@ pub(super) async fn get_job(
         tasks,
         task_states,
     }))
-}
-
-pub(super) async fn get_or_create_conversation_objective(
-    pool: &PgPool,
-    request: DocketConversationObjectiveRequest,
-) -> Result<DocketJobProjection, DenError> {
-    let conversation_id = request.source_conversation_id.trim();
-    if conversation_id.is_empty() {
-        return Err(DenError::ValidationError(
-            "Docket conversation objective requires source_conversation_id".to_string(),
-        ));
-    }
-    if let Some(existing) = sqlx::query_as::<_, DocketJobRow>(
-        r"
-        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
-               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
-        FROM bear_jobs
-        WHERE bear_id = $1
-          AND source_conversation_id = $2
-          AND objective_kind = 'conversation_task_list'
-          AND status NOT IN ('completed', 'cancelled', 'archived')
-        ORDER BY updated_at DESC
-        LIMIT 1
-        ",
-    )
-    .bind(request.bear_id)
-    .bind(conversation_id)
-    .fetch_optional(pool)
-    .await?
-    {
-        return get_job(pool, request.bear_id, existing.id).await?.ok_or_else(|| {
-            DenError::NotFound(format!(
-                "Docket conversation objective disappeared after lookup: {}",
-                existing.id
-            ))
-        });
-    }
-
-    create_job(
-        pool,
-        DocketJobCreate {
-            bear_id: request.bear_id,
-            created_by_user_id: request.created_by_user_id,
-            created_by_role: request.created_by_role,
-            goal: format!("Conversation task list for {conversation_id}"),
-            work_surface_ref: None,
-            work_surface_id: None,
-            commit_policy: None,
-            work_branch: None,
-            status: DocketJobStatus::Ready,
-            visibility: super::model::TaskListVisibility::SameUser,
-            source_conversation_id: Some(conversation_id.to_string()),
-            objective_kind: Some("conversation_task_list".to_string()),
-            supersedes_job_id: None,
-            overlap_resolution: super::model::DocketJobOverlapResolution::Independent,
-            criteria: Vec::new(),
-            tasks: Vec::new(),
-        },
-    )
-    .await
 }
 
 pub(super) async fn update_job(

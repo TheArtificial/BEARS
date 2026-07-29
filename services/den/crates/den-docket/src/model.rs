@@ -487,10 +487,6 @@ pub enum TaskListCheckoutSource {
         job_id: Uuid,
         parent_task_id: Option<Uuid>,
     },
-    ConversationObjective {
-        request: DocketConversationObjectiveRequest,
-        active_subtree: bool,
-    },
     LocalProjection(Box<TaskListProjection>),
 }
 
@@ -1070,14 +1066,6 @@ pub struct DocketJobCreate {
     pub tasks: Vec<DocketTaskInput>,
 }
 
-#[derive(Debug, Clone)]
-pub struct DocketConversationObjectiveRequest {
-    pub bear_id: Uuid,
-    pub created_by_user_id: i32,
-    pub created_by_role: String,
-    pub source_conversation_id: String,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct DocketJobListFilter {
     pub statuses: Option<Vec<DocketJobStatus>>,
@@ -1254,6 +1242,8 @@ pub struct DocketTaskProjection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocketValidationError {
     EmptyGoal,
+    MissingWorkSurface,
+    MismatchedWorkSurfaceBinding,
     InvalidJobCreatorRole { role: String },
     EmptyCriterionDescription,
     EmptyTaskTitle,
@@ -1272,6 +1262,12 @@ impl fmt::Display for DocketValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyGoal => f.write_str("Docket job goal must not be empty"),
+            Self::MissingWorkSurface => {
+                f.write_str("Docket work job requires a managed work surface")
+            }
+            Self::MismatchedWorkSurfaceBinding => f.write_str(
+                "Docket work job surface name and managed surface ID must be set together",
+            ),
             Self::InvalidJobCreatorRole { role } => {
                 write!(
                     f,
@@ -1679,6 +1675,11 @@ fn current_task_list_item(items: &[TaskListItem]) -> Option<&TaskListItem> {
 pub fn validate_docket_job_create(create: &DocketJobCreate) -> Result<(), DocketValidationError> {
     if create.goal.trim().is_empty() {
         return Err(DocketValidationError::EmptyGoal);
+    }
+    match (&create.work_surface_ref, create.work_surface_id) {
+        (Some(work_surface_ref), Some(_)) if !work_surface_ref.trim().is_empty() => {}
+        (None, None) => return Err(DocketValidationError::MissingWorkSurface),
+        _ => return Err(DocketValidationError::MismatchedWorkSurfaceBinding),
     }
     if !matches!(create.created_by_role.trim(), "chat" | "pair" | "ui") {
         return Err(DocketValidationError::InvalidJobCreatorRole {
@@ -2216,8 +2217,8 @@ mod tests {
             created_by_user_id: 42,
             created_by_role: "work".to_string(),
             goal: "Ship Docket".to_string(),
-            work_surface_ref: None,
-            work_surface_id: None,
+            work_surface_ref: Some("docket-test-surface".to_string()),
+            work_surface_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap()),
             commit_policy: Some(DocketCommitPolicy::None),
             work_branch: None,
             status: DocketJobStatus::Ready,
@@ -2245,8 +2246,8 @@ mod tests {
             created_by_user_id: 42,
             created_by_role: "pair".to_string(),
             goal: "Ship Docket".to_string(),
-            work_surface_ref: None,
-            work_surface_id: None,
+            work_surface_ref: Some("docket-test-surface".to_string()),
+            work_surface_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap()),
             commit_policy: None,
             work_branch: None,
             status: DocketJobStatus::Ready,

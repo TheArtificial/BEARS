@@ -551,7 +551,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_LIST,
             "List task lists",
-            "List visible planning and task-list context for the current Bear/conversation, including checked-out Docket task-list projections, submitted plan-mode gates, and saved plan artifacts where available. Docket-backed task lists are user-visible, durable/resumable plans, checklists, next steps, and roadmap slices for Docket jobs or the current conversation objective. Call session_info first if current conversation/session/work-surface scope is unclear.",
+            "List visible planning and task-list context for the current Bear/conversation, including checked-out Docket task-list projections, submitted plan-mode gates, and saved plan artifacts where available. Docket-backed task lists are user-visible, durable/resumable plans, checklists, next steps, and roadmap slices for work jobs or the current Pair task tree. Call session_info first if current conversation/session/work-surface scope is unclear.",
             "bear.activity",
             &["task_list.read"],
             TASK_LIST_READ_PROFILES,
@@ -569,7 +569,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_LISTS_UPDATE,
             "Update task list",
-            "Use durable Docket job/task tools for user-visible task and job state. For pair conversation-scoped plans, checklists, next steps, and roadmap slices, create or reuse the current conversation's implied Docket objective; create an explicit Docket job only for distinct objectives with their own lifecycle, focus, delegation, work surface, commit policy, or execution tracking. Keep session_anchor_id only for compatibility with legacy session task projections. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status with job_id and run_id when known; otherwise it infers the active run. Docket tools record durable state and do not authorize autonomous execution by themselves.",
+            "Use durable Docket job/task tools for user-visible task and job state. For pair conversation-scoped plans, checklists, next steps, and roadmap slices, create or reuse the current Pair task tree; create a work Docket job only for distinct objectives with their own lifecycle, managed work surface, commit policy, or execution tracking. session_anchor_id identifies the Pair task-tree root. To show/work an existing Docket job as a task-list projection, use checkout_task_list; to reconcile a checked-out projection, use sync_task_list. For durable task definition edits use update_task. For run-scoped status/results use update_current_task_status with job_id and run_id when known; otherwise it infers the active run. Docket tools record durable state and do not authorize autonomous execution by themselves.",
             "bear.activity",
             &["task_list.write"],
             TASK_LIST_UPDATE_PROFILES,
@@ -587,7 +587,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_JOB_CREATE,
             "Create job",
-            "Create a durable Docket job with acceptance criteria and an optional initial task tree. Use Jobs for distinct objectives needing their own lifecycle, work surface, commit policy, execution tracking, or background work; do not create one for a small change that Pair can finish here. For pair conversation-scoped plans or checklists, prefer the implied conversation objective. Every initial task requires concrete completion_criteria. Creating a Job does not execute or dispatch it. Keep returned full UUIDs for tool calls and evidence; in ordinary prose present a typed short handle such as `job e4e4797b` (extend the prefix if ambiguous). Do not invent a web URL: use a UI link only when a tool result provides one.",
+            "Create a durable Docket work job with acceptance criteria and an optional initial task tree. Every work job is bound to one managed work surface: pass a surface from get_work_catalog unless the current session has a resolved/confirmed surface anchor. Use Jobs for distinct objectives needing their own lifecycle, work surface, commit policy, execution tracking, or background work; do not create one for a small change that Pair can finish here. For pair conversation-scoped plans or checklists, use the Pair task tree. Every initial task requires concrete completion_criteria. Creating a Job does not execute or dispatch it. Keep returned full UUIDs for tool calls and evidence; in ordinary prose present a typed short handle such as `job e4e4797b` (extend the prefix if ambiguous). Do not invent a web URL: use a UI link only when a tool result provides one.",
             "bear.docket",
             &["docket.job.write"],
             CHAT_AND_PAIR_PROFILES,
@@ -650,7 +650,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_TASK_CREATE,
             "Create Docket task",
-            "Create a durable Docket task under an explicit Docket job or, in pair conversation scope when job_id is omitted, the current conversation's implied Docket objective. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. session_anchor_id remains legacy compatibility only. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition. Keep full UUIDs for tool calls and evidence; in prose use a typed unambiguous short handle such as `task e4e4797b` (extend the prefix if needed). Do not invent a web URL: use a UI link only when a tool result provides one.",
+            "Create a durable Docket task under an explicit work Docket job or, in pair conversation scope when job_id is omitted, the current Pair task tree. Use for durable/resumable plans, checklists, next steps, and roadmap slices; this records user-visible Docket state and does not execute work. session_anchor_id identifies the Pair task-tree root. Pair can add planned/template tasks; work can add run-scoped child tasks during execution. Every Docket task requires concrete completion_criteria so execution has a stopping condition. Status/results remain run-scoped and are not stored on the task definition. Keep full UUIDs for tool calls and evidence; in prose use a typed unambiguous short handle such as `task e4e4797b` (extend the prefix if needed). Do not invent a web URL: use a UI link only when a tool result provides one.",
             "bear.docket",
             &["docket.task.write"],
             &["pair", "work"],
