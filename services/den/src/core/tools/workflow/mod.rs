@@ -54,10 +54,10 @@ fn docket_entity_presentation(
     href: Option<String>,
 ) -> DocketEntityPresentation {
     // Short handles are presentation only: tool inputs retain canonical UUIDs.
-    // Canonical URLs require at least sixteen hexadecimal characters; extend
-    // only when this response contains a collision.
+    // Canonical URLs use eight hexadecimal characters; extend only when this
+    // response contains a collision.
     let id_text = id.simple().to_string();
-    let prefix_len = (16..=id_text.len())
+    let prefix_len = (8..=id_text.len())
         .find(|&len| {
             ids.iter()
                 .filter(|other| **other != id)
@@ -2682,7 +2682,7 @@ mod docket_entity_presentation_tests {
     }
 
     #[test]
-    fn uses_sixteen_character_typed_handle_when_unambiguous() {
+    fn uses_eight_character_typed_handle_when_unambiguous() {
         let entity = docket_entity_presentation(
             "job",
             id("e4e4797b-2d29-4800-856e-b8220a9097dd"),
@@ -2690,7 +2690,7 @@ mod docket_entity_presentation_tests {
             None,
         );
 
-        assert_eq!(entity.display, "job e4e4797b2d294800");
+        assert_eq!(entity.display, "job e4e4797b");
         assert_eq!(entity.href, None);
     }
 

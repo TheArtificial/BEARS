@@ -167,7 +167,7 @@
                 <td><a href="/bear/{{ bear_slug }}/jobs/runs/{{ run.route_id }}" title="UUID prefix for {{ run.full_id }}">Run <code class="entity-reference-id">{{ run.display_id }}</code>: {{ run.title }}</a></td>
                 <td>
                     {{ run.state }}{% if run.cleanup_failed %} ⚠ cleanup failed{% endif %}
-                    {%- if run.queue_position %} (#{{ run.queue_position }} in queue{% if run.waiting_on_run_id %}, behind <a href="/bear/{{ bear_slug }}/jobs/runs/{{ run.waiting_on_run_id }}">Run <code class="entity-reference-id">{{ run.waiting_on_run_id[:16] }}</code></a>{% endif %}){% endif %}
+                    {%- if run.queue_position %} (#{{ run.queue_position }} in queue{% if run.waiting_on_run_id %}, behind <a href="/bear/{{ bear_slug }}/jobs/runs/{{ run.waiting_on_run_id }}">Run <code class="entity-reference-id">{{ run.waiting_on_run_id[:8] }}</code></a>{% endif %}){% endif %}
                 </td>
                 <td>{{ run.attempt }}</td>
                 <td>{{ run.result_summary or run.error or "—" }}</td>

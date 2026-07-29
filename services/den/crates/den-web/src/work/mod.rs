@@ -15,7 +15,7 @@ use minijinja::context;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-const DISPLAY_ID_HEX_LEN: usize = 16;
+const DISPLAY_ID_HEX_LEN: usize = 8;
 const ROUTE_ID_HEX_LEN: usize = 16;
 
 fn uuid_hex_prefix(id: Uuid, len: usize) -> String {

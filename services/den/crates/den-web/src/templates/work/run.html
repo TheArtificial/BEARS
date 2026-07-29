@@ -20,7 +20,7 @@
                 {{ run.state }}{% if run.cancel_requested %} (cancel requested){% endif %}
                 {% if run.queue_position %}
                 — position {{ run.queue_position }} in the job's queue{% if run.waiting_on_run_id %},
-                waiting on run <a href="/bear/{{ bear_slug }}/jobs/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:16] }}…</a>{% endif %}
+                waiting on run <a href="/bear/{{ bear_slug }}/jobs/runs/{{ run.waiting_on_run_id }}">{{ run.waiting_on_run_id[:8] }}…</a>{% endif %}
                 (runs within a job execute one at a time)
                 {% endif %}
             </td></tr>
