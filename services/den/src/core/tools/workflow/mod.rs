@@ -1089,28 +1089,44 @@ async fn update_focused_conversation_title(
 
 async fn resolve_surface_ref(
     pool: &PgPool,
-    bear_id: Uuid,
+    context: &DenToolInvocationContext,
     work_surface_ref: Option<String>,
-) -> Result<(Option<String>, Option<Uuid>), CustomError> {
-    let Some(ref_name) = work_surface_ref
+) -> Result<(Option<String>, Option<Uuid>, bool), CustomError> {
+    let explicit_ref = work_surface_ref
         .as_deref()
         .map(str::trim)
-        .filter(|name| !name.is_empty())
-    else {
-        return Ok((None, None));
+        .filter(|name| !name.is_empty());
+    let Some(ref_name) = explicit_ref else {
+        let assigned =
+            den_service::work_surfaces::list_surfaces_for_bears(pool, &[context.bear_id]).await?;
+        let Some(ref_name) =
+            den_core::tools::work_surface::resolve_assigned_work_surface_slug_from_hints(
+                &den_core::tools::work_surface::WorkSurfaceSessionHints::from_invocation(context),
+                assigned.iter().map(|surface| surface.name.as_str()),
+            )
+        else {
+            return Ok((None, None, false));
+        };
+        let surface = assigned
+            .into_iter()
+            .find(|surface| surface.name == ref_name)
+            .expect("resolved assigned work surface must be present");
+        return Ok((Some(surface.name), Some(surface.id), true));
     };
     match den_service::work_surfaces::surface_by_name(pool, ref_name).await? {
         Some(surface) => {
-            if !den_service::work_surfaces::bear_may_use_surface(pool, bear_id, surface.id).await? {
+            if !den_service::work_surfaces::bear_may_use_surface(pool, context.bear_id, surface.id)
+                .await?
+            {
                 return Err(DenError::ValidationError(format!(
                     "bear is not assigned to work surface '{}'; pick a surface listed by get_work_catalog or ask a surface manager to assign this bear",
                     surface.name
                 ))
                 .into());
             }
-            Ok((Some(surface.name), Some(surface.id)))
+            Ok((Some(surface.name), Some(surface.id), false))
         }
-        None => Ok((Some(ref_name.to_string()), None)),
+        None => Ok((Some(ref_name.to_string()), None, false)),
     }
 }
 
@@ -1130,8 +1146,8 @@ pub(crate) async fn create_job(
         );
     }
     let args: DocketJobCreateArguments = serde_json::from_value(arguments)?;
-    let (work_surface_ref, work_surface_id) =
-        resolve_surface_ref(pool, context.bear_id, args.work_surface_ref).await?;
+    let (work_surface_ref, work_surface_id, surface_auto_bound) =
+        resolve_surface_ref(pool, context, args.work_surface_ref).await?;
     let job = PgDocketService::from_pool(pool)
         .create_job(DocketJobCreate {
             bear_id: context.bear_id,
@@ -1172,7 +1188,12 @@ pub(crate) async fn create_job(
         "task_list": task_list,
         "notes": [
             "Created durable Docket job state; execution is not started by this tool.",
-            "Use get_job for canonical job/task state; checkout_task_list exposes a Docket job as a session task-list projection."
+            "Use get_job for canonical job/task state; checkout_task_list exposes a Docket job as a session task-list projection.",
+            if surface_auto_bound {
+                "Auto-bound the unique assigned work surface resolved from trusted session metadata."
+            } else {
+                "No work surface was auto-bound; explicit selection remains available and unresolved or ambiguous session hints remain unbound."
+            }
         ]
     }))
 }
@@ -1332,8 +1353,19 @@ pub(crate) async fn update_job(
     let (work_surface_ref, work_surface_id) = if args.clear_work_surface_ref {
         (Some(None), Some(None))
     } else if args.work_surface_ref.is_some() {
-        let (surface_ref, surface_id) =
-            resolve_surface_ref(pool, context.bear_id, args.work_surface_ref).await?;
+        let (surface_ref, surface_id) = match args
+            .work_surface_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            Some(_) => {
+                let (surface_ref, surface_id, _) =
+                    resolve_surface_ref(pool, context, args.work_surface_ref).await?;
+                (surface_ref, surface_id)
+            }
+            None => (None, None),
+        };
         (Some(surface_ref), Some(surface_id))
     } else {
         (None, None)

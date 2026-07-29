@@ -178,6 +178,23 @@ pub fn work_surface_candidate_slug(context: &DenToolInvocationContext) -> Option
     work_surface_candidate_slug_from_hints(&WorkSurfaceSessionHints::from_invocation(context))
 }
 
+/// Resolves a trusted session candidate only when it identifies exactly one
+/// assigned managed surface after applying the canonical slug normalization.
+/// A non-match and a normalized-name collision are intentionally unbound.
+pub fn resolve_assigned_work_surface_slug_from_hints(
+    hints: &WorkSurfaceSessionHints,
+    assigned_surface_names: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<String> {
+    let candidate = work_surface_candidate_slug_from_hints(hints)?;
+    let mut matches = assigned_surface_names.into_iter().filter_map(|name| {
+        let name = name.as_ref();
+        (normalize_work_surface_slug(name).ok().as_deref() == Some(candidate.as_str()))
+            .then(|| name.to_string())
+    });
+    let resolved = matches.next()?;
+    matches.next().is_none().then_some(resolved)
+}
+
 pub fn work_surface_candidate_slug_from_hints(hints: &WorkSurfaceSessionHints) -> Option<String> {
     let mut raw_candidates = Vec::new();
     if let Some(value) = hints.runtime_target.as_deref().and_then(clean_optional) {

@@ -1,4 +1,6 @@
-use super::infer_work_surface_hint;
+use super::{
+    infer_work_surface_hint, resolve_assigned_work_surface_slug_from_hints, WorkSurfaceSessionHints,
+};
 use crate::tools::context::DenToolInvocationContext;
 use crate::BearProfile;
 use serde_json::json;
@@ -60,4 +62,21 @@ fn infer_work_surface_hint_reports_unresolved_without_trusted_candidates() {
     let payload = infer_work_surface_hint(&context, BearProfile::Pair);
     assert_eq!(payload["work_surface"]["status"], json!("unresolved"));
     assert_eq!(payload["work_surface"]["reference_candidates"], json!([]));
+}
+
+#[test]
+fn resolves_only_a_unique_assigned_surface_candidate() {
+    let hints = WorkSurfaceSessionHints::from_invocation(&pair_context());
+    assert_eq!(
+        resolve_assigned_work_surface_slug_from_hints(&hints, ["builder-bear"]),
+        Some("builder-bear".to_string())
+    );
+    assert_eq!(
+        resolve_assigned_work_surface_slug_from_hints(&hints, ["other-surface"]),
+        None
+    );
+    assert_eq!(
+        resolve_assigned_work_surface_slug_from_hints(&hints, ["builder_bear", "builder-bear"],),
+        None
+    );
 }
