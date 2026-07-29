@@ -1097,20 +1097,32 @@ async fn resolve_surface_ref(
         .map(str::trim)
         .filter(|name| !name.is_empty());
     let Some(ref_name) = explicit_ref else {
-        let assigned =
-            den_service::work_surfaces::list_surfaces_for_bears(pool, &[context.bear_id]).await?;
-        let Some(ref_name) =
-            den_core::tools::work_surface::resolve_assigned_work_surface_slug_from_hints(
-                &den_core::tools::work_surface::WorkSurfaceSessionHints::from_invocation(context),
-                assigned.iter().map(|surface| surface.name.as_str()),
-            )
+        let Some(client_session_id) = context.client_session_id.as_deref() else {
+            return Ok((None, None, false));
+        };
+        let Some(session) = client_sessions::find_for_user_bear_session_id(
+            pool,
+            context.user_id,
+            context.bear_id,
+            client_session_id,
+        )
+        .await?
         else {
             return Ok((None, None, false));
         };
-        let surface = assigned
+        let Some(anchor) = den_core::tools::work_surface::WorkSurfaceSessionAnchor::from_adapter_environment(
+            session.adapter_environment.as_ref(),
+        ) else {
+            return Ok((None, None, false));
+        };
+        let assigned =
+            den_service::work_surfaces::list_surfaces_for_bears(pool, &[context.bear_id]).await?;
+        let Some(surface) = assigned
             .into_iter()
-            .find(|surface| surface.name == ref_name)
-            .expect("resolved assigned work surface must be present");
+            .find(|surface| surface.id == anchor.surface_id)
+        else {
+            return Ok((None, None, false));
+        };
         return Ok((Some(surface.name), Some(surface.id), true));
     };
     match den_service::work_surfaces::surface_by_name(pool, ref_name).await? {

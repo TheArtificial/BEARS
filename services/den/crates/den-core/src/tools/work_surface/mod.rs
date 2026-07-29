@@ -129,6 +129,29 @@ impl WorkSurfaceSessionHints {
     }
 }
 
+/// A durable, canonical work-surface identity supplied by a trusted armature
+/// session. Candidate strings are intentionally not accepted here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkSurfaceSessionAnchor {
+    pub surface_id: uuid::Uuid,
+    pub status: WorkSurfaceProjectionStatus,
+}
+
+impl WorkSurfaceSessionAnchor {
+    /// Read only the typed anchor written into trusted adapter session context.
+    /// Unknown/malformed values remain unanchored rather than becoming hints.
+    pub fn from_adapter_environment(value: Option<&Value>) -> Option<Self> {
+        let anchor = value?.get("work_surface_anchor")?;
+        let surface_id = anchor.get("surface_id")?.as_str()?.parse().ok()?;
+        let status = match anchor.get("status")?.as_str()? {
+            "resolved" => WorkSurfaceProjectionStatus::Resolved,
+            "confirmed" => WorkSurfaceProjectionStatus::Confirmed,
+            _ => return None,
+        };
+        Some(Self { surface_id, status })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkSurfaceProjectionStatus {
     Unresolved,

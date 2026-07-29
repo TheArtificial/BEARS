@@ -1,6 +1,4 @@
-use super::{
-    infer_work_surface_hint, resolve_assigned_work_surface_slug_from_hints, WorkSurfaceSessionHints,
-};
+use super::{infer_work_surface_hint, WorkSurfaceSessionAnchor};
 use crate::tools::context::DenToolInvocationContext;
 use crate::BearProfile;
 use serde_json::json;
@@ -65,18 +63,25 @@ fn infer_work_surface_hint_reports_unresolved_without_trusted_candidates() {
 }
 
 #[test]
-fn resolves_only_a_unique_assigned_surface_candidate() {
-    let hints = WorkSurfaceSessionHints::from_invocation(&pair_context());
+fn accepts_only_resolved_or_confirmed_typed_session_anchors() {
+    let resolved = json!({
+        "work_surface_anchor": {
+            "surface_id": "00000000-0000-0000-0000-000000000001",
+            "status": "resolved"
+        }
+    });
     assert_eq!(
-        resolve_assigned_work_surface_slug_from_hints(&hints, ["builder-bear"]),
-        Some("builder-bear".to_string())
+        WorkSurfaceSessionAnchor::from_adapter_environment(Some(&resolved))
+            .expect("resolved anchor")
+            .surface_id,
+        uuid::Uuid::from_u128(1)
     );
-    assert_eq!(
-        resolve_assigned_work_surface_slug_from_hints(&hints, ["other-surface"]),
-        None
-    );
-    assert_eq!(
-        resolve_assigned_work_surface_slug_from_hints(&hints, ["builder_bear", "builder-bear"],),
-        None
-    );
+
+    for invalid in [
+        json!({"work_surface_anchor": {"surface_id": "00000000-0000-0000-0000-000000000001", "status": "candidate"}}),
+        json!({"work_surface_anchor": {"surface_id": "not-a-uuid", "status": "confirmed"}}),
+        json!({"work_surface_anchor": {"status": "confirmed"}}),
+    ] {
+        assert!(WorkSurfaceSessionAnchor::from_adapter_environment(Some(&invalid)).is_none());
+    }
 }
