@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS client_session_work_surface_resolutions;

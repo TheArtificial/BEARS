@@ -1109,10 +1109,10 @@ async fn resolve_surface_ref(
         else {
             return Ok((None, None, false));
         };
-        let Some(anchor) =
-            den_core::tools::work_surface::WorkSurfaceSessionAnchor::from_adapter_environment(
-                session.adapter_environment.as_ref(),
-            )
+        let Some(resolution) = den_service::client_session_work_surface_resolutions::find(
+            pool, session.id,
+        )
+        .await?
         else {
             return Ok((None, None, false));
         };
@@ -1120,7 +1120,7 @@ async fn resolve_surface_ref(
             den_service::work_surfaces::list_surfaces_for_bears(pool, &[context.bear_id]).await?;
         let Some(surface) = assigned
             .into_iter()
-            .find(|surface| surface.id == anchor.surface_id)
+            .find(|surface| surface.id == resolution.work_surface_id)
         else {
             return Ok((None, None, false));
         };

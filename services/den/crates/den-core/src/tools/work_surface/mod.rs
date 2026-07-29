@@ -48,6 +48,7 @@ pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearPro
         }));
     }
     let active_work_surface_roles = matches!(role, BearProfile::Pair | BearProfile::Work);
+    let has_candidates = !candidates.is_empty();
     json!({
         "workplace": {
             "profile": role.as_str(),
@@ -55,8 +56,12 @@ pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearPro
         },
         "work_surface": {
             "mode": if active_work_surface_roles { "active" } else { "reference_only" },
-            "status": if candidates.is_empty() { "unresolved" } else { "candidate" },
-            "note": if candidates.is_empty() {
+            // ponytail: Session metadata is only evidence, never canonical identity.
+            // Upgrade this to resolved/confirmed only through the session-resolution record.
+            "status": if has_candidates { "candidate" } else { "unresolved" },
+            "confidence": if has_candidates { "medium" } else { "none" },
+            "needs_user_confirmation": false,
+            "note": if !has_candidates {
                 if active_work_surface_roles {
                     "No trusted work-surface hint is available yet from this session. Use workspace roots, runtime target, user references, and memory anchors to resolve what the agent may be acting on."
                 } else {
@@ -68,6 +73,26 @@ pub fn infer_work_surface_hint(context: &DenToolInvocationContext, role: BearPro
                 "Trusted session metadata provides work-surface reference candidates that may help the agent answer about relevant Bear work surfaces. Treat these as hints, not canonical identity, until confirmed by anchors or explicit user intent."
             },
             "reference_candidates": candidates,
+            "agent_guidance": {
+                "may_state_assumption": has_candidates,
+                "should_ask_user_when": [
+                    "multiple plausible work surfaces",
+                    "memory or action depends on work-surface scope",
+                    "the user asks to continue prior work but the current surface is unclear"
+                ],
+                "confirmation_examples": [
+                    "Should I treat this as the current work surface?",
+                    "Which work surface should this work job use?"
+                ]
+            },
+            "recommended_grounding_order": [
+                "current conversation",
+                "session_info",
+                "current work-surface anchors",
+                "role-local memory",
+                "core memory",
+                "workspace artifacts"
+            ]
         }
     })
 }

@@ -36,6 +36,12 @@ fn infer_work_surface_hint_surfaces_trusted_candidates() {
     assert_eq!(payload["workplace"]["profile"], json!("pair"));
     assert_eq!(payload["workplace"]["memory_surface"], json!("pair/"));
     assert_eq!(payload["work_surface"]["status"], json!("candidate"));
+    assert_eq!(payload["work_surface"]["confidence"], json!("medium"));
+    assert_eq!(payload["work_surface"]["needs_user_confirmation"], json!(false));
+    assert_eq!(
+        payload["work_surface"]["agent_guidance"]["may_state_assumption"],
+        json!(true)
+    );
     let candidates = payload["work_surface"]["reference_candidates"]
         .as_array()
         .expect("reference candidates array");
@@ -59,6 +65,12 @@ fn infer_work_surface_hint_reports_unresolved_without_trusted_candidates() {
 
     let payload = infer_work_surface_hint(&context, BearProfile::Pair);
     assert_eq!(payload["work_surface"]["status"], json!("unresolved"));
+    assert_eq!(payload["work_surface"]["confidence"], json!("none"));
+    assert_eq!(payload["work_surface"]["needs_user_confirmation"], json!(false));
+    assert_eq!(
+        payload["work_surface"]["agent_guidance"]["may_state_assumption"],
+        json!(false)
+    );
     assert_eq!(payload["work_surface"]["reference_candidates"], json!([]));
 }
 
