@@ -2572,13 +2572,16 @@ async fn command_obligation_expiry_blocks_automatic_retry_as_outcome_unknown(poo
         .expect("run.failed event");
     assert_eq!(failed.event.data["reason"], "command_outcome_unknown");
     assert_eq!(
+        failed.event.data["message"],
+        "Command result couldn't be confirmed. The connection ended before Builder Bear could report whether the command completed. To avoid duplicate changes, the command was not retried automatically."
+    );
+    assert_eq!(
         failed.event.data["context"]["recovery"]["automatic_retry_allowed"],
         false
     );
-    assert_eq!(
-        failed.event.data["context"]["recovery"]["next_action"],
-        "reconnect_and_inspect"
-    );
+    assert!(failed.event.data["context"]["recovery"]
+        .get("next_action")
+        .is_none());
 }
 
 #[sqlx::test(migrations = "../../migrations")]

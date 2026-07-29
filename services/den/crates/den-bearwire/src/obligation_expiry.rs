@@ -98,11 +98,10 @@ pub async fn expire_client_obligations_once(
         let (reason, message, recovery) = if command_outcome_unknown {
             (
                 RunFailureReason::CommandOutcomeUnknown,
-                "A command exceeded its response deadline, and Den could not confirm whether it completed or is still running. Do not retry it until you inspect the client and workspace state.".to_string(),
+                "Command result couldn't be confirmed. The connection ended before Builder Bear could report whether the command completed. To avoid duplicate changes, the command was not retried automatically.".to_string(),
                 Some(json!({
                     "status": "outcome_unknown",
                     "automatic_retry_allowed": false,
-                    "next_action": "reconnect_and_inspect",
                 })),
             )
         } else {
