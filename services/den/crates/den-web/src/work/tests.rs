@@ -341,6 +341,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
     assert!(body.contains(&active_goal));
     assert!(!body.contains(&completed_goal));
     assert!(body.contains("Show completed jobs"));
+    assert!(body.contains(&format!("/bear/{bear_slug}/jobs/new")));
 
     let response = app
         .oneshot(

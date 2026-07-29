@@ -652,6 +652,7 @@ async fn index(
             title => "Docket",
             jobs => jobs_with_work,
             provider_status => provider_status,
+            bear_slug => bear_slug,
             show_completed => show_completed,
             show_archived => show_archived,
         },
