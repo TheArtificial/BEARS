@@ -1,0 +1,120 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,\n               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at\n        FROM bear_jobs\n        WHERE bear_id = $1\n          AND ($2::text IS NULL OR source_conversation_id = $2)\n        ORDER BY updated_at DESC\n        LIMIT $3\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "bear_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "created_by_user_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_by_role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "goal",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "work_surface_ref",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "work_surface_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
+        "name": "commit_policy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "work_branch",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "visibility",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "source_conversation_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 12,
+        "name": "objective_kind",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 13,
+        "name": "supersedes_job_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 14,
+        "name": "current_run_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "e5f55d37302504e220a1955e1e0d7a404b75bbc8f8f40701e343d7b824ff36f7"
+}

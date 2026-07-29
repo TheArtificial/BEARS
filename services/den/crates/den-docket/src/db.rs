@@ -441,7 +441,8 @@ pub(super) async fn list_jobs(
     } else {
         filter.limit.min(200)
     };
-    let rows = sqlx::query_as::<_, DocketJobRow>(
+    let rows = sqlx::query_as!(
+        DocketJobRow,
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
                commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
@@ -451,10 +452,10 @@ pub(super) async fn list_jobs(
         ORDER BY updated_at DESC
         LIMIT $3
         ",
+        bear_id,
+        filter.source_conversation_id.as_deref(),
+        limit,
     )
-    .bind(bear_id)
-    .bind(filter.source_conversation_id.as_deref())
-    .bind(limit)
     .fetch_all(pool)
     .await?;
 
@@ -477,16 +478,17 @@ pub(super) async fn get_job(
     bear_id: Uuid,
     job_id: Uuid,
 ) -> Result<Option<DocketJobProjection>, DenError> {
-    let Some(job) = sqlx::query_as::<_, DocketJobRow>(
+    let Some(job) = sqlx::query_as!(
+        DocketJobRow,
         r"
         SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
                commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
         ",
+        bear_id,
+        job_id,
     )
-    .bind(bear_id)
-    .bind(job_id)
     .fetch_optional(pool)
     .await?
     else {
