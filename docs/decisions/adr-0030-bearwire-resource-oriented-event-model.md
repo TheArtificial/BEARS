@@ -297,6 +297,10 @@ A livestream subscriber first receives a derived current snapshot, then best-eff
 
 `client.waiting` is a live notification derived from a durable client obligation. The obligation, not the notification, is the source of truth for reconnect, timeout, and authorization validation. A reconnect snapshot exposes unresolved obligations so a client can recover an actionable prompt without a replayed `client.waiting` event.
 
+For armature-local tool execution, the current obligation resource also owns claim and lease status. A successful execution claim may produce one durable `tool_call.started` fact for timing and audit, but periodic lease renewals update current obligation state only: they are not appended to the durable BearWire sequence and must not create livestream, review, or audit heartbeat spam. Lease expiry that changes the run produces one canonical durable terminal outcome.
+
+The opaque attempt token is execution authority and must never appear in ordinary event, history, snapshot, or `run.state` projections. Those projections may expose typed status and expiry (`waiting` or `claimed/running`, plus `lease_expires_at`) without the token. `outcome_unknown` and its recovery evidence must be derived from the same normalized terminal state for livestream/conversation, review, and audit projections.
+
 ### Connection and session
 
 | Event | Persistence and retention | Livestream | Review | Audit |

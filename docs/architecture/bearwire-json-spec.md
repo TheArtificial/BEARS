@@ -1070,11 +1070,21 @@ event.replay
 ### Tool and permission methods
 
 ```text
+client.tool.claim
+client.tool.renew
 client.tool.result
 client.permission.result
 ```
 
-`client.tool.result` answers an open `tool_result` obligation for an armature-local tool. `client.permission.result` answers an open `permission_decision` obligation emitted via `client.waiting`.
+`client.tool.claim` transactionally claims an open `tool_result` obligation for armature-local execution. Only after claim succeeds may the armature invoke the tool. The request identifies the session, run, obligation, and tool call. The response returns an opaque attempt token, `lease_expires_at`, and Den-selected `renew_after_ms`. Concurrent or stale claims do not authorize execution; their caller reconciles through `run.state`.
+
+`client.tool.renew` conditionally extends the claimed obligation using the same durable identity plus the attempt token. Den's database clock determines the new deadline. Renewal is idempotent while the claim is current and cannot revive an expired, cancelled, superseded, or settled obligation.
+
+`client.tool.result` answers a claimed `tool_result` obligation and includes its attempt token. Identical duplicate submissions are idempotent; conflicting or stale submissions are rejected without starting continuation. Result, expiry, cancellation, and renewal are compare-and-set transitions with one canonical winner.
+
+The attempt token is a bearer capability for one execution attempt. It must be transmitted only in claim-dependent requests and must not be returned by `run.state`, event history, snapshots, logs, or user-visible diagnostics. `run.state` may expose typed lease status and expiry so reconnecting clients can inspect safely without acquiring execution authority.
+
+`client.permission.result` answers an open `permission_decision` obligation emitted via `client.waiting`. Permission approval does not itself claim or execute the tool; a subsequent armature-local tool obligation must still be claimed before execution.
 
 ### Resource methods
 
@@ -1133,7 +1143,9 @@ BearWire uses:
 - lifecycle events for terminal run and tool failures; and
 - warning/diagnostic events for recoverable issues.
 
-Client obligations that remain unanswered past their deadline fail the run with `reason`/`error_type` such as `client_obligation_timeout`. The failure event should include enough context for the armature and user to identify the open obligation without inspecting Den internals; `run.state` remains the structured recovery endpoint for full obligation/result/event details.
+Unclaimed client obligations that remain unanswered past their deadline fail the run with `reason`/`error_type` such as `client_obligation_timeout`. A claimed armature-local command is different: while its lease is current it remains an open running obligation, and expiry after execution was claimed fails with `outcome_unknown` because the command may still be running or may already have made changes. That outcome prohibits automatic re-execution and directs recovery through `run.state` plus process/workspace inspection. Failure to fetch event pages alone is not a run outcome; clients reconcile `run.state` before synthesizing a terminal transport error.
+
+Failure events should include enough context for the armature and user to identify the affected obligation without inspecting Den internals; `run.state` remains the structured recovery endpoint for full obligation/result/event details.
 
 After Den accepts `client.tool.result` or `client.permission.result` and starts model continuation, continuation liveness is phase-aware. Before the first resumed runtime event, the watchdog must allow the native LLM handshake window plus the continuation idle window; after the first runtime event, the shorter continuation idle window applies between events. `continuation_watchdog_timeout` context may include `watchdog_phase`, `handshake_timeout_ms`, `idle_watchdog_timeout_ms`, `first_event_watchdog_timeout_ms`, `runtime_event_count`, and `last_event_kind`.
 

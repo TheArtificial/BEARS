@@ -413,18 +413,35 @@ Obligation kinds:
 Obligation states:
 
 - requested/waiting;
+- claimed/running with a current renewable lease (armature-local `ToolResult` only);
 - result received;
 - continued;
 - failed;
 - timed out;
+- expired with `outcome_unknown` after execution was claimed;
 - cancelled;
 - late ignored.
+
+Lease transitions for armature-local tool execution:
+
+```text
+waiting --claim--> claimed/running
+claimed/running --renew--> claimed/running
+claimed/running --result--> result received
+claimed/running --lease expiry--> failed/outcome_unknown
+```
 
 Invariants:
 
 - Open obligations block turn completion/continuation decisions; settled obligations do not.
 - Terminal turns cannot be reopened by late client/tool/permission results.
 - Waiting states require a matching open obligation.
+- Exactly one claimant may acquire execution authority for an obligation; local task registries are not authority.
+- Claim, renewal, result, cancellation, and expiry match run, session, obligation, tool call, attempt token, responder, and open state; `turn_step_id` joins the fence once available.
+- Den's database clock owns lease expiry. Renewal is idempotent and cannot revive a settled or expired obligation.
+- Conditional transitions give result, cancellation, renewal, and expiry races one canonical winner.
+- A stale or reconnecting armature without the current attempt token may inspect `run.state` but cannot renew, submit, or re-execute.
+- A claimed command whose result is not confirmed expires as `outcome_unknown`; recovery never automatically retries it.
 
 ### Turn and run lifecycle
 
@@ -622,8 +639,8 @@ Invalid or suspicious combinations should be rejected before prompt assembly or 
 | Run state | Required obligation condition |
 | --- | --- |
 | Running | no blocking awaited obligation |
-| WaitingForClient | at least one open client obligation; blocking reason derived from obligation responder actions |
-| Completed/Failed/Cancelled | no open obligations or active steps; exactly one matching terminal BearWire event committed atomically; late results ignored |
+| WaitingForClient | at least one open client obligation; blocking reason derived from obligation responder actions; a claimed/running tool obligation remains open while its lease is current |
+| Completed/Failed/Cancelled | no open obligations or active steps; exactly one matching terminal BearWire event committed atomically; late results and renewals ignored |
 
 ## Test obligations
 

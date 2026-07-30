@@ -77,6 +77,10 @@ The [BearWire JSON specification](../architecture/bearwire-json-spec.md) may lat
 
 WebSocket JSON-RPC at `/bearwire/v1` remains a possible future binding (same semantic model, different transport). Buffered SSE is not part of BearWire v1; adapter-SSE and `/acp/**` are deprecated once parity is proven.
 
+JSON event-page delivery remains stateless, run/session-scoped, and cursor-based. Den must not require server-held waiters or process-local session waiter registries for correctness. Failure to fetch an event page is not evidence that the run failed: before synthesizing a terminal transport outcome, an armature reconciles through `run.state` and prefers Den's canonical terminal state when available.
+
+An armature that owns a current tool-obligation lease must not abandon the run because an arbitrary number of event-page requests failed. Claim, renewal, and result methods project coordinator transitions defined by ADR-0048; they do not make the HTTP connection, polling loop, or BearWire edge the owner of execution. Losing event delivery neither transfers execution ownership nor authorizes re-execution.
+
 ### 4. Canonical projection path
 
 ```text
