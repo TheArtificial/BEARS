@@ -2672,6 +2672,7 @@ pub(crate) async fn get_work_catalog(
             .into_iter()
             .map(|surface| {
                 json!({
+                    "id": surface.id,
                     "name": surface.name,
                     "description": surface.description,
                     "default_ref": surface.default_ref,
@@ -2702,7 +2703,7 @@ pub(crate) async fn get_work_catalog(
         "images": catalog.images,
         "roots": catalog.roots,
         "notes": [
-            "Prefer a `surfaces` name (managed work surfaces assigned to this bear) as create_job's work_surface_ref / dispatch_work's root.",
+            "Pass a `surfaces[].id` UUID as create_job's work_surface_id. Use the surface name as dispatch_work's root when dispatching that job.",
             "Pass an image name from `images` as dispatch_work's `image` to select a toolchain; omit it to use the surface's default.",
             "Roots with has_upstream=true are git-backed; pushable jobs publish to their upstream work branch."
         ],
