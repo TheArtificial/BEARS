@@ -13445,6 +13445,7 @@ mod tests {
             "type": "tool_call.requested",
             "run_id": "run-1",
             "data": {
+                "obligation_id": "obl-call-1",
                 "tool_call": {
                     "id": "call-1",
                     "name": "fs_read_text_file",
@@ -13747,6 +13748,7 @@ mod tests {
         let canonical_event = json!({
             "type": "tool_call.requested",
             "data": {
+                "obligation_id": "obl-call-den",
                 "policy": { "execution_target": "den" },
                 "tool_call": {
                     "id": "call-den",
@@ -14040,7 +14042,10 @@ mod tests {
             json!({
                 "type": "tool_call.requested",
                 "run_id": "run-test-title",
-                "data": { "tool_call": tool_call.clone() },
+                "data": {
+                    "obligation_id": format!("obl-{call_id}"),
+                    "tool_call": tool_call.clone()
+                },
                 "policy": { "execution_target": "den" }
             }),
             json!({
@@ -14452,6 +14457,7 @@ mod tests {
                     "type": "tool_call.requested",
                     "run_id": "run-test-title",
                     "data": {
+                        "obligation_id": "obl-den-owned-title",
                         "policy": { "execution_target": "den" },
                         "tool_call": {
                             "id": "call-den-owned-title",
@@ -15864,7 +15870,7 @@ mod tests {
             &ToolPolicy::default(),
         )
         .await;
-        assert!(format!("{:#}", invalid.unwrap_err()).contains("did not contain"));
+        assert!(format!("{:#}", invalid.unwrap_err()).contains("found no file diff headers"));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -17301,6 +17307,7 @@ mod tests {
             "type": "tool_call.requested",
             "run_id": "run-terminal-first",
             "data": {
+                "obligation_id": "obl-terminal-first",
                 "policy": { "execution_target": "den" },
                 "tool_call": {
                     "id": tool_call_id,
@@ -17424,6 +17431,7 @@ mod tests {
             "type": "tool_call.requested",
             "run_id": "run-stale-den-owned",
             "data": {
+                "obligation_id": "obl-stale-den-owned",
                 "policy": { "execution_target": "den" },
                 "tool_call": {
                     "id": format!("call-{}", Uuid::new_v4()),
@@ -18158,6 +18166,7 @@ mod bearwire_tool_request_parser_tests {
         let event = json!({
             "type": "tool_call.requested",
             "data": {
+                "obligation_id": "obl-call-req-1",
                 "tool_call": {
                     "id": "call-req-1",
                     "name": "fs_read_text_file",

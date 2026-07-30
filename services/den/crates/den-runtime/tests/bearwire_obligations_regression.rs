@@ -561,7 +561,7 @@ async fn terminal_turn_run_cannot_be_reopened_or_overwritten(pool: sqlx::PgPool)
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn expired_client_obligation_is_marked_failed(pool: sqlx::PgPool) {
+async fn expired_client_obligation_is_detected_without_early_settlement(pool: sqlx::PgPool) {
     let (user_id, bear_id) = create_user_and_bear(&pool).await;
     let session_id = format!("session-{}", Uuid::new_v4().simple());
     let run_id = format!("run_{}", Uuid::new_v4().simple());
@@ -594,16 +594,14 @@ async fn expired_client_obligation_is_marked_failed(pool: sqlx::PgPool) {
         .expect("expire obligations");
     assert_eq!(expired.len(), 1);
     assert_eq!(expired[0].id, obligation.id);
-    assert_eq!(expired[0].state, "failed");
-    assert_eq!(
-        expired[0].result_payload.as_ref().unwrap()["status"],
-        "timeout"
-    );
+    assert_eq!(expired[0].state, "waiting_for_client");
+    assert!(expired[0].result_payload.is_none());
 
     let open = turn_obligations::open_client_obligations_for_session(&pool, &session_id)
         .await
         .expect("list open obligations");
-    assert!(open.is_empty(), "expired obligation should not remain open");
+    assert_eq!(open.len(), 1);
+    assert_eq!(open[0].id, obligation.id);
 }
 
 #[sqlx::test(migrations = "../../migrations")]
