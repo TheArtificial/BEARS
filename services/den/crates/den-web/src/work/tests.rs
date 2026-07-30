@@ -571,7 +571,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
 }
 
 #[tokio::test]
-async fn job_lifecycle_can_extend_then_complete() {
+async fn legacy_job_lifecycle_can_extend_then_complete() {
     let _guard = TEST_DB_LOCK.lock().await;
     let Some(pool) = test_pool().await else {
         return;
