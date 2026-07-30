@@ -67,7 +67,8 @@ pub async fn expire_client_obligations_once(
 
     let mut by_run = BTreeMap::<String, (Vec<Value>, bool)>::new();
     for obligation in expired {
-        let command_outcome_unknown = is_command_tool_result(&obligation);
+        let command_outcome_unknown =
+            obligation.is_claimed() && is_command_tool_result(&obligation);
         let entry = by_run
             .entry(obligation.run_id.clone())
             .or_insert_with(|| (Vec::new(), false));

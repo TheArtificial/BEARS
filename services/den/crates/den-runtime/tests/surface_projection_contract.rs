@@ -22,6 +22,9 @@ fn obligation(kind: &str, action: &str) -> TurnObligationRow {
         created_at: OffsetDateTime::UNIX_EPOCH,
         updated_at: OffsetDateTime::UNIX_EPOCH,
         completed_at: None,
+        lease_attempt_token_hash: None,
+        claimed_at: None,
+        lease_expires_at: None,
     }
 }
 

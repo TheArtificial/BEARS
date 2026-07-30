@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -185,6 +186,10 @@ pub struct TurnObligationRow {
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
     pub completed_at: Option<OffsetDateTime>,
+    #[serde(skip_serializing)]
+    pub lease_attempt_token_hash: Option<String>,
+    pub claimed_at: Option<OffsetDateTime>,
+    pub lease_expires_at: Option<OffsetDateTime>,
 }
 
 impl TurnObligationRow {
@@ -213,7 +218,12 @@ impl TurnObligationRow {
     }
 
     pub fn expires_at(&self) -> OffsetDateTime {
-        self.created_at + time::Duration::milliseconds(self.timeout_ms())
+        self.lease_expires_at
+            .unwrap_or_else(|| self.created_at + time::Duration::milliseconds(self.timeout_ms()))
+    }
+
+    pub fn is_claimed(&self) -> bool {
+        self.lease_attempt_token_hash.is_some()
     }
 
     pub fn timed_out(&self, now: OffsetDateTime) -> bool {
@@ -250,6 +260,9 @@ fn row_to_obligation(row: sqlx::postgres::PgRow) -> TurnObligationRow {
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         completed_at: row.get("completed_at"),
+        lease_attempt_token_hash: row.try_get("lease_attempt_token_hash").ok(),
+        claimed_at: row.try_get("claimed_at").ok(),
+        lease_expires_at: row.try_get("lease_expires_at").ok(),
     }
 }
 
@@ -273,7 +286,7 @@ pub async fn create_turn_obligation_for_step(
         ) VALUES ($1, $2, $3, $4, $5, $6, 'waiting_for_client', $7)
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
-                  request_payload, result_payload, created_at, updated_at, completed_at
+                  request_payload, result_payload, created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         ",
     )
     .bind(run_id)
@@ -337,7 +350,7 @@ pub async fn upsert_tool_result_obligation_for_step(
                       updated_at = NOW()
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                  created_at, updated_at, completed_at
+                  created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         ",
     )
     .bind(run_id)
@@ -401,7 +414,7 @@ pub async fn upsert_permission_decision_obligation_for_step(
               AND (permission_id IS NULL OR permission_id = $4)
             RETURNING id, run_id, session_id, kind, expected_responder_action,
                       tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                      created_at, updated_at, completed_at
+                      created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
             ",
         )
         .bind(run_id)
@@ -436,7 +449,7 @@ pub async fn upsert_permission_decision_obligation_for_step(
                       updated_at = NOW()
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                  created_at, updated_at, completed_at
+                  created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         ",
     )
     .bind(run_id)
@@ -459,7 +472,7 @@ pub async fn get_tool_call_obligation(
         r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-               created_at, updated_at, completed_at
+               created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE run_id = $1 AND tool_call_id = $2
         ",
@@ -480,13 +493,128 @@ pub async fn get_permission_obligation(
         r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-               created_at, updated_at, completed_at
+               created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE run_id = $1 AND permission_id = $2
         ",
     )
     .bind(run_id)
     .bind(permission_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_obligation))
+}
+
+pub const TOOL_LEASE_DURATION_SECONDS: i64 = 30;
+pub const TOOL_LEASE_RENEW_AFTER_SECONDS: i64 = 10;
+
+pub fn lease_attempt_token_hash(attempt_token: &str) -> String {
+    format!("{:x}", Sha256::digest(attempt_token.as_bytes()))
+}
+
+pub async fn claim_tool_execution(
+    pool: &PgPool,
+    obligation_id: Uuid,
+    run_id: &str,
+    session_id: &str,
+    tool_call_id: &str,
+    attempt_token_hash: &str,
+) -> Result<Option<TurnObligationRow>, DenError> {
+    let row = sqlx::query(
+        r"
+        UPDATE turn_obligations
+        SET lease_attempt_token_hash = $5,
+            claimed_at = NOW(),
+            lease_expires_at = NOW() + make_interval(secs => $6),
+            updated_at = NOW()
+        WHERE id = $1
+          AND run_id = $2
+          AND session_id = $3
+          AND tool_call_id = $4
+          AND kind = 'tool_result'
+          AND expected_responder_action = 'tool_result'
+          AND state = 'waiting_for_client'
+          AND lease_attempt_token_hash IS NULL
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
+                  tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
+                  request_payload, result_payload, created_at, updated_at, completed_at,
+                  lease_attempt_token_hash, claimed_at, lease_expires_at
+        ",
+    )
+    .bind(obligation_id)
+    .bind(run_id)
+    .bind(session_id)
+    .bind(tool_call_id)
+    .bind(attempt_token_hash)
+    .bind(TOOL_LEASE_DURATION_SECONDS as f64)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_obligation))
+}
+
+pub async fn renew_tool_execution(
+    pool: &PgPool,
+    obligation_id: Uuid,
+    run_id: &str,
+    session_id: &str,
+    tool_call_id: &str,
+    attempt_token_hash: &str,
+) -> Result<Option<TurnObligationRow>, DenError> {
+    let row = sqlx::query(
+        r"
+        UPDATE turn_obligations
+        SET lease_expires_at = NOW() + make_interval(secs => $6),
+            updated_at = NOW()
+        WHERE id = $1
+          AND run_id = $2
+          AND session_id = $3
+          AND tool_call_id = $4
+          AND kind = 'tool_result'
+          AND state = 'waiting_for_client'
+          AND lease_attempt_token_hash = $5
+          AND lease_expires_at > NOW()
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
+                  tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
+                  request_payload, result_payload, created_at, updated_at, completed_at,
+                  lease_attempt_token_hash, claimed_at, lease_expires_at
+        ",
+    )
+    .bind(obligation_id)
+    .bind(run_id)
+    .bind(session_id)
+    .bind(tool_call_id)
+    .bind(attempt_token_hash)
+    .bind(TOOL_LEASE_DURATION_SECONDS as f64)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_obligation))
+}
+
+pub async fn mark_claimed_result_received(
+    pool: &PgPool,
+    obligation_id: Uuid,
+    attempt_token_hash: &str,
+    result_payload: Value,
+) -> Result<Option<TurnObligationRow>, DenError> {
+    let row = sqlx::query(
+        r"
+        UPDATE turn_obligations
+        SET state = 'result_received',
+            result_payload = $3,
+            updated_at = NOW()
+        WHERE id = $1
+          AND state = 'waiting_for_client'
+          AND lease_attempt_token_hash = $2
+          AND lease_expires_at > NOW()
+        RETURNING id, run_id, session_id, kind, expected_responder_action,
+                  tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
+                  request_payload, result_payload, created_at, updated_at, completed_at,
+                  lease_attempt_token_hash, claimed_at, lease_expires_at
+        ",
+    )
+    .bind(obligation_id)
+    .bind(attempt_token_hash)
+    .bind(result_payload)
     .fetch_optional(pool)
     .await?;
     Ok(row.map(row_to_obligation))
@@ -507,7 +635,7 @@ pub async fn mark_result_received(
           AND state IN ('requested','waiting_for_client','result_received')
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                  created_at, updated_at, completed_at
+                  created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         ",
     )
     .bind(obligation_id)
@@ -533,7 +661,7 @@ pub async fn mark_waiting_for_tool_result(
           AND tool_call_id IS NOT NULL
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                  created_at, updated_at, completed_at
+                  created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         ",
     )
     .bind(obligation_id)
@@ -556,7 +684,7 @@ pub async fn mark_continued(
           AND state IN ('result_received','continued')
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                  created_at, updated_at, completed_at
+                  created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         ",
     )
     .bind(obligation_id)
@@ -579,7 +707,7 @@ pub async fn mark_failed(
           AND state IN ('requested','waiting_for_client','result_received')
         RETURNING id, run_id, session_id, kind, expected_responder_action,
                   tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-                  created_at, updated_at, completed_at
+                  created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         ",
     )
     .bind(obligation_id)
@@ -596,7 +724,7 @@ pub async fn open_client_obligations_for_step(
         r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-               created_at, updated_at, completed_at
+               created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE turn_step_id = $1
           AND state IN ('requested','waiting_for_client')
@@ -617,7 +745,7 @@ pub async fn open_client_obligations_for_run(
         r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-               created_at, updated_at, completed_at
+               created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE run_id = $1
           AND state IN ('requested','waiting_for_client')
@@ -638,7 +766,7 @@ pub async fn open_client_obligations_for_session(
         r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, state, turn_step_id, request_payload, result_payload,
-               created_at, updated_at, completed_at
+               created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE session_id = $1
           AND state IN ('requested','waiting_for_client')
@@ -660,7 +788,7 @@ async fn open_client_obligations(
         r"
         SELECT id, run_id, session_id, kind, expected_responder_action,
                tool_call_id, permission_id, responder_ref_id, state, turn_step_id,
-               request_payload, result_payload, created_at, updated_at, completed_at
+               request_payload, result_payload, created_at, updated_at, completed_at, lease_attempt_token_hash, claimed_at, lease_expires_at
         FROM turn_obligations
         WHERE state IN ('requested','waiting_for_client')
         ORDER BY created_at ASC, id ASC

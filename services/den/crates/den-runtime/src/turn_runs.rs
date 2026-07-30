@@ -300,6 +300,93 @@ pub async fn record_client_result(
     .await
 }
 
+pub enum ClaimedToolResultRecord {
+    ClaimRejected,
+    Recorded(TurnObligationResultRecord),
+}
+
+pub async fn record_claimed_tool_result_for_step(
+    pool: &PgPool,
+    run_id: &str,
+    turn_step_id: Option<Uuid>,
+    obligation_id: Uuid,
+    tool_call_id: &str,
+    attempt_token_hash: &str,
+    payload_json: serde_json::Value,
+) -> Result<ClaimedToolResultRecord, DenError> {
+    let mut tx = pool.begin().await?;
+    let claimed = sqlx::query_scalar::<_, Uuid>(
+        r"
+        UPDATE turn_obligations
+        SET state = 'result_received', result_payload = $4, updated_at = NOW()
+        WHERE id = $1
+          AND run_id = $2
+          AND tool_call_id = $3
+          AND kind = 'tool_result'
+          AND state = 'waiting_for_client'
+          AND lease_attempt_token_hash = $5
+          AND lease_expires_at > NOW()
+        RETURNING id
+        ",
+    )
+    .bind(obligation_id)
+    .bind(run_id)
+    .bind(tool_call_id)
+    .bind(&payload_json)
+    .bind(attempt_token_hash)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if claimed.is_none() {
+        tx.rollback().await?;
+        return Ok(ClaimedToolResultRecord::ClaimRejected);
+    }
+
+    let hash = result_hash(&payload_json)?;
+    let inserted = sqlx::query(
+        r"
+        INSERT INTO turn_obligation_results (
+            run_id, turn_step_id, obligation_kind, obligation_id, result_hash, payload_json
+        ) VALUES ($1, $2, 'tool', $3, $4, $5)
+        ON CONFLICT (run_id, obligation_kind, obligation_id) DO NOTHING
+        RETURNING id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
+        ",
+    )
+    .bind(run_id)
+    .bind(turn_step_id)
+    .bind(tool_call_id)
+    .bind(&hash)
+    .bind(&payload_json)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let record = if let Some(row) = inserted {
+        TurnObligationResultRecord::Inserted {
+            row: row_to_client_result(row),
+        }
+    } else {
+        let existing = sqlx::query(
+            r"
+            SELECT id, run_id, obligation_kind, obligation_id, result_hash, payload_json, turn_step_id, created_at
+            FROM turn_obligation_results
+            WHERE run_id = $1 AND obligation_kind = 'tool' AND obligation_id = $2
+            ",
+        )
+        .bind(run_id)
+        .bind(tool_call_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let row = row_to_client_result(existing);
+        if row.result_hash == hash {
+            TurnObligationResultRecord::DuplicateIdentical { row }
+        } else {
+            TurnObligationResultRecord::DuplicateConflict {
+                existing_hash: row.result_hash,
+            }
+        }
+    };
+    tx.commit().await?;
+    Ok(ClaimedToolResultRecord::Recorded(record))
+}
+
 pub async fn record_client_result_for_step(
     pool: &PgPool,
     run_id: &str,

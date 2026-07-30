@@ -70,6 +70,8 @@ struct ClientToolResultRequest {
     session_id: String,
     #[serde(deserialize_with = "deserialize_required_string")]
     tool_call_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    attempt_token: Option<String>,
     #[serde(
         default = "default_tool_result_status",
         deserialize_with = "deserialize_tool_result_status"
@@ -92,7 +94,7 @@ fn default_tool_result_status() -> ToolResultStatus {
 }
 
 impl ClientToolResultRequest {
-    fn into_run_session_input(self) -> (String, String, ClientToolResultInput) {
+    fn into_run_session_input(self) -> (String, String, Option<String>, ClientToolResultInput) {
         let input = ClientToolResultInput::new(
             self.tool_call_id,
             self.tool_name,
@@ -101,7 +103,7 @@ impl ClientToolResultRequest {
             self.structured_content,
             self.error,
         );
-        (self.run_id, self.session_id, input)
+        (self.run_id, self.session_id, self.attempt_token, input)
     }
 }
 
@@ -972,6 +974,107 @@ fn spawn_continuation_task(
     });
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ClientToolLeaseRequest {
+    #[serde(deserialize_with = "deserialize_required_string")]
+    run_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    session_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    obligation_id: String,
+    #[serde(deserialize_with = "deserialize_required_string")]
+    tool_call_id: String,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    attempt_token: Option<String>,
+}
+
+async fn authenticated_tool_lease(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<(ClientToolLeaseRequest, turn_runs::TurnRunRow), CustomError> {
+    let (user_id, bear) = authenticated_bear(state, headers, params).await?;
+    let request: ClientToolLeaseRequest = parse_params(params)?;
+    let run = turn_runs::get_run(&state.sqlx_pool, &request.run_id)
+        .await?
+        .ok_or_else(|| CustomError::ValidationError("BearWire run not found".to_string()))?;
+    if run.bear_id != bear.id || run.user_id != user_id || run.session_id != request.session_id {
+        return Err(CustomError::Authorization(
+            "run does not belong to authenticated Bear/session".to_string(),
+        ));
+    }
+    if matches!(run.state.as_str(), "completed" | "failed" | "cancelled") {
+        return Err(CustomError::ValidationError(format!(
+            "cannot lease tool execution for terminal run {}",
+            run.run_id
+        )));
+    }
+    Ok((request, run))
+}
+
+pub(crate) async fn client_tool_claim_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (request, _run) = authenticated_tool_lease(state, headers, params).await?;
+    let obligation_id = Uuid::parse_str(&request.obligation_id)
+        .map_err(|_| CustomError::ValidationError("invalid obligation_id".to_string()))?;
+    let attempt_token = Uuid::new_v4().to_string();
+    let hash = turn_obligations::lease_attempt_token_hash(&attempt_token);
+    let Some(obligation) = turn_obligations::claim_tool_execution(
+        &state.sqlx_pool,
+        obligation_id,
+        &request.run_id,
+        &request.session_id,
+        &request.tool_call_id,
+        &hash,
+    )
+    .await?
+    else {
+        return Ok(json!({ "ok": false, "status": "claim_rejected" }));
+    };
+    Ok(json!({
+        "ok": true,
+        "status": "claimed",
+        "attempt_token": attempt_token,
+        "lease_expires_at": obligation.lease_expires_at,
+        "renew_after_ms": turn_obligations::TOOL_LEASE_RENEW_AFTER_SECONDS * 1000,
+    }))
+}
+
+pub(crate) async fn client_tool_renew_result(
+    state: &DenState,
+    headers: &HeaderMap,
+    params: &Value,
+) -> Result<Value, CustomError> {
+    let (request, _run) = authenticated_tool_lease(state, headers, params).await?;
+    let obligation_id = Uuid::parse_str(&request.obligation_id)
+        .map_err(|_| CustomError::ValidationError("invalid obligation_id".to_string()))?;
+    let attempt_token = request.attempt_token.ok_or_else(|| {
+        CustomError::ValidationError("client.tool.renew requires attempt_token".to_string())
+    })?;
+    let hash = turn_obligations::lease_attempt_token_hash(&attempt_token);
+    let Some(obligation) = turn_obligations::renew_tool_execution(
+        &state.sqlx_pool,
+        obligation_id,
+        &request.run_id,
+        &request.session_id,
+        &request.tool_call_id,
+        &hash,
+    )
+    .await?
+    else {
+        return Ok(json!({ "ok": false, "status": "lease_lost" }));
+    };
+    Ok(json!({
+        "ok": true,
+        "status": "renewed",
+        "lease_expires_at": obligation.lease_expires_at,
+        "renew_after_ms": turn_obligations::TOOL_LEASE_RENEW_AFTER_SECONDS * 1000,
+    }))
+}
+
 pub(crate) async fn client_tool_result_result(
     state: &DenState,
     headers: &HeaderMap,
@@ -979,7 +1082,7 @@ pub(crate) async fn client_tool_result_result(
 ) -> Result<Value, CustomError> {
     let (user_id, bear) = authenticated_bear(state, headers, params).await?;
     let request: ClientToolResultRequest = parse_params(params)?;
-    let (run_id, session_id, input) = request.into_run_session_input();
+    let (run_id, session_id, attempt_token, input) = request.into_run_session_input();
     let tool_call_id = input.tool_call_id.clone();
     let status = input.status;
     let Some(run) = turn_runs::get_run(&state.sqlx_pool, &run_id).await? else {
@@ -1083,10 +1186,15 @@ pub(crate) async fn client_tool_result_result(
         .ok_or_else(|| {
             CustomError::System("Bear pair profile binding not configured".to_string())
         })?;
+    let attempt_token = attempt_token.ok_or_else(|| {
+        CustomError::ValidationError("client.tool.result requires attempt_token".to_string())
+    })?;
+    let attempt_token_hash = turn_obligations::lease_attempt_token_hash(&attempt_token);
     let coordinator_outcome = client_obligation_coordinator::record_and_settle_tool_result(
         &state.sqlx_pool,
         &run,
         &obligation,
+        &attempt_token_hash,
         "tool",
         &tool_call_id,
         payload.clone(),

@@ -71,6 +71,26 @@ async fn create_user_and_bear(pool: &sqlx::PgPool) -> (i32, Uuid) {
     (user_id, bear_id)
 }
 
+async fn claim_tool_obligation(
+    pool: &sqlx::PgPool,
+    obligation: &turn_obligations::TurnObligationRow,
+) -> String {
+    let attempt_token_hash =
+        turn_obligations::lease_attempt_token_hash(&Uuid::new_v4().to_string());
+    turn_obligations::claim_tool_execution(
+        pool,
+        obligation.id,
+        &obligation.run_id,
+        &obligation.session_id,
+        obligation.tool_call_id.as_deref().expect("tool call id"),
+        &attempt_token_hash,
+    )
+    .await
+    .expect("claim tool obligation")
+    .expect("tool obligation was claimable");
+    attempt_token_hash
+}
+
 async fn create_run_with_step(
     pool: &sqlx::PgPool,
 ) -> (turn_runs::TurnRunRow, turn_steps::TurnStepRow, String) {
@@ -113,10 +133,14 @@ async fn multi_tool_step_continues_exactly_once_after_all_results_settle(pool: s
     .await
     .expect("create second obligation");
 
+    let first_attempt = claim_tool_obligation(&pool, &first).await;
+    let second_attempt = claim_tool_obligation(&pool, &second).await;
+
     let first_outcome = client_obligation_coordinator::record_and_settle_tool_result(
         &pool,
         &run,
         &first,
+        &first_attempt,
         "tool",
         "call-first",
         json!({ "status": "ok", "content": "first" }),
@@ -137,6 +161,7 @@ async fn multi_tool_step_continues_exactly_once_after_all_results_settle(pool: s
         &pool,
         &run,
         &second,
+        &second_attempt,
         "tool",
         "call-second",
         json!({ "status": "ok", "content": "second" }),
@@ -152,6 +177,7 @@ async fn multi_tool_step_continues_exactly_once_after_all_results_settle(pool: s
         &pool,
         &run,
         &second,
+        &second_attempt,
         "tool",
         "call-second",
         json!({ "status": "ok", "content": "second" }),
@@ -193,10 +219,12 @@ async fn tool_execution_error_is_a_settling_result_and_can_continue(pool: sqlx::
     .await
     .expect("create tool obligation");
 
+    let attempt = claim_tool_obligation(&pool, &obligation).await;
     let outcome = client_obligation_coordinator::record_and_settle_tool_result(
         &pool,
         &run,
         &obligation,
+        &attempt,
         "tool",
         "call-missing-file",
         json!({
@@ -254,6 +282,7 @@ async fn late_result_after_terminal_run_is_ignored_by_coordinator(pool: sqlx::Pg
         &pool,
         &failed_run,
         &failed_obligation,
+        "",
         "tool",
         "call-late",
         json!({ "status": "ok", "content": "too late" }),
@@ -300,6 +329,7 @@ async fn late_tool_result_after_terminal_is_ignored(pool: sqlx::PgPool) {
         &pool,
         &completed_run,
         &completed_obligation,
+        "",
         "tool",
         "call-late-exact-name",
         json!({ "status": "ok", "content": "too late" }),
@@ -331,10 +361,12 @@ async fn duplicate_conflicting_tool_result_is_owned_by_coordinator(pool: sqlx::P
     .await
     .expect("create tool obligation");
 
+    let attempt = claim_tool_obligation(&pool, &obligation).await;
     let first = client_obligation_coordinator::record_and_settle_tool_result(
         &pool,
         &run,
         &obligation,
+        &attempt,
         "tool",
         "call-conflict",
         json!({ "status": "ok", "content": "one" }),
@@ -350,6 +382,7 @@ async fn duplicate_conflicting_tool_result_is_owned_by_coordinator(pool: sqlx::P
         &pool,
         &run,
         &obligation,
+        &attempt,
         "tool",
         "call-conflict",
         json!({ "status": "ok", "content": "two" }),
@@ -560,6 +593,7 @@ async fn stale_wrong_step_result_is_detected_before_settlement(pool: sqlx::PgPoo
         &run,
         &obligation,
         Some(second_step.id),
+        "",
         "tool",
         "call-step-bound",
         json!({ "status": "ok", "content": "wrong step" }),
