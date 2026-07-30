@@ -150,10 +150,30 @@ impl TaskDispatcher for PgDocketService {
         )
         .await?;
 
-        Ok(first_pending_leaves_in_plan_order(tasks)
-            .into_iter()
-            .take(scan_limit as usize)
-            .collect())
+        // ponytail: fetch each selected job until dispatch becomes a single
+        // queue query; the task scan is already capped at 500.
+        let mut runnable = Vec::new();
+        for task in first_pending_leaves_in_plan_order(tasks) {
+            let Some(job_id) = task.task.job_id else {
+                continue;
+            };
+            let Some(job) = db::get_job(&self.pool, bear_id, job_id).await? else {
+                continue;
+            };
+            if job.job.status == "blocked"
+                || job
+                    .current_run
+                    .as_ref()
+                    .is_some_and(|run| run.state == "blocked")
+            {
+                continue;
+            }
+            runnable.push(task);
+            if runnable.len() == scan_limit as usize {
+                break;
+            }
+        }
+        Ok(runnable)
     }
 
     async fn mark_task_started(
