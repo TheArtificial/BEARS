@@ -2,7 +2,9 @@
 
 ## Status
 
-Planned. Implements [ADR-0047 — Context Window Budget and Token Estimation](../decisions/adr-0047-context-window-budget-and-token-estimation.md).
+Substantially landed (audited 2026-07-30). Implements [ADR-0047 — Context Window Budget and Token Estimation](../decisions/adr-0047-context-window-budget-and-token-estimation.md).
+
+Landed: `ContextBudgetReport` DTO (`den-protocol/src/context_budget.rs`), per-component estimation including distinct `key_memory_projection` and `recall` buckets (`den-runtime/src/context_budget.rs`, chars/4 heuristic), turn enforcement (`agent_loop/budget.rs`), per-turn persistence and admin surfacing. **Remaining: Phase 4 calibration** — per-model-family chars→tokens correction ratios in the model registry from observed Bifrost usage, feeding the estimator and memory char-cap re-tuning (2026-07-30 ADR-0047 amendment, below).
 
 ## Goal
 
@@ -69,10 +71,13 @@ Required buckets:
 - compiled base prompt,
 - transcript replay,
 - prompt-memory blocks,
-- retrieved memory,
+- **key memory projection** (path anchors — distinct bucket per the 2026-07-30 ADR-0047 amendment),
+- **derived recall** (injected recall passages — distinct bucket, same amendment),
 - tool schemas/tool surface,
 - runtime notes/compaction supplements,
 - output reserve.
+
+Key memory projection and derived recall must be attributed separately (not merged as "retrieved memory"): their char caps are tuned independently ([den-runtime v1 budgets](../architecture/den-runtime.md#v1-budgets)) and the calibration loop in Phase 4 feeds back into those caps.
 
 Exact model-aware tokenization is preferred where practical. Fallback approximation is acceptable if clearly labeled.
 
@@ -124,6 +129,12 @@ When provider/Bifrost usage data is available, compare:
 - actual prompt/completion usage.
 
 Use this to tune fallback estimators per model family. Do not block runtime checks on this phase.
+
+**Calibration home and memory-cap feedback (ADR-0047 amendment, 2026-07-30):**
+
+- Persist per-model-family **chars→tokens correction ratios** in the model registry (alongside resolved model metadata), computed from observed Bifrost prompt-token usage against assembled character counts. Bifrost stays the usage authority; Den mirrors ratios for estimation.
+- The ratios feed two consumers: the approximate estimator (Phase 2 fallback path) and **periodic re-tuning of the memory char caps** in [den-runtime v1 budgets](../architecture/den-runtime.md#v1-budgets). The memory subsystem never grows its own token estimator — char caps remain selection heuristics recalibrated from this measured loop.
+- Include the key-memory-projection and derived-recall buckets in calibration comparisons so their ratios reflect memory-content character density (prose-heavy anchors vs code-heavy work-surface docs), not just transcript averages.
 
 ### Phase 5 — Policy integration
 
