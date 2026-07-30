@@ -579,12 +579,30 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
     let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
+    let surface_name = format!("lifecycle-{}", &Uuid::new_v4().simple().to_string()[..12]);
+    let response = post_form(
+        &app,
+        &cookie,
+        "/work/surfaces/new",
+        format!(
+            "name={surface_name}&description=&upstream_url=https%3A%2F%2Fexample.invalid%2Frepo.git\
+             &default_ref=main&default_image=&credential_kind=&credential_value=&bear_id={bear_id}"
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let surface_id: Uuid = sqlx::query_scalar("SELECT id FROM work_surfaces WHERE name = $1")
+        .bind(&surface_name)
+        .fetch_one(&pool)
+        .await
+        .expect("surface id");
+
     let response = post_form(
         &app,
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&goal=Lifecycle+job&root=&commit_policy=none\
+            "bear_id={bear_id}&goal=Lifecycle+job&surface_id={surface_id}&root=&commit_policy=none\
              &task_title=First+task&task_criteria=first+done"
         ),
     )
@@ -636,6 +654,13 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
         .fetch_one(&pool)
         .await
         .expect("job status");
+    let (surface_ref, bound_surface_id): (Option<String>, Option<Uuid>) = sqlx::query_as(
+        "SELECT work_surface_ref, work_surface_id FROM bear_jobs WHERE id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("job surface binding");
     let run_state: String = sqlx::query_scalar("SELECT state FROM bear_job_runs WHERE id = $1")
         .bind(run_id)
         .fetch_one(&pool)
@@ -648,6 +673,8 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
             .await
             .expect("criterion states");
     assert_eq!(status, "completed");
+    assert_eq!(surface_ref.as_deref(), Some(surface_name.as_str()));
+    assert_eq!(bound_surface_id, Some(surface_id));
     assert_eq!(run_state, "completed");
     assert!(criterion_statuses.iter().all(|status| status == "met"));
 }
