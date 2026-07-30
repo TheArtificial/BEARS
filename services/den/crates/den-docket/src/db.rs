@@ -48,8 +48,7 @@ pub(super) async fn create_job(
           AND status IN ('draft', 'ready', 'running', 'blocked')
           AND lower(btrim(goal)) = lower(btrim($2))
           AND work_surface_id IS NOT DISTINCT FROM $3
-          AND work_surface_ref IS NOT DISTINCT FROM $4
-          AND ($5::uuid IS NULL OR id = $5)
+          AND ($4::uuid IS NULL OR id = $4)
         ORDER BY created_at DESC
         LIMIT 1
         FOR UPDATE
@@ -58,7 +57,6 @@ pub(super) async fn create_job(
     .bind(create.bear_id)
     .bind(create.goal.trim())
     .bind(create.work_surface_id)
-    .bind(create.work_surface_ref.as_deref())
     .bind(create.supersedes_job_id)
     .fetch_optional(&mut *tx)
     .await?;
@@ -94,12 +92,12 @@ pub(super) async fn create_job(
     let job = sqlx::query_as::<_, DocketJobRow>(
         r"
         INSERT INTO bear_jobs (
-            bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
+            bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
             commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind,
             supersedes_job_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
                   commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind,
                   supersedes_job_id, current_run_id, created_at, updated_at
         ",
@@ -108,7 +106,6 @@ pub(super) async fn create_job(
     .bind(create.created_by_user_id)
     .bind(create.created_by_role.trim())
     .bind(create.goal.trim())
-    .bind(create.work_surface_ref.as_deref())
     .bind(create.work_surface_id)
     .bind(create.commit_policy.map(|policy| policy.as_str()))
     .bind(
@@ -143,7 +140,7 @@ pub(super) async fn create_job(
         UPDATE bear_jobs
         SET current_run_id = $2, updated_at = NOW()
         WHERE id = $1
-        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
+        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
                   commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         ",
     )
@@ -448,7 +445,7 @@ pub(super) async fn list_jobs(
     let rows = sqlx::query_as!(
         DocketJobRow,
         r"
-        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
+        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
                commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1
@@ -485,7 +482,7 @@ pub(super) async fn get_job(
     let Some(job) = sqlx::query_as!(
         DocketJobRow,
         r"
-        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
+        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
                commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
@@ -580,7 +577,7 @@ pub(super) async fn update_job(
     let mut tx = pool.begin().await?;
     let Some(current) = sqlx::query_as::<_, DocketJobRow>(
         r"
-        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
+        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
                commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         FROM bear_jobs
         WHERE bear_id = $1 AND id = $2
@@ -600,15 +597,14 @@ pub(super) async fn update_job(
         r"
         UPDATE bear_jobs
         SET goal = $3,
-            work_surface_ref = $4,
-            work_surface_id = $5,
-            commit_policy = $6,
-            work_branch = $7,
-            status = $8,
-            visibility = $9,
+            work_surface_id = $4,
+            commit_policy = $5,
+            work_branch = $6,
+            status = $7,
+            visibility = $8,
             updated_at = NOW()
         WHERE bear_id = $1 AND id = $2
-        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,
+        RETURNING id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,
                   commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at
         ",
     )
@@ -620,12 +616,6 @@ pub(super) async fn update_job(
             .as_deref()
             .map(str::trim)
             .unwrap_or(&current.goal),
-    )
-    .bind(
-        update
-            .work_surface_ref
-            .clone()
-            .unwrap_or_else(|| current.work_surface_ref.clone()),
     )
     .bind(
         update
@@ -1102,17 +1092,33 @@ pub(super) async fn execute_job(
             "Docket job has no current run".to_string(),
         ));
     };
-    if projection.job.status == "blocked" || run.state == "blocked" {
-        return Err(DenError::ValidationError(
-            "Docket job is blocked; recover its current run before dispatching work".to_string(),
-        ));
-    }
-
     let state_by_task = projection
         .task_states
         .iter()
         .map(|state| (state.task_id, state.status.as_str()))
         .collect::<HashMap<_, _>>();
+    let criteria_complete = projection.criteria.is_empty()
+        || projection.criteria.iter().all(|criterion| {
+            projection
+                .criteria_states
+                .iter()
+                .find(|state| state.criterion_id == criterion.id)
+                .map(|state| matches!(state.status.as_str(), "met" | "waived"))
+                .unwrap_or(false)
+        });
+    let tasks_complete = projection.tasks.iter().all(|task| {
+        matches!(
+            state_by_task.get(&task.id).copied(),
+            Some("done" | "cancelled")
+        )
+    });
+    // A criteria-only block is re-evaluated here after criteria are updated.
+    // A blocked run with unfinished task work still requires explicit recovery.
+    if (projection.job.status == "blocked" || run.state == "blocked") && !tasks_complete {
+        return Err(DenError::ValidationError(
+            "Docket job is blocked; recover its current run before dispatching work".to_string(),
+        ));
+    }
     if let Some(active) = projection
         .task_states
         .iter()
@@ -1183,21 +1189,6 @@ pub(super) async fn execute_job(
         });
     }
 
-    let criteria_complete = projection.criteria.is_empty()
-        || projection.criteria.iter().all(|criterion| {
-            projection
-                .criteria_states
-                .iter()
-                .find(|state| state.criterion_id == criterion.id)
-                .map(|state| matches!(state.status.as_str(), "met" | "waived"))
-                .unwrap_or(false)
-        });
-    let tasks_complete = projection.tasks.iter().all(|task| {
-        matches!(
-            state_by_task.get(&task.id).copied(),
-            Some("done" | "cancelled")
-        )
-    });
     if tasks_complete && criteria_complete {
         record_execution_session(pool, &request, run.id, None, "completed").await?;
         let job = update_job(
@@ -1209,7 +1200,6 @@ pub(super) async fn execute_job(
                 actor_user_id: request.actor_user_id,
                 actor_agent_id: request.actor_agent_id,
                 goal: None,
-                work_surface_ref: None,
                 work_surface_id: None,
                 commit_policy: None,
                 work_branch: None,
@@ -1236,7 +1226,6 @@ pub(super) async fn execute_job(
                 actor_user_id: request.actor_user_id,
                 actor_agent_id: request.actor_agent_id,
                 goal: None,
-                work_surface_ref: None,
                 work_surface_id: None,
                 commit_policy: None,
                 work_branch: None,

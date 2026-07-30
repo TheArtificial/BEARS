@@ -195,6 +195,26 @@ async fn seed_member(pool: &sqlx::PgPool) -> (i32, Uuid, String) {
     (user_id, bear_id, slug)
 }
 
+async fn assigned_surface_id(pool: &sqlx::PgPool, user_id: i32, bear_id: Uuid) -> Uuid {
+    let name = format!("work-ui-{}", Uuid::new_v4().simple());
+    let surface_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO work_surfaces (name, upstream_url, created_by_user_id)
+         VALUES ($1, 'https://example.test/work-ui.git', $2) RETURNING id",
+    )
+    .bind(name)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .expect("create work surface");
+    sqlx::query("INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind(bear_id)
+        .execute(pool)
+        .await
+        .expect("assign work surface");
+    surface_id
+}
+
 #[tokio::test]
 async fn create_job_form_creates_work_job_with_tasks() {
     let _guard = TEST_DB_LOCK.lock().await;
@@ -202,11 +222,12 @@ async fn create_job_form_creates_work_job_with_tasks() {
         return;
     };
     let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
     let body = format!(
-        "bear_id={bear_id}&goal=Ship+the+site&root=site&commit_policy=per_task\
+        "bear_id={bear_id}&goal=Ship+the+site&surface_id={surface_id}&commit_policy=per_task\
          &work_branch=&task_title=Update+headline&task_criteria=headline+mentions+bears\
          &task_title=&task_criteria="
     );
@@ -261,17 +282,21 @@ async fn create_job_form_creates_work_job_with_tasks() {
     .await
     .expect("job id");
 
-    let (goal, surface, policy, branch): (String, Option<String>, Option<String>, Option<String>) =
-        sqlx::query_as(
-            "SELECT goal, work_surface_ref, commit_policy, work_branch
+    let (goal, selected_surface_id, policy, branch): (
+        String,
+        Option<Uuid>,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT goal, work_surface_id, commit_policy, work_branch
              FROM bear_jobs WHERE id = $1",
-        )
-        .bind(job_id)
-        .fetch_one(&pool)
-        .await
-        .expect("job row");
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("job row");
     assert_eq!(goal, "Ship the site");
-    assert_eq!(surface.as_deref(), Some("site"));
+    assert_eq!(selected_surface_id, Some(surface_id));
     assert_eq!(policy.as_deref(), Some("per_task"));
     assert!(branch.is_none(), "blank branch stays unset until dispatch");
 
@@ -287,21 +312,24 @@ async fn create_job_form_creates_work_job_with_tasks() {
         &app,
         &cookie,
         &format!("/bear/{bear_slug}/jobs/{}/edit", route_id(job_id)),
-        "goal=Ship+the+updated+site&surface_id=&commit_policy=per_job&work_branch=feature%2Fupdated"
-            .to_string(),
+        format!("goal=Ship+the+updated+site&surface_id={surface_id}&commit_policy=per_job&work_branch=feature%2Fupdated"),
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let (goal, surface, policy, branch): (String, Option<String>, Option<String>, Option<String>) =
-        sqlx::query_as(
-            "SELECT goal, work_surface_ref, commit_policy, work_branch FROM bear_jobs WHERE id = $1",
-        )
-        .bind(job_id)
-        .fetch_one(&pool)
-        .await
-        .expect("edited job row");
+    let (goal, selected_surface_id, policy, branch): (
+        String,
+        Option<Uuid>,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT goal, work_surface_id, commit_policy, work_branch FROM bear_jobs WHERE id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("edited job row");
     assert_eq!(goal, "Ship the updated site");
-    assert!(surface.is_none());
+    assert_eq!(selected_surface_id, Some(surface_id));
     assert_eq!(policy.as_deref(), Some("per_job"));
     assert_eq!(branch.as_deref(), Some("feature/updated"));
 }
@@ -313,6 +341,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
         return;
     };
     let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
     let unique = Uuid::new_v4().simple().to_string();
@@ -325,7 +354,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
             &cookie,
             &format!("/bear/{bear_slug}/jobs/new"),
             format!(
-                "bear_id={bear_id}&goal={}&root=&commit_policy=none&work_branch=&task_title=Check&task_criteria=done",
+                "bear_id={bear_id}&goal={}&surface_id={surface_id}&commit_policy=none&work_branch=&task_title=Check&task_criteria=done",
                 urlencoding::encode(goal)
             ),
         )
@@ -383,6 +412,7 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
         return;
     };
     let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
@@ -391,7 +421,7 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&goal=Reusable+job&root=site&commit_policy=per_task\
+            "bear_id={bear_id}&goal=Reusable+job&surface_id={surface_id}&commit_policy=per_task\
              &work_branch=&task_title=Build+artifact&task_criteria=artifact+exists%3Btests+pass"
         ),
     )
@@ -433,15 +463,15 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     .expect("duplicate job");
     assert_ne!(duplicate_id, source_id);
 
-    let (goal, surface, policy, branch, status, current_run): (
+    let (goal, duplicate_surface_id, policy, branch, status, current_run): (
         String,
-        Option<String>,
+        Option<Uuid>,
         Option<String>,
         Option<String>,
         String,
         Option<Uuid>,
     ) = sqlx::query_as(
-        "SELECT goal, work_surface_ref, commit_policy, work_branch, status, current_run_id \
+        "SELECT goal, work_surface_id, commit_policy, work_branch, status, current_run_id \
          FROM bear_jobs WHERE id = $1",
     )
     .bind(duplicate_id)
@@ -449,7 +479,7 @@ async fn duplicate_job_copies_definition_and_resets_execution_state() {
     .await
     .expect("duplicate job row");
     assert_eq!(goal, "Reusable job (copy)");
-    assert_eq!(surface.as_deref(), Some("site"));
+    assert_eq!(duplicate_surface_id, Some(surface_id));
     assert_eq!(policy.as_deref(), Some("per_task"));
     assert!(branch.is_none());
     assert_eq!(status, "ready");
@@ -484,6 +514,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
         return;
     };
     let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
@@ -492,7 +523,7 @@ async fn task_tree_can_add_children_and_reorder_siblings() {
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&goal=Edit+the+tree&root=&commit_policy=none\
+            "bear_id={bear_id}&goal=Edit+the+tree&surface_id={surface_id}&commit_policy=none\
              &task_title=First+root&task_criteria=first+done"
         ),
     )
@@ -654,13 +685,12 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
         .fetch_one(&pool)
         .await
         .expect("job status");
-    let (surface_ref, bound_surface_id): (Option<String>, Option<Uuid>) = sqlx::query_as(
-        "SELECT work_surface_ref, work_surface_id FROM bear_jobs WHERE id = $1",
-    )
-    .bind(job_id)
-    .fetch_one(&pool)
-    .await
-    .expect("job surface binding");
+    let bound_surface_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT work_surface_id FROM bear_jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("job surface binding");
     let run_state: String = sqlx::query_scalar("SELECT state FROM bear_job_runs WHERE id = $1")
         .bind(run_id)
         .fetch_one(&pool)
@@ -673,7 +703,6 @@ async fn legacy_job_lifecycle_can_extend_then_complete() {
             .await
             .expect("criterion states");
     assert_eq!(status, "completed");
-    assert_eq!(surface_ref.as_deref(), Some(surface_name.as_str()));
     assert_eq!(bound_surface_id, Some(surface_id));
     assert_eq!(run_state, "completed");
     assert!(criterion_statuses.iter().all(|status| status == "met"));
@@ -686,6 +715,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
         return;
     };
     let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let initial_surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
     let response = post_form(
@@ -693,7 +723,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
         &cookie,
         &format!("/bear/{bear_slug}/jobs/new"),
         format!(
-            "bear_id={bear_id}&goal=Surface+job&root=&commit_policy=none\
+            "bear_id={bear_id}&goal=Surface+job&surface_id={initial_surface_id}&commit_policy=none\
              &task_title=Use+repo&task_criteria=repo+used"
         ),
     )
@@ -725,13 +755,12 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
-    let (surface_ref, surface_id): (Option<String>, Option<Uuid>) =
-        sqlx::query_as("SELECT work_surface_ref, work_surface_id FROM bear_jobs WHERE id = $1")
+    let surface_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT work_surface_id FROM bear_jobs WHERE id = $1")
             .bind(job_id)
             .fetch_one(&pool)
             .await
             .expect("attached job surface");
-    assert_eq!(surface_ref.as_deref(), Some(surface_name.as_str()));
     let surface_id = surface_id.expect("surface id");
     assert!(redirect.starts_with(&format!(
         "/work/surfaces/{}?message=",
@@ -783,12 +812,13 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         return;
     };
     let (user_id, bear_id, bear_slug) = seed_member(&pool).await;
+    let surface_id = assigned_surface_id(&pool, user_id, bear_id).await;
     let app = test_app(pool.clone()).await;
     let cookie = login_cookie(&app, user_id).await;
 
     // Create the job through the same form, then dispatch its task.
     let body = format!(
-        "bear_id={bear_id}&goal=Dispatch+me&root=&commit_policy=none\
+        "bear_id={bear_id}&goal=Dispatch+me&surface_id={surface_id}&commit_policy=none\
          &task_title=Do+the+thing&task_criteria=thing+is+done\
          &task_title=Do+the+next+thing&task_criteria=next+thing+is+done"
     );
@@ -1025,7 +1055,7 @@ async fn create_job_enforces_surface_assignment() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     // Assign the bear from the surface page, then the same form succeeds and
-    // binds both name and id.
+    // binds the canonical surface id.
     let response = post_form(
         &app,
         &cookie,
@@ -1042,14 +1072,13 @@ async fn create_job_enforces_surface_assignment() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let (surface_ref, bound_id): (Option<String>, Option<Uuid>) = sqlx::query_as(
-        "SELECT work_surface_ref, work_surface_id FROM bear_jobs
+    let bound_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT work_surface_id FROM bear_jobs
          WHERE bear_id = $1 ORDER BY created_at DESC LIMIT 1",
     )
     .bind(bear_id)
     .fetch_one(&pool)
     .await
     .expect("job row");
-    assert_eq!(surface_ref.as_deref(), Some(name.as_str()));
     assert_eq!(bound_id, Some(surface_id));
 }

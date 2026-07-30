@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref, work_surface_id,\n               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at\n        FROM bear_jobs\n        WHERE bear_id = $1\n          AND ($2::text IS NULL OR source_conversation_id = $2)\n        ORDER BY updated_at DESC\n        LIMIT $3\n        ",
+  "query": "\n        SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id,\n               commit_policy, work_branch, status, visibility, source_conversation_id, objective_kind, supersedes_job_id, current_run_id, created_at, updated_at\n        FROM bear_jobs\n        WHERE bear_id = $1\n          AND ($2::text IS NULL OR source_conversation_id = $2)\n        ORDER BY updated_at DESC\n        LIMIT $3\n        ",
   "describe": {
     "columns": [
       {
@@ -30,61 +30,56 @@
       },
       {
         "ordinal": 5,
-        "name": "work_surface_ref",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 6,
         "name": "work_surface_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "commit_policy",
         "type_info": "Text"
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "work_branch",
         "type_info": "Text"
       },
       {
-        "ordinal": 9,
+        "ordinal": 8,
         "name": "status",
         "type_info": "Text"
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "visibility",
         "type_info": "Text"
       },
       {
-        "ordinal": 11,
+        "ordinal": 10,
         "name": "source_conversation_id",
         "type_info": "Text"
       },
       {
-        "ordinal": 12,
+        "ordinal": 11,
         "name": "objective_kind",
         "type_info": "Text"
       },
       {
-        "ordinal": 13,
+        "ordinal": 12,
         "name": "supersedes_job_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 14,
+        "ordinal": 13,
         "name": "current_run_id",
         "type_info": "Uuid"
       },
       {
-        "ordinal": 15,
+        "ordinal": 14,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 16,
+        "ordinal": 15,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -105,7 +100,6 @@
       true,
       true,
       true,
-      true,
       false,
       false,
       true,
@@ -116,5 +110,5 @@
       false
     ]
   },
-  "hash": "e5f55d37302504e220a1955e1e0d7a404b75bbc8f8f40701e343d7b824ff36f7"
+  "hash": "cb01841a10e017d0d734f30bedc3f3e5995f2af9daed3abe097c7e2082bc3769"
 }

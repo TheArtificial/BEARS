@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::execution_profiles::{ProfileProvenance, ResolvedExecutionProfile};
 use crate::recovery::{
-    parent_rollup_context, persist_result_rollup, start_turn_attempt, terminalize_stale_attempts,
-    terminalize_turn_attempt, AttemptOutcome, ResultRollup, RetryDisposition,
+    parent_rollup_context, persist_result_rollup, start_turn_attempt, terminalize_turn_attempt,
+    AttemptOutcome, ResultRollup, RetryDisposition,
 };
 use crate::work_runs::{
     checkout_work_run_for_session, claim_next_work_run, disconnect_attached_work_run,
@@ -117,14 +117,29 @@ async fn seed_work_job_with_policy(
     commit_policy: DocketCommitPolicy,
 ) -> (Uuid, Vec<Uuid>) {
     let service = PgDocketService::from_pool(pool);
+    let surface_name = format!("work-run-{}", Uuid::new_v4().simple());
+    let (surface_id,): (Uuid,) = sqlx::query_as(
+        "INSERT INTO work_surfaces (name, upstream_url, created_by_user_id)
+         VALUES ($1, 'https://example.test/work-run.git', $2) RETURNING id",
+    )
+    .bind(surface_name)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .expect("seed work surface");
+    sqlx::query("INSERT INTO work_surface_bears (surface_id, bear_id) VALUES ($1, $2)")
+        .bind(surface_id)
+        .bind(bear_id)
+        .execute(pool)
+        .await
+        .expect("assign work surface");
     let created = service
         .create_job(DocketJobCreate {
             bear_id,
             created_by_user_id: user_id,
             created_by_role: "chat".to_string(),
             goal: format!("Ship the work-run slice {}", Uuid::new_v4().simple()),
-            work_surface_ref: None,
-            work_surface_id: None,
+            work_surface_id: Some(surface_id),
             commit_policy: Some(commit_policy),
             work_branch: None,
             status: DocketJobStatus::Ready,
@@ -280,10 +295,9 @@ async fn enqueue_enforces_managed_surface_assignment() {
 
     // Job bound to the surface; bear not assigned -> rejected.
     let (job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
-    sqlx::query("UPDATE bear_jobs SET work_surface_id = $2, work_surface_ref = $3 WHERE id = $1")
+    sqlx::query("UPDATE bear_jobs SET work_surface_id = $2 WHERE id = $1")
         .bind(job_id)
         .bind(surface_id)
-        .bind(&surface_name)
         .execute(&pool)
         .await
         .expect("bind job to surface");
@@ -316,9 +330,11 @@ async fn enqueue_enforces_managed_surface_assignment() {
         .expect("assigned bear enqueues");
     assert_eq!(run.state, "queued");
 
-    // Free-text roots that match no managed surface still pass through
-    // (legacy path; the provider validates them at provision time).
-    let mut free_text = enqueue_for(bear_id, task_ids[1], user_id);
+    // A free-text root override still passes through once the job itself has
+    // a valid managed-surface binding (the provider validates the override at
+    // provision time). Use a separate job because work runs are job-scoped.
+    let (_free_text_job_id, free_text_task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    let mut free_text = enqueue_for(bear_id, free_text_task_ids[0], user_id);
     free_text.root_name = Some(format!("no-such-surface-{}", &suffix[..8]));
     let run = enqueue_work_run(&pool, free_text)
         .await
@@ -336,11 +352,12 @@ async fn enqueue_validates_stance_and_uniqueness() {
     let (user_id, bear_id) = seed_user_and_bear(&pool, "enqueue").await;
     let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
 
-    // Pair-assigned task is rejected.
-    let err = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[2], user_id))
+    // Enqueue is job-scoped: any task ID in the job locates the same job run.
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[2], user_id))
         .await
-        .expect_err("pair task must not enqueue");
-    assert!(matches!(err, DenError::ValidationError(_)), "{err:?}");
+        .expect("enqueue work job");
+    assert_eq!(run.state, "queued");
+    assert_eq!(run.attempt, 1);
 
     // Unknown task is NotFound.
     let err = enqueue_work_run(&pool, enqueue_for(bear_id, Uuid::new_v4(), user_id))
@@ -348,22 +365,7 @@ async fn enqueue_validates_stance_and_uniqueness() {
         .expect_err("unknown task");
     assert!(matches!(err, DenError::NotFound(_)), "{err:?}");
 
-    // Happy path: queued, attempt 1, audit event appended.
-    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
-        .await
-        .expect("enqueue work task");
-    assert_eq!(run.state, "queued");
-    assert_eq!(run.attempt, 1);
-    let (events,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM bear_task_events WHERE task_id = $1 AND event_type = 'claimed'",
-    )
-    .bind(task_ids[0])
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(events, 1);
-
-    // Second enqueue for the same task hits the partial unique index.
+    // The active job run is unique regardless of which task locates it.
     let err = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
         .expect_err("duplicate active run");
@@ -410,78 +412,31 @@ async fn concurrent_claims_take_distinct_runs_across_jobs() {
 }
 
 #[tokio::test]
-async fn runs_within_one_job_serialize() {
+async fn one_active_work_run_per_job() {
     let Some(pool) = test_pool().await else {
         eprintln!("skipping postgres-backed work_runs test; database unavailable");
         return;
     };
     let _guard = DB_LOCK.lock().await;
     purge_claimable_runs(&pool).await;
-    let (user_id, bear_id) = seed_user_and_bear(&pool, "serial").await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "one-active-run").await;
     let (_job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
-    // Both work tasks queued up front — the job should drain them one at a
-    // time in queue order (sequential tasks build on the work branch).
-    let run_a = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
-        .unwrap();
-    let run_b = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[1], user_id))
-        .await
-        .unwrap();
+        .expect("first job run");
 
-    // Queue placement before anything is claimed: positions in queue order,
-    // nothing to wait on yet.
-    let infos = crate::work_runs::queued_run_positions(&pool, &[run_a.id, run_b.id])
+    let error = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[1], user_id))
         .await
-        .unwrap();
-    let info = |id: Uuid| infos.iter().find(|i| i.run_id == id).expect("queue info");
-    assert_eq!(info(run_a.id).position, 1);
-    assert_eq!(info(run_b.id).position, 2);
-    assert!(info(run_b.id).waiting_on_run_id.is_none());
+        .expect_err("job must reject a second active work run");
+    assert!(error
+        .to_string()
+        .contains("job already has an active work run"));
 
-    let lease = std::time::Duration::from_secs(60);
-    let first = claim_next_work_run(&pool, "runner-1", lease)
+    let claimed = claim_next_work_run(&pool, "runner-1", std::time::Duration::from_secs(60))
         .await
         .unwrap()
-        .expect("oldest queued run claims");
-    assert_eq!(first.id, run_a.id);
-
-    // The sibling stays queued while the job has a run in flight.
-    let blocked = claim_next_work_run(&pool, "runner-2", lease).await.unwrap();
-    assert!(
-        blocked.is_none(),
-        "second run of the same job must not claim while the first is in flight"
-    );
-
-    // Placement now names the in-flight run it waits behind; claimed runs
-    // drop out of the queue view entirely.
-    let infos = crate::work_runs::queued_run_positions(&pool, &[run_a.id, run_b.id])
-        .await
-        .unwrap();
-    assert_eq!(
-        infos.len(),
-        1,
-        "only queued runs have queue info: {infos:?}"
-    );
-    assert_eq!(infos[0].run_id, run_b.id);
-    assert_eq!(infos[0].position, 1);
-    assert_eq!(infos[0].waiting_on_run_id, Some(run_a.id));
-
-    // A failed run stops the job and cancels queued siblings by default.
-    finalize_work_run(
-        &pool,
-        run_a.id,
-        WorkRunState::Failed,
-        WorkRunFinalize::default(),
-    )
-    .await
-    .unwrap();
-    let second = claim_next_work_run(&pool, "runner-2", lease).await.unwrap();
-    assert!(second.is_none(), "failed jobs must not start later work");
-    let sibling = get_work_run(&pool, run_b.id)
-        .await
-        .unwrap()
-        .expect("sibling run");
-    assert_eq!(sibling.state, "cancelled");
+        .expect("single run claims");
+    assert_eq!(claimed.id, run.id);
 }
 
 #[tokio::test]
@@ -529,7 +484,12 @@ async fn blocked_job_refuses_pair_dispatch_without_mutating_task_state() {
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(statuses, vec![(task_ids[0], "pending".to_string())]);
+    let mut expected = task_ids
+        .into_iter()
+        .map(|task_id| (task_id, "pending".to_string()))
+        .collect::<Vec<_>>();
+    expected.sort_by_key(|(task_id, _)| *task_id);
+    assert_eq!(statuses, expected);
 }
 
 #[tokio::test]
@@ -705,7 +665,7 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(task_status, "pending");
+    assert_eq!(task_status, "in_progress");
     assert!(task_summary.is_none());
     assert!(task_refs.is_none());
     let (job_status, job_run_state): (String, String) = sqlx::query_as(
@@ -750,7 +710,19 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .unwrap();
     assert_eq!(events, 0);
 
-    // A finished task can be re-enqueued (attempt 2).
+    // Explicitly recover the blocked job before retrying it.
+    sqlx::query("UPDATE bear_jobs SET status = 'ready' WHERE id = $1")
+        .bind(run.job_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE bear_job_runs SET state = 'running', finished_at = NULL WHERE id = $1")
+        .bind(run.job_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // A recovered task can be re-enqueued (attempt 2).
     let retry = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
         .expect("retry enqueue");
@@ -780,7 +752,9 @@ async fn successful_work_run_settles_completed_docket_job() {
     for task_id in task_ids {
         sqlx::query(
             "INSERT INTO bear_task_run_state (run_id, task_id, status, result_summary, finished_at)
-             VALUES ($1, $2, 'done', 'completed', NOW())",
+             VALUES ($1, $2, 'done', 'completed', NOW())
+             ON CONFLICT (run_id, task_id) DO UPDATE
+             SET status = 'done', result_summary = 'completed', finished_at = NOW()",
         )
         .bind(run.job_run_id)
         .bind(task_id)
@@ -790,7 +764,9 @@ async fn successful_work_run_settles_completed_docket_job() {
     }
     sqlx::query(
         "INSERT INTO bear_job_criteria_state (run_id, criterion_id, status, evaluated_at)
-         SELECT $1, id, 'met', NOW() FROM bear_job_criteria WHERE job_id = $2",
+             SELECT $1, id, 'met', NOW() FROM bear_job_criteria WHERE job_id = $2
+             ON CONFLICT (run_id, criterion_id) DO UPDATE
+             SET status = 'met', evaluated_at = NOW()",
     )
     .bind(run.job_run_id)
     .bind(job_id)
@@ -988,25 +964,16 @@ async fn publish_wiring_image_branch_and_prompt() {
     )
     .await
     .unwrap());
-    assert_eq!(
-        terminalize_stale_attempts(
-            &pool,
-            time::OffsetDateTime::now_utc() + time::Duration::hours(1)
-        )
-        .await
-        .unwrap(),
-        0
-    );
 
     assert!(checkout.prompt.contains(&format!("job_id: {}", run.job_id)));
     assert!(checkout
         .prompt
         .contains(&format!("run_id: {}", run.job_run_id)));
-    assert!(checkout.prompt.contains("Tasks to complete:"));
+    assert!(checkout.prompt.contains("Task ("));
     assert!(checkout.prompt.contains("status `done`"));
     assert!(checkout.prompt.contains("non-empty result_summary"));
     assert!(
-        checkout.prompt.contains("Commit your work"),
+        checkout.prompt.contains("Commit the completed task"),
         "{}",
         checkout.prompt
     );
@@ -1077,7 +1044,17 @@ async fn attention_and_completion_visibility() {
         Some("missing credentials for the deploy step")
     );
 
-    // A queued retry supersedes the failure: no longer needs attention.
+    // Explicitly recover the job before a queued retry supersedes the failure.
+    sqlx::query("UPDATE bear_jobs SET status = 'ready' WHERE id = $1")
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE bear_job_runs SET state = 'running', finished_at = NULL WHERE id = $1")
+        .bind(run.job_run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let retry = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
         .unwrap();

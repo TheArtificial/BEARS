@@ -166,13 +166,13 @@ impl WorkRunRow {
 
 pub fn effective_work_run_root(
     requested_root: Option<&str>,
-    job_work_surface_ref: Option<&str>,
+    managed_surface_name: Option<&str>,
 ) -> Option<String> {
     requested_root
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .or_else(|| {
-            job_work_surface_ref
+            managed_surface_name
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
         })
@@ -248,28 +248,46 @@ pub async fn enqueue_work_job(
     enqueue: WorkJobEnqueue,
 ) -> Result<Vec<WorkRunRow>, DenError> {
     let mut tx = pool.begin().await?;
-    let job: Option<(Option<String>, Option<Uuid>, Option<Uuid>, Option<String>)> = sqlx::query_as(
-        "SELECT work_surface_ref, work_surface_id, current_run_id, status
-         FROM bear_jobs WHERE id = $1 AND bear_id = $2 FOR UPDATE",
+    let job: Option<(
+        Option<Uuid>,
+        Option<String>,
+        Option<Uuid>,
+        Option<String>,
+        bool,
+    )> = sqlx::query_as(
+        "SELECT j.work_surface_id, s.name, j.current_run_id, j.status,
+                    EXISTS (
+                        SELECT 1 FROM work_surface_bears wsb
+                        WHERE wsb.surface_id = j.work_surface_id AND wsb.bear_id = j.bear_id
+                    ) AS surface_assigned
+             FROM bear_jobs j
+             LEFT JOIN work_surfaces s ON s.id = j.work_surface_id
+             WHERE j.id = $1 AND j.bear_id = $2 FOR UPDATE OF j",
     )
     .bind(enqueue.job_id)
     .bind(enqueue.bear_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((job_work_surface_ref, surface_id, current_run_id, status)) = job else {
+    let Some((surface_id, surface_name, current_run_id, status, surface_assigned)) = job else {
         return Err(DenError::NotFound(format!(
             "Docket job not found: {}",
             enqueue.job_id
         )));
     };
     if surface_id.is_none()
-        || job_work_surface_ref
+        || surface_name
             .as_deref()
-            .is_none_or(|surface_ref| surface_ref.trim().is_empty())
+            .is_none_or(|name| name.trim().is_empty())
     {
         return Err(DenError::ValidationError(
             "work_surface_required: this work job lacks a valid managed work-surface binding; select or rebind a surface before dispatch".into(),
         ));
+    }
+    if !surface_assigned {
+        return Err(DenError::ValidationError(format!(
+            "managed work surface '{}' is not assigned to this Bear",
+            surface_name.as_deref().unwrap_or("unknown")
+        )));
     }
     if !matches!(status.as_deref(), Some("ready") | Some("running")) {
         return Err(DenError::ValidationError(
@@ -277,13 +295,10 @@ pub async fn enqueue_work_job(
         ));
     }
 
-    let root_name = effective_work_run_root(
-        enqueue.root_name.as_deref(),
-        job_work_surface_ref.as_deref(),
-    );
+    let root_name = effective_work_run_root(enqueue.root_name.as_deref(), surface_name.as_deref());
     if root_name.is_none() {
         return Err(DenError::ValidationError(
-            "no sandbox root configured: choose a root, set work_surface_ref on the job, or explicitly dispatch to scratch".into(),
+            "no sandbox root configured: choose a root, select a managed surface on the job, or explicitly dispatch to scratch".into(),
         ));
     }
     let runnable: bool = sqlx::query_scalar(
@@ -573,9 +588,8 @@ pub async fn jobs_awaiting_completion(
     bear_id: Uuid,
 ) -> Result<Vec<crate::model::DocketJobRow>, DenError> {
     let rows = sqlx::query_as::<_, crate::model::DocketJobRow>(
-        "SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_ref,
-                work_surface_id, commit_policy, work_branch, status, visibility,
-                source_conversation_id, objective_kind, current_run_id,
+        "SELECT id, bear_id, created_by_user_id, created_by_role, goal, work_surface_id, commit_policy, work_branch, status, visibility,
+                source_conversation_id, objective_kind, current_run_id, supersedes_job_id,
                 created_at, updated_at
          FROM bear_jobs j
          WHERE j.bear_id = $1
@@ -919,8 +933,13 @@ pub async fn finalize_work_run(
     let task_statuses: Vec<String> = task_statuses.into_iter().map(|(status,)| status).collect();
     let result_refs = row.result_refs.as_ref().unwrap_or(&Value::Null);
     let canonical_state = canonical_work_run_state(state, result_refs, &task_statuses);
-    let canonical_outcome =
+    let mut canonical_outcome =
         canonical_work_run_outcome(canonical_state, result_refs, &task_statuses);
+    if !matches!(canonical_state, WorkRunState::Succeeded) {
+        if let Some(summary) = finalize.result_summary.as_deref() {
+            canonical_outcome["summary"] = Value::String(summary.to_string());
+        }
+    }
     let row = sqlx::query_as::<_, WorkRunRow>(&format!(
         "UPDATE bear_work_runs
          SET state = $2,
@@ -1840,7 +1859,7 @@ pub struct WorkRunDispatchContext {
     pub bear_name: String,
     pub created_by_user_id: i32,
     pub job_goal: String,
-    pub work_surface_ref: Option<String>,
+    pub work_surface_name: Option<String>,
     pub commit_policy: Option<String>,
     pub work_branch: Option<String>,
     pub allow_default_ref: bool,
@@ -1862,7 +1881,7 @@ pub async fn get_work_run_dispatch_context(
     run_id: Uuid,
 ) -> Result<WorkRunDispatchContext, DenError> {
     sqlx::query_as::<_, WorkRunDispatchContext>(
-        "SELECT b.slug AS bear_slug, b.name AS bear_name, j.created_by_user_id, j.goal AS job_goal, j.work_surface_ref,
+        "SELECT b.slug AS bear_slug, b.name AS bear_name, j.created_by_user_id, j.goal AS job_goal, s.name AS work_surface_name,
                 j.commit_policy, j.work_branch,
                 COALESCE(j.work_branch = s.default_ref, FALSE) AS allow_default_ref,
                 COALESCE((

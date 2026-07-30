@@ -167,7 +167,7 @@ pub(crate) enum JobOverlapResolution {
 pub(crate) struct DocketJobCreateArguments {
     pub(crate) goal: String,
     #[serde(default)]
-    pub(crate) work_surface_ref: Option<String>,
+    pub(crate) work_surface_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) commit_policy: Option<DocketCommitPolicy>,
     #[serde(default)]
@@ -217,9 +217,7 @@ pub(crate) struct DocketJobUpdateArguments {
     #[serde(default)]
     pub(crate) goal: Option<String>,
     #[serde(default)]
-    pub(crate) work_surface_ref: Option<String>,
-    #[serde(default)]
-    pub(crate) clear_work_surface_ref: bool,
+    pub(crate) work_surface_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) commit_policy: Option<DocketCommitPolicy>,
     #[serde(default)]
@@ -1096,79 +1094,52 @@ async fn update_focused_conversation_title(
     Ok(())
 }
 
-async fn resolve_surface_ref_for_create(
+async fn resolve_surface_id_for_create(
     pool: &PgPool,
     stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearProfile,
-    work_surface_ref: Option<String>,
-) -> Result<(Option<String>, Option<Uuid>, bool), CustomError> {
-    if work_surface_ref
-        .as_deref()
-        .is_none_or(|value| value.trim().is_empty())
-    {
-        persist_recognized_session_surface(pool, stores, context, role).await?;
+    explicit_id: Option<Uuid>,
+) -> Result<(Option<Uuid>, bool), CustomError> {
+    if let Some(surface_id) = explicit_id {
+        validate_assigned_surface(pool, context, surface_id).await?;
+        return Ok((Some(surface_id), false));
     }
-    resolve_surface_ref(pool, context, work_surface_ref).await
+    persist_recognized_session_surface(pool, stores, context, role).await?;
+    let Some(client_session_id) = context.client_session_id.as_deref() else {
+        return Ok((None, false));
+    };
+    let Some(session) = client_sessions::find_for_user_bear_session_id(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+    )
+    .await?
+    else {
+        return Ok((None, false));
+    };
+    let Some(resolution) =
+        den_service::client_session_work_surface_resolutions::find(pool, session.id).await?
+    else {
+        return Ok((None, false));
+    };
+    validate_assigned_surface(pool, context, resolution.work_surface_id).await?;
+    Ok((Some(resolution.work_surface_id), true))
 }
 
-async fn resolve_surface_ref(
+async fn validate_assigned_surface(
     pool: &PgPool,
     context: &DenToolInvocationContext,
-    work_surface_ref: Option<String>,
-) -> Result<(Option<String>, Option<Uuid>, bool), CustomError> {
-    let explicit_ref = work_surface_ref
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty());
-    let Some(ref_name) = explicit_ref else {
-        let Some(client_session_id) = context.client_session_id.as_deref() else {
-            return Ok((None, None, false));
-        };
-        let Some(session) = client_sessions::find_for_user_bear_session_id(
-            pool,
-            context.user_id,
-            context.bear_id,
-            client_session_id,
+    surface_id: Uuid,
+) -> Result<(), CustomError> {
+    if !den_service::work_surfaces::bear_may_use_surface(pool, context.bear_id, surface_id).await? {
+        return Err(DenError::ValidationError(
+            "work_surface_id must identify a managed surface assigned to this Bear".to_string(),
         )
-        .await?
-        else {
-            return Ok((None, None, false));
-        };
-        let Some(resolution) =
-            den_service::client_session_work_surface_resolutions::find(pool, session.id).await?
-        else {
-            return Ok((None, None, false));
-        };
-        let assigned =
-            den_service::work_surfaces::list_surfaces_for_bears(pool, &[context.bear_id]).await?;
-        let Some(surface) = assigned
-            .into_iter()
-            .find(|surface| surface.id == resolution.work_surface_id)
-        else {
-            return Ok((None, None, false));
-        };
-        return Ok((Some(surface.name), Some(surface.id), true));
-    };
-    match den_service::work_surfaces::surface_by_name(pool, ref_name).await? {
-        Some(surface) => {
-            if !den_service::work_surfaces::bear_may_use_surface(pool, context.bear_id, surface.id)
-                .await?
-            {
-                return Err(DenError::ValidationError(format!(
-                    "bear is not assigned to work surface '{}'; pick a surface listed by get_work_catalog or ask a surface manager to assign this bear",
-                    surface.name
-                ))
-                .into());
-            }
-            Ok((Some(surface.name), Some(surface.id), false))
-        }
-        None => Err(DenError::ValidationError(
-            "work_surface_required: Docket work jobs require an assigned managed work surface; choose one from get_work_catalog or use a resolved/confirmed session anchor"
-                .to_string(),
-        )
-        .into()),
+        .into());
     }
+    Ok(())
 }
 
 pub(crate) async fn confirm_work_surface(
@@ -1246,8 +1217,8 @@ pub(crate) async fn create_job(
         );
     }
     let args: DocketJobCreateArguments = serde_json::from_value(arguments)?;
-    let (work_surface_ref, work_surface_id, surface_auto_bound) =
-        resolve_surface_ref_for_create(pool, stores, context, role, args.work_surface_ref).await?;
+    let (work_surface_id, surface_auto_bound) =
+        resolve_surface_id_for_create(pool, stores, context, role, args.work_surface_id).await?;
     if work_surface_id.is_none() {
         return Err(DenError::ValidationError(
             "work_surface_required: Docket work jobs require an assigned managed work surface; choose one from get_work_catalog or use a resolved/confirmed session anchor"
@@ -1261,7 +1232,6 @@ pub(crate) async fn create_job(
             created_by_user_id: context.user_id,
             created_by_role: role.as_str().to_string(),
             goal: args.goal,
-            work_surface_ref,
             work_surface_id,
             commit_policy: args.commit_policy,
             work_branch: args.work_branch,
@@ -1457,25 +1427,11 @@ pub(crate) async fn update_job(
     arguments: Value,
 ) -> Result<Value, CustomError> {
     let args: DocketJobUpdateArguments = serde_json::from_value(arguments)?;
-    let (work_surface_ref, work_surface_id) = if args.clear_work_surface_ref {
-        (Some(None), Some(None))
-    } else if args.work_surface_ref.is_some() {
-        let (surface_ref, surface_id) = match args
-            .work_surface_ref
-            .as_deref()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-        {
-            Some(_) => {
-                let (surface_ref, surface_id, _) =
-                    resolve_surface_ref(pool, context, args.work_surface_ref).await?;
-                (surface_ref, surface_id)
-            }
-            None => (None, None),
-        };
-        (Some(surface_ref), Some(surface_id))
+    let work_surface_id = if let Some(surface_id) = args.work_surface_id {
+        validate_assigned_surface(pool, context, surface_id).await?;
+        Some(Some(surface_id))
     } else {
-        (None, None)
+        None
     };
     let job = PgDocketService::from_pool(pool)
         .update_job(DocketJobUpdate {
@@ -1485,7 +1441,6 @@ pub(crate) async fn update_job(
             actor_user_id: Some(context.user_id),
             actor_agent_id: clean_optional(&context.binding_id),
             goal: args.goal,
-            work_surface_ref,
             work_surface_id,
             commit_policy: args
                 .clear_commit_policy

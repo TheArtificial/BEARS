@@ -852,9 +852,7 @@ pub struct DocketJobRow {
     pub created_by_user_id: i32,
     pub created_by_role: String,
     pub goal: String,
-    pub work_surface_ref: Option<String>,
-    /// Managed work surface this job runs on (`work_surfaces.id`), when the
-    /// ref names one. `work_surface_ref` mirrors the surface name.
+    /// Canonical managed work surface this job runs on (`work_surfaces.id`).
     pub work_surface_id: Option<Uuid>,
     pub commit_policy: Option<String>,
     /// Upstream branch this job's work runs publish to (set on first
@@ -1046,9 +1044,7 @@ pub struct DocketJobCreate {
     pub created_by_user_id: i32,
     pub created_by_role: String,
     pub goal: String,
-    pub work_surface_ref: Option<String>,
-    /// Managed surface id; callers set it together with `work_surface_ref`
-    /// (= the surface name) after checking the bear's assignment.
+    /// Managed surface id, after checking the bear's assignment.
     pub work_surface_id: Option<Uuid>,
     pub commit_policy: Option<DocketCommitPolicy>,
     /// Explicit upstream branch for work-run publishing; generated
@@ -1083,9 +1079,7 @@ pub struct DocketJobUpdate {
     pub actor_user_id: Option<i32>,
     pub actor_agent_id: Option<String>,
     pub goal: Option<String>,
-    pub work_surface_ref: Option<Option<String>>,
-    /// Set together with `work_surface_ref` when the new ref names a managed
-    /// surface; `Some(None)` clears it.
+    /// Replace the managed surface binding. Work jobs cannot clear it.
     pub work_surface_id: Option<Option<Uuid>>,
     pub commit_policy: Option<Option<DocketCommitPolicy>>,
     /// Explicit publish branch; `Some(None)` clears it so the next pushable
@@ -1455,12 +1449,7 @@ pub fn task_list_projection_from_docket_job(
         id: projection.job.id,
         bear_id: projection.job.bear_id,
         title: projection.job.goal.clone(),
-        summary: projection
-            .job
-            .work_surface_ref
-            .as_ref()
-            .map(|surface| format!("Docket job on work surface `{surface}`"))
-            .unwrap_or_else(|| "Docket job checkout".to_string()),
+        summary: "Docket work job checkout".to_string(),
         owner_profile: projection.job.created_by_role.clone(),
         visibility: projection.job.visibility.clone(),
         status: projection.job.status.clone(),
@@ -1676,10 +1665,8 @@ pub fn validate_docket_job_create(create: &DocketJobCreate) -> Result<(), Docket
     if create.goal.trim().is_empty() {
         return Err(DocketValidationError::EmptyGoal);
     }
-    match (&create.work_surface_ref, create.work_surface_id) {
-        (Some(work_surface_ref), Some(_)) if !work_surface_ref.trim().is_empty() => {}
-        (None, None) => return Err(DocketValidationError::MissingWorkSurface),
-        _ => return Err(DocketValidationError::MismatchedWorkSurfaceBinding),
+    if create.work_surface_id.is_none() {
+        return Err(DocketValidationError::MissingWorkSurface);
     }
     if !matches!(create.created_by_role.trim(), "chat" | "pair" | "ui") {
         return Err(DocketValidationError::InvalidJobCreatorRole {
@@ -2217,7 +2204,6 @@ mod tests {
             created_by_user_id: 42,
             created_by_role: "work".to_string(),
             goal: "Ship Docket".to_string(),
-            work_surface_ref: Some("docket-test-surface".to_string()),
             work_surface_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap()),
             commit_policy: Some(DocketCommitPolicy::None),
             work_branch: None,
@@ -2246,7 +2232,6 @@ mod tests {
             created_by_user_id: 42,
             created_by_role: "pair".to_string(),
             goal: "Ship Docket".to_string(),
-            work_surface_ref: Some("docket-test-surface".to_string()),
             work_surface_id: Some(Uuid::parse_str("00000000-0000-0000-0000-000000000999").unwrap()),
             commit_policy: None,
             work_branch: None,
@@ -2354,7 +2339,6 @@ mod tests {
                 created_by_user_id: 42,
                 created_by_role: "pair".to_string(),
                 goal: "Ship Docket".to_string(),
-                work_surface_ref: Some("zed".to_string()),
                 work_surface_id: None,
                 commit_policy: Some("none".to_string()),
                 work_branch: None,
@@ -2457,7 +2441,6 @@ mod tests {
                 created_by_user_id: 42,
                 created_by_role: "pair".to_string(),
                 goal: "Ship Docket".to_string(),
-                work_surface_ref: Some("zed".to_string()),
                 work_surface_id: None,
                 commit_policy: Some("none".to_string()),
                 work_branch: None,

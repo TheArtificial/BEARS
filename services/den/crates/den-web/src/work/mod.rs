@@ -603,7 +603,7 @@ async fn index(
             "bear_slug": bear_slug,
             "goal": job.goal,
             "status": job.status,
-            "work_surface_ref": job.work_surface_ref,
+            "work_surface_id": job.work_surface_id,
             "run_count": run_count,
         }));
     }
@@ -712,9 +712,6 @@ struct NewJobForm {
     /// Managed work surface id (preferred; from the surface select).
     #[serde(default)]
     surface_id: String,
-    /// Legacy free-text provider root name.
-    #[serde(default)]
-    root: String,
     #[serde(default)]
     commit_policy: String,
     #[serde(default)]
@@ -796,54 +793,24 @@ async fn create_job(
         ));
     }
 
-    // Managed surface select wins over the legacy free-text root. Either
-    // way, a name matching a managed surface requires the bear's assignment.
-    let (work_surface_ref, work_surface_id) = if let Ok(surface_id) =
-        form.surface_id.trim().parse::<Uuid>()
+    let work_surface_id =
+        form.surface_id.trim().parse::<Uuid>().map_err(|_| {
+            CustomError::ValidationError("choose a managed work surface".to_string())
+        })?;
+    let surface = den_service::work_surfaces::surface_by_id(state.sqlx_pool(), work_surface_id)
+        .await?
+        .ok_or_else(|| CustomError::NotFound("work surface not found".to_string()))?;
+    if !den_service::work_surfaces::bear_may_use_surface(state.sqlx_pool(), bear.id, surface.id)
+        .await?
     {
-        let surface = den_service::work_surfaces::surface_by_id(state.sqlx_pool(), surface_id)
-            .await?
-            .ok_or_else(|| CustomError::NotFound("work surface not found".to_string()))?;
-        if !den_service::work_surfaces::bear_may_use_surface(state.sqlx_pool(), bear.id, surface.id)
-            .await?
-        {
-            return Err(CustomError::ValidationError(format!(
-                "bear is not assigned to work surface '{}'",
-                surface.name
-            )));
-        }
-        (Some(surface.name), Some(surface.id))
-    } else if let Some(root) = Some(form.root.trim().to_string()).filter(|root| !root.is_empty()) {
-        match den_service::work_surfaces::surface_by_name(state.sqlx_pool(), &root).await? {
-            Some(surface) => {
-                if !den_service::work_surfaces::bear_may_use_surface(
-                    state.sqlx_pool(),
-                    bear.id,
-                    surface.id,
-                )
-                .await?
-                {
-                    return Err(CustomError::ValidationError(format!(
-                        "bear is not assigned to work surface '{}'",
-                        surface.name
-                    )));
-                }
-                (Some(surface.name), Some(surface.id))
-            }
-            None => (Some(root), None),
-        }
-    } else {
-        (None, None)
-    };
+        return Err(CustomError::ValidationError(format!(
+            "bear is not assigned to work surface '{}'",
+            surface.name
+        )));
+    }
+    let work_surface_id = Some(surface.id);
 
-    let surface_default_ref = match work_surface_id {
-        Some(surface_id) => {
-            den_service::work_surfaces::surface_by_id(state.sqlx_pool(), surface_id)
-                .await?
-                .map(|surface| surface.default_ref)
-        }
-        None => None,
-    };
+    let surface_default_ref = Some(surface.default_ref);
     let entered_branch = clean_form_field(&form.work_branch);
     let work_branch = if form.allow_default_ref {
         Some(surface_default_ref.clone().ok_or_else(|| {
@@ -867,7 +834,6 @@ async fn create_job(
             created_by_user_id: user_id,
             created_by_role: "ui".to_string(),
             goal: form.goal,
-            work_surface_ref,
             work_surface_id,
             commit_policy,
             work_branch,
@@ -941,7 +907,7 @@ async fn edit_job(
             "work branch must be a branch name, not a Git option or command".to_string(),
         ));
     }
-    let (work_surface_ref, work_surface_id, surface_default_ref) = match form.surface_id {
+    let (work_surface_id, surface_default_ref) = match form.surface_id {
         Some(surface_id) => {
             let surface = den_service::work_surfaces::surface_by_id(state.sqlx_pool(), surface_id)
                 .await?
@@ -957,13 +923,13 @@ async fn edit_job(
                     "the job's Bear is not assigned to that work surface".to_string(),
                 ));
             }
-            (
-                Some(surface.name),
-                Some(surface.id),
-                Some(surface.default_ref),
-            )
+            (Some(surface.id), Some(surface.default_ref))
         }
-        None => (None, None, None),
+        None => {
+            return Err(CustomError::ValidationError(
+                "choose a managed work surface for this work job".to_string(),
+            ));
+        }
     };
     let work_branch = if form.allow_default_ref {
         Some(surface_default_ref.clone().ok_or_else(|| {
@@ -988,7 +954,6 @@ async fn edit_job(
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             goal: Some(goal.to_string()),
-            work_surface_ref: Some(work_surface_ref),
             work_surface_id: Some(work_surface_id),
             commit_policy: Some(Some(commit_policy)),
             work_branch: Some(work_branch),
@@ -1108,7 +1073,6 @@ async fn duplicate_job(
             created_by_user_id: user_id,
             created_by_role: "ui".to_string(),
             goal: format!("{} (copy)", source.job.goal),
-            work_surface_ref: source.job.work_surface_ref,
             work_surface_id: source.job.work_surface_id,
             commit_policy,
             work_branch: None,
@@ -1198,7 +1162,6 @@ async fn complete_job(
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             goal: None,
-            work_surface_ref: None,
             work_surface_id: None,
             commit_policy: None,
             work_branch: None,
@@ -1244,7 +1207,6 @@ async fn archive_job(
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             goal: None,
-            work_surface_ref: None,
             work_surface_id: None,
             commit_policy: None,
             work_branch: None,
@@ -1364,7 +1326,6 @@ async fn add_top_level_task(
             actor_user_id: Some(user_id),
             actor_agent_id: None,
             goal: None,
-            work_surface_ref: None,
             work_surface_id: None,
             commit_policy: None,
             work_branch: None,
@@ -1479,17 +1440,15 @@ async fn job_detail(
     let status_report = den_docket::docket_job_status_report(&projection);
     let available_surfaces =
         den_service::work_surfaces::list_surfaces_for_bears(state.sqlx_pool(), &[bear_id]).await?;
-    let allow_default_ref = projection
-        .job
-        .work_surface_id
-        .and_then(|surface_id| {
-            available_surfaces
-                .iter()
-                .find(|surface| surface.id == surface_id)
-        })
-        .is_some_and(|surface| {
-            projection.job.work_branch.as_deref() == Some(surface.default_ref.as_str())
-        });
+    let selected_work_surface_id = projection.job.work_surface_id;
+    let selected_work_surface = selected_work_surface_id.and_then(|surface_id| {
+        available_surfaces
+            .iter()
+            .find(|surface| surface.id == surface_id)
+    });
+    let allow_default_ref = selected_work_surface.is_some_and(|surface| {
+        projection.job.work_branch.as_deref() == Some(surface.default_ref.as_str())
+    });
     let catalog = provider_catalog(&state).await;
     web::render_template(
         &state,
@@ -1506,10 +1465,10 @@ async fn job_detail(
             job_full_id => job_id.to_string(),
             job_title => entity_ref(job_id, "Job", &projection.job.goal, Some(&projection.job.status))["title"],
             status => projection.job.status,
-            work_surface_ref => projection.job.work_surface_ref,
             work_surface_id => projection.job.work_surface_id.map(|id| route_id(id)),
-            work_surface_name => projection.job.work_surface_id.and_then(|surface_id| available_surfaces.iter().find(|surface| surface.id == surface_id).map(|surface| surface.name.clone())),
-            work_surface_default_ref => projection.job.work_surface_id.and_then(|surface_id| available_surfaces.iter().find(|surface| surface.id == surface_id).map(|surface| surface.default_ref.clone())),
+            selected_work_surface_id => selected_work_surface_id,
+            work_surface_name => selected_work_surface.map(|surface| surface.name.clone()),
+            work_surface_default_ref => selected_work_surface.map(|surface| surface.default_ref.clone()),
             available_surfaces => available_surfaces,
             commit_policy_label => commit_policy_label(projection.job.commit_policy.as_deref()),
             commit_policy => projection.job.commit_policy,
@@ -1867,7 +1826,7 @@ async fn run_detail(
         None => Vec::new(),
     };
     let work_surface = run.work_surface.clone();
-    let work_surface_link = match dispatch_context.work_surface_ref.as_deref() {
+    let work_surface_link = match dispatch_context.work_surface_name.as_deref() {
         Some(name) => den_service::work_surfaces::surface_by_name(state.sqlx_pool(), name)
             .await?
             .map(|surface| {
