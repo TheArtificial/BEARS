@@ -162,6 +162,19 @@ impl ToolTaskRegistry {
         });
     }
 
+    pub(crate) async fn has_active_execution(&self, session_id: &str) -> bool {
+        self.tasks.lock().await.values().any(|task| {
+            task.session_id == session_id
+                && matches!(
+                    task.phase,
+                    ToolTaskPhase::ExecutionStarted
+                        | ToolTaskPhase::ExecutionSucceeded
+                        | ToolTaskPhase::ExecutionFailed
+                        | ToolTaskPhase::ResultPostFailed
+                )
+        })
+    }
+
     pub(crate) async fn list_for_session(&self, session_id: &str) -> Vec<ToolTaskRecord> {
         self.tasks
             .lock()
@@ -238,6 +251,31 @@ pub(crate) fn log_tool_task_phase(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn active_execution_tracks_only_command_ownership_phases() {
+        let registry = ToolTaskRegistry::default();
+        assert!(
+            registry
+                .try_register("session-a", "call-a", "run_command", Some(Uuid::new_v4()))
+                .await
+        );
+        assert!(!registry.has_active_execution("session-a").await);
+
+        registry
+            .set_phase(
+                "session-a",
+                "call-a",
+                "run_command",
+                ToolTaskPhase::ExecutionStarted,
+            )
+            .await;
+        assert!(registry.has_active_execution("session-a").await);
+        assert!(!registry.has_active_execution("session-b").await);
+
+        registry.remove("session-a", "call-a").await;
+        assert!(!registry.has_active_execution("session-a").await);
+    }
 
     #[tokio::test]
     async fn cancelling_session_evicts_all_matching_task_records() {

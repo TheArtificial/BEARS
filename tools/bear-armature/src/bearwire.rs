@@ -19,7 +19,8 @@ use crate::{
 
 const BEARWIRE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const BEARWIRE_PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
-const BEARWIRE_EVENT_FETCH_MAX_CONSECUTIVE_ERRORS: usize = 5;
+const BEARWIRE_EVENT_FETCH_FAILURE_GRACE: Duration = Duration::from_secs(10);
+const BEARWIRE_EVENT_FETCH_MAX_BACKOFF: Duration = Duration::from_secs(5);
 const BEARWIRE_TOOL_RAW_OUTPUT_PREVIEW_CHARS: usize = 24 * 1024;
 const BEARWIRE_OBLIGATION_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 const BEARWIRE_RUN_STATE_DIAGNOSTIC_INTERVAL: Duration = Duration::from_secs(5);
@@ -529,16 +530,27 @@ pub(crate) async fn handle_prompt(
     let mut last_run_state_summary: Option<String> = None;
     let mut logged_initial_wait = false;
     let mut consecutive_fetch_errors = 0usize;
+    let mut first_fetch_error_at: Option<Instant> = None;
 
-    while started.elapsed() < BEARWIRE_PROMPT_TIMEOUT {
+    'poll: loop {
+        if started.elapsed() >= BEARWIRE_PROMPT_TIMEOUT
+            && !shared_state
+                .tool_tasks
+                .has_active_execution(session_id)
+                .await
+        {
+            break;
+        }
         let replay = match fetch_events(http, config, session_id, after).await {
             Ok(replay) => {
                 consecutive_fetch_errors = 0;
+                first_fetch_error_at = None;
                 replay
             }
             Err(err) => {
                 consecutive_fetch_errors += 1;
                 diagnostics.fetch_errors += 1;
+                let failure_started = *first_fetch_error_at.get_or_insert_with(Instant::now);
                 tracing::warn!(
                     target: "bear_armature::lifecycle",
                     session_id,
@@ -546,14 +558,34 @@ pub(crate) async fn handle_prompt(
                     after = ?after,
                     consecutive_fetch_errors,
                     error = %err,
-                    "BearWire event fetch failed; retrying before aborting prompt loop"
+                    "BearWire event fetch failed; reconciling canonical run state"
                 );
-                if consecutive_fetch_errors >= BEARWIRE_EVENT_FETCH_MAX_CONSECUTIVE_ERRORS {
-                    return Err(err).context("BearWire event fetch failed repeatedly");
-                }
+
+                let mut state_reachable = false;
                 if run_id != "<unknown>" {
                     match fetch_run_state(http, config, session_id, run_id).await {
                         Ok(state) => {
+                            state_reachable = true;
+                            if let Some(event) = latest_terminal_event_from_run_state(&state) {
+                                let outcome = handle_bearwire_event(
+                                    config,
+                                    adapter_state,
+                                    shared_state,
+                                    session_id,
+                                    run_id,
+                                    event,
+                                    &mut diagnostics,
+                                    turn_token,
+                                )
+                                .await?;
+                                saw_done |= outcome.saw_done;
+                                saw_visible_output |= outcome.saw_visible_output;
+                                saw_tool_activity |= outcome.saw_tool_activity;
+                                saw_error |= outcome.saw_error;
+                                if saw_done {
+                                    break 'poll;
+                                }
+                            }
                             service_run_state_tool_obligations(
                                 config,
                                 shared_state,
@@ -570,12 +602,25 @@ pub(crate) async fn handle_prompt(
                                 session_id,
                                 run_id,
                                 error = %state_err,
-                                "BearWire run.state obligation sync failed after event fetch error"
+                                "BearWire run.state reconciliation failed after event fetch error"
                             );
                         }
                     }
                 }
-                sleep(BEARWIRE_POLL_INTERVAL).await;
+
+                let command_active = shared_state
+                    .tool_tasks
+                    .has_active_execution(session_id)
+                    .await;
+                if !command_active
+                    && !state_reachable
+                    && failure_started.elapsed() >= BEARWIRE_EVENT_FETCH_FAILURE_GRACE
+                {
+                    return Err(err).context(
+                        "BearWire event delivery and run.state reconciliation failed during the recovery grace period",
+                    );
+                }
+                sleep(event_fetch_retry_delay(consecutive_fetch_errors)).await;
                 continue;
             }
         };
@@ -963,6 +1008,28 @@ async fn fetch_run_state(
         }),
     )
     .await
+}
+
+fn latest_terminal_event_from_run_state(state: &Value) -> Option<&Value> {
+    state
+        .get("recent_events")?
+        .as_array()?
+        .iter()
+        .rev()
+        .filter_map(|entry| entry.get("event"))
+        .find(|event| {
+            matches!(
+                event.get("type").and_then(Value::as_str),
+                Some("run.completed" | "run.failed" | "run.cancelled")
+            )
+        })
+}
+
+fn event_fetch_retry_delay(consecutive_errors: usize) -> Duration {
+    let exponent = consecutive_errors.saturating_sub(1).min(5) as u32;
+    BEARWIRE_POLL_INTERVAL
+        .saturating_mul(1_u32 << exponent)
+        .min(BEARWIRE_EVENT_FETCH_MAX_BACKOFF)
 }
 
 fn canonical_run_state_allows_prompt_end(state: &Value) -> bool {
@@ -2272,6 +2339,33 @@ mod tests {
         assert!(message.contains("stream_error"));
         assert!(message.contains("max_steps_exceeded"));
         assert!(message.contains("run-123"));
+    }
+
+    #[test]
+    fn event_fetch_retry_uses_capped_exponential_backoff() {
+        assert_eq!(event_fetch_retry_delay(1), Duration::from_millis(250));
+        assert_eq!(event_fetch_retry_delay(2), Duration::from_millis(500));
+        assert_eq!(event_fetch_retry_delay(5), Duration::from_secs(4));
+        assert_eq!(
+            event_fetch_retry_delay(20),
+            BEARWIRE_EVENT_FETCH_MAX_BACKOFF
+        );
+    }
+
+    #[test]
+    fn terminal_event_is_recovered_from_canonical_run_state() {
+        let state = json!({
+            "recent_events": [
+                { "event": { "type": "run.started" } },
+                { "event": { "type": "run.failed", "run_id": "run-1" } }
+            ]
+        });
+        assert_eq!(
+            latest_terminal_event_from_run_state(&state)
+                .and_then(|event| event.get("type"))
+                .and_then(Value::as_str),
+            Some("run.failed")
+        );
     }
 
     #[test]
