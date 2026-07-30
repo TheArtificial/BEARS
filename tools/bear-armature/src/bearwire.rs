@@ -1237,7 +1237,11 @@ fn actionable_tool_request_event_from_obligation(
     {
         return None;
     }
-    if !policy_allows_approval_free_obligation_service(request, tool_name) {
+    let permission_granted = request
+        .get("permission_granted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !permission_granted && !policy_allows_approval_free_obligation_service(request, tool_name) {
         return None;
     }
     Some(json!({
@@ -1289,6 +1293,17 @@ fn unsupported_required_client_obligation_error(obligation: &Value) -> Option<an
         .and_then(Value::as_str)
         .unwrap_or("<none>");
     let sample = truncate_for_log(&obligation.to_string(), 1000);
+
+    if (expected == "tool_result" || kind == "tool_result")
+        && request
+            .get("approval_required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Some(anyhow!(
+            "BearWire invariant violation: tool_result obligation remains approval_required after permission settlement: id={id} tool_call={tool_call_id} permission={permission_id} sample={sample}"
+        ));
+    }
 
     Some(anyhow!(
         "unsupported required BearWire client obligation: id={id} kind={kind} expected={expected} tool_call={tool_call_id} permission={permission_id} sample={sample}"
@@ -2476,6 +2491,43 @@ mod tests {
     }
 
     #[test]
+    fn reconstructs_permission_granted_tool_request_from_run_state() {
+        let obligation = json!({
+            "id": "obl-granted",
+            "kind": "tool_result",
+            "expected_responder_action": "tool_result",
+            "state": "waiting_for_client",
+            "tool_call_id": "call-edit",
+            "permission_id": "perm-edit",
+            "request_payload": {
+                "tool_call_id": "call-edit",
+                "tool_name": "fs_edit_file",
+                "arguments": { "path": "README.md", "old_text": "a", "new_text": "b" },
+                "approval_required": false,
+                "approval_request_id": "perm-edit",
+                "permission_granted": true,
+                "execution_target": "armature_local",
+                "policy": {
+                    "execution_target": "armature_local",
+                    "approval_required": true,
+                    "approval_policy": "required",
+                    "risk": "writes_workspace"
+                }
+            }
+        });
+
+        let event = actionable_tool_request_event_from_obligation("run-1", &obligation)
+            .expect("actionable permission-granted tool");
+
+        assert_eq!(event["type"], "tool_call.requested");
+        assert_eq!(event["data"]["obligation_id"], "obl-granted");
+        assert_eq!(event["data"]["tool_call"]["id"], "call-edit");
+        assert_eq!(event["data"]["tool_call"]["name"], "fs_edit_file");
+        assert_eq!(event["data"]["tool_call"]["arguments"]["new_text"], "b");
+        assert_eq!(event["data"]["approval_required"], false);
+    }
+
+    #[test]
     fn reconstructs_permission_wait_from_run_state() {
         let obligation = json!({
             "id": "obl-perm",
@@ -2568,6 +2620,34 @@ mod tests {
             }
         });
         assert!(actionable_tool_request_event_from_obligation("run-1", &approval).is_none());
+    }
+
+    #[test]
+    fn approval_required_tool_result_reports_server_invariant_violation() {
+        let obligation = json!({
+            "id": "obl-stale-approval",
+            "kind": "tool_result",
+            "expected_responder_action": "tool_result",
+            "state": "waiting_for_client",
+            "request_payload": {
+                "tool_call_id": "call-edit",
+                "tool_name": "fs_edit_file",
+                "arguments": { "path": "README.md" },
+                "approval_required": true,
+                "approval_request_id": "perm-edit",
+                "execution_target": "armature_local"
+            }
+        });
+
+        let err = unsupported_required_client_obligation_error(&obligation)
+            .expect("inconsistent tool obligation should fail the prompt");
+        let message = err.to_string();
+
+        assert!(message.contains("BearWire invariant violation"));
+        assert!(message.contains(
+            "tool_result obligation remains approval_required after permission settlement"
+        ));
+        assert!(!message.contains("unsupported required BearWire client obligation"));
     }
 
     #[test]

@@ -655,6 +655,11 @@ pub async fn mark_waiting_for_tool_result(
         SET kind = 'tool_result',
             expected_responder_action = 'tool_result',
             state = 'waiting_for_client',
+            request_payload = jsonb_set(
+                jsonb_set(request_payload, '{approval_required}', 'false'::jsonb, true),
+                '{permission_granted}', 'true'::jsonb,
+                true
+            ),
             updated_at = NOW()
         WHERE id = $1
           AND state IN ('requested','waiting_for_client','result_received')

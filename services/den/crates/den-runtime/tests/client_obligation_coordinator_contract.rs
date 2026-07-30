@@ -517,9 +517,7 @@ async fn den_hosted_approved_permission_continues_without_local_tool_dispatch(po
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn local_approved_permission_dispatches_tool_and_uses_persisted_obligation_id(
-    pool: sqlx::PgPool,
-) {
+async fn local_approved_permission_persists_recoverable_tool_obligation(pool: sqlx::PgPool) {
     let (run, step, session_id) = create_run_with_step(&pool).await;
     let obligation = turn_obligations::upsert_permission_decision_obligation_for_step(
         &pool,
@@ -528,7 +526,20 @@ async fn local_approved_permission_dispatches_tool_and_uses_persisted_obligation
         Some(step.id),
         "perm-local",
         Some("call-local"),
-        json!({ "tool_name": "fs_read_text_file", "arguments": { "path": "README.md" } }),
+        json!({
+            "approval_required": true,
+            "approval_request_id": "perm-local",
+            "tool_call_id": "call-local",
+            "tool_name": "fs_edit_file",
+            "arguments": { "path": "README.md", "old_text": "a", "new_text": "b" },
+            "execution_target": "armature_local",
+            "policy": {
+                "execution_target": "armature_local",
+                "approval_required": true,
+                "approval_policy": "required",
+                "risk": "writes_workspace"
+            }
+        }),
     )
     .await
     .expect("create local permission obligation");
@@ -556,11 +567,34 @@ async fn local_approved_permission_dispatches_tool_and_uses_persisted_obligation
             assert_eq!(tool_obligation.id, obligation.id);
             assert_eq!(tool_obligation.kind, "tool_result");
             assert_eq!(tool_obligation.expected_responder_action, "tool_result");
+            assert_eq!(tool_obligation.state, "waiting_for_client");
             assert_eq!(tool_obligation.permission_id.as_deref(), Some("perm-local"));
             assert_eq!(tool_obligation.tool_call_id.as_deref(), Some("call-local"));
+            assert_eq!(tool_obligation.request_payload["approval_required"], false);
+            assert_eq!(tool_obligation.request_payload["permission_granted"], true);
+            assert_eq!(
+                tool_obligation.request_payload["approval_request_id"],
+                "perm-local"
+            );
             assert_eq!(tool_call_id, "call-local");
-            assert_eq!(tool_name, "fs_read_text_file");
-            assert_eq!(args, json!({ "path": "README.md" }));
+            assert_eq!(tool_name, "fs_edit_file");
+            assert_eq!(
+                args,
+                json!({ "path": "README.md", "old_text": "a", "new_text": "b" })
+            );
+
+            let open = turn_obligations::open_client_obligations_for_step(&pool, step.id)
+                .await
+                .expect("fetch durable open obligations");
+            assert_eq!(open.len(), 1);
+            assert_eq!(open[0].id, obligation.id);
+            assert_eq!(open[0].expected_responder_action, "tool_result");
+            assert_eq!(open[0].state, "waiting_for_client");
+            assert_eq!(open[0].request_payload["approval_required"], false);
+            assert_eq!(open[0].request_payload["permission_granted"], true);
+            assert_eq!(open[0].request_payload["tool_call_id"], "call-local");
+            assert_eq!(open[0].request_payload["tool_name"], "fs_edit_file");
+            assert_eq!(open[0].request_payload["arguments"]["new_text"], "b");
         }
         other => panic!("approved local permission should dispatch tool: {other:?}"),
     }
