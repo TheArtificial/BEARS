@@ -28,6 +28,8 @@ use den_memory::MemoryStoreManager;
 /// SQLite memory stores, and the process-local turn coordinators.
 #[derive(Clone)]
 pub struct DenState {
+    /// Unique identity for this Den process lifetime.
+    pub process_epoch_id: uuid::Uuid,
     /// Database connection pool.
     pub sqlx_pool: PgPool,
     /// Shared immutable runtime configuration.
@@ -71,6 +73,7 @@ impl DenState {
     ) -> Self {
         let (bearwire_livestream, _) = broadcast::channel(BEARWIRE_LIVESTREAM_CAPACITY);
         Self {
+            process_epoch_id: uuid::Uuid::new_v4(),
             sqlx_pool,
             config,
             bifrost,

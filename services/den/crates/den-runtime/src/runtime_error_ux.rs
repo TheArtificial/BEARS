@@ -222,6 +222,12 @@ pub fn run_failed_user_message(
                 .unwrap_or("the failed run"),
         ));
     }
+    if reason == "server_restart_interrupted" {
+        return Some(format!(
+            "{} was interrupted because Den restarted while waiting for the connected work surface to complete a local step. Reconnect and send another message to continue.",
+            display_bear_name(bear_name),
+        ));
+    }
     if reason == "client_obligation_timeout" {
         let permission_ids = context
             .and_then(|context| context.get("expired_obligations"))
@@ -238,14 +244,14 @@ pub fn run_failed_user_message(
             .collect::<Vec<_>>();
         let detail = match permission_ids.as_slice() {
             [permission_id] => format!("Permission request {permission_id} timed out."),
-            [] => "The connected client did not respond in time.".to_string(),
+            [] => "The connection was interrupted, or the required work-surface response did not arrive in time.".to_string(),
             permission_ids => format!(
                 "Permission requests {} timed out.",
                 permission_ids.join(", ")
             ),
         };
         return Some(format!(
-            "{} stopped because {detail} Reconnect the client and send another message to retry.",
+            "{} stopped because {detail} Reconnect the work surface and send another message to retry.",
             display_bear_name(bear_name),
         ));
     }
@@ -639,13 +645,44 @@ mod tests {
 
         let user_message = projection.user_message.expect("user message");
         assert!(user_message.contains("Permission request req-123 timed out."));
-        assert!(user_message.contains("Reconnect the client"));
+        assert!(user_message.contains("Reconnect the work surface"));
         assert_eq!(projection.content["reason"], "client_obligation_timeout");
         assert_eq!(
             projection.diagnostic_context.expect("diagnostic context")["expired_obligations"][0]
                 ["permission_id"],
             "req-123"
         );
+    }
+
+    #[test]
+    fn generic_client_obligation_timeout_does_not_blame_the_client() {
+        let projection = run_failure_projection(
+            "client_obligation_timeout",
+            "required step timed out",
+            "run-1",
+            "Builder Bear",
+            Some(json!({ "expired_obligations": [] })),
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("connection was interrupted"));
+        assert!(user_message.contains("work-surface response"));
+        assert!(!user_message.contains("client did not respond"));
+    }
+
+    #[test]
+    fn server_restart_interruption_names_den_as_the_cause() {
+        let projection = run_failure_projection(
+            "server_restart_interrupted",
+            "process-local continuation unavailable",
+            "run-1",
+            "Builder Bear",
+            None,
+        );
+
+        let user_message = projection.user_message.expect("user message");
+        assert!(user_message.contains("Den restarted"));
+        assert!(user_message.contains("connected work surface"));
     }
 
     #[test]

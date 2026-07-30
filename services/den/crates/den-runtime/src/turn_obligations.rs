@@ -226,6 +226,18 @@ impl TurnObligationRow {
         self.lease_attempt_token_hash.is_some()
     }
 
+    pub fn process_epoch_id(&self) -> Option<Uuid> {
+        self.request_payload
+            .get("den_process_epoch_id")
+            .and_then(Value::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok())
+    }
+
+    pub fn belongs_to_prior_process_epoch(&self, current_process_epoch_id: Uuid) -> bool {
+        self.process_epoch_id()
+            .is_some_and(|process_epoch_id| process_epoch_id != current_process_epoch_id)
+    }
+
     pub fn timed_out(&self, now: OffsetDateTime) -> bool {
         obligation_is_open(self) && self.expires_at() <= now
     }
@@ -812,6 +824,22 @@ pub async fn expire_open_client_obligations_for_session(
 ) -> Result<Vec<TurnObligationRow>, DenError> {
     let open = open_client_obligations_for_session(pool, session_id).await?;
     expire_open_client_obligations_from_rows(pool, open).await
+}
+
+pub async fn client_obligations_requiring_reconciliation(
+    pool: &PgPool,
+    current_process_epoch_id: Uuid,
+    limit: i64,
+) -> Result<Vec<TurnObligationRow>, DenError> {
+    let open = open_client_obligations(pool, limit).await?;
+    let now = OffsetDateTime::now_utc();
+    Ok(open
+        .into_iter()
+        .filter(|obligation| {
+            obligation.timed_out(now)
+                || obligation.belongs_to_prior_process_epoch(current_process_epoch_id)
+        })
+        .collect())
 }
 
 pub async fn expire_open_client_obligations(

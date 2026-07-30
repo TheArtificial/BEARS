@@ -75,6 +75,7 @@ pub(crate) enum RunFailureReason {
     StreamError,
     StartFailed,
     ClientObligationTimeout,
+    ServerRestartInterrupted,
     CommandOutcomeUnknown,
     #[cfg(test)]
     RuntimeInternal,
@@ -92,6 +93,7 @@ impl RunFailureReason {
             Self::StreamError => "stream_error",
             Self::StartFailed => "start_failed",
             Self::ClientObligationTimeout => "client_obligation_timeout",
+            Self::ServerRestartInterrupted => "server_restart_interrupted",
             Self::CommandOutcomeUnknown => "command_outcome_unknown",
             #[cfg(test)]
             Self::RuntimeInternal => "runtime_internal",
@@ -870,7 +872,7 @@ fn publish_answerable_client_waiting_event(
 
 #[allow(clippy::too_many_arguments)]
 async fn persist_tool_call_requested_transactionally(
-    pool: &sqlx::PgPool,
+    state: &DenState,
     session_id: &str,
     run_id: &str,
     bear_id: uuid::Uuid,
@@ -887,9 +889,11 @@ async fn persist_tool_call_requested_transactionally(
     approval_reason: &Option<String>,
     event_run_id: &Option<String>,
 ) -> Result<(), den_core::DenError> {
+    let pool = &state.sqlx_pool;
     let persisted = den_runtime::turn_waits::persist_bearwire_tool_call_wait_transactionally(
         pool,
         den_runtime::turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: state.process_epoch_id,
             session_id,
             run_id,
             bear_id,
@@ -983,7 +987,7 @@ pub(crate) async fn persist_runtime_event_as_bearwire(
     ) = &runtime_event
     {
         match persist_tool_call_requested_transactionally(
-            pool,
+            state,
             session_id,
             run_id,
             bear_id,

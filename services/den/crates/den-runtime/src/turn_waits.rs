@@ -70,6 +70,7 @@ fn tool_call_policy(tool_name: &str, owner: ToolExecutionOwner) -> Value {
 
 #[derive(Debug, Clone)]
 pub struct PersistToolCallWaitInput<'a> {
+    pub process_epoch_id: Uuid,
     pub session_id: &'a str,
     pub run_id: &'a str,
     pub bear_id: Uuid,
@@ -267,6 +268,7 @@ pub async fn persist_bearwire_tool_call_wait_transactionally(
     };
     let policy = tool_call_policy(input.tool_name, execution_owner);
     let request_payload = json!({
+        "den_process_epoch_id": input.process_epoch_id,
         "tool_call_id": input.tool_call_id,
         "tool_name": input.tool_name,
         "arguments": input.arguments,

@@ -60,18 +60,25 @@ pub async fn expire_client_obligations_once(
     limit: i64,
 ) -> Result<usize, DenError> {
     let pool = &state.sqlx_pool;
-    let expired = turn_obligations::expire_open_client_obligations(pool, limit).await?;
-    if expired.is_empty() {
+    let affected = turn_obligations::client_obligations_requiring_reconciliation(
+        pool,
+        state.process_epoch_id,
+        limit,
+    )
+    .await?;
+    if affected.is_empty() {
         return Ok(0);
     }
 
-    let mut by_run = BTreeMap::<String, (Vec<Value>, bool)>::new();
-    for obligation in expired {
+    let mut by_run = BTreeMap::<String, (Vec<Value>, bool, bool)>::new();
+    for obligation in affected {
         let command_outcome_unknown =
             obligation.is_claimed() && is_command_tool_result(&obligation);
+        let interrupted_by_restart =
+            obligation.belongs_to_prior_process_epoch(state.process_epoch_id);
         let entry = by_run
             .entry(obligation.run_id.clone())
-            .or_insert_with(|| (Vec::new(), false));
+            .or_insert_with(|| (Vec::new(), false, false));
         entry.0.push(json!({
             "obligation_id": obligation.id,
             "kind": obligation.kind,
@@ -82,17 +89,20 @@ pub async fn expire_client_obligations_once(
             "timeout_ms": obligation.timeout_ms(),
             "created_at": obligation.created_at,
             "expires_at": obligation.expires_at(),
+            "process_epoch_id": obligation.process_epoch_id(),
         }));
         entry.1 |= command_outcome_unknown;
+        entry.2 |= interrupted_by_restart;
     }
 
-    let expired_run_count = by_run.len();
-    for (run_id, (expired_obligations, command_outcome_unknown)) in by_run {
+    let affected_run_count = by_run.len();
+    for (run_id, (affected_obligations, command_outcome_unknown, interrupted_by_restart)) in by_run
+    {
         let Some(run) = turn_runs::get_run(pool, &run_id).await? else {
             tracing::warn!(
                 run_id,
-                expired_obligation_count = expired_obligations.len(),
-                "expired BearWire client obligations reference a missing run"
+                affected_obligation_count = affected_obligations.len(),
+                "reconciled BearWire client obligations reference a missing run"
             );
             continue;
         };
@@ -107,8 +117,14 @@ pub async fn expire_client_obligations_once(
                     "next_action_params": { "run_id": run_id },
                 })),
             )
+        } else if interrupted_by_restart {
+            (
+                RunFailureReason::ServerRestartInterrupted,
+                "Den restarted while waiting for the connected work surface to complete a local step. The process-local continuation could not be resumed automatically.".to_string(),
+                None,
+            )
         } else {
-            let timed_out_permissions = expired_obligations
+            let timed_out_permissions = affected_obligations
                 .iter()
                 .filter(|obligation| {
                     obligation
@@ -122,8 +138,7 @@ pub async fn expire_client_obligations_once(
                 [permission_id] => {
                     format!("Permission request {permission_id} timed out waiting for a client response.")
                 }
-                [] => "The connected client did not respond before the required step timed out."
-                    .to_string(),
+                [] => "The connection was interrupted, or the required work-surface response did not arrive before the step timed out.".to_string(),
                 permission_ids => format!(
                     "Permission requests {} timed out waiting for client responses.",
                     permission_ids.join(", ")
@@ -131,7 +146,7 @@ pub async fn expire_client_obligations_once(
             };
             (
                 RunFailureReason::ClientObligationTimeout,
-                format!("{detail} Reconnect the client and start a new turn to retry."),
+                format!("{detail} Reconnect the work surface and start a new turn to retry."),
                 None,
             )
         };
@@ -148,13 +163,19 @@ pub async fn expire_client_obligations_once(
             reason,
             message,
             Some(json!({
-                "expired_obligations": expired_obligations,
-                "source": "bearwire_client_obligation_expiry_loop",
+                "affected_obligations": affected_obligations,
+                "expired_obligations": if interrupted_by_restart { Value::Null } else { json!(affected_obligations) },
+                "source": if interrupted_by_restart {
+                    "bearwire_client_obligation_restart_reconciliation"
+                } else {
+                    "bearwire_client_obligation_expiry_loop"
+                },
+                "current_process_epoch_id": state.process_epoch_id,
                 "recovery": recovery,
             })),
         )
         .await;
     }
 
-    Ok(expired_run_count)
+    Ok(affected_run_count)
 }

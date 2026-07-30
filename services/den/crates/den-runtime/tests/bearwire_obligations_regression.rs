@@ -231,6 +231,7 @@ async fn armature_owned_tool_call_creates_client_obligation(pool: sqlx::PgPool) 
     let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
@@ -290,6 +291,7 @@ async fn unknown_tool_execution_owner_fails_closed(pool: sqlx::PgPool) {
     let err = turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
@@ -329,6 +331,7 @@ async fn den_owned_tool_call_does_not_create_client_obligation(pool: sqlx::PgPoo
     turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
@@ -377,6 +380,7 @@ async fn den_owned_approval_required_tool_creates_permission_obligation(pool: sq
     let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
@@ -442,6 +446,7 @@ async fn armature_approval_required_tool_persists_policy_for_permission_reconstr
     let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
@@ -738,6 +743,7 @@ async fn transactional_tool_wait_persists_step_obligation_and_event(pool: sqlx::
     let persisted = turn_waits::persist_bearwire_tool_call_wait_transactionally(
         &pool,
         turn_waits::PersistToolCallWaitInput {
+            process_epoch_id: Uuid::new_v4(),
             session_id: &session_id,
             run_id: &run_id,
             bear_id,
