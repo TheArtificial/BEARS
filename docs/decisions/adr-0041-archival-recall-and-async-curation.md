@@ -116,6 +116,21 @@ In-loop retrieval merges complementary lanes — deterministic **anchors** (key 
 
 Adopt validity windows on `memory_records` (`valid_from` / `invalid_at` alongside the existing `created_at` transaction time) and lean on the entity relation layer ([ADR-0042](adr-0042-memory-entity-relationships-and-bear-entity-layer.md)) for **lightweight typed entity links** (people, work surfaces, domains, missions). This gives point-in-time recall and "how knowledge evolved" cheaply. Multi-hop recall, when needed, is served by **bounded retrieval-time traversal** over the record↔entity bipartite links (depth-capped, read-only, no stored transitive edges or inference — see §6, [DERIVED_RECALL Phase 3.5](../roadmap/DERIVED_RECALL_INDEX_IMPLEMENTATION_PLAN.md), and ADR-0042 anti-RDF guardrails), not by persisting a graph. A full Graphiti-style graph DB as canonical store is **explicitly rejected** — it conflicts with SQLite-canonical (ADR-0031).
 
+### 8. Read-time contradiction surfacing (amendment 2026-07-30)
+
+Sections 3–5 defend memory quality entirely on the **write side** (harvest filtering, `requires_human`, freshness-trend re-harvest nudges). That leaves the residual hazard this ADR already names — a bad or stale extraction becomes a head record and recall then surfaces it *confidently*. The bi-temporal machinery (§7) already holds everything needed to catch this at read time; this amendment adds the read-side consumer.
+
+**Observed failure class:** confident stale answers — recall returns one ranked winner when canonical memory in fact holds two live, mutually inconsistent assertions (divergent heads on the same logical path, or `subject`-linked to the same entity, with overlapping validity windows and no supersession edge between them).
+
+**Decision:**
+
+- **Conflict check in recall assembly.** When retrieved records share a `logical_path` or primary `subject` entity and have overlapping `valid_from`/`invalid_at` windows with divergent heads, the assembler surfaces **both** records with an explicit `conflicting` marker instead of silently returning the ranked winner. The model sees the disagreement and can say so, ask, or check further — never assert one side as settled truth.
+- **`memory_conflict` observations feed curation.** Each detected conflict emits an observation (idempotent per unordered record pair, keyed on the two `memory_id`s) into the standard proposal/observation queue. Resolution is the existing consolidation path (§4): curate supersedes one side, merges, or records the disagreement — read-time detection creates *work items*, never resolves conflicts itself.
+- **Detection is bounded and hot-path-cheap.** The check runs only over the records already retrieved for the turn (no corpus-wide scan); full-corpus contradiction sweeps belong to sleep-time consolidation, which may reuse the same predicate.
+- **No new schema.** This is a pure consumer of `supersedes_memory_id`, `valid_from`/`invalid_at`, and the `subject` relation layer ([ADR-0042](adr-0042-memory-entity-relationships-and-bear-entity-layer.md)); `memory_conflict` is an observation kind, not a table.
+
+This satisfies the [complexity budget](../architecture/memory-model.md#complexity-budget) evidence rule: it cites a concrete failure class, and it makes the temporal legs (§7) pay read-time rent rather than serving ranking alone.
+
 ### Schema deltas (sketch, for implementation)
 
 Append-only and single-writer-per-Bear invariants are preserved; these are additive columns plus newly *used* existing columns.

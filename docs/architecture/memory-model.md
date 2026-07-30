@@ -131,6 +131,29 @@ It exists to support:
 
 Canonical truth remains in SQLite memory records and curated shared memory.
 
+## Complexity budget
+
+The memory system optimizes for a two-sentence operator mental model:
+
+> Memory is SQLite. Set `QDRANT_URL` and you get semantic recall; don't, and you get anchors + keyword.
+
+`QDRANT_URL` is the **only operational dial** for memory behavior. There are no memory tiers, feature flags, or per-lane toggles at the operations layer; everything else is an internal architecture decision recorded in ADRs, invisible to a self-hoster.
+
+To keep it that way, additions to the memory system carry a standing evidence rule:
+
+- **Any new recall lane, ranking signal, projection tier, or curation pass must cite the observed failure it fixes before it lands.** "Would plausibly help" is not sufficient; a described failure mode with an example is.
+- **Speculative lanes are resolved by subtraction, not configuration.** A lane that cannot cite its failure is deferred — removed from the hot path, with a "revisit when \<evidence\>" note in its owning ADR — never hidden behind a flag that operators must learn.
+- **Landed lanes are kept while they stay cheap.** Removal churn is itself complexity; a landed, tested lane is removed only when it demonstrates maintenance or quality cost, with the decision recorded in its owning ADR's status.
+
+| Lane | Owning ADR | Status | Revisit trigger |
+|------|-----------|--------|-----------------|
+| Vector + keyword recall | [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) | keep (core) | — |
+| Temporal filtering (validity windows) | [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) | keep (landed; feeds contradiction surfacing) | — |
+| Bounded graph expansion | [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) §6 / [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) | keep (landed) | remove if recall-quality evals show no lift, or maintenance cost appears |
+| Freshness-trend ranking | [ADR-0041](../decisions/adr-0041-archival-recall-and-async-curation.md) §5 | keep (landed, derived-only) | remove if it never changes a curation or ranking outcome in practice |
+| Entity anchor projection | [ADR-0042](../decisions/adr-0042-memory-entity-relationships-and-bear-entity-layer.md) §8 | keep (landed, explicit-anchor-only) | derived-fallback projection stays deferred until curation policy is mature |
+| Rerank (cross-encoder) | [ADR-0038](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) §5 | deferred | recall-quality complaints attributable to ranking, not coverage |
+
 ## Prompt-time memory use
 
 At turn time, the runtime does not dump all Bear memory into the prompt.
