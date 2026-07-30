@@ -62,11 +62,16 @@ pub fn tool_call_finish_wire(
     error: Option<Value>,
     compacted: Option<Value>,
 ) -> ToolCallFinishWire {
-    // ponytail: content preview is deliberately simple; upgrade by sharing the
-    // client-tool result compactor's summary extraction if cards need richer text.
+    let compacted_summary = compacted
+        .as_ref()
+        .and_then(|value| value.get("output_summary"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty());
     let summary = summary
         .map(str::to_string)
         .or_else(|| error_message.map(str::to_string))
+        .or_else(|| compacted_summary.map(str::to_string))
         .or_else(|| content.map(|text| text.chars().take(160).collect::<String>()));
     let tool_name = tool_name.map(str::to_string);
     ToolCallFinishWire {

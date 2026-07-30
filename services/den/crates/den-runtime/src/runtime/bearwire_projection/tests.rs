@@ -6,6 +6,9 @@ use crate::{
         RuntimeEventProjectionOutcome,
     },
 };
+use den_core::tools::result_compaction::{
+    compact_client_tool_result, ClientToolResultInput, ToolResultStatus,
+};
 use den_protocol::{
     RuntimeConversationRef, RuntimeErrorCategory, RuntimeSemanticEvent, RuntimeStreamEvent,
     ToolCallFinishStatus,
@@ -204,6 +207,55 @@ fn den_owned_tool_call_requested_bearwire_event_marks_den_execution_target() {
     );
 }
 
+#[test]
+fn tool_call_finish_uses_compacted_outcome_summary() {
+    let compacted = compact_client_tool_result(&ClientToolResultInput::new(
+        "call-search",
+        Some("fs_search_files".to_string()),
+        ToolResultStatus::Ok,
+        None,
+        serde_json::json!({"matches": ["docs/guide.md"]}),
+        serde_json::Value::Null,
+    ));
+
+    let event = crate::runtime::bearwire_projection::wire::tool_call_finish_wire(
+        "call-search",
+        Some("fs_search_files"),
+        "ok",
+        None,
+        None,
+        None,
+        Some(serde_json::json!({"matches": ["docs/guide.md"]})),
+        None,
+        Some(compacted.payload),
+    );
+
+    assert_eq!(
+        event.summary.as_deref(),
+        Some("Used fs_search_files (ok): {\"matches\":[\"docs/guide.md\"]}")
+    );
+}
+
+#[test]
+fn tool_call_finish_preserves_error_message_over_generic_compacted_summary() {
+    let event = crate::runtime::bearwire_projection::wire::tool_call_finish_wire(
+        "call-command",
+        Some("run_command"),
+        "error",
+        None,
+        Some("Command exited with code 1"),
+        None,
+        None,
+        Some(serde_json::json!({"exit_code": 1})),
+        Some(serde_json::json!({"output_summary": "Used run_command (error): 1"})),
+    );
+
+    assert_eq!(event.summary.as_deref(), Some("Command exited with code 1"));
+    assert_eq!(
+        event.error_message.as_deref(),
+        Some("Command exited with code 1")
+    );
+}
 #[test]
 fn tool_call_finished_bearwire_event_has_stable_finish_envelope() {
     let mapped = runtime_stream_event_to_bearwire_events(RuntimeStreamEvent::Semantic(
