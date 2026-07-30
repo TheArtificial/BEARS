@@ -102,6 +102,8 @@ pub async fn expire_client_obligations_once(
                 Some(json!({
                     "status": "outcome_unknown",
                     "automatic_retry_allowed": false,
+                    "next_action": "run_state",
+                    "next_action_params": { "run_id": run_id },
                 })),
             )
         } else {

@@ -212,8 +212,14 @@ pub fn run_failed_user_message(
 ) -> Option<String> {
     if reason == "command_outcome_unknown" {
         return Some(format!(
-            "{} could not confirm the command's final status after the connected client stopped responding. The command may still be running or may already have made changes. Reconnect and inspect the process and workspace before retrying it.",
-            display_bear_name(bear_name)
+            "{} could not confirm the command's final status after the connected client stopped responding. The command may still be running or may already have made changes. Reconnect, call `run_state` with run ID `{}`, then inspect the reported command result and workspace before retrying it.",
+            display_bear_name(bear_name),
+            context
+                .and_then(|value| value.get("recovery"))
+                .and_then(|value| value.get("next_action_params"))
+                .and_then(|value| value.get("run_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("the failed run"),
         ));
     }
     if reason == "client_obligation_timeout" {
@@ -511,6 +517,27 @@ mod tests {
             .contains("Operational note from Den"));
         assert_eq!(projection.content["kind"], "turn_budget_exhausted");
         assert_eq!(projection.content["retryable"], false);
+    }
+
+    #[test]
+    fn command_outcome_unknown_tells_the_client_how_to_inspect_the_run() {
+        let projection = run_failure_projection(
+            "command_outcome_unknown",
+            "Command result couldn't be confirmed.",
+            "run-1",
+            "Builder Bear",
+            Some(json!({
+                "recovery": {
+                    "next_action": "run_state",
+                    "next_action_params": { "run_id": "run-1" },
+                },
+            })),
+        );
+
+        assert_eq!(
+            projection.user_message.as_deref(),
+            Some("Builder Bear could not confirm the command's final status after the connected client stopped responding. The command may still be running or may already have made changes. Reconnect, call `run_state` with run ID `run-1`, then inspect the reported command result and workspace before retrying it."),
+        );
     }
 
     #[test]

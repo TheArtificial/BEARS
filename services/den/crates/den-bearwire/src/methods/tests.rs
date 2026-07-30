@@ -2579,9 +2579,14 @@ async fn command_obligation_expiry_blocks_automatic_retry_as_outcome_unknown(poo
         failed.event.data["context"]["recovery"]["automatic_retry_allowed"],
         false
     );
-    assert!(failed.event.data["context"]["recovery"]
-        .get("next_action")
-        .is_none());
+    assert_eq!(
+        failed.event.data["context"]["recovery"]["next_action"],
+        "run_state"
+    );
+    assert_eq!(
+        failed.event.data["context"]["recovery"]["next_action_params"]["run_id"],
+        run_id
+    );
 }
 
 #[sqlx::test(migrations = "../../migrations")]
