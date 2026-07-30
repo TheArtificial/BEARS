@@ -254,7 +254,9 @@ async fn invoke_workflow_tool(
             )
             .await?
         }
-        DEN_JOB_CREATE => workflow::create_job(pool, config, context, role, arguments).await?,
+        DEN_JOB_CREATE => {
+            workflow::create_job(pool, config, stores, context, role, arguments).await?
+        }
         DEN_JOB_LIST => workflow::list_jobs(pool, config, context, arguments).await?,
         DEN_JOB_GET => workflow::get_job(pool, context, arguments).await?,
         DEN_JOB_FIND => workflow::find_job(pool, context, arguments).await?,

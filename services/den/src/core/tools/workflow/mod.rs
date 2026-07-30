@@ -25,7 +25,10 @@ use den_docket::{
 
 use crate::{
     config::Config,
-    core::tools::{session::DenToolInvocationContext, support::clean_optional},
+    core::tools::{
+        session::DenToolInvocationContext, support::clean_optional,
+        work_surface::persist_recognized_session_surface,
+    },
     errors::{CustomError, DenError},
 };
 use den_memory::{tools as sqlite_memory, MemoryStoreManager};
@@ -1093,6 +1096,22 @@ async fn update_focused_conversation_title(
     Ok(())
 }
 
+async fn resolve_surface_ref_for_create(
+    pool: &PgPool,
+    stores: &MemoryStoreManager,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+    work_surface_ref: Option<String>,
+) -> Result<(Option<String>, Option<Uuid>, bool), CustomError> {
+    if work_surface_ref
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        persist_recognized_session_surface(pool, stores, context, role).await?;
+    }
+    resolve_surface_ref(pool, context, work_surface_ref).await
+}
+
 async fn resolve_surface_ref(
     pool: &PgPool,
     context: &DenToolInvocationContext,
@@ -1213,6 +1232,7 @@ pub(crate) async fn confirm_work_surface(
 pub(crate) async fn create_job(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearProfile,
     arguments: Value,
@@ -1227,7 +1247,7 @@ pub(crate) async fn create_job(
     }
     let args: DocketJobCreateArguments = serde_json::from_value(arguments)?;
     let (work_surface_ref, work_surface_id, surface_auto_bound) =
-        resolve_surface_ref(pool, context, args.work_surface_ref).await?;
+        resolve_surface_ref_for_create(pool, stores, context, role, args.work_surface_ref).await?;
     if work_surface_id.is_none() {
         return Err(DenError::ValidationError(
             "work_surface_required: Docket work jobs require an assigned managed work surface; choose one from get_work_catalog or use a resolved/confirmed session anchor"

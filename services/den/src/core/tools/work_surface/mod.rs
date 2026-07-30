@@ -79,61 +79,7 @@ impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
         let files = sqlite_memory::sqlite_collect_role_logical_paths(&store, role.as_str()).await?;
         let orientation =
             build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
-        if let Some(client_session_id) = context.client_session_id.as_deref() {
-            let session = den_service::client_sessions::find_for_user_bear_session_id(
-                self.pool,
-                context.user_id,
-                context.bear_id,
-                client_session_id,
-            )
-            .await?;
-            if let Some(session) = session {
-                let candidate_slug = orientation
-                    .pointer("/work_surface/slug")
-                    .and_then(Value::as_str);
-                let has_canonical_anchor = orientation
-                    .get("canonical_paths")
-                    .and_then(Value::as_array)
-                    .is_some_and(|paths| !paths.is_empty());
-                if let Some(candidate_slug) = candidate_slug.filter(|_| has_canonical_anchor) {
-                    let matches = den_service::work_surfaces::list_surfaces_for_bears(
-                        self.pool,
-                        &[context.bear_id],
-                    )
-                    .await?
-                    .into_iter()
-                    .filter(|surface| {
-                        normalize_work_surface_slug(&surface.name).ok().as_deref()
-                            == Some(candidate_slug)
-                    })
-                    .collect::<Vec<_>>();
-                    if matches.len() == 1 {
-                        den_service::client_session_work_surface_resolutions::upsert(
-                            self.pool,
-                            session.id,
-                            matches[0].id,
-                            den_service::client_session_work_surface_resolutions::ClientSessionWorkSurfaceResolutionStatus::Resolved,
-                            json!({
-                                "kind": "memory_anchor",
-                                "candidate_slug": candidate_slug,
-                                "canonical_anchor_paths": orientation.get("canonical_paths"),
-                            }),
-                        )
-                        .await?;
-                    } else {
-                        den_service::client_session_work_surface_resolutions::clear_resolved(
-                            self.pool, session.id,
-                        )
-                        .await?;
-                    }
-                } else {
-                    den_service::client_session_work_surface_resolutions::clear_resolved(
-                        self.pool, session.id,
-                    )
-                    .await?;
-                }
-            }
-        }
+        persist_recognized_session_surface(self.pool, self.stores, context, role).await?;
         Ok(json!({
             "ok": true,
             "configured": true,
@@ -143,6 +89,72 @@ impl WorkSurfaceOps for DenWorkSurfaceOps<'_> {
             "orientation": orientation,
         }))
     }
+}
+
+pub(crate) async fn persist_recognized_session_surface(
+    pool: &PgPool,
+    stores: &MemoryStoreManager,
+    context: &DenToolInvocationContext,
+    role: BearProfile,
+) -> Result<(), DenError> {
+    let Some(client_session_id) = context.client_session_id.as_deref() else {
+        return Ok(());
+    };
+    let Some(session) = den_service::client_sessions::find_for_user_bear_session_id(
+        pool,
+        context.user_id,
+        context.bear_id,
+        client_session_id,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+    if den_service::client_session_work_surface_resolutions::find(pool, session.id)
+        .await?
+        .is_some_and(|resolution| resolution.status == "confirmed")
+    {
+        return Ok(());
+    }
+    let hint_payload = infer_work_surface_hint(context, role);
+    let candidate_slug = work_surface_candidate_slug(context);
+    let store = stores.store_for_bear(context.bear_id).await?;
+    let files = sqlite_memory::sqlite_collect_role_logical_paths(&store, role.as_str()).await?;
+    let orientation =
+        build_work_surface_orientation_payload(role, &hint_payload, &files, candidate_slug);
+    let candidate_slug = orientation
+        .pointer("/work_surface/slug")
+        .and_then(Value::as_str);
+    let has_canonical_anchor = orientation
+        .get("canonical_paths")
+        .and_then(Value::as_array)
+        .is_some_and(|paths| !paths.is_empty());
+    if let Some(candidate_slug) = candidate_slug.filter(|_| has_canonical_anchor) {
+        let matches = den_service::work_surfaces::list_surfaces_for_bears(pool, &[context.bear_id])
+            .await?
+            .into_iter()
+            .filter(|surface| {
+                normalize_work_surface_slug(&surface.name).ok().as_deref() == Some(candidate_slug)
+            })
+            .collect::<Vec<_>>();
+        if matches.len() == 1 {
+            den_service::client_session_work_surface_resolutions::upsert(
+                pool,
+                session.id,
+                matches[0].id,
+                den_service::client_session_work_surface_resolutions::ClientSessionWorkSurfaceResolutionStatus::Resolved,
+                json!({
+                    "kind": "memory_anchor",
+                    "candidate_slug": candidate_slug,
+                    "canonical_anchor_paths": orientation.get("canonical_paths"),
+                }),
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+    den_service::client_session_work_surface_resolutions::clear_resolved(pool, session.id).await?;
+    Ok(())
 }
 
 #[cfg(test)]
