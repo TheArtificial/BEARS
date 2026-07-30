@@ -843,6 +843,7 @@ pub(crate) fn tool_result_rpc_params(
     run_id: &str,
     tool_call_id: &str,
     payload: &Value,
+    attempt_token: Option<&str>,
 ) -> Value {
     let status = payload
         .get("status")
@@ -867,6 +868,7 @@ pub(crate) fn tool_result_rpc_params(
         "structured_content": payload.get("structured_content").cloned().unwrap_or(Value::Null),
         "diagnostic": payload.get("diagnostic").cloned().unwrap_or(Value::Null),
         "error": error,
+        "attempt_token": attempt_token,
         "adapter_contract": adapter_contract_context(),
     })
 }
@@ -877,12 +879,68 @@ pub(crate) async fn post_tool_result(
     run_id: &str,
     tool_call_id: &str,
     payload: Value,
+    attempt_token: Option<&str>,
 ) -> Result<Value> {
     rpc_call(
         &reqwest::Client::new(),
         config,
         "client.tool.result",
-        tool_result_rpc_params(config, session_id, run_id, tool_call_id, &payload),
+        tool_result_rpc_params(
+            config,
+            session_id,
+            run_id,
+            tool_call_id,
+            &payload,
+            attempt_token,
+        ),
+    )
+    .await
+}
+
+pub(crate) async fn claim_tool_execution(
+    config: &Config,
+    session_id: &str,
+    run_id: &str,
+    obligation_id: &str,
+    tool_call_id: &str,
+) -> Result<Value> {
+    rpc_call(
+        &reqwest::Client::new(),
+        config,
+        "client.tool.claim",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "run_id": run_id,
+            "obligation_id": obligation_id,
+            "tool_call_id": tool_call_id,
+            "adapter_contract": adapter_contract_context(),
+        }),
+    )
+    .await
+}
+
+pub(crate) async fn renew_tool_execution(
+    config: &Config,
+    session_id: &str,
+    run_id: &str,
+    obligation_id: &str,
+    tool_call_id: &str,
+    attempt_token: &str,
+) -> Result<Value> {
+    rpc_call(
+        &reqwest::Client::new(),
+        config,
+        "client.tool.renew",
+        json!({
+            "bear_slug": config.bear,
+            "session_id": session_id,
+            "run_id": run_id,
+            "obligation_id": obligation_id,
+            "tool_call_id": tool_call_id,
+            "attempt_token": attempt_token,
+            "adapter_contract": adapter_contract_context(),
+        }),
     )
     .await
 }
@@ -1119,6 +1177,7 @@ fn actionable_tool_request_event_from_obligation(
         "type": "tool_call.requested",
         "run_id": run_id,
         "data": {
+            "obligation_id": obligation_id(obligation)?,
             "tool_call": {
                 "id": tool_call_id,
                 "name": tool_name,
@@ -2737,6 +2796,7 @@ mod tests {
                 "structured_content": { "content": "hello" },
                 "diagnostic": { "phase": "permission_local_tool_completed" }
             }),
+            None,
         );
 
         assert_eq!(params["tool_name"], "fs_read_text_file");
@@ -2766,8 +2826,10 @@ mod tests {
                 "content": "failed",
                 "diagnostic": { "phase": "permission_local_tool_failed" }
             }),
+            Some("attempt-1"),
         );
 
+        assert_eq!(params["attempt_token"], "attempt-1");
         assert_eq!(params["error"]["phase"], "permission_local_tool_failed");
     }
 

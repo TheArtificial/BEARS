@@ -7343,9 +7343,132 @@ fn cancellation_matches_turn(
     true
 }
 
+enum LeasedToolTaskWaitOutcome<T> {
+    ToolFinished(T),
+    Cancelled(CancellationNotice),
+    LeaseLost(anyhow::Error),
+}
+
 enum ToolTaskWaitOutcome<T> {
     ToolFinished(T),
     Cancelled(CancellationNotice),
+}
+
+#[derive(Debug)]
+struct ToolExecutionLease {
+    attempt_token: String,
+    renew_after: Duration,
+}
+
+fn parse_tool_execution_lease(response: &Value) -> Result<ToolExecutionLease> {
+    if response.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err(anyhow!(
+            "tool execution claim was rejected: {}",
+            response
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        ));
+    }
+    let attempt_token = response
+        .get("attempt_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("tool execution claim omitted attempt_token"))?
+        .to_string();
+    let renew_after_ms = response
+        .get("renew_after_ms")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .ok_or_else(|| anyhow!("tool execution claim omitted renew_after_ms"))?;
+    Ok(ToolExecutionLease {
+        attempt_token,
+        renew_after: Duration::from_millis(renew_after_ms),
+    })
+}
+
+async fn wait_for_leased_tool_future_or_matching_cancellation<F>(
+    mut cancellation_rx: broadcast::Receiver<CancellationNotice>,
+    session_id: &str,
+    turn_token: Uuid,
+    conversation_id: Option<&str>,
+    config: &Config,
+    run_id: &str,
+    obligation_id: &str,
+    tool_call_id: &str,
+    lease: &ToolExecutionLease,
+    tool_future: F,
+) -> LeasedToolTaskWaitOutcome<F::Output>
+where
+    F: std::future::Future,
+{
+    let mut cancellation_closed = false;
+    let mut renewal = tokio::time::interval(lease.renew_after);
+    renewal.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    renewal.tick().await;
+    tokio::pin!(tool_future);
+    loop {
+        tokio::select! {
+            result = &mut tool_future => return LeasedToolTaskWaitOutcome::ToolFinished(result),
+            _ = renewal.tick() => {
+                match crate::bearwire::renew_tool_execution(
+                    config,
+                    session_id,
+                    run_id,
+                    obligation_id,
+                    tool_call_id,
+                    &lease.attempt_token,
+                ).await {
+                    Ok(response) if response.get("ok").and_then(Value::as_bool) == Some(true) => {}
+                    Ok(response) => return LeasedToolTaskWaitOutcome::LeaseLost(anyhow!(
+                        "tool execution lease was lost: {}",
+                        response.get("status").and_then(Value::as_str).unwrap_or("unknown")
+                    )),
+                    Err(err) => {
+                        // ponytail: retry transient renewal failures at Den's fixed interval; a prolonged
+                        // outage can still expire the lease, at which point renewal/result settlement is
+                        // rejected. Upgrade by scheduling against lease_expires_at if tighter timing is needed.
+                        tracing::warn!(
+                            target: "bear_armature::lifecycle",
+                            session_id,
+                            run_id,
+                            obligation_id,
+                            tool_call_id,
+                            error = %err,
+                            "tool execution lease renewal failed transiently; continuing local wait"
+                        );
+                    }
+                }
+            }
+            cancelled = cancellation_rx.recv(), if !cancellation_closed => {
+                match cancelled {
+                    Ok(notice) if cancellation_matches_turn(&notice, session_id, turn_token, conversation_id) => {
+                        return LeasedToolTaskWaitOutcome::Cancelled(notice);
+                    }
+                    Ok(notice) => {
+                        eprintln!(
+                            "bear-armature: ignored unrelated cancellation notice while local tool was running session_id={} turn_token={} notice_session_id={} notice_turn_token={:?}",
+                            session_id,
+                            turn_token,
+                            notice.session_id,
+                            notice.turn_token,
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        eprintln!(
+                            "bear-armature: local tool cancellation receiver lagged session_id={} turn_token={} skipped={}",
+                            session_id,
+                            turn_token,
+                            skipped,
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        cancellation_closed = true;
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn wait_for_tool_future_or_matching_cancellation<F>(
@@ -7368,26 +7491,8 @@ where
                     Ok(notice) if cancellation_matches_turn(&notice, session_id, turn_token, conversation_id) => {
                         return ToolTaskWaitOutcome::Cancelled(notice);
                     }
-                    Ok(notice) => {
-                        eprintln!(
-                            "bear-armature: ignored unrelated cancellation notice while local tool was running session_id={} turn_token={} notice_session_id={} notice_turn_token={:?}",
-                            session_id,
-                            turn_token,
-                            notice.session_id,
-                            notice.turn_token,
-                        );
-                    }
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        eprintln!(
-                            "bear-armature: local tool cancellation receiver lagged session_id={} turn_token={} skipped={}",
-                            session_id,
-                            turn_token,
-                            skipped,
-                        );
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        cancellation_closed = true;
-                    }
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => cancellation_closed = true,
                 }
             }
         }
@@ -7449,6 +7554,7 @@ pub(crate) fn spawn_tool_request_task(
                         run_id,
                         tool_call_id,
                         payload,
+                        None,
                     )
                     .await
                     {
@@ -7481,6 +7587,48 @@ pub(crate) fn spawn_tool_request_task(
             return;
         }
         let den_owned_display_only = is_den_server_tool_request(&event);
+        let mut event = event;
+        let lease = if den_owned_display_only {
+            None
+        } else {
+            let run_id = event
+                .get("run_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("canonical tool request omitted run_id"));
+            let claim = match run_id {
+                Ok(run_id) => crate::bearwire::claim_tool_execution(
+                    &config,
+                    &session_id,
+                    run_id,
+                    &canonical.obligation_id,
+                    &tool_call_id,
+                )
+                .await
+                .and_then(|response| parse_tool_execution_lease(&response)),
+                Err(err) => Err(err),
+            };
+            match claim {
+                Ok(lease) => {
+                    event["data"]["attempt_token"] = json!(lease.attempt_token);
+                    Some(lease)
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        target: "bear_armature::lifecycle",
+                        session_id = session_id.as_str(),
+                        tool_call_id = tool_call_id.as_str(),
+                        tool_name = tool_name.as_str(),
+                        error = %err,
+                        "tool execution claim rejected; local execution suppressed"
+                    );
+                    let _ = shared_state
+                        .tool_tasks
+                        .remove(&session_id, &tool_call_id)
+                        .await;
+                    return;
+                }
+            }
+        };
         tracing::info!(
             target: "bear_armature::lifecycle",
             session_id = session_id.as_str(),
@@ -7506,17 +7654,45 @@ pub(crate) fn spawn_tool_request_task(
             &event,
             turn_token,
         );
-        let result = match wait_for_tool_future_or_matching_cancellation(
-            cancellation_rx,
-            &session_id,
-            turn_token,
-            None,
-            tool_future,
-        )
-        .await
-        {
-            ToolTaskWaitOutcome::ToolFinished(result) => result,
-            ToolTaskWaitOutcome::Cancelled(_notice) => {
+        let result = if let Some(lease) = lease.as_ref() {
+            let run_id = event
+                .get("run_id")
+                .and_then(Value::as_str)
+                .expect("claimed canonical tool request has run_id");
+            wait_for_leased_tool_future_or_matching_cancellation(
+                cancellation_rx,
+                &session_id,
+                turn_token,
+                None,
+                &config,
+                run_id,
+                &canonical.obligation_id,
+                &tool_call_id,
+                lease,
+                tool_future,
+            )
+            .await
+        } else {
+            LeasedToolTaskWaitOutcome::ToolFinished(tool_future.await)
+        };
+        let result = match result {
+            LeasedToolTaskWaitOutcome::ToolFinished(result) => result,
+            LeasedToolTaskWaitOutcome::LeaseLost(err) => {
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id = session_id.as_str(),
+                    tool_call_id = tool_call_id.as_str(),
+                    tool_name = tool_name.as_str(),
+                    error = %err,
+                    "stopped waiting for local tool after losing execution lease"
+                );
+                let _ = shared_state
+                    .tool_tasks
+                    .remove(&session_id, &tool_call_id)
+                    .await;
+                return;
+            }
+            LeasedToolTaskWaitOutcome::Cancelled(_notice) => {
                 shared_state
                     .tool_tasks
                     .set_phase(
@@ -8114,6 +8290,7 @@ async fn handle_tool_request_event(
         "run_id": event.get("run_id").and_then(Value::as_str),
         "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
         "tool_name": tool_name,
+        "attempt_token": event.pointer("/data/attempt_token").and_then(Value::as_str),
         "diagnostic": {
             "component": "bear-armature",
             "adapter_version": adapter_version(),
@@ -8306,6 +8483,7 @@ struct BearWireToolCallRequestCard {
 
 #[derive(Debug, Clone, Deserialize)]
 struct BearWireToolCallRequestData {
+    obligation_id: String,
     tool_call: BearWireToolCallRequestCard,
 }
 
@@ -8681,6 +8859,7 @@ async fn post_local_tool_error_result(
         "run_id": event.get("run_id").and_then(Value::as_str),
         "approval_request_id": event.get("approval_request_id").and_then(Value::as_str),
         "tool_name": tool_name,
+        "attempt_token": event.pointer("/data/attempt_token").and_then(Value::as_str),
         "status": local_err.status_str(),
         "content": local_err.message,
         "structured_content": {},
@@ -8982,7 +9161,14 @@ async fn post_tool_result(
         }
         let result = timeout(
             Duration::from_secs(TOOL_RESULT_POST_TIMEOUT_SECS),
-            bearwire::post_tool_result(config, session_id, run_id, tool_call_id, payload.clone()),
+            bearwire::post_tool_result(
+                config,
+                session_id,
+                run_id,
+                tool_call_id,
+                payload.clone(),
+                payload.get("attempt_token").and_then(Value::as_str),
+            ),
         )
         .await
         .map_err(|_| {
@@ -12480,6 +12666,31 @@ mod tests {
                 .is_err(),
             "different-conversation overlap should not send cancellation"
         );
+    }
+
+    #[test]
+    fn adapter_parses_tool_execution_lease() {
+        let lease = parse_tool_execution_lease(&json!({
+            "ok": true,
+            "attempt_token": "attempt-1",
+            "renew_after_ms": 10_000,
+        }))
+        .expect("valid lease");
+
+        assert_eq!(lease.attempt_token, "attempt-1");
+        assert_eq!(lease.renew_after, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn adapter_rejects_incomplete_or_rejected_tool_execution_lease() {
+        for response in [
+            json!({"ok": false, "status": "claim_rejected"}),
+            json!({"ok": true, "renew_after_ms": 10_000}),
+            json!({"ok": true, "attempt_token": "attempt-1"}),
+            json!({"ok": true, "attempt_token": "attempt-1", "renew_after_ms": 0}),
+        ] {
+            assert!(parse_tool_execution_lease(&response).is_err(), "{response}");
+        }
     }
 
     #[tokio::test]
