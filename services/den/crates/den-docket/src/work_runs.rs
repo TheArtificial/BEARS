@@ -947,8 +947,9 @@ pub async fn finalize_work_run(
     Ok(row)
 }
 
-/// Any non-success terminal work result stops the job by default. Project the
-/// cause into the active task, block pending work, and prevent later dispatch.
+/// Any non-success terminal work result stops the job by default. The failure
+/// belongs to the work run and job: it must not be projected as a task-local
+/// blocker for unfinished tasks.
 async fn settle_failed_work_as_blocked(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     work_run: &WorkRunRow,
@@ -971,21 +972,6 @@ async fn settle_failed_work_as_blocked(
                 work_run.state
             )
         });
-
-    sqlx::query(
-        "UPDATE bear_task_run_state
-         SET status = 'blocked', result_summary = $3,
-             result_refs = COALESCE(result_refs, '{}'::jsonb) || $4::jsonb,
-             finished_at = NULL, updated_at = NOW()
-         WHERE run_id = $1 AND status IN ('pending', 'in_progress')
-           AND task_id IN (SELECT id FROM bear_tasks WHERE job_id = $2)",
-    )
-    .bind(work_run.job_run_id)
-    .bind(work_run.job_id)
-    .bind(&summary)
-    .bind(&evidence)
-    .execute(&mut **tx)
-    .await?;
 
     let settled = sqlx::query_scalar::<_, Uuid>(
         "UPDATE bear_jobs SET status = 'blocked', updated_at = NOW()

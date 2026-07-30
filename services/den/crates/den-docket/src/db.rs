@@ -1102,6 +1102,11 @@ pub(super) async fn execute_job(
             "Docket job has no current run".to_string(),
         ));
     };
+    if projection.job.status == "blocked" || run.state == "blocked" {
+        return Err(DenError::ValidationError(
+            "Docket job is blocked; recover its current run before dispatching work".to_string(),
+        ));
+    }
 
     let state_by_task = projection
         .task_states

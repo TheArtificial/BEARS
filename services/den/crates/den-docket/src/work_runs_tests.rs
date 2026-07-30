@@ -23,9 +23,9 @@ use crate::work_runs::{
 };
 use crate::{
     DocketCommitPolicy, DocketCriterionKind, DocketJobCreate, DocketJobCriterionInput,
-    DocketJobOverlapResolution, DocketJobStatus, DocketService, DocketTaskDifficulty,
-    DocketTaskInput, DocketTaskKind, DocketTaskScope, PgDocketService, RoutingStrategy,
-    TaskListVisibility,
+    DocketJobExecuteRequest, DocketJobOverlapResolution, DocketJobStatus, DocketService,
+    DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskScope, PgDocketService,
+    RoutingStrategy, TaskListVisibility,
 };
 
 /// `claim_next_work_run` is deliberately global (any runner takes the oldest
@@ -477,8 +477,59 @@ async fn runs_within_one_job_serialize() {
     .unwrap();
     let second = claim_next_work_run(&pool, "runner-2", lease).await.unwrap();
     assert!(second.is_none(), "failed jobs must not start later work");
-    let sibling = get_work_run(&pool, run_b.id).await.unwrap().expect("sibling run");
+    let sibling = get_work_run(&pool, run_b.id)
+        .await
+        .unwrap()
+        .expect("sibling run");
     assert_eq!(sibling.state, "cancelled");
+}
+
+#[tokio::test]
+async fn blocked_job_refuses_pair_dispatch_without_mutating_task_state() {
+    let Some(pool) = test_pool().await else {
+        eprintln!("skipping postgres-backed work_runs test; database unavailable");
+        return;
+    };
+    let _guard = DB_LOCK.lock().await;
+    let (user_id, bear_id) = seed_user_and_bear(&pool, "blocked-dispatch").await;
+    let (job_id, task_ids) = seed_work_job(&pool, user_id, bear_id).await;
+    let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
+        .await
+        .unwrap();
+
+    finalize_work_run(
+        &pool,
+        run.id,
+        WorkRunState::Failed,
+        WorkRunFinalize::default(),
+    )
+    .await
+    .unwrap();
+
+    let service = PgDocketService::from_pool(&pool);
+    let error = service
+        .execute_job(DocketJobExecuteRequest {
+            bear_id,
+            job_id,
+            actor_role: BearProfile::Pair,
+            actor_user_id: Some(user_id),
+            actor_agent_id: None,
+            session_id: None,
+            source_conversation_id: None,
+            source_client_session_id: None,
+        })
+        .await
+        .expect_err("blocked job must not dispatch");
+    assert!(error.to_string().contains("recover its current run"));
+
+    let statuses: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT task_id, status FROM bear_task_run_state WHERE run_id = $1 ORDER BY task_id",
+    )
+    .bind(run.job_run_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(statuses, vec![(task_ids[0], "pending".to_string())]);
 }
 
 #[tokio::test]
@@ -654,17 +705,9 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(task_status, "blocked");
-    assert_eq!(
-        task_summary.as_deref(),
-        Some("Work run cancelled: test cancellation")
-    );
-    assert_eq!(
-        task_refs
-            .as_ref()
-            .and_then(|refs| refs.get("cancel_requested_by")),
-        Some(&serde_json::json!("test"))
-    );
+    assert_eq!(task_status, "pending");
+    assert!(task_summary.is_none());
+    assert!(task_refs.is_none());
     let (job_status, job_run_state): (String, String) = sqlx::query_as(
         "SELECT j.status, r.state FROM bear_jobs j JOIN bear_job_runs r ON r.id = j.current_run_id \
          WHERE j.id = $1",
