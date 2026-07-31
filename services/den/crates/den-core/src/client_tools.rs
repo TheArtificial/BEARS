@@ -1635,6 +1635,29 @@ const ARMATURE_GIT_SHOW_POLICY: ToolPolicy = ToolPolicy {
     permission_timeout_ms: 120_000,
 };
 
+const ARMATURE_GIT_ADD_POLICY: ToolPolicy = ToolPolicy {
+    scope_basis: "armature:tools",
+    role_basis: "pair_agent",
+    allowed_roots_basis: "client_session.workspace_roots",
+    path_containment: "adapter_enforced_absolute_path_under_allowed_roots",
+    execution_target: ExecutionTargetPolicy::ArmatureLocal,
+    approval_policy: ApprovalPolicy::Never,
+    sensitive_path_policy: SensitivePathPolicy::Deny,
+    target_policy: TargetPolicy::None,
+    max_lines: None,
+    max_entries: Some(100),
+    max_results: None,
+    max_bytes: Some(262_144),
+    recursive_default: None,
+    include_hidden_default: None,
+    max_replacements: None,
+    create_files: None,
+    allow_multiple: None,
+    deny_hidden_paths: None,
+    total_timeout_ms: 150_000,
+    permission_timeout_ms: 120_000,
+};
+
 const ARMATURE_GIT_WRITE_POLICY: ToolPolicy = ToolPolicy {
     scope_basis: "armature:tools",
     role_basis: "pair_agent",
@@ -1725,7 +1748,7 @@ pub fn client_tool_policy(tool: ClientToolName) -> ToolPolicy {
         ClientToolName::GitDiff => ARMATURE_GIT_DIFF_POLICY,
         ClientToolName::GitLog => ARMATURE_GIT_LOG_POLICY,
         ClientToolName::GitShow => ARMATURE_GIT_SHOW_POLICY,
-        ClientToolName::GitAdd => ARMATURE_GIT_WRITE_POLICY,
+        ClientToolName::GitAdd => ARMATURE_GIT_ADD_POLICY,
         ClientToolName::GitRestore => ARMATURE_GIT_WRITE_POLICY,
         ClientToolName::GitCommit => ARMATURE_GIT_WRITE_POLICY,
         ClientToolName::GitStash => ARMATURE_GIT_WRITE_POLICY,
