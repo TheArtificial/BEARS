@@ -84,7 +84,7 @@ pub async fn reflect_open_sessions_once(state: &DenState) -> Result<usize, Custo
                 }
             }
             Err(error) => {
-                tracing::warn!(session_id = %session.client_session_id, error = %error, "open-session pair reflection failed")
+                tracing::warn!(session_id = %session.client_session_id, error = %error, "open-session pair reflection failed");
             }
         }
     }

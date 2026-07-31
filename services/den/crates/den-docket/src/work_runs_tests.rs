@@ -207,7 +207,7 @@ async fn attached_disconnect_reconnect_and_timeout_are_idempotent() {
     .remove(0);
 
     let disconnected =
-        disconnect_attached_work_run(&pool, &session_id, std::time::Duration::from_secs(60))
+        disconnect_attached_work_run(&pool, &session_id, std::time::Duration::from_mins(1))
             .await
             .expect("disconnect")
             .expect("active attached run");
@@ -391,7 +391,7 @@ async fn concurrent_claims_take_distinct_runs_across_jobs() {
         .await
         .unwrap();
 
-    let lease = std::time::Duration::from_secs(60);
+    let lease = std::time::Duration::from_mins(1);
     let (first, second) = tokio::join!(
         claim_next_work_run(&pool, "runner-1", lease),
         claim_next_work_run(&pool, "runner-2", lease),
@@ -432,7 +432,7 @@ async fn one_active_work_run_per_job() {
         .to_string()
         .contains("job already has an active work run"));
 
-    let claimed = claim_next_work_run(&pool, "runner-1", std::time::Duration::from_secs(60))
+    let claimed = claim_next_work_run(&pool, "runner-1", std::time::Duration::from_mins(1))
         .await
         .unwrap()
         .expect("single run claims");
@@ -512,7 +512,7 @@ async fn expired_lease_is_reclaimed_and_heartbeat_fences_old_owner() {
         .expect("claim with instant-expiry lease");
 
     // Lease already expired: another runner takes the run over, state preserved.
-    let reclaimed = claim_next_work_run(&pool, "runner-new", std::time::Duration::from_secs(60))
+    let reclaimed = claim_next_work_run(&pool, "runner-new", std::time::Duration::from_mins(1))
         .await
         .unwrap()
         .expect("reclaim expired lease");
@@ -525,7 +525,7 @@ async fn expired_lease_is_reclaimed_and_heartbeat_fences_old_owner() {
         &pool,
         claimed.id,
         "runner-old",
-        std::time::Duration::from_secs(60),
+        std::time::Duration::from_mins(1),
     )
     .await
     .unwrap();
@@ -534,7 +534,7 @@ async fn expired_lease_is_reclaimed_and_heartbeat_fences_old_owner() {
         &pool,
         claimed.id,
         "runner-new",
-        std::time::Duration::from_secs(60),
+        std::time::Duration::from_mins(1),
     )
     .await
     .unwrap();
@@ -554,7 +554,7 @@ async fn lifecycle_provision_outcome_finalize_and_cancel() {
     let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
         .unwrap();
-    let claimed = claim_next_work_run(&pool, "runner-1", std::time::Duration::from_secs(60))
+    let claimed = claim_next_work_run(&pool, "runner-1", std::time::Duration::from_mins(1))
         .await
         .unwrap()
         .expect("claim");
@@ -889,7 +889,7 @@ async fn publish_wiring_image_branch_and_prompt() {
     assert_eq!(context.work_branch.as_deref(), Some(branch.as_str()));
 
     // Pushable jobs instruct the armature to commit (and still not push).
-    let claimed = claim_next_work_run(&pool, "runner-pub", std::time::Duration::from_secs(60))
+    let claimed = claim_next_work_run(&pool, "runner-pub", std::time::Duration::from_mins(1))
         .await
         .unwrap()
         .expect("claim queued run");
@@ -1018,7 +1018,7 @@ async fn attention_and_completion_visibility() {
     let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
         .unwrap();
-    claim_next_work_run(&pool, "runner-att", std::time::Duration::from_secs(60))
+    claim_next_work_run(&pool, "runner-att", std::time::Duration::from_mins(1))
         .await
         .unwrap()
         .expect("claim");
@@ -1117,7 +1117,7 @@ async fn pause_resume_is_compare_and_set() {
     let run = enqueue_work_run(&pool, enqueue_for(bear_id, task_ids[0], user_id))
         .await
         .unwrap();
-    claim_next_work_run(&pool, "runner-pause", std::time::Duration::from_secs(60))
+    claim_next_work_run(&pool, "runner-pause", std::time::Duration::from_mins(1))
         .await
         .unwrap()
         .expect("claim");

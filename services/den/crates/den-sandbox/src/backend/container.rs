@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const DOCKER_TIMEOUT: Duration = Duration::from_secs(120);
+const DOCKER_TIMEOUT: Duration = Duration::from_mins(2);
 const DOCKER_OUTPUT_CAP: usize = 256 * 1024;
 const CARGO_DIAGNOSTIC_CAP: usize = 4096;
 const CONTAINER_PREFIX: &str = "den-sbx-";

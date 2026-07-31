@@ -1171,7 +1171,7 @@ async fn compute_diff(
         .collect();
     let mut spec = CommandSpec::new("git", &status_args);
     spec.cwd = Some(workspace);
-    spec.timeout = Duration::from_secs(60);
+    spec.timeout = Duration::from_mins(1);
     let status_out = run_command(spec).await.map_err(|e| e.to_string())?;
     if !status_out.success() {
         return Err(format!(
@@ -1197,7 +1197,7 @@ async fn compute_diff(
     let diff_args: Vec<String> = ["diff", "HEAD"].iter().map(|s| (*s).to_string()).collect();
     let mut spec = CommandSpec::new("git", &diff_args);
     spec.cwd = Some(workspace);
-    spec.timeout = Duration::from_secs(60);
+    spec.timeout = Duration::from_mins(1);
     spec.max_output_bytes = usize::try_from(max_patch_bytes).unwrap_or(usize::MAX);
     let diff_out = run_command(spec).await.map_err(|e| e.to_string())?;
     if !diff_out.success() {

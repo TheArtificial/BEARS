@@ -78,7 +78,11 @@ pub fn agent_loop_control_profile_fingerprint(
     let bytes = serde_json::to_vec(profile)
         .map_err(|err| DenError::System(format!("serialize agent-loop profile: {err}")))?;
     let digest = Sha256::digest(bytes);
-    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+    Ok(digest.iter().fold(String::new(), |mut hex, byte| {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    }))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

@@ -865,6 +865,25 @@ async fn expire_open_client_obligations_from_rows(
         .collect())
 }
 
+pub fn obligation_accepts_responder_action(
+    obligation: &TurnObligationRow,
+    action: ExpectedResponderAction,
+) -> bool {
+    obligation
+        .expected_action()
+        .map(|expected| expected == action)
+        .unwrap_or(false)
+}
+
+pub fn obligation_is_open(obligation: &TurnObligationRow) -> bool {
+    matches!(
+        obligation.state_value(),
+        Ok(TurnObligationState::Requested)
+            | Ok(TurnObligationState::WaitingForClient)
+            | Ok(TurnObligationState::ResultReceived)
+    )
+}
+
 #[cfg(test)]
 mod blocking_reason_tests {
     use super::{BlockingReason, ExpectedResponderAction};
@@ -887,23 +906,4 @@ mod blocking_reason_tests {
             None
         );
     }
-}
-
-pub fn obligation_accepts_responder_action(
-    obligation: &TurnObligationRow,
-    action: ExpectedResponderAction,
-) -> bool {
-    obligation
-        .expected_action()
-        .map(|expected| expected == action)
-        .unwrap_or(false)
-}
-
-pub fn obligation_is_open(obligation: &TurnObligationRow) -> bool {
-    matches!(
-        obligation.state_value(),
-        Ok(TurnObligationState::Requested)
-            | Ok(TurnObligationState::WaitingForClient)
-            | Ok(TurnObligationState::ResultReceived)
-    )
 }

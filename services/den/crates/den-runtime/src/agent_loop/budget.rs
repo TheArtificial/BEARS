@@ -995,7 +995,7 @@ mod tests {
             3,
             1_000,
             &prior,
-            &[observation("git_status", r#"{}"#, false)],
+            &[observation("git_status", r"{}", false)],
         );
 
         assert!(evaluation.stop_reason.is_none());

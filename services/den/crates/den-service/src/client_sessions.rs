@@ -704,11 +704,11 @@ mod reflection_candidate_tests {
     async fn insert_test_user(pool: &PgPool) -> i32 {
         let suffix = Uuid::new_v4().simple().to_string();
         let (user_id,): (i32,) = sqlx::query_as(
-            r#"
+            r"
             INSERT INTO users (email, username, display_name, passhash)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-            "#,
+            ",
         )
         .bind(format!("reflection-{suffix}@example.test"))
         .bind(format!("reflection{}", &suffix[..16]))
@@ -724,11 +724,11 @@ mod reflection_candidate_tests {
         let suffix = Uuid::new_v4().simple().to_string();
         let slug = format!("reflection-bear-{}", &suffix[..12]);
         let (bear_id,): (Uuid,) = sqlx::query_as(
-            r#"
+            r"
             INSERT INTO bears (slug, name, description, system_prompt, live_reflection_enabled)
             VALUES ($1, 'Reflection Test Bear', 'test', 'test', TRUE)
             RETURNING id
-            "#,
+            ",
         )
         .bind(&slug)
         .fetch_one(pool)
@@ -776,11 +776,11 @@ mod reflection_candidate_tests {
         end_seq: i64,
     ) {
         let canonical_id = if let Some((id,)) = sqlx::query_as::<_, (Uuid,)>(
-            r#"
+            r"
             SELECT id
             FROM conversations
             WHERE bear_id = $1 AND external_conversation_id = $2
-            "#,
+            ",
         )
         .bind(bear_id)
         .bind(conversation_id)
@@ -791,11 +791,11 @@ mod reflection_candidate_tests {
             id
         } else {
             let (id,): (Uuid,) = sqlx::query_as(
-                r#"
+                r"
                 INSERT INTO conversations (bear_id, external_conversation_id)
                 VALUES ($1, $2)
                 RETURNING id
-                "#,
+                ",
             )
             .bind(bear_id)
             .bind(conversation_id)
@@ -805,13 +805,13 @@ mod reflection_candidate_tests {
             id
         };
         sqlx::query(
-            r#"
+            r"
             INSERT INTO conversation_compaction_artifacts (
                 conversation_id, artifact_kind, policy_version, trigger,
                 source_message_start_seq, source_message_end_seq, artifact_json
             )
             VALUES ($1, 'iterative_summary', 'test', 'test', 1, $2, '{}'::jsonb)
-            "#,
+            ",
         )
         .bind(canonical_id)
         .bind(end_seq)
@@ -828,10 +828,10 @@ mod reflection_candidate_tests {
         event_type: &str,
     ) {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)
             VALUES ($1, $2, $3, $4, '{}'::jsonb)
-            "#,
+            ",
         )
         .bind(session_id)
         .bind(bear_id)
@@ -855,10 +855,10 @@ mod reflection_candidate_tests {
             pair_reflection["source_message_end_seq"] = json!(source_end_seq);
         }
         sqlx::query(
-            r#"
+            r"
             INSERT INTO bearwire_events (session_id, bear_id, user_id, event_type, event_json)
             VALUES ($1, $2, $3, 'session.reflected', $4)
-            "#,
+            ",
         )
         .bind(session_id)
         .bind(bear_id)

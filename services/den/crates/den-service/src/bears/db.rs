@@ -1076,6 +1076,49 @@ pub fn resolve_model_from_values(
         .to_string()
 }
 
+pub async fn update_live_reflection_enabled(
+    pool: &PgPool,
+    bear_id: Uuid,
+    enabled: bool,
+) -> Result<(), DenError> {
+    update_live_reflection_settings(pool, bear_id, enabled, 30, 20, 25).await
+}
+
+pub async fn update_live_reflection_settings(
+    pool: &PgPool,
+    bear_id: Uuid,
+    enabled: bool,
+    stale_after_minutes: i32,
+    activity_threshold: i32,
+    sweep_limit: i32,
+) -> Result<(), DenError> {
+    let stale_after_minutes = stale_after_minutes.clamp(1, 1440);
+    let activity_threshold = activity_threshold.clamp(1, 1000);
+    let sweep_limit = sweep_limit.clamp(1, 100);
+    let result = sqlx::query(
+        r"
+        UPDATE bears
+        SET live_reflection_enabled = $2,
+            live_reflection_stale_after_minutes = $3,
+            live_reflection_activity_threshold = $4,
+            live_reflection_sweep_limit = $5,
+            updated_at = NOW()
+        WHERE id = $1
+        ",
+    )
+    .bind(bear_id)
+    .bind(enabled)
+    .bind(stale_after_minutes)
+    .bind(activity_threshold)
+    .bind(sweep_limit)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(DenError::NotFound("bear not found".to_string()));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -1171,47 +1214,4 @@ mod model_setting_tests {
             Some("strict")
         );
     }
-}
-
-pub async fn update_live_reflection_enabled(
-    pool: &PgPool,
-    bear_id: Uuid,
-    enabled: bool,
-) -> Result<(), DenError> {
-    update_live_reflection_settings(pool, bear_id, enabled, 30, 20, 25).await
-}
-
-pub async fn update_live_reflection_settings(
-    pool: &PgPool,
-    bear_id: Uuid,
-    enabled: bool,
-    stale_after_minutes: i32,
-    activity_threshold: i32,
-    sweep_limit: i32,
-) -> Result<(), DenError> {
-    let stale_after_minutes = stale_after_minutes.clamp(1, 1440);
-    let activity_threshold = activity_threshold.clamp(1, 1000);
-    let sweep_limit = sweep_limit.clamp(1, 100);
-    let result = sqlx::query(
-        r#"
-        UPDATE bears
-        SET live_reflection_enabled = $2,
-            live_reflection_stale_after_minutes = $3,
-            live_reflection_activity_threshold = $4,
-            live_reflection_sweep_limit = $5,
-            updated_at = NOW()
-        WHERE id = $1
-        "#,
-    )
-    .bind(bear_id)
-    .bind(enabled)
-    .bind(stale_after_minutes)
-    .bind(activity_threshold)
-    .bind(sweep_limit)
-    .execute(pool)
-    .await?;
-    if result.rows_affected() == 0 {
-        return Err(DenError::NotFound("bear not found".to_string()));
-    }
-    Ok(())
 }

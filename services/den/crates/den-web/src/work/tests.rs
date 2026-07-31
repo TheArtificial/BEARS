@@ -236,7 +236,7 @@ async fn create_job_form_creates_work_job_with_tasks() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/bear/{bear_slug}/jobs/new"))
+                .uri(format!("/bear/{bear_slug}/jobs/new"))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from(body))
@@ -372,7 +372,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(&format!("/bear/{bear_slug}/jobs"))
+                .uri(format!("/bear/{bear_slug}/jobs"))
                 .header(header::COOKIE, &cookie)
                 .body(Body::empty())
                 .unwrap(),
@@ -391,7 +391,7 @@ async fn work_dashboard_hides_completed_jobs_until_requested() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri(&format!("/bear/{bear_slug}/jobs?completed=show"))
+                .uri(format!("/bear/{bear_slug}/jobs?completed=show"))
                 .header(header::COOKIE, &cookie)
                 .body(Body::empty())
                 .unwrap(),
@@ -764,7 +764,7 @@ async fn job_scoped_surface_creation_assigns_and_attaches_surface() {
     let surface_id = surface_id.expect("surface id");
     assert!(redirect.starts_with(&format!(
         "/work/surfaces/{}?message=",
-        surface_id.simple().to_string()[..16].to_string()
+        &surface_id.simple().to_string()[..16]
     )));
     assert!(redirect.contains("not%20ready"));
     let assignment_count: i64 = sqlx::query_scalar(
@@ -827,7 +827,7 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/bear/{bear_slug}/jobs/new"))
+                .uri(format!("/bear/{bear_slug}/jobs/new"))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(Body::from(body))
@@ -867,7 +867,8 @@ async fn dispatch_form_enqueues_run_with_root_and_image() {
         .and_then(|value| value.to_str().ok())
         .expect("dispatch redirect");
 
-    let runs: Vec<(Uuid, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+    type QueuedRunRow = (Uuid, Option<String>, Option<String>, Option<String>);
+    let runs: Vec<QueuedRunRow> = sqlx::query_as(
         "SELECT id, root_name, image_name, git_ref FROM bear_work_runs
          WHERE job_id = $1 AND state = 'queued' ORDER BY queued_at",
     )

@@ -621,14 +621,14 @@ pub(crate) fn publish_run_progress(
 async fn incomplete_stream_pending_tools(pool: &sqlx::PgPool, run_id: &str) -> Vec<Value> {
     // Diagnostics deliberately retain only IDs and lifecycle state, never tool arguments.
     sqlx::query(
-        r#"
+        r"
         SELECT tool_call_id, state
         FROM turn_obligations
         WHERE run_id = $1
           AND tool_call_id IS NOT NULL
           AND state IN ('requested', 'waiting_for_client')
         ORDER BY created_at ASC, id ASC
-        "#,
+        ",
     )
     .bind(run_id)
     .fetch_all(pool)
@@ -2054,7 +2054,6 @@ pub(crate) async fn run_start_result(
                             match item {
                                 Ok(den_protocol::RuntimeStreamEvent::ProviderActivity) => {
                                     provider_activity_seen = true;
-                                    continue;
                                 }
                                 Ok(runtime_event) => {
                                     runtime_event_count += 1;

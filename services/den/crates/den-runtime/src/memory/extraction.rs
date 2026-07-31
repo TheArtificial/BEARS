@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::create_proposal;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryExtractionBundle {
     pub source_kind: String,
     pub source_ref: String,
@@ -21,7 +21,7 @@ pub struct MemoryExtractionBundle {
     pub artifacts: Vec<MemoryExtractionArtifact>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryExtractionCompactionContext {
     pub artifact_id: Option<String>,
     pub policy_version: Option<String>,
@@ -30,7 +30,7 @@ pub struct MemoryExtractionCompactionContext {
     pub hints: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryExtractionMessage {
     pub id: String,
     pub seq: Option<i64>,
@@ -39,7 +39,7 @@ pub struct MemoryExtractionMessage {
     pub created_at: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryExtractionArtifact {
     pub id: String,
     pub kind: String,
@@ -64,20 +64,20 @@ pub struct MemoryExtractionCandidate {
     pub suggested_action: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryExtractionDiscard {
     pub source_message_ids: Vec<String>,
     pub source_artifact_ids: Vec<String>,
     pub reason: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryExtractionPipelineOutput {
     pub proposal_drafts: Vec<MemoryProposalDraft>,
     pub discarded: Vec<MemoryExtractionDiscard>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryProposalDraft {
     pub title: String,
     pub proposed_content: String,

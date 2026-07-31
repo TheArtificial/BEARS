@@ -147,14 +147,14 @@ pub async fn latest_bearwire_event_of_type(
     event_type: &str,
 ) -> Result<Option<BearWireEventRow>, DenError> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT id, sequence_no, session_id, event_type, event_json, created_at
         FROM bearwire_events
         WHERE session_id = $1
           AND event_type = $2
         ORDER BY sequence_no DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(session_id)
     .bind(event_type)

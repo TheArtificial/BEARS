@@ -22,9 +22,9 @@ fn uuid_hex_prefix(id: Uuid, len: usize) -> String {
     id.simple().to_string()[..len].to_string()
 }
 
-fn tasks_parent_first<'a>(
-    tasks: &'a [den_docket::DocketTaskRow],
-) -> Vec<(&'a den_docket::DocketTaskRow, usize)> {
+fn tasks_parent_first(
+    tasks: &[den_docket::DocketTaskRow],
+) -> Vec<(&den_docket::DocketTaskRow, usize)> {
     fn visit<'a>(
         tasks: &'a [den_docket::DocketTaskRow],
         parent: Option<Uuid>,
@@ -76,7 +76,8 @@ pub(crate) fn route_id(id: Uuid) -> String {
 
 fn normalized_route_prefix(prefix: &str) -> Result<String, CustomError> {
     let compact = prefix.replace('-', "");
-    if !(compact.len() >= ROUTE_ID_HEX_LEN && compact.len() <= 32)
+    if compact.len() < ROUTE_ID_HEX_LEN
+        || compact.len() > 32
         || !compact.chars().all(|c| c.is_ascii_hexdigit())
     {
         return Err(CustomError::NotFound("entity not found".to_string()));
@@ -1465,7 +1466,7 @@ async fn job_detail(
             job_full_id => job_id.to_string(),
             job_title => entity_ref(job_id, "Job", &projection.job.goal, Some(&projection.job.status))["title"],
             status => projection.job.status,
-            work_surface_id => projection.job.work_surface_id.map(|id| route_id(id)),
+            work_surface_id => projection.job.work_surface_id.map(route_id),
             selected_work_surface_id => selected_work_surface_id,
             work_surface_name => selected_work_surface.map(|surface| surface.name.clone()),
             work_surface_default_ref => selected_work_surface.map(|surface| surface.default_ref.clone()),

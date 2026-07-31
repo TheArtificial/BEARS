@@ -120,7 +120,7 @@ fn first_pending_leaf_for_parent(
             .map(|state| state.status.as_str())
             .unwrap_or("pending")
         {
-            "done" | "cancelled" => continue,
+            "done" | "cancelled" => {}
             "pending" => return Ok(Some(index)),
             // Do not skip earlier claimed or blocked work to offer a later
             // sibling in the same sequential plan.

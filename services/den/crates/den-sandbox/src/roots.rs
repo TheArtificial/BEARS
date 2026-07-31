@@ -21,7 +21,7 @@ use std::time::Duration;
 
 pub const SCRATCH_ROOT_NAME: &str = "scratch";
 const SCRATCH_SOURCE_DIR: &str = "scratch-source";
-const GIT_TIMEOUT: Duration = Duration::from_secs(300);
+const GIT_TIMEOUT: Duration = Duration::from_mins(5);
 const GIT_OUTPUT_CAP: usize = 64 * 1024;
 
 #[derive(Debug, thiserror::Error)]

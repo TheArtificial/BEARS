@@ -583,7 +583,6 @@ async fn conversation_history_like_result(
                             current_mode: None,
                             created_at: Some(row.created_at.to_string()),
                         }));
-                        continue;
                     }
                 }
             }

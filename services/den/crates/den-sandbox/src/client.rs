@@ -46,7 +46,7 @@ impl SandboxClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             token: token.to_string(),
             http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(600))
+                .timeout(Duration::from_mins(10))
                 .connect_timeout(Duration::from_secs(10))
                 .build()
                 .expect("reqwest client"),

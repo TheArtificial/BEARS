@@ -119,7 +119,7 @@ impl LoopControlDecisionKind {
         }
     }
 
-    pub fn from_str(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "checkpoint_requested" => Some(Self::CheckpointRequested),
             "context_budget_pressure" => Some(Self::ContextBudgetPressure),
@@ -207,7 +207,7 @@ impl GroundingProbeSignalKind {
         }
     }
 
-    pub fn from_str(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "pass" => Some(Self::Pass),
             "fail" => Some(Self::Fail),
@@ -615,7 +615,7 @@ fn push_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
 fn replay_observation_from_row(
     row: &LoopControlLedgerRow,
 ) -> Result<LoopControlReplayObservation, DenError> {
-    let decision_kind = LoopControlDecisionKind::from_str(&row.decision_kind).ok_or_else(|| {
+    let decision_kind = LoopControlDecisionKind::parse(&row.decision_kind).ok_or_else(|| {
         DenError::System(format!(
             "unknown loop-control decision kind in replay ledger: {}",
             row.decision_kind
@@ -896,7 +896,7 @@ pub async fn latest_grounding_probe_signal_for_tool_call(
 ) -> Result<Option<GroundingProbeSignalKind>, DenError> {
     let evidence_ref = serde_json::json!([{ "kind": "tool_call", "id": tool_call_id }]);
     let row: Option<(Option<String>,)> = sqlx::query_as(
-        r#"
+        r"
         SELECT reason
         FROM bear_loop_control_ledger
         WHERE run_id = $1
@@ -904,7 +904,7 @@ pub async fn latest_grounding_probe_signal_for_tool_call(
           AND evidence_refs @> $2::jsonb
         ORDER BY created_at DESC, decision_id DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(run_id)
     .bind(evidence_ref)
@@ -913,7 +913,7 @@ pub async fn latest_grounding_probe_signal_for_tool_call(
 
     Ok(row
         .and_then(|(reason,)| reason)
-        .and_then(|reason| GroundingProbeSignalKind::from_str(&reason)))
+        .and_then(|reason| GroundingProbeSignalKind::parse(&reason)))
 }
 
 pub async fn latest_grounding_probe_signal_for_run(
@@ -939,7 +939,7 @@ pub async fn latest_grounding_probe_signal_for_run(
 
     Ok(row
         .and_then(|(reason,)| reason)
-        .and_then(|reason| GroundingProbeSignalKind::from_str(&reason)))
+        .and_then(|reason| GroundingProbeSignalKind::parse(&reason)))
 }
 
 pub async fn summarize_loop_control_replay_profile_for_run(

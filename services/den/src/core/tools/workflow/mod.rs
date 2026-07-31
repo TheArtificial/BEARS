@@ -578,10 +578,10 @@ pub(crate) async fn update_task_list(
     .into())
 }
 
-/// Resolve a `work_surface_ref` against managed work surfaces. When the ref
-/// names one, the bear must be assigned to it, and the canonical name + id
-/// come back; names matching no managed surface pass through unchanged (the
-/// sandbox provider is the final validator for those).
+// Resolve a `work_surface_ref` against managed work surfaces. When the ref
+// names one, the bear must be assigned to it, and the canonical name + id
+// come back; names matching no managed surface pass through unchanged (the
+// sandbox provider is the final validator for those).
 
 fn truncate_focused_conversation_title(title: &str) -> String {
     title
@@ -2402,7 +2402,7 @@ pub(crate) async fn dispatch_work(
     )
     .await?;
     let run_ids: Vec<Uuid> = runs.iter().map(|run| run.id).collect();
-    if let WorkDispatchTarget::AttachedArmature = args.target {
+    if args.target == WorkDispatchTarget::AttachedArmature {
         let client_session_id = context
             .client_session_id
             .as_deref()

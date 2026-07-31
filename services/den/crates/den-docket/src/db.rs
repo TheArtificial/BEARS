@@ -1293,7 +1293,7 @@ fn first_pending_leaf_in_children<'a>(
             }
         }
         match state_by_task.get(&task.id).copied().unwrap_or("pending") {
-            "done" | "cancelled" => continue,
+            "done" | "cancelled" => {}
             "pending" => return Ok(Some(task)),
             // An earlier in-progress or blocked leaf owns its place in the
             // plan. Do not skip it to offer a later sibling.

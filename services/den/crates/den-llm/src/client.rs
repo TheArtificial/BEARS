@@ -589,15 +589,14 @@ async fn send_llm_provider_request_with_retries(
         }
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        if attempt_index == LLM_PROVIDER_RETRY_DELAYS.len() {
+        let Some(delay) = LLM_PROVIDER_RETRY_DELAYS.get(attempt_index).copied() else {
             return Err(llm_provider_retry_exhausted_error(
                 api_style,
                 model,
                 attempt_number,
                 &format!("HTTP {status}: {text}"),
             ));
-        }
-        let delay = LLM_PROVIDER_RETRY_DELAYS[attempt_index];
+        };
         tracing::warn!(
             model,
             api_style = %api_style.as_str(),

@@ -25,9 +25,9 @@ use den_sandbox::protocol::{
 };
 use den_sandbox::SandboxClient;
 
-const LEASE: Duration = Duration::from_secs(120);
-const ORPHAN_SWEEP_INTERVAL: Duration = Duration::from_secs(3600);
-const SURFACE_SYNC_INTERVAL: Duration = Duration::from_secs(300);
+const LEASE: Duration = Duration::from_mins(2);
+const ORPHAN_SWEEP_INTERVAL: Duration = Duration::from_hours(1);
+const SURFACE_SYNC_INTERVAL: Duration = Duration::from_mins(5);
 const LOG_TAIL_BYTES: u64 = 64 * 1024;
 const DIFF_PATCH_BYTES: u64 = 256 * 1024;
 /// Margin under the container timeout so the armature self-kills (and reports)
@@ -614,7 +614,6 @@ async fn harvest_run(
     let mut published: Option<Value> = None;
     let mut publish_failed: Option<String> = None;
     if succeeded {
-        let context = context;
         if let Some(context) = context.filter(WorkRunDispatchContext::publishes) {
             match (sandbox_id, context.work_branch.as_deref()) {
                 (Some(id), Some(branch)) => {
@@ -864,45 +863,6 @@ async fn revoke_token_for_run(pool: &PgPool, run_id: Uuid) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use uuid::Uuid;
-
-    use super::{work_run_outcome_summary, work_run_succeeded};
-
-    #[test]
-    fn per_task_succeeds_when_its_checked_out_task_is_done() {
-        let done = Uuid::new_v4();
-        let pending = Uuid::new_v4();
-        let statuses = vec![(done, "done".to_string()), (pending, "pending".to_string())];
-
-        assert!(work_run_succeeded(Some("per_task"), Some(done), &statuses));
-        assert!(!work_run_succeeded(
-            Some("per_task"),
-            Some(pending),
-            &statuses
-        ));
-        assert!(!work_run_succeeded(Some("per_task"), None, &statuses));
-        assert!(!work_run_succeeded(Some("per_job"), Some(done), &statuses));
-        assert!(!work_run_succeeded(None, Some(done), &statuses));
-    }
-
-    #[test]
-    fn blocked_summary_is_not_hidden_by_generic_armature_completion() {
-        let summary = work_run_outcome_summary(
-            false,
-            Some("headless turn reached a terminal run event".to_string()),
-            0,
-            Some("in_progress"),
-        );
-
-        assert!(summary.contains("unfinished job tasks"));
-        assert!(summary.contains("unfinished tasks remain pending"));
-        assert!(summary.contains("task run status: in_progress"));
-        assert!(summary.contains("armature: headless turn reached"));
-    }
-}
-
 /// Reconcile provider-side sandboxes with durable run state: destroy
 /// sandboxes whose runs are already terminal (leaked by a crashed worker).
 async fn orphan_sweep(pool: &PgPool, config: &Arc<Config>, client: &SandboxClient) {
@@ -945,5 +905,44 @@ async fn orphan_sweep(pool: &PgPool, config: &Arc<Config>, client: &SandboxClien
                 config.sandbox_preserve_failed && run.as_ref().is_some_and(|r| r.state == "failed");
             let _ = client.destroy(&descriptor.id, preserve).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use uuid::Uuid;
+
+    use super::{work_run_outcome_summary, work_run_succeeded};
+
+    #[test]
+    fn per_task_succeeds_when_its_checked_out_task_is_done() {
+        let done = Uuid::new_v4();
+        let pending = Uuid::new_v4();
+        let statuses = vec![(done, "done".to_string()), (pending, "pending".to_string())];
+
+        assert!(work_run_succeeded(Some("per_task"), Some(done), &statuses));
+        assert!(!work_run_succeeded(
+            Some("per_task"),
+            Some(pending),
+            &statuses
+        ));
+        assert!(!work_run_succeeded(Some("per_task"), None, &statuses));
+        assert!(!work_run_succeeded(Some("per_job"), Some(done), &statuses));
+        assert!(!work_run_succeeded(None, Some(done), &statuses));
+    }
+
+    #[test]
+    fn blocked_summary_is_not_hidden_by_generic_armature_completion() {
+        let summary = work_run_outcome_summary(
+            false,
+            Some("headless turn reached a terminal run event".to_string()),
+            0,
+            Some("in_progress"),
+        );
+
+        assert!(summary.contains("unfinished job tasks"));
+        assert!(summary.contains("unfinished tasks remain pending"));
+        assert!(summary.contains("task run status: in_progress"));
+        assert!(summary.contains("armature: headless turn reached"));
     }
 }

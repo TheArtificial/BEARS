@@ -66,10 +66,10 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     let surface_id = test_work_surface_id(bear_id);
     let surface_name = format!("surface-{}", &surface_id.simple().to_string()[..12]);
     sqlx::query(
-        r#"
+        r"
         INSERT INTO work_surfaces (id, name, upstream_url, created_by_user_id)
         VALUES ($1, $2, $3, $4)
-        "#,
+        ",
     )
     .bind(surface_id)
     .bind(surface_name)
@@ -79,10 +79,10 @@ async fn seed_user_and_bear(pool: &PgPool, label: &str) -> (i32, Uuid) {
     .await
     .expect("seed work surface");
     sqlx::query(
-        r#"
+        r"
         INSERT INTO work_surface_bears (surface_id, bear_id)
         VALUES ($1, $2)
-        "#,
+        ",
     )
     .bind(surface_id)
     .bind(bear_id)

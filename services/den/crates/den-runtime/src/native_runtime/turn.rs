@@ -205,7 +205,7 @@ pub fn update_native_client_session_cached_activity_plan_projection(
     let key = agent_loop_session_key(conversation_id, client_session_id);
     SESSION_STORE.update(&key, |session| {
         session.cached_activity_plan_projection = cached_activity_plan_projection;
-    })
+    });
 }
 
 fn active_docket_execution_lookup_for_session(

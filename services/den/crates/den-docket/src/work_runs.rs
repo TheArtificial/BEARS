@@ -26,7 +26,7 @@ use crate::service::PgDocketService;
 /// Explicit root name for a provider-managed empty workspace. Absence is not
 /// scratch: callers must opt in so rootless dispatch stays invalid.
 pub const SCRATCH_ROOT_NAME: &str = "scratch";
-pub const ATTACHED_DISCONNECT_TIMEOUT: StdDuration = StdDuration::from_secs(15 * 60);
+pub const ATTACHED_DISCONNECT_TIMEOUT: StdDuration = StdDuration::from_mins(15);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkExecutionTarget {
@@ -248,13 +248,8 @@ pub async fn enqueue_work_job(
     enqueue: WorkJobEnqueue,
 ) -> Result<Vec<WorkRunRow>, DenError> {
     let mut tx = pool.begin().await?;
-    let job: Option<(
-        Option<Uuid>,
-        Option<String>,
-        Option<Uuid>,
-        Option<String>,
-        bool,
-    )> = sqlx::query_as(
+    type JobEnqueueRow = (Option<Uuid>, Option<String>, Option<Uuid>, Option<String>, bool);
+    let job: Option<JobEnqueueRow> = sqlx::query_as(
         "SELECT j.work_surface_id, s.name, j.current_run_id, j.status,
                     EXISTS (
                         SELECT 1 FROM work_surface_bears wsb
@@ -1500,13 +1495,14 @@ pub async fn checkout_work_run_for_session(
 ) -> Result<WorkRunCheckout, DenError> {
     let run = bind_work_run_session(pool, run_id, bear_id, session_id).await?;
 
-    let active_task: Option<(
+    type ActiveTaskRow = (
         Uuid,
         String,
         String,
         sqlx::types::Json<Vec<String>>,
         Option<String>,
-    )> = sqlx::query_as(
+    );
+    let active_task: Option<ActiveTaskRow> = sqlx::query_as(
         "SELECT t.id, t.title, t.body, t.completion_criteria, t.difficulty
          FROM bear_tasks t
          JOIN bear_task_run_state s ON s.task_id = t.id AND s.run_id = $2

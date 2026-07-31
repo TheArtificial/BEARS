@@ -179,7 +179,7 @@ pub struct GarageArtifactUploadPath {
     pub object_path: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactContentLocation {
     pub artifact_ref: String,
     pub storage_kind: ArtifactStorageKind,
@@ -270,7 +270,7 @@ pub struct AttachDocketArtifactInput {
     pub created_by_user_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ArtifactCitation {
     pub artifact_ref: String,
     pub kind: String,
@@ -282,7 +282,7 @@ pub struct ArtifactCitation {
     pub readable: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactMetadata {
     pub id: Uuid,
     pub artifact_ref: String,
@@ -308,7 +308,7 @@ pub struct ArtifactMetadata {
     pub updated_at: OffsetDateTime,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactLink {
     pub id: Uuid,
     pub artifact_ref: String,
@@ -1162,7 +1162,7 @@ mod tests {
         .expect("list citations");
         assert_eq!(citations.len(), 1);
         assert_eq!(citations[0].artifact_ref, reserved.artifact_ref);
-        assert_eq!(citations[0].readable, true);
+        assert!(citations[0].readable);
         assert_eq!(citations[0].content_bytes, Some(12));
     }
 

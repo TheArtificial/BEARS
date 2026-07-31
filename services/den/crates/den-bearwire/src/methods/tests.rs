@@ -321,11 +321,11 @@ async fn session_open_mode_change_clears_active_focus(pool: sqlx::PgPool) {
     assert_eq!(initial["result"]["cleared_focus_count"], 0);
 
     let docket_job_id: Uuid = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal, status)
         VALUES ($1, $2, 'pair', 'Focused job', 'running')
         RETURNING id
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(user_id)
@@ -333,11 +333,11 @@ async fn session_open_mode_change_clears_active_focus(pool: sqlx::PgPool) {
     .await
     .expect("insert docket job");
     let docket_run_id: Uuid = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO bear_job_runs (job_id, state, started_at)
         VALUES ($1, 'running', NOW())
         RETURNING id
-        "#,
+        ",
     )
     .bind(docket_job_id)
     .fetch_one(&pool)
@@ -350,12 +350,12 @@ async fn session_open_mode_change_clears_active_focus(pool: sqlx::PgPool) {
         .await
         .expect("attach docket run");
     sqlx::query(
-        r#"
+        r"
         INSERT INTO docket_execution_sessions (
             bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id, job_id, run_id
         )
         VALUES ($1, 'pair', $2, $3, $2, $4, $5)
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(&session_id)
@@ -383,10 +383,10 @@ async fn session_open_mode_change_clears_active_focus(pool: sqlx::PgPool) {
     assert_eq!(changed["result"]["cleared_focus_count"], 1);
 
     let execution_state: String = sqlx::query_scalar(
-        r#"
+        r"
         SELECT state FROM docket_execution_sessions
         WHERE bear_id = $1 AND source_client_session_id = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(&session_id)
@@ -1993,11 +1993,11 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .expect("persist unsupported reasoning replay policy event");
 
     let docket_job_id: Uuid = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO bear_jobs (bear_id, created_by_user_id, created_by_role, goal, status)
         VALUES ($1, $2, 'pair', 'Surface diagnostics job', 'running')
         RETURNING id
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(user_id)
@@ -2005,11 +2005,11 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .await
     .expect("insert docket job");
     let docket_run_id: Uuid = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO bear_job_runs (job_id, state, started_at)
         VALUES ($1, 'running', NOW())
         RETURNING id
-        "#,
+        ",
     )
     .bind(docket_job_id)
     .fetch_one(&pool)
@@ -2037,12 +2037,12 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .await
     .expect("insert docket task");
     sqlx::query(
-        r#"
+        r"
         INSERT INTO docket_execution_sessions (
             bear_id, owner_profile, session_id, source_conversation_id, source_client_session_id, job_id, run_id, task_id
         )
         VALUES ($1, 'pair', $2, $3, $2, $4, $5, $6)
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(&session_id)
@@ -2066,10 +2066,10 @@ async fn conversation_history_returns_tool_result_summary_from_persisted_record(
     .await
     .expect("insert focus event");
     sqlx::query(
-        r#"
+        r"
         INSERT INTO bear_task_events (task_id, run_id, event_type, by_role, by_user_id, payload)
         VALUES ($1, $2, 'created', 'pair', $3, $4::jsonb)
-        "#,
+        ",
     )
     .bind(docket_task_id)
     .bind(docket_run_id)

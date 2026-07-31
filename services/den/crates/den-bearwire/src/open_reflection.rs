@@ -16,7 +16,7 @@ pub async fn run_open_session_reflection_loop(
     ticker.tick().await;
     loop {
         tokio::select! {
-            _ = token.cancelled() => return Ok(()),
+            () = token.cancelled() => return Ok(()),
             _ = ticker.tick() => {
                 let processed = crate::methods::session::reflect_open_sessions_once(&state).await?;
                 if processed > 0 {

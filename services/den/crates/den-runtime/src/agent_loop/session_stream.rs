@@ -169,12 +169,12 @@ async fn oriented_child_count_policy_error(
         DenError::ValidationError("parent_task_id must be a valid UUID".to_string())
     })?;
     let child_count: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)
         FROM bear_tasks
         WHERE bear_id = $1
           AND parent_task_id = $2
-        "#,
+        ",
     )
     .bind(bear_id)
     .bind(parent_task_id)
@@ -462,10 +462,7 @@ impl SessionTrackingStream {
             ObjectiveOrientation::Oriented { task } => {
                 let parent_task_id = args
                     .get("parent_task_id")
-                    .and_then(serde_json::Value::as_str);
-                let Some(parent_task_id) = parent_task_id else {
-                    return None;
-                };
+                    .and_then(serde_json::Value::as_str)?;
                 let OrientationTaskRef::DocketTask {
                     task_id: oriented_task_id,
                     ..
@@ -1028,6 +1025,9 @@ impl SessionTrackingStream {
         RuntimeStreamEvent::Semantic(tool_call_finished_event_for_content(&call, Some(&content)))
     }
 
+    // The Err carries the full runtime event to emit; boxing it would ripple
+    // through every `?` call site for no runtime win on this cold path.
+    #[allow(clippy::result_large_err)]
     fn block_or_recover_if_checkpoint_pending(
         &mut self,
         attempted_action: &str,
@@ -1093,7 +1093,9 @@ impl SessionTrackingStream {
     fn prepare_autonomous_final_gate(&mut self, focus: RuntimeFocusContext) {
         let focused_task_list = focus.active_activity_plan().cloned();
         self.store.update(&self.session_key, |session| {
-            session.cached_activity_plan_projection = focused_task_list.clone();
+            session
+                .cached_activity_plan_projection
+                .clone_from(&focused_task_list);
         });
         self.evaluate_final_gate_or_complete(focused_task_list);
     }

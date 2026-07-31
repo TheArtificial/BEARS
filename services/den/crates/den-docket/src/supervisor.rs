@@ -21,10 +21,10 @@ pub fn derive_job_state<'a>(
     criteria_complete: bool,
 ) -> DerivedJobState {
     let states: Vec<_> = task_states.into_iter().collect();
-    if states.iter().any(|state| *state == "in_progress") {
+    if states.contains(&"in_progress") {
         return DerivedJobState::Running;
     }
-    if states.iter().any(|state| *state == "pending") {
+    if states.contains(&"pending") {
         return DerivedJobState::Ready;
     }
     if states

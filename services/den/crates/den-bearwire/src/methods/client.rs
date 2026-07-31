@@ -561,7 +561,7 @@ fn spawn_continuation_task(
                             return;
                         }
                     }
-                    _ = tokio::time::sleep(pause) => {}
+                    () = tokio::time::sleep(pause) => {}
                 }
             }
             let continuation_future = continue_native_client_turn_event_stream(
@@ -727,7 +727,6 @@ fn spawn_continuation_task(
                             Ok(den_protocol::RuntimeStreamEvent::ProviderActivity) => {
                                 provider_activity_seen = true;
                                 last_provider_activity_at = Some(Instant::now());
-                                continue;
                             }
                             Ok(runtime_event) => {
                                 runtime_event_count += 1;
@@ -1885,7 +1884,7 @@ mod tests {
         );
         assert_eq!(
             continuation_watchdog_timeout_from_raw(Some("999999999")),
-            Duration::from_secs(600)
+            Duration::from_mins(10)
         );
     }
 
@@ -1893,7 +1892,7 @@ mod tests {
     fn first_event_watchdog_includes_handshake_allowance() {
         assert_eq!(
             continuation_first_event_watchdog_timeout(
-                Duration::from_secs(120),
+                Duration::from_mins(2),
                 Duration::from_secs(30),
             ),
             Duration::from_secs(150)
