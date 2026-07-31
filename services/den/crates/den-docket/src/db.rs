@@ -21,9 +21,9 @@ use super::model::{
     DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
     DocketJobRunRow, DocketJobStatus, DocketJobUpdate, DocketTaskCreate, DocketTaskDefinitionPatch,
     DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection,
-    DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError, TaskListItemStatus,
-    TaskListProjection, TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest,
-    TaskListSyncState,
+    DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError,
+    TaskListItemStatus, TaskListProjection, TaskListSourceRef, TaskListSyncOutcome,
+    TaskListSyncRequest, TaskListSyncState,
 };
 
 pub(super) async fn create_job(
@@ -420,14 +420,17 @@ async fn place_task(
             .bind(session_anchor_id)
             .fetch_optional(&mut **tx)
             .await?
-            .ok_or_else(|| DenError::ValidationError("task session anchor not found".to_string()))?;
+            .ok_or_else(|| {
+                DenError::ValidationError("task session anchor not found".to_string())
+            })?;
     }
 
     let placement = create.placement.unwrap_or(DocketTaskPlacement::Last);
     let target_order = match placement {
         DocketTaskPlacement::First => 0,
-        DocketTaskPlacement::Last => sqlx::query_scalar::<_, i32>(
-            r"
+        DocketTaskPlacement::Last => {
+            sqlx::query_scalar::<_, i32>(
+                r"
             SELECT COALESCE(MAX(sibling_order), -1) + 1
             FROM bear_tasks
             WHERE bear_id = $1
@@ -435,15 +438,15 @@ async fn place_task(
               AND session_anchor_id IS NOT DISTINCT FROM $3
               AND parent_task_id IS NOT DISTINCT FROM $4
             ",
-        )
-        .bind(create.bear_id)
-        .bind(create.job_id)
-        .bind(create.session_anchor_id)
-        .bind(create.parent_task_id)
-        .fetch_one(&mut **tx)
-        .await?,
-        DocketTaskPlacement::Before { task_id }
-        | DocketTaskPlacement::After { task_id } => {
+            )
+            .bind(create.bear_id)
+            .bind(create.job_id)
+            .bind(create.session_anchor_id)
+            .bind(create.parent_task_id)
+            .fetch_one(&mut **tx)
+            .await?
+        }
+        DocketTaskPlacement::Before { task_id } | DocketTaskPlacement::After { task_id } => {
             let anchor: DocketTaskRow = sqlx::query_as(
                 r"
                 SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
@@ -459,7 +462,9 @@ async fn place_task(
             .bind(create.bear_id)
             .fetch_optional(&mut **tx)
             .await?
-            .ok_or_else(|| DenError::ValidationError("placement anchor task not found".to_string()))?;
+            .ok_or_else(|| {
+                DenError::ValidationError("placement anchor task not found".to_string())
+            })?;
             if anchor.job_id != create.job_id
                 || anchor.session_anchor_id != create.session_anchor_id
                 || anchor.parent_task_id != create.parent_task_id
@@ -468,8 +473,7 @@ async fn place_task(
                     "placement anchor must be a sibling in the same task tree".to_string(),
                 ));
             }
-            anchor.sibling_order
-                + i32::from(matches!(placement, DocketTaskPlacement::After { .. }))
+            anchor.sibling_order + i32::from(matches!(placement, DocketTaskPlacement::After { .. }))
         }
     };
 
@@ -682,6 +686,20 @@ pub(super) async fn update_job(
             "Docket job goal must not be empty".to_string(),
         ));
     }
+    if update.status.is_some_and(|status| {
+        matches!(
+            status,
+            DocketJobStatus::Ready
+                | DocketJobStatus::Running
+                | DocketJobStatus::Blocked
+                | DocketJobStatus::Completed
+        )
+    }) {
+        return Err(DenError::ValidationError(
+            "Docket job ready/running/blocked/completed status is derived from current task and criterion state"
+                .to_string(),
+        ));
+    }
     let mut tx = pool.begin().await?;
     let Some(current) = sqlx::query_as::<_, DocketJobRow>(
         r"
@@ -832,6 +850,95 @@ async fn update_run_for_job_status(
     Ok(())
 }
 
+async fn reconcile_job_status(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    job_id: Uuid,
+    run_id: Uuid,
+) -> Result<(), DenError> {
+    let (current_status, current_run_id): (String, Option<Uuid>) =
+        sqlx::query_as("SELECT status, current_run_id FROM bear_jobs WHERE id = $1 FOR UPDATE")
+            .bind(job_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    if current_run_id != Some(run_id)
+        || matches!(current_status.as_str(), "draft" | "cancelled" | "archived")
+    {
+        return Ok(());
+    }
+
+    let (in_progress, blocked, unfinished): (i64, i64, i64) = sqlx::query_as(
+        r"
+        SELECT
+            COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') = 'in_progress'),
+            COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') = 'blocked'),
+            COUNT(*) FILTER (WHERE COALESCE(state.status, 'pending') NOT IN ('done', 'cancelled'))
+        FROM bear_tasks task
+        LEFT JOIN bear_task_run_state state
+          ON state.task_id = task.id AND state.run_id = $2
+        WHERE task.job_id = $1
+        ",
+    )
+    .bind(job_id)
+    .bind(run_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let unmet_criteria: i64 = sqlx::query_scalar(
+        r"
+        SELECT COUNT(*)
+        FROM bear_job_criteria criterion
+        LEFT JOIN bear_job_criteria_state state
+          ON state.criterion_id = criterion.id AND state.run_id = $2
+        WHERE criterion.job_id = $1
+          AND COALESCE(state.status, 'unmet') NOT IN ('met', 'waived')
+        ",
+    )
+    .bind(job_id)
+    .bind(run_id)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    let derived = derived_job_status(in_progress, blocked, unfinished, unmet_criteria);
+    if current_status != derived {
+        sqlx::query("UPDATE bear_jobs SET status = $2, updated_at = NOW() WHERE id = $1")
+            .bind(job_id)
+            .bind(derived)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
+fn derived_job_status(
+    in_progress: i64,
+    blocked: i64,
+    unfinished: i64,
+    unmet_criteria: i64,
+) -> &'static str {
+    if in_progress > 0 {
+        "running"
+    } else if blocked > 0 {
+        "blocked"
+    } else if unfinished == 0 && unmet_criteria == 0 {
+        "completed"
+    } else {
+        "ready"
+    }
+}
+
+#[cfg(test)]
+mod derived_job_status_tests {
+    use super::derived_job_status;
+
+    #[test]
+    fn derives_status_from_current_work_only() {
+        assert_eq!(derived_job_status(1, 1, 2, 1), "running");
+        assert_eq!(derived_job_status(0, 1, 2, 0), "blocked");
+        assert_eq!(derived_job_status(0, 0, 1, 0), "ready");
+        assert_eq!(derived_job_status(0, 0, 0, 1), "ready");
+        assert_eq!(derived_job_status(0, 0, 0, 0), "completed");
+    }
+}
+
 pub(super) async fn evaluate_criterion(
     pool: &PgPool,
     update: DocketCriterionStateUpdate,
@@ -890,6 +997,7 @@ pub(super) async fn evaluate_criterion(
     }))
     .execute(&mut *tx)
     .await?;
+    reconcile_job_status(&mut tx, update.job_id, update.run_id).await?;
     tx.commit().await?;
     get_job(pool, update.bear_id, update.job_id)
         .await?
@@ -1299,23 +1407,11 @@ pub(super) async fn execute_job(
 
     if tasks_complete && criteria_complete {
         record_execution_session(pool, &request, run.id, None, "completed").await?;
-        let job = update_job(
-            pool,
-            DocketJobUpdate {
-                bear_id: request.bear_id,
-                job_id: request.job_id,
-                actor_role: request.actor_role,
-                actor_user_id: request.actor_user_id,
-                actor_agent_id: request.actor_agent_id,
-                goal: None,
-                work_surface_id: None,
-                commit_policy: None,
-                work_branch: None,
-                status: Some(DocketJobStatus::Completed),
-                visibility: None,
-            },
-        )
-        .await?;
+        let job = get_job(pool, request.bear_id, request.job_id)
+            .await?
+            .ok_or_else(|| {
+                DenError::NotFound(format!("Docket job not found: {}", request.job_id))
+            })?;
         Ok(DocketJobExecuteOutcome {
             job,
             selected_task_id: None,
@@ -1325,23 +1421,11 @@ pub(super) async fn execute_job(
         })
     } else {
         record_execution_session(pool, &request, run.id, None, "blocked").await?;
-        let job = update_job(
-            pool,
-            DocketJobUpdate {
-                bear_id: request.bear_id,
-                job_id: request.job_id,
-                actor_role: request.actor_role,
-                actor_user_id: request.actor_user_id,
-                actor_agent_id: request.actor_agent_id,
-                goal: None,
-                work_surface_id: None,
-                commit_policy: None,
-                work_branch: None,
-                status: Some(DocketJobStatus::Blocked),
-                visibility: None,
-            },
-        )
-        .await?;
+        let job = get_job(pool, request.bear_id, request.job_id)
+            .await?
+            .ok_or_else(|| {
+                DenError::NotFound(format!("Docket job not found: {}", request.job_id))
+            })?;
         Ok(DocketJobExecuteOutcome {
             job,
             selected_task_id: None,
@@ -1672,6 +1756,9 @@ pub(super) async fn update_task(
         .filter(|state| matches!(state.status.as_str(), "done" | "cancelled"))
     {
         roll_up_completed_parents(&mut tx, current.parent_task_id, run_state.run_id).await?;
+    }
+    if let (Some(job_id), Some(run_state)) = (current.job_id, update.run_state.as_ref()) {
+        reconcile_job_status(&mut tx, job_id, run_state.run_id).await?;
     }
     tx.commit().await?;
     Ok(DocketTaskProjection {

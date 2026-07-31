@@ -119,7 +119,7 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
                 client_key: Some("first".to_string()),
                 parent_client_key: None,
                 parent_task_id: None,
-                sibling_order: 0,
+                sibling_order: Some(0),
                 kind: DocketTaskKind::Execution,
                 scope: DocketTaskScope::Template,
                 title: "First task".to_string(),
@@ -135,7 +135,7 @@ fn two_task_job(user_id: i32, bear_id: Uuid) -> DocketJobCreate {
                 client_key: Some("second".to_string()),
                 parent_client_key: None,
                 parent_task_id: None,
-                sibling_order: 1,
+                sibling_order: Some(1),
                 kind: DocketTaskKind::Execution,
                 scope: DocketTaskScope::Template,
                 title: "Second task".to_string(),
@@ -186,6 +186,7 @@ async fn creates_session_anchored_task_without_job() {
             session_anchor_id: Some(session_anchor_id),
             parent_task_id: None,
             sibling_order: 0,
+            placement: None,
             kind: DocketTaskKind::Investigation,
             scope: DocketTaskScope::Run,
             title: "Session anchored task".to_string(),
@@ -252,6 +253,7 @@ async fn lists_session_anchored_task_with_latest_run_state() {
             session_anchor_id: Some(session_anchor_id),
             parent_task_id: None,
             sibling_order: 0,
+            placement: None,
             kind: DocketTaskKind::Execution,
             scope: DocketTaskScope::Run,
             title: "Session task with state".to_string(),
@@ -487,7 +489,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .await
         .expect("blocked before criteria");
     assert!(blocked.blocked);
-    assert_eq!(blocked.job.job.status, "blocked");
+    assert_eq!(blocked.job.job.status, "ready");
 
     let evaluated = service
         .evaluate_criterion(DocketCriterionStateUpdate {
@@ -504,6 +506,7 @@ async fn docket_pair_lifecycle_completes_after_tasks_and_criteria() {
         .await
         .expect("evaluate criterion");
     assert_eq!(evaluated.criteria_states[0].status, "met");
+    assert_eq!(evaluated.job.status, "completed");
 
     let completed = service
         .execute_job(DocketJobExecuteRequest {
@@ -821,6 +824,7 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
             session_anchor_id: None,
             parent_task_id: Some(phase_one_id),
             sibling_order: 0,
+            placement: None,
             kind: DocketTaskKind::Execution,
             scope: DocketTaskScope::Template,
             title: "Phase one, first step".to_string(),
@@ -845,6 +849,7 @@ async fn docket_dispatcher_follows_depth_first_sibling_order() {
             session_anchor_id: None,
             parent_task_id: Some(phase_one_id),
             sibling_order: 1,
+            placement: None,
             kind: DocketTaskKind::Execution,
             scope: DocketTaskScope::Template,
             title: "Phase one, second step".to_string(),

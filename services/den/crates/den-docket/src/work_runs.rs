@@ -248,7 +248,13 @@ pub async fn enqueue_work_job(
     enqueue: WorkJobEnqueue,
 ) -> Result<Vec<WorkRunRow>, DenError> {
     let mut tx = pool.begin().await?;
-    type JobEnqueueRow = (Option<Uuid>, Option<String>, Option<Uuid>, Option<String>, bool);
+    type JobEnqueueRow = (
+        Option<Uuid>,
+        Option<String>,
+        Option<Uuid>,
+        Option<String>,
+        bool,
+    );
     let job: Option<JobEnqueueRow> = sqlx::query_as(
         "SELECT j.work_surface_id, s.name, j.current_run_id, j.status,
                     EXISTS (
@@ -987,16 +993,16 @@ async fn settle_failed_work_as_blocked(
             )
         });
 
-    let settled = sqlx::query_scalar::<_, Uuid>(
-        "UPDATE bear_jobs SET status = 'blocked', updated_at = NOW()
-         WHERE id = $1 AND current_run_id = $2 AND status IN ('ready', 'running')
-         RETURNING id",
+    let is_current = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+             SELECT 1 FROM bear_jobs WHERE id = $1 AND current_run_id = $2
+         )",
     )
     .bind(work_run.job_id)
     .bind(work_run.job_run_id)
-    .fetch_optional(&mut **tx)
+    .fetch_one(&mut **tx)
     .await?;
-    if settled.is_none() {
+    if !is_current {
         return Ok(());
     }
 
@@ -1072,17 +1078,16 @@ async fn settle_completed_job(
         return Ok(());
     }
 
-    let settled = sqlx::query_scalar::<_, Uuid>(
-        "UPDATE bear_jobs
-         SET status = 'completed', updated_at = NOW()
-         WHERE id = $1 AND current_run_id = $2 AND status IN ('ready', 'running')
-         RETURNING id",
+    let is_current = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+             SELECT 1 FROM bear_jobs WHERE id = $1 AND current_run_id = $2
+         )",
     )
     .bind(work_run.job_id)
     .bind(work_run.job_run_id)
-    .fetch_optional(&mut **tx)
+    .fetch_one(&mut **tx)
     .await?;
-    if settled.is_none() {
+    if !is_current {
         return Ok(());
     }
 

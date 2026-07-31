@@ -90,7 +90,7 @@ fn work_task(title: &str, order: i32, _stance: BearProfile) -> DocketTaskInput {
         client_key: Some(format!("k{order}")),
         parent_client_key: None,
         parent_task_id: None,
-        sibling_order: order,
+        sibling_order: Some(order),
         kind: DocketTaskKind::Execution,
         scope: DocketTaskScope::Template,
         title: title.to_string(),
