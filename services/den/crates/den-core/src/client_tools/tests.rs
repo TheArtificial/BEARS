@@ -2,6 +2,14 @@ use super::*;
 use crate::tools::descriptor::builtin_den_tool_descriptors;
 
 #[test]
+fn git_status_is_read_only_without_an_approval_gate() {
+    let policy = client_tool_policy(ClientToolName::GitStatus);
+
+    assert_eq!(policy.approval_policy, ApprovalPolicy::Never);
+    assert_eq!(policy.sensitive_path_policy, SensitivePathPolicy::Deny);
+}
+
+#[test]
 fn all_client_tool_policies_have_descriptor_owned_execution_contract() {
     for tool in ClientToolName::all() {
         let descriptor = tool.descriptor();

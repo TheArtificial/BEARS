@@ -1324,7 +1324,17 @@ async fn service_run_state_tool_obligations(
     for obligation in open {
         let Some(event) = actionable_tool_request_event_from_obligation(run_id, obligation) else {
             if let Some(err) = unsupported_required_client_obligation_error(obligation) {
-                return Err(err);
+                // A run.state snapshot can race permission/result settlement. Treat an
+                // obligation this client cannot service as a reconciliation warning;
+                // the next state poll can observe the settled obligation. Ending the
+                // model turn here turns an approval redirect into a sandbox failure.
+                tracing::warn!(
+                    target: "bear_armature::lifecycle",
+                    session_id,
+                    run_id,
+                    error = %err,
+                    "cannot service BearWire obligation from this run.state snapshot"
+                );
             }
             continue;
         };
@@ -2668,7 +2678,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_open_client_obligation_becomes_prompt_error() {
+    fn unsupported_open_client_obligation_is_classified_for_reconciliation() {
         let obligation = json!({
             "id": "obl-context",
             "kind": "added_context",

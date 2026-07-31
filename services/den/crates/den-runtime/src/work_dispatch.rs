@@ -429,8 +429,25 @@ async fn monitor_owned_runs(
     }
 }
 
-/// A running run whose sandbox has exited without a recorded turn outcome is
-/// a lost turn (Den restart, armature crash, provider timeout).
+fn sandbox_exit_failure(result_refs: Option<&Value>) -> (&'static str, String) {
+    let report = result_refs.and_then(|refs| refs.get("armature_report"));
+    let summary = report
+        .and_then(|report| report.get("summary"))
+        .and_then(Value::as_str)
+        .filter(|summary| !summary.trim().is_empty());
+
+    match summary {
+        Some(summary) => ("armature_failed", summary.to_string()),
+        None => (
+            "turn_lost",
+            "sandbox exited without a terminal turn outcome (armature crash, deadline, or Den restart)"
+                .to_string(),
+        ),
+    }
+}
+
+/// Reconcile a running run after its sandbox exits. An armature report is an
+/// authoritative terminal failure; `turn_lost` is only the no-report fallback.
 async fn reconcile_running(
     pool: &PgPool,
     config: &Arc<Config>,
@@ -489,18 +506,12 @@ async fn reconcile_running(
                 .map(|logs| logs.content)
                 .unwrap_or_default();
             revoke_token_for_run(pool, run.id).await;
+            let (reason, message) = sandbox_exit_failure(current.result_refs.as_ref());
             let refs = json!({
                 "log_tail": log_tail,
                 "sandbox_exit_code": descriptor.exit_code,
             });
-            fail_run(
-                pool,
-                &current,
-                "turn_lost",
-                "sandbox exited without a terminal turn outcome (armature crash, deadline, or Den restart)",
-                Some(refs),
-            )
-            .await;
+            fail_run(pool, &current, reason, &message, Some(refs)).await;
             teardown_sandbox(pool, config, client, &current, false).await;
             maybe_requeue(pool, config, &current).await;
         }
@@ -910,9 +921,10 @@ async fn orphan_sweep(pool: &PgPool, config: &Arc<Config>, client: &SandboxClien
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
     use uuid::Uuid;
 
-    use super::{work_run_outcome_summary, work_run_succeeded};
+    use super::{sandbox_exit_failure, work_run_outcome_summary, work_run_succeeded};
 
     #[test]
     fn per_task_succeeds_when_its_checked_out_task_is_done() {
@@ -929,6 +941,36 @@ mod tests {
         assert!(!work_run_succeeded(Some("per_task"), None, &statuses));
         assert!(!work_run_succeeded(Some("per_job"), Some(done), &statuses));
         assert!(!work_run_succeeded(None, Some(done), &statuses));
+    }
+
+    #[test]
+    fn sandbox_exit_prefers_armature_report_over_turn_lost() {
+        let refs = json!({
+            "armature_report": {
+                "status_hint": "failed",
+                "summary": "headless turn failed: unsupported required BearWire client obligation"
+            }
+        });
+
+        assert_eq!(
+            sandbox_exit_failure(Some(&refs)),
+            (
+                "armature_failed",
+                "headless turn failed: unsupported required BearWire client obligation".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn sandbox_exit_is_turn_lost_only_without_armature_report() {
+        assert_eq!(
+            sandbox_exit_failure(None),
+            (
+                "turn_lost",
+                "sandbox exited without a terminal turn outcome (armature crash, deadline, or Den restart)"
+                    .to_string()
+            )
+        );
     }
 
     #[test]
