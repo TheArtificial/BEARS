@@ -26,6 +26,12 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
+            # ADR-0031 write topology: one MemoryStoreManager per process. Cheap
+            # grep gate — fails on MemoryStoreManager::new outside the sanctioned
+            # sites listed in scripts/check-memory-write-topology.sh.
+            - name: Enforce memory write topology
+              run: bash ../../scripts/check-memory-write-topology.sh
+
             - name: Install Rust toolchain (with clippy)
               run: rustup component add clippy
 

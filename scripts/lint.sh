@@ -7,6 +7,9 @@
 # remaining (non-allow-listed) lint into a hard failure.
 set -euo pipefail
 
+# ADR-0031 write topology: no MemoryStoreManager::new outside sanctioned sites.
+bash "$(dirname "$0")/check-memory-write-topology.sh"
+
 cd "$(dirname "$0")/../services/den"
 
 export SQLX_OFFLINE="${SQLX_OFFLINE:-true}"

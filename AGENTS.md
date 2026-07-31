@@ -106,6 +106,7 @@ Build local Den/Codepool/Bifrost images, start/recreate the dev stack, seed, and
 - `pair` can learn things useful to `work`, but `work` must not read raw `pair/`. The intended path is `pair/` → pair reflection/review request → `curate` → `core`/archive/Cabinet/task context → `work`.
 - Human identity for ACP `pair` comes from the ACP token. Use `session_info.human` as trusted identity; do not infer the human from chat text when it conflicts with Den identity.
 - `curate` owns cross-role memory curation and `core/` cleanliness. Human UI should make its activity visible and overrideable, not require approval for routine inner-loop memory work.
+- Write topology (ADR-0031 amendment): exactly one `MemoryStoreManager` per process. Production code receives clones of the instance built at server startup (threaded via `DenState`/runtime context) — never call `MemoryStoreManager::new` outside the sanctioned sites (startup, short-lived CLIs, tests). CI enforces this via `scripts/check-memory-write-topology.sh`.
 
 ## Conversation History and Transcript Projection
 
