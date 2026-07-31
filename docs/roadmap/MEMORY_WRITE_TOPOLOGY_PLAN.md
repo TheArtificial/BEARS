@@ -2,11 +2,10 @@
 
 ## Status
 
-In progress (2026-07-31). Implements the [ADR-0031 write-topology amendment](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md#write-topology-amendment-2026-07-30-one-owning-process-per-bear-database): one owning process per Bear database, with a single in-process write path.
+**Complete** (2026-07-31). Implements the [ADR-0031 write-topology amendment](../decisions/adr-0031-sqlite-first-canonical-store-for-bear-agent-memory-and-tasks.md#write-topology-amendment-2026-07-30-one-owning-process-per-bear-database): one owning process per Bear database, with a single in-process write path.
 
 - **Phase 1 landed** (commit `eaaf897a`): one `MemoryStoreManager` built at server startup; clones threaded through web/API state, the web chat runtime, reflection worker loops, provision/recall functions, and tool backends (`DenToolContext`). Production `::new` sites reduced from ~40 to 4 — startup plus the sanctioned short-lived CLIs (`reindex`, `import-legacy-memory`, `seed`), each commented.
-- **Phase 2 open**: constructor-visibility restriction + CI check.
-- **Phase 3 open**: deployment/compose docs and `import-legacy-memory` live-database guard.
+- **Phases 2–3 landed** (commit `81fbad49`): `scripts/check-memory-write-topology.sh` enforces the allowlist in `lint.sh` and CI (`den-clippy.yml`); invariant noted in `AGENTS.md`; `import-legacy-memory` warns loudly on WAL/SHM sidecars suggesting a live runtime; worker co-location documented in [infrastructure-and-ops](../guides/infrastructure-and-ops.md).
 
 ## Current state (audited 2026-07-30)
 
