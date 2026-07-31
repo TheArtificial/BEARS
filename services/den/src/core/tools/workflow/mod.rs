@@ -18,9 +18,9 @@ use den_docket::{
     DocketJobOverlapResolution, DocketJobProjection, DocketJobStatus, DocketJobStatusReport,
     DocketJobUpdate, DocketService, DocketTaskCreate, DocketTaskDefinitionPatch,
     DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
-    DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus, DocketTaskUpdate,
-    DocketValidationError, PgDocketService, TaskListCheckoutRequest, TaskListCheckoutSource,
-    TaskListProjection, TaskListSyncRequest, TaskListVisibility,
+    DocketTaskPlacement, DocketTaskRunStateUpdate, DocketTaskScope, DocketTaskStatus,
+    DocketTaskUpdate, DocketValidationError, PgDocketService, TaskListCheckoutRequest,
+    TaskListCheckoutSource, TaskListProjection, TaskListSyncRequest, TaskListVisibility,
 };
 
 use crate::{
@@ -253,6 +253,8 @@ pub(crate) struct DocketTaskCreateArguments {
     pub(crate) parent_task_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) sibling_order: i32,
+    #[serde(default)]
+    pub(crate) placement: Option<DocketTaskPlacement>,
     #[serde(default = "default_task_kind")]
     pub(crate) kind: DocketTaskKind,
     #[serde(default = "default_task_scope")]
@@ -1603,6 +1605,7 @@ pub(crate) async fn create_task(
             session_anchor_id,
             parent_task_id: args.parent_task_id,
             sibling_order: args.sibling_order,
+            placement: args.placement,
             kind: args.kind,
             scope: args.scope,
             title: args.title,
