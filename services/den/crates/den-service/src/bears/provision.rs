@@ -17,17 +17,19 @@ use den_core::DenError;
 pub async fn provision_bear_if_configured(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     bear_id: Uuid,
 ) -> Result<(), DenError> {
-    provision_bear_native(pool, config, bear_id).await
+    provision_bear_native(pool, config, stores, bear_id).await
 }
 
 async fn provision_bear_native(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     bear_id: Uuid,
 ) -> Result<(), DenError> {
-    let summary = reconcile_bear_native(pool, config, bear_id).await?;
+    let summary = reconcile_bear_native(pool, config, stores, bear_id).await?;
     if let Some(message) = summary.diagnostic_message() {
         return Err(DenError::System(message));
     }
@@ -40,6 +42,7 @@ async fn provision_bear_native(
 pub async fn reconcile_bear_native(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     bear_id: Uuid,
 ) -> Result<crate::bears::sync::BearSyncSummary, DenError> {
     let bear = bears_db::get_bear(pool, bear_id)
@@ -49,8 +52,7 @@ pub async fn reconcile_bear_native(
     bears_db::ensure_bear_profile_binding_rows(pool, bear_id).await?;
     bears_db::ensure_default_runtime_plan(pool, bear_id, &default_runtime_plan()).await?;
 
-    let memory_stores = MemoryStoreManager::new(config);
-    memory_stores.store_for_bear(bear_id).await?;
+    stores.store_for_bear(bear_id).await?;
 
     if bear.context_profile.is_some() {
         compile_and_store_managed_config_for_bear(pool, &bear).await?;
@@ -126,14 +128,16 @@ async fn reconcile_one_native_profile(
 pub async fn provision_missing_bear_profiles_native(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     bear_id: Uuid,
 ) -> Result<usize, DenError> {
-    provision_missing_bear_profiles(pool, config, bear_id).await
+    provision_missing_bear_profiles(pool, config, stores, bear_id).await
 }
 
 pub async fn provision_missing_bear_profiles(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     bear_id: Uuid,
 ) -> Result<usize, DenError> {
     let bear = bears_db::get_bear(pool, bear_id)
@@ -158,7 +162,7 @@ pub async fn provision_missing_bear_profiles(
         return Ok(0);
     }
 
-    let summary = reconcile_bear_native(pool, config, bear_id).await?;
+    let summary = reconcile_bear_native(pool, config, stores, bear_id).await?;
     if let Some(message) = summary.diagnostic_message() {
         return Err(DenError::System(message));
     }

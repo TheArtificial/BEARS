@@ -36,8 +36,12 @@ use tower_sessions_sqlx_store::PostgresStore;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-#[derive(Debug, Default)]
-struct NativeWebChatRuntime;
+#[derive(Debug)]
+struct NativeWebChatRuntime {
+    /// Clone of the process-wide [`den_memory::MemoryStoreManager`] (one instance
+    /// per process; cloning shares the per-Bear pool map).
+    stores: den_memory::MemoryStoreManager,
+}
 
 impl web::web_chat_runtime::WebChatRuntime for NativeWebChatRuntime {
     fn stream_chat(
@@ -50,8 +54,8 @@ impl web::web_chat_runtime::WebChatRuntime for NativeWebChatRuntime {
     > {
         let pool = state.sqlx_pool().clone();
         let config = state.config.clone();
+        let stores = self.stores.clone();
         Box::pin(async move {
-            let stores = den_memory::MemoryStoreManager::new(config.as_ref());
             let deps = den_runtime::native_runtime::NativeRuntimeDeps {
                 pool: &pool,
                 config: config.as_ref(),
@@ -89,8 +93,10 @@ impl web::web_chat_runtime::WebChatRuntime for NativeWebChatRuntime {
     }
 }
 
-fn native_web_chat_runtime() -> Arc<dyn web::web_chat_runtime::WebChatRuntime> {
-    Arc::new(NativeWebChatRuntime)
+fn native_web_chat_runtime(
+    stores: den_memory::MemoryStoreManager,
+) -> Arc<dyn web::web_chat_runtime::WebChatRuntime> {
+    Arc::new(NativeWebChatRuntime { stores })
 }
 
 /// Run all enabled services until a shutdown signal (Ctrl+C, or SIGTERM on Unix).
@@ -202,6 +208,11 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
     let mut deletion_task_abort_handle = None;
     if needs_db {
         let sqlx_pool = connect_database(config.as_ref()).await?;
+        // The one production `MemoryStoreManager` for this process (ADR-0031
+        // write-topology amendment): every subsystem below receives a clone,
+        // which shares the per-Bear pool map — one pool (and one SQLite write
+        // connection) per Bear per process.
+        let memory_stores = den_memory::MemoryStoreManager::new(config.as_ref());
         ensure_database_schema_supported(&sqlx_pool).await?;
         if skip_migrations {
             tracing::info!(
@@ -244,7 +255,8 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
                 sqlx_pool.clone(),
                 session_store.clone(),
                 config_web,
-                native_web_chat_runtime(),
+                memory_stores.clone(),
+                native_web_chat_runtime(memory_stores.clone()),
             )
             .await
             .map_err(|e| {
@@ -286,6 +298,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
                 sqlx_pool.clone(),
                 session_store.clone(),
                 config_api,
+                memory_stores.clone(),
                 peer_routers,
             )
             .await
@@ -332,11 +345,13 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
             let t = token;
             let worker_pool = sqlx_pool.clone();
             let worker_config = config.clone();
+            let worker_stores = memory_stores.clone();
             task_set.spawn(async move {
                 tracing::info!("Workers: memory_curate runner loop enabled");
                 den_runtime::reflection_conductor::run_memory_curate_worker_loop(
                     worker_pool,
                     worker_config,
+                    worker_stores,
                     t,
                     std::time::Duration::from_secs(5),
                 )
@@ -351,6 +366,7 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
             let t = token;
             let worker_pool = sqlx_pool.clone();
             let worker_config = config.clone();
+            let worker_stores = memory_stores.clone();
             task_set.spawn(async move {
                 tracing::info!("Workers: open-session pair reflection loop enabled");
                 let worker_state = den_service::DenState::new(
@@ -359,12 +375,12 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
                     Arc::new(den_service::bifrost::BifrostClient::new(
                         worker_config.as_ref(),
                     )),
-                    den_memory::MemoryStoreManager::new(worker_config.as_ref()),
+                    worker_stores,
                 );
                 den_bearwire::run_open_session_reflection_loop(
                     worker_state,
                     t,
-                    std::time::Duration::from_secs(300),
+                    std::time::Duration::from_mins(5),
                 )
                 .await
                 .map_err(std::io::Error::other)
@@ -376,11 +392,13 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
                 let t = token;
                 let worker_pool = sqlx_pool.clone();
                 let worker_config = config.clone();
+                let worker_stores = memory_stores.clone();
                 task_set.spawn(async move {
                     tracing::info!("Workers: recall_index runner loop enabled");
                     den_runtime::reflection_conductor::run_recall_index_worker_loop(
                         worker_pool,
                         worker_config,
+                        worker_stores,
                         t,
                         std::time::Duration::from_secs(5),
                     )
@@ -413,11 +431,13 @@ async fn run_server(skip_migrations: bool) -> Result<(), StartupError> {
             let t = token;
             let worker_pool = sqlx_pool.clone();
             let worker_config = config.clone();
+            let worker_stores = memory_stores.clone();
             task_set.spawn(async move {
                 tracing::info!("Workers: archive_harvest runner loop enabled");
                 den_runtime::reflection_conductor::run_archive_harvest_worker_loop(
                     worker_pool,
                     worker_config,
+                    worker_stores,
                     t,
                     std::time::Duration::from_secs(30),
                 )

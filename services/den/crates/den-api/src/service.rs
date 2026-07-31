@@ -62,6 +62,7 @@ async fn api_readiness(State(state): State<DenState>) -> Result<&'static str, St
 /// * `sqlx_pool` - Database connection pool.
 /// * `session_store` - PostgreSQL session store for axum-login.
 /// * `config` - Shared process configuration used for URLs, cookies, Bifrost, and memory stores.
+/// * `memory_stores` - Clone of the process-wide per-Bear memory store manager.
 /// * `peer_routers` - Sibling edge routers mounted by the binary composition root.
 ///
 /// # Returns
@@ -93,6 +94,7 @@ pub async fn create_api_app(
     sqlx_pool: PgPool,
     session_store: PostgresStore,
     config: Arc<Config>,
+    memory_stores: MemoryStoreManager,
     peer_routers: Vec<(&'static str, Router<DenState>)>,
 ) -> Result<(Router, DenState), Box<dyn std::error::Error>> {
     // Extract URLs before moving config
@@ -104,7 +106,7 @@ pub async fn create_api_app(
         sqlx_pool.clone(),
         config.clone(),
         Arc::new(BifrostClient::new(config.as_ref())),
-        MemoryStoreManager::new(config.as_ref()),
+        memory_stores,
     );
     den_service::bifrost::spawn_managed_catalog_refresh(
         api_state.bifrost.clone(),

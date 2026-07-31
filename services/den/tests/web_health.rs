@@ -31,7 +31,8 @@ async fn web_app() -> axum::Router {
         .migrate()
         .await
         .expect("tower-sessions postgres migrate");
-    web::server_with_state(pool, store, config)
+    let memory_stores = den_memory::MemoryStoreManager::new(config.as_ref());
+    web::server_with_state(pool, store, config, memory_stores)
         .await
         .expect("build web router")
 }
@@ -51,7 +52,8 @@ async fn api_app() -> axum::Router {
         .migrate()
         .await
         .expect("tower-sessions postgres migrate");
-    api::create_api_app(pool, store, config, Vec::new())
+    let memory_stores = den_memory::MemoryStoreManager::new(config.as_ref());
+    api::create_api_app(pool, store, config, memory_stores, Vec::new())
         .await
         .expect("build api router")
         .0

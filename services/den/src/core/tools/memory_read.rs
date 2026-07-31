@@ -23,24 +23,31 @@ use den_service::bears::BearProfile;
 pub(crate) struct DenRoleMemoryStore<'a> {
     pool: &'a PgPool,
     config: &'a Config,
+    stores: &'a MemoryStoreManager,
 }
 
 impl<'a> DenRoleMemoryStore<'a> {
-    pub(crate) fn new(pool: &'a PgPool, config: &'a Config) -> Self {
-        Self { pool, config }
+    pub(crate) fn new(
+        pool: &'a PgPool,
+        config: &'a Config,
+        stores: &'a MemoryStoreManager,
+    ) -> Self {
+        Self {
+            pool,
+            config,
+            stores,
+        }
     }
 }
 
 impl RoleMemoryStore for DenRoleMemoryStore<'_> {
     async fn read(&self, bear_id: Uuid, _role: BearProfile, path: &str) -> Result<Value, DenError> {
-        let stores = MemoryStoreManager::new(self.config);
-        let store = stores.store_for_bear(bear_id).await?;
+        let store = self.stores.store_for_bear(bear_id).await?;
         sqlite_memory::sqlite_memory_read(&store, path).await
     }
 
     async fn browse(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
-        let stores = MemoryStoreManager::new(self.config);
-        let store = stores.store_for_bear(bear_id).await?;
+        let store = self.stores.store_for_bear(bear_id).await?;
         sqlite_memory::sqlite_memory_browse(&store, role.as_str()).await
     }
 
@@ -56,13 +63,19 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
         limit: i64,
     ) -> Result<Value, DenError> {
         let limit = usize::try_from(limit).unwrap_or(10);
-        den_runtime::recall::hybrid_memory_search(self.config, bear_id, role.as_str(), query, limit)
-            .await
+        den_runtime::recall::hybrid_memory_search(
+            self.config,
+            self.stores,
+            bear_id,
+            role.as_str(),
+            query,
+            limit,
+        )
+        .await
     }
 
     async fn status_base(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
-        let stores = MemoryStoreManager::new(self.config);
-        let store = stores.store_for_bear(bear_id).await?;
+        let store = self.stores.store_for_bear(bear_id).await?;
         sqlite_memory::sqlite_memory_status(&store, role.as_str()).await
     }
 
@@ -72,9 +85,8 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
         role: BearProfile,
         entry: RoleMemoryEntryWrite,
     ) -> Result<Value, DenError> {
-        let stores = MemoryStoreManager::new(self.config);
         let written = sqlite_memory::sqlite_write_profile_entry(
-            &stores,
+            self.stores,
             bear_id,
             role.as_str(),
             &entry.kind,
@@ -102,10 +114,11 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
 pub(crate) async fn memory_status(
     pool: &PgPool,
     config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearProfile,
 ) -> Result<Value, CustomError> {
-    let memory = DenRoleMemoryStore::new(pool, config);
+    let memory = DenRoleMemoryStore::new(pool, config, stores);
     let prompt = DenPromptMemoryStore::new(pool);
     den_core::tools::memory::memory_status(&memory, &prompt, context.bear_id, role)
         .await
@@ -114,9 +127,10 @@ pub(crate) async fn memory_status(
 
 pub(crate) async fn memory_status_value(
     config: &Config,
+    stores: &MemoryStoreManager,
     context: &DenToolInvocationContext,
     role: BearProfile,
     pool: &PgPool,
 ) -> Result<Value, CustomError> {
-    memory_status(pool, config, context, role).await
+    memory_status(pool, config, stores, context, role).await
 }

@@ -396,7 +396,7 @@ const GRAPH_MAX_DEPTH: u32 = 2;
 /// is inherent (traversal is over the descriptive table only) and `AccessContext` is applied by
 /// the caller once access rules exist.
 pub async fn graph_expand_hits(
-    config: &Config,
+    stores: &den_memory::MemoryStoreManager,
     bear_id: Uuid,
     role: &str,
     seed_memory_ids: &[String],
@@ -406,7 +406,6 @@ pub async fn graph_expand_hits(
     if seed_memory_ids.is_empty() || limit == 0 {
         return Ok(Vec::new());
     }
-    let stores = den_memory::MemoryStoreManager::new(config);
     let store = stores.store_for_bear(bear_id).await?;
     let reached =
         den_memory::bounded_graph_expand(&store, seed_memory_ids, max_depth, limit).await?;
@@ -488,6 +487,7 @@ pub async fn graph_expand_hits(
 /// The keyword leg reads the canonical store, so its errors propagate.
 pub async fn hybrid_memory_search(
     config: &Config,
+    stores: &den_memory::MemoryStoreManager,
     bear_id: Uuid,
     role: &str,
     query: &str,
@@ -524,7 +524,6 @@ pub async fn hybrid_memory_search(
         }
     };
 
-    let stores = den_memory::MemoryStoreManager::new(config);
     let store = stores.store_for_bear(bear_id).await?;
     let limit_i64 = i64::try_from(fetch_limit).unwrap_or(10);
     let keyword =
@@ -543,7 +542,7 @@ pub async fn hybrid_memory_search(
             }
         }
     }
-    let graph = match graph_expand_hits(config, bear_id, role, &seeds, GRAPH_MAX_DEPTH, fetch_limit)
+    let graph = match graph_expand_hits(stores, bear_id, role, &seeds, GRAPH_MAX_DEPTH, fetch_limit)
         .await
     {
         Ok(hits) => hits,

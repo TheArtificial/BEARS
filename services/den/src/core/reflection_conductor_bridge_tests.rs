@@ -128,10 +128,12 @@ async fn memory_curate_worker_loop_processes_queued_runs_until_cancelled() {
     let worker_pool = pool.clone();
     let worker_token = token.clone();
     let config = Arc::new(Config::load());
+    let worker_stores = MemoryStoreManager::new(config.as_ref());
     let handle = tokio::spawn(async move {
         run_memory_curate_worker_loop(
             worker_pool,
             config,
+            worker_stores,
             worker_token,
             std::time::Duration::from_millis(25),
         )

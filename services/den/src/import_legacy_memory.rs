@@ -108,6 +108,9 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<Option<ImportLegacyMemoryAr
 pub async fn run_import_legacy_memory(args: ImportLegacyMemoryArgs) -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let config = Config::load();
+    // Sanctioned construction: `den import-legacy-memory` is a short-lived CLI
+    // process (ADR-0031 write topology: one owning process per Bear database —
+    // the target Bear's runtime must be stopped while importing).
     let stores = den_memory::MemoryStoreManager::new(&config);
     let store = stores
         .store_for_bear(args.bear_id)

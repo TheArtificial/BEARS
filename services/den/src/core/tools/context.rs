@@ -80,7 +80,7 @@ impl<'a> DenToolContext<'a> {
     }
 
     fn memory(&self) -> DenRoleMemoryStore<'a> {
-        DenRoleMemoryStore::new(self.pool, self.config)
+        DenRoleMemoryStore::new(self.pool, self.config, self.stores)
     }
 
     fn prompt(&self) -> DenPromptMemoryStore<'a> {
@@ -116,6 +116,7 @@ impl<'a> DenToolContext<'a> {
         DenEnvironmentOps {
             pool: self.pool,
             config: self.config,
+            stores: self.stores,
         }
     }
 

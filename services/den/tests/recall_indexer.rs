@@ -432,7 +432,7 @@ async fn hybrid_search_graph_leg_surfaces_indirectly_linked_record() {
     .await
     .expect("link neighbor");
 
-    let result = hybrid_memory_search(&config, bear_id, "work", token, 10)
+    let result = hybrid_memory_search(&config, &stores, bear_id, "work", token, 10)
         .await
         .expect("hybrid search");
 
@@ -488,7 +488,7 @@ async fn hybrid_search_temporal_leg_filters_by_effective_time() {
     }
 
     // A `today` window keeps just-written records and strips the temporal phrase from the query.
-    let today = hybrid_memory_search(&config, bear_id, "work", &format!("{token} today"), 10)
+    let today = hybrid_memory_search(&config, &stores, bear_id, "work", &format!("{token} today"), 10)
         .await
         .expect("today search");
     assert_eq!(today["temporal"]["matched"], "today", "{today}");
@@ -500,6 +500,7 @@ async fn hybrid_search_temporal_leg_filters_by_effective_time() {
     // A window entirely in the past prunes every just-written record.
     let past = hybrid_memory_search(
         &config,
+        &stores,
         bear_id,
         "work",
         &format!("{token} before 2000-01-01"),

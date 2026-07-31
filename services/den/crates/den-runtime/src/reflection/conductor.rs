@@ -214,6 +214,7 @@ pub async fn run_next_archive_harvest_once(
 pub async fn run_archive_harvest_worker_loop(
     pool: PgPool,
     config: Arc<Config>,
+    stores: MemoryStoreManager,
     worker_token: tokio_util::sync::CancellationToken,
     poll_interval: std::time::Duration,
 ) -> Result<(), DenError> {
@@ -224,7 +225,6 @@ pub async fn run_archive_harvest_worker_loop(
         }
 
         let bear_ids = list_bears_with_queued_archive_harvest_runs(&pool).await?;
-        let stores = MemoryStoreManager::new(config.as_ref());
         for bear_id in bear_ids {
             if worker_token.is_cancelled() {
                 break;
@@ -819,6 +819,7 @@ fn project_curate_briefing_to_conversation(
 pub async fn run_memory_curate_worker_loop(
     pool: PgPool,
     config: Arc<Config>,
+    stores: MemoryStoreManager,
     worker_token: tokio_util::sync::CancellationToken,
     poll_interval: std::time::Duration,
 ) -> Result<(), DenError> {
@@ -831,7 +832,6 @@ pub async fn run_memory_curate_worker_loop(
         }
 
         let bear_ids = list_bears_with_queued_memory_curate_runs(&pool).await?;
-        let stores = MemoryStoreManager::new(config.as_ref());
         for bear_id in bear_ids {
             if worker_token.is_cancelled() {
                 break;
@@ -1082,6 +1082,7 @@ pub async fn run_next_recall_index_once(
 pub async fn run_recall_index_worker_loop(
     pool: PgPool,
     config: Arc<Config>,
+    stores: MemoryStoreManager,
     worker_token: tokio_util::sync::CancellationToken,
     poll_interval: std::time::Duration,
 ) -> Result<(), DenError> {
@@ -1092,7 +1093,6 @@ pub async fn run_recall_index_worker_loop(
         }
 
         let bear_ids = list_bears_with_queued_recall_index_runs(&pool).await?;
-        let stores = MemoryStoreManager::new(config.as_ref());
         for bear_id in bear_ids {
             if worker_token.is_cancelled() {
                 break;

@@ -23,9 +23,7 @@ use crate::{
     web::{self, AppState},
 };
 use den_core::DenError;
-use den_memory::{
-    admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats, MemoryStoreManager,
-};
+use den_memory::{admin_inspect::bear_memory_admin_stats, BearMemoryAdminStats};
 use den_service::bears::{
     db as bears_db, db::BearParams, provision, BearProfile, BearProfileBinding,
 };
@@ -498,7 +496,7 @@ async fn bear_detail_response(
         .count();
 
     let memory_stats: Option<BearMemoryAdminStats> = {
-        let manager = MemoryStoreManager::new(state.config.as_ref());
+        let manager = state.memory_stores.clone();
         match bear_memory_admin_stats(&manager, state.config.as_ref(), id).await {
             Ok(stats) => Some(stats),
             Err(err) => {
@@ -669,7 +667,7 @@ pub async fn new_action(
         }
 
         if let Err(e) =
-            provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id)
+            provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, id)
                 .await
         {
             tracing::warn!(%id, "Bear provision failed: {e}");
@@ -808,7 +806,7 @@ async fn edit_action(
         .await?;
 
         if let Err(e) =
-            provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id)
+            provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, id)
                 .await
         {
             tracing::warn!(%id, "Native profile refresh after bear edit failed: {e}");
@@ -934,7 +932,7 @@ async fn edit_prompt_action(
         )
         .await?;
 
-        provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), id)
+        provision::provision_bear_if_configured(state.sqlx_pool(), state.config.as_ref(), &state.memory_stores, id)
             .await?;
 
         Ok(Redirect::to(&format!("/admin/bears/{id}")).into_response())
@@ -1142,6 +1140,7 @@ async fn provision_missing_profiles_action(
     let message = match provision::provision_missing_bear_profiles(
         state.sqlx_pool(),
         state.config.as_ref(),
+        &state.memory_stores,
         id,
     )
     .await

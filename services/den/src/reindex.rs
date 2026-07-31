@@ -65,6 +65,9 @@ pub async fn run_reindex(target: ReindexTarget) -> anyhow::Result<()> {
         .connect(&config.database_url)
         .await
         .context("connect to Postgres (DATABASE_URL)")?;
+    // Sanctioned construction: `den reindex` is a short-lived CLI process, so
+    // this is its one process-local `MemoryStoreManager` (ADR-0031 write
+    // topology: one owning process per Bear database).
     let stores = den_memory::MemoryStoreManager::new(&config);
 
     let bear_ids: Vec<Uuid> = match target {

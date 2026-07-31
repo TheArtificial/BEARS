@@ -195,7 +195,10 @@ async fn ensure_smoke_role_runtimes(
     bear_id: uuid::Uuid,
     config: &Config,
 ) -> Result<()> {
-    provision::provision_bear_if_configured(pool, config, bear_id)
+    // Sanctioned construction: `den seed` is a short-lived CLI process, so this
+    // is its one process-local `MemoryStoreManager` (ADR-0031 write topology).
+    let stores = den_memory::MemoryStoreManager::new(config);
+    provision::provision_bear_if_configured(pool, config, &stores, bear_id)
         .await
         .context("provision smoke bear native runtimes")
 }
