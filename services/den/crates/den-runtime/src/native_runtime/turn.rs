@@ -824,6 +824,19 @@ async fn build_session(
     let profile = profile.with_tool_budget_multiplier(tool_budget_multiplier);
     let model_option =
         den_service::model_selection::resolve_model_option(deps.pool, &model).await?;
+    // Best-effort: calibration only improves the approximate estimator, so a
+    // failed lookup must never fail the turn (ADR-0047 §7).
+    let model_token_calibration =
+        den_service::model_selection::load_model_token_calibration(deps.pool, &model)
+            .await
+            .unwrap_or_else(|err| {
+                tracing::debug!(
+                    model = %model,
+                    error = %err,
+                    "model token calibration lookup failed; using chars/4 fallback"
+                );
+                None
+            });
     let bifrost_virtual_key = den_service::bears::db::bifrost_virtual_key_for_inference(
         deps.pool,
         bear.id,
@@ -894,6 +907,7 @@ async fn build_session(
         model_max_output_tokens: model_option
             .as_ref()
             .and_then(|option| option.max_output_tokens),
+        model_token_calibration,
         bifrost_virtual_key,
         api_style,
         step: 0,
@@ -2147,6 +2161,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,
@@ -2224,6 +2239,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,
@@ -2309,6 +2325,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,
@@ -2365,6 +2382,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,
@@ -2499,6 +2517,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 8,
@@ -2615,6 +2634,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 1,
@@ -2780,6 +2800,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 1,
@@ -2937,6 +2958,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 1,

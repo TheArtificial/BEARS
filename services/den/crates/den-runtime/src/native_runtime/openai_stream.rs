@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::Poll;
 
 use den_llm::LlmRequestTelemetry;
@@ -15,6 +16,11 @@ use crate::{
     runtime_stream_parser::{find_sse_frame_end, strip_trailing_sse_delimiter_owned},
 };
 use den_core::DenError;
+
+/// Best-effort receiver for provider-reported prompt-token usage observed on a
+/// stream (ADR-0047 §7 calibration input). Invoked at most once per stream;
+/// implementations must not block.
+pub type ObservedPromptTokensSink = Arc<dyn Fn(u64) + Send + Sync>;
 
 fn is_terminal_or_pause(event: &RuntimeStreamEvent) -> bool {
     matches!(
@@ -33,12 +39,13 @@ fn is_terminal_or_pause(event: &RuntimeStreamEvent) -> bool {
 pub fn responses_byte_stream_to_event_stream(
     parsed: impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin + 'static,
 ) -> RuntimeEventStream {
-    responses_byte_stream_to_event_stream_with_telemetry(parsed, None)
+    responses_byte_stream_to_event_stream_with_telemetry(parsed, None, None)
 }
 
 pub fn responses_byte_stream_to_event_stream_with_telemetry(
     parsed: impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin + 'static,
     telemetry: Option<LlmRequestTelemetry>,
+    usage_sink: Option<ObservedPromptTokensSink>,
 ) -> RuntimeEventStream {
     let mut buffer = Vec::new();
     let mut queued_events: VecDeque<Result<RuntimeStreamEvent, DenError>> = VecDeque::new();
@@ -77,6 +84,12 @@ pub fn responses_byte_stream_to_event_stream_with_telemetry(
                         Err(err) => queued_events.push_back(Err(err)),
                     }
                 }
+                if let (Some(prompt_tokens), Some(sink)) = (
+                    accumulator.take_observed_prompt_tokens(),
+                    usage_sink.as_ref(),
+                ) {
+                    sink(prompt_tokens);
+                }
                 if accumulator.should_detach_upstream() {
                     finished = true;
                 }
@@ -106,12 +119,13 @@ pub fn responses_byte_stream_to_event_stream_with_telemetry(
 pub fn openai_byte_stream_to_event_stream(
     parsed: impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin + 'static,
 ) -> RuntimeEventStream {
-    openai_byte_stream_to_event_stream_with_telemetry(parsed, None)
+    openai_byte_stream_to_event_stream_with_telemetry(parsed, None, None)
 }
 
 pub fn openai_byte_stream_to_event_stream_with_telemetry(
     parsed: impl Stream<Item = Result<bytes::Bytes, DenError>> + Send + Unpin + 'static,
     telemetry: Option<LlmRequestTelemetry>,
+    usage_sink: Option<ObservedPromptTokensSink>,
 ) -> RuntimeEventStream {
     let mut buffer = Vec::new();
     let mut queued_events: VecDeque<Result<RuntimeStreamEvent, DenError>> = VecDeque::new();
@@ -154,6 +168,12 @@ pub fn openai_byte_stream_to_event_stream_with_telemetry(
                             }
                             Err(err) => queued_events.push_back(Err(err)),
                         }
+                    }
+                    if let (Some(prompt_tokens), Some(sink)) = (
+                        accumulator.take_observed_prompt_tokens(),
+                        usage_sink.as_ref(),
+                    ) {
+                        sink(prompt_tokens);
                     }
                     if accumulator.should_detach_upstream() {
                         finished = true;

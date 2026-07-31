@@ -920,6 +920,7 @@ mod tests {
             estimate_precision: den_protocol::ContextBudgetEstimatePrecision::Approximate,
             near_budget,
             over_budget,
+            calibration: None,
             components: Vec::new(),
         }
     }

@@ -29,6 +29,88 @@ pub struct DenModelRegistryEntry {
     pub selectable: bool,
 }
 
+/// Aggregate chars→tokens correction mirrored from observed Bifrost prompt-token
+/// usage (ADR-0047 §7, 2026-07-30 amendment). Bifrost stays the usage authority;
+/// Den keeps one exponential moving average per model handle so the approximate
+/// context-budget estimator can correct its chars/4 fallback.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModelTokenCalibration {
+    /// EMA of observed prompt tokens per assembled prompt character.
+    pub tokens_per_char: f64,
+    /// Number of observed samples folded into the EMA.
+    pub sample_count: i64,
+}
+
+/// Minimum observed samples before a stored ratio is applied to estimates.
+pub const MODEL_TOKEN_CALIBRATION_MIN_SAMPLES: i64 = 5;
+/// EMA smoothing factor applied to each new observed ratio.
+pub const MODEL_TOKEN_CALIBRATION_EMA_ALPHA: f64 = 0.2;
+/// Lower clamp for tokens-per-char so one bad sample cannot poison estimates.
+pub const MODEL_TOKEN_CALIBRATION_MIN_RATIO: f64 = 0.1;
+/// Upper clamp for tokens-per-char so one bad sample cannot poison estimates.
+pub const MODEL_TOKEN_CALIBRATION_MAX_RATIO: f64 = 1.0;
+
+/// Observed ratio for one sample, clamped to the sane range. Returns `None`
+/// when either side of the ratio is unusable (zero counts).
+pub fn observed_tokens_per_char(
+    observed_prompt_tokens: u64,
+    assembled_prompt_chars: u64,
+) -> Option<f64> {
+    if observed_prompt_tokens == 0 || assembled_prompt_chars == 0 {
+        return None;
+    }
+    let ratio = observed_prompt_tokens as f64 / assembled_prompt_chars as f64;
+    Some(ratio.clamp(
+        MODEL_TOKEN_CALIBRATION_MIN_RATIO,
+        MODEL_TOKEN_CALIBRATION_MAX_RATIO,
+    ))
+}
+
+impl ModelTokenCalibration {
+    /// Fold one observed ratio into the stored calibration (EMA update).
+    /// A missing or non-finite previous value restarts from the observation.
+    pub fn fold_sample(previous: Option<Self>, observed_tokens_per_char: f64) -> Self {
+        let observed = observed_tokens_per_char.clamp(
+            MODEL_TOKEN_CALIBRATION_MIN_RATIO,
+            MODEL_TOKEN_CALIBRATION_MAX_RATIO,
+        );
+        match previous {
+            Some(prev) if prev.tokens_per_char.is_finite() => {
+                let base = prev.tokens_per_char.clamp(
+                    MODEL_TOKEN_CALIBRATION_MIN_RATIO,
+                    MODEL_TOKEN_CALIBRATION_MAX_RATIO,
+                );
+                Self {
+                    tokens_per_char: MODEL_TOKEN_CALIBRATION_EMA_ALPHA
+                        .mul_add(observed - base, base)
+                        .clamp(
+                            MODEL_TOKEN_CALIBRATION_MIN_RATIO,
+                            MODEL_TOKEN_CALIBRATION_MAX_RATIO,
+                        ),
+                    sample_count: prev.sample_count.saturating_add(1),
+                }
+            }
+            _ => Self {
+                tokens_per_char: observed,
+                sample_count: previous.map_or(1, |prev| prev.sample_count.saturating_add(1)),
+            },
+        }
+    }
+
+    /// The ratio to apply to estimates, or `None` while too few samples exist
+    /// (callers then fall back to the uncalibrated chars/4 heuristic).
+    pub fn applied_tokens_per_char(self) -> Option<f64> {
+        (self.sample_count >= MODEL_TOKEN_CALIBRATION_MIN_SAMPLES
+            && self.tokens_per_char.is_finite())
+        .then(|| {
+            self.tokens_per_char.clamp(
+                MODEL_TOKEN_CALIBRATION_MIN_RATIO,
+                MODEL_TOKEN_CALIBRATION_MAX_RATIO,
+            )
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelGatewayCompatibilityReport {
     pub metadata_model_count: usize,
@@ -511,6 +593,79 @@ mod tests {
         assert_eq!(option.handle, "gpt-4.1");
         assert!(option.label.contains("OpenAI GPT-4.1"));
         assert_eq!(option.context_window, Some(1_047_576));
+    }
+
+    #[test]
+    fn observed_tokens_per_char_clamps_and_rejects_zero_counts() {
+        assert_eq!(observed_tokens_per_char(0, 4_000), None);
+        assert_eq!(observed_tokens_per_char(1_000, 0), None);
+        assert_eq!(observed_tokens_per_char(1_000, 4_000), Some(0.25));
+        // One bad sample cannot escape the sane range.
+        assert_eq!(observed_tokens_per_char(1, 1_000_000), Some(0.1));
+        assert_eq!(observed_tokens_per_char(50_000, 1_000), Some(1.0));
+    }
+
+    #[test]
+    fn fold_sample_starts_from_first_observation() {
+        let calibration = ModelTokenCalibration::fold_sample(None, 0.3);
+        assert!((calibration.tokens_per_char - 0.3).abs() < f64::EPSILON);
+        assert_eq!(calibration.sample_count, 1);
+    }
+
+    #[test]
+    fn fold_sample_applies_ema_and_clamps() {
+        let previous = ModelTokenCalibration {
+            tokens_per_char: 0.25,
+            sample_count: 4,
+        };
+        let updated = ModelTokenCalibration::fold_sample(Some(previous), 0.35);
+        // 0.25 + 0.2 * (0.35 - 0.25) = 0.27
+        assert!((updated.tokens_per_char - 0.27).abs() < 1e-12);
+        assert_eq!(updated.sample_count, 5);
+
+        // An absurd observation is clamped before folding.
+        let poisoned = ModelTokenCalibration::fold_sample(Some(previous), 400.0);
+        assert!(poisoned.tokens_per_char <= MODEL_TOKEN_CALIBRATION_MAX_RATIO);
+        // 0.25 + 0.2 * (1.0 - 0.25) = 0.4
+        assert!((poisoned.tokens_per_char - 0.4).abs() < 1e-12);
+    }
+
+    #[test]
+    fn fold_sample_recovers_from_non_finite_stored_ratio() {
+        let previous = ModelTokenCalibration {
+            tokens_per_char: f64::NAN,
+            sample_count: 9,
+        };
+        let updated = ModelTokenCalibration::fold_sample(Some(previous), 0.3);
+        assert!((updated.tokens_per_char - 0.3).abs() < f64::EPSILON);
+        assert_eq!(updated.sample_count, 10);
+    }
+
+    #[test]
+    fn applied_ratio_requires_min_samples_and_finite_value() {
+        let below_threshold = ModelTokenCalibration {
+            tokens_per_char: 0.3,
+            sample_count: MODEL_TOKEN_CALIBRATION_MIN_SAMPLES - 1,
+        };
+        assert_eq!(below_threshold.applied_tokens_per_char(), None);
+
+        let at_threshold = ModelTokenCalibration {
+            tokens_per_char: 0.3,
+            sample_count: MODEL_TOKEN_CALIBRATION_MIN_SAMPLES,
+        };
+        assert_eq!(at_threshold.applied_tokens_per_char(), Some(0.3));
+
+        let non_finite = ModelTokenCalibration {
+            tokens_per_char: f64::INFINITY,
+            sample_count: 100,
+        };
+        assert_eq!(non_finite.applied_tokens_per_char(), None);
+
+        let out_of_range = ModelTokenCalibration {
+            tokens_per_char: 7.5,
+            sample_count: 100,
+        };
+        assert_eq!(out_of_range.applied_tokens_per_char(), Some(1.0));
     }
 
     #[test]

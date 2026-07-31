@@ -1362,6 +1362,7 @@ async fn session_state_includes_latest_context_budget_for_resolved_conversation(
         estimate_precision: ContextBudgetEstimatePrecision::Approximate,
         near_budget: false,
         over_budget: false,
+        calibration: None,
         components: vec![ContextBudgetComponentReport {
             key: "history".to_string(),
             label: "Conversation history".to_string(),

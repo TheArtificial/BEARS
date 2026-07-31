@@ -7,7 +7,8 @@ use std::pin::Pin;
 pub mod context_budget;
 
 pub use context_budget::{
-    ContextBudgetComponentReport, ContextBudgetEstimatePrecision, ContextBudgetReport,
+    ContextBudgetCalibrationReport, ContextBudgetComponentReport, ContextBudgetEstimatePrecision,
+    ContextBudgetReport,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

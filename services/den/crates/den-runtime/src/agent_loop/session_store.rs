@@ -39,6 +39,10 @@ pub struct AgentLoopSession {
     pub model: String,
     pub model_context_window: Option<u32>,
     pub model_max_output_tokens: Option<u32>,
+    /// Observed chars→tokens correction for this model, mirrored from the Den
+    /// model registry at session build (ADR-0047 §7). `None` falls back to the
+    /// chars/4 heuristic.
+    pub model_token_calibration: Option<den_llm::model_registry::ModelTokenCalibration>,
     pub bifrost_virtual_key: Option<String>,
     pub api_style: Option<LlmApiStyle>,
     pub step: u32,
@@ -397,6 +401,7 @@ mod tests {
             model: "openai/test".to_string(),
             model_context_window: None,
             model_max_output_tokens: None,
+            model_token_calibration: None,
             bifrost_virtual_key: None,
             api_style: None,
             step: 0,

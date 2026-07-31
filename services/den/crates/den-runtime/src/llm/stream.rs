@@ -50,6 +50,7 @@ pub struct OpenAiStreamAccumulator {
     tool_args: std::collections::HashMap<String, String>,
     finish_reason: Option<String>,
     saw_tool_calls: bool,
+    observed_prompt_tokens: Option<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -285,6 +286,17 @@ impl OpenAiStreamAccumulator {
             return out;
         }
 
+        // Providers/gateways that report usage on the stream attach it to the
+        // final chunk (often with an empty `choices` array); capture it before
+        // the choice-shaped early return (ADR-0047 §7 calibration input).
+        if let Some(prompt_tokens) = json
+            .pointer("/usage/prompt_tokens")
+            .and_then(Value::as_u64)
+            .filter(|tokens| *tokens > 0)
+        {
+            self.observed_prompt_tokens = Some(prompt_tokens);
+        }
+
         let choice = json.pointer("/choices/0").or_else(|| json.get("choice"));
         let Some(choice) = choice else {
             return out;
@@ -418,6 +430,12 @@ impl OpenAiStreamAccumulator {
         self.finish_reason.is_some()
     }
 
+    /// Take the observed prompt-token usage, if the provider reported any on
+    /// this stream. Consuming ensures a sample is only delivered once.
+    pub fn take_observed_prompt_tokens(&mut self) -> Option<u64> {
+        self.observed_prompt_tokens.take()
+    }
+
     pub fn flush_end_of_stream(&mut self) -> Vec<RuntimeStreamEvent> {
         if self.saw_tool_calls && self.finish_reason.is_none() {
             return self.terminal_events_for_finish("tool_calls");
@@ -440,6 +458,7 @@ pub struct ResponsesStreamAccumulator {
     reasoning_output_item_keys: HashSet<String>,
     completed: bool,
     saw_tool_call: bool,
+    observed_prompt_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -792,6 +811,16 @@ impl ResponsesStreamAccumulator {
             }
             "response.completed" => {
                 self.completed = true;
+                // Responses API reports usage on the completion event; capture
+                // prompt-side usage for calibration (ADR-0047 §7).
+                if let Some(prompt_tokens) = json
+                    .pointer("/response/usage/input_tokens")
+                    .or_else(|| json.pointer("/response/usage/prompt_tokens"))
+                    .and_then(Value::as_u64)
+                    .filter(|tokens| *tokens > 0)
+                {
+                    self.observed_prompt_tokens = Some(prompt_tokens);
+                }
                 out.finish_reason = Some("stop".to_string());
                 if !self.saw_tool_call {
                     out.events.push(RuntimeStreamEvent::Semantic(
@@ -883,6 +912,12 @@ impl ResponsesStreamAccumulator {
 
     pub fn should_detach_upstream(&self) -> bool {
         self.completed
+    }
+
+    /// Take the observed prompt-token usage, if the provider reported any on
+    /// this stream. Consuming ensures a sample is only delivered once.
+    pub fn take_observed_prompt_tokens(&mut self) -> Option<u64> {
+        self.observed_prompt_tokens.take()
     }
 
     pub fn flush_end_of_stream(&mut self) -> Vec<RuntimeStreamEvent> {

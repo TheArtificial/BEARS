@@ -1,13 +1,17 @@
 use den_core::DenError;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::Stream;
 use futures::StreamExt;
 
-use crate::native_runtime::openai_byte_stream_to_event_stream;
+use crate::native_runtime::{
+    openai_byte_stream_to_event_stream, openai_byte_stream_to_event_stream_with_telemetry,
+    ObservedPromptTokensSink,
+};
 use den_protocol::{RuntimeSemanticEvent, RuntimeStreamEvent};
 
 #[tokio::test]
@@ -26,6 +30,25 @@ async fn provider_bytes_emit_process_local_activity_before_semantic_events() {
         RuntimeStreamEvent::Semantic(RuntimeSemanticEvent::AssistantTextDelta { ref text })
             if text == "hi"
     ));
+}
+
+#[tokio::test]
+async fn openai_usage_chunk_is_delivered_to_calibration_sink_once() {
+    let observed = Arc::new(AtomicU64::new(0));
+    let observed_by_sink = observed.clone();
+    let sink: ObservedPromptTokensSink = Arc::new(move |prompt_tokens| {
+        observed_by_sink.store(prompt_tokens, Ordering::SeqCst);
+    });
+    let source = futures::stream::iter(vec![Ok::<Bytes, DenError>(Bytes::from_static(
+        b"data: {\"usage\":{\"prompt_tokens\":1234},\"choices\":[]}\n\n",
+    ))]);
+    let mut stream = openai_byte_stream_to_event_stream_with_telemetry(source, None, Some(sink));
+
+    while let Some(item) = stream.next().await {
+        item.expect("stream event");
+    }
+
+    assert_eq!(observed.load(Ordering::SeqCst), 1_234);
 }
 
 #[tokio::test]
