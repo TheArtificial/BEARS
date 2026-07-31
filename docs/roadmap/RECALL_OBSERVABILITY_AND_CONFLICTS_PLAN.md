@@ -2,10 +2,11 @@
 
 ## Status
 
-In progress (2026-07-31). Implements two 2026-07-30 amendments:
+**Complete** (2026-07-31). Implements two 2026-07-30 amendments:
 
-- **Part A (Phases A1+A2) landed** (commit `afda4b93`): `recall_watermark` in `den-service/src/recall/watermark.rs` (indexable heads vs live registry passages; run stats from the `recall_index` lane; `None` when Qdrant unconfigured), surfaced via the `memory_status` payload's `recall` object, the admin memory dashboard, and `recall_watermark_for_bear` / `is_healthy()`. Phase A3 (turn annotation) deferred until after Part B's rendering conventions.
-- **Part B open**: conflict predicate, `conflicting` marker, `memory_conflict` observations.
+- **Part A (Phases A1+A2) landed** (commit `afda4b93`): `recall_watermark` in `den-service/src/recall/watermark.rs` (indexable heads vs live registry passages; run stats from the `recall_index` lane; `None` when Qdrant unconfigured), surfaced via the `memory_status` payload's `recall` object, the admin memory dashboard, and `recall_watermark_for_bear` / `is_healthy()`.
+- **Part B + Phase A3 landed** (commit `373f1a00`): `detect_conflicts` in `den-memory/src/conflicts.rs` (shared path or primary subject + overlapping validity + live heads + no supersession chain, depth-capped CTE seeded by retrieved ids); detection runs before the top-N cut with counterpart retention; `conflicting`/`conflicts_with` markers in `memory_search` results, `render_recall_block`, and session diagnostics; idempotent best-effort `memory_conflict` observations feed curate review; turn assembly annotates "recall index N records behind" when the watermark lags.
+- **Noted for follow-up** (not in scope here): the observation→proposal reflection enqueue exists only for the watch `observation_write` path — `memory_conflict` observations surface in review-attention counts but do not yet auto-enqueue a `memory_curate` run.
 
 - [ADR-0038 §8 — Recall consistency watermark](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) ("is this Bear fully recallable right now?" must have a definite, visible answer),
 - [ADR-0041 §8 — Read-time contradiction surfacing](../decisions/adr-0041-archival-recall-and-async-curation.md) (conflicting live records are surfaced, never silently ranked away).
