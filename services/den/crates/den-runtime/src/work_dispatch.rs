@@ -768,6 +768,14 @@ async fn teardown_sandbox(
     }
 }
 
+fn should_block_failed_work_task(
+    active_task_id: Option<Uuid>,
+    task_id: Uuid,
+    status: &str,
+) -> bool {
+    Some(task_id) == active_task_id && status != "done"
+}
+
 async fn fail_run(
     pool: &PgPool,
     run: &WorkRunRow,
@@ -777,12 +785,18 @@ async fn fail_run(
 ) {
     tracing::warn!(work_run_id = %run.id, reason, message, "work_dispatch: run failed");
     let service = PgDocketService::from_pool(pool);
+    let active_task_id = run
+        .result_refs
+        .as_ref()
+        .and_then(|refs| refs.get("task_id"))
+        .and_then(Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok());
     for (task_id, status) in
         work_runs::get_job_work_task_run_statuses(pool, run.job_id, run.job_run_id)
             .await
             .unwrap_or_default()
     {
-        if status == "done" {
+        if !should_block_failed_work_task(active_task_id, task_id, &status) {
             continue;
         }
         let _ = service
@@ -924,7 +938,10 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use super::{sandbox_exit_failure, work_run_outcome_summary, work_run_succeeded};
+    use super::{
+        sandbox_exit_failure, should_block_failed_work_task, work_run_outcome_summary,
+        work_run_succeeded,
+    };
 
     #[test]
     fn per_task_succeeds_when_its_checked_out_task_is_done() {
@@ -941,6 +958,25 @@ mod tests {
         assert!(!work_run_succeeded(Some("per_task"), None, &statuses));
         assert!(!work_run_succeeded(Some("per_job"), Some(done), &statuses));
         assert!(!work_run_succeeded(None, Some(done), &statuses));
+    }
+
+    #[test]
+    fn failed_work_run_blocks_only_its_active_unfinished_task() {
+        let active = Uuid::new_v4();
+        let unattempted = Uuid::new_v4();
+
+        assert!(should_block_failed_work_task(
+            Some(active),
+            active,
+            "in_progress"
+        ));
+        assert!(!should_block_failed_work_task(
+            Some(active),
+            unattempted,
+            "pending"
+        ));
+        assert!(!should_block_failed_work_task(Some(active), active, "done"));
+        assert!(!should_block_failed_work_task(None, active, "pending"));
     }
 
     #[test]

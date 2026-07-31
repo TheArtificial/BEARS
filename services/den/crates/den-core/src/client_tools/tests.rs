@@ -2,11 +2,21 @@ use super::*;
 use crate::tools::descriptor::builtin_den_tool_descriptors;
 
 #[test]
-fn git_status_is_read_only_without_an_approval_gate() {
-    let policy = client_tool_policy(ClientToolName::GitStatus);
-
-    assert_eq!(policy.approval_policy, ApprovalPolicy::Never);
-    assert_eq!(policy.sensitive_path_policy, SensitivePathPolicy::Deny);
+fn read_only_git_tools_do_not_require_an_approval_gate() {
+    for tool in [
+        ClientToolName::GitStatus,
+        ClientToolName::GitDiff,
+        ClientToolName::GitLog,
+        ClientToolName::GitShow,
+    ] {
+        let policy = client_tool_policy(tool);
+        assert_eq!(
+            policy.approval_policy,
+            ApprovalPolicy::Never,
+            "{tool:?} should not pause for permission"
+        );
+        assert_eq!(policy.sensitive_path_policy, SensitivePathPolicy::Deny);
+    }
 }
 
 #[test]
