@@ -1,6 +1,8 @@
 //! `recall_passages` registry access (ADR-0038 §3): Postgres metadata for the derived
 //! recall index. Enables idempotent upsert, content-hash dedup, and delete-on-supersede.
 
+use std::collections::HashMap;
+
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -64,6 +66,37 @@ pub async fn list_indexed_memory_ids(
     .await
     .map_err(db_err("list memory ids"))?;
     Ok(rows)
+}
+
+/// Live (non-deleted) chunk content hashes for every indexed memory record of a Bear,
+/// keyed `memory_id → chunk_index → content_hash`. Feeds the recall consistency
+/// watermark's canonical-vs-registry comparison (ADR-0038 §8).
+pub async fn live_chunk_hashes_by_memory(
+    pool: &PgPool,
+    bear_id: Uuid,
+    embedding_standard: &str,
+) -> Result<HashMap<String, HashMap<i32, String>>, DenError> {
+    let rows = sqlx::query_as::<_, (String, i32, String)>(
+        r"
+        SELECT memory_id, chunk_index, content_hash
+        FROM recall_passages
+        WHERE bear_id = $1 AND embedding_standard = $2 AND deleted_at IS NULL
+        ",
+    )
+    .bind(bear_id)
+    .bind(embedding_standard)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err("list chunk hashes"))?;
+
+    let mut by_memory: HashMap<String, HashMap<i32, String>> = HashMap::new();
+    for (memory_id, chunk_index, content_hash) in rows {
+        by_memory
+            .entry(memory_id)
+            .or_default()
+            .insert(chunk_index, content_hash);
+    }
+    Ok(by_memory)
 }
 
 /// Per-Bear recall coverage stats: live passage (chunk) count and the number of distinct

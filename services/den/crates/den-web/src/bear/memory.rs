@@ -1750,7 +1750,26 @@ async fn dashboard_view(
             recall_registry::passage_stats(state.sqlx_pool(), id, &config.embedding_standard)
                 .await
                 .unwrap_or((0, 0));
-        Some(json!({ "enabled": true, "passages": passages, "memories": memories }))
+        // Recall consistency watermark (ADR-0038 §8): lag + last-run failure summary.
+        let watermark = match den_service::recall::recall_watermark_for_bear(
+            state.sqlx_pool(),
+            config,
+            &manager,
+            id,
+        )
+        .await
+        {
+            Ok(watermark) => den_service::recall::recall_status_json(watermark.as_ref()),
+            Err(err) => {
+                json!({ "available": false, "reason": format!("watermark unavailable: {err}") })
+            }
+        };
+        Some(json!({
+            "enabled": true,
+            "passages": passages,
+            "memories": memories,
+            "watermark": watermark,
+        }))
     } else {
         None
     };

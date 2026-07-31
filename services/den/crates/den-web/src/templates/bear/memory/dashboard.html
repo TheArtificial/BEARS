@@ -329,6 +329,30 @@
             <strong>{{ recall.memories }}</strong> records indexed for semantic
             recall.
         </p>
+        {% if recall.watermark and recall.watermark.available %}
+        <p>
+            Watermark: indexed
+            <strong>{{ recall.watermark.indexed_seq }}</strong> of
+            <strong>{{ recall.watermark.canonical_seq }}</strong> canonical
+            records{% if recall.watermark.fully_recallable %} — fully
+            recallable{% else %} —
+            <strong>{{ recall.watermark.lag_count }}</strong>
+            {{ recall.watermark.lag_count == 1 and "record" or "records" }}
+            behind{% endif %}.
+        </p>
+        <p class="form-hint">
+            Last successful index run: {% if recall.watermark.last_success_at
+            %}{{ recall.watermark.last_success_at }}{% else %}never{% endif %}.
+            {% if recall.watermark.failed_run_count > 0 %} Failed runs since
+            last success:
+            <strong>{{ recall.watermark.failed_run_count }}</strong>. {% endif
+            %}
+        </p>
+        {% elif recall.watermark %}
+        <p class="form-hint">
+            Watermark unavailable: {{ recall.watermark.reason | e }}
+        </p>
+        {% endif %}
         <p class="form-hint">
             Recall is enabled (Qdrant configured). Indexing runs asynchronously
             after canonical writes.

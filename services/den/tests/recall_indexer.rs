@@ -67,6 +67,7 @@ async fn recall_indexer_round_trip_against_live_qdrant() {
     let req = IndexRequest {
         bear_id,
         memory_id: memory_id.clone(),
+        sequence_no: 1,
         logical_path: Some("core/recall/smoke.md".into()),
         scope_type: "shared".into(),
         scope_profile: None,
@@ -171,6 +172,7 @@ async fn recall_query_retrieves_indexed_passage_against_live_qdrant() {
     let req = IndexRequest {
         bear_id,
         memory_id: memory_id.clone(),
+        sequence_no: 1,
         logical_path: Some(logical_path.into()),
         scope_type: "shared".into(),
         scope_profile: None,
@@ -281,6 +283,7 @@ async fn entity_scoped_recall_filters_by_payload_entity_ids() {
     let req = IndexRequest {
         bear_id,
         memory_id: memory_id.clone(),
+        sequence_no: 1,
         logical_path: Some("core/recall/entity-smoke.md".into()),
         scope_type: "shared".into(),
         scope_profile: None,

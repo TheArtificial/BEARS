@@ -328,7 +328,7 @@ pub fn builtin_den_tool_descriptors() -> Vec<DenToolDescriptor> {
         descriptor(
             DEN_MEMORY_STATUS,
             "Memory status",
-            "Return SQLite memory health and entry counts for the current Bear role/Workplace. Use session_info first when current role, work surface, or memory scope is unclear.",
+            "Return SQLite memory health and entry counts for the current Bear role/Workplace, plus a `recall` object reporting the recall-index consistency watermark (indexed_seq, canonical_seq, lag_count, fully_recallable, last_success_at, failed_run_count; `available: false` when semantic recall is not configured). Use this to answer truthfully what memory is currently recallable. Use session_info first when current role, work surface, or memory scope is unclear.",
             "bear.memory",
             &["memory.status.read"],
             MEMORY_READ_PROFILES,

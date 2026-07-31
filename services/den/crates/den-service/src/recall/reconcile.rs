@@ -33,6 +33,7 @@ pub struct ReconcileOutcome {
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct HeadRow {
     memory_id: String,
+    sequence_no: i64,
     scope_type: String,
     scope_profile: Option<String>,
     kind: String,
@@ -50,7 +51,7 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
     let bear_id = store.bear_id();
     let rows = sqlx::query_as::<_, HeadRow>(
         r"
-        SELECT m.memory_id, m.scope_type, m.scope_profile, m.kind, m.visibility,
+        SELECT m.memory_id, m.sequence_no, m.scope_type, m.scope_profile, m.kind, m.visibility,
                m.salience, m.metadata_json, m.supersedes_memory_id, m.invalid_at,
                m.logical_path, m.work_surface_ref, m.content_text
         FROM memory_records m
@@ -101,6 +102,7 @@ pub async fn list_indexable_heads(store: &BearMemoryStore) -> Result<Vec<IndexRe
             Some(IndexRequest {
                 bear_id,
                 memory_id: head.memory_id,
+                sequence_no: head.sequence_no,
                 logical_path: head.logical_path,
                 scope_type: head.scope_type,
                 scope_profile: head.scope_profile,

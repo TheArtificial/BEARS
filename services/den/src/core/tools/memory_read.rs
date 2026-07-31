@@ -74,9 +74,26 @@ impl RoleMemoryStore for DenRoleMemoryStore<'_> {
         .await
     }
 
+    /// Base status plus the recall consistency watermark (ADR-0038 §8): a `recall`
+    /// object carrying `indexed_seq` / `canonical_seq` / `lag_count` / `fully_recallable`
+    /// / `last_success_at` / `failed_run_count`, or `{"available": false, ...}` when
+    /// recall is not configured. Watermark errors degrade the `recall` object rather
+    /// than failing the whole status.
     async fn status_base(&self, bear_id: Uuid, role: BearProfile) -> Result<Value, DenError> {
         let store = self.stores.store_for_bear(bear_id).await?;
-        sqlite_memory::sqlite_memory_status(&store, role.as_str()).await
+        let mut base = sqlite_memory::sqlite_memory_status(&store, role.as_str()).await?;
+        let recall = match den_runtime::recall::recall_watermark(self.pool, self.config, &store)
+            .await
+        {
+            Ok(watermark) => den_runtime::recall::recall_status_json(watermark.as_ref()),
+            Err(err) => {
+                serde_json::json!({ "available": false, "reason": format!("watermark unavailable: {err}") })
+            }
+        };
+        if let Some(obj) = base.as_object_mut() {
+            obj.insert("recall".to_string(), recall);
+        }
+        Ok(base)
     }
 
     async fn write_entry(
