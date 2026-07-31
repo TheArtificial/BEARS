@@ -700,7 +700,7 @@ pub async fn fetch_records_min(
         .collect())
 }
 
-fn parse_rfc3339(value: &str) -> Option<OffsetDateTime> {
+pub(crate) fn parse_rfc3339(value: &str) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
 }
 

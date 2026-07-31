@@ -218,6 +218,9 @@ pub fn recalled_memory_session_diagnostic(recall: Option<&Value>) -> Value {
                 "count": count,
                 "query": value.get("query_text").cloned().unwrap_or(Value::Null),
                 "top_paths": top_paths,
+                // Read-time conflict presence (ADR-0041 §8): pair count + record ids, when
+                // the recall projection detected contradictory live records.
+                "conflicts": value.get("conflicts").cloned().unwrap_or(Value::Null),
                 "reason": Value::Null,
                 "next_surface": "memory_search for canonical follow-up reads",
             })
@@ -366,7 +369,7 @@ async fn build_recall_section(
     if !embedder.is_enabled() {
         return None;
     }
-    let projection = match crate::recall::recall_for_turn_scoped(
+    let mut projection = match crate::recall::recall_for_turn_scoped(
         &qdrant,
         &embedder,
         &ctx.config.embedding_standard,
@@ -387,8 +390,55 @@ async fn build_recall_section(
             return None;
         }
     };
-    let block = crate::recall::render_recall_block(&projection, anchor_text)?;
+    // Read-time contradiction surfacing (ADR-0041 §8): detect over the retrieved passages,
+    // mark counterparts, and emit best-effort `memory_conflict` observations.
+    let memory_ids: Vec<String> = projection
+        .passages
+        .iter()
+        .map(|p| p.memory_id.clone())
+        .collect();
+    let conflicts =
+        crate::recall::surface_recall_conflicts(ctx.stores, ctx.bear_id, &memory_ids).await;
+    crate::recall::mark_projection_conflicts(&mut projection, &conflicts);
+
+    let mut block = crate::recall::render_recall_block(&projection, anchor_text)?;
+    // Recall watermark turn annotation (ADR-0038 §8 Phase A3): one line, best-effort —
+    // degraded recall must not read as absent memory. Errors mean no annotation, never a
+    // failed turn.
+    if let Some(lag_count) = recall_lag_count(ctx).await {
+        if lag_count > 0 {
+            block.push_str(&format!("\nrecall index {lag_count} records behind\n"));
+        }
+    }
     Some((block, projection.diagnostic))
+}
+
+/// Best-effort recall watermark lag for the turn annotation (ADR-0038 §8 Phase A3): `None`
+/// when recall is unconfigured or the watermark cannot be computed (errors are logged at
+/// debug and swallowed — the annotation is advisory only).
+async fn recall_lag_count(ctx: &AssembleTurnContext<'_>) -> Option<i64> {
+    let store = match ctx.stores.store_for_bear(ctx.bear_id).await {
+        Ok(store) => store,
+        Err(err) => {
+            tracing::debug!(
+                bear_id = %ctx.bear_id,
+                error = %err,
+                "recall watermark annotation skipped: store unavailable"
+            );
+            return None;
+        }
+    };
+    match crate::recall::recall_watermark(ctx.pool, ctx.config, &store).await {
+        Ok(watermark) => watermark.map(|wm| wm.lag_count),
+        Err(err) => {
+            tracing::debug!(
+                bear_id = %ctx.bear_id,
+                error = %err,
+                "recall watermark annotation skipped: watermark unavailable"
+            );
+            None
+        }
+    }
 }
 
 pub async fn assemble_native_turn_messages(
@@ -655,6 +705,23 @@ pub async fn assemble_native_turn_for_bear(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recalled_memory_session_diagnostic_surfaces_conflict_presence() {
+        let diagnostic = json!({
+            "source": "recall_query",
+            "status": "ok",
+            "hits": [],
+            "conflicts": { "pairs": 1, "records": ["m1", "m2"] },
+        });
+        let session = recalled_memory_session_diagnostic(Some(&diagnostic));
+        assert_eq!(session["conflicts"]["pairs"], 1);
+        assert_eq!(session["conflicts"]["records"], json!(["m1", "m2"]));
+
+        // No conflict info stays null rather than fabricating an empty object.
+        let plain = recalled_memory_session_diagnostic(Some(&json!({ "hits": [] })));
+        assert!(plain["conflicts"].is_null());
+    }
 
     #[test]
     fn active_docket_execution_lookup_keeps_conversation_restore_path() {

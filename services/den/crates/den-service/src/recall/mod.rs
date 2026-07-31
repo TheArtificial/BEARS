@@ -26,9 +26,10 @@ pub use indexer::{IndexOutcome, PassageEmbedder, RecallIndexer};
 pub use policy::IndexRequest;
 pub use qdrant::{collection_name, QdrantPoint, QdrantRecall, RecallHit};
 pub use query::{
-    graph_expand_hits, hybrid_memory_search, recall_for_turn, recall_for_turn_scoped,
-    render_recall_block, search_bear_memory_for_entities, search_bear_memory_for_role,
-    semantic_search_for_bear, RecallProjection, RecalledPassage,
+    conflict_summary_json, graph_expand_hits, hybrid_memory_search, mark_projection_conflicts,
+    recall_for_turn, recall_for_turn_scoped, render_recall_block,
+    search_bear_memory_for_entities, search_bear_memory_for_role, semantic_search_for_bear,
+    surface_recall_conflicts, RecallProjection, RecalledPassage,
 };
 pub use reconcile::{reconcile_bear, reindex_bear_now, ReconcileOutcome};
 pub use temporal::{parse_time_expression, TemporalQuery};
