@@ -1009,7 +1009,7 @@ pub struct DocketTaskInput {
     #[serde(default)]
     pub parent_task_id: Option<Uuid>,
     #[serde(default)]
-    pub sibling_order: i32,
+    pub sibling_order: Option<i32>,
     #[serde(default = "default_task_kind")]
     pub kind: DocketTaskKind,
     #[serde(default = "default_task_scope")]
@@ -1159,6 +1159,15 @@ pub struct DocketJobExecuteOutcome {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DocketTaskPlacement {
+    First,
+    Last,
+    Before { task_id: Uuid },
+    After { task_id: Uuid },
+}
+
 #[derive(Debug, Clone)]
 pub struct DocketTaskCreate {
     pub bear_id: Uuid,
@@ -1166,6 +1175,7 @@ pub struct DocketTaskCreate {
     pub session_anchor_id: Option<Uuid>,
     pub parent_task_id: Option<Uuid>,
     pub sibling_order: i32,
+    pub placement: Option<DocketTaskPlacement>,
     pub kind: DocketTaskKind,
     pub scope: DocketTaskScope,
     pub title: String,

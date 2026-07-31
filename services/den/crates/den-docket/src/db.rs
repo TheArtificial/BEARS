@@ -20,8 +20,8 @@ use super::model::{
     DocketExecutionSessionUpsert, DocketJobCreate, DocketJobCriterionRow, DocketJobExecuteOutcome,
     DocketJobExecuteRequest, DocketJobListFilter, DocketJobProjection, DocketJobRow,
     DocketJobRunRow, DocketJobStatus, DocketJobUpdate, DocketTaskCreate, DocketTaskDefinitionPatch,
-    DocketTaskInput, DocketTaskListFilter, DocketTaskProjection, DocketTaskRow,
-    DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError, TaskListItemStatus,
+    DocketTaskInput, DocketTaskListFilter, DocketTaskPlacement, DocketTaskProjection,
+    DocketTaskRow, DocketTaskRunStateRow, DocketTaskUpdate, DocketValidationError, TaskListItemStatus,
     TaskListProjection, TaskListSourceRef, TaskListSyncOutcome, TaskListSyncRequest,
     TaskListSyncState,
 };
@@ -181,9 +181,21 @@ pub(super) async fn create_job(
 
     let mut task_ids_by_client_key = HashMap::new();
     let mut tasks = Vec::new();
-    for task in &create.tasks {
+    for (index, task) in create.tasks.iter().enumerate() {
         let parent_task_id = resolve_parent_task_id(task, &task_ids_by_client_key)?;
-        let row = insert_task_for_job(&mut tx, &create, job.id, &run, task, parent_task_id).await?;
+        let sibling_order = task
+            .sibling_order
+            .unwrap_or_else(|| i32::try_from(index).unwrap_or(i32::MAX));
+        let row = insert_task_for_job(
+            &mut tx,
+            &create,
+            job.id,
+            &run,
+            task,
+            parent_task_id,
+            sibling_order,
+        )
+        .await?;
         if let Some(key) = task
             .client_key
             .as_ref()
@@ -279,6 +291,7 @@ async fn insert_task_for_job(
     run: &DocketJobRunRow,
     task: &DocketTaskInput,
     parent_task_id: Option<Uuid>,
+    sibling_order: i32,
 ) -> Result<DocketTaskRow, DenError> {
     let row = sqlx::query_as::<_, DocketTaskRow>(
         r"
@@ -297,7 +310,7 @@ async fn insert_task_for_job(
     .bind(create.bear_id)
     .bind(job_id)
     .bind(parent_task_id)
-    .bind(task.sibling_order)
+    .bind(sibling_order)
     .bind(task.kind.as_str())
     .bind(task.scope.as_str())
     .bind(task.title.trim())
@@ -369,6 +382,9 @@ pub(super) async fn create_task(
 ) -> Result<DocketTaskRow, DenError> {
     validate_docket_task_create(&create)?;
     let mut tx = pool.begin().await?;
+    let sibling_order = place_task(&mut tx, &create).await?;
+    let mut create = create;
+    create.sibling_order = sibling_order;
     let row = insert_task(&mut tx, &create).await?;
     if let Some(run_id) = create.created_in_run_id {
         sqlx::query(
@@ -385,6 +401,98 @@ pub(super) async fn create_task(
     }
     tx.commit().await?;
     Ok(row)
+}
+
+async fn place_task(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    create: &DocketTaskCreate,
+) -> Result<i32, DenError> {
+    // Serialize placement within a task tree; jobs and session anchors are the
+    // stable roots available before a top-level task exists.
+    if let Some(job_id) = create.job_id {
+        sqlx::query("SELECT id FROM bear_jobs WHERE id = $1 FOR UPDATE")
+            .bind(job_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or_else(|| DenError::ValidationError("Docket job not found".to_string()))?;
+    } else if let Some(session_anchor_id) = create.session_anchor_id {
+        sqlx::query("SELECT id FROM client_sessions WHERE id = $1 FOR UPDATE")
+            .bind(session_anchor_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or_else(|| DenError::ValidationError("task session anchor not found".to_string()))?;
+    }
+
+    let placement = create.placement.unwrap_or(DocketTaskPlacement::Last);
+    let target_order = match placement {
+        DocketTaskPlacement::First => 0,
+        DocketTaskPlacement::Last => sqlx::query_scalar::<_, i32>(
+            r"
+            SELECT COALESCE(MAX(sibling_order), -1) + 1
+            FROM bear_tasks
+            WHERE bear_id = $1
+              AND job_id IS NOT DISTINCT FROM $2
+              AND session_anchor_id IS NOT DISTINCT FROM $3
+              AND parent_task_id IS NOT DISTINCT FROM $4
+            ",
+        )
+        .bind(create.bear_id)
+        .bind(create.job_id)
+        .bind(create.session_anchor_id)
+        .bind(create.parent_task_id)
+        .fetch_one(&mut **tx)
+        .await?,
+        DocketTaskPlacement::Before { task_id }
+        | DocketTaskPlacement::After { task_id } => {
+            let anchor: DocketTaskRow = sqlx::query_as(
+                r"
+                SELECT id, bear_id, job_id, session_anchor_id, parent_task_id, sibling_order,
+                       kind, scope, title, body, completion_criteria, difficulty, effort_hint,
+                       routing_strategy, expected_context_size, result_rollup_policy,
+                       created_by_role, created_by_user_id, created_by_agent_id, created_in_run_id,
+                       created_at, updated_at
+                FROM bear_tasks
+                WHERE id = $1 AND bear_id = $2
+                ",
+            )
+            .bind(task_id)
+            .bind(create.bear_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or_else(|| DenError::ValidationError("placement anchor task not found".to_string()))?;
+            if anchor.job_id != create.job_id
+                || anchor.session_anchor_id != create.session_anchor_id
+                || anchor.parent_task_id != create.parent_task_id
+            {
+                return Err(DenError::ValidationError(
+                    "placement anchor must be a sibling in the same task tree".to_string(),
+                ));
+            }
+            anchor.sibling_order
+                + i32::from(matches!(placement, DocketTaskPlacement::After { .. }))
+        }
+    };
+
+    sqlx::query(
+        r"
+        UPDATE bear_tasks
+        SET sibling_order = sibling_order + 1, updated_at = NOW()
+        WHERE bear_id = $1
+          AND job_id IS NOT DISTINCT FROM $2
+          AND session_anchor_id IS NOT DISTINCT FROM $3
+          AND parent_task_id IS NOT DISTINCT FROM $4
+          AND sibling_order >= $5
+        ",
+    )
+    .bind(create.bear_id)
+    .bind(create.job_id)
+    .bind(create.session_anchor_id)
+    .bind(create.parent_task_id)
+    .bind(target_order)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(target_order)
 }
 
 async fn insert_task(
@@ -2108,6 +2216,7 @@ pub(super) async fn sync_task_list(
                     session_anchor_id: None,
                     parent_task_id,
                     sibling_order: i32::MAX / 2,
+                    placement: Some(DocketTaskPlacement::Last),
                     kind: super::model::DocketTaskKind::Execution,
                     scope: super::model::DocketTaskScope::Template,
                     title: item.title.clone(),

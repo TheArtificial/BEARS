@@ -49,6 +49,7 @@ pub use model::{
     DocketJobRow, DocketJobRunRow, DocketJobStatus, DocketJobStatusReport, DocketJobUpdate,
     DocketRunState, DocketRunTrigger, DocketTaskCreate, DocketTaskDefinitionPatch,
     DocketTaskDifficulty, DocketTaskInput, DocketTaskKind, DocketTaskListFilter,
+    DocketTaskPlacement,
     DocketTaskProjection, DocketTaskRow, DocketTaskRunStateRow, DocketTaskRunStateUpdate,
     DocketTaskScope, DocketTaskStatus, DocketTaskUpdate, DocketValidationError, ResultRollupPolicy,
     RoutingStrategy, TaskListCheckoutRequest, TaskListCheckoutSource, TaskListHandoffOutcome,

@@ -20,6 +20,21 @@ fn read_only_git_tools_do_not_require_an_approval_gate() {
 }
 
 #[test]
+fn git_add_does_not_require_an_approval_gate() {
+    let policy = client_tool_policy(ClientToolName::GitAdd);
+    assert_eq!(policy.approval_policy, ApprovalPolicy::Never);
+    assert_eq!(policy.sensitive_path_policy, SensitivePathPolicy::Deny);
+}
+
+#[test]
+fn destructive_git_tools_still_require_approval() {
+    for tool in [ClientToolName::GitRestore, ClientToolName::GitStash] {
+        let policy = client_tool_policy(tool);
+        assert_eq!(policy.approval_policy, ApprovalPolicy::Required);
+    }
+}
+
+#[test]
 fn all_client_tool_policies_have_descriptor_owned_execution_contract() {
     for tool in ClientToolName::all() {
         let descriptor = tool.descriptor();
