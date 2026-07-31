@@ -2,7 +2,10 @@
 
 ## Status
 
-Planned (2026-07-30). Implements two 2026-07-30 amendments:
+In progress (2026-07-31). Implements two 2026-07-30 amendments:
+
+- **Part A (Phases A1+A2) landed** (commit `afda4b93`): `recall_watermark` in `den-service/src/recall/watermark.rs` (indexable heads vs live registry passages; run stats from the `recall_index` lane; `None` when Qdrant unconfigured), surfaced via the `memory_status` payload's `recall` object, the admin memory dashboard, and `recall_watermark_for_bear` / `is_healthy()`. Phase A3 (turn annotation) deferred until after Part B's rendering conventions.
+- **Part B open**: conflict predicate, `conflicting` marker, `memory_conflict` observations.
 
 - [ADR-0038 §8 — Recall consistency watermark](../decisions/adr-0038-platform-embedding-standard-and-derived-recall-index.md) ("is this Bear fully recallable right now?" must have a definite, visible answer),
 - [ADR-0041 §8 — Read-time contradiction surfacing](../decisions/adr-0041-archival-recall-and-async-curation.md) (conflicting live records are surfaced, never silently ranked away).
