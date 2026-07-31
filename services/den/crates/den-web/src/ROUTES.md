@@ -125,9 +125,9 @@ All `/admin/*` routes use `permission_required!(…, "admin")`.
 - `POST /bear/{bear_slug}/jobs/{job_id}/extend` — add a fresh work-assigned task with concrete criteria to the current run and return the job to ready
 - `POST /bear/{bear_slug}/jobs/{job_id}/tasks/{task_id}/retry` — retry a blocked current-run task after the operator supplies an audit reason
 - `GET /bear/{bear_slug}/jobs/runs/{run_id}` — run detail: state, sandbox type/strength, image, work surface, published branch/commit, changed files + diff, headless conversation link, sandbox/armature output, usage, cleanup status
-- `POST /bear/{bear_slug}/jobs/{job_id}/dispatch` — enqueue one background work run for all runnable work-assigned tasks in the job (optional form fields: root, image, git_ref); the tasks execute within the shared job session
+- `POST /bear/{bear_slug}/jobs/{job_id}/dispatch` — explicitly dispatch the job. For a ready/running job, enqueue one background work run for all runnable work-assigned tasks (optional form fields: root, image, git_ref). For a job whose current Docket run was blocked by a terminal work failure, preserve that run and its evidence, create a new current Docket run, carry forward completed work, reset interrupted work to pending, and enqueue a new work run. Automatic dispatch does not retry blocked jobs. If unpublished changes from the failed attempt cannot be recovered, require confirmation before starting clean.
 - `POST /bear/{bear_slug}/jobs/runs/{run_id}/cancel` — request cancellation (dispatch worker performs teardown)
-- `POST /bear/{bear_slug}/jobs/runs/{run_id}/retry` — re-enqueue a terminal run as a new attempt
+- `POST /bear/{bear_slug}/jobs/runs/{run_id}/retry` — retry the work run as a new work attempt within its Docket lifecycle; unlike job-level dispatch after a blocked Docket run, this does not replace `bear_jobs.current_run_id`
 
 ### Work surfaces (`src/work/surfaces.rs`)
 
